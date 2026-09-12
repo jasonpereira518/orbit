@@ -18,6 +18,8 @@ import {
   startImportJob,
   useImportJob,
 } from "@/lib/import-job-runner";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type PreviewResult = Awaited<ReturnType<typeof previewLinkedInCsv>>;
 type ConnectionsPreview = Exclude<PreviewResult, { error: string }>;
@@ -64,22 +66,27 @@ export function LinkedInConnectionsImport() {
 
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-connections/70 bg-card p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-1 items-start gap-3 pr-2">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-connections/10 text-import-connections">
-            <FileSpreadsheet className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-lg font-medium text-ink">
+      {/*
+        The export guide shares the title's row, not the whole header's. Beside the full
+        text block it took ~120px from a column already sharing a phone with the icon, and
+        the description ran four words to a line. Here the description spans the card.
+      */}
+      <div className="flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-connections/10 text-import-connections">
+          <FileSpreadsheet className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <h2 className="min-w-0 text-lg font-medium text-ink">
               LinkedIn connections
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Upload your Connections CSV, review everyone, then import into
-              your orbit. Imports keep running if you leave this page.
-            </p>
+            <LinkedInExportGuide variant="connections" />
           </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Upload your Connections CSV, review everyone, then import into
+            your orbit. Imports keep running if you leave this page.
+          </p>
         </div>
-        <LinkedInExportGuide variant="connections" />
       </div>
 
       <ImportFilePicker
@@ -89,7 +96,7 @@ export function LinkedInConnectionsImport() {
         onFile={(file) => {
           if (file.size > LARGE_FILE_WARNING_BYTES) {
             toast.message(
-              `This is a large file (${(file.size / (1024 * 1024)).toFixed(1)}MB) — import may take a while.`
+              `This is a large file (${(file.size / (1024 * 1024)).toFixed(1)}MB) — the import may take a while`
             );
           }
           start(async () => {
@@ -106,7 +113,7 @@ export function LinkedInConnectionsImport() {
               setSelected(new Set());
               setWarnings([]);
               toast.error(
-                err instanceof Error ? err.message : "Preview failed",
+                friendlyError(err, TOAST_COPY.previewFailed),
               );
             }
           });
@@ -129,7 +136,7 @@ export function LinkedInConnectionsImport() {
               } catch (err) {
                 setWarnings([]);
                 toast.error(
-                  err instanceof Error ? err.message : "Preview failed",
+                  friendlyError(err, TOAST_COPY.previewFailed),
                 );
               }
             })
@@ -157,7 +164,7 @@ export function LinkedInConnectionsImport() {
               setFileName(null);
               setWarnings([]);
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Import failed");
+              toast.error(friendlyError(err, TOAST_COPY.importFailed));
             }
           }}
         >

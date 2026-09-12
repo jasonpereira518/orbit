@@ -16,8 +16,8 @@
 import "./smoke/_env";
 
 import { eq, like } from "drizzle-orm";
-import AdminFeedbackDetailPage from "../src/app/(admin)/admin/feedback/[feedbackId]/page";
-import AdminFeedbackPage from "../src/app/(admin)/admin/feedback/page";
+import AdminFeedbackDetailPage from "../src/app/(clerk)/(admin)/admin/feedback/[feedbackId]/page";
+import AdminFeedbackPage from "../src/app/(clerk)/(admin)/admin/feedback/page";
 import { getDb } from "../src/db";
 import { adminAuditLog, feedback, feedbackScreenshots, userSettings } from "../src/db/schema";
 import {

@@ -266,10 +266,15 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
       <div className="shrink-0 space-y-2 border-t border-border/60 p-4">
         <div className="mx-auto max-w-3xl space-y-2.5">
           <Skeleton className="h-14 w-full rounded-lg" />
-          <div className="flex flex-wrap gap-1.5">
-            <Skeleton className="h-6 w-28 rounded-full" />
-            <Skeleton className="h-6 w-36 rounded-full" />
-            <Skeleton className="h-6 w-32 rounded-full" />
+          {/* The suggestion pills, at their real height. Fixed on purpose: the composer
+              footer is `shrink-0` above a message list with no floor, so a placeholder of
+              the wrong height hands the panel a different layout than the one that swaps in
+              — the failure GraphPageSkeleton's comment below records. Kept in step with
+              `PILL_BOX` in components/chat/suggestion-cards.tsx. */}
+          <div className="flex gap-2 overflow-hidden">
+            <Skeleton className="h-8 w-52 shrink-0 rounded-full" />
+            <Skeleton className="h-8 w-44 shrink-0 rounded-full" />
+            <Skeleton className="h-8 w-56 shrink-0 rounded-full" />
           </div>
         </div>
       </div>
@@ -294,6 +299,20 @@ export function CaptureFormSkeleton() {
         </div>
       ))}
       <Skeleton className="h-32 w-full rounded-lg" />
+      {/*
+        The scan controls: two tap tiles below md, a three-button row above it. Sized to
+        match so the skeleton does not collapse to a shorter form and then jump when the
+        real controls arrive.
+      */}
+      <div className="grid grid-cols-2 gap-2 md:hidden">
+        <Skeleton className="h-[86px] rounded-xl" />
+        <Skeleton className="h-[86px] rounded-xl" />
+      </div>
+      <div className="hidden gap-2 md:flex">
+        <Skeleton className="h-9 w-44 rounded-lg" />
+        <Skeleton className="h-9 w-28 rounded-lg" />
+        <Skeleton className="h-9 w-36 rounded-lg" />
+      </div>
       <Skeleton className="mt-2 h-9 w-32" />
     </div>
   );
@@ -314,10 +333,12 @@ export function CapturePageSkeleton() {
 
 export function ChatPageSkeleton() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5">
+    // Same phone height as the chat page itself, so the load doesn't jump.
+    <div className="flex h-[calc(100dvh-11rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-5 md:h-[calc(100dvh-4rem)]">
       <div className="shrink-0 space-y-2">
         <Skeleton className="h-9 w-64" />
-        <Skeleton className="h-4 w-80 max-w-full" />
+        {/* The page hides its subtitle on phones. */}
+        <Skeleton className="hidden h-4 w-80 max-w-full sm:block" />
       </div>
       <ChatPanelSkeleton className="flex-1" />
     </div>
@@ -688,7 +709,7 @@ export function SuspendedPageSkeleton() {
 
 /**
  * Mirrors the real pricing page's section order 1:1 — see
- * src/app/(marketing)/pricing/page.tsx and src/components/pricing/*. Kept in
+ * src/app/(clerk)/(marketing)/pricing/page.tsx and src/components/pricing/*. Kept in
  * sync deliberately: this is a full-page async Server Component (auth() +
  * two DB reads), so it's the marketing route most likely to actually show a
  * loading state, and a generic skeleton here would visibly jump on swap-in.

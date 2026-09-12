@@ -5,6 +5,7 @@ import {
   aiSuggestions,
   billingEvents,
   calendarSubscriptions,
+  captureHandoffs,
   chatThreads,
   closenessCohorts,
   companies,
@@ -21,16 +22,22 @@ import {
   contactIdentities,
   contactMerges,
   duplicateSuggestions,
+  eventAliases,
   eventAttendees,
+  eventCompanies,
   eventProviderConnections,
   events,
   gmailConnections,
+  targetCompanies,
   imports,
   interactions,
+  meetingSessions,
+  meetingTranscriptSegments,
   noteBatches,
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
+  pageViews,
   recruiterMessages,
   reminderLists,
   reminders,
@@ -137,6 +144,13 @@ export async function purgeUserData(
   // or `interactions` (its `seed_contact_id` is a plain column) — it survives both of
   // those deletes below unless removed explicitly.
   await db.delete(noteBatches).where(eq(noteBatches.userId, userId));
+  // Meeting transcripts: the words of everyone on a call, verbatim. Segments first and
+  // explicitly, though they cascade from the session — they carry their own `user_id`, and
+  // a transcript that outlived its account would be the worst leak this function could have.
+  await db
+    .delete(meetingTranscriptSegments)
+    .where(eq(meetingTranscriptSegments.userId, userId));
+  await db.delete(meetingSessions).where(eq(meetingSessions.userId, userId));
   await db.delete(interactions).where(eq(interactions.userId, userId));
   // The pasted text a note was parsed out of, kept so a save can be undone. `source_text`
   // is the user's own prose about named people, which makes this the most sensitive row
@@ -151,12 +165,28 @@ export async function purgeUserData(
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
   await db.delete(imports).where(eq(imports.userId, userId));
   await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
+  // Short-lived by construction — claimed on pickup, swept on expiry — but a scan started
+  // minutes before the account was deleted would otherwise leave a live grant and a
+  // transcript of the user's notes behind it.
+  await db.delete(captureHandoffs).where(eq(captureHandoffs.userId, userId));
   // Before `contacts`: `event_attendees.contact_id` is `ON DELETE SET NULL`, so deleting
   // contacts first would rewrite every one of these rows on the way to deleting them anyway.
   // Attendees are deleted explicitly rather than left to the cascade from `events` — they
   // carry their own `user_id` (which is why `smoke-purge` finds them), and a roster holds
   // names, emails and employers of people the user met.
   await db.delete(eventAttendees).where(eq(eventAttendees.userId, userId));
+  // Both cascade from their parents, and both are deleted explicitly for the same reason
+  // `event_attendees` is: they carry their own `user_id`, so `smoke-purge` requires them, and
+  // leaving them to a cascade means a change to either FK silently strips them from account
+  // deletion. `target_companies` is also a statement of intent — where this person wants to
+  // work — which is not something to leave behind.
+  await db.delete(eventCompanies).where(eq(eventCompanies.userId, userId));
+  await db.delete(targetCompanies).where(eq(targetCompanies.userId, userId));
+  // Before `events`, and explicitly: an alias row survives its event by design (`ON DELETE
+  // SET NULL` is what makes a dismissal stick), so deleting events first would leave a
+  // tombstone per event behind — a list of every Luma link and calendar UID the user ever
+  // had, pointing at nothing, outliving the account.
+  await db.delete(eventAliases).where(eq(eventAliases.userId, userId));
   await db.delete(events).where(eq(events.userId, userId));
   // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as the
   // Gmail/Outlook rows below, and it must not outlive the account.
@@ -263,6 +293,22 @@ export async function purgeUserData(
     .update(billingEvents)
     .set({ userId: null })
     .where(eq(billingEvents.userId, userId));
+
+  // ANONYMISED, NOT DELETED — for the same reason, and with a sharper one behind it.
+  //
+  // `page_views` is an aggregate traffic record. Deleting a departing account's rows would
+  // retroactively change how many people visited the site last March, which is both wrong
+  // and the kind of wrong nobody would ever notice. Nulling `user_id` keeps the count and
+  // removes the person.
+  //
+  // It also makes the privacy page true rather than nearly true. That page says traffic
+  // records hold nothing pointing back to you — which is so for anonymous views by
+  // construction, since the visitor hash is salted per day and expires, but `user_id` is
+  // set on views from a signed-in session. This is the statement that closes that gap.
+  await db
+    .update(pageViews)
+    .set({ userId: null })
+    .where(eq(pageViews.userId, userId));
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 

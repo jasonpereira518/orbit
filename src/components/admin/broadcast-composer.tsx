@@ -10,6 +10,8 @@ import {
 } from "@/actions/admin";
 import { BODY_MAX, SUBJECT_MAX } from "@/lib/broadcast-limits";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 /**
  * Compose a note to the interest list.
@@ -35,11 +37,11 @@ export function BroadcastComposer({ audienceSize }: { audienceSize: number }) {
     startTransition(async () => {
       try {
         await createBroadcastAction({ subject, body });
-        toast.success("Draft saved. Send it from the list below.");
+        toast.success("Draft saved — send it from the list below");
         setSubject("");
         setBody("");
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Couldn't save that.");
+        toast.error(friendlyError(e, TOAST_COPY.saveFailed));
       }
     });
 
@@ -47,9 +49,9 @@ export function BroadcastComposer({ audienceSize }: { audienceSize: number }) {
     startTransition(async () => {
       try {
         await sendBroadcastTestAction({ subject, body, to: testTo.trim() });
-        toast.success(`Test sent to ${testTo.trim()}.`);
+        toast.success(`Test sent to ${testTo.trim()}`);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "The test send failed.");
+        toast.error(friendlyError(e, "The test didn’t send — try again?"));
       }
     });
 

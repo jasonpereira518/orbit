@@ -19,6 +19,8 @@ import {
 } from "@/lib/background-jobs";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -102,7 +104,11 @@ export function GmailImportPanel({
       toast.success("Gmail connected");
       router.refresh();
     } else if (gmail === "error") {
-      toast.error(params.get("reason") || "Gmail connection failed");
+      {
+        const oauth = describeOAuthReason(params.get("reason"), "Gmail");
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
     }
     params.delete("gmail");
     params.delete("reason");
@@ -128,7 +134,8 @@ export function GmailImportPanel({
                 : "No recruiters found in your mailbox"
             );
           } else if (next.status === "failed") {
-            toast.error(next.errorMessage || "Scan failed");
+            // The stored scan error can be a raw Gmail API body.
+            toast.error(friendlyError(next.errorMessage, "The scan didn’t finish — try again?"));
           }
           router.refresh();
         }
@@ -193,7 +200,7 @@ export function GmailImportPanel({
                     window.location.href = url;
                   } catch (err) {
                     toast.error(
-                      err instanceof Error ? err.message : "OAuth failed"
+                      friendlyError(err, TOAST_COPY.connectFailed)
                     );
                   }
                 })
@@ -208,7 +215,12 @@ export function GmailImportPanel({
                 onClick={() =>
                   start(async () => {
                     try {
-                      const { importId } = await startGmailRecruiterScan();
+                      const started = await startGmailRecruiterScan();
+                      if (!started.ok) {
+                        toast.error(started.error);
+                        return;
+                      }
+                      const { importId } = started.value;
                       const next = await getGmailScanStatus(importId);
                       if (next) {
                         setScan(next);
@@ -217,7 +229,7 @@ export function GmailImportPanel({
                       toast.success("Scan started — this can take a few minutes");
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not start scan"
+                        friendlyError(err, "Couldn’t start the scan — try again?")
                       );
                     }
                   })
@@ -257,7 +269,7 @@ export function GmailImportPanel({
               onClick={() =>
                 start(async () => {
                   await cancelGmailRecruiterScan(scan.importId);
-                  toast.success("Scan cancelled");
+                  toast.success("Scan stopped");
                   const next = await getGmailScanStatus(scan.importId);
                   if (next) {
                     setScan(next);
