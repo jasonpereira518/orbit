@@ -874,12 +874,64 @@ export const noteBatches = pgTable(
     anchorBasis: text("anchor_basis").$type<"note" | "hint" | "upload">().default("upload").notNull(),
     status: text("status").$type<"saved" | "undone">().default("saved").notNull(),
     result: jsonb("result").$type<NoteBatchResult>().notNull(),
+    /**
+     * How the notes got in — typed, voice, photos, a calendar invite, an email. Only ever a
+     * label for the capture history (so "that voice note from Tuesday" is findable by its
+     * icon); nothing branches on it. Empty on batches saved before it existed, which the
+     * history renders as plain notes rather than guessing.
+     */
+    inputSources: jsonb("input_sources").$type<CaptureSourceKind[]>().default([]).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     undoneAt: timestamp("undone_at", { withTimezone: true }),
   },
   (t) => [
     index("note_batches_user_created_idx").on(t.userId, t.createdAt),
     index("note_batches_user_source_idx").on(t.userId, t.sourceHash),
+  ]
+);
+
+export type CaptureSourceKind = "text" | "voice" | "photo" | "calendar" | "email" | "file";
+
+/**
+ * A photo attached to a capture — a whiteboard, a business card, a page of handwritten
+ * notes — kept so the capture history can show the original next to what was extracted.
+ *
+ * Written at UPLOAD time, not at save time, with `note_batch_id` null until the capture is
+ * saved. Re-sending the bytes with the save would double every upload and push the save
+ * over the server-action body limit that `src/lib/capture-limits.ts` exists to police. The
+ * cost is orphans: a photo whose capture was never saved. The daily cron prunes those (see
+ * `pruneUnattachedCapturePhotos`), and nothing reads an unattached row except its owner's
+ * own paste step.
+ *
+ * Same storage discipline as `feedback_screenshots`: `storage` is a real discriminator,
+ * Blob objects get a random suffix and are only ever served through the owner-checked
+ * `/api/capture/photos/[photoId]` route, and the bytes are re-encoded server-side (which
+ * also strips EXIF, GPS included) so `content_type` is always one Orbit produced.
+ */
+export const capturePhotos = pgTable(
+  "capture_photos",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Carried directly: the serving route's owner check and `smoke-purge` both key on it. */
+    userId: text("user_id").notNull(),
+    noteBatchId: uuid("note_batch_id").references(() => noteBatches.id, { onDelete: "cascade" }),
+    /** Order within the upload it arrived in. */
+    position: integer("position").notNull().default(0),
+    /** The name the file had on the user's device, for the alt text and the download. */
+    fileName: text("file_name"),
+    storage: text("storage").$type<"blob" | "inline">().notNull(),
+    blobUrl: text("blob_url"),
+    /** Raw base64, no `data:` prefix — see `feedback_screenshots.inline_data`. */
+    inlineData: text("inline_data"),
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("capture_photos_batch_idx").on(t.noteBatchId, t.position),
+    index("capture_photos_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -1257,6 +1309,28 @@ export type OutlookContactRowPayload = {
 };
 
 /**
+ * One contact from an uploaded address-book file — a vCard or a Google/Outlook contacts CSV —
+ * already normalized by `parseContactsFile` (`src/lib/contacts-file.ts`), so this shape is the
+ * same whichever of those formats it came from and the adapter never needs to know.
+ *
+ * No `photoUrl`, unlike Google: a vCard carries its photo inline as base64, and that is
+ * stripped before upload rather than stored. `notes` is the card's NOTE (or the CSV's Notes
+ * column) and is written on create only — see `contactsFileAdapter`.
+ */
+export type ContactsFileRowPayload = {
+  kind: "contacts_file_contact";
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  linkedinUrl: string;
+  notes: string;
+};
+
+/**
  * One resolved conversation from a LinkedIn Messages export, snapshotted once at parse
  * time so the engine never re-parses the CSV or re-fetches contacts per conversation.
  * `messages[].id` is a hash of (conversationId, date, content) computed at parse time —
@@ -1333,6 +1407,7 @@ export type ImportJobRowPayload =
   | GmailSenderRowPayload
   | GoogleContactRowPayload
   | OutlookContactRowPayload
+  | ContactsFileRowPayload
   | LinkedInMessageThreadRowPayload
   | CalendarEventRowPayload;
 

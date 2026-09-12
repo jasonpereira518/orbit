@@ -63,6 +63,18 @@ function isImage(file: CaptureMediaFile) {
   );
 }
 
+/**
+ * The photos in an upload, as `normalizeCaptureInput` will classify them, with any `data:`
+ * prefix stripped. Exported so the capture action can keep a copy of exactly the files the
+ * transcription reads — one classifier, so the two can never disagree about which files
+ * were photos.
+ */
+export function captureImageFiles(files: CaptureMediaFile[] | undefined): CaptureMediaFile[] {
+  return (files || [])
+    .map((f) => ({ ...f, base64: stripDataUrl(f.base64), mimeType: f.mimeType || "application/octet-stream" }))
+    .filter((f) => !isIcs(f) && !isEml(f) && !isPlainText(f) && isImage(f));
+}
+
 function isAudio(file: CaptureMediaFile) {
   const ext = extOf(file.filename);
   return (
@@ -301,7 +313,8 @@ function mergeHints(
 
 /**
  * Normalize text + optional media uploads into a single capture corpus.
- * Media is processed ephemerally (not stored).
+ * Nothing here stores anything: audio is transcribed and dropped, and photos are kept only
+ * by the capture action, separately (see `src/lib/capture-photos.ts`).
  */
 export async function normalizeCaptureInput(
   userId: string,

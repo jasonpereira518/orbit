@@ -66,6 +66,12 @@ export const ERROR_SOURCES = {
    * and without this there is no trace that someone tried to say something and could not.
    */
   feedbackSubmit: "feedback.submit",
+  /**
+   * A capture photo that could not be kept — the configured Blob store refused it, or the
+   * insert failed. The capture itself carries on (the text was already read out of the
+   * photo), so this row is the only trace that the history will be missing a picture.
+   */
+  capturePhotoStore: "capture.photo_store",
 } as const;
 
 export type ErrorEventInput = {

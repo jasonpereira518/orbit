@@ -651,6 +651,118 @@ async function main() {
     JSON.stringify(out)
   );
 
+  // --- Contacts file (vCard / contacts CSV): same engine, email- and LinkedIn-keyed ---
+  // The same nameless row (5) and name-only row (6) as the Google/Outlook fixtures, for the
+  // same reasons. Row 7 is the one this adapter adds: no email, but a LinkedIn URL — an iCloud
+  // card's social profile — which must be enough to merge on re-import, because it is the
+  // strongest identifier the matcher has and the reason `identity()` probes it at all.
+  await reset();
+  const fileRows = Array.from({ length: 40 }, (_, i) => ({
+    kind: "contacts_file_contact" as const,
+    fullName: `File Person ${i}`,
+    firstName: "File",
+    lastName: `Person ${i}`,
+    company: `Company ${i % 6}`,
+    title: `Title ${i % 4}`,
+    email: `file${i}@example.com`,
+    phone: `+1 555 010 ${String(1000 + i)}`,
+    linkedinUrl: "",
+    notes: i === 0 ? "Met at the reunion" : "",
+  }));
+  fileRows[5].fullName = "   ";
+  fileRows[6].email = "";
+  fileRows[6].company = "";
+  fileRows[6].title = "";
+  fileRows[7].email = "";
+  fileRows[7].company = "";
+  fileRows[7].title = "";
+  fileRows[7].linkedinUrl = "https://www.linkedin.com/in/file-person-7";
+
+  id = await seedJob(fileRows, "contacts_file");
+  await runJob(id);
+  out = await outcome(id);
+  check("contacts file import completes", out.status === "completed", JSON.stringify(out));
+  check("contacts file creates all but the nameless row", out.created === 39, JSON.stringify(out));
+  check("contacts file skips the nameless row", out.skipped === 1, JSON.stringify(out));
+  {
+    const db = await getDb();
+    const first = await db.query.contacts.findFirst({
+      where: and(eq(contacts.userId, USER), eq(contacts.fullName, "File Person 0")),
+    });
+    check(
+      "contacts file writes source, howMet and the card's note on create",
+      first?.source === "contacts_file" &&
+        first?.howMet === "Address book" &&
+        first?.notes === "Met at the reunion" &&
+        first?.phone === "+1 555 010 1000",
+      JSON.stringify(first && { source: first.source, howMet: first.howMet, notes: first.notes, phone: first.phone })
+    );
+  }
+
+  // Between the two imports, person 1 becomes someone Orbit knows better than the phone does:
+  // a current role and a how-met from elsewhere, and no phone number yet.
+  {
+    const db = await getDb();
+    await db
+      .update(contacts)
+      .set({ company: "Stripe", title: "Staff Engineer", howMet: "LinkedIn", source: "linkedin", phone: null })
+      .where(and(eq(contacts.userId, USER), eq(contacts.fullName, "File Person 1")));
+  }
+
+  id = await seedJob(fileRows, "contacts_file");
+  await runJob(id);
+  out = await outcome(id);
+  check(
+    "contacts file re-import merges every row with an email or a LinkedIn URL",
+    out.updated === 38,
+    JSON.stringify(out)
+  );
+  {
+    const db = await getDb();
+    const known = await db.query.contacts.findFirst({
+      where: and(eq(contacts.userId, USER), eq(contacts.fullName, "File Person 1")),
+    });
+    check(
+      "a merge from an address book keeps the contact's role and how-met, and only adds how to reach them",
+      known?.company === "Stripe" &&
+        known?.title === "Staff Engineer" &&
+        known?.howMet === "LinkedIn" &&
+        known?.source === "linkedin" &&
+        known?.phone === "+1 555 010 1001",
+      JSON.stringify(known && { company: known.company, title: known.title, howMet: known.howMet, source: known.source, phone: known.phone })
+    );
+  }
+  check(
+    "contacts file re-import creates the name-only row again instead of merging it",
+    out.created === 1,
+    JSON.stringify(out)
+  );
+
+  // The plan cap is the engine's, not the adapter's — this is the assertion that an address
+  // book can't walk a free account past it the way no other contact import can either.
+  await reset();
+  const overCap = Array.from({ length: FREE_CONTACT_LIMIT + 7 }, (_, i) => ({
+    kind: "contacts_file_contact" as const,
+    fullName: `Cap File ${i}`,
+    firstName: "Cap",
+    lastName: `File ${i}`,
+    company: "",
+    title: "",
+    email: `capfile${i}@example.com`,
+    phone: "",
+    linkedinUrl: "",
+    notes: "",
+  }));
+  id = await seedJob(overCap, "contacts_file");
+  await runJob(id);
+  out = await outcome(id);
+  check(
+    `contacts file respects the free cap (admits ${FREE_CONTACT_LIMIT})`,
+    out.created === FREE_CONTACT_LIMIT,
+    JSON.stringify(out)
+  );
+  check("contacts file blocks the rest by plan", out.blockedByPlan === 7, JSON.stringify(out));
+
   // --- LinkedIn messages: creates contacts AND logs interactions ---
   await reset();
   const threads = Array.from({ length: 12 }, (_, i) => ({

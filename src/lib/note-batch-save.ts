@@ -10,7 +10,7 @@
  */
 import { and, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, contacts, interactionMentions, noteBatches, reminders, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
+import { actionItems, contacts, interactionMentions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
@@ -73,6 +73,8 @@ export type SaveNoteBatchInput = {
   commitments: NoteBatchCommitmentInput[];
   mentions?: NoteBatchMentionInput[];
   skipped: { relative: number; unverifiable: number; past: number };
+  /** How the notes arrived — see `noteBatches.inputSources`. Defaults to none recorded. */
+  inputSources?: CaptureSourceKind[];
   /**
    * Set when the batch is a recorded meeting. Its summary is stored on the result, and a
    * meeting is saveable with no people and no dates — the summary is the point.
@@ -138,6 +140,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       anchorBasis: input.anchorBasis,
       status: "saved",
       result,
+      inputSources: input.inputSources ?? [],
     })
     .returning();
   const batchId = batch.id;

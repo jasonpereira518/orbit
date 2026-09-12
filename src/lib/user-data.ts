@@ -49,6 +49,7 @@ import {
   userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
+import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
 import { recomputeRecruiterRating } from "@/lib/recruiters";
 
 /**
@@ -140,6 +141,11 @@ export async function purgeUserData(
   await db.delete(contactIdentities).where(eq(contactIdentities.userId, userId));
   await db.delete(duplicateSuggestions).where(eq(duplicateSuggestions.userId, userId));
   await db.delete(contactMerges).where(eq(contactMerges.userId, userId));
+  // Capture photos before the batches they belong to. The rows WOULD cascade from
+  // `note_batches`, but an unattached photo (a capture that was never saved) has no batch to
+  // cascade from, and the Blob objects behind all of them have no foreign key at all — the
+  // same reason feedback screenshots are removed by hand below.
+  await purgeCapturePhotosForUser(userId);
   // `note_batches` carries the raw pasted note text and has no cascading FK to `contacts`
   // or `interactions` (its `seed_contact_id` is a plain column) — it survives both of
   // those deletes below unless removed explicitly.
