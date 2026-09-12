@@ -13,6 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-purge.ts
  */
+import { randomUUID } from "node:crypto";
 import "./smoke/_env";
 
 import { eq, getTableColumns, getTableName, sql } from "drizzle-orm";
@@ -465,6 +466,17 @@ async function seed() {
     eventId: "evt_purge_fixture",
     eventType: "contact.created",
     payload: {},
+  });
+
+  // A page view from a signed-in session. Purge ANONYMISES this rather than deleting it,
+  // the same way it treats billing_events — so like that row, it survives its own cleanup.
+  await db.insert(schema.pageViews).values({
+    id: randomUUID(),
+    visitorHash: "purge-fixture-visitor",
+    sessionId: randomUUID(),
+    userId: USER,
+    route: "/dashboard",
+    device: "desktop",
   });
 
   return { recruiterId: recruiter.id };
