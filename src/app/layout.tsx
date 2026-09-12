@@ -3,8 +3,8 @@ import { Fraunces, Outfit } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { WarpProvider } from "@/components/warp/warp-provider";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
+import { PageviewBeacon } from "@/components/analytics/pageview-beacon";
+import { VercelTelemetry } from "@/components/analytics/vercel-telemetry";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -76,8 +76,13 @@ export default function RootLayout({
           <WarpProvider>{children}</WarpProvider>
           <Toaster />
         </ThemeProvider>
-        <Analytics />
-        <SpeedInsights />
+        {/* Orbit's own traffic pipeline: page views, sessions and geography, read by
+            /admin/analytics. Vercel's Web Analytics counts page views too, and Speed
+            Insights measures load performance, but neither can be joined to the users and
+            billing tables — so conversion has to be measured here. */}
+        <PageviewBeacon />
+        {/* Redacted: Vercel sees route patterns, never ids, tokens or admin URLs. */}
+        <VercelTelemetry />
       </body>
     </html>
   );

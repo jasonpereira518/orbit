@@ -20,13 +20,13 @@ export const metadata: Metadata = {
     "What Orbit collects, who it shares data with, and how to export or delete everything in your account.",
 };
 
-const LAST_UPDATED = "August 12, 2026";
+const LAST_UPDATED = "September 12, 2026";
 
 const HIGHLIGHTS: readonly Highlight[] = [
   {
     icon: ShieldCheck,
     title: "Your network isn't a product",
-    body: "Orbit doesn't sell personal information, run ad pixels, or ship third-party analytics trackers.",
+    body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies.",
   },
   {
     icon: Sparkles,
@@ -52,7 +52,7 @@ const TOC: readonly TocItem[] = [
   { id: "third-parties", label: "Who else sees it" },
   { id: "ai", label: "AI processing" },
   { id: "payments", label: "Payments" },
-  { id: "cookies", label: "Cookies & storage" },
+  { id: "cookies", label: "Cookies, storage & analytics" },
   { id: "controls", label: "Your controls" },
   { id: "retention", label: "Retention" },
   { id: "security", label: "Security" },
@@ -67,7 +67,7 @@ const PROCESSORS = [
   {
     name: "Clerk",
     badge: "Required",
-    body: "Authentication, sessions, account lifecycle, and subscription billing. Holds your sign-in identity.",
+    body: "Authentication, sessions, and account lifecycle. Holds your sign-in identity.",
   },
   {
     name: "Database host",
@@ -77,17 +77,22 @@ const PROCESSORS = [
   {
     name: "Vercel",
     badge: "Required",
-    body: "Hosting and file storage for the app, including uploaded or fetched contact avatars.",
+    body: "Hosting and file storage for the app, including uploaded or fetched contact avatars. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed.",
   },
   {
     name: "Stripe",
     badge: "Optional",
-    body: "One-time Orbit Lifetime checkout. Card details go to Stripe directly; Orbit stores only a customer reference.",
+    body: "Subscriptions and the one-time Orbit Lifetime purchase. Card details go to Stripe directly; Orbit stores only a customer reference.",
   },
   {
     name: "Google Gemini, OpenAI, Anthropic",
     badge: "Optional",
-    body: "AI features. Which one receives content depends on the provider and key you configure in Settings.",
+    body: "AI features, including transcribing meetings you record and reading pages you scan. Which one receives content depends on the provider and key you configure in Settings.",
+  },
+  {
+    name: "Wispr Flow",
+    badge: "Optional",
+    body: "Meeting transcription, only if you add a Wispr key in Settings.",
   },
   {
     name: "Apollo",
@@ -163,6 +168,12 @@ export default function PrivacyPage() {
               campaigns and messages, and import metadata.
             </li>
             <li>
+              <strong>Recordings and photos you capture</strong> — when you
+              record a meeting or scan a page, the audio or photo is sent to be
+              transcribed and then discarded. Only the resulting text is kept,
+              as notes.
+            </li>
+            <li>
               <strong>Secrets you provide</strong> — the API keys you supply for
               AI, enrichment, email, or SMS providers. These are stored
               encrypted at rest.
@@ -178,12 +189,22 @@ export default function PrivacyPage() {
               This is what powers your cost view and lets failures be debugged.
               It records the shape of the call, never the prompt or the reply.
             </li>
+            <li>
+              <strong>Page views</strong> — which pages are opened, when, and for
+              how long; the type of device; the site that linked to Orbit and any
+              campaign tags; and approximate location (city, region, and country)
+              looked up from the IP address. Linked to your account while you are
+              signed in. See{" "}
+              <a href="#cookies">cookies, storage, and analytics</a>.
+            </li>
           </ul>
           <DocCallout title="Worth knowing">
             <p>
               Contact records are usually about other people. When you add or
               import someone, you are deciding what Orbit stores about them, and
-              you remain responsible for having a lawful basis to keep it.
+              you remain responsible for having a lawful basis to keep it. The
+              same goes for recording a meeting: it captures what everyone on the
+              call says, and many places require their consent first.
             </p>
           </DocCallout>
         </DocSection>
@@ -205,6 +226,10 @@ export default function PrivacyPage() {
               outbound email or SMS when you connect those integrations
             </li>
             <li>Apply plan limits and process payments if you upgrade</li>
+            <li>
+              Understand how Orbit is found and used — which pages are read, where
+              visitors arrive from, and which features get used
+            </li>
             <li>
               Honour export, deletion, and account lifecycle requests you make
             </li>
@@ -243,8 +268,9 @@ export default function PrivacyPage() {
         <DocSection id="ai" index={5} title="AI processing">
           <p>
             When you use an AI feature, content from your network — notes,
-            contact context, chat prompts — is sent to the provider configured
-            in Settings. You choose that provider, and in production every call
+            contact context, chat prompts, the audio of meetings you record, and
+            photos of pages you scan — is sent to the provider configured in
+            Settings. You choose that provider, and in production every call
             runs on an API key you supply, so the request lands on your own
             account with that vendor and is governed by the retention settings
             you have agreed with them.
@@ -262,9 +288,9 @@ export default function PrivacyPage() {
 
         <DocSection id="payments" index={6} title="Payments">
           <p>
-            The Free Plan needs no payment details at all. If you upgrade,
-            subscriptions are handled by Clerk&apos;s billing and the one-time
-            Orbit Lifetime purchase runs through Stripe.
+            The Free Plan needs no payment details at all. If you upgrade, both
+            subscriptions and the one-time Orbit Lifetime purchase run through
+            Stripe.
           </p>
           <p>
             <strong>Orbit never sees your card.</strong> Card details are entered
@@ -275,7 +301,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="cookies" index={7} title="Cookies and local storage">
+        <DocSection id="cookies" index={7} title="Cookies, local storage, and analytics">
           <p>
             Orbit uses Clerk session cookies to keep you signed in. On your very
             first visit it also sets one first-party cookie,{" "}
@@ -289,8 +315,47 @@ export default function PrivacyPage() {
             preferences live with your account instead.
           </p>
           <p>
-            There are no advertising pixels and no third-party analytics
-            trackers in the product today.
+            Orbit counts its own traffic, and does it{" "}
+            <strong>without cookies</strong>. Each page view records which page
+            was opened, when, and for how long; whether it was on a desktop,
+            phone, or tablet; the site that linked there and any campaign tags;
+            and an approximate location — city, region, and country — looked up
+            from the IP address. The IP address itself is not kept: Orbit&apos;s
+            analytics reduces it, together with your browser type, to a one-way
+            hash mixed with a value that changes every day, and stores only the
+            hash. That hash cannot connect one day&apos;s visit to the next, and
+            it cannot be turned back into an address from the data alone. To
+            group the pages of a single visit, your browser holds a random
+            session id in <code>sessionStorage</code>; it is discarded when you
+            close the tab, and replaced after 30 minutes without a page view.
+          </p>
+          <p>
+            For a signed-out visitor, that is all it is: a count of how many
+            people read which pages on a given day, with no way to tell who they
+            were.{" "}
+            <strong>
+              While you are signed in, your page views are also recorded against
+              your account
+            </strong>{" "}
+            — which pages you open, when, and for how long. Only Orbit&apos;s
+            operator can see them, in the internal console described under{" "}
+            <a href="#operator-access">operator access</a>. They are used to
+            understand which features get used and where people get stuck, and
+            they are never sold, shared, or used for advertising.
+          </p>
+          <p>
+            Orbit also runs two of its host&apos;s tools:{" "}
+            <strong>Vercel Web Analytics</strong>, which counts page views and
+            visitors in aggregate, and <strong>Vercel Speed Insights</strong>,
+            which measures how quickly pages load. Along with each page, Vercel
+            receives the site that linked to it, the browser and device type, and
+            an approximate location. Neither tool uses cookies; Vercel tells
+            visitors apart with a hash of the request that it discards after 24
+            hours. Before anything is sent to Vercel, ids and one-time
+            tokens in the page address are replaced with placeholders, every
+            query parameter except campaign tags is removed, and views of the
+            operator console are not sent at all. There are no advertising
+            pixels and no cross-site tracking.
           </p>
         </DocSection>
 
@@ -332,6 +397,14 @@ export default function PrivacyPage() {
             back under the Free Plan&apos;s limit.
           </p>
           <p>
+            Page views are deleted automatically after 180 days. Views made while
+            you were signed in stay linked to your account until then, unless you
+            delete your account or wipe your data from Settings — either one
+            unlinks them immediately, keeping the anonymous count and removing
+            the connection to you. Views made while signed out were never linked
+            to anyone.
+          </p>
+          <p>
             After deletion, residual copies may persist briefly in backups or
             operational logs before they are purged in the ordinary course.
           </p>
@@ -357,8 +430,10 @@ export default function PrivacyPage() {
           <p>
             Running Orbit means occasionally looking at how it is doing. There
             is an internal console for that, and it is deliberately narrow: it
-            shows counts, plans, usage totals, and error rates —{" "}
-            <strong>metadata, not the people in your network</strong>.
+            shows counts, plans, usage totals, error rates, and — for each
+            account — which pages it has opened and when.{" "}
+            <strong>That is metadata about how Orbit is used, not the people in
+            your network</strong>.
           </p>
           <p>
             One escape hatch exists, for the support ticket that genuinely
