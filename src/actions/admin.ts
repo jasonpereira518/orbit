@@ -8,6 +8,7 @@ import { after } from "next/server";
 import { getDb } from "@/db";
 import { adminAuditLog, userSettings } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
+import { loadProviderStatuses } from "@/lib/admin-providers";
 import * as ops from "@/lib/admin-operations";
 import * as interestList from "@/lib/admin-interest-list";
 import * as adminFeedback from "@/lib/admin-feedback";
@@ -757,5 +758,22 @@ export async function deleteFeedbackScreenshotAction(input: {
   });
 
   revalidateFeedback();
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------- provider status */
+
+/**
+ * Re-checks all four providers now, bypassing the snapshot cache.
+ *
+ * `/admin/health` reads the cached snapshot so a page load never fans out to four APIs;
+ * this is the "I am looking at it right now" path. Nothing is passed in, so there is
+ * nothing to validate — but the gate still comes first, because a route that hits four
+ * third-party APIs on demand is one an unauthenticated caller should not be able to ring.
+ */
+export async function refreshProvidersAction(): Promise<{ ok: true }> {
+  await requireAdminUserId();
+  await loadProviderStatuses({ force: true });
+  revalidatePath("/admin/health");
   return { ok: true };
 }

@@ -25,6 +25,9 @@ import {
   RetryImportButton,
 } from "@/components/admin/health-actions";
 import { getAdminHealth } from "@/lib/admin-health";
+import { cn } from "@/lib/utils";
+import { loadProviderStatuses } from "@/lib/admin-providers";
+import { ProviderRefreshButton } from "@/components/admin/provider-refresh-button";
 import {
   getBugSignatures,
   getCronHealth,
@@ -53,7 +56,7 @@ export default async function AdminHealthPage() {
   // "what is broken about Orbit" — no person to name, no button to press, which is
   // precisely why none of it was visible before. Each degrades independently so this page
   // still renders if one instrumentation table is missing.
-  const [health, cron, webhooks, errors, outreach, bugs, ops] = await Promise.all([
+  const [health, cron, webhooks, errors, outreach, bugs, ops, providers] = await Promise.all([
     getAdminHealth(),
     getCronHealth("imports.process-stalled").catch(() => null),
     getWebhookHealth().catch(() => null),
@@ -61,6 +64,7 @@ export default async function AdminHealthPage() {
     getOutreachQueueHealth().catch(() => null),
     getBugSignatures().catch(() => null),
     getOpsStatus().catch(() => null),
+    loadProviderStatuses().catch(() => null),
   ]);
 
   const criticalOpen = ops?.openAlerts.filter((a) => a.severity === "critical").length ?? 0;
@@ -188,6 +192,62 @@ export default async function AdminHealthPage() {
       />
 
       <div className="space-y-6">
+        {/* Above the account-level panels, next to Open alerts: both answer "is Orbit
+            itself up", not "is this account broken". Reads the cached snapshot, so a page
+            load never fans out to four provider APIs — the button forces a live check. */}
+        <AdminPanel
+          title="Provider status"
+          action={<ProviderRefreshButton />}
+        >
+          {!providers || providers.length === 0 ? (
+            <EmptyState>Provider checks are unavailable.</EmptyState>
+          ) : (
+            <ul className="divide-y divide-border/50">
+              {providers.map((p) => (
+                <li key={p.provider} className="flex items-center gap-3 py-2 text-sm">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-2 shrink-0 rounded-full",
+                      p.status === "healthy" && "bg-emerald-500",
+                      p.status === "degraded" && "bg-amber-500",
+                      p.status === "unavailable" && "bg-destructive",
+                      p.status === "unconfigured" && "bg-muted-foreground/40"
+                    )}
+                  />
+                  <a
+                    href={p.href}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="w-24 shrink-0 truncate hover:text-primary"
+                  >
+                    {p.label}
+                  </a>
+                  <span
+                    className={cn(
+                      "w-28 shrink-0 text-xs",
+                      p.status === "unconfigured"
+                        ? "text-muted-foreground"
+                        : p.status === "healthy"
+                          ? "text-muted-foreground"
+                          : "text-destructive"
+                    )}
+                  >
+                    {p.status}
+                    {p.stale && " (stale)"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                    {p.detail}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    <RelativeTime date={p.checkedAt} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </AdminPanel>
+
         <AdminPanel title="Open alerts" className="scroll-mt-24">
           <div id="open-alerts" />
           {!ops || ops.openAlerts.length === 0 ? (

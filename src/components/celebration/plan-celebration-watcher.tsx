@@ -32,6 +32,20 @@ const CelebrationStage = dynamic(
 const FAST_POLL_MS = 2_000;
 const FAST_POLL_ATTEMPTS = 30;
 
+/**
+ * Claims one queued upgrade for this account, or null if none is owed.
+ *
+ * Rejects rather than returning null on a transport failure, so the caller can
+ * tell "nothing to celebrate" from "could not ask" — those need opposite
+ * handling, and conflating them is how a celebration goes missing.
+ */
+async function claimPlanUpgrade(): Promise<{ plan: Plan } | null> {
+  const res = await fetch("/api/plan-upgrades/claim", { method: "POST" });
+  if (!res.ok) throw new Error(`claim failed: ${res.status}`);
+  const body = (await res.json()) as { event?: { plan: Plan } | null };
+  return body.event ?? null;
+}
+
 type ActiveRun = {
   plan: PaidPlan;
   startAt: "accrete" | "ignite";
@@ -45,15 +59,29 @@ type ActiveRun = {
  * the AppShell root is transform-animated during warp, which would break a
  * `fixed` overlay mounted inside it.
  *
- * Detection is client-side only: the server-reported plan against one
- * localStorage key. Writing the key BEFORE starting is the whole dedupe —
- * every competing feed (prop, fast poll, ambient poll, StrictMode's second
- * effect run, another tab via fresh reads) then classifies as "same".
+ * Detection is two-layer. The localStorage key is the LOCAL dedupe: writing it
+ * before starting is what makes every competing feed (prop, fast poll, ambient
+ * poll, StrictMode's second effect run, another tab via fresh reads) classify
+ * as "same" without a network round trip each.
+ *
+ * The SERVER is the authority on whether a celebration is still owed.
+ * `POST /api/plan-upgrades/claim` returns a queued upgrade once and never
+ * again, which is what a per-device key cannot do: upgrade on a phone and the
+ * laptop would otherwise celebrate the same transition a second time, and
+ * clearing site data would replay it forever.
+ *
+ * The ordering below is deliberate. The key is written only once the claim
+ * RESOLVES, because writing it first would classify the next tick as "same"
+ * and a failed claim would lose the celebration permanently. `claimingRef`
+ * covers the gap that leaves open — without it the four feeds would each fire
+ * a claim in the same tick.
  */
 export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   const router = useRouter();
   const [active, setActive] = useState<ActiveRun | null>(null);
   const activeRef = useRef<ActiveRun | null>(null);
+  /** One claim at a time: the four feeds can all reach `maybeCelebrate` in one tick. */
+  const claimingRef = useRef(false);
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
@@ -98,11 +126,30 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
           return;
         case "same":
           return;
-        case "upgrade":
-          writeLastSeenPlan(next);
-          if (!isPaidPlan(next)) return;
-          pendingRef.current = next;
-          tryStartPending();
+        case "upgrade": {
+          if (!isPaidPlan(next)) {
+            writeLastSeenPlan(next);
+            return;
+          }
+          if (claimingRef.current) return;
+          claimingRef.current = true;
+          claimPlanUpgrade()
+            .then((claimed) => {
+              // Only now: a claim that resolved is a decision, either way.
+              writeLastSeenPlan(next);
+              claimingRef.current = false;
+              // null = another device already celebrated this transition.
+              if (!claimed) return;
+              pendingRef.current = next;
+              tryStartPending();
+            })
+            .catch(() => {
+              // Network blip. Leave the key untouched so the next feed tick
+              // re-classifies as "upgrade" and tries again — the queued event
+              // is durable and still unclaimed.
+              claimingRef.current = false;
+            });
+        }
       }
     },
     [start, tryStartPending],

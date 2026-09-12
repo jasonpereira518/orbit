@@ -66,6 +66,7 @@ export const ERROR_SOURCES = {
    * and without this there is no trace that someone tried to say something and could not.
    */
   feedbackSubmit: "feedback.submit",
+  providerHealthCheck: "provider.health_check",
 } as const;
 
 export type ErrorEventInput = {
