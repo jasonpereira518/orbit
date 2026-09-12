@@ -11,10 +11,9 @@ import {
   confirmBulkCapture,
   ingestCaptureMedia,
   parseBulkCaptureNotes,
-  type BulkNotePersonPreview,
   type BulkParseOptions,
-  type SuggestedReminderPreview,
 } from "@/actions/capture";
+import type { BulkNotePersonPreview, SuggestedReminderPreview } from "@/lib/capture/types";
 import type { MeetingExtraReminderInput } from "@/lib/note-batch-save";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import {
