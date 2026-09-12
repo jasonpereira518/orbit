@@ -22,6 +22,7 @@ import {
   UNKNOWN_ROUTE,
   isTrackedPath,
   normalizeRoute,
+  redactUrlForVendor,
 } from "../src/lib/analytics-routes";
 import { isBotUserAgent } from "../src/lib/analytics-bots";
 import {
@@ -159,6 +160,41 @@ check(
   "every pattern is itself a tracked path",
   ROUTE_PATTERNS.every((p) => isTrackedPath(p.replace(/\[.*$/, "")) || p === "/")
 );
+
+// --- 2b. What Vercel's scripts are allowed to see --------------------------------------
+//
+// <Analytics /> and <SpeedInsights /> send the full page URL by default. Orbit's own table
+// held patterns while Vercel received /scan/<one-time token> and /admin/users/<Clerk id>.
+
+console.log("\nvendor URL redaction");
+const token = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+check(
+  "a scan handoff token never reaches Vercel",
+  redactUrlForVendor(`https://orbit.example/scan/${token}`) === "https://orbit.example/scan/[token]",
+  String(redactUrlForVendor(`https://orbit.example/scan/${token}`))
+);
+check(
+  "a contact id never reaches Vercel",
+  redactUrlForVendor(`https://orbit.example/contacts/${uuid}`) === "https://orbit.example/contacts/[id]"
+);
+check(
+  "admin console views are dropped, not rewritten",
+  redactUrlForVendor("https://orbit.example/admin/users/user_2abcXYZ") === null &&
+    redactUrlForVendor("https://orbit.example/admin") === null
+);
+check(
+  "query strings lose everything but campaign tags",
+  redactUrlForVendor(
+    "https://orbit.example/sign-in?redirect_url=%2Fcontacts%2Fabc&__clerk_ticket=secret&utm_campaign=launch"
+  ) === "https://orbit.example/sign-in/[[...sign-in]]?utm_campaign=launch",
+  String(
+    redactUrlForVendor(
+      "https://orbit.example/sign-in?redirect_url=%2Fcontacts%2Fabc&__clerk_ticket=secret&utm_campaign=launch"
+    )
+  )
+);
+check("a plain page passes through as itself", redactUrlForVendor("https://orbit.example/pricing") === "https://orbit.example/pricing");
+check("garbage is dropped", redactUrlForVendor("not a url") === null);
 
 // --- 3. Visitor hashing --------------------------------------------------------------
 

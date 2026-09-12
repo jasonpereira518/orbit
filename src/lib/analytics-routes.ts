@@ -146,3 +146,41 @@ export function isTrackedPath(pathname: string): boolean {
   if (clean.startsWith("/_next/") || clean.startsWith("/__clerk/")) return false;
   return true;
 }
+
+/** Query parameters worth keeping when a URL leaves for a third party: campaign tags only. */
+const VENDOR_KEPT_PARAMS = ["utm_source", "utm_medium", "utm_campaign"] as const;
+
+/**
+ * The address Vercel's analytics scripts are allowed to see, or null to drop the event.
+ *
+ * Both `<Analytics />` and `<SpeedInsights />` report the page's FULL URL by default — for
+ * client-side transitions too. Orbit's own pipeline stores patterns, never paths, and that
+ * was worth little while the same raw addresses went to Vercel: `/scan/<one-time token>`,
+ * `/admin/users/<Clerk user id>`, every `/contacts/<uuid>`. This is the one place both
+ * scripts pass through.
+ *
+ * - Untracked paths (the admin console, API routes) are dropped, not rewritten: the
+ *   operator's own browsing is not traffic, and admin URLs carry other people's ids.
+ * - The path becomes its `ROUTE_PATTERNS` entry, so an id or token never leaves.
+ * - Every query parameter except the campaign tags is removed — sign-in redirects and
+ *   one-off links carry ids and tickets in the query string, not just the path.
+ *
+ * Pure and dependency-free, like the rest of this module, because it runs in the browser.
+ */
+export function redactUrlForVendor(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!isTrackedPath(parsed.pathname)) return null;
+
+  const kept = new URLSearchParams();
+  for (const key of VENDOR_KEPT_PARAMS) {
+    const value = parsed.searchParams.get(key);
+    if (value) kept.set(key, value);
+  }
+  const query = kept.toString();
+  return `${parsed.origin}${normalizeRoute(parsed.pathname)}${query ? `?${query}` : ""}`;
+}
