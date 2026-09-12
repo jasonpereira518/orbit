@@ -56,4 +56,13 @@ export const PUBLIC_ROUTES = [
   // Genuinely public: the liveness probe the uptime monitor polls. Its shallow body says
   // only "up or down" plus the deployed sha; the deep view needs HEALTH_TOKEN.
   "/api/health",
+  // The phone half of note scanning. A phone that has never signed in opens this from a QR
+  // code on a signed-in desktop, and is authenticated solely by the opaque token in the
+  // path (`src/lib/scan-handoff.ts`) — the same arrangement as the calendar feed above.
+  // Requiring a Clerk session here would defeat the point: the entire feature exists so
+  // nobody has to sign into a CRM on a phone keyboard to photograph a page of notes.
+  // The token is single-use, expires in ten minutes, is stored only as a SHA-256 hash, and
+  // is checked against a shape regex before any query, so malformed traffic costs nothing.
+  "/scan/(.*)",
+  "/api/scan/(.*)",
 ] as const;

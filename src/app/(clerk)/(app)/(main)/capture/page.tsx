@@ -3,6 +3,14 @@ import { getPlanOverview, getSettings } from "@/actions/settings";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { CaptureFormLazy } from "@/components/capture/capture-form-lazy";
 import { UnresolvedMentionsCard } from "@/components/capture/unresolved-mentions-card";
+import { requireUserId } from "@/lib/auth";
+import { getResumableMeeting } from "@/lib/meeting-sessions";
+
+// Page-level, because it governs the server actions called from this page: summarizing an
+// hour-long meeting is a map-reduce over several model calls, and the capture save runs
+// contact writes for everyone on the call. The (main) layout's 300 is a stopgap slated to
+// go back to 60; this page needs its own.
+export const maxDuration = 300;
 
 export default async function CapturePage({
   searchParams,
@@ -14,12 +22,17 @@ export default async function CapturePage({
   const modeParam =
     params.mode === "structured" ||
     params.mode === "messy" ||
-    params.mode === "voice"
+    params.mode === "voice" ||
+    params.mode === "meeting"
       ? params.mode
       : null;
 
   const settingsPromise = getSettings();
   const planPromise = getPlanOverview();
+  const resumablePromise = requireUserId()
+    .then((userId) => getResumableMeeting(userId))
+    // The banner is a convenience; a failure to read it must never take capture down.
+    .catch(() => null);
 
   let contactId: string | null = null;
   let contactName: string | null = null;
@@ -33,7 +46,18 @@ export default async function CapturePage({
 
   const settings = await settingsPromise;
   const { usage } = await planPromise;
-  const defaultMode = modeParam || (contactId ? "structured" : "messy");
+  const resumableMeeting = await resumablePromise;
+  // An unfinished meeting is the one thing on this page that can be lost by ignoring it,
+  // so it opens on the Meeting tab unless the link asked for something specific.
+  const defaultMode =
+    modeParam || (contactId ? "structured" : resumableMeeting ? "meeting" : "messy");
+  // Mirrors the engine chain in `transcribeAudioWithAI`: Wispr, Whisper, Gemini. Anthropic
+  // has no speech-to-text, so an Anthropic-only account can summarize but not transcribe.
+  const canTranscribe =
+    settings.hasWisprKey ||
+    settings.providers.some(
+      (p) => (p.id === "openai" || p.id === "gemini") && (p.hasPersonalKey || p.usingEnv)
+    );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -60,6 +84,8 @@ export default async function CapturePage({
         initialContactName={contactName}
         defaultMode={defaultMode}
         hasApiKey={settings.hasApiKey}
+        canTranscribe={canTranscribe}
+        resumableMeeting={resumableMeeting}
       />
     </div>
   );

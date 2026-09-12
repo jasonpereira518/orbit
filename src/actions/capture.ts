@@ -44,12 +44,23 @@ import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution
 import type { PreviewMention } from "@/lib/note-batches";
 import {
   saveNoteBatch,
+  type MeetingExtraReminderInput,
   type NoteBatchCommitmentInput,
   type NoteBatchMentionInput,
   type NoteBatchParticipantInput,
 } from "@/lib/note-batch-save";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { isSelf } from "@/lib/meeting-digest";
+import {
+  getMeetingSession,
+  getMeetingTranscript,
+  getNoteBatchForUser,
+  loadMeetingSelf as loadSelfName,
+  markMeetingSessionSaved,
+  toNoteBatchMeeting,
+} from "@/lib/meeting-sessions";
+import type { NoteBatchMeeting } from "@/db/schema";
 
 export type BulkNoteDuplicate = {
   id: string;
@@ -193,9 +204,21 @@ export async function ingestCaptureMedia(input: {
   }
 }
 
+export type BulkParseOptions = {
+  /**
+   * Set when the notes are a recorded meeting's corpus (`analyzeMeetingSession`). Three
+   * things change: dated commitments are verified against the meeting's stored transcript
+   * rather than the AI-written corpus, the user is never offered as a person, and a
+   * meeting with no people and no dates is still a valid result — its summary, blockers
+   * and questions are worth saving on their own.
+   */
+  meetingSessionId?: string | null;
+};
+
 export async function parseBulkCaptureNotes(
   notes: string,
-  hints?: CaptureParseHints | null
+  hints?: CaptureParseHints | null,
+  opts: BulkParseOptions = {}
 ) {
   try {
     const userId = await requireUserId();
@@ -203,6 +226,14 @@ export async function parseBulkCaptureNotes(
     if (!notes.trim()) {
       return { ok: false as const, error: "Notes are required" };
     }
+
+    const meeting = opts.meetingSessionId
+      ? await getMeetingTranscript(userId, opts.meetingSessionId)
+      : null;
+    if (opts.meetingSessionId && !meeting) {
+      return { ok: false as const, error: "That meeting no longer exists" };
+    }
+    const self = meeting ? await loadSelfName(userId) : null;
 
     // Auto-detect pasted ICS / email forwards when caller didn't supply hints.
     const detected = normalizePastedCaptureText(notes);
@@ -234,7 +265,12 @@ export async function parseBulkCaptureNotes(
       }).catch(() => [] as Awaited<ReturnType<typeof fetchRawCommitments>>),
     ]);
 
-    const { people, shared_notes, interaction_date } = personParse;
+    const { shared_notes, interaction_date } = personParse;
+    // The person recording a meeting is on every call they record, and the corpus says
+    // "I am <name>" — which a parser reads as one more participant. Never a contact.
+    const people = self
+      ? personParse.people.filter((p) => !p.name || !isSelf(p.name, self))
+      : personParse.people;
     // people[] mixes two roles: participants (actually talked to) and mentions demoted into
     // people[] because the note gave them real profile detail. Only participants get a
     // review card; demoted mentions fold into mention resolution below.
@@ -251,7 +287,9 @@ export async function parseBulkCaptureNotes(
         : "upload";
     const commitmentResult = (() => {
       try {
-        return validateCommitments(rawCommitments, corpus, { today, anchor });
+        // For a meeting, the corpus is AI-written, so "the phrase appears in the note"
+        // would only prove the digest wrote it. The transcript is what was actually said.
+        return validateCommitments(rawCommitments, meeting ? meeting.text : corpus, { today, anchor });
       } catch {
         return emptyCommitmentResult();
       }
@@ -338,7 +376,7 @@ export async function parseBulkCaptureNotes(
     // A note can legitimately carry dates but no people ("Board review 15th of October"),
     // so only fail when both extractions came back empty.
     // Mentions alone are not saveable: they hang on a participant's interaction.
-    if (!participants.length && !commitmentResult.commitments.length) {
+    if (!meeting && !participants.length && !commitmentResult.commitments.length) {
       return {
         ok: false as const,
         error: "No people or dates found in those notes",
@@ -402,6 +440,8 @@ export async function confirmBulkCapture(
     commitments: NoteBatchCommitmentInput[];
     mentions?: NoteBatchMentionInput[];
     skipped: RejectedCounts;
+    /** A recorded meeting being saved: which one, and the digest items ticked as reminders. */
+    meeting?: { sessionId: string; extraReminders: MeetingExtraReminderInput[] } | null;
   }
 ) {
   const userId = await requireUserId();
@@ -410,6 +450,23 @@ export async function confirmBulkCapture(
   // could collide with (or evade) another note's dedupe keys.
   const sourceHash = hashSourceNote(batch.sourceText);
   if (sourceHash !== batch.sourceHash) throw new Error("Note text changed since parsing; re-run extraction");
+
+  // The digest is read from the session, never taken from the client: it is what the
+  // results page will show as "what this meeting was", and it must be what the model said.
+  let meetingSummary: NoteBatchMeeting | null = null;
+  if (batch.meeting) {
+    const session = await getMeetingSession(userId, batch.meeting.sessionId);
+    if (!session) throw new Error("That meeting no longer exists");
+    if (session.status === "saved" && session.noteBatchId) {
+      // A double-click, or a second tab. The first save is the save.
+      const existing = await getNoteBatchForUser(userId, session.noteBatchId);
+      if (existing) {
+        return { batchId: existing.id, created: 0, updated: 0, contactIds: [], remindersCreated: 0, result: existing.result };
+      }
+    }
+    if (!session.digest) throw new Error("Analyze the meeting before saving it");
+    meetingSummary = toNoteBatchMeeting(session);
+  }
 
   const out = await saveNoteBatch(userId, {
     sourceText: batch.sourceText,
@@ -422,7 +479,15 @@ export async function confirmBulkCapture(
     commitments: batch.commitments,
     mentions: batch.mentions ?? [],
     skipped: batch.skipped,
+    meeting:
+      batch.meeting && meetingSummary
+        ? { summary: meetingSummary, extraReminders: batch.meeting.extraReminders.slice(0, 40) }
+        : null,
   });
+
+  if (batch.meeting) {
+    await markMeetingSessionSaved(userId, batch.meeting.sessionId, out.batchId);
+  }
 
   // The lib skipped embeddings and summaries (it must run outside a request scope for the
   // smoke suite); this is the request scope, so schedule them here.

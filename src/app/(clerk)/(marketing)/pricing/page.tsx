@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Eye, KeyRound, RotateCcw } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
@@ -202,48 +203,7 @@ export default async function PricingPage() {
         </section>
       </main>
 
-      <footer className="relative z-10 mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 py-12 md:px-10">
-        <Link href="/" className="flex items-center gap-2.5" aria-label="Orbit home">
-          <OrbitLogo size="sm" />
-          <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
-            Orbit
-          </span>
-        </Link>
-        <div className="flex items-center gap-6">
-          <Link
-            href="/pricing"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Pricing
-          </Link>
-          <Link
-            href="/interest"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Interest list
-          </Link>
-          <Link
-            href="/privacy"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Privacy
-          </Link>
-          <Link
-            href="/contact"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Contact
-          </Link>
-        </div>
-        <a
-          href="https://jasonpereira.live/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="landing-credit-shimmer text-sm"
-        >
-          By Jason Pereira
-        </a>
-      </footer>
+      <MarketingFooter className="max-w-6xl px-6 md:px-10" />
     </div>
   );
 }
