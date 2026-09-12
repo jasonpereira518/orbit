@@ -65,7 +65,8 @@ async function EventsList() {
       <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
         <p className="text-sm text-muted-foreground">
           No events yet. Add one by pasting its link — the event page or your ticket, from
-          Luma, Eventbrite, Partiful and the rest — and Orbit will pull in the details.
+          Luma, Eventbrite, Partiful and the rest — and Orbit will pull in the details. Or
+          connect a calendar below and they&rsquo;ll arrive on their own.
         </p>
       </div>
     );
@@ -88,14 +89,6 @@ export default function EventsPage() {
         <AddEventDialog />
       </div>
 
-      {/* fallback={null}: this card renders as a compact "nothing connected" state, and a
-          skeleton that resolves into it reads as a glitch. */}
-      <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
-        <Suspense fallback={null}>
-          <ConnectionsSection />
-        </Suspense>
-      </div>
-
       {/* Above the list: the point of keeping rosters is the pattern across them, and a
           panel below four screens of events is a panel nobody reads. `fallback={null}`
           because it renders nothing at all until there IS a pattern. */}
@@ -115,6 +108,15 @@ export default function EventsPage() {
           placeholder for something that will not appear is worse than a late arrival. */}
       <Suspense fallback={null}>
         <HiddenList />
+      </Suspense>
+
+      {/* Last, and collapsed: connecting a source is something you do once, and the page is
+          about the events themselves. It sat above them as the largest card on the page,
+          which put set-up between the user and the thing they came to look at. The collapsed
+          row still says when a connection needs attention. fallback={null} because a
+          skeleton for a one-line row is more noise than the row. */}
+      <Suspense fallback={null}>
+        <ConnectionsSection />
       </Suspense>
     </div>
   );
