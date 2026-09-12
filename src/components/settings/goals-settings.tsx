@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import type { UserGoal } from "@/db/schema";
 import { friendlyError } from "@/lib/errors";
+import { SettingsSection } from "@/components/settings/settings-section";
 
 export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
   const router = useRouter();
@@ -18,14 +19,10 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
   const [pending, start] = useTransition();
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Goals</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Active goals improve closeness scoring and surface aligned contacts on
-          your dashboard.
-        </p>
-      </div>
+    <SettingsSection
+      title="Goals"
+      description="Active goals improve closeness scoring and surface aligned contacts on your dashboard."
+    >
 
       {goals.length === 0 ? (
         <p className="text-sm text-muted-foreground">No goals yet.</p>
@@ -119,6 +116,6 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
           Add goal
         </Button>
       </form>
-    </section>
+    </SettingsSection>
   );
 }

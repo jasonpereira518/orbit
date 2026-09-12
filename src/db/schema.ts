@@ -112,6 +112,16 @@ export const userSettings = pgTable("user_settings", {
     .$type<string[]>()
     .default([]),
   /**
+   * Whether this account wants desktop notifications — the account half of the setting; the
+   * browser's own permission is per device and lives in the browser.
+   *
+   * Nullable on purpose, with no default. Before this column the preference lived only in
+   * localStorage, so null means "never recorded": the first device to load adopts its local
+   * value and writes it up, rather than a `false` default silently switching off everyone
+   * who had turned notifications on.
+   */
+  desktopNotificationsEnabled: boolean("desktop_notifications_enabled"),
+  /**
    * Schools the user attended, for the shared-alma-mater signal when ranking a roster.
    *
    * A plain list on this row rather than a table: nothing joins on it, it is read whole

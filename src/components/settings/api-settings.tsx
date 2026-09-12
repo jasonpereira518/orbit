@@ -25,6 +25,9 @@ import {
 } from "@/actions/api-keys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SettingsSection } from "@/components/settings/settings-section";
+import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -65,6 +68,7 @@ export function ApiSettings() {
   const [blocked, setBlocked] = useState<string | null>(null);
   const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const revokeFocus = useConfirmFocus(confirmingRevoke);
 
   // Deliberately does not clear the error synchronously: doing so inside the mount effect
   // triggers a cascading render, and clearing it on success reads the same to the user.
@@ -127,14 +131,10 @@ export function ApiSettings() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-medium">API and connectors</h2>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Connect Orbit to Zapier, Make, n8n, or an AI assistant like Claude. Keys act as you,
-          so treat them like a password.
-        </p>
-      </div>
+    <SettingsSection
+      title="API and connectors"
+      description="Connect Orbit to Zapier, Make, n8n, or an AI assistant like Claude. Keys act as you, so treat them like a password."
+    >
 
       {/* A new key, shown once. */}
       {created ? (
@@ -227,7 +227,10 @@ export function ApiSettings() {
             </Button>
           </div>
         ) : keys === null ? (
-          <p className="text-muted-foreground text-sm">Loading…</p>
+          <div className="space-y-2" aria-busy="true" aria-label="Loading your keys">
+            <Skeleton className="h-16 w-full rounded-lg" />
+            <Skeleton className="h-16 w-full rounded-lg" />
+          </div>
         ) : keys.length === 0 ? (
           <p className="text-muted-foreground text-sm">No keys yet.</p>
         ) : (
@@ -250,10 +253,11 @@ export function ApiSettings() {
               </div>
               {confirmingRevoke === key.id ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground text-xs">
+                  <span role="status" className="text-muted-foreground text-xs">
                     Anything using it stops working.
                   </span>
                   <Button
+                    ref={revokeFocus.confirmRef(key.id)}
                     size="sm"
                     variant="destructive"
                     disabled={pending}
@@ -267,6 +271,7 @@ export function ApiSettings() {
                 </div>
               ) : (
                 <Button
+                  ref={revokeFocus.triggerRef(key.id)}
                   size="sm"
                   variant="ghost"
                   onClick={() => setConfirmingRevoke(key.id)}
@@ -279,6 +284,6 @@ export function ApiSettings() {
           ))
         )}
       </div>
-    </div>
+    </SettingsSection>
   );
 }

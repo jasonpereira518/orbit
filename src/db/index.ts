@@ -1274,7 +1274,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 48 = the same event-platform DDL again, with main's v47 (page_views) merged in. 46 cannot
 // carry it twice over: the traffic-analytics branch's previews stamped 46, and so did this
 // PR's own preview (#168) — with the event tables but without page_views. 47 is main's.
-export const SCHEMA_VERSION = 48;
+//
+// 50 = user_settings.desktop_notifications_enabled, so the desktop-notification preference
+// syncs across devices instead of living only in one browser's localStorage. Not 49: that
+// is capture history's (#164), claimed while this was being built.
+export const SCHEMA_VERSION = 50;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1779,6 +1783,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "desktop_notified_ids",
     "jsonb DEFAULT '[]'"
   );
+  await ensureColumn(client, "user_settings", "desktop_notifications_enabled", "boolean");
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
   await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
@@ -2269,6 +2274,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_from_number text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notified_ids jsonb DEFAULT '[]'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notifications_enabled boolean`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,

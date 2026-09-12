@@ -18,7 +18,12 @@ import { IntegrationUnavailable } from "@/components/imports/integration-unavail
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-export function GoogleContactsImport() {
+/**
+ * `returnTo` is where Google's consent screen sends the user back to. /imports by default;
+ * the Integrations dialog in Settings passes its own URL so a connect started there lands
+ * back in the dialog, on this tab.
+ */
+export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
   const router = useRouter();
   const job = useImportJob();
   const [pending, start] = useTransition();
@@ -67,7 +72,12 @@ export function GoogleContactsImport() {
       params.delete("gmail");
       params.delete("reason");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
       router.refresh();
       getGmailConnectionStatus().then(setStatus).catch(() => {});
     } else if (google === "error") {
@@ -80,7 +90,16 @@ export function GoogleContactsImport() {
       params.delete("gmail");
       params.delete("reason");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
+      // Re-read the status: a Next router "restore" (which `replaceState` is) drops any
+      // server action still queued — here, the status fetch this card fired a moment ago
+      // on mount — without settling it, which would leave the card rendering nothing.
+      getGmailConnectionStatus().then(setStatus).catch(() => {});
     }
   }, [router]);
 
@@ -93,7 +112,7 @@ export function GoogleContactsImport() {
       <IntegrationUnavailable
         id="import-google-contacts"
         title="Google Contacts"
-        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        blurb="Not connected yet. Import a LinkedIn export instead, or paste your notes into Capture and Orbit will pull the people out."
         envVars={[
           "GOOGLE_CLIENT_ID",
           "GOOGLE_CLIENT_SECRET",
@@ -121,7 +140,7 @@ export function GoogleContactsImport() {
               onClick={() =>
                 start(async () => {
                   try {
-                    const { url } = await startGmailOAuth("/imports");
+                    const { url } = await startGmailOAuth(returnTo);
                     window.location.href = url;
                   } catch (err) {
                     toast.error(friendlyError(err, TOAST_COPY.connectFailed));

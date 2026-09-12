@@ -1,13 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  SECTION_SCROLL_OFFSET,
-  type SettingsSectionId,
-} from "@/components/settings/sections";
+import { SECTION_SCROLL_OFFSET } from "@/components/settings/sections";
 import { cn } from "@/lib/utils";
 
-export type RailSection = { id: SettingsSectionId; label: string };
+/** A rail row: one settings group, and the id of the element that anchors it. */
+export type RailSection = { id: string; label: string };
 
 /**
  * Everything an open row spends beside the label — `px-3`, `gap-3`, tick slot —
@@ -66,7 +64,7 @@ function stopScrollAnimation() {
  * own journey through non-end positions but is dropped the moment the reader
  * moves the page somewhere else themselves.
  */
-const railIntent: { id: SettingsSectionId | null; settled: boolean } = {
+const railIntent: { id: string | null; settled: boolean } = {
   id: null,
   settled: true,
 };
@@ -76,7 +74,7 @@ const railIntent: { id: SettingsSectionId | null; settled: boolean } = {
  * curve at a distance-aware duration, and so a scrub can stay instant while a
  * tap eases — one call site, two feels.
  */
-function scrollToSection(id: SettingsSectionId, animate: boolean) {
+function scrollToSection(id: string, animate: boolean) {
   const el = document.getElementById(id);
   if (!el) return;
 
@@ -120,23 +118,26 @@ function scrollToSection(id: SettingsSectionId, animate: boolean) {
 }
 
 /**
- * `sections` is passed in rather than read from `SETTINGS_SECTIONS` directly because an
- * operator can hide individual settings cards. The rail is derived entirely from the
- * sections the page actually rendered — a row for a hidden card would scroll to an anchor
- * that does not exist, and `getElementById` returning null makes that a silent dead click.
+ * One row per settings group — Account, Preferences, Integrations, Resources, Data.
+ *
+ * `sections` is passed in rather than read from `SETTINGS_GROUPS` directly because an
+ * operator can hide individual settings cards, and a group whose every card is hidden is not
+ * rendered. The rail is derived entirely from the groups the page actually rendered — a row
+ * for a missing group would scroll to an anchor that does not exist, and `getElementById`
+ * returning null makes that a silent dead click.
  */
 export function SettingsSectionNav({ sections }: { sections: RailSection[] }) {
   const firstId = sections[0]?.id;
   const lastId = sections[sections.length - 1]?.id;
-  const [activeId, setActiveId] = useState<SettingsSectionId | undefined>(
+  const [activeId, setActiveId] = useState<string | undefined>(
     firstId
   );
-  const [dragId, setDragId] = useState<SettingsSectionId | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
 
   const navRef = useRef<HTMLElement>(null);
-  const itemsRef = useRef(new Map<SettingsSectionId, HTMLButtonElement>());
-  const labelsRef = useRef(new Map<SettingsSectionId, HTMLSpanElement>());
-  const centersRef = useRef<Array<{ id: SettingsSectionId; center: number }>>(
+  const itemsRef = useRef(new Map<string, HTMLButtonElement>());
+  const labelsRef = useRef(new Map<string, HTMLSpanElement>());
+  const centersRef = useRef<Array<{ id: string; center: number }>>(
     [],
   );
   const endDragRef = useRef<(() => void) | null>(null);
@@ -181,7 +182,7 @@ export function SettingsSectionNav({ sections }: { sections: RailSection[] }) {
     const compute = () => {
       frame = 0;
       const line = anchorLine();
-      let next: SettingsSectionId | undefined = firstId;
+      let next: string | undefined = firstId;
       let lastEl: Element | null = null;
 
       for (const section of sections) {
@@ -221,7 +222,7 @@ export function SettingsSectionNav({ sections }: { sections: RailSection[] }) {
   }, [sections, firstId, lastId]);
 
   const nearestId = useCallback((clientY: number) => {
-    let best: SettingsSectionId | null = null;
+    let best: string | null = null;
     let bestDistance = Number.POSITIVE_INFINITY;
     for (const item of centersRef.current) {
       const distance = Math.abs(item.center - clientY);
@@ -349,7 +350,7 @@ export function SettingsSectionNav({ sections }: { sections: RailSection[] }) {
   return (
     <nav
       ref={navRef}
-      aria-label="Settings sections"
+      aria-label="Settings groups"
       data-dragging={dragId ? "true" : undefined}
       onPointerDown={handlePointerDown}
       onKeyDown={handleKeyDown}
