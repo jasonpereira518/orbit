@@ -332,7 +332,8 @@ export function ImportHub({
       )}
 
       {/* Notes live in Capture rather than as a tab here, so there's exactly one
-          extraction path — but this is where people look for them. */}
+          extraction path — but this is where people look for them. Photographing a page
+          lives there too, which is why this card names it. */}
       <Link
         href="/capture"
         className="flex items-start gap-3 rounded-2xl border border-border/70 bg-card p-5 transition-colors hover:border-primary/40"
@@ -343,8 +344,9 @@ export function ImportHub({
             Meeting &amp; chat notes
           </span>
           <span className="block text-sm text-muted-foreground">
-            Paste or upload your notes and Orbit pulls out the people — plus any
-            dates you wrote down, as reminders you review before they&apos;re set.
+            Paste, upload, or photograph your notes and Orbit pulls out the
+            people — plus any dates you wrote down, as reminders you review
+            before they&apos;re set.
           </span>
         </span>
       </Link>

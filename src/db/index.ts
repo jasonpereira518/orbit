@@ -1037,6 +1037,54 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS meeting_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  title text,
+  attendees jsonb NOT NULL DEFAULT '[]',
+  capture_surface text,
+  includes_mic integer NOT NULL DEFAULT 1,
+  recorder_id text,
+  status text NOT NULL DEFAULT 'recording',
+  started_at timestamptz NOT NULL DEFAULT now(),
+  ended_at timestamptz,
+  duration_ms integer NOT NULL DEFAULT 0,
+  last_seq integer NOT NULL DEFAULT -1,
+  digest jsonb,
+  digest_error text,
+  note_batch_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS meeting_transcript_segments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id uuid NOT NULL REFERENCES meeting_sessions(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  seq integer NOT NULL,
+  start_ms integer NOT NULL,
+  end_ms integer NOT NULL,
+  text text NOT NULL,
+  engine text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq);
+CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id);
+CREATE TABLE IF NOT EXISTS capture_handoffs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  token_hash text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  transcript text,
+  page_count integer NOT NULL DEFAULT 0,
+  sources text,
+  error text,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS capture_handoffs_token_uidx ON capture_handoffs(token_hash);
+CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expires_at);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1094,6 +1142,16 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * duplicates being created), contact_merges (a merged contact archived whole, so the
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
+ * v34 = chat_messages.attached_contacts: the people attached to a chat question (#141).
+ * v35 = the last-interaction index the chat composer's person pickers order on (#141).
+ * v36 = user_settings.wispr_api_key_encrypted: the voice-note transcription key (#161).
+ * v38 = capture_handoffs: the phone-to-desktop scanning handoff (#143). Written as 33,
+ * then 34, and moved each time another branch landed first with that number. It skips
+ * 37 instead of taking the next free integer, because 37 is #146's open claim. (36 was
+ * skipped too while it was unsafe: #146's pre-merge preview builds stamped it onto the
+ * production database with different DDL. #141's v35 deploy re-stamped that database
+ * before #161 took 36, so #161's DDL still ran.) A number some database may already hold
+ * is the one choice that silently skips this table, so the next free integer was not free.
  * v39 = events revision: organizer_name, organizer_url, attendance_mode on events. Also
  * built as 33 and moved when duplicate prevention landed first — the fifth collision, and
  * the same rule: re-using 33 would have left those columns unapplied on every database
@@ -1105,33 +1163,34 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * claimed by the scan-notes branch. Also worth knowing: until Sep 11 2026 Preview shared
  * Production's DATABASE_URL, so preview builds stamped production directly. Previews now
  * migrate their own Neon project.
- * v41 = capture history: the capture_photos table and note_batches.input_sources. Built
- * as 40 and moved when #146 landed on 40 first — the same rule, one more time.
+ * v41 and this branch's own 40 = capture_handoffs again, renumbered as main's DDL was
+ * merged in (#161's column, then #152's). Neither reached main, and this branch's 40 is not
+ * main's v40 above: two different DDL sets carried that number, so neither 40 nor 41 is
+ * safe to reuse. Merging another branch's DDL is a DDL change, so it takes a new number:
+ * a database a pre-merge build already stamped would otherwise skip the merged-in columns
+ * (this worktree's own did, and every user_settings read failed).
+ * v42 = meeting capture (#163): meeting_sessions, meeting_transcript_segments.
+ * v43 = capture_handoffs with #146's v40 column merged in. Never reached main.
+ * v45 = capture_handoffs with #163's v42 tables merged in. Builds of this branch pushed at 43
+ * lack those tables, so 43 cannot carry them. 44 is claimed by admin-console-page-metrics.
+ * v46 = capture history (#164): the capture_photos table and note_batches.input_sources.
+ * Built as 41 (see above), moved because merging main's capture_handoffs renumbering
+ * claimed every number through 45 and reserved 44.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-// 34 and 35 are this branch's, above main's 33 (duplicate prevention, #148). 33 was
-// skipped here deliberately while it was still claimed by unmerged branches — a repeated
-// version is the one real failure mode this counter has, since the alters are all
-// `IF NOT EXISTS` and concatenate harmlessly on merge but a collision means one branch's
-// DDL never runs. That skip is why this merge resolved to a number rather than a clash.
+// Pick a number above anything ANY branch has claimed and anything a database may already
+// be stamped with, not just one above main. A repeated version is the one real failure
+// mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
+// collision means one branch's DDL never runs. The changelog above says which numbers are
+// taken and why 44 is skipped.
 //
-// Two bumps on this branch because the guard requires one per DDL change: 34 added
-// `chat_messages.attached_contacts`, 35 the last-interaction index the composer's pickers
-// order on.
-//
-// 39 is the events revision (PR #152): organizer_name, organizer_url, attendance_mode on
-// events. Built as 33, moved to 34 when #148 took 33, and moved again here because while it
-// waited 34-36 landed on main and 37 and 38 were claimed by open branches. Every step was
-// the same rule — a shared number means one branch's DDL silently never runs.
-//
-// 40 is the contact photo cooldown (#146) — see the v40 entry above.
-//
-// 41 is capture history: the capture_photos table and note_batches.input_sources. It was
-// 40 until #146 merged first; 37 and 38 are still claimed by open branches.
-export const SCHEMA_VERSION = 41;
+// 46 is capture history: the capture_photos table and note_batches.input_sources. It was
+// 41 on this branch until merging main's capture_handoffs renumbering claimed every number
+// through 45.
+export const SCHEMA_VERSION = 46;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2302,6 +2361,11 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
   `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v42: meeting capture. Same rule as v31/v32 — every index in both places. The
+  // unique index is what makes a re-uploaded chunk a no-op rather than a repeated line.
+  `CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq)`,
+  `CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id)`,
 ];
 
 /**

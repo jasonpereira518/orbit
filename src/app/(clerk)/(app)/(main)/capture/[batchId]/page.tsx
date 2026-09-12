@@ -15,6 +15,7 @@ export default async function NoteBatchPage({
   const { batchId } = await params;
   const batch = await getNoteBatch(batchId);
   if (!batch) notFound();
+  const fromMeeting = Boolean(batch.result.meeting);
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
@@ -28,11 +29,11 @@ export default async function NoteBatchPage({
           Capture
         </Link>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-          What your notes produced
+          {fromMeeting ? "What your meeting produced" : "What your notes produced"}
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Everything below was created from this capture. Dismiss anything that
-          is wrong, or undo the whole batch.
+          Everything below was created from this {fromMeeting ? "meeting" : "paste"}. Dismiss
+          anything that is wrong, or undo the whole batch.
         </p>
       </div>
       <CaptureSourceCard

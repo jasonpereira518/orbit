@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { Camera, History, X } from "lucide-react";
+import { History, X } from "lucide-react";
 import { addDays, format, formatDistanceToNow } from "date-fns";
 import { toast } from "@/lib/toast";
 import { useCornerClearanceAbove } from "@/lib/corner-clearance";
@@ -13,8 +13,10 @@ import {
   ingestCaptureMedia,
   parseBulkCaptureNotes,
   type BulkNotePersonPreview,
+  type BulkParseOptions,
   type SuggestedReminderPreview,
 } from "@/actions/capture";
+import type { MeetingExtraReminderInput } from "@/lib/note-batch-save";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { capturePhotoSrc } from "@/components/capture/capture-source-meta";
 import {
@@ -33,11 +35,18 @@ import {
   takeCaptureHandoff,
 } from "@/lib/capture-handoff";
 import { shrinkImageForUpload } from "@/lib/capture-image-shrink";
-import { useMediaQuery } from "@/lib/use-media-query";
 import { MAX_RECORDING_MS, formatElapsed } from "@/lib/voice-recording";
 import type { VoiceRecording } from "@/lib/use-voice-recorder";
 import { VoiceRecorder } from "@/components/capture/voice-recorder";
 import { getSettings } from "@/actions/settings";
+import { BusyHint } from "@/components/imports/import-utils";
+import {
+  ScanControls,
+  sortAndNormalizeScanFiles,
+  useScanDropZone,
+} from "@/components/scan/scan-controls";
+import { finishBackgroundJob, startBackgroundJob } from "@/lib/background-jobs";
+import { releaseScanPage, type ScanPage } from "@/lib/scan-capture";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
 import {
   pickLockedParticipant,
@@ -94,6 +103,8 @@ const CAPTURE_FILE_ACCEPT = [
   "text/calendar",
   "message/rfc822",
   "image/*",
+  "application/pdf",
+  ".pdf",
   "audio/*",
   ".webm",
   ".mp3",
@@ -122,6 +133,24 @@ async function fileToBase64(file: Blob): Promise<string> {
   return btoa(binary);
 }
 
+/** Filename and provenance for whatever was last ingested — "note.jpg · via photos:2". */
+function IngestMeta({
+  fileName,
+  sources,
+}: {
+  fileName: string | null;
+  sources: string[];
+}) {
+  if (!fileName && !sources.length) return null;
+  return (
+    <span className="truncate text-xs text-muted-foreground">
+      {fileName}
+      {fileName && sources.length ? " · " : ""}
+      {sources.length ? `via ${sources.join(", ")}` : ""}
+    </span>
+  );
+}
+
 export function BulkNotesPanel({
   compact = false,
   showRecorder = false,
@@ -134,8 +163,30 @@ export function BulkNotesPanel({
   onSaved,
   draftKey = null,
   acceptsHandoff = false,
+  initialNotes,
+  initialHints,
+  autoExtract = false,
+  parseOptions,
+  meeting = null,
+  onStartOver,
+  headerSlot,
 }: {
   compact?: boolean;
+  /** Seed the textarea — a recorded meeting's analysis hands its notes over this way. */
+  initialNotes?: string;
+  initialHints?: CaptureParseHints | null;
+  /** Run the extraction on mount, once, instead of waiting for the button. */
+  autoExtract?: boolean;
+  parseOptions?: BulkParseOptions;
+  /**
+   * A recorded meeting being saved. Passed through to `confirmBulkCapture`, and makes a
+   * save with no people and no dates valid — the meeting's summary is worth keeping alone.
+   */
+  meeting?: { sessionId: string; extraReminders: MeetingExtraReminderInput[] } | null;
+  /** Replaces the built-in "Start over", for a caller that owns what came before. */
+  onStartOver?: () => void;
+  /** Rendered above the review and done steps — the meeting flow's summary card. */
+  headerSlot?: React.ReactNode;
   /**
    * Put a microphone above the textarea and let a recording drive the ingest.
    *
@@ -173,12 +224,8 @@ export function BulkNotesPanel({
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
-  const cameraRef = useRef<HTMLInputElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
-  // `capture` opens the camera on a phone and is ignored on a desktop, where the button would
-  // only be a second file picker — so it is offered only to touch-first pointers.
-  const coarsePointer = useMediaQuery("(pointer: coarse)");
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(initialNotes ?? "");
   /** When a restored draft was last saved, for the banner; null when nothing was restored. */
   const [restoredAt, setRestoredAt] = useState<number | null>(null);
   /**
@@ -189,7 +236,7 @@ export function BulkNotesPanel({
   const latestDraftRef = useRef<Omit<CaptureDraft, "savedAt"> | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [captureHints, setCaptureHints] = useState<CaptureParseHints | null>(
-    null
+    initialHints ?? null
   );
   const [ingestSources, setIngestSources] = useState<string[]>([]);
   /**
@@ -344,14 +391,16 @@ export function BulkNotesPanel({
   const checkedDates = suggestions.filter((s) => s.checked).length;
   const saveLabel = (() => {
     const parts: string[] = [];
+    if (meeting) parts.push("meeting");
     if (accepted.length) {
       parts.push(
         `${accepted.length} ${accepted.length === 1 ? "contact" : "contacts"}`
       );
     }
-    if (checkedDates) {
+    const reminderCount = checkedDates + (meeting?.extraReminders.length ?? 0);
+    if (reminderCount) {
       parts.push(
-        `${checkedDates} ${checkedDates === 1 ? "reminder" : "reminders"}`
+        `${reminderCount} ${reminderCount === 1 ? "reminder" : "reminders"}`
       );
     }
     return parts.length ? `Save ${parts.join(" + ")}` : "Save";
@@ -425,7 +474,7 @@ export function BulkNotesPanel({
           interactionType: i.interactionType,
         }));
         const checkedSuggestions = suggestions.filter((s) => s.checked);
-        if (!payload.length && !checkedSuggestions.length) {
+        if (!payload.length && !checkedSuggestions.length && !meeting) {
           toast.error("Nothing to save — accept a person or a date first");
           return;
         }
@@ -455,6 +504,7 @@ export function BulkNotesPanel({
           // Typing after an upload adds to the text without an ingest, so "text" is only
           // implied when nothing was uploaded — the server fills that default in.
           sources: captureSources,
+          meeting,
         });
         // Saved, so there is nothing left to lose. Cleared here rather than left to the
         // autosave: the capture page navigates away on save, and the panel never renders
@@ -494,9 +544,82 @@ export function BulkNotesPanel({
     });
   }
 
-  function handleFilesSelected(fileList: FileList | null) {
-    if (!fileList?.length) return;
-    const files = Array.from(fileList);
+  /**
+   * Send already-normalized scan pages for transcription.
+   *
+   * Deliberately does NOT pass `text`: a photographed page replaces what is in the box
+   * rather than appending to it, which is what made the old dedicated scan screen feel
+   * right. Uploading a .txt still merges, because that is additive by nature.
+   */
+  function ingestScanPages(pages: ScanPage[]) {
+    if (!pages.length) return;
+
+    const totalBytes = pages.reduce((sum, page) => sum + page.bytes, 0);
+    if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+      toast.error(
+        `Those pages total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer at a time`
+      );
+      return;
+    }
+
+    // Auto-extract ONLY into an empty box. A scan is a complete thought, so a second click
+    // would be ceremony — but firing extraction under someone who was mid-sentence would
+    // be worse, so notes already typed mean the transcript lands and waits.
+    const wasEmpty = !notes.trim();
+
+    start(async () => {
+      // Inside the transition, not beside it: `Date.now()` and the job store are both
+      // impure, and the React compiler rightly refuses them in a component body.
+      const jobId = `scan-${Date.now()}`;
+      // Indeterminate (both zero) on purpose: transcription is one server action that fans
+      // out to a call per page on the far side, so the browser learns nothing until every
+      // page is back. A bar here could only be animated, never measured. The page count
+      // goes in the label instead, which is the part we genuinely know.
+      startBackgroundJob({
+        id: jobId,
+        kind: "scan-notes",
+        label: pages.length === 1 ? "Reading your page" : `Reading ${pages.length} pages`,
+        startedAt: Date.now(),
+        done: 0,
+        total: 0,
+      });
+      try {
+        const res = await ingestCaptureMedia({
+          files: pages.map((page) => ({
+            filename: page.filename,
+            mimeType: page.mimeType,
+            base64: page.base64,
+          })),
+        });
+        if (!res.ok) {
+          const missingKey = isMissingAiApiKeyError(res.error);
+          if (missingKey) setHasApiKey(false);
+          finishBackgroundJob(jobId, { status: "failed", error: res.error });
+          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+          return;
+        }
+        finishBackgroundJob(jobId, {
+          status: "completed",
+          resultMessage: pages.length === 1 ? "Read 1 page" : `Read ${pages.length} pages`,
+        });
+        setNotes(res.text);
+        setCaptureHints(res.hints || null);
+        setIngestSources(res.sources || []);
+        setFileName(pages.length === 1 ? pages[0]!.filename : `${pages.length} pages`);
+        if (wasEmpty && hasApiKey) runParse(res.text, res.hints || null);
+      } catch (err) {
+        const message = friendlyError(err, "Couldn’t read those pages — try again?");
+        finishBackgroundJob(jobId, { status: "failed", error: message });
+        toast.error(message);
+      } finally {
+        // The blobs only ever backed thumbnails; the base64 has already been sent.
+        for (const page of pages) releaseScanPage(page);
+      }
+    });
+  }
+
+  function handleFilesSelected(files: File[]) {
+    if (!files.length) return;
 
     start(async () => {
       try {
@@ -541,6 +664,40 @@ export function BulkNotesPanel({
         );
       }
     });
+  }
+
+  /** A file dropped on the card takes the same path as one chosen from the picker. */
+  async function acceptDroppedFiles(files: File[]) {
+    if (!files.length) return;
+    const { pages, raw } = await sortAndNormalizeScanFiles(files);
+    if (raw.length) handleFilesSelected(raw);
+    if (pages.length) ingestScanPages(pages);
+  }
+
+  const { dragging, dropProps } = useScanDropZone({
+    onFiles: (files) => void acceptDroppedFiles(files),
+    disabled: compact || pending,
+  });
+
+  /**
+   * Whether the text in the box came from a photograph.
+   *
+   * Derived from the ingest sources rather than remembered in a ref, because
+   * `resetToPaste` clears those — so the "Show what we read" disclosure disappears along
+   * with the scan that justified it, instead of clinging to every later hand-typed note.
+   */
+  const scannedPhotos = ingestSources.some((s) => s.startsWith("photos"));
+
+  /**
+   * Extract people from a block of notes, as a transition. A thin wrapper over `runExtract`.
+   *
+   * Takes the text and hints as arguments rather than reading `notes` and `captureHints`,
+   * because scanning calls this the instant a transcript lands and must not race the state
+   * updates that put it there.
+   */
+  function runParse(text: string, hints: CaptureParseHints | null = captureHints) {
+    if (!text.trim()) return;
+    start(() => runExtract(text, hints));
   }
 
   /**
@@ -601,6 +758,110 @@ export function BulkNotesPanel({
   }
 
   /**
+   * Parse the notes and move on to review. One function for the "Extract people" button and
+   * for `autoExtract`, which runs it on arrival for a recorded meeting whose notes were
+   * written by the analysis rather than typed.
+   */
+  async function runExtract(text: string, baseHints: CaptureParseHints | null) {
+    try {
+      const hints: CaptureParseHints | null =
+        lockedParticipantId && lockedParticipantName
+          ? withLockedSeedPerson(baseHints, lockedParticipantName)
+          : baseHints;
+      const res = await parseBulkCaptureNotes(text, hints, parseOptions ?? {});
+      if (!res.ok) {
+        const missingKey = isMissingAiApiKeyError(res.error);
+        if (missingKey) setHasApiKey(false);
+        toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+        return;
+      }
+      setSharedNotes(res.sharedNotes || []);
+      const lockedKey =
+        lockedParticipantId && lockedParticipantName
+          ? pickLockedParticipant(
+              res.items.map((item) => ({
+                key: item.key,
+                name: item.parsed.name,
+                duplicateIds: item.duplicates.map((d) => d.id),
+              })),
+              { id: lockedParticipantId, name: lockedParticipantName }
+            )
+          : null;
+      setItems(
+        res.items.map((item) => {
+          const isLocked = lockedKey !== null && item.key === lockedKey;
+          const preferredMatch =
+            preferredContactId &&
+            item.duplicates.some((d) => d.id === preferredContactId)
+              ? preferredContactId
+              : null;
+          return {
+            ...item,
+            decision: "pending" as const,
+            mergeContactId: isLocked
+              ? lockedParticipantId
+              : preferredMatch || item.suggestedMergeId,
+            locked: isLocked,
+            createReminder: Boolean(item.parsed.follow_up_recommendation),
+            relationshipScore: item.parsed.relationship_score_suggestion || 2,
+            tagNames: (item.parsed.tags || []).join(", "),
+            followUpDays: item.parsed.follow_up_days || 14,
+          };
+        })
+      );
+      const found = res.suggestedReminders || [];
+      setSourceText(res.sourceText);
+      setSourceHash(res.sourceHash);
+      setAnchorIso(res.anchorIso);
+      setAnchorBasis(res.anchorBasis);
+      setSkipped(res.suggestionsSkipped || null);
+      setMentions(res.mentions || []);
+      setSuggestions(
+        found.map((s) => ({
+          ...s,
+          // High-confidence items start checked; the user still sees
+          // every one before anything is written.
+          checked: s.confidenceScore >= 60,
+          personNameOverride: null,
+        }))
+      );
+      setReviewIndex(0);
+      setSlideDirection(1);
+      // A note can carry dates but no people — skip the person carousel.
+      setStep(res.items.length ? "review" : "done");
+      // Acted on, so the "your notes are back" banner has done its job.
+      setRestoredAt(null);
+
+      const peopleLabel = `${res.items.length} ${
+        res.items.length === 1 ? "person" : "people"
+      }`;
+      const dateLabel = found.length
+        ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
+        : "";
+      toast.success(`Found ${peopleLabel}${dateLabel}`);
+    } catch (err) {
+      // Only unexpected throws reach here — a missing key comes back as
+      // `res.ok === false` above — so the key message is no longer the
+      // fallback. `friendlyError` still names a genuine missing key.
+      const message = friendlyError(err, TOAST_COPY.notesReadFailed);
+      if (message === MISSING_AI_API_KEY_MESSAGE) setHasApiKey(false);
+      toast.error(message);
+    }
+  }
+
+  // Once per mount, and guarded by a ref rather than state: StrictMode runs effects twice
+  // in development, and a second parse would be a second paid model call.
+  const autoExtractedRef = useRef(false);
+  useEffect(() => {
+    if (!autoExtract || autoExtractedRef.current || !initialNotes?.trim()) return;
+    autoExtractedRef.current = true;
+    start(() => runExtract(initialNotes, initialHints ?? null));
+    // Deliberately mount-only: the props that seed an auto-extract never change for the
+    // life of this panel (the meeting flow remounts it for a new analysis).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
    * A finished recording, straight into the path a picked audio file already takes.
    *
    * The size check `handleFilesSelected` does is unnecessary here: the recorder's own
@@ -636,11 +897,14 @@ export function BulkNotesPanel({
 
   return (
     <div className={cn("space-y-4", compact && "space-y-3")}>
+      {headerSlot}
       {step === "paste" && (
         <div
+          {...(compact ? {} : dropProps)}
           className={cn(
-            "space-y-3",
-            !compact && "rounded-2xl border border-border/70 bg-card p-6 space-y-4"
+            "space-y-3 transition-colors",
+            !compact && "rounded-2xl border border-border/70 bg-card p-6 space-y-4",
+            !compact && dragging && "border-dashed border-import-scan bg-import-scan/5"
           )}
         >
           {!hasApiKey && (
@@ -705,14 +969,18 @@ export function BulkNotesPanel({
           )}
           <div>
             <Label htmlFor="bulk-notes">
-              {showRecorder ? "Or type it out" : "Paste or upload notes"}
+              {showRecorder
+                ? "Or type it out"
+                : compact
+                  ? "Paste or upload notes"
+                  : "Paste, upload or photograph notes"}
             </Label>
             {!compact && (
               <p className="mt-1 text-sm text-muted-foreground">
-                Drop in notes about one person or many — text, voice, photos,
-                calendar invites, or email forwards. Orbit splits profiles out,
-                keeps shared event/group context attached to each, and you
-                review one card at a time.
+                Drop in notes about one person or many — typed, spoken,
+                photographed, or a PDF, plus calendar invites and email
+                forwards. Orbit splits profiles out, keeps shared event/group
+                context attached to each, and you review one card at a time.
               </p>
             )}
             {compact && (
@@ -735,63 +1003,57 @@ export function BulkNotesPanel({
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              accept={CAPTURE_FILE_ACCEPT}
-              className="hidden"
-              onChange={(e) => {
-                handleFilesSelected(e.target.files);
-                e.target.value = "";
-              }}
-            />
-            {coarsePointer && (
-              <>
-                <input
-                  ref={cameraRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={(e) => {
-                    handleFilesSelected(e.target.files);
-                    e.target.value = "";
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size={compact ? "sm" : "default"}
-                  disabled={pending}
-                  onClick={() => cameraRef.current?.click()}
-                >
-                  <Camera aria-hidden />
-                  Scan business card
-                </Button>
-              </>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size={compact ? "sm" : "default"}
-              disabled={pending}
-              onClick={() => fileRef.current?.click()}
-            >
-              Upload notes / media
-            </Button>
-            {fileName && (
-              <span className="truncate text-xs text-muted-foreground">
-                {fileName}
-              </span>
-            )}
-            {ingestSources.length > 0 && (
-              <span className="truncate text-xs text-muted-foreground">
-                via {ingestSources.join(", ")}
-              </span>
-            )}
-          </div>
+          {compact ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept={CAPTURE_FILE_ACCEPT}
+                className="hidden"
+                onChange={(e) => {
+                  handleFilesSelected(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={() => fileRef.current?.click()}
+              >
+                Upload notes / media
+              </Button>
+              <IngestMeta fileName={fileName} sources={ingestSources} />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <ScanControls
+                accept={CAPTURE_FILE_ACCEPT}
+                disabled={pending}
+                onRawFiles={handleFilesSelected}
+                onPages={ingestScanPages}
+                onTranscript={(text, sources) => {
+                  const wasEmpty = !notes.trim();
+                  // A phone transcript replaces the box, so hints from an earlier upload
+                  // no longer describe what is in it.
+                  setNotes(text);
+                  setCaptureHints(null);
+                  setIngestSources(sources);
+                  setFileName("from your phone");
+                  if (wasEmpty && hasApiKey) runParse(text, null);
+                }}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                {pending ? <BusyHint>Reading…</BusyHint> : null}
+                <IngestMeta fileName={fileName} sources={ingestSources} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Drop a file anywhere on this card, or paste a screenshot.
+              </p>
+            </div>
+          )}
 
           {photoIds.length > 0 && (
             <div className="space-y-1.5">
@@ -828,103 +1090,48 @@ export function BulkNotesPanel({
             disabled={pending || !notes.trim() || !hasApiKey}
             size={compact ? "sm" : "default"}
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const hints: CaptureParseHints | null =
-                    lockedParticipantId && lockedParticipantName
-                      ? withLockedSeedPerson(captureHints, lockedParticipantName)
-                      : captureHints;
-                  const res = await parseBulkCaptureNotes(notes, hints);
-                  if (!res.ok) {
-                    const missingKey = isMissingAiApiKeyError(res.error);
-                    if (missingKey) setHasApiKey(false);
-                    toast.error(
-                      missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error
-                    );
-                    return;
-                  }
-                  setSharedNotes(res.sharedNotes || []);
-                  const lockedKey =
-                    lockedParticipantId && lockedParticipantName
-                      ? pickLockedParticipant(
-                          res.items.map((item) => ({
-                            key: item.key,
-                            name: item.parsed.name,
-                            duplicateIds: item.duplicates.map((d) => d.id),
-                          })),
-                          { id: lockedParticipantId, name: lockedParticipantName }
-                        )
-                      : null;
-                  setItems(
-                    res.items.map((item) => {
-                      const isLocked = lockedKey !== null && item.key === lockedKey;
-                      const preferredMatch =
-                        preferredContactId &&
-                        item.duplicates.some((d) => d.id === preferredContactId)
-                          ? preferredContactId
-                          : null;
-                      return {
-                        ...item,
-                        decision: "pending" as const,
-                        mergeContactId: isLocked
-                          ? lockedParticipantId
-                          : preferredMatch || item.suggestedMergeId,
-                        locked: isLocked,
-                        createReminder: Boolean(
-                          item.parsed.follow_up_recommendation
-                        ),
-                        relationshipScore:
-                          item.parsed.relationship_score_suggestion || 2,
-                        tagNames: (item.parsed.tags || []).join(", "),
-                        followUpDays: item.parsed.follow_up_days || 14,
-                      };
-                    })
-                  );
-                  const found = res.suggestedReminders || [];
-                  setSourceText(res.sourceText);
-                  setSourceHash(res.sourceHash);
-                  setAnchorIso(res.anchorIso);
-                  setAnchorBasis(res.anchorBasis);
-                  setSkipped(res.suggestionsSkipped || null);
-                  setMentions(res.mentions || []);
-                  setSuggestions(
-                    found.map((s) => ({
-                      ...s,
-                      // High-confidence items start checked; the user still sees
-                      // every one before anything is written.
-                      checked: s.confidenceScore >= 60,
-                      personNameOverride: null,
-                    }))
-                  );
-                  setReviewIndex(0);
-                  setSlideDirection(1);
-                  // A note can carry dates but no people — skip the person carousel.
-                  setStep(res.items.length ? "review" : "done");
-                  // Acted on, so the "your notes are back" banner has done its job.
-                  setRestoredAt(null);
-
-                  const peopleLabel = `${res.items.length} ${
-                    res.items.length === 1 ? "person" : "people"
-                  }`;
-                  const dateLabel = found.length
-                    ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
-                    : "";
-                  toast.success(`Found ${peopleLabel}${dateLabel}`);
-                } catch (err) {
-                  // Only unexpected throws reach here — a missing key comes back as
-                  // `res.ok === false` above — so the key message is no longer the
-                  // fallback. `friendlyError` still names a genuine missing key.
-                  const message = friendlyError(err, TOAST_COPY.notesReadFailed);
-                  if (message === MISSING_AI_API_KEY_MESSAGE) setHasApiKey(false);
-                  toast.error(message);
-                }
-              })
-            }
+            onClick={() => runParse(notes)}
           >
             {pending ? "Parsing…" : "Extract people"}
           </Button>
         </div>
+      )}
+
+      {/*
+        What the model read, kept one click away.
+
+        Scanning transcribes a photograph and then throws the photograph away, so this is
+        the only place an OCR mistake can still be caught — and a misread name that reaches
+        a contact record is not obviously wrong once it is sitting in a form field. Closed
+        by default because it is usually right; editable and re-runnable because when it is
+        wrong, retyping one word beats rephotographing the page.
+      */}
+      {step !== "paste" && scannedPhotos && (
+        <details className="rounded-lg border border-border/70 bg-muted/40 px-3 py-2">
+          <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground marker:hidden hover:text-ink">
+            Show what we read
+            {ingestSources.length > 0 && (
+              <span className="ml-1 font-normal">({ingestSources.join(", ")})</span>
+            )}
+          </summary>
+          <div className="mt-2 space-y-2">
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={6}
+              className="text-xs"
+              aria-label="Transcribed text"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending || !notes.trim() || !hasApiKey}
+              onClick={() => runParse(notes)}
+            >
+              {pending ? "Re-reading…" : "Re-run extraction"}
+            </Button>
+          </div>
+        </details>
       )}
 
       {step === "review" && current && (
@@ -1112,6 +1319,11 @@ export function BulkNotesPanel({
                 </li>
               ))}
             </ul>
+          ) : meeting ? (
+            <p className="text-sm text-muted-foreground">
+              No people to save from this meeting — its summary
+              {suggestions.length > 0 || meeting.extraReminders.length > 0 ? " and reminders" : ""} will still be saved.
+            </p>
           ) : suggestions.length > 0 ? (
             <p className="text-sm text-muted-foreground">
               No people to save from these notes — just the dates below.
@@ -1163,14 +1375,14 @@ export function BulkNotesPanel({
               type="button"
               variant="outline"
               size={compact ? "sm" : "default"}
-              onClick={resetToPaste}
+              onClick={onStartOver ?? resetToPaste}
             >
               Start over
             </Button>
             <Button
               type="button"
               size={compact ? "sm" : "default"}
-              disabled={pending || (accepted.length === 0 && checkedDates === 0)}
+              disabled={pending || (!meeting && accepted.length === 0 && checkedDates === 0)}
               className="bg-primary text-primary-foreground hover:bg-primary/90 sm:flex-1"
               onClick={saveAccepted}
             >

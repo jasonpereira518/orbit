@@ -834,6 +834,22 @@ export type NoteBatchResult = {
   actionItems: { id: string; contactId: string; text: string; reminderId: string | null }[];
   reminders: { id: string; contactId: string | null; title: string; dueIso: string; dateBasis: ReminderDateBasis; rawDatePhrase: string | null; sourceExcerpt: string | null }[];
   skipped: { relative: number; unverifiable: number; past: number; duplicate: number };
+  /** Present only when the batch came from a recorded meeting (`/capture?mode=meeting`). */
+  meeting?: NoteBatchMeeting;
+};
+
+/** The call-level half of a meeting batch — what no per-person card can carry. */
+export type NoteBatchMeeting = {
+  sessionId: string;
+  title: string;
+  summary: string;
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: { text: string; owner: string | null }[];
+  blockers: { text: string; owner: string | null }[];
+  openQuestions: { text: string; askedBy: string | null }[];
+  durationMs: number;
+  startedAtIso: string;
 };
 
 /** One confirmed paste of notes — the unit the results page and Undo operate on. */
@@ -957,6 +973,82 @@ export const actionItems = pgTable(
     index("action_items_user_contact_status_idx").on(t.userId, t.contactId, t.status),
   ]
 );
+
+export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
+export type MeetingSegmentEngine = "wispr" | "whisper" | "gemini" | "silent";
+
+/**
+ * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
+ * still happening, so a crashed or closed tab can pick up where it left off — audio is
+ * never stored, only what it was transcribed to. `digest` is the analysis
+ * (`src/lib/meeting-digest.ts`), written once the call ends.
+ */
+export const meetingSessions = pgTable(
+  "meeting_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    title: text("title"),
+    attendees: jsonb("attendees").$type<{ name: string; email?: string | null }[]>().default([]).notNull(),
+    /** `displaySurface` of the shared track: "browser" (a tab) or "monitor"/"window". */
+    captureSurface: text("capture_surface"),
+    includesMic: integer("includes_mic").default(1).notNull(),
+    /**
+     * A random id minted per recorder instance. A second tab that tries to push chunks into a
+     * session another tab is recording gets a 409 instead of interleaving its audio.
+     */
+    recorderId: text("recorder_id"),
+    status: text("status").$type<MeetingSessionStatus>().default("recording").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    durationMs: integer("duration_ms").default(0).notNull(),
+    /** Highest segment seq stored, so a resumed recorder continues numbering after it. */
+    lastSeq: integer("last_seq").default(-1).notNull(),
+    digest: jsonb("digest").$type<MeetingDigest>(),
+    digestError: text("digest_error"),
+    noteBatchId: uuid("note_batch_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("meeting_sessions_user_status_idx").on(t.userId, t.status)]
+);
+
+/** One transcribed chunk (~60s) of a meeting. `(session_id, seq)` makes a re-upload a no-op. */
+export const meetingTranscriptSegments = pgTable(
+  "meeting_transcript_segments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => meetingSessions.id, { onDelete: "cascade" }),
+    /** Denormalised so `scripts/smoke-purge.ts` discovers the table — see `feedbackScreenshots`. */
+    userId: text("user_id").notNull(),
+    seq: integer("seq").notNull(),
+    startMs: integer("start_ms").notNull(),
+    endMs: integer("end_ms").notNull(),
+    text: text("text").notNull(),
+    engine: text("engine").$type<MeetingSegmentEngine>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("meeting_segments_session_seq_uidx").on(t.sessionId, t.seq),
+    index("meeting_segments_user_idx").on(t.userId),
+  ]
+);
+
+/** The stored analysis of a meeting. Mirrors `meetingDigestSchema` in `src/lib/meeting-digest.ts`. */
+export type MeetingDigest = {
+  title: string;
+  summary: string;
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: { text: string; owner: string | null; duePhrase: string | null; sourceExcerpt: string | null }[];
+  blockers: { text: string; owner: string | null; sourceExcerpt: string | null }[];
+  openQuestions: { text: string; askedBy: string | null; sourceExcerpt: string | null }[];
+  participants: { name: string; present: boolean; context: string | null }[];
+  datedQuotes: string[];
+  notes: string;
+};
 
 /** The structured profile brief. 1:1 with contacts; kept off `contacts` because that table is scanned whole on hot paths. */
 export const contactBriefs = pgTable("contact_briefs", {
@@ -2014,6 +2106,45 @@ export const apiKeys = pgTable(
     // than a scan: it runs on every API and MCP request.
     uniqueIndex("api_keys_hash_uidx").on(t.keyHash),
     index("api_keys_user_idx").on(t.userId),
+  ]
+);
+
+/**
+ * One scanning session, handed from a signed-in desktop to a phone that is not signed in.
+ *
+ * WHY A TABLE AND NOT A SIGNED TOKEN. A stateless JWT would carry the grant without
+ * storage, but the phone has to hand something BACK, and the desktop has to notice — so
+ * there has to be a row for the transcript to land in and for polling to read. Given a row
+ * exists anyway, storing the hash buys single-use and revocation for free.
+ *
+ * `transcript` holds text only. The photos are transcribed inside the request that carries
+ * them and are never written anywhere — going via a phone must not silently upgrade
+ * ephemeral capture media into stored user imagery.
+ */
+export const captureHandoffs = pgTable(
+  "capture_handoffs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** SHA-256 of the token. The token itself exists only in the QR code. */
+    tokenHash: text("token_hash").notNull(),
+    status: text("status")
+      .$type<"pending" | "uploading" | "ready" | "claimed">()
+      .default("pending")
+      .notNull(),
+    transcript: text("transcript"),
+    pageCount: integer("page_count").default(0).notNull(),
+    /** The `photos:7/8` label, so the desktop can report partial success too. */
+    sources: text("sources"),
+    error: text("error"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // Every request on the phone path is this one lookup.
+    uniqueIndex("capture_handoffs_token_uidx").on(t.tokenHash),
+    index("capture_handoffs_expiry_idx").on(t.expiresAt),
   ]
 );
 

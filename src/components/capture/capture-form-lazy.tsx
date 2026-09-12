@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { CaptureFormSkeleton } from "@/components/loading/page-skeletons";
 import type { CaptureMode } from "@/components/capture/capture-form";
+import type { ResumableMeeting } from "@/lib/meeting-sessions";
 
 const CaptureForm = dynamic(
   () =>
@@ -20,6 +21,8 @@ export function CaptureFormLazy({
   defaultMode = "messy",
   hasApiKey = true,
   userId,
+  canTranscribe = false,
+  resumableMeeting = null,
 }: {
   initialContactId?: string | null;
   initialContactName?: string | null;
@@ -27,6 +30,8 @@ export function CaptureFormLazy({
   hasApiKey?: boolean;
   /** Scopes the autosaved draft to this account — see `captureDraftKey`. */
   userId: string;
+  canTranscribe?: boolean;
+  resumableMeeting?: ResumableMeeting | null;
 }) {
   return (
     <CaptureForm
@@ -35,6 +40,8 @@ export function CaptureFormLazy({
       defaultMode={defaultMode}
       hasApiKey={hasApiKey}
       userId={userId}
+      canTranscribe={canTranscribe}
+      resumableMeeting={resumableMeeting}
     />
   );
 }

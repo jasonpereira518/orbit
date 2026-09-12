@@ -40,7 +40,11 @@ export const KNOWN_OPERATIONS = [
   "capture.parse.excerpt-retry",
   "capture.dates",
   "capture.transcribe.audio",
+  // Per page, since scanning fans out one call per photo. The older batched
+  // "capture.transcribe.images" label is kept so history from before that change still
+  // groups instead of falling into "unknown".
   "capture.transcribe.images",
+  "capture.transcribe.page",
   "chat.answer",
   "search.embed",
   "search.embed.batch",
