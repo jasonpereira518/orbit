@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   x_handle text,
   website text,
   profile_image_url text,
+  profile_image_checked_at timestamp,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
   source text,
@@ -1058,6 +1059,54 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS meeting_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  title text,
+  attendees jsonb NOT NULL DEFAULT '[]',
+  capture_surface text,
+  includes_mic integer NOT NULL DEFAULT 1,
+  recorder_id text,
+  status text NOT NULL DEFAULT 'recording',
+  started_at timestamptz NOT NULL DEFAULT now(),
+  ended_at timestamptz,
+  duration_ms integer NOT NULL DEFAULT 0,
+  last_seq integer NOT NULL DEFAULT -1,
+  digest jsonb,
+  digest_error text,
+  note_batch_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS meeting_transcript_segments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id uuid NOT NULL REFERENCES meeting_sessions(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  seq integer NOT NULL,
+  start_ms integer NOT NULL,
+  end_ms integer NOT NULL,
+  text text NOT NULL,
+  engine text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq);
+CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id);
+CREATE TABLE IF NOT EXISTS capture_handoffs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  token_hash text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  transcript text,
+  page_count integer NOT NULL DEFAULT 0,
+  sources text,
+  error text,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS capture_handoffs_token_uidx ON capture_handoffs(token_hash);
+CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expires_at);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1115,15 +1164,47 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * duplicates being created), contact_merges (a merged contact archived whole, so the
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
+ * v34 = chat_messages.attached_contacts: the people attached to a chat question (#141).
+ * v35 = the last-interaction index the chat composer's person pickers order on (#141).
+ * v36 = user_settings.wispr_api_key_encrypted: the voice-note transcription key (#161).
+ * v38 = capture_handoffs: the phone-to-desktop scanning handoff (#143). Written as 33,
+ * then 34, and moved each time another branch landed first with that number. It skips
+ * 37 instead of taking the next free integer, because 37 is #146's open claim. (36 was
+ * skipped too while it was unsafe: #146's pre-merge preview builds stamped it onto the
+ * production database with different DDL. #141's v35 deploy re-stamped that database
+ * before #161 took 36, so #161's DDL still ran.) A number some database may already hold
+ * is the one choice that silently skips this table, so the next free integer was not free.
  * v39 = events revision: organizer_name, organizer_url, attendance_mode on events. Also
  * built as 33 and moved when duplicate prevention landed first — the fifth collision, and
  * the same rule: re-using 33 would have left those columns unapplied on every database
  * main had already stamped.
+ * v40 = contact photo cooldown (#146): contacts.profile_image_checked_at. This PR has been
+ * 33, 36 and 37 in turn. 37 was reserved for it (#152 skipped past it to 39), but it can't
+ * be reused now: this branch's own preview stamped 37 onto the preview database with DDL
+ * that predates #152's columns, so a 37 carrying them would skip on that database. 38 is
+ * claimed by the scan-notes branch. Also worth knowing: until Sep 11 2026 Preview shared
+ * Production's DATABASE_URL, so preview builds stamped production directly. Previews now
+ * migrate their own Neon project.
+ * v41 and this branch's own 40 = capture_handoffs again, renumbered as main's DDL was
+ * merged in (#161's column, then #152's). Neither reached main, and this branch's 40 is not
+ * main's v40 above: two different DDL sets carried that number, so neither 40 nor 41 is
+ * safe to reuse. Merging another branch's DDL is a DDL change, so it takes a new number:
+ * a database a pre-merge build already stamped would otherwise skip the merged-in columns
+ * (this worktree's own did, and every user_settings read failed).
+ * v42 = meeting capture (#163): meeting_sessions, meeting_transcript_segments.
+ * v43 = capture_handoffs with #146's v40 column merged in. Never reached main.
+ * v45 = capture_handoffs with #163's v42 tables merged in. Builds of this branch pushed at 43
+ * lack those tables, so 43 cannot carry them. 44 is claimed by admin-console-page-metrics.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
+// Pick a number above anything ANY branch has claimed and anything a database may already
+// be stamped with, not just one above main. A repeated version is the one real failure
+// mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
+// collision means one branch's DDL never runs. The changelog above says which numbers are
+// taken and why 44 is skipped.
 // 34 and 35 are this branch's, above main's 33 (duplicate prevention, #148). 33 was
 // skipped here deliberately while it was still claimed by unmerged branches — a repeated
 // version is the one real failure mode this counter has, since the alters are all
@@ -1156,7 +1237,13 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
 // commands" — so on any database that already existed, `event_aliases` was never created and
 // discovery would have failed on its first write. A version bump is the only thing that
 // re-runs the sweep on an instance already stamped 40, 41 or 42.
-export const SCHEMA_VERSION = 43;
+//
+// 46 = everything above (the event-platform work, built as 40-43) renumbered past main's
+// 40-45 and the 44 that admin-console-page-metrics has claimed. Those four numbers carried
+// different DDL on main — contact photo cooldown, capture handoffs, meeting capture — so
+// reusing any of them would have left this branch's tables unapplied on every database main
+// had already stamped. None of 40-43 as built here ever reached a deployed database.
+export const SCHEMA_VERSION = 46;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1606,7 +1693,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "ai_provider", "text DEFAULT 'gemini'");
   await ensureColumn(client, "user_settings", "openai_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "anthropic_api_key_encrypted", "text");
-  // v42. Both also appear in `alters` above; `smoke-schema-ddl` requires them in BOTH places,
+  // v46 (event platform). Both also appear in `alters` above; `smoke-schema-ddl` requires them in BOTH places,
   // because a local database created before either existed only ever sees this list.
   await ensureColumn(client, "user_settings", "schools", "jsonb DEFAULT '[]'::jsonb");
   await ensureColumn(client, "events", "kind", "text");
@@ -1663,6 +1750,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
+  await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
   await ensureColumn(
     client,
     "user_settings",
@@ -2096,7 +2184,7 @@ const alters = [
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name text`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_url text`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS attendance_mode text`,
-  // v40, event discovery. `discovered_via` is separate from `source` because enrichment
+  // v46 (event platform), discovery. `discovered_via` is separate from `source` because enrichment
   // overwrites `source` with 'page' the moment it reads the event's own link — so `source`
   // cannot answer "where did this event come from", which is exactly what the card's badge
   // and the re-add rules need.
@@ -2106,10 +2194,10 @@ const alters = [
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS dismissed_at timestamptz`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_due_at timestamptz`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_attempts integer NOT NULL DEFAULT 0`,
-  // v41, cross-event identity. `identity_key` cannot answer "same person at another event":
+  // v46 (event platform), cross-event identity. `identity_key` cannot answer "same person at another event":
   // it keys on the string it was given, so two spellings of one LinkedIn URL are two keys.
   // Changing it would break the unique index every stored roster row depends on.
-  // v42, companies at events. `kind` is what makes a career fair rank recruiters above
+  // v46 (event platform), companies at events. `kind` is what makes a career fair rank recruiters above
   // founders — the same person is a different opportunity at a different kind of event.
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS kind text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS schools jsonb DEFAULT '[]'::jsonb`,
@@ -2119,7 +2207,7 @@ const alters = [
   // is fine because that path splits on ';' first.
   `CREATE TABLE IF NOT EXISTS event_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, role text NOT NULL, source text NOT NULL, evidence text, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS target_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, priority integer NOT NULL DEFAULT 2, note text, created_at timestamptz NOT NULL DEFAULT now())`,
-  // v43 as well: the cached one-line "why" and opener, keyed by a hash of what produced it.
+  // v46 (event platform) as well: the cached one-line "why" and opener, keyed by a hash of what produced it.
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS ai_note jsonb`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_kind text`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_value text`,
@@ -2192,6 +2280,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
@@ -2364,7 +2453,12 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
   `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
-  // Schema v40: event discovery.
+  // Schema v42: meeting capture. Same rule as v31/v32 — every index in both places. The
+  // unique index is what makes a re-uploaded chunk a no-op rather than a repeated line.
+  `CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq)`,
+  `CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id)`,
+  // Schema v46 (event platform): discovery.
   //
   // `event_aliases_user_kind_value_uidx` is the whole dedup story. Three sources can report
   // the same event within one pass — a calendar invite, a Luma feed entry and a confirmation
@@ -2376,10 +2470,10 @@ const alters = [
   // The enrichment queue's claim: a partial index, because the overwhelming majority of
   // events are not waiting to be read.
   `CREATE INDEX IF NOT EXISTS events_enrich_due_idx ON events(enrich_due_at) WHERE enrich_due_at IS NOT NULL`,
-  // Schema v41: "who do I keep running into". The aggregate groups a user's whole roster
+  // Schema v46 (event platform): "who do I keep running into". The aggregate groups a user's whole roster
   // history by this, so it is the one index standing between that panel and a full scan.
   `CREATE INDEX IF NOT EXISTS event_attendees_person_idx ON event_attendees(user_id, person_key_kind, person_key_value) WHERE person_key_value IS NOT NULL`,
-  // Schema v42: companies at events.
+  // Schema v46 (event platform): companies at events.
   `CREATE UNIQUE INDEX IF NOT EXISTS event_companies_event_company_role_uidx ON event_companies(event_id, company_id, role)`,
   `CREATE INDEX IF NOT EXISTS event_companies_user_company_idx ON event_companies(user_id, company_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS target_companies_user_company_uidx ON target_companies(user_id, company_id)`,

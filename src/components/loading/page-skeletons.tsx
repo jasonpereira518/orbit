@@ -299,6 +299,20 @@ export function CaptureFormSkeleton() {
         </div>
       ))}
       <Skeleton className="h-32 w-full rounded-lg" />
+      {/*
+        The scan controls: two tap tiles below md, a three-button row above it. Sized to
+        match so the skeleton does not collapse to a shorter form and then jump when the
+        real controls arrive.
+      */}
+      <div className="grid grid-cols-2 gap-2 md:hidden">
+        <Skeleton className="h-[86px] rounded-xl" />
+        <Skeleton className="h-[86px] rounded-xl" />
+      </div>
+      <div className="hidden gap-2 md:flex">
+        <Skeleton className="h-9 w-44 rounded-lg" />
+        <Skeleton className="h-9 w-28 rounded-lg" />
+        <Skeleton className="h-9 w-36 rounded-lg" />
+      </div>
       <Skeleton className="mt-2 h-9 w-32" />
     </div>
   );
@@ -695,7 +709,7 @@ export function SuspendedPageSkeleton() {
 
 /**
  * Mirrors the real pricing page's section order 1:1 — see
- * src/app/(marketing)/pricing/page.tsx and src/components/pricing/*. Kept in
+ * src/app/(clerk)/(marketing)/pricing/page.tsx and src/components/pricing/*. Kept in
  * sync deliberately: this is a full-page async Server Component (auth() +
  * two DB reads), so it's the marketing route most likely to actually show a
  * loading state, and a generic skeleton here would visibly jump on swap-in.

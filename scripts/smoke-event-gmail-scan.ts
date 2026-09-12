@@ -1,8 +1,10 @@
 /**
  * The confirmation-email scan: what it opens, what it refuses, and what it keeps.
  *
- * `pure` tier — Gmail itself is stubbed, and `recordDiscoveryCandidates` is only reached in
- * the pglite test.
+ * `pure` tier — Gmail AND the recorder are stubbed, so no database is touched; the write
+ * itself is followed to a real row in `smoke-event-discovery-store`. The recorder stub is not
+ * optional: this script has no `_env` preamble, so reaching the real one would write to
+ * whatever `DATABASE_URL` points at when it is run by hand.
  *
  * This path reads a user's mail under a Google RESTRICTED scope, so the assertions that matter
  * most are the refusals:
@@ -32,8 +34,15 @@ function check(label: string, ok: boolean, detail = "") {
 const DKIM_OK = "mx.google.com; dkim=pass header.d=lu.ma; spf=pass";
 const DKIM_FAIL = "mx.google.com; dkim=fail header.d=lu.ma; spf=softfail";
 
+/** Every candidate a scan tried to write, captured instead of written. No database here. */
+const recorded: Array<{ url: string | null }> = [];
+
 function deps(over: Partial<GmailScanDeps> = {}): GmailScanDeps {
   return {
+    record: async (_userId, candidates) => {
+      recorded.push(...candidates.map((c) => ({ url: c.url })));
+      return { created: candidates.length, attached: 0, suppressed: 0, enrichQueued: 0 };
+    },
     listPage: async () => ({ messages: [{ id: "m1", threadId: "t1" }], nextPageToken: null }),
     headers: async () => [
       {
@@ -104,8 +113,17 @@ async function main() {
     check("an unrecognised subject still counts as attending", classifyEventMail("x@lu.ma", "Hello")?.rsvpHint === null);
   }
 
-  // A genuine confirmation is followed all the way to the row in `smoke-event-discovery-store`,
-  // which has a database. What is pinned here is everything up to that write.
+  console.log("\na genuine confirmation");
+  {
+    recorded.length = 0;
+    await scanGmailForEvents("user-1", "token", null, {
+      deps: deps(),
+      now: new Date("2026-06-02T00:00:00Z"),
+    });
+    // The event link survives; the tracker and the unsubscribe footer beside it do not.
+    check("exactly one event is found", recorded.length === 1, JSON.stringify(recorded));
+    check("the guest token is stripped from it", recorded[0]?.url === "https://lu.ma/ai-tinkerers", String(recorded[0]?.url));
+  }
 
   console.log("\nwhat a forged sender gets");
   {
@@ -155,7 +173,7 @@ async function main() {
       }),
       now: new Date("2026-06-02T00:00:00Z"),
     });
-    check("no event is invented from a tracker or a map", result.stats.created === 0);
+    check("no event is invented from a tracker, a map or an unsubscribe link", result.stats.created === 0, JSON.stringify(recorded));
     check("the message was still opened", result.opened === 1);
   }
 

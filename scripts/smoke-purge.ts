@@ -156,6 +156,22 @@ async function seed() {
     result: {} as never,
   });
 
+  // A recorded call and one line of it. The segment carries its own `user_id` and is
+  // deleted explicitly, though it would also cascade from the session.
+  const [meetingRow] = await db
+    .insert(schema.meetingSessions)
+    .values({ userId: USER, title: "Weekly sync" })
+    .returning();
+  await db.insert(schema.meetingTranscriptSegments).values({
+    sessionId: meetingRow.id,
+    userId: USER,
+    seq: 0,
+    startMs: 0,
+    endMs: 60_000,
+    text: "what everyone on the call said, verbatim",
+    engine: "whisper",
+  });
+
   // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
   // thing under test, and an unseeded table proves nothing about it.
   await db.insert(schema.contactBriefs).values({
@@ -247,6 +263,15 @@ async function seed() {
   await db.insert(schema.calendarSubscriptions).values({
     userId: USER,
     icsUrl: "https://example.test/feed.ics",
+  });
+
+  // A scan handoff in flight when the account is deleted: a live grant, and a transcript
+  // of the user's notes sitting behind it.
+  await db.insert(schema.captureHandoffs).values({
+    userId: USER,
+    tokenHash: "0".repeat(64),
+    expiresAt: new Date(Date.now() + 600_000),
+    transcript: "Ada Lovelace — Analytical Engines",
   });
 
   await db.insert(schema.aiSuggestions).values({

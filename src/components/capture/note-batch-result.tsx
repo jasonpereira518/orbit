@@ -9,6 +9,7 @@ import { dismissNoteReminder, undoNoteBatch } from "@/actions/note-batches";
 import type { NoteBatchResult } from "@/lib/note-batches";
 import type { ReminderActionKind } from "@/db/schema";
 import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
+import { MeetingSummaryCard } from "@/components/capture/meeting-summary-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -118,9 +119,16 @@ export function NoteBatchResultView({
         )}
       </div>
 
+      {result.meeting && (
+        <MeetingSummaryCard meeting={result.meeting} sessionId={result.meeting.sessionId} />
+      )}
+
       <Card className="border-border/70 shadow-none">
         <CardHeader><CardTitle as="h2">People you spoke to</CardTitle></CardHeader>
         <CardContent>
+          {result.participants.length === 0 && (
+            <p className="text-sm text-muted-foreground">No one was saved as a contact from this batch.</p>
+          )}
           <ul className="space-y-2">
             {result.participants.map((p) => (
               <li key={p.contactId} className="flex items-center justify-between gap-2 text-sm">
@@ -246,7 +254,9 @@ export function NoteBatchResultView({
       )}
 
       <div className="flex gap-2">
-        <Link href="/capture"><Button variant="outline" size="sm">Paste more notes</Button></Link>
+        <Link href={result.meeting ? "/capture?mode=meeting" : "/capture"}>
+          <Button variant="outline" size="sm">{result.meeting ? "Record another meeting" : "Paste more notes"}</Button>
+        </Link>
         <Link href="/reminders"><Button variant="ghost" size="sm">Open reminders</Button></Link>
       </div>
     </div>

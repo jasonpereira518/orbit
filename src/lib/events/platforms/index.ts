@@ -45,10 +45,19 @@ function isEventbrite(hostname: string): boolean {
  */
 const LUMA_EVENT_ID = /\bevt-[A-Za-z0-9]{4,}\b/;
 
-/** Not an event page: Luma's own marketing, discovery and account routes. */
-const LUMA_NON_EVENT = /^\/(?:discover|pricing|about|terms|privacy|signin|sign-in|create|home|user|u|calendar|cal)(?:\/|$)/i;
+/**
+ * Not an event page: Luma's own marketing, discovery, account and mail-footer routes.
+ *
+ * The mail-footer ones matter most. A Luma confirmation email is signed, from a platform
+ * sender, and full of lu.ma links — and `lu.ma/unsubscribe` is a single-segment path, exactly
+ * the shape of an event slug. Without it here, the one link in the footer every such email
+ * carries became an event on the user's page.
+ */
+const LUMA_NON_EVENT =
+  /^\/(?:discover|explore|pricing|about|terms|privacy|legal|help|faq|signin|sign-in|login|logout|signup|sign-up|verify|create|home|user|u|calendar|cal|settings|account|notifications|emails?|unsubscribe|manage|dashboard|api|ics|search|map|ios|android|download|blog|careers|contact)(?:\/|$)/i;
 
-const PARTIFUL_NON_EVENT = /^\/(?:about|terms|privacy|login|signup|create|me|u)(?:\/|$)/i;
+const PARTIFUL_NON_EVENT =
+  /^\/(?:about|terms|privacy|legal|help|faq|login|logout|signup|create|me|u|settings|account|notifications|unsubscribe|emails?|download|blog|careers)(?:\/|$)/i;
 
 export function platformOf(input: string | URL): PlatformMatch | null {
   let url: URL;

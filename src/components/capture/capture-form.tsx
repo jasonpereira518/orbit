@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { SPRING_PILL } from "@/lib/motion";
@@ -8,6 +8,9 @@ import { toast } from "@/lib/toast";
 import { logInteraction, searchContactsForPicker } from "@/actions/contacts";
 import { scheduleContactFollowUp } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
+import { MeetingCapturePanel } from "@/components/capture/meeting-capture-panel";
+import type { ResumableMeeting } from "@/lib/meeting-sessions";
+import { isMeetingCaptureSupported } from "@/lib/use-meeting-recorder";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -18,7 +21,23 @@ import { SELECTABLE_INTERACTION_TYPES } from "@/lib/interaction-types";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-export type CaptureMode = "voice" | "messy" | "structured";
+export type CaptureMode = "voice" | "messy" | "structured" | "meeting";
+
+/**
+ * Whether this browser can record a call. Only knowable on the client, so the server
+ * snapshot is `false` and the tab appears after hydration rather than flashing in and out.
+ */
+function useMeetingCaptureSupported(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const mq = window.matchMedia("(min-width: 768px) and (pointer: fine)");
+      mq.addEventListener("change", onChange);
+      return () => mq.removeEventListener("change", onChange);
+    },
+    isMeetingCaptureSupported,
+    () => false
+  );
+}
 
 type ContactOption = {
   id: string;
@@ -38,15 +57,27 @@ export function CaptureForm({
   initialContactName = null,
   defaultMode = "messy",
   hasApiKey = true,
+  canTranscribe = false,
+  resumableMeeting = null,
 }: {
   initialContactId?: string | null;
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
+  /** An OpenAI, Gemini or Wispr key exists — what meeting capture transcribes with. */
+  canTranscribe?: boolean;
+  /** An unfinished recorded meeting, offered for resuming on the Meeting tab. */
+  resumableMeeting?: ResumableMeeting | null;
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<CaptureMode>(defaultMode);
   const [pending, start] = useTransition();
+  const meetingSupported = useMeetingCaptureSupported();
+  // A meeting on the server can be summarized from any browser; only recording needs
+  // desktop Chromium. So the tab shows for either reason.
+  const showMeetingTab = meetingSupported || Boolean(resumableMeeting) || mode === "meeting";
+  // Switching tabs unmounts the recorder — mid-call, that would stop the recording.
+  const [meetingBusy, setMeetingBusy] = useState(false);
 
   const [contactOptions, setContactOptions] = useState<ContactOption[]>(() =>
     initialContactId
@@ -109,18 +140,30 @@ export function CaptureForm({
         >
           <ModeTab
             active={mode === "voice"}
+            disabled={meetingBusy}
             onClick={() => setMode("voice")}
           >
             Voice
           </ModeTab>
+          {showMeetingTab && (
+            <ModeTab
+              active={mode === "meeting"}
+              disabled={meetingBusy}
+              onClick={() => setMode("meeting")}
+            >
+              Meeting
+            </ModeTab>
+          )}
           <ModeTab
             active={mode === "messy"}
+            disabled={meetingBusy}
             onClick={() => setMode("messy")}
           >
             Messy Notes
           </ModeTab>
           <ModeTab
             active={mode === "structured"}
+            disabled={meetingBusy}
             onClick={() => setMode("structured")}
           >
             Structured Logging
@@ -129,6 +172,8 @@ export function CaptureForm({
         <p className="text-sm text-muted-foreground">
           {mode === "voice" &&
             "Just finished a conversation? Say who you met and what you agreed — Orbit transcribes it, pulls out the people, and turns \"ping her in two weeks\" into a reminder."}
+          {mode === "meeting" &&
+            "On a Zoom or Google Meet call? Keep this tab open and Orbit listens along — then summarizes the call and pulls out the people, next steps, blockers and open questions."}
           {mode === "messy" &&
             "Paste notes about one person or many — AI extracts each profile, keeps shared event context, and you review before saving."}
           {mode === "structured" &&
@@ -148,6 +193,16 @@ export function CaptureForm({
           onSaved={(res) => {
             router.push(`/capture/${res.batchId}`);
           }}
+        />
+      )}
+
+      {mode === "meeting" && (
+        <MeetingCapturePanel
+          resumable={resumableMeeting}
+          hasApiKey={hasApiKey}
+          canTranscribe={canTranscribe}
+          captureSupported={meetingSupported}
+          onBusyChange={setMeetingBusy}
         />
       )}
 
@@ -294,10 +349,12 @@ export function CaptureForm({
 function ModeTab({
   active,
   onClick,
+  disabled = false,
   children,
 }: {
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -305,10 +362,12 @@ function ModeTab({
       type="button"
       role="tab"
       aria-selected={active}
+      disabled={disabled && !active}
       onClick={onClick}
       className={cn(
         "relative flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:px-4",
-        active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+        active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+        "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted-foreground"
       )}
     >
       {active && (

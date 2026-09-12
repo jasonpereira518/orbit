@@ -160,12 +160,19 @@ export type GmailScanDeps = {
   listPage: typeof listGmailMessagePage;
   headers: typeof fetchGmailHeaders;
   links: typeof fetchGmailMessageLinks;
+  /**
+   * Where candidates are written. Injectable so the pure-tier test can see exactly which
+   * candidates a mailbox produced WITHOUT a database — a test that reaches the real recorder
+   * writes to whatever `DATABASE_URL` points at when it is run outside the harness.
+   */
+  record?: typeof recordDiscoveryCandidates;
 };
 
 const DEFAULT_DEPS: GmailScanDeps = {
   listPage: listGmailMessagePage,
   headers: fetchGmailHeaders,
   links: fetchGmailMessageLinks,
+  record: recordDiscoveryCandidates,
 };
 
 export type GmailScanResult = {
@@ -285,7 +292,8 @@ export async function scanGmailForEvents(
   }
 
   if (candidates.length > 0) {
-    result.stats = await recordDiscoveryCandidates(userId, candidates);
+    const record = deps.record ?? recordDiscoveryCandidates;
+    result.stats = await record(userId, candidates);
   }
   return result;
 }

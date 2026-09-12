@@ -104,6 +104,14 @@ function main() {
     check("a meetup group page is not an event", platformOf("https://www.meetup.com/sf-python/") === null);
     check("an unrelated host is not a platform", platformOf("https://example.com/e/party") === null);
     check("a lookalike domain is refused", platformOf("https://notlu.ma/abc") === null);
+    // Every Luma and Partiful email carries these in its footer, signed and from a platform
+    // sender, and each is a single-segment path — exactly the shape of an event slug. This
+    // one made an event out of an unsubscribe link until the merge with main ran the Gmail
+    // scan against a fresh database.
+    check("luma's unsubscribe link is not an event", platformOf("https://lu.ma/unsubscribe") === null);
+    check("nor its settings page", platformOf("https://luma.com/settings/emails") === null);
+    check("nor partiful's", platformOf("https://partiful.com/unsubscribe") === null);
+    check("a real luma slug still is", platformOf("https://lu.ma/sf-founders-brunch")?.platform === "luma");
     check("junk is refused", platformOf("not a url") === null);
   }
 
