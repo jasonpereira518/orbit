@@ -229,6 +229,12 @@ export function BulkNotesPanel({
   /** When a restored draft was last saved, for the banner; null when nothing was restored. */
   const [restoredAt, setRestoredAt] = useState<number | null>(null);
   /**
+   * Whether that save was under a minute ago, decided once when the draft loads rather
+   * than compared against `Date.now()` at render time — reading the clock during render
+   * is impure and would tear under concurrent rendering.
+   */
+  const [restoredJustNow, setRestoredJustNow] = useState(false);
+  /**
    * The draft key whose contents are in state. Autosave waits for this to match `draftKey`,
    * or the empty first render would overwrite — and so delete — the draft about to load.
    */
@@ -326,6 +332,7 @@ export function BulkNotesPanel({
       setCaptureSources(draft?.sources ?? []);
       setPhotoIds(draft?.photoIds ?? []);
       setRestoredAt(draft ? draft.savedAt : null);
+      setRestoredJustNow(draft ? Date.now() - draft.savedAt < 60_000 : false);
       setLoadedDraftKey(draftKey);
       if (handed) focusNotesAtEnd();
     });
@@ -382,6 +389,7 @@ export function BulkNotesPanel({
     latestDraftRef.current = null;
     resetToPaste();
     setRestoredAt(null);
+    setRestoredJustNow(false);
   }
 
   const accepted = items.filter((i) => i.decision === "accepted");
@@ -933,7 +941,7 @@ export function BulkNotesPanel({
                 <History className="size-4 shrink-0" aria-hidden />
                 <span>
                   Unsaved notes restored — last edited{" "}
-                  {Date.now() - restoredAt < 60_000
+                  {restoredJustNow
                     ? "just now"
                     : formatDistanceToNow(new Date(restoredAt), { addSuffix: true })}
                 </span>
