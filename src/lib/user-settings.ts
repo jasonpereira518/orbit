@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { and, count, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "@/db";
+import { queuePlanUpgradeTransition } from "@/lib/plan-upgrade-events";
 import { userSettings } from "@/db/schema";
 
 /**
@@ -216,11 +217,11 @@ export type SubscriptionMirror = {
 export async function setSubscriptionState(
   userId: string,
   mirror: SubscriptionMirror,
-  opts: { stripeCustomerId?: string | null } = {}
+  opts: { stripeCustomerId?: string | null; eventKey?: string } = {}
 ) {
-  await ensureUserSettings(userId);
+  const existing = await ensureUserSettings(userId);
   const db = await getDb();
-  await db
+  const [updated] = await db
     .update(userSettings)
     .set({
       subscriptionPlan: mirror.plan,
@@ -237,7 +238,24 @@ export async function setSubscriptionState(
         : {}),
       updatedAt: new Date(),
     })
-    .where(eq(userSettings.userId, userId));
+    .where(eq(userSettings.userId, userId))
+    .returning();
+
+  // Queues the one-shot upgrade celebration when the RESOLVED plan moves upward. Server
+  // side on purpose: the client watcher dedupes on a localStorage key, which replays the
+  // celebration on a second device and loses it when storage is cleared.
+  if (updated) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: updated,
+      eventKey:
+        opts.eventKey ??
+        `subscription:${userId}:${mirror.status ?? "none"}:${mirror.periodEnd ?? "none"}`,
+    });
+  }
+
+  return updated;
 }
 
 /**
@@ -261,20 +279,36 @@ export async function findUserIdByStripeCustomerId(customerId: string) {
  */
 export async function setLifetimePurchase(
   userId: string,
-  opts: { purchasedAt?: Date; stripeCustomerId?: string | null } = {}
+  opts: {
+    purchasedAt?: Date;
+    stripeCustomerId?: string | null;
+    eventKey?: string;
+  } = {}
 ) {
   const existing = await ensureUserSettings(userId);
   if (existing?.lifetimePurchasedAt) return;
 
   const db = await getDb();
-  await db
+  const [updated] = await db
     .update(userSettings)
     .set({
       lifetimePurchasedAt: opts.purchasedAt ?? new Date(),
       stripeCustomerId: opts.stripeCustomerId ?? existing?.stripeCustomerId ?? null,
       updatedAt: new Date(),
     })
-    .where(eq(userSettings.userId, userId));
+    .where(eq(userSettings.userId, userId))
+    .returning();
+
+  if (updated) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: updated,
+      eventKey: opts.eventKey ?? `lifetime:${userId}`,
+    });
+  }
+
+  return updated;
 }
 
 /** How many one-time Lifetime purchases have been made. Reported in /admin. */

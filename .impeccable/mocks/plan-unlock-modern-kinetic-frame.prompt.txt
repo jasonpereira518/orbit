@@ -1,0 +1,12 @@
+Use case: ui-mockup
+Asset type: revised high-fidelity desktop web app full-screen subscription unlock overlay composition study
+Primary request: Create modern composition option B, “Kinetic Frame,” for Orbit Lifetime’s main unlock reveal. Rewarding and bold, but less astral, less ornamental, and more contemporary than a gold fantasy reward screen.
+Input image: Orbit logo is a geometry reference only. Abstract it into one clean oversized orbit stroke and a few flat circular nodes; do not reproduce decorative stars or constellation scenery.
+Surface structure: no app chrome; full-screen saturated gold-yellow; a huge cropped circular orbit stroke enters from the left and fills roughly 45% of the viewport; three flat circular nodes travel along it; on the right, strict left-aligned UI typography: small uppercase “PLAN UNLOCKED”, enormous bold sans-serif “ORBIT LIFETIME”, then “UNLOCKED”; directly below, a concise source line “Orbit Lifetime is yours. No renewal.”; three benefit labels in a compact row; a high-contrast rounded “ENTER ORBIT” button below; a quiet “SKIP” control top right.
+Style/medium: premium contemporary product-launch motion graphics, Swiss-inspired grid, modern fintech or operating-system onboarding, crisp vector forms, flat color with subtle tonal layering, no luxury ornament.
+Composition/framing: desktop landscape 16:10 at 1440×900, asymmetric editorial UI composition, strong left-to-right motion, large type, disciplined alignment, real web safe areas.
+Color palette: gold/yellow only—deep ochre #7A4600, amber #C77A00, Orbit gold #F2C14E, pale cream-gold #FFF3C4. Dark text may be warm brown #2A1800. No blue, purple, black field, or multicolor.
+Typography: bold modern geometric sans-serif throughout; no serif, no beveled lettering, no metallic type.
+Text verbatim: “PLAN UNLOCKED”; “ORBIT LIFETIME”; “UNLOCKED”; “Orbit Lifetime is yours. No renewal.”; “Unlimited contacts”; “Sync + recruiter tools”; “Permanent access”; “ENTER ORBIT”; “SKIP”.
+Constraints: entire screen visibly yellow/gold; one oversized orbit form, not a galaxy; no starfield, stars, sparkles, lens flare, solar seal, engraved rings, metallic texture, coins, confetti, glass cards, game HUD, characters, trophies, pricing, fake metrics, watermark.
+Avoid: casino luxury, ornate gold, fantasy, sci-fi, ceremonial medallion, centered poster layout, serif display type, excessive glow.

@@ -33,8 +33,10 @@ import {
   noteBatches,
   outboundWebhookDeliveries,
   outlookConnections,
+  operationalEvents,
   outreachCampaigns,
   recruiterMessages,
+  planUpgradeEvents,
   reminderLists,
   reminders,
   suggestedReminders,
@@ -277,6 +279,23 @@ export async function purgeUserData(
     .update(billingEvents)
     .set({ userId: null })
     .where(eq(billingEvents.userId, userId));
+
+  // The account's own one-shot celebration queue. Nothing outside this user reads it and
+  // it carries no operational value, so it goes rather than being anonymised.
+  await db
+    .delete(planUpgradeEvents)
+    .where(eq(planUpgradeEvents.userId, userId));
+
+  // `operational_events` is the reliability record behind /admin/logs and the error-rate
+  // summaries. Deleting a departed account's rows would punch holes in that history —
+  // last month's failure rate would change retroactively, which is the same problem
+  // `billing_events` above has. Nulling `user_id` severs the link to the person and
+  // leaves the operational picture intact, and satisfies smoke-purge's
+  // `WHERE user_id = ...` count honestly rather than by exemption.
+  await db
+    .update(operationalEvents)
+    .set({ userId: null })
+    .where(eq(operationalEvents.userId, userId));
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 

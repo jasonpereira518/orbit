@@ -601,6 +601,58 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS plan_upgrade_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  plan text NOT NULL,
+  source text NOT NULL,
+  event_key text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS operational_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  severity text NOT NULL,
+  source text NOT NULL,
+  event_type text NOT NULL,
+  message text NOT NULL,
+  success integer,
+  user_id text,
+  resource_type text,
+  resource_id text,
+  correlation_id text,
+  duration_ms integer,
+  dedupe_key text UNIQUE,
+  metadata jsonb DEFAULT '{}',
+  occurred_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS admin_issues (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  fingerprint text NOT NULL UNIQUE,
+  source text NOT NULL,
+  severity text NOT NULL,
+  state text NOT NULL DEFAULT 'open',
+  title text NOT NULL,
+  message text NOT NULL,
+  target_user_id text,
+  resource_type text,
+  resource_id text,
+  occurrence_count integer NOT NULL DEFAULT 1,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now(),
+  acknowledged_at timestamptz,
+  acknowledged_by text,
+  snoozed_until timestamptz,
+  resolved_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS admin_provider_snapshots (
+  provider text PRIMARY KEY,
+  status text NOT NULL,
+  summary jsonb DEFAULT '{}',
+  error_kind text,
+  checked_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_audit_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_user_id text NOT NULL,
@@ -1155,6 +1207,11 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
  * v43 = capture_handoffs with #146's v40 column merged in. Never reached main.
  * v45 = capture_handoffs with #163's v42 tables merged in. Builds of this branch pushed at 43
  * lack those tables, so 43 cannot carry them. 44 is claimed by admin-console-page-metrics.
+ * v46 = the admin operations hub (#153) merged onto main's v45: plan_upgrade_events,
+ * operational_events, admin_issues, admin_provider_snapshots and their ten indexes.
+ * Merging another branch's DDL is itself a DDL change, so it takes a new number rather
+ * than riding on 45 — a database an earlier build of this branch already stamped at 45
+ * would otherwise skip all four tables entirely.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1165,7 +1222,7 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
 // mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
 // collision means one branch's DDL never runs. The changelog above says which numbers are
 // taken and why 44 is skipped.
-export const SCHEMA_VERSION = 45;
+export const SCHEMA_VERSION = 46;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1940,6 +1997,16 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
   `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
   `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+  `CREATE INDEX IF NOT EXISTS plan_upgrade_events_claim_idx ON plan_upgrade_events(user_id, claimed_at, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS plan_upgrade_events_pending_uidx ON plan_upgrade_events(user_id, plan) WHERE claimed_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS operational_events_occurred_idx ON operational_events(occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS operational_events_source_idx ON operational_events(source, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS operational_events_severity_idx ON operational_events(severity, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS operational_events_user_idx ON operational_events(user_id, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS operational_events_type_idx ON operational_events(event_type, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_issues_state_idx ON admin_issues(state, severity, last_seen_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_issues_target_idx ON admin_issues(target_user_id, last_seen_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_provider_snapshots_expires_idx ON admin_provider_snapshots(expires_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
   `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
   `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,

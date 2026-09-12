@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-30T00:00:00.000Z",
+  "title": "Design System: Orbit",
+  "extensions": {
+    "colorMeta": {
+      "orbit-teal": { "role": "primary", "displayName": "Orbit Teal", "canonical": "#0f3d3e", "tonalRamp": ["#071e1f", "#0b2f30", "#0f3d3e", "#26605d", "#4f847b", "#82aaa0", "#bfd1cb", "#eef4f1"] },
+      "orbit-blue": { "role": "primary", "displayName": "Orbit Blue", "canonical": "#599de7", "tonalRamp": ["#0b2038", "#153c66", "#265c98", "#3e7bc2", "#599de7", "#85b8ef", "#b8d6f6", "#eef6fd"] },
+      "orbit-gold": { "role": "secondary", "displayName": "Orbit Gold", "canonical": "#f2c14e", "tonalRamp": ["#2f2103", "#5b4109", "#876414", "#b88c27", "#f2c14e", "#f6d27a", "#fae4aa", "#fff8df"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Fraunces Display", "purpose": "Singular page and milestone statements." },
+      "body": { "displayName": "Outfit Body", "purpose": "Product controls, copy, and data." }
+    },
+    "shadows": [
+      { "name": "ambient-card", "value": "0 8px 24px -12px rgba(26,28,26,0.22)", "purpose": "Interactive card lift only." },
+      { "name": "liquid-glass", "value": "0 8px 32px -8px rgba(26,28,26,0.18)", "purpose": "Persistent floating navigation surfaces." }
+    ],
+    "motion": [
+      { "name": "fast", "value": "120ms", "purpose": "Hover, press, tooltip, and exit feedback." },
+      { "name": "base", "value": "180ms", "purpose": "Small overlays and toggles." },
+      { "name": "slow", "value": "320ms", "purpose": "Page and section continuity." },
+      { "name": "celestial", "value": "700ms", "purpose": "Authored constellation and milestone set pieces." },
+      { "name": "house-ease", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Confident authored arrivals." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Compact, confident primary action with a quiet tactile press.",
+      "html": "<button class=\"ds-button-primary\">Continue</button>",
+      "css": ".ds-button-primary { border: 0; border-radius: .625rem; background: var(--primary, #0f3d3e); color: var(--primary-foreground, #e8f3f1); padding: .5rem .75rem; font: 500 .875rem/1.25 Outfit, sans-serif; transition: background-color 120ms, translate 120ms; } .ds-button-primary:hover { filter: brightness(.92); } .ds-button-primary:active { translate: 0 1px; } .ds-button-primary:focus-visible { outline: 3px solid color-mix(in srgb, var(--ring, #0f3d3e) 50%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "A quiet secondary action on the current surface.",
+      "html": "<button class=\"ds-button-outline\">Compare plans</button>",
+      "css": ".ds-button-outline { border: 1px solid var(--border, #e4e7e1); border-radius: .625rem; background: var(--background, #fbfbf9); color: var(--foreground, #1a1c1a); padding: .5rem .75rem; font: 500 .875rem/1.25 Outfit, sans-serif; transition: background-color 120ms; } .ds-button-outline:hover { background: var(--muted, #f0f2ee); } .ds-button-outline:focus-visible { outline: 3px solid color-mix(in srgb, var(--ring, #0f3d3e) 50%, transparent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input-default",
+      "description": "Compact transparent field with an explicit focus ring.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search your network\" />",
+      "css": ".ds-input { width: 16rem; height: 2rem; border: 1px solid var(--input, #e4e7e1); border-radius: .625rem; background: transparent; color: var(--foreground, #1a1c1a); padding: .25rem .625rem; font: 400 .875rem/1.5 Outfit, sans-serif; } .ds-input:focus { outline: 3px solid color-mix(in srgb, var(--ring, #0f3d3e) 45%, transparent); border-color: var(--ring, #0f3d3e); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card-default",
+      "description": "Soft, lightly outlined operating surface with no decorative lift.",
+      "html": "<article class=\"ds-card\"><strong>Plan</strong><p>Your network, clearly organized.</p></article>",
+      "css": ".ds-card { width: 18rem; border-radius: .875rem; background: var(--card, #fff); color: var(--card-foreground, #1a1c1a); padding: 1rem; box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground, #1a1c1a) 10%, transparent); font: 400 .875rem/1.5 Outfit, sans-serif; } .ds-card strong { font: 500 1rem/1.3 Fraunces, Georgia, serif; } .ds-card p { color: var(--muted-foreground, #5f6760); margin: .35rem 0 0; }"
+    },
+    {
+      "name": "Active Navigation Pill",
+      "kind": "nav",
+      "refersTo": "nav-active",
+      "description": "A softly raised shared-element state inside liquid-glass navigation.",
+      "html": "<a class=\"ds-nav-active\" href=\"#\"><svg aria-hidden=\"true\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><circle cx=\"12\" cy=\"12\" r=\"8\" stroke=\"currentColor\" stroke-width=\"2\"/><circle cx=\"12\" cy=\"12\" r=\"2\" fill=\"currentColor\"/></svg>Dashboard</a>",
+      "css": ".ds-nav-active { display: inline-flex; align-items: center; gap: .625rem; border-radius: .75rem; background: rgba(255,255,255,.7); color: var(--sidebar-accent-foreground, #0f3d3e); padding: .5rem .75rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); font: 400 .875rem/1.25 Outfit, sans-serif; text-decoration: none; } .ds-nav-active:focus-visible { outline: 3px solid color-mix(in srgb, var(--ring, #0f3d3e) 50%, transparent); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Living Constellation",
+    "overview": "Orbit pairs a calm, practical relationship workspace with moments of genuine celestial scale. Everyday app surfaces stay light, legible, and restrained; meaningful milestones may open into deep space, saturated plan colors, and authored motion.",
+    "keyCharacteristics": ["Quiet operating surfaces with selective atmospheric depth.", "Fraunces for framing and Outfit for operation.", "Teal, blue, and gold carry distinct semantic roles.", "Snappy routine feedback and slower celestial motion for earned moments."],
+    "rules": [
+      { "name": "The Earned Color Rule", "body": "Blue and gold may drench a surface only when the state itself is the subject.", "section": "colors" },
+      { "name": "The Two-Voice Rule", "body": "Fraunces names and frames; Outfit explains and operates.", "section": "typography" },
+      { "name": "The Flat-Until-Meaningful Rule", "body": "Elevation appears for interaction, persistent floating navigation, or celestial depth.", "section": "elevation" }
+    ],
+    "dos": ["Do reserve celestial spectacle for landing, constellation, onboarding, and genuinely earned milestones.", "Do keep routine transitions within the fast/base motion tier and use the house easing curve for authored arrivals.", "Do preserve strong written hierarchy and reduced-motion behavior whenever color and motion become expressive."],
+    "donts": ["Don't scatter blue and gold together as generic decoration; each has a plan and hierarchy role.", "Don't replace the product's connected-star language with generic confetti, trophies, or arcade badges.", "Don't stack blur, glow, gradients, and shadows unless each layer communicates depth or state."]
+  }
+}

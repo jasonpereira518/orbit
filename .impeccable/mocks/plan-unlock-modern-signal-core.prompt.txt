@@ -1,0 +1,12 @@
+Use case: ui-mockup
+Asset type: revised high-fidelity desktop web app full-screen subscription unlock overlay composition study
+Primary request: Create modern composition option A, “Signal Core,” for Orbit Pro’s main unlock reveal. It must feel rewarding and high-impact, but distinctly less astral, less ornate, and more contemporary than a fantasy or space-game reward screen.
+Input image: Orbit logo is a reference for brand geometry only. Reduce it to a clean flat circular mark with one simplified connected path; remove decorative stars, sparkles, galaxy imagery, and literal constellations.
+Surface structure: no app chrome; saturated full-screen blue; one large flat tonal circle centered in the upper half with a crisp simplified Orbit path inside; two or three wide horizontal motion bands pass behind it and terminate at viewport edges; below it, a compact uppercase label “PLAN UNLOCKED”; huge bold geometric sans-serif “ORBIT PRO”; smaller bold “UNLOCKED”; three benefit labels in one disciplined baseline row; a solid modern pill button “ENTER ORBIT” centered at bottom; a quiet “SKIP” control at top right.
+Style/medium: premium modern product-launch motion graphics, clean operating-system onboarding, crisp vector UI, bold typography, simple flat shapes, subtle depth through scale and tonal contrast only.
+Composition/framing: desktop landscape 16:10 at 1440×900, centered but not poster-like, strict grid, generous safe margins, obvious real-web-interface hierarchy.
+Color palette: blue only—#082B70, #165DCE, Orbit blue #599DE7, pale blue #DCEBFF. White may be used for text. No black field, no gold, no purple.
+Typography: bold contemporary geometric sans-serif for every line; no serif, no beveled lettering, no metallic type.
+Text verbatim: “PLAN UNLOCKED”; “ORBIT PRO”; “UNLOCKED”; “Unlimited contacts”; “Hosted outreach”; “Sync everywhere”; “ENTER ORBIT”; “SKIP”.
+Constraints: modern, minimal, rewarding; entire screen blue; no starfield, no starbursts, no sparkles, no lens flare, no glowing solar seal, no ornate rings, no engraving, no galaxy, no confetti, no game HUD, no cards, no glass panels, no characters, no trophies, no pricing, no watermark.
+Avoid: poster art, fantasy, sci-fi cockpit, casino luxury, celestial wallpaper, serif display type, excessive glow.

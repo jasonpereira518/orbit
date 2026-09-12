@@ -1,0 +1,13 @@
+Use case: ui-mockup
+Asset type: high-fidelity desktop web app full-screen subscription unlock overlay composition study
+Primary request: Create composition option 3, “Constellation Crown,” for Orbit’s full-screen Orbit Pro plan unlock reveal at the exact main impact moment around 3.2 seconds.
+Input image: reference image is Orbit’s existing logo and its connected-star path; use that relationship as the structural backbone but render it as luminous blue vector geometry.
+Surface structure, in order: no navigation and no underlying app; a full-bleed saturated blue viewport; the upper two-thirds contain one oversized connected constellation stretched almost edge-to-edge like a crown, with seven bright nodes and clean linking paths, the center node enlarged into the Orbit orbital seal; the lower third is a calm typographic landing zone with a very small tracked “PLAN UNLOCKED”, then one huge single-line “ORBIT PRO”, then a smaller strong “UNLOCKED”; three benefits appear as compact words separated by star points; “ENTER ORBIT” is a discreet pill at bottom right while “SKIP” sits as a tiny accessible text control at top right. The hierarchy must read as a designed responsive web interface, not a poster.
+Style/medium: polished product UI mockup, semantic-layout realism, precise vector constellation, controlled glow and depth, recognizably Orbit, premium rewarding scale inspired by a battle-pass unlock ceremony without any copied game assets.
+Composition/framing: desktop landscape 16:10 at 1440×900, panoramic composition, enormous constellation geometry above, disciplined baseline-aligned type below, strong use of negative space.
+Lighting/mood: electric blue energy travels through the connecting lines toward the central seal; a single soft impact bloom, otherwise clean and controlled.
+Color palette: blue only—ink blue #061F54, cobalt #124EAB, Orbit blue #599DE7, icy blue #D7EAFF. No gold, orange, purple, neutral black, multicolor confetti, or white screen.
+Typography: elegant high-contrast display serif character for “ORBIT PRO”, clean rounded sans-serif for every other label.
+Text (verbatim): “PLAN UNLOCKED”; “ORBIT PRO”; “UNLOCKED”; “Unlimited contacts”; “Hosted outreach”; “Sync everywhere”; “ENTER ORBIT”; “SKIP”.
+Constraints: the entire screen must remain visibly blue-tinted; the constellation must be a functional hero layout rather than background decoration; no cards, no panels, no dashboard chrome, no characters, no weapons, no trophies, no coins, no confetti, no product screenshots, no pricing, no fake metrics, no watermark. This must look like a real full-screen web state, not wall art.
+Avoid: generic game HUD, neon cyberpunk, centered medallion poster, glass cards, dense particles, tiny constellation, illegible text.
