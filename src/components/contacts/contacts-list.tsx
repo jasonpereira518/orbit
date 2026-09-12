@@ -713,14 +713,14 @@ function AlphabetScrubber({
   useEffect(() => {
     const root = document.documentElement;
     /**
-     * The rail occupies 2.75rem of the right edge — `right-2` (0.5rem) plus its own
-     * `w-9` (2.25rem). The content column already carries 1rem of base padding, so the
-     * gutter only has to make up the difference plus a little air: 1 + 2.25 = 3.25rem
+     * The rail occupies 1.875rem of the right edge — `right-1.5` (0.375rem) plus its own
+     * `w-6` (1.5rem). The content column already carries 1rem of base padding, so the
+     * gutter only has to make up the difference plus a little air: 1 + 1.375 = 2.375rem
      * total, which stops the content 0.5rem clear of the rail. Publishing the full
-     * 3.25rem here instead would double-count the padding and squeeze the header hard
+     * 2.375rem here instead would double-count the padding and squeeze the header hard
      * enough to change how its buttons wrap.
      */
-    root.style.setProperty("--content-rail-gutter", "2.25rem");
+    root.style.setProperty("--content-rail-gutter", "1.375rem");
     return () => {
       root.style.removeProperty("--content-rail-gutter");
     };
@@ -768,7 +768,7 @@ function AlphabetScrubber({
   return createPortal(
     <div
       className={cn(
-        "pointer-events-none fixed top-1/2 right-2 z-40 -translate-y-1/2 sm:right-4",
+        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 sm:right-3",
         // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
         // viewport it rose into the header and covered the notification bell, and its
         // 27 letters had about 6pt each between the header and the nav. The gutter it
@@ -782,7 +782,7 @@ function AlphabetScrubber({
         role="navigation"
         aria-label="Jump to letter"
         className={cn(
-          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-9 cursor-ns-resize select-none flex-col items-center justify-between rounded-2xl border border-border/70 bg-card/95 py-2.5 shadow-md backdrop-blur",
+          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-6 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
           "touch-none ring-1 ring-foreground/5"
         )}
         onPointerDown={onPointerDown}

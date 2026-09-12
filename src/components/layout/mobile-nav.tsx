@@ -262,7 +262,7 @@ export function MobileNav({
          * scrim is also what keeps the portalled starfield from showing through the nav. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-background via-background/45 to-transparent dark:from-black/55 dark:via-black/20"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-background/80 via-background/30 to-transparent dark:from-black/45 dark:via-black/15"
         />
 
         <div className="relative w-full max-w-lg">
@@ -310,7 +310,7 @@ export function MobileNav({
                         setMoreOpen(true);
                       }}
                       className={cn(
-                        "flex w-full items-center justify-center py-0.5 text-[10px] font-medium transition-colors",
+                        "flex w-full items-center justify-center py-0.5 text-[9.5px] font-medium transition-colors",
                         displayActive
                           ? "text-primary dark:text-white"
                           : "text-muted-foreground hover:text-foreground dark:text-white/75"
@@ -333,7 +333,7 @@ export function MobileNav({
                                 : undefined,
                           }}
                         >
-                          <Icon className="h-5 w-5" aria-hidden />
+                          <Icon className="size-[18px]" aria-hidden />
                           <span>{item.label}</span>
                         </span>
                       </span>
@@ -355,16 +355,16 @@ export function MobileNav({
                       // cannot do; the Messy Notes tab is still one tap away on arrival.
                       href={`${navItem.href}?mode=voice`}
                       draggable={false}
-                      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1 text-[10px] font-medium text-primary"
+                      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1 text-[9.5px] font-medium text-primary"
                     >
-                      <span className="h-5 w-5" aria-hidden />
+                      <span className="size-[18px]" aria-hidden />
                       <motion.span
                         aria-hidden
                         className="absolute -top-5 left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
                         whileTap={reducedMotion ? undefined : { scale: 0.88 }}
                         transition={reducedMotion ? { duration: 0 } : SPRING_TAP}
                       >
-                        <Icon className="h-5 w-5" aria-hidden />
+                        <Icon className="size-[18px]" aria-hidden />
                       </motion.span>
                       <span>{navItem.label}</span>
                     </Link>
@@ -383,7 +383,7 @@ export function MobileNav({
                     }}
                     draggable={false}
                     className={cn(
-                      "flex w-full items-center justify-center py-0.5 text-[10px] font-medium transition-colors",
+                      "flex w-full items-center justify-center py-0.5 text-[9.5px] font-medium transition-colors",
                       displayActive
                         ? "text-primary dark:text-white"
                         : "text-muted-foreground hover:text-foreground dark:text-white/75"
@@ -407,7 +407,7 @@ export function MobileNav({
                               : undefined,
                         }}
                       >
-                        <Icon className="h-5 w-5" aria-hidden />
+                        <Icon className="size-[18px]" aria-hidden />
                         <span>{navItem.label}</span>
                       </span>
                     </span>
