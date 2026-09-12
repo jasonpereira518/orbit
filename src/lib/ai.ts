@@ -11,6 +11,7 @@ import {
   loadNetworkVocabulary,
   vocabularyToPromptLine,
   vocabularyToWhisperPrompt,
+  WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
 import { z } from "zod";
 import {
@@ -24,6 +25,7 @@ import {
   AI_INCOMPLETE_MESSAGE,
   aiProviderErrorMessage,
   aiProviderLabel,
+  friendlyError,
 } from "@/lib/errors";
 import {
   RECOMMENDATIONS_MARKER,
@@ -218,6 +220,24 @@ export const FAST_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.1-flash-lite",
   openai: "gpt-4o-mini",
   anthropic: "claude-haiku-4-5",
+};
+
+/**
+ * What reads a photograph, regardless of what the user picked for chat.
+ *
+ * Deliberately NOT `FAST_MODELS`. OCR sits at the root of the capture pipeline: every
+ * contact, every dedupe decision and every reminder downstream inherits whatever it got
+ * wrong, and because the photo is processed ephemerally and never stored, a misread name
+ * cannot be recovered later — there is nothing left to re-read. The lite tiers save a
+ * fraction of a cent per page and give up exactly the thing that matters most here, which
+ * is dense handwriting. Speed comes from transcribing pages concurrently
+ * (`capture-ingest.ts`) and from shrinking them before upload (`scan-image.ts`), never
+ * from a weaker pair of eyes.
+ */
+export const VISION_MODELS: Record<AiProvider, string> = {
+  gemini: "gemini-3.5-flash",
+  openai: "gpt-4o",
+  anthropic: "claude-sonnet-4-5",
 };
 
 type ProviderKeySettings = {
@@ -529,6 +549,15 @@ function normalizeJsonResponse(raw: string) {
   return JSON.stringify(parseAiJson(raw));
 }
 
+/** The only image types Anthropic's messages API accepts. */
+export const ANTHROPIC_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+] as const;
+export type AnthropicImageType = (typeof ANTHROPIC_IMAGE_TYPES)[number];
+
 export type MultimodalPart =
   | { type: "text"; text: string }
   | { type: "image"; mimeType: string; base64: string }
@@ -635,16 +664,18 @@ export async function completeMultimodalJson(
   input: MultimodalInput,
 ): Promise<string> {
   const cfg = await getAiConfig(userId);
+  // Resolved out here, not inside, so usage telemetry records the model that actually ran.
+  const model = input.speed === "vision" ? VISION_MODELS[cfg.provider] : cfg.model;
   return withUsage(
     {
       userId,
       operation: input.operation ?? "completeMultimodalJson",
       provider: cfg.provider,
-      model: cfg.model,
+      model,
       kind: "multimodal",
       keyOwner: cfg.keyOwner,
     },
-    (report) => completeMultimodalJsonInner(cfg, input, report),
+    (report) => completeMultimodalJsonInner({ ...cfg, model }, input, report),
   );
 }
 
@@ -655,6 +686,8 @@ type MultimodalInput = {
   maxOutputTokens?: number;
   /** Call-site label for usage telemetry. */
   operation?: string;
+  /** "vision" routes to VISION_MODELS[provider] instead of the user's configured model. */
+  speed?: "vision";
 };
 
 /** Body split out so `completeMultimodalJson` stays a thin instrumented wrapper. */
@@ -752,13 +785,18 @@ async function completeMultimodalJsonInner(
     }
     for (const p of mediaParts) {
       if (p.type === "image") {
-        const mediaType = (
-          ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(
-            p.mimeType,
-          )
-            ? p.mimeType
-            : "image/jpeg"
-        ) as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+        // Anthropic reads these four and nothing else. This used to fall back to
+        // "image/jpeg" for anything unrecognised, which meant a HEIC from an iPhone was
+        // sent with a label saying it was a JPEG — so instead of "unsupported format" the
+        // caller got a decode error about bytes the API had been told to trust. Scanning
+        // re-encodes to JPEG before upload (`scan-image.ts`), so by the time anything
+        // reaches here the claim is true; refuse rather than lie if it ever is not.
+        if (!ANTHROPIC_IMAGE_TYPES.includes(p.mimeType as AnthropicImageType)) {
+          throw new Error(
+            `Anthropic cannot read ${p.mimeType}. Supported image types: ${ANTHROPIC_IMAGE_TYPES.join(", ")}.`,
+          );
+        }
+        const mediaType = p.mimeType as AnthropicImageType;
         content.push({
           type: "image",
           source: {
@@ -804,6 +842,24 @@ export type TranscriptionEngine = "wispr" | "whisper" | "gemini";
 
 export type TranscriptionResult = { text: string; engine: TranscriptionEngine };
 
+export type TranscribeOptions = {
+  /**
+   * What came just before this audio — the previous meeting chunk's transcript. Only its
+   * tail is used, as continuation context for Whisper and Gemini; Wispr has no field for it.
+   */
+  contextText?: string | null;
+  /** Return `{ text: "" }` for silence instead of throwing "Empty transcription". */
+  allowEmpty?: boolean;
+  /** `usage_events.operation`. Defaults to `capture.transcribe.audio`. */
+  operation?: string;
+};
+
+/** How much of `contextText` to carry over. About two sentences. */
+const TRANSCRIBE_CONTEXT_CHARS = 200;
+
+/** Deadline for one transcription call — longer than a completion's, see the Whisper call. */
+const TRANSCRIBE_TIMEOUT_MS = 90_000;
+
 /**
  * Speech to text: Wispr, then OpenAI Whisper, then Gemini audio understanding.
  *
@@ -823,8 +879,19 @@ export type TranscriptionResult = { text: string; engine: TranscriptionEngine };
 export async function transcribeAudioWithAI(
   userId: string,
   input: { mimeType: string; base64: string; filename?: string },
+  opts: TranscribeOptions = {},
 ): Promise<TranscriptionResult> {
   const settings = await loadSettings(userId);
+  const operation = opts.operation ?? "capture.transcribe.audio";
+  // Only the tail matters: it is there so a word cut at a chunk boundary is decoded as the
+  // continuation of the sentence it belongs to, not as the start of a new one.
+  const context = opts.contextText?.trim().slice(-TRANSCRIBE_CONTEXT_CHARS) || "";
+  const empty = (engine: TranscriptionEngine): TranscriptionResult => {
+    // A silent stretch of a meeting is a normal chunk, not a failure — and throwing on it
+    // would have the recorder's retry loop resend the same silence forever.
+    if (opts.allowEmpty) return { text: "", engine };
+    throw new Error("Empty transcription");
+  };
 
   // One read, shared by every branch below. Never throws and returns [] on failure — a
   // transcript with misspelled names beats no transcript.
@@ -835,7 +902,7 @@ export async function transcribeAudioWithAI(
     const text = await withUsage(
       {
         userId,
-        operation: "capture.transcribe.audio",
+        operation,
         provider: "wispr",
         model: "flow",
         kind: "transcription",
@@ -872,26 +939,38 @@ export async function transcribeAudioWithAI(
     return withUsage(
       {
         userId,
-        operation: "capture.transcribe.audio",
+        operation,
         provider: "openai",
         model: "whisper-1",
         kind: "transcription",
         keyOwner: usingEnvKey("openai", settings) ? "orbit" : "user",
       },
       async () => {
-        const prompt = vocabularyToWhisperPrompt(vocabulary);
-        const result = await client.audio.transcriptions.create({
-          file,
-          model: "whisper-1",
-          // Whisper's decoding prior. Omitted rather than sent empty: a blank prompt is
-          // not the same request as no prompt.
-          ...(prompt ? { prompt } : {}),
-        });
+        // Whisper reads its prompt as the transcript that came before, so the previous
+        // chunk's tail goes LAST — the end of the prompt is what it conditions on most — and
+        // the names share what is left of the budget.
+        const names = vocabularyToWhisperPrompt(
+          vocabulary,
+          context ? WHISPER_PROMPT_MAX_CHARS - context.length - 1 : WHISPER_PROMPT_MAX_CHARS,
+        );
+        const prompt = [names, context].filter(Boolean).join(" ");
+        const result = await client.audio.transcriptions.create(
+          {
+            file,
+            model: "whisper-1",
+            // Whisper's decoding prior. Omitted rather than sent empty: a blank prompt is
+            // not the same request as no prompt.
+            ...(prompt ? { prompt } : {}),
+          },
+          // Longer than a completion's deadline: a six-minute voice note is a legitimate
+          // upload, and it has to be transcribed, not just answered.
+          { signal: aiSignal(TRANSCRIBE_TIMEOUT_MS) },
+        );
         // Whisper bills per second of audio and returns no usage object, so this row
         // stores null tokens and counts as volume only. A fabricated zero would be a lie
         // that got summed.
         const text = result.text?.trim();
-        if (!text) throw new Error("Empty transcription");
+        if (!text) return empty("whisper");
         return { text, engine: "whisper" as const };
       },
     );
@@ -904,7 +983,7 @@ export async function transcribeAudioWithAI(
     return withUsage(
       {
         userId,
-        operation: "capture.transcribe.audio",
+        operation,
         provider: "gemini",
         model,
         kind: "transcription",
@@ -921,6 +1000,9 @@ export async function transcribeAudioWithAI(
                   text: [
                     'Transcribe this audio verbatim. Return JSON: {"text": string}. If unintelligible, use an empty string.',
                     vocabularyToPromptLine(vocabulary),
+                    context
+                      ? `This audio continues a recording whose previous part ended: "${context}". Transcribe only this audio; do not repeat that text.`
+                      : "",
                   ]
                     .filter(Boolean)
                     .join(" "),
@@ -942,10 +1024,10 @@ export async function transcribeAudioWithAI(
         });
         report(tokensFromGemini(response));
         const raw = response.text;
-        if (!raw) throw new Error("Empty transcription");
+        if (!raw) return empty("gemini");
         const parsed = parseAiJson<{ text?: string }>(raw);
         const text = parsed.text?.trim();
-        if (!text) throw new Error("Empty transcription");
+        if (!text) return empty("gemini");
         return { text, engine: "gemini" as const };
       },
     );
@@ -964,38 +1046,124 @@ function guessAudioFilename(mimeType: string) {
   return "audio.webm";
 }
 
-/** OCR / note transcription from one or more images. */
-export async function transcribeImagesWithAI(
+export type PageTranscription = {
+  /** 1-based, matching what the person sees in the filmstrip. */
+  pageNumber: number;
+  text: string;
+  ok: boolean;
+  /** Why this page failed, when it did. Lets the caller report a cause, not a guess. */
+  error?: string;
+};
+
+/**
+ * Transcribe ONE page.
+ *
+ * One call per page, rather than all eight in a single request, is the whole reason this
+ * takes an index. The batched version had three problems that only showed up on real
+ * input: eight dense pages share one 8192-token ceiling, so the last pages came back
+ * truncated and `repairTruncatedJson` then quietly patched the broken JSON into
+ * plausible-looking text; a single unreadable photo failed the entire capture; and eight
+ * images in one request is eight images' worth of latency under one 45s timeout. Per page
+ * each gets the full budget, its own timeout, and its own failure.
+ */
+async function transcribeNotePage(
   userId: string,
-  images: Array<{ mimeType: string; base64: string }>,
+  image: { mimeType: string; base64: string },
+  pageNumber: number,
+  totalPages: number,
 ): Promise<string> {
-  if (!images.length) return "";
   const content = await completeMultimodalJson(userId, {
-    operation: "capture.transcribe.images",
+    operation: "capture.transcribe.page",
     temperature: 0.1,
     maxOutputTokens: 8192,
+    // OCR quality is load-bearing for everything downstream — see VISION_MODELS.
+    speed: "vision",
     system: `You transcribe networking / meeting notes from photos (handwritten, whiteboard, typed screenshots, business cards).
 Return strict JSON: { "text": string }
 Rules:
 - Preserve person names, companies, roles, emails, URLs, and action items exactly when readable.
-- Keep a sensible reading order (top-to-bottom, left-to-right, page by page).
+- Keep a sensible reading order (top-to-bottom, left-to-right).
 - Separate distinct blocks with blank lines.
 - Do not invent unreadable content; skip illegible fragments.
-- If multiple images, concatenate in order with a blank line between pages.`,
+- Transcribe only what is on this page. Do not add commentary or headings of your own.`,
     parts: [
       {
         type: "text",
-        text: `Transcribe ${images.length} note image(s) into plain text for contact capture.`,
+        text:
+          totalPages > 1
+            ? `Transcribe page ${pageNumber} of ${totalPages} into plain text for contact capture.`
+            : `Transcribe this note image into plain text for contact capture.`,
       },
-      ...images.map((img): MultimodalPart => ({
+      {
         type: "image",
-        mimeType: img.mimeType,
-        base64: img.base64,
-      })),
+        mimeType: image.mimeType,
+        base64: image.base64,
+      } satisfies MultimodalPart,
     ],
   });
   const parsed = parseAiJson<{ text?: string }>(content);
   return (parsed.text || "").trim();
+}
+
+/**
+ * How many pages we transcribe at once.
+ *
+ * Three is a compromise against the provider rate limits a BYOK key is likeliest to have:
+ * it collapses an 8-page scan from eight round trips to three, while staying far enough
+ * under per-minute request caps that a burst does not turn into a 429 storm that fails
+ * more pages than the serial version would have.
+ */
+const TRANSCRIBE_CONCURRENCY = 3;
+
+/**
+ * OCR a set of note images, page by page, tolerating individual failures.
+ *
+ * Never throws for a page-level problem: a page that fails comes back with `ok: false` and
+ * empty text, and the caller decides how to present the gap. A scan where seven of eight
+ * pages read fine is worth far more than an error.
+ */
+export async function transcribeImagePages(
+  userId: string,
+  images: Array<{ mimeType: string; base64: string }>,
+): Promise<PageTranscription[]> {
+  const total = images.length;
+  if (!total) return [];
+
+  const results: PageTranscription[] = new Array(total);
+  let next = 0;
+
+  async function worker() {
+    for (;;) {
+      const i = next++;
+      if (i >= total) return;
+      const pageNumber = i + 1;
+      try {
+        const text = await transcribeNotePage(userId, images[i]!, pageNumber, total);
+        results[i] = { pageNumber, text, ok: true };
+      } catch (err) {
+        // One bad photo must not cost the person the other seven — but the REASON is kept
+        // and handed back, because "couldn’t read it" is a lie when the real answer is
+        // "there is no API key" or "the provider is rate-limiting you". Told to retake the
+        // photo, a person will retake it forever.
+        //
+        // `friendlyError`, never `err.message`: it passes through only what is worth
+        // naming — a missing key, a provider-failure template, a timeout, offline — and
+        // never a raw provider body. The empty fallback means "nothing more specific to
+        // say", and the caller supplies the "couldn’t read it" copy itself.
+        results[i] = {
+          pageNumber,
+          text: "",
+          ok: false,
+          error: friendlyError(err, "") || undefined,
+        };
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(TRANSCRIBE_CONCURRENCY, total) }, worker),
+  );
+  return results;
 }
 
 const PERSON_FIELD_SHAPE = `{

@@ -38,6 +38,8 @@ export type ContactListRow = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar: boolean;
   relationshipScore: number;
   /** 0–1, matching what the UI renders. Stored as a 0–100 integer so it can be indexed. */
   closeness: number;
