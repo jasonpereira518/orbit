@@ -92,6 +92,25 @@ export const RATE_LIMITS = {
    * it being used as a high-volume scanner wearing Orbit's network position.
    */
   eventEnrich: { limit: 10, windowSec: 300 },
+  /**
+   * Background reads of one HOST's event pages, across every user (`enrich-queue.ts`).
+   *
+   * Scoped to the host rather than the user because the thing being protected is different:
+   * `eventEnrich` above stops one user scanning the internet through us, while this stops
+   * Orbit as a whole from hammering lu.ma the morning after a big conference, when a
+   * thousand users' calendars all sprout the same kind of link at once. No single user is
+   * doing anything wrong in that scenario, which is exactly why a per-user bucket cannot see
+   * it.
+   */
+  eventHostFetch: { limit: 60, windowSec: 600 },
+  /**
+   * The optional "why should I talk to them" line (`explainAttendee`).
+   *
+   * One model call each, against the user's OWN key, so the limit is about protecting them
+   * from a stuck loop rather than protecting us from them — generous enough to explain every
+   * name on a normal roster, tight enough that a retry storm cannot run up their bill.
+   */
+  eventWhy: { limit: 30, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

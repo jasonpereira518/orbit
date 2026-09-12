@@ -937,10 +937,47 @@ CREATE TABLE IF NOT EXISTS events (
   theme_locked integer NOT NULL DEFAULT 0,
   attendee_count integer,
   notes text,
+  discovered_via text,
+  rsvp_status text,
+  role_source text,
+  dismissed_at timestamptz,
+  enrich_due_at timestamptz,
+  enrich_attempts integer NOT NULL DEFAULT 0,
   enriched_at timestamptz,
   enrich_error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  role text NOT NULL,
+  source text NOT NULL,
+  evidence text,
+  dismissed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS target_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  priority integer NOT NULL DEFAULT 2,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_aliases (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  value text NOT NULL,
+  event_id uuid REFERENCES events(id) ON DELETE SET NULL,
+  source text NOT NULL,
+  evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS event_attendees (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -956,6 +993,9 @@ CREATE TABLE IF NOT EXISTS event_attendees (
   attendee_role text,
   source text NOT NULL DEFAULT 'paste',
   external_ref text,
+  ai_note jsonb,
+  person_key_kind text,
+  person_key_value text,
   spoke_to integer NOT NULL DEFAULT 0,
   contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
   converted_at timestamptz,
@@ -1192,7 +1232,49 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
 // collision means one branch's DDL never runs. The changelog above says which numbers are
 // taken and why 44 is skipped.
-export const SCHEMA_VERSION = 47;
+// 34 and 35 are this branch's, above main's 33 (duplicate prevention, #148). 33 was
+// skipped here deliberately while it was still claimed by unmerged branches — a repeated
+// version is the one real failure mode this counter has, since the alters are all
+// `IF NOT EXISTS` and concatenate harmlessly on merge but a collision means one branch's
+// DDL never runs. That skip is why this merge resolved to a number rather than a clash.
+//
+// Two bumps on this branch because the guard requires one per DDL change: 34 added
+// `chat_messages.attached_contacts`, 35 the last-interaction index the composer's pickers
+// order on.
+//
+// 39 is the events revision (PR #152): organizer_name, organizer_url, attendance_mode on
+// events. Built as 33, moved to 34 when #148 took 33, and moved again here because while it
+// waited 34-36 landed on main and 37 and 38 were claimed by open branches. Every step was
+// the same rule — a shared number means one branch's DDL silently never runs.
+//
+// 40 = event discovery: discovered_via, rsvp_status, role_source, dismissed_at,
+// enrich_due_at and enrich_attempts on events, plus the event_aliases table and its unique
+// index. If another branch lands 40 first, renumber to the next free value and regenerate
+// scripts/schema-ddl.lock.json rather than reusing it.
+//
+// 41 = cross-event identity: person_key_kind/person_key_value on event_attendees and the
+// index the "people you keep seeing" aggregate groups on.
+//
+// 42 = companies at events: the event_companies and target_companies tables, events.kind,
+// user_settings.schools, and the generated company_key on event_attendees (in SCALE_DDL,
+// with the indexes, because a generated column must exist before an index can read it).
+//
+// 43 = the repair for a v40 mistake: the `event_aliases` entry in `alters` had three
+// CREATE TABLEs spliced into one string, which PGlite and Neon both reject as "multiple
+// commands" — so on any database that already existed, `event_aliases` was never created and
+// discovery would have failed on its first write. A version bump is the only thing that
+// re-runs the sweep on an instance already stamped 40, 41 or 42.
+//
+// 46 = everything above (the event-platform work, built as 40-43) renumbered past main's
+// 40-45 and the 44 that admin-console-page-metrics has claimed. Those four numbers carried
+// different DDL on main — contact photo cooldown, capture handoffs, meeting capture — so
+// reusing any of them would have left this branch's tables unapplied on every database main
+// had already stamped. None of 40-43 as built here ever reached a deployed database.
+//
+// 48 = the same event-platform DDL again, with main's v47 (page_views) merged in. 46 cannot
+// carry it twice over: the traffic-analytics branch's previews stamped 46, and so did this
+// PR's own preview (#168) — with the event tables but without page_views. 47 is main's.
+export const SCHEMA_VERSION = 48;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1205,6 +1287,20 @@ export const SCHEMA_VERSION = 47;
  */
 export const SCALE_DDL: string[] = [
   // --- Generated columns -----------------------------------------------------------
+  //
+  // An attendee's employer, normalised. MUST stay byte-identical to `normalizeCompanyKey`
+  // in `src/lib/company-name.ts`: the company panel groups a roster by this column and then
+  // compares the result against keys computed in JavaScript, so a disagreement does not
+  // throw — it silently splits "Stripe" and "Stripe, Inc." into two companies on one page.
+  //
+  // Generated rather than written, because it derives from a column five different
+  // acquisition paths write, and one of them would eventually forget.
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS company_key text
+     GENERATED ALWAYS AS (
+       nullif(trim(regexp_replace(regexp_replace(lower(company), '[^a-z0-9\\s]', ' ', 'g'), '\\s+', ' ', 'g')), '')
+     ) STORED`,
+  `CREATE INDEX IF NOT EXISTS event_attendees_company_key_idx
+     ON event_attendees(user_id, company_key) WHERE company_key IS NOT NULL`,
   //
   // Last-name sort key. This is the keyset-pagination ordering column, and it must agree
   // exactly with what the UI would have computed — `lastNameSortKey` in
@@ -1628,6 +1724,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "ai_provider", "text DEFAULT 'gemini'");
   await ensureColumn(client, "user_settings", "openai_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "anthropic_api_key_encrypted", "text");
+  // v48 (event platform). Both also appear in `alters` above; `smoke-schema-ddl` requires them in BOTH places,
+  // because a local database created before either existed only ever sees this list.
+  await ensureColumn(client, "user_settings", "schools", "jsonb DEFAULT '[]'::jsonb");
+  await ensureColumn(client, "events", "kind", "text");
   await ensureColumn(client, "contacts", "preferred_name", "text");
   await ensureColumn(client, "contacts", "website", "text");
   await ensureColumn(client, "interactions", "external_id", "text");
@@ -2115,6 +2215,34 @@ const alters = [
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name text`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_url text`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS attendance_mode text`,
+  // v48 (event platform), discovery. `discovered_via` is separate from `source` because enrichment
+  // overwrites `source` with 'page' the moment it reads the event's own link — so `source`
+  // cannot answer "where did this event come from", which is exactly what the card's badge
+  // and the re-add rules need.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS discovered_via text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS rsvp_status text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS role_source text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS dismissed_at timestamptz`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_due_at timestamptz`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_attempts integer NOT NULL DEFAULT 0`,
+  // v48 (event platform), cross-event identity. `identity_key` cannot answer "same person at another event":
+  // it keys on the string it was given, so two spellings of one LinkedIn URL are two keys.
+  // Changing it would break the unique index every stored roster row depends on.
+  // v48 (event platform), companies at events. `kind` is what makes a career fair rank recruiters above
+  // founders — the same person is a different opportunity at a different kind of event.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS kind text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS schools jsonb DEFAULT '[]'::jsonb`,
+  // One line each, deliberately: PGlite runs every entry in this array through the extended
+  // query protocol, which rejects a statement it reads as more than one command — and a
+  // multi-line CREATE TABLE here trips that, while the identical text in the template above
+  // is fine because that path splits on ';' first.
+  `CREATE TABLE IF NOT EXISTS event_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, role text NOT NULL, source text NOT NULL, evidence text, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE TABLE IF NOT EXISTS target_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, priority integer NOT NULL DEFAULT 2, note text, created_at timestamptz NOT NULL DEFAULT now())`,
+  // v48 (event platform) as well: the cached one-line "why" and opener, keyed by a hash of what produced it.
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS ai_note jsonb`,
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_kind text`,
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_value text`,
+  `CREATE TABLE IF NOT EXISTS event_aliases (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, kind text NOT NULL, value text NOT NULL, event_id uuid REFERENCES events(id) ON DELETE SET NULL, source text NOT NULL, evidence jsonb NOT NULL DEFAULT '{}'::jsonb, first_seen_at timestamptz NOT NULL DEFAULT now(), last_seen_at timestamptz NOT NULL DEFAULT now())`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
@@ -2361,6 +2489,25 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq)`,
   `CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id)`,
+  // Schema v48 (event platform): discovery.
+  //
+  // `event_aliases_user_kind_value_uidx` is the whole dedup story. Three sources can report
+  // the same event within one pass — a calendar invite, a Luma feed entry and a confirmation
+  // email — and each knows a different key for it. One unique index gives them a single
+  // winner even when they race, and a row whose `event_id` is NULL is a tombstone that says
+  // "this one was dismissed or deleted", which is what stops the next sync re-adding it.
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_aliases_user_kind_value_uidx ON event_aliases(user_id, kind, value)`,
+  `CREATE INDEX IF NOT EXISTS event_aliases_event_idx ON event_aliases(event_id) WHERE event_id IS NOT NULL`,
+  // The enrichment queue's claim: a partial index, because the overwhelming majority of
+  // events are not waiting to be read.
+  `CREATE INDEX IF NOT EXISTS events_enrich_due_idx ON events(enrich_due_at) WHERE enrich_due_at IS NOT NULL`,
+  // Schema v48 (event platform): "who do I keep running into". The aggregate groups a user's whole roster
+  // history by this, so it is the one index standing between that panel and a full scan.
+  `CREATE INDEX IF NOT EXISTS event_attendees_person_idx ON event_attendees(user_id, person_key_kind, person_key_value) WHERE person_key_value IS NOT NULL`,
+  // Schema v48 (event platform): companies at events.
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_companies_event_company_role_uidx ON event_companies(event_id, company_id, role)`,
+  `CREATE INDEX IF NOT EXISTS event_companies_user_company_idx ON event_companies(user_id, company_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS target_companies_user_company_uidx ON target_companies(user_id, company_id)`,
 ];
 
 /**

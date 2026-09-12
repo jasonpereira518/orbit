@@ -22,6 +22,8 @@ import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import { constellationEligibility } from "@/lib/constellation-eligibility";
 import { requireUserId } from "@/lib/auth";
+import { getEventsWithContact } from "@/actions/events";
+import { ContactEventsTogether } from "@/components/contacts/contact-events-together";
 import { listOpenActionItems } from "@/lib/action-items";
 import {
   generateAndStoreContactBrief,
@@ -372,6 +374,11 @@ export default async function ContactDetailPage({
       <Suspense fallback={null}>
         <StreamedRelated people={relatedPromise} subjectName={displayName} />
       </Suspense>
+
+      {/* Where you know them from. Same rule: absent rather than empty. */}
+      <Suspense fallback={null}>
+        <StreamedEventsTogether contactId={contact.id} name={displayName} />
+      </Suspense>
     </div>
   );
 }
@@ -469,6 +476,29 @@ async function StreamedMentions({
   return (
     <div className="reveal-mount">
       <ContactMentionsSection mentionedIn={mentionedIn} mentions={mentions} />
+    </div>
+  );
+}
+
+/**
+ * Events this contact shares with the user.
+ *
+ * Read here rather than with the contact itself so a slow aggregate cannot hold up the page,
+ * and failed rather than thrown: a missing section is a missing section, while a thrown error
+ * would take the whole contact page with it.
+ */
+async function StreamedEventsTogether({
+  contactId,
+  name,
+}: {
+  contactId: string;
+  name: string;
+}) {
+  const events = await getEventsWithContact(contactId).catch(() => []);
+  if (events.length === 0) return null;
+  return (
+    <div className="reveal-mount">
+      <ContactEventsTogether events={events} name={name} />
     </div>
   );
 }

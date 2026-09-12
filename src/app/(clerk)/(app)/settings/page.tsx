@@ -5,6 +5,8 @@ import { AiSettings } from "@/components/settings/ai-settings";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
+import { TargetCompaniesSettings } from "@/components/settings/target-companies-settings";
+import { getSchools, getTargetCompanies } from "@/actions/target-companies";
 import { HelpSettings } from "@/components/settings/help-settings";
 import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { ApiSettings } from "@/components/settings/api-settings";
@@ -47,14 +49,23 @@ function Section({
 }
 
 export default async function SettingsPage() {
-  const [initialSettings, initialGoals, profile, planOverview, visibility] =
-    await Promise.all([
-      getSettings(),
-      listGoals(),
-      getCurrentUserProfile(),
-      getPlanOverview(),
-      requireUserId().then(resolveSurfaceVisibility),
-    ]);
+  const [
+    initialSettings,
+    initialGoals,
+    profile,
+    planOverview,
+    visibility,
+    targetCompanies,
+    schools,
+  ] = await Promise.all([
+    getSettings(),
+    listGoals(),
+    getCurrentUserProfile(),
+    getPlanOverview(),
+    requireUserId().then(resolveSurfaceVisibility),
+    getTargetCompanies(),
+    getSchools(),
+  ]);
 
   const { hidden } = visibility;
   // The rail is built from the same filter the sections below use, in the same order, so
@@ -88,6 +99,12 @@ export default async function SettingsPage() {
       </Section>
       <Section id="settings-goals" hidden={hidden}>
         <GoalsSettings initialGoals={initialGoals} />
+      </Section>
+      <Section id="settings-targets" hidden={hidden}>
+        <TargetCompaniesSettings
+          initialCompanies={targetCompanies}
+          initialSchools={schools}
+        />
       </Section>
       <Section id="settings-appearance" hidden={hidden}>
         <AppearanceSettings initialTheme={initialSettings.theme} />

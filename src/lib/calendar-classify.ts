@@ -1,4 +1,5 @@
 import type { ParsedCalendarEvent } from "@/lib/calendar-import";
+import { isEventPlatformInvite } from "@/lib/events/discovery/from-calendar";
 
 const NETWORKING_TITLE =
   /\b(1\s*[:/.-]?\s*1|one[-\s]?on[-\s]?one|coffee|catch[-\s]?up|catchup|intro(duction)?|networking|coffee chat|get to know|office hours|informational|mentor|meet(?:ing)?\s+with|chat\s+with|lunch\s+with|dinner\s+with|sync\s+with|call\s+with|walk\s+with|zoom\s+with|hang\s+with)\b/i;
@@ -129,6 +130,23 @@ export function classifyCalendarEvent(
   const count = counterparts.length;
   const minutes = durationMinutes(event);
   const titleName = nameFromNetworkingTitle(title);
+
+  // An event-platform invite is not a meeting, and reading it as one was actively wrong.
+  //
+  // A Luma or Partiful invite carries the platform's mailer as its organiser, so
+  // `counterpartsOf` produced exactly one "counterpart" and this function classified a
+  // 200-person party as a 1:1 — which then created a contact named "invites" or "calendar",
+  // logged a meeting that never happened, and scheduled a follow-up nudge to a mailbox.
+  //
+  // These now go to `src/lib/events/discovery/`, where an event is an event.
+  if (isEventPlatformInvite(event)) {
+    return {
+      keep: false,
+      reason: "Event-platform invite — tracked in Events, not as a meeting",
+      kind: "skip",
+      counterpartCount: count,
+    };
+  }
 
   if (EXCLUDE_TITLE.test(title)) {
     return {

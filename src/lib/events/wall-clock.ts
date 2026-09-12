@@ -26,15 +26,66 @@
  * the same — a shift of zero. The time shown is then the host's literal text, which is the
  * only honest reading available, and the UI says the zone was not stated.
  *
- * Pure: no network, no database, no DOM.
+ * ## Two kinds of `timezone`, and why the second one had to be taught
+ *
+ * A scraped page publishes an OFFSET (`-08:00`), because that is what an ISO timestamp carries.
+ * Every provider API publishes an IANA ZONE NAME (`America/New_York`) instead, and so does an
+ * ICS `TZID`. Until this function understood the second kind it returned null for all of them,
+ * which is a silent shift of zero — so every Luma and Eventbrite event displayed and edited in
+ * UTC while looking perfectly consistent about it.
+ *
+ * A zone name is not a fixed offset: `America/New_York` is -05:00 in January and -04:00 in
+ * July. So the resolution takes the INSTANT it is being asked about. Callers that have one
+ * pass it; the fallback is now, which is only ever used for a label.
+ *
+ * Pure: no network, no database, no DOM. `Intl` is ambient in both Node and the browser.
  */
 
-/** A published UTC offset (`-08:00`, `+0530`, `Z`) as minutes east of UTC. */
-export function offsetMinutes(timezone: string | null | undefined): number | null {
+/**
+ * An IANA zone name (`America/New_York`, `UTC`) as minutes east of UTC at `at`.
+ *
+ * Deliberately narrow about what counts as a zone name: `Region/City`, or UTC/GMT. Node's
+ * `Intl` also accepts `PST` and even `-08:00` as zone ids, which would make this function
+ * silently disagree with the offset parser above about the same string and would accept
+ * abbreviations that are genuinely ambiguous worldwide. Everything real — provider APIs, ICS
+ * TZIDs — uses `Region/City`.
+ */
+function zoneNameOffsetMinutes(timezone: string, at: Date): number | null {
+  if (!/^(?:[A-Za-z][A-Za-z0-9_+-]*\/[A-Za-z0-9_+\-/]+|UTC|GMT)$/i.test(timezone)) return null;
+  try {
+    const name = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      timeZoneName: "longOffset",
+    })
+      .formatToParts(at)
+      .find((part) => part.type === "timeZoneName")?.value;
+    if (!name) return null;
+    // `GMT` bare means zero; otherwise `GMT-04:00`.
+    if (/^GMT$/i.test(name)) return 0;
+    const hit = /^GMT([+-])(\d{2}):?(\d{2})$/i.exec(name);
+    if (!hit) return null;
+    return (hit[1] === "-" ? -1 : 1) * (Number(hit[2]) * 60 + Number(hit[3]));
+  } catch {
+    // An unknown zone id throws RangeError. That is "no offset", not a crash in the hero.
+    return null;
+  }
+}
+
+/**
+ * A published UTC offset (`-08:00`, `+0530`, `Z`) or IANA zone name (`America/New_York`) as
+ * minutes east of UTC, resolved at `at` because a zone name's offset depends on the date.
+ */
+export function offsetMinutes(
+  timezone: string | null | undefined,
+  at?: Date | null
+): number | null {
   if (!timezone) return null;
   if (/^z$/i.test(timezone)) return 0;
   const hit = /^([+-])(\d{2}):?(\d{2})$/.exec(timezone);
-  if (!hit) return null;
+  if (!hit) {
+    const when = at && !Number.isNaN(at.getTime()) ? at : new Date();
+    return zoneNameOffsetMinutes(timezone.trim(), when);
+  }
   const minutes = Number(hit[2]) * 60 + Number(hit[3]);
   // A malformed offset is no offset. `+99:99` should not silently move an event four days.
   if (minutes > 14 * 60) return null;
@@ -54,7 +105,7 @@ export function toWallClockInput(
   timezone: string | null | undefined
 ): string {
   if (!instant || Number.isNaN(instant.getTime())) return "";
-  const shifted = new Date(instant.getTime() + (offsetMinutes(timezone) ?? 0) * 60_000);
+  const shifted = new Date(instant.getTime() + (offsetMinutes(timezone, instant) ?? 0) * 60_000);
   // Read back in UTC, because the shift above put the venue's wall clock into UTC's fields.
   return (
     `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}` +
@@ -67,6 +118,15 @@ export function toWallClockInput(
  *
  * Parsed by hand rather than with `new Date(value)` precisely because that constructor is the
  * bug — it would apply the browser's zone to a string that has none.
+ *
+ * ## Why the offset is resolved twice
+ *
+ * A zone name's offset depends on the instant, and the instant is what we are solving for. The
+ * first pass reads the wall clock as if it were UTC, which lands within a day of the answer —
+ * close enough to pick the right side of a DST boundary for every wall clock except one within
+ * the shift itself. The second pass re-resolves at that estimate and uses it. Iterating further
+ * buys nothing: the only inputs that still move are the ones inside the skipped hour, which do
+ * not exist on the venue's clock at all.
  */
 export function fromWallClockInput(
   value: string,
@@ -77,13 +137,17 @@ export function fromWallClockInput(
   const [, y, mo, d, h, mi] = hit.map(Number) as unknown as number[];
   const asUtc = Date.UTC(y!, mo! - 1, d!, h!, mi!);
   if (Number.isNaN(asUtc)) return null;
-  const instant = new Date(asUtc - (offsetMinutes(timezone) ?? 0) * 60_000);
+  const estimate = new Date(asUtc - (offsetMinutes(timezone, new Date(asUtc)) ?? 0) * 60_000);
+  const instant = new Date(asUtc - (offsetMinutes(timezone, estimate) ?? 0) * 60_000);
   return Number.isNaN(instant.getTime()) ? null : instant;
 }
 
 /** How the event's zone should be described to the user, or null when it was never stated. */
-export function zoneLabel(timezone: string | null | undefined): string | null {
-  const minutes = offsetMinutes(timezone);
+export function zoneLabel(
+  timezone: string | null | undefined,
+  at?: Date | null
+): string | null {
+  const minutes = offsetMinutes(timezone, at);
   if (minutes === null) return null;
   if (minutes === 0) return "UTC";
   const sign = minutes < 0 ? "-" : "+";

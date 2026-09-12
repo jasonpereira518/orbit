@@ -10,6 +10,7 @@ export const SETTINGS_SECTIONS = [
   { id: "settings-profile", label: "Profile" },
   { id: "settings-plan", label: "Pricing Plan" },
   { id: "settings-goals", label: "Goals" },
+  { id: "settings-targets", label: "Targets" },
   { id: "settings-appearance", label: "Appearance" },
   { id: "settings-ai", label: "AI provider" },
   { id: "settings-notifications", label: "Notifications" },
