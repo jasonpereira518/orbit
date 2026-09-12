@@ -8,6 +8,7 @@ import { LandingAuthControls } from "@/components/landing/landing-auth-controls"
 import { InterestForm } from "@/components/interest/interest-form";
 import { OrbitRingsBackdrop } from "@/components/interest/orbit-rings-backdrop";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
+import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { BackControl } from "@/components/pricing/back-control";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
@@ -19,8 +20,6 @@ export const metadata: Metadata = {
 
 const HEADING =
   "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
-
-const FOOTER_LINK = "text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]";
 
 const EXPECT = [
   {
@@ -232,36 +231,7 @@ export default function InterestPage() {
         </section>
       </main>
 
-      <footer className="relative z-10 mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 py-12 md:px-10">
-        <Link href="/" className="flex items-center gap-2.5" aria-label="Orbit home">
-          <OrbitLogo size="sm" />
-          <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
-            Orbit
-          </span>
-        </Link>
-        <div className="flex items-center gap-6">
-          <Link href="/pricing" className={FOOTER_LINK}>
-            Pricing
-          </Link>
-          <Link href="/interest" className={FOOTER_LINK}>
-            Interest list
-          </Link>
-          <Link href="/privacy" className={FOOTER_LINK}>
-            Privacy
-          </Link>
-          <Link href="/contact" className={FOOTER_LINK}>
-            Contact
-          </Link>
-        </div>
-        <a
-          href="https://jasonpereira.live/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="landing-credit-shimmer text-sm"
-        >
-          By Jason Pereira
-        </a>
-      </footer>
+      <MarketingFooter className="max-w-6xl px-6 md:px-10" />
     </div>
   );
 }
