@@ -15,6 +15,13 @@ import { useRouter } from "next/navigation";
 import { Star, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import {
@@ -23,12 +30,19 @@ import {
   saveTargetCompany,
 } from "@/actions/target-companies";
 import type { TargetCompanyRow, TargetPriority } from "@/lib/events/target-companies";
+import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
 
 const PRIORITY_LABEL: Record<TargetPriority, string> = {
   1: "Dream",
   2: "Target",
   3: "Curious",
 };
+
+/** `items` so the trigger shows "Dream", not the stored "1". */
+const PRIORITY_ITEMS = ([1, 2, 3] as const).map((p) => ({
+  value: String(p),
+  label: PRIORITY_LABEL[p],
+}));
 
 export function TargetCompaniesSettings({
   initialCompanies,
@@ -90,14 +104,10 @@ export function TargetCompaniesSettings({
   }
 
   return (
-    <section className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Target companies and schools</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Orbit uses these to rank who is worth talking to at an event — and to tell you when
-          somewhere you are aiming at turns up on a guest list.
-        </p>
-      </div>
+    <SettingsSection
+      title="Target companies and schools"
+      description="Orbit uses these to rank who is worth talking to at an event — and to tell you when somewhere you are aiming at turns up on a guest list."
+    >
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -111,16 +121,22 @@ export function TargetCompaniesSettings({
             aria-label="Company name"
             className="max-w-xs"
           />
-          <select
-            value={priority}
-            onChange={(e) => setPriority(Number(e.target.value) as TargetPriority)}
-            aria-label="How much you want it"
-            className="h-9 rounded-md border border-border/70 bg-background px-2 text-sm"
+          <Select
+            value={String(priority)}
+            onValueChange={(v) => setPriority(Number(v ?? 2) as TargetPriority)}
+            items={PRIORITY_ITEMS}
           >
-            <option value={1}>Dream</option>
-            <option value={2}>Target</option>
-            <option value={3}>Curious</option>
-          </select>
+            <SelectTrigger aria-label="How much you want it" className="h-9 w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false} className="p-1">
+              {PRIORITY_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value} className="py-1.5 pl-2">
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button onClick={add} disabled={pending || !name.trim()}>
             <Star className="size-4" aria-hidden />
             Add
@@ -164,12 +180,10 @@ export function TargetCompaniesSettings({
         )}
       </div>
 
-      <div className="space-y-2 border-t border-border/60 pt-4">
-        <p className="text-sm font-medium text-ink">Schools</p>
-        <p className="text-sm text-muted-foreground">
-          A shared alma mater is the easiest opening line there is, so it counts toward who to
-          find at an event.
-        </p>
+      <SettingsRow
+        title="Schools"
+        description="A shared alma mater is the easiest opening line there is, so it counts toward who to find at an event."
+      >
         <div className="flex flex-wrap items-center gap-2">
           <Input
             value={school}
@@ -206,7 +220,7 @@ export function TargetCompaniesSettings({
             ))}
           </ul>
         ) : null}
-      </div>
-    </section>
+      </SettingsRow>
+    </SettingsSection>
   );
 }

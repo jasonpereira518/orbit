@@ -18,7 +18,8 @@ import { IntegrationUnavailable } from "@/components/imports/integration-unavail
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-export function OutlookContactsImport() {
+/** `returnTo`: see `GoogleContactsImport`. */
+export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
   const router = useRouter();
   const job = useImportJob();
   const [pending, start] = useTransition();
@@ -65,7 +66,12 @@ export function OutlookContactsImport() {
       params.delete("outlook");
       params.delete("reason");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
       router.refresh();
       getOutlookConnectionStatus().then(setStatus).catch(() => {});
     } else if (outlook === "error") {
@@ -77,7 +83,16 @@ export function OutlookContactsImport() {
       params.delete("outlook");
       params.delete("reason");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
+      // Re-read the status: a Next router "restore" (which `replaceState` is) drops any
+      // server action still queued — here, the status fetch this card fired a moment ago
+      // on mount — without settling it, which would leave the card rendering nothing.
+      getOutlookConnectionStatus().then(setStatus).catch(() => {});
     }
   }, [router]);
 
@@ -90,7 +105,7 @@ export function OutlookContactsImport() {
       <IntegrationUnavailable
         id="import-outlook-contacts"
         title="Outlook Contacts"
-        blurb="Not connected yet. Export your Outlook contacts as a CSV and upload it on the Contacts file card above — no account connection needed."
+        blurb="Not connected yet. Export your Outlook contacts as a CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
           "MICROSOFT_CLIENT_ID",
           "MICROSOFT_CLIENT_SECRET",
@@ -118,7 +133,7 @@ export function OutlookContactsImport() {
               onClick={() =>
                 start(async () => {
                   try {
-                    const { url } = await startOutlookOAuth("/imports");
+                    const { url } = await startOutlookOAuth(returnTo);
                     window.location.href = url;
                   } catch (err) {
                     toast.error(friendlyError(err, TOAST_COPY.connectFailed));

@@ -209,6 +209,69 @@ export function FormPageSkeleton({ wide = false }: { wide?: boolean }) {
   );
 }
 
+function SettingsCardSkeleton({ rows = 1, tall = false }: { rows?: number; tall?: boolean }) {
+  return (
+    <div className="space-y-4 rounded-2xl border border-border/70 p-6">
+      <div className="space-y-2">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-4 w-72 max-w-full" />
+      </div>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="space-y-2 border-t border-border/60 pt-4">
+          <Skeleton className="h-4 w-28" />
+          <Skeleton className={cn("w-full rounded-lg", tall ? "h-24" : "h-9")} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Matches /settings: the five group labels, and cards shaped like the ones under each —
+ * Account's two, Preferences' merged card and two lists, the Integrations tile grid,
+ * Resources, Data.
+ */
+export function SettingsPageSkeleton() {
+  const label = <Skeleton className="ml-1 h-3 w-24" />;
+  return (
+    <div className="mx-auto max-w-2xl space-y-10">
+      <PageHeaderSkeleton />
+      <div className="space-y-4">
+        {label}
+        <SettingsCardSkeleton rows={1} tall />
+        <SettingsCardSkeleton rows={1} />
+      </div>
+      <div className="space-y-4">
+        {label}
+        <SettingsCardSkeleton rows={2} />
+        <SettingsCardSkeleton rows={1} />
+      </div>
+      <div className="space-y-4">
+        {label}
+        <div className="space-y-4 rounded-2xl border border-border/70 p-6">
+          <div className="space-y-2">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-64 max-w-full" />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 w-full rounded-xl" />
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="space-y-4">
+        {label}
+        <SettingsCardSkeleton rows={2} />
+      </div>
+      <div className="space-y-4">
+        {label}
+        <SettingsCardSkeleton rows={2} />
+      </div>
+    </div>
+  );
+}
+
 /** Matches /capture/[batchId]: the results view, not the capture form it's nested under. */
 export function NoteBatchResultSkeleton() {
   return (

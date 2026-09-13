@@ -98,6 +98,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
+  "smoke-settings-layout": "pure",
   "smoke-sky-figures": "pure",
   "smoke-timeline-vocabulary": "pure",
   "smoke-webhook-signing": "pure",

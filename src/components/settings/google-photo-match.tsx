@@ -5,6 +5,7 @@ import { ImageDown } from "lucide-react";
 import { matchGooglePhotos } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
+import { SettingsRow } from "@/components/settings/settings-section";
 
 /**
  * Fills missing contact photos from Google Contacts.
@@ -18,12 +19,11 @@ export function GooglePhotoMatch() {
   const [summary, setSummary] = useState<string | null>(null);
 
   return (
-    <div className="border-t border-border/60 pt-4">
-      <h3 className="text-sm font-medium text-ink">Photos from Google Contacts</h3>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Matches on email address, so nobody gets someone else&apos;s face.
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-3">
+    <SettingsRow
+      title="Photos from Google Contacts"
+      description="Fills in missing contact photos. Matches on email address, so nobody gets someone else’s face."
+    >
+      <div className="flex flex-wrap items-center gap-3">
         <Button
           variant="outline"
           size="sm"
@@ -65,6 +65,6 @@ export function GooglePhotoMatch() {
           <p className="text-sm text-muted-foreground">{summary}</p>
         )}
       </div>
-    </div>
+    </SettingsRow>
   );
 }
