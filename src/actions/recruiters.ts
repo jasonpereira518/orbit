@@ -34,28 +34,6 @@ function revalidateRecruiterPaths(id?: string) {
   if (id) revalidatePath(`/recruiters/${id}`);
 }
 
-export async function searchRecruiters(q?: string): Promise<PublicRecruiter[]> {
-  const userId = await requireRecruitersUser();
-  const db = await getDb();
-  const sharing = await isViewerSharing(userId);
-  const rows = await searchCanonicalRecruiters({
-    q,
-    limit: 50,
-    viewerUserId: userId,
-    viewerIsSharing: sharing,
-  });
-  const links = await db.query.userRecruiterLinks.findMany({
-    where: eq(userRecruiterLinks.userId, userId),
-  });
-  const byRecruiter = new Map(links.map((l) => [l.recruiterId, l]));
-  const pooled = sharing
-    ? await pooledRecruiterIds(rows.map((r) => r.id))
-    : new Set<string>();
-  return rows.map((r) =>
-    toPublicRecruiter(r, byRecruiter.get(r.id) || null, pooled.has(r.id))
-  );
-}
-
 /** Pool recruiters the user has not logged. Empty unless they are sharing. */
 export async function listDiscoverRecruiters(
   q?: string

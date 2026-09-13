@@ -1,5 +1,3 @@
-"use client";
-
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";

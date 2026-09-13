@@ -22,6 +22,7 @@
  * Pure: no network, no database.
  */
 import type { ParsedCalendarEvent } from "@/lib/calendar-import";
+import { rsvpFromFeedText, rsvpFromParticipation } from "@/lib/events/attendance";
 import { extractEventLinks, platformForEmailDomain, platformOf } from "@/lib/events/platforms";
 import type {
   DiscoveryCandidate,
@@ -70,13 +71,32 @@ export function isEventPlatformInvite(event: ParsedCalendarEvent): boolean {
   return Boolean(organizer && platformForEmailDomain(organizer));
 }
 
-function rsvpFromStatus(status: string | null | undefined): RsvpStatus | null {
-  const value = status?.trim().toUpperCase();
-  if (!value) return null;
-  if (value === "CANCELLED") return "cancelled";
-  if (value === "TENTATIVE") return "maybe";
-  if (value === "CONFIRMED") return "going";
-  return null;
+/**
+ * Where a platform writes the user's state: the title, and the first few lines above the
+ * host's own copy. Never the whole description — a host writing "join the waitlist!" in the
+ * blurb of an event the user DID attend would otherwise take it off their page.
+ */
+function statusTextOf(event: ParsedCalendarEvent): string {
+  const head = (event.description ?? "").split(/\n/).slice(0, 3).join("\n");
+  return `${event.summary ?? ""}\n${head}`;
+}
+
+/**
+ * The user's registration state, from the most specific evidence the entry carries.
+ *
+ * The event's own `STATUS` only settles it when the event is off — `CONFIRMED` describes the
+ * event, not the user, and a confirmed event you are waitlisted for is still confirmed. So the
+ * user's own answer comes next, then whatever the platform wrote where a person would read it,
+ * and `CONFIRMED` is the last resort rather than the first.
+ */
+function rsvpOf(event: ParsedCalendarEvent): RsvpStatus | null {
+  const status = event.status?.trim().toUpperCase() || null;
+  if (status === "CANCELLED") return "cancelled";
+  return (
+    rsvpFromParticipation(event.selfResponse) ??
+    rsvpFromFeedText(statusTextOf(event)) ??
+    (status === "TENTATIVE" ? "maybe" : status === "CONFIRMED" ? "going" : null)
+  );
 }
 
 /**
@@ -136,8 +156,9 @@ export function calendarEventsToCandidates(
       null;
     const match = link ? platformOf(link) : null;
 
-    // A cancelled event is still worth recording — the user may well have met people at the
-    // one that DID happen, and "cancelled" is the honest label for the row either way.
+    // Every entry is reported with its RSVP, including the ones the user is not going to:
+    // `recordDiscoveryCandidates` needs the waitlisted report to update an event it already
+    // holds, and it is the one that declines to CREATE from it (see `attendance.ts`).
     out.push({
       source,
       sourceRef: `${source === "gcal" ? "gcal" : "ics"}:${event.uid}`,
@@ -153,7 +174,7 @@ export function calendarEventsToCandidates(
       // platform's mailer. `attended` is the honest default, and the page or the host API
       // corrects it later.
       roleHint: null,
-      rsvpHint: rsvpFromStatus(event.status),
+      rsvpHint: rsvpOf(event),
       attendees: guestsOf(event, selfEmails),
       evidence: {
         calendarSummary: event.summary?.slice(0, 200) ?? null,

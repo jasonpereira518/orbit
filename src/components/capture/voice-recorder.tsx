@@ -72,6 +72,8 @@ export function VoiceRecorder({
   busy = false,
   busyLabel,
   onCapReached,
+  size = "default",
+  idleHint,
 }: {
   /** A finished WAV, ready to hand to capture's ingest path. */
   onRecording: (recording: VoiceRecording) => void;
@@ -80,6 +82,10 @@ export function VoiceRecorder({
   /** What the parent is doing, shown under the button while `busy`. */
   busyLabel?: string;
   onCapReached?: () => void;
+  /** `hero` is the Voice tab's centrepiece; `default` is the size the old panel used. */
+  size?: "default" | "hero";
+  /** Replaces the idle sentence under the button. */
+  idleHint?: string;
 }) {
   const reduced = usePrefersReducedMotion();
   const recorder = useVoiceRecorder({ onRecording, onCapReached });
@@ -88,7 +94,7 @@ export function VoiceRecorder({
   // An already-granted mic resolves in ~20ms; without the delay that is a spinner flash.
   const showSpinner = useDelayedLoading(state === "requesting", 150);
 
-  const ringScale = useTransform(level, [0, 1], [1.04, 1.45]);
+  const ringScale = useTransform(level, [0, 1], size === "hero" ? [1.04, 1.6] : [1.04, 1.45]);
   const ringOpacity = useTransform(level, [0, 1], [0.12, 0.4]);
 
   const recording = state === "recording";
@@ -138,21 +144,21 @@ export function VoiceRecorder({
             else recorder.start();
           }}
           className={cn(
-            "relative size-24 shrink-0 overflow-visible rounded-full shadow-sm transition-colors",
-            "sm:size-20",
+            "relative shrink-0 overflow-visible rounded-full shadow-sm transition-colors",
+            size === "hero" ? "size-32 sm:size-28" : "size-24 sm:size-20",
             recording &&
               "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
             state === "error" && "border-destructive/50 text-destructive",
           )}
         >
           {showSpinner || state === "encoding" ? (
-            <Loader2 className="size-7 animate-spin" />
+            <Loader2 className={cn("animate-spin", size === "hero" ? "size-9" : "size-7")} />
           ) : recording ? (
             // A square, not a second mic: the control's job changes when it is on, and the
             // glyph should say so without reading the label.
-            <Square className="size-7 fill-current" />
+            <Square className={cn("fill-current", size === "hero" ? "size-9" : "size-7")} />
           ) : (
-            <Mic className="size-8" />
+            <Mic className={size === "hero" ? "size-11" : "size-8"} />
           )}
         </Button>
       </div>
@@ -174,7 +180,7 @@ export function VoiceRecorder({
             : formatElapsed(elapsedMs))}
         {state === "idle" &&
           !busy &&
-          "Talk through who you met and what you agreed — Orbit sorts it out."}
+          (idleHint ?? "Talk through who you met and what you agreed — Orbit sorts it out.")}
         {busy && (busyLabel ?? "Working…")}
       </p>
 

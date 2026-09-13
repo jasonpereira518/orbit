@@ -3,12 +3,18 @@
 import QRCode from "qrcode";
 import { requireUserId } from "@/lib/auth";
 import { friendlyError } from "@/lib/errors";
+import { getCaptureJobRow, toCaptureJobView, type CaptureJobView } from "@/lib/capture-jobs";
 import {
   cancelScanHandoff,
-  claimScanHandoff,
+  finishScanHandoff,
+  handoffJobFor,
+  looksLikeHandoffToken,
   mintScanHandoff,
-  type HandoffClaim,
+  hashHandoffToken,
 } from "@/lib/scan-handoff";
+import { getDb } from "@/db";
+import { captureHandoffs } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 
 /**
  * Desktop-side half of the phone handoff. Every export here is async, because one
@@ -21,6 +27,8 @@ export type MintedScanHandoff = {
   /** Pre-rendered so the QR encoder never reaches the browser bundle. */
   svg: string;
   expiresAtIso: string;
+  /** The capture job the phone's pages land on. */
+  captureJobId: string;
 };
 
 /**
@@ -55,6 +63,7 @@ export async function mintScanHandoffAction() {
         // instead of vanishing into a dark card.
         svg: svg.replace(/#000000/g, "currentColor"),
         expiresAtIso: minted.expiresAt.toISOString(),
+        captureJobId: minted.captureJobId,
       } satisfies MintedScanHandoff,
     };
   } catch (err) {
@@ -62,14 +71,48 @@ export async function mintScanHandoffAction() {
   }
 }
 
-/** Desktop poll. A `ready` result consumes the grant — see `claimScanHandoff`. */
-export async function pollScanHandoffAction(token: string) {
+export type HandoffWatch =
+  | { state: "expired" }
+  | { state: "waiting" | "uploading" | "ready" | "done"; pages: number; error: string | null; job: CaptureJobView | null };
+
+/**
+ * Desktop poll: what the phone has done so far. The text lives on the job; this reports
+ * the grant's state and the job's blocks. `done` means the phone pressed Done — the grant
+ * is gone and the job is `transcribed`.
+ */
+export async function watchScanHandoffAction(token: string, captureJobId: string): Promise<{ ok: true; watch: HandoffWatch } | { ok: false; error: string }> {
   try {
     const userId = await requireUserId();
-    const claim: HandoffClaim = await claimScanHandoff(userId, token);
-    return { ok: true as const, claim };
+    const row = await getCaptureJobRow(userId, captureJobId);
+    const job = row ? toCaptureJobView(row) : null;
+    const grant = await handoffJobFor(userId, token);
+    if (!grant) {
+      if (job && job.status === "transcribed") return { ok: true, watch: { state: "done", pages: job.blocks.length, error: null, job } };
+      return { ok: true, watch: { state: "expired" } };
+    }
+    const pages = job?.blocks.length ?? 0;
+    const state = grant.status === "uploading" ? "uploading" : pages > 0 ? "ready" : "waiting";
+    return { ok: true, watch: { state, pages, error: grant.error, job } };
   } catch (err) {
     return { ok: false as const, error: friendlyError(err, "Couldn’t check on your phone — try again?") };
+  }
+}
+
+/** The desktop says it has everything: consume the grant and hand the job to Extract. */
+export async function finishScanHandoffAction(token: string) {
+  try {
+    const userId = await requireUserId();
+    if (!looksLikeHandoffToken(token)) return { ok: false as const, error: "That code expired" };
+    const db = await getDb();
+    const row = await db.query.captureHandoffs.findFirst({
+      where: and(eq(captureHandoffs.tokenHash, hashHandoffToken(token)), eq(captureHandoffs.userId, userId)),
+    });
+    if (!row) return { ok: false as const, error: "That code expired" };
+    const out = await finishScanHandoff(row.id);
+    const job = out.captureJobId ? await getCaptureJobRow(userId, out.captureJobId) : null;
+    return { ok: true as const, job: job ? toCaptureJobView(job) : null };
+  } catch (err) {
+    return { ok: false as const, error: friendlyError(err, "Couldn’t finish that scan — try again?") };
   }
 }
 

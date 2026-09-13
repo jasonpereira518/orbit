@@ -14,6 +14,7 @@ import {
   WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
 import { z } from "zod";
+import { closenessLegend } from "@/lib/capture/closeness";
 import {
   withUsage,
   tokensFromGemini,
@@ -117,6 +118,11 @@ export const noteParseSchema = z.object({
   follow_up_recommendation: nullStr,
   follow_up_days: nullNum,
   relationship_score_suggestion: nullScore,
+  /**
+   * How directly this person advances the user's stated goals (1–5). Null when the prompt
+   * carried no goals, so the save path can tell "unscored" from "unrelated".
+   */
+  relevance: nullScore,
   tags: strList,
   summary: nullStr,
   key_facts: strList,
@@ -202,6 +208,8 @@ export type CaptureParseHints = {
   eventDate?: string | null;
   seedPeople?: Array<{ name?: string | null; email?: string | null }>;
   interactionType?: string | null;
+  /** The user's active goals, so the model can score each person's `relevance`. */
+  goals?: string[];
 };
 
 const TWO_PASS_CHAR_THRESHOLD = 2500;
@@ -1180,6 +1188,7 @@ const PERSON_FIELD_SHAPE = `{
   "follow_up_recommendation": string|null,
   "follow_up_days": number|null,
   "relationship_score_suggestion": 1-5|null,
+  "relevance": 1-5|null,
   "tags": string[],
   "summary": string|null,
   "key_facts": string[],
@@ -1211,6 +1220,10 @@ function hintsPreamble(hints?: CaptureParseHints | null) {
     if (seeds.length) {
       lines.push(`Likely attendees / seed people:\n- ${seeds.join("\n- ")}`);
     }
+  }
+  const goals = (hints.goals ?? []).map((g) => g.trim()).filter(Boolean).slice(0, 12);
+  if (goals.length) {
+    lines.push(`The user's current goals (score each person's relevance against these):\n- ${goals.join("\n- ")}`);
   }
   if (!lines.length) return "";
   return `\n\nStructured hints from calendar/email (use when consistent with the notes):\n${lines.join("\n")}`;
@@ -1281,7 +1294,8 @@ Rules:
 - If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
 - If several people share the same event/place, set each person's met_at (and include it on shared_notes too).
 - interaction_date: YYYY-MM-DD when the notes/calendar imply a specific past event date; otherwise null.
-- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
+- relationship_score_suggestion: ${closenessLegend()}.
+- relevance: how directly this person advances the user's stated goals: 1=unrelated, 2=tangential, 3=plausibly useful, 4=clearly useful, 5=directly advances a goal. Null when no goals are listed.
 - If the notes only cover one person, return a single-item people array and an empty shared_notes array.
 - When seed people/hints are provided, include them if they appear in or clearly belong to this meeting, and prefer their emails when matching.`,
   });
@@ -1421,7 +1435,8 @@ Rules:
 - Never invent people or facts. Prefer emails/companies from the request when the notes don't contradict them.
 - low_confidence_fields: list field names you had to guess or infer rather than read directly from the notes. Use [] when every extracted field is directly supported.
 - interaction_date: YYYY-MM-DD when known for this person/event; else null.
-- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
+- relationship_score_suggestion: ${closenessLegend()}.
+- relevance: how directly this person advances the user's stated goals: 1=unrelated, 2=tangential, 3=plausibly useful, 4=clearly useful, 5=directly advances a goal. Null when no goals are listed.
 - met_at may use shared event place when the person was clearly there.`,
     });
 
@@ -1450,6 +1465,7 @@ Rules:
         follow_up_days: found?.follow_up_days || null,
         relationship_score_suggestion:
           found?.relationship_score_suggestion || null,
+        relevance: found?.relevance ?? null,
         tags: found?.tags || [],
         summary: found?.summary || null,
         key_facts: found?.key_facts || [],

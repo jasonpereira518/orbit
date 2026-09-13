@@ -58,10 +58,17 @@ export type RecordedMeetingChunk = MeetingChunk & {
   wav: Uint8Array | null;
 };
 
-export type MeetingSurface = "browser" | "window" | "monitor" | null;
+/** `mic` = no shared call audio at all: the microphone is the only source (phones, Safari). */
+export type MeetingSurface = "browser" | "window" | "monitor" | "mic" | null;
 
 export type MeetingRecorderStart = {
   includeMic: boolean;
+  /**
+   * `display` (default) shares a tab/window/screen's audio, optionally plus the mic —
+   * desktop Chromium only. `mic` records from the microphone alone: the meeting is on
+   * speaker, or in the room. Same chunker, same upload queue, same analysis.
+   */
+  source?: "display" | "mic";
   /** Continue a resumed meeting's numbering and timeline. */
   startSeq?: number;
   startOffsetMs?: number;
@@ -113,6 +120,18 @@ export function isMeetingCaptureSupported(): boolean {
   if (!getAudioContextCtor() || typeof AudioWorkletNode === "undefined") return false;
   if (typeof navigator.mediaDevices?.getDisplayMedia !== "function") return false;
   return window.matchMedia("(min-width: 768px) and (pointer: fine)").matches;
+}
+
+/**
+ * Whether this browser can record a meeting through the microphone alone — every modern
+ * browser on a secure origin, phones included. No width or pointer gate: the point is
+ * exactly the devices `isMeetingCaptureSupported` refuses.
+ */
+export function isMicMeetingCaptureSupported(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  if (!window.isSecureContext) return false;
+  if (!getAudioContextCtor() || typeof AudioWorkletNode === "undefined") return false;
+  return typeof navigator.mediaDevices?.getUserMedia === "function";
 }
 
 export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingRecorderHandle {
@@ -221,7 +240,8 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
   const start = useCallback(
     (opts: MeetingRecorderStart) => {
       if (!endedRef.current) return;
-      if (!isMeetingCaptureSupported()) {
+      const micOnly = opts.source === "mic";
+      if (micOnly ? !isMicMeetingCaptureSupported() : !isMeetingCaptureSupported()) {
         fail(typeof window !== "undefined" && !window.isSecureContext ? "insecure-context" : "unsupported");
         return;
       }
@@ -240,8 +260,15 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
       const ctx = new Ctor();
       ctxRef.current = ctx;
 
-      // Also inside the click: `getDisplayMedia` requires transient activation.
-      const displayRequest = requestDisplayAudio();
+      // Also inside the click: `getDisplayMedia` requires transient activation. Mic-only
+      // asks for the microphone instead — with echo cancellation and noise suppression OFF,
+      // because those are tuned to remove exactly the far-end-through-speaker audio this
+      // mode exists to keep.
+      const displayRequest = micOnly
+        ? navigator.mediaDevices.getUserMedia({
+            audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+          })
+        : requestDisplayAudio();
 
       void (async () => {
         let display: MediaStream;
@@ -267,15 +294,19 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
         const videoTrack = display.getVideoTracks()[0];
         const shared = (videoTrack?.getSettings() as MediaTrackSettings & { displaySurface?: string })
           ?.displaySurface;
-        const sharedSurface: MeetingSurface =
-          shared === "browser" || shared === "window" || shared === "monitor" ? shared : null;
+        const sharedSurface: MeetingSurface = micOnly
+          ? "mic"
+          : shared === "browser" || shared === "window" || shared === "monitor"
+            ? shared
+            : null;
         // Kept, not stopped — see the header. Disabled so nothing renders it.
         if (videoTrack) videoTrack.enabled = false;
 
         // The mic is best-effort. A meeting with only the call's audio is still worth
-        // recording, so a refusal carries on without it and says so.
+        // recording, so a refusal carries on without it and says so. In mic-only mode the
+        // microphone IS the call source, so there is no second stream to ask for.
         let mic: MediaStream | null = null;
-        if (opts.includeMic) {
+        if (opts.includeMic && !micOnly) {
           try {
             mic = await navigator.mediaDevices.getUserMedia({
               audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },

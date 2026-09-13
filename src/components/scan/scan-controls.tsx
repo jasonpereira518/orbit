@@ -113,8 +113,8 @@ export function ScanControls({
   onRawFiles: (files: File[]) => void;
   /** Images and PDF pages, already downscaled and re-encoded to JPEG. */
   onPages: (pages: ScanPage[]) => void;
-  /** The phone handoff returns text the server already transcribed. */
-  onTranscript: (text: string, sources: string[]) => void;
+  /** The phone handoff returns text the server already transcribed, and the job it sits on. */
+  onTranscript: (text: string, sources: string[], captureJobId?: string) => void;
 }) {
   const [mode, setMode] = useState<Mode>("idle");
   const [normalizing, setNormalizing] = useState(false);
@@ -275,9 +275,9 @@ export function ScanControls({
           <ScanQrHandoff
             // Cancels the code on the click that closes the dialog, not on the unmount.
             active={mode === "qr"}
-            onTranscript={({ transcript, sources }) => {
+            onTranscript={({ transcript, sources, captureJobId }) => {
               setMode("idle");
-              onTranscript(transcript, sources);
+              onTranscript(transcript, sources, captureJobId);
             }}
             onCancel={() => setMode("idle")}
           />

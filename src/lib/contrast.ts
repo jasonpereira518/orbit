@@ -47,12 +47,6 @@ export function contrastRatio(a: string, b: string): number {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 
-/** Perceptual lightness. Used to move a colour without disturbing its hue. */
-export function lstar(hex: string): number {
-  const y = relativeLuminance(hex);
-  return y <= 216 / 24389 ? y * (24389 / 27) : Math.cbrt(y) * 116 - 16;
-}
-
 /** The worst ratio against every surface in a theme — the number that has to clear the floor. */
 export function worstContrast(hex: string, theme: keyof typeof SURFACES): number {
   return Math.min(...SURFACES[theme].map((bg) => contrastRatio(hex, bg)));

@@ -5,6 +5,7 @@ import type { AppPulse } from "@/lib/app-pulse";
 import Link from "next/link";
 import {
   useEffect,
+  useMemo,
   useState,
   useTransition,
 } from "react";
@@ -16,6 +17,7 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  NotebookPen,
   Shield,
   Sparkles,
   UserRound,
@@ -116,17 +118,27 @@ export function NotificationsPanelButton({
   const jobs = useBackgroundJobs();
   const activeJobCount = useActiveBackgroundJobCount();
   const kept = useKeptNotifications();
-  const unreadKeptCount = kept.filter((entry) => !entry.read).length;
+  const unreadKeptCount = useMemo(
+    () => kept.filter((entry) => !entry.read).length,
+    [kept]
+  );
   const dueCount = data?.dueCount ?? 0;
   // Unread missed notifications count toward the badge — that is the whole
   // point of keeping them; a failure nobody saw should say so on the bell.
   // They stop counting once the panel has been opened, but stay in the list.
   const badgeCount = dueCount + activeJobCount + unreadKeptCount;
-  const dueItems = data?.items.filter((i) => i.urgency === "due") ?? [];
-  const upcomingItems =
-    data?.items.filter((i) => i.urgency === "upcoming") ?? [];
-  const suggestionItems =
-    data?.items.filter((i) => i.urgency === "info") ?? [];
+  const dueItems = useMemo(
+    () => data?.items.filter((i) => i.urgency === "due") ?? [],
+    [data]
+  );
+  const upcomingItems = useMemo(
+    () => data?.items.filter((i) => i.urgency === "upcoming") ?? [],
+    [data]
+  );
+  const suggestionItems = useMemo(
+    () => data?.items.filter((i) => i.urgency === "info") ?? [],
+    [data]
+  );
   const alerts = data?.alerts ?? [];
   // Account alerts deliberately do NOT count here. They live in the pinned footer, so an
   // alert-only account should still see the scroll area say there is nothing due rather
@@ -676,7 +688,9 @@ function NotificationRow({
         ? UserRound
         : item.kind === "suggested_reminder"
           ? CalendarClock
-          : Sparkles;
+          : item.kind === "capture_review"
+            ? NotebookPen
+            : Sparkles;
 
   return (
     <div
@@ -707,7 +721,9 @@ function NotificationRow({
                 ? "Outreach tip"
                 : item.kind === "suggested_reminder"
                   ? "Found in your notes"
-                  : "No due date"}
+                  : item.kind === "capture_review"
+                    ? "Waiting on you"
+                    : "No due date"}
           </p>
         </div>
       </div>

@@ -35,44 +35,6 @@ import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------- helpers -------- */
 
-/** A window selector. Closed set — never interpolated from anything a user typed. */
-export function WindowToggle<T extends string | number>({
-  options,
-  value,
-  onChange,
-  label,
-}: {
-  options: Array<{ value: T; label: string }>;
-  value: T;
-  onChange: (next: T) => void;
-  label: string;
-}) {
-  return (
-    <div
-      className="flex items-center gap-1 rounded-lg border border-border/70 p-0.5"
-      role="group"
-      aria-label={label}
-    >
-      {options.map((option) => (
-        <button
-          key={String(option.value)}
-          type="button"
-          onClick={() => onChange(option.value)}
-          aria-pressed={option.value === value}
-          className={cn(
-            "rounded-md px-2 py-0.5 text-xs transition-colors",
-            option.value === value
-              ? "bg-primary/10 text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function LegendSwatch({
   color,
   label,
