@@ -39,6 +39,9 @@ export const EXPECTED_IN_PRODUCTION = [
   // and /admin/analytics says so — deliberately not REQUIRED, because that list fails the
   // production build, and an analytics secret must never be able to block a deploy.
   "ANALYTICS_SALT",
+  // Orbit-funded Outreach discovery. Absent, only users with their own Brave key can search —
+  // a warning, not a failed build.
+  "BRAVE_SEARCH_API_KEY",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [
