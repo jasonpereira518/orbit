@@ -2,7 +2,8 @@
  * Routes reachable without a Clerk session.
  *
  * Kept out of `proxy.ts` so it can be asserted against the filesystem: every page under
- * `src/app/(marketing)/` must appear here. A marketing page missing from this list is
+ * `src/app/(site)/` and `src/app/(clerk)/(marketing)/` must appear here. A marketing page
+ * missing from this list is
  * served only to signed-in users, which means the visitors it exists to convert get a
  * 404 — and only in production, since the middleware skips protection entirely when
  * Clerk is unconfigured locally. `scripts/smoke-public-routes.ts` enforces it.
@@ -37,6 +38,8 @@ export const PUBLIC_ROUTES = [
   // (`src/lib/internal-auth.ts`), which is fail-closed in production.
   "/api/imports/process-stalled",
   "/api/imports/(.*)/continue",
+  // The capture job runner's internal kick — same gate, same reasons.
+  "/api/capture/jobs/(.*)/run",
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
@@ -52,7 +55,20 @@ export const PUBLIC_ROUTES = [
   // Genuinely public: browsers POST Content-Security-Policy violation reports here with
   // no session. The handler stores nothing but a directive and a URI, throttled.
   "/api/csp-report",
+  // Genuinely public: the traffic beacon. Anonymous marketing visitors are most of what
+  // it exists to count, so requiring a session would measure only the people who already
+  // converted. It stores no IP and sets no cookie — see src/lib/analytics-visitor.ts.
+  "/api/track",
   // Genuinely public: the liveness probe the uptime monitor polls. Its shallow body says
   // only "up or down" plus the deployed sha; the deep view needs HEALTH_TOKEN.
   "/api/health",
+  // The phone half of note scanning. A phone that has never signed in opens this from a QR
+  // code on a signed-in desktop, and is authenticated solely by the opaque token in the
+  // path (`src/lib/scan-handoff.ts`) — the same arrangement as the calendar feed above.
+  // Requiring a Clerk session here would defeat the point: the entire feature exists so
+  // nobody has to sign into a CRM on a phone keyboard to photograph a page of notes.
+  // The token is single-use, expires in ten minutes, is stored only as a SHA-256 hash, and
+  // is checked against a shape regex before any query, so malformed traffic costs nothing.
+  "/scan/(.*)",
+  "/api/scan/(.*)",
 ] as const;

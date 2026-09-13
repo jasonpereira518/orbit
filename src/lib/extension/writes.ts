@@ -144,6 +144,9 @@ export async function saveContactFromExtension(
   } else {
     if (!input.force) {
       const { matches } = await matchesForPage(userId, input.page);
+      // The same confidence floor every other path uses — but note this does not merge
+      // anything. A human is looking at the page, so a confident match is shown as a
+      // candidate to confirm rather than folded on their behalf.
       const strong = matches.filter(
         (m) => m.confidence >= DUPLICATE_MERGE_CONFIDENCE
       );

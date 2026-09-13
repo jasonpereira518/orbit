@@ -2,7 +2,7 @@
  * Resolve a page to a contact.
  *
  * This runs on every popup open and the whole first paint waits on it, so the
- * hard rule here is: never load the user's full contact list. `findDuplicateCandidates`
+ * hard rule here is: never load the user's full contact list. `matchAgainst`
  * takes an array, and the obvious implementation hands it every row — which for
  * a few thousand contacts is hundreds of KB over Neon HTTP, per popup, to find
  * one person. Instead we pull a narrow candidate set with indexed predicates and
@@ -22,7 +22,7 @@ import {
 import {
   DUPLICATE_MERGE_CONFIDENCE,
   daysAgo,
-  findDuplicateCandidates,
+  matchAgainst,
   linkedinSlug,
   normalizeXHandle,
   type DuplicateMatch,
@@ -426,7 +426,7 @@ export async function loadNetworkOverlap(
 export async function matchesForPage(userId: string, page: PageContext) {
   const probe = probeFromPage(page);
   const candidateRows = await loadCandidates(userId, probe);
-  const matches = findDuplicateCandidates(candidateRows, {
+  const matches = matchAgainst(candidateRows, {
     fullName: probe.fullName,
     email: probe.email,
     linkedinUrl: probe.linkedinUrl,

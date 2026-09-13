@@ -108,9 +108,10 @@ async function seed() {
     accessTokenEncrypted: "ciphertext-access",
     refreshTokenEncrypted: "ciphertext-refresh",
   });
-  await db
+  const [event] = await db
     .insert(schema.events)
-    .values({ userId: USER, title: "Deep Learning Summit", venue: "Moscone" });
+    .values({ userId: USER, title: "Deep Learning Summit", venue: "Moscone" })
+    .returning();
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
   await db.insert(schema.chatThreads).values({ userId: USER, title: "thread" });
   await db.insert(schema.apiKeys).values({
@@ -132,6 +133,43 @@ async function seed() {
     .insert(schema.feedback)
     .values({ userId: USER, kind: "churn_reason", text: "their own words" });
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
+
+  // Tables folded into an existing category by the merge with main's newer feature
+  // branches — each seeded here so a step that quietly forgets one, or a step that
+  // reaches across a category boundary for one, fails this script rather than shipping.
+  await db.insert(schema.meetingSessions).values({ userId: USER, title: "Coffee chat" });
+  await db.insert(schema.captureJobs).values({
+    userId: USER,
+    sourceKind: "messy",
+    inputText: "met ada at the summit",
+  });
+  const [company] = await db
+    .insert(schema.companies)
+    .values({ userId: USER, name: "Acme", nameNormalized: "acme" })
+    .returning();
+  await db.insert(schema.contactMerges).values({
+    userId: USER,
+    winnerContactId: contact.id,
+    loserContactId: crypto.randomUUID(),
+    loserSnapshot: { fullName: "A. Lovelace" },
+  });
+  await db.insert(schema.targetCompanies).values({ userId: USER, companyId: company.id });
+  await db.insert(schema.eventCompanies).values({
+    userId: USER,
+    eventId: event.id,
+    companyId: company.id,
+    role: "sponsor",
+    source: "manual",
+  });
+  await db.insert(schema.recruiterScanState).values({ userId: USER });
+  await db.insert(schema.pageViews).values({
+    id: crypto.randomUUID(),
+    userId: USER,
+    visitorHash: "0".repeat(64),
+    sessionId: "sess-selective",
+    route: "/dashboard",
+    device: "desktop",
+  });
 
   // The one row this script writes outside the user's own data. `recruiters` is the shared
   // directory: it must survive, and its denormalized counters must come back down.
@@ -269,6 +307,68 @@ async function main() {
     "contact_tags leaves no orphans",
     (rowsOf<{ n: number }>(orphans)[0]?.n ?? 0) === 0
   );
+  // `contact_merges` and `target_companies` were folded into this step by a later merge —
+  // this is what stops a future merge from quietly leaving one of them in the wrong
+  // category, or dropping it from any category at all.
+  check(
+    "...and the merge snapshot went with it",
+    (await countFor("contact_merges")) === 0
+  );
+  check(
+    "...and the target company list went with it",
+    (await countFor("target_companies")) === 0
+  );
+
+  console.log("\nTables folded in by a later merge stay in their own category");
+  // A fresh seed, not a continuation of the block above: that block already ran a
+  // `contacts` purge, which (via `implies`) already emptied the `notes` step this block
+  // is about to probe.
+  await reset();
+  await purgeUserData(USER, { only: ["chat"] });
+  check(
+    "an unrelated delete leaves the meeting/capture pipeline alone",
+    (await countFor("meeting_sessions")) > 0 && (await countFor("capture_jobs")) > 0
+  );
+  check(
+    "...and the merge/target-company rows",
+    (await countFor("contact_merges")) > 0 && (await countFor("target_companies")) > 0
+  );
+  check("...and event_companies", (await countFor("event_companies")) > 0);
+  check(
+    "...and the recruiter scan watermark",
+    (await countFor("recruiter_scan_state")) > 0
+  );
+
+  await purgeUserData(USER, { only: ["notes"] });
+  check(
+    "notes takes the meeting/capture pipeline with it",
+    (await countFor("meeting_sessions")) === 0 && (await countFor("capture_jobs")) === 0
+  );
+
+  await purgeUserData(USER, { only: ["events"] });
+  check("events takes event_companies with it", (await countFor("event_companies")) === 0);
+
+  await purgeUserData(USER, { only: ["recruiters"] });
+  check(
+    "recruiters takes the scan watermark with it",
+    (await countFor("recruiter_scan_state")) === 0
+  );
+
+  // `page_views` is ANONYMISED by the `activity` step, not deleted — asserted the same way
+  // `billing_events` is in `scripts/smoke-purge.ts`: the row survives, with `user_id` cleared.
+  check(
+    "activity has not yet touched page_views",
+    (await countFor("page_views")) > 0
+  );
+  await purgeUserData(USER, { only: ["activity"] });
+  const pageViewAfter = await db.query.pageViews.findFirst({
+    where: eq(schema.pageViews.sessionId, "sess-selective"),
+  });
+  check(
+    "activity anonymises page_views rather than deleting it",
+    Boolean(pageViewAfter) && pageViewAfter?.userId === null
+  );
+  await db.delete(schema.pageViews).where(eq(schema.pageViews.sessionId, "sess-selective"));
 
   console.log("\nSettings follow the preferences box, not the delete");
   await reset();

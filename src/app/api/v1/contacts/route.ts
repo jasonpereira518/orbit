@@ -111,6 +111,9 @@ export const POST = apiHandler({ scope: "write", bucket: "apiWrite" }, async (re
       company: body.company ?? null,
       title: body.title ?? null,
     });
+    // Anything the app is confident about — every identifier tier, plus name+company and
+    // name+title. A bare full-name match (0.60) falls through and creates a contact, because
+    // two different people can share a name and this caller has nobody to ask.
     if (best && best.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
       return apiOk({
         created: false,

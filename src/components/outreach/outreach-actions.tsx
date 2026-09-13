@@ -19,6 +19,8 @@ import {
 import type { OutreachChannel } from "@/lib/outreach-types";
 import { DangerSendDialog } from "@/components/outreach/danger-send-dialog";
 import { useState } from "react";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type ProspectInfo = {
   email: string | null;
@@ -59,7 +61,7 @@ export function OutreachActions({
     navigator.clipboard.writeText(text);
     start(async () => {
       await markMessageAction({ messageId, status: "copied" });
-      toast.success("Copied to clipboard");
+      toast.success(TOAST_COPY.copied);
       refresh();
     });
   }
@@ -75,7 +77,7 @@ export function OutreachActions({
     } else if (channel === "linkedin" && prospect.linkedinUrl) {
       navigator.clipboard.writeText(body);
       window.open(buildLinkedInUrl(prospect.linkedinUrl), "_blank");
-      toast.success("Draft copied — paste in LinkedIn messaging");
+      toast.success("Draft copied — paste it into LinkedIn");
     }
 
     start(async () => {
@@ -92,7 +94,7 @@ export function OutreachActions({
         setDangerOpen(false);
         refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Send failed");
+        toast.error(friendlyError(err, TOAST_COPY.sendFailed));
       }
     });
   }

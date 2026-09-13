@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
 import { resumeStalledImports } from "@/lib/import-stall";
+import { resumeStalledCaptureJobs } from "@/lib/capture-jobs";
+import { runCaptureJobById } from "@/lib/capture-job-runner";
+import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import {
   finishCronRun,
   startCronRun,
@@ -113,8 +116,15 @@ export async function GET(request: Request) {
     resumeFailed: 0,
     /** Marked failed after MAX_STALL_RESUMES; the user has to re-upload. */
     resumeGaveUp: 0,
+    /** The capture-job backstop: extractions and saves that went quiet. */
+    captureStalledFound: 0,
+    captureResumed: 0,
+    captureGaveUp: 0,
+    captureSwept: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
+    /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
+    capturePhotosPruned: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
     embeddingsGenerated: 0,
@@ -138,6 +148,16 @@ export async function GET(request: Request) {
     stats.resumeGaveUp = sweep.gaveUp;
 
     try {
+      const captures = await resumeStalledCaptureJobs({ now: new Date(), runner: runCaptureJobById });
+      stats.captureStalledFound = captures.found;
+      stats.captureResumed = captures.resumed;
+      stats.captureGaveUp = captures.gaveUp;
+      stats.captureSwept = captures.swept;
+    } catch {
+      status = "partial";
+    }
+
+    try {
       stats.usageEventsPruned = await pruneOlderThan(
         usageEvents,
         USAGE_EVENT_RETENTION_DAYS
@@ -146,6 +166,10 @@ export async function GET(request: Request) {
         errorEvents,
         ERROR_EVENT_RETENTION_DAYS
       );
+      // Photos uploaded to a capture that was never saved. Nobody can see these — the
+      // history only lists saved captures — so keeping them would be holding pictures of
+      // someone's notes for no one.
+      stats.capturePhotosPruned = await pruneUnattachedCapturePhotos();
     } catch {
       // Housekeeping must never fail the job-resumption backstop this route exists for,
       // but a silent failure here is how a table grows unbounded — so it downgrades the

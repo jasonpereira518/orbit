@@ -19,6 +19,8 @@ import {
 } from "@/lib/outreach-channels";
 import type { OutreachChannel } from "@/lib/outreach-types";
 import { DangerSendDialog } from "@/components/outreach/danger-send-dialog";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type Row = {
   prospectId: string;
@@ -139,7 +141,7 @@ export function BulkActionBar({
         }
         setDangerOpen(true);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Quality check failed");
+        toast.error(friendlyError(err, "Couldn’t check those drafts — try again?"));
       }
     });
   }
@@ -152,18 +154,30 @@ export function BulkActionBar({
           messageIds: sendable.map((r) => r.messageId),
           ignoreWarnings: ignoreWarnings || !qualityNote,
         });
-        toast.success(`Sent ${result.sent}, failed ${result.failed}`);
+        if (result.status === "blocked") {
+          toast.error(result.reason);
+          return;
+        }
+        if (result.status === "needs_confirmation") {
+          setQualityNote(`Quality warning: ${result.warning}`);
+          setIgnoreWarnings(true);
+          // Not a failure — the send is waiting on the person. A quiet message, so it
+          // is not red and is not filed under Missed as though something broke.
+          toast.message("Check the warning, then confirm the send again");
+          return;
+        }
+        const { sent, failed } = result;
+        if (sent === 0 && failed > 0) {
+          toast.error(`None of those sent — try again?`);
+        } else if (failed > 0) {
+          toast.success(`Sent ${sent} — ${failed} didn’t go through`);
+        } else {
+          toast.success(`Sent ${sent} ${sent === 1 ? "message" : "messages"}`);
+        }
         setDangerOpen(false);
         refresh();
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Bulk send failed";
-        if (message.startsWith("Quality warnings:")) {
-          setQualityNote(message);
-          setIgnoreWarnings(true);
-          toast.error("Review warnings, then confirm send again");
-          return;
-        }
-        toast.error(message);
+        toast.error(friendlyError(err, TOAST_COPY.sendFailed));
       }
     });
   }

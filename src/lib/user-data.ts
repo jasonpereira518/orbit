@@ -6,6 +6,9 @@ import {
   aiSuggestions,
   billingEvents,
   calendarSubscriptions,
+  captureHandoffs,
+  captureJobs,
+  ignoredPeople,
   chatThreads,
   closenessCohorts,
   companies,
@@ -19,17 +22,27 @@ import {
   feedback,
   feedbackScreenshots,
   gateEvents,
+  contactIdentities,
+  contactMerges,
+  duplicateSuggestions,
+  eventAliases,
   eventAttendees,
+  eventCompanies,
   eventProviderConnections,
   events,
   gmailConnections,
+  targetCompanies,
   imports,
   interactions,
+  meetingSessions,
+  meetingTranscriptSegments,
   noteBatches,
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
+  pageViews,
   recruiterMessages,
+  recruiterScanState,
   reminderLists,
   reminders,
   suggestedReminders,
@@ -40,6 +53,7 @@ import {
   userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
+import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
 import { recomputeRecruiterRating } from "@/lib/recruiters";
 import {
   DATA_CATEGORY_IDS,
@@ -113,8 +127,19 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   notes: {
-    counts: [interactions, noteBatches],
+    counts: [
+      interactions,
+      noteBatches,
+      meetingSessions,
+      captureJobs,
+      ignoredPeople,
+    ],
     run: async (db, userId) => {
+      // Capture photos before the batches they belong to. The rows WOULD cascade from
+      // `note_batches`, but an unattached photo (a capture that was never saved) has no
+      // batch to cascade from, and the Blob objects behind all of them have no foreign key
+      // at all — the same reason feedback screenshots are removed by hand in `feedback`.
+      await purgeCapturePhotosForUser(userId);
       // `note_batches` holds the raw pasted note text and has no cascading FK to `contacts`
       // or `interactions` — `seed_contact_id`, `reminders.note_batch_id` and
       // `interactions.note_batch_id` are all plain columns with no foreign key, so it
@@ -122,7 +147,23 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // user's own prose about named people, which makes it the most sensitive row in the
       // file.
       await db.delete(noteBatches).where(eq(noteBatches.userId, userId));
+      // Meeting transcripts: the words of everyone on a call, verbatim. Segments first and
+      // explicitly, though they cascade from the session — they carry their own `user_id`,
+      // and a transcript that outlived its account would be the worst leak this function
+      // could have.
+      await db
+        .delete(meetingTranscriptSegments)
+        .where(eq(meetingTranscriptSegments.userId, userId));
+      await db.delete(meetingSessions).where(eq(meetingSessions.userId, userId));
       await db.delete(interactions).where(eq(interactions.userId, userId));
+      // Short-lived by construction — claimed on pickup, swept on expiry — but a scan
+      // started minutes before the account was deleted would otherwise leave a live grant
+      // and a transcript of the user's notes behind it.
+      await db.delete(captureHandoffs).where(eq(captureHandoffs.userId, userId));
+      // A capture mid-review holds the user's own notes in `source_text` and every
+      // extracted profile in `result`; the ignored list holds names from those notes.
+      await db.delete(captureJobs).where(eq(captureJobs.userId, userId));
+      await db.delete(ignoredPeople).where(eq(ignoredPeople.userId, userId));
     },
   },
   reminders: {
@@ -168,6 +209,15 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // they carry their own `user_id` (which is why `smoke-purge` finds them), and a roster
       // holds names, emails and employers of people the user met.
       await db.delete(eventAttendees).where(eq(eventAttendees.userId, userId));
+      // Cascades from `events`, and deleted explicitly for the same reason `eventAttendees`
+      // is: it carries its own `user_id`, so `smoke-purge` requires it, and leaving it to a
+      // cascade means a change to the FK silently strips it from account deletion.
+      await db.delete(eventCompanies).where(eq(eventCompanies.userId, userId));
+      // Before `events`, and explicitly: an alias row survives its event by design (`on
+      // delete set null` is what makes a dismissal stick), so deleting events first would
+      // leave a tombstone per event behind — a list of every Luma link and calendar UID the
+      // user ever had, pointing at nothing, outliving the account.
+      await db.delete(eventAliases).where(eq(eventAliases.userId, userId));
       await db.delete(events).where(eq(events.userId, userId));
     },
   },
@@ -213,6 +263,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         // Best-effort: a stale counter must not block deleting someone's data.
         await recomputeRecruiterRating(recruiterId).catch(() => {});
       }
+      // The recruiter scan's watermark. Not derived from `gmail_connections`, so it
+      // survives a disconnect/reconnect on purpose — but it must not survive the account.
+      await db.delete(recruiterScanState).where(eq(recruiterScanState.userId, userId));
     },
   },
   api: {
@@ -244,6 +297,17 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
       await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
       await db.delete(gateEvents).where(eq(gateEvents.userId, userId));
+      // ANONYMISED, NOT DELETED — same reasoning as `billing_events` below, with a sharper
+      // point behind it. `page_views` is an aggregate traffic record: deleting a departing
+      // account's rows would retroactively change how many people visited the site last
+      // March, which is both wrong and the kind of wrong nobody would ever notice. Nulling
+      // `user_id` keeps the count and removes the person — it also makes the privacy page
+      // true rather than nearly true, since a view from a signed-in session is the one case
+      // where `user_id` was ever set. Folded into `activity` (rather than gated on a full
+      // purge like billing) because there is no live external state to protect here: unlike
+      // a Stripe subscription, clearing "Usage and diagnostics" alone is a safe time to sever
+      // this link too.
+      await db.update(pageViews).set({ userId: null }).where(eq(pageViews.userId, userId));
     },
   },
   feedback: {
@@ -287,8 +351,21 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     // exceeding a partial request: `interactions`, `reminders`, `contact_embeddings` and
     // `contact_tags` are all `on delete cascade` from `contacts` and go the moment a
     // contact does, ticked or not.
-    counts: [contacts, companies],
+    counts: [contacts, companies, contactMerges],
     run: async (db, userId) => {
+      // Duplicate-prevention rows. `contact_identities` and `duplicate_suggestions` do
+      // cascade from `contacts`, but they are deleted explicitly for the same reason
+      // `event_attendees` is: they carry their own `user_id`, so `smoke-purge` requires
+      // them, and leaving them to a cascade means a change to that FK silently strips them
+      // from account deletion.
+      //
+      // `contact_merges` is the one that genuinely must be here. It has NO foreign key on
+      // either contact id — by design, since the losing contact's row is deleted — so
+      // nothing cascades it, and `loser_snapshot` holds a whole archived contact: every
+      // field of a person the user knew, surviving the deletion of the contact it came from.
+      await db.delete(contactIdentities).where(eq(contactIdentities.userId, userId));
+      await db.delete(duplicateSuggestions).where(eq(duplicateSuggestions.userId, userId));
+      await db.delete(contactMerges).where(eq(contactMerges.userId, userId));
       // `contact_tags` has no `user_id` of its own, so it is deleted through its contacts.
       // One statement with a subquery, not a query for every contact followed by a delete
       // for each — that shape meant purging a 5,000-contact account took 5,001 round trips.
@@ -299,6 +376,11 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         )
       );
       await db.delete(contacts).where(eq(contacts.userId, userId));
+      // Cascades from `companies`, and deleted explicitly for the same reason as the
+      // duplicate-prevention rows above — it carries its own `user_id`. It's also a
+      // statement of intent — where this person wants to work — which is not something to
+      // leave behind.
+      await db.delete(targetCompanies).where(eq(targetCompanies.userId, userId));
       await db.delete(companies).where(eq(companies.userId, userId));
     },
   },
@@ -324,11 +406,12 @@ const STEPS: Record<DataCategory, CategoryStep> = {
  * delete. The reasoning is that "delete all data" means "delete the data I put in," not
  * "erase the account":
  *   - the BYO provider keys (`*_api_key_encrypted` for Gemini/OpenAI/Anthropic/Apollo/Resend/
- *     Twilio) plus `aiProvider`/`aiModel`, since a key without the selection that uses it is
- *     inert — these are credentials for third-party services the user pays for directly, not
- *     Orbit data about them, unlike the Gmail/Outlook OAuth tokens the `connections` step
- *     purges
- *   - `theme`, a cosmetic preference rather than content
+ *     Twilio/Wispr) plus `aiProvider`/`aiModel`, since a key without the selection that uses
+ *     it is inert — these are credentials for third-party services the user pays for
+ *     directly, not Orbit data about them, unlike the Gmail/Outlook OAuth tokens the
+ *     `connections` step purges
+ *   - `theme` and `desktopNotificationsEnabled`, cosmetic/device preferences rather than
+ *     content
  *   - the Clerk identity mirror (`email`, `firstName`, `lastName`, `profileImageUrl`) and
  *     `createdAt` — account metadata, not something the user authored
  *   - billing/subscription fields — deleting these would silently disconnect a live
@@ -355,9 +438,11 @@ const PRESERVED_SETTINGS_COLUMNS = {
   twilioAccountSidEncrypted: true,
   twilioAuthTokenEncrypted: true,
   twilioFromNumber: true,
+  wisprApiKeyEncrypted: true,
   aiProvider: true,
   aiModel: true,
   theme: true,
+  desktopNotificationsEnabled: true,
   email: true,
   firstName: true,
   lastName: true,

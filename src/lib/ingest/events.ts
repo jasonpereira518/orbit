@@ -51,6 +51,7 @@ import {
   type ContactInput,
 } from "@/lib/contact-writes";
 import { createCompanyResolver, type CompanyResolver } from "@/lib/companies";
+import { recordDuplicateSuggestion } from "@/lib/contact-merge";
 import { interactionExternalId } from "@/lib/ingest/external-id";
 import type { InteractionInsert, ReminderInsert } from "@/lib/import-engine";
 
@@ -325,7 +326,12 @@ export async function ingestEvents(
    * per participant identity, with every contributing pair remembered so each event still
    * logs its own interaction.
    */
-  const toCreate: Array<{ input: ContactInput; pairs: Pair[] }> = [];
+  const toCreate: Array<{
+    input: ContactInput;
+    pairs: Pair[];
+    /** A name-tier match this batch declined to fold; recorded for review after the insert. */
+    lookalike?: { contactId: string; reason: string; confidence: number };
+  }> = [];
   const createIndexByKey = new Map<string, number>();
   const mergeByContactId = new Map<string, { input: Partial<ContactInput>; pairs: Pair[] }>();
   const resolved: Array<{ pair: Pair; contactId: string }> = [];
@@ -339,12 +345,19 @@ export async function ingestEvents(
       company: pair.participant.company ?? null,
       title: pair.participant.title ?? null,
     };
-    // The INDEXED matcher only. The linear `findDuplicateCandidates` scores a bare full-name
-    // match at 0.6 and differs in its fuzzy branch; the two are not interchangeable, and a
-    // write path must never be the place that discovers it.
     const [best] = findDuplicateCandidatesIndexed(ctx.index, probe);
 
-    if (best && best.confidence >= ctx.options.matchConfidence) {
+    // Fold when the match is confident enough to stand on its own; otherwise create the
+    // contact and record the pair for review (below).
+    //
+    // The floor is what matters here, not the tier's kind. It was the floor that was wrong:
+    // calendar sync set `matchConfidence` to 0.6, which is the bare-full-name tier, so every
+    // pair of people in a network who happened to share a name was merged into one contact by
+    // the next sync — silently, and with no way back. Both calendar paths now use the default
+    // 0.85, which name+company and name+title clear and a bare name does not.
+    const canFold = best ? best.confidence >= ctx.options.matchConfidence : false;
+
+    if (best && canFold) {
       const contactId = best.contact.id;
       const existing = mergeByContactId.get(contactId);
       if (existing) {
@@ -365,6 +378,16 @@ export async function ingestEvents(
       stats.unmatched++;
       continue;
     }
+
+    // A name-tier lookalike that was NOT folded. The participant becomes their own contact
+    // (below) and the pair is queued for a human to judge.
+    // A match that was NOT confident enough to fold. The participant becomes their own
+    // contact and the pair is queued for a human. Without this the bare-full-name tier would
+    // simply be discarded, and the likeliest duplicate in the batch would leave no trace.
+    const lookalike =
+      best && !best.strong && !canFold
+        ? { contactId: best.contact.id, reason: best.reason, confidence: best.confidence }
+        : undefined;
 
     const key = participantIdentityKey(pair.participant);
     const pending = key === null ? undefined : createIndexByKey.get(key);
@@ -387,7 +410,7 @@ export async function ingestEvents(
       continue;
     }
     if (key !== null) createIndexByKey.set(key, toCreate.length);
-    toCreate.push({ input, pairs: [pair] });
+    toCreate.push({ input, pairs: [pair], lookalike });
   }
 
   // 1 statement (plus the resolver's primed lookups, which are per-batch, not per-row).
@@ -421,6 +444,7 @@ export async function ingestEvents(
       }
     );
     stats.contactsCreated = created.length;
+    const suggestions: Array<[string, string, string, number]> = [];
     created.forEach((contact, i) => {
       // Fold new contacts into the index so a LATER batch matches them rather than creating
       // the person again. Within this batch, `createIndexByKey` already did that job.
@@ -428,7 +452,15 @@ export async function ingestEvents(
       for (const pair of toCreate[i]?.pairs ?? []) {
         resolved.push({ pair, contactId: contact.id });
       }
+      const lookalike = toCreate[i]?.lookalike;
+      if (lookalike) {
+        suggestions.push([contact.id, lookalike.contactId, lookalike.reason, lookalike.confidence]);
+      }
     });
+    // After the insert, so both ids exist: the suggestion has foreign keys to each side.
+    for (const [a, b, reason, confidence] of suggestions) {
+      await recordDuplicateSuggestion(ctx.userId, a, b, reason, confidence);
+    }
     if (ctx.headroom !== null) ctx.headroom -= created.length;
     // Fewer created than asked for means the cap bit part-way through the batch.
     stats.blockedByPlan += toCreate.length - created.length;

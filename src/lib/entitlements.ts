@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { isDemoAccount } from "@/lib/demo-account";
 import { recordGateHit } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
 import {
@@ -147,6 +148,14 @@ export function entitlementsForPlan(
   };
 }
 
+/** Every flag on and no contact cap, under whatever plan the account actually holds. */
+function unrestrictedEntitlements(plan: Plan, source: PlanSource): Entitlements {
+  return {
+    ...entitlementsForPlan("orbit", source, { hostedEnrichment: true }),
+    plan,
+  };
+}
+
 /**
  * The single entitlement resolver. Every gate in the app goes through this and nothing
  * else — no gate calls Clerk's `has()` or reads Stripe directly.
@@ -160,6 +169,11 @@ export const getEntitlements = cache(
   async (userId: string): Promise<Entitlements> => {
     const row = await ensureUserSettings(userId);
     const { plan, source } = resolvePlan(row);
+    // Demo accounts get every feature whatever their plan. `plan` and `source` stay as
+    // resolved, deliberately: the showcase runs the upgrade (Ctrl+Shift+U → celebration)
+    // from a free account, and the pricing surfaces should still tell the truth about
+    // what was bought. Only the gates are lifted.
+    if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
     // A Lifetime holder who also subscribes gets hosted enrichment for as long as the
     // subscription is live, without losing the Lifetime floor when it lapses. Enrichment
     // is the only flag this can still matter for: `resolvePlan` ranks lifetime above

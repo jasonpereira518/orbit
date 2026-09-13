@@ -6,6 +6,7 @@ import { Globe2, Lock } from "lucide-react";
 import { setRecruiterSharing } from "@/actions/recruiters";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
+import { friendlyError } from "@/lib/errors";
 
 /**
  * The consent surface for the shared recruiter pool.
@@ -39,7 +40,7 @@ export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
       } catch (err) {
         setOn(previous);
         toast.error(
-          err instanceof Error ? err.message : "Could not change sharing"
+          friendlyError(err, "Couldn’t change sharing — try again?")
         );
       }
     });

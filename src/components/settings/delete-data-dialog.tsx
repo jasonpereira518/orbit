@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/lib/toast";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { friendlyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import {
   DATA_CATEGORY_IDS,
@@ -113,7 +115,7 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
         );
         router.refresh();
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "That didn't work.");
+        toast.error(friendlyError(e, TOAST_COPY.deleteFailed));
       }
     });
   };

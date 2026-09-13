@@ -38,8 +38,32 @@ export const RATE_LIMITS = {
   chat: { limit: 20, windowSec: 60 },
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
-  /** On-demand LinkedIn photo resolution in `/api/avatars/[contactId]` (Microlink quota). */
-  avatarResolve: { limit: 30, windowSec: 60 },
+  /**
+   * Photos posted from a phone against a scan handoff token.
+   *
+   * Tighter than `capture`, and deliberately measured over five minutes rather than one:
+   * this is the only public write path that spends the account's AI budget, so the shape
+   * to bound is a token that leaked being used to run up a bill, not a person taking a
+   * burst of photos. A real scan session is a handful of pages and finishes inside the
+   * token's ten-minute life.
+   */
+  captureHandoff: { limit: 12, windowSec: 300 },
+  /**
+   * One transcribed chunk of a live meeting (`/api/capture/meetings/[id]/chunks`). A
+   * recording sends one about every minute; the headroom is for draining a backlog after the
+   * connection comes back. Its own bucket so a long call can never starve capture's.
+   */
+  meetingChunk: { limit: 20, windowSec: 60 },
+  /**
+   * On-demand photo resolution in `/api/avatars/[contactId]`.
+   *
+   * Sized for the contacts list, where every photoless row visible resolves itself —
+   * 30/min was sized for the old behaviour (one profile page at a time) and 429s within
+   * a couple of scrolls. This bucket is a runaway-loop guard, not the quota guard:
+   * each upstream source (Unavatar and Microlink are both ~25 lookups a day) is
+   * protected by its own process-wide cooldown via `AvatarSourceRateLimitError`.
+   */
+  avatarResolve: { limit: 120, windowSec: 60 },
   /**
    * `submitFeedback`: a form post carrying up to three screenshots. Generous per
    * submission, tight per window — this is the largest row a user can create directly,
@@ -68,6 +92,25 @@ export const RATE_LIMITS = {
    * it being used as a high-volume scanner wearing Orbit's network position.
    */
   eventEnrich: { limit: 10, windowSec: 300 },
+  /**
+   * Background reads of one HOST's event pages, across every user (`enrich-queue.ts`).
+   *
+   * Scoped to the host rather than the user because the thing being protected is different:
+   * `eventEnrich` above stops one user scanning the internet through us, while this stops
+   * Orbit as a whole from hammering lu.ma the morning after a big conference, when a
+   * thousand users' calendars all sprout the same kind of link at once. No single user is
+   * doing anything wrong in that scenario, which is exactly why a per-user bucket cannot see
+   * it.
+   */
+  eventHostFetch: { limit: 60, windowSec: 600 },
+  /**
+   * The optional "why should I talk to them" line (`explainAttendee`).
+   *
+   * One model call each, against the user's OWN key, so the limit is about protecting them
+   * from a stuck loop rather than protecting us from them — generous enough to explain every
+   * name on a normal roster, tight enough that a retry storm cannot run up their bill.
+   */
+  eventWhy: { limit: 30, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

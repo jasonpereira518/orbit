@@ -18,6 +18,8 @@ import { OutreachActions } from "@/components/outreach/outreach-actions";
 import { buildLinkedInSearchUrl, buildLinkedInUrl, channelLabel } from "@/lib/outreach-channels";
 import { isAwaitingReply, isDeliveredMessage } from "@/lib/outreach-metrics";
 import type { OutreachChannel, PipelineFilter } from "@/lib/outreach-types";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type ProspectRow = {
   id: string;
@@ -79,10 +81,10 @@ export function ProspectTable({
     start(async () => {
       try {
         const result = await saveProspectAsContact({ campaignId, prospectId });
-        toast.success(result.created ? "Saved to contacts" : "Already in contacts");
+        toast.success(result.created ? "Added to your orbit" : "Already in your contacts");
         onUpdated?.();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Save failed");
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
     });
   }
@@ -92,13 +94,13 @@ export function ProspectTable({
       try {
         const updated = await enrichProspect({ campaignId, prospectId });
         if (updated.linkedinUrl) {
-          toast.success("LinkedIn profile enriched");
+          toast.success("Found more on that LinkedIn profile");
         } else {
           toast.message("No LinkedIn URL found — try Find on LinkedIn");
         }
         onUpdated?.();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Enrich failed");
+        toast.error(friendlyError(err, "Couldn’t find more on that profile — try again?"));
       }
     });
   }
@@ -113,9 +115,19 @@ export function ProspectTable({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[980px] text-sm">
-          <thead className="border-b border-border/70 bg-muted/30 text-left text-muted-foreground">
+      {/*
+        A table from `md` up, and the same markup reflowed into stacked cards below it.
+
+        It used to be a 980px table in a horizontal scroller at every width. On a phone
+        that showed the Person column and half of Contact, and the edge of the card sliced
+        "Save to Orbit" mid-word — nothing said the Draft and Actions columns were a
+        sideways swipe away, so it read as clipping rather than as a scroller. Reflowing
+        with CSS rather than rendering a second, card-shaped copy of each row keeps one
+        instance of the draft editor and the send controls, which both hold state.
+      */}
+      <div className="md:overflow-x-auto">
+        <table className="block w-full text-sm md:table md:min-w-[980px]">
+          <thead className="hidden border-b border-border/70 bg-muted/30 text-left text-muted-foreground md:table-header-group">
             <tr>
               <th className="px-4 py-3 w-10" />
               <th className="px-4 py-3">Person</th>
@@ -124,7 +136,7 @@ export function ProspectTable({
               <th className="px-4 py-3">Actions / outcome</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="block md:table-row-group">
             {prospects.map((prospect) => {
               const message = prospect.message;
               const channel = (message?.channel || defaultChannel) as OutreachChannel;
@@ -154,11 +166,11 @@ export function ProspectTable({
               return (
                 <tr
                   key={prospect.id}
-                  className={`border-b border-border/50 align-top ${
+                  className={`grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-4 border-b border-border/50 px-4 py-4 align-top last:border-b-0 md:table-row md:p-0 md:last:border-b ${
                     awaiting ? "bg-primary/[0.03]" : ""
                   }`}
                 >
-                  <td className="px-4 py-3">
+                  <td className="pt-0.5 md:table-cell md:px-4 md:py-3">
                     <Checkbox
                       checked={isSelected}
                       onCheckedChange={(checked) =>
@@ -167,7 +179,7 @@ export function ProspectTable({
                       disabled={pending}
                     />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="min-w-0 md:table-cell md:px-4 md:py-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium text-ink">
                         {prospect.fullName}
@@ -229,7 +241,8 @@ export function ProspectTable({
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">
+                  <td className="col-start-2 min-w-0 text-muted-foreground md:table-cell md:px-4 md:py-3">
+                    <span className={CELL_LABEL}>Contact</span>
                     <div>{prospect.email || "—"}</div>
                     <div>{prospect.phone || "—"}</div>
                     <div className="mt-2">
@@ -253,7 +266,8 @@ export function ProspectTable({
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="col-start-2 min-w-0 md:table-cell md:px-4 md:py-3">
+                    <span className={CELL_LABEL}>Draft</span>
                     {message ? (
                       <div className="space-y-2">
                         <Badge variant="outline">{channelLabel(channel)}</Badge>
@@ -281,7 +295,7 @@ export function ProspectTable({
                       <span className="text-muted-foreground">No draft</span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="col-start-2 min-w-0 max-md:has-[>div:empty]:hidden md:table-cell md:px-4 md:py-3">
                     <div className="space-y-3">
                       {message && !delivered && (
                         <OutreachActions
@@ -315,6 +329,13 @@ export function ProspectTable({
     </div>
   );
 }
+
+/**
+ * The column name, shown inside the cell only while the table is reflowed into cards —
+ * the header row that normally names these columns is hidden below `md`.
+ */
+const CELL_LABEL =
+  "mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80 md:hidden";
 
 export function useSelectedProspectIds(prospects: ProspectRow[]) {
   return useMemo(

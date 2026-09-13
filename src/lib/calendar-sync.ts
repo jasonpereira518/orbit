@@ -3,6 +3,8 @@ import { getDb, rowsOf } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
 import { classifyCalendarEvent, counterpartsOf } from "@/lib/calendar-classify";
+import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
+import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
 import { calendarExternalIdBase } from "@/lib/ingest/external-id";
 import {
   finalizeIngest,
@@ -118,6 +120,18 @@ export async function applyNetworkingEvents(
     return t >= now - SYNC_WINDOW_PAST_MS && t <= now + SYNC_WINDOW_FUTURE_MS;
   });
 
+  // Platform invites are events, not meetings, and they leave this path entirely.
+  //
+  // This is what gives Apple Calendar (and every other ICS feed) the same discovery Google
+  // Calendar gets, without a second implementation: the classifier below already refuses
+  // these, so without the hand-off they would simply be dropped on the floor.
+  try {
+    const candidates = calendarEventsToCandidates(windowed, selfEmails, "ics");
+    if (candidates.length > 0) await recordDiscoveryCandidates(userId, candidates);
+  } catch {
+    // Never allowed to fail the calendar import that triggered it.
+  }
+
   const networkEvents: NetworkEvent[] = [];
   for (const event of windowed) {
     if (!event.start) continue;
@@ -138,8 +152,12 @@ export async function applyNetworkingEvents(
   const ctx = await openIngestContext(userId, {
     source,
     createsContacts: true,
-    // `calendarAdapter`'s figure: an attendee list makes a name-only match strong evidence.
-    matchConfidence: 0.6,
+    // No `matchConfidence` override: this source CREATES contacts, so it takes the default
+    // DUPLICATE_MERGE_CONFIDENCE (0.85). It used to pass 0.6 — the bare-full-name tier —
+    // which meant two different people who happened to share a full name were merged into
+    // one contact by the next sync, silently and permanently. Name+company and name+title
+    // still fold; a name on its own now becomes a review suggestion instead.
+    // `calendarAdapter` keeps 0.6 because it only annotates and never creates or merges.
     reminders: createFollowUps ? postMeetingReminder : undefined,
   });
   const ingested = await ingestEvents(ctx, networkEvents);

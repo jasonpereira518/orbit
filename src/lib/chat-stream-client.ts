@@ -19,7 +19,13 @@ export type ChatStreamHandlers = {
 };
 
 export async function streamChat(
-  body: { question: string; threadId?: string | null; contactId?: string | null },
+  body: {
+    question: string;
+    threadId?: string | null;
+    contactId?: string | null;
+    /** Contact ids the composer's `@Name` chips resolved to. */
+    contextContactIds?: string[];
+  },
   handlers: ChatStreamHandlers,
   signal?: AbortSignal
 ): Promise<void> {
