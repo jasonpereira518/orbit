@@ -16,8 +16,12 @@ import {
   MIN_FILL_MS,
   interestListSchema,
   type InterestListInput,
-  type InterestListResult,
 } from "@/lib/interest-list";
+
+// TEMPORARY BRIDGE (Task 5 removes this): `InterestListResult` now requires a ticket, but
+// this action still returns the old bare-`ok` shape until Task 5 rewrites it. Keeping the
+// old shape locally lets this file typecheck without touching its behaviour early.
+type LegacyResult = { ok: true } | { ok: false; message: string };
 
 /**
  * Per-instance throttle, same shape as `src/actions/contact.ts`. A speed bump, not a
@@ -49,7 +53,7 @@ function overRateLimit(key: string, now: number) {
 
 export async function joinInterestList(
   input: InterestListInput
-): Promise<InterestListResult> {
+): Promise<LegacyResult> {
   const parsed = interestListSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, message: "That address doesn't look right." };

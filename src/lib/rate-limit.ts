@@ -71,6 +71,12 @@ export const RATE_LIMITS = {
    */
   feedback: { limit: 5, windowSec: 300 },
   /**
+   * `joinInterestList`: five submits per ten minutes per IP. Replaces the action's old
+   * per-instance Map, which never held across instances. A person mistypes twice; a script
+   * probing whether addresses are on the list is what this is for.
+   */
+  interestJoin: { limit: 5, windowSec: 600 },
+  /**
    * Public API reads. Generous — a read is one or two indexed queries — but bounded, because
    * these endpoints are reachable by anyone holding a key and a polling integration with a
    * misconfigured interval is the normal failure mode, not an attack.
