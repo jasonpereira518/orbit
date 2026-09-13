@@ -13,6 +13,9 @@ export {
   type WelcomePlanet,
 } from "@/lib/welcome-planets";
 
+/** The two personal links a signup gets once it has a share token. */
+export type EmailLinks = { ticketUrl: string; shareUrl: string };
+
 /** Opaque, same convention as `generateCalendarFeedToken` — no session, no guessable id. */
 export function generateUnsubscribeToken() {
   return randomBytes(32).toString("base64url");
@@ -71,6 +74,7 @@ export function buildInterestListWelcomeEmail(input: {
   unsubscribeUrl: string;
   /** Which planet this send gets. See `planetForSignupNumber`. */
   planet: WelcomePlanet;
+  links?: EmailLinks;
 }) {
   const appUrl = getAppBaseUrl();
   const signUpUrl = `${appUrl}/sign-up`;
@@ -99,6 +103,13 @@ export function buildInterestListWelcomeEmail(input: {
     "— Jason",
     "",
     `PS — everyone on this list gets a different planet, in order out from the sun. You got ${planetLabel(input.planet)}.`,
+    ...(input.links
+      ? [
+          "",
+          `Your ticket, with your number and your planet: ${input.links.ticketUrl}`,
+          `Know someone who'd like a planet? Send them your link: ${input.links.shareUrl}`,
+        ]
+      : []),
     "",
     "—",
     "You're getting this because you joined Orbit's interest list.",
@@ -225,6 +236,17 @@ export function buildInterestListWelcomeEmail(input: {
                 You got <span style="color:${MUTED};">${planetLabel(input.planet)}</span>.
               </td>
             </tr>
+            ${
+              input.links
+                ? `<tr>
+              <td style="font-size:14px;line-height:1.7;color:${MUTED};padding-bottom:26px;">
+                <a href="${escapeHtml(input.links.ticketUrl)}" style="color:${ACCENT};text-decoration:underline;">Your ticket</a>, with your number and your planet.
+                Know someone who'd like a planet?
+                <a href="${escapeHtml(input.links.shareUrl)}" style="color:${ACCENT};text-decoration:underline;">Send them your link</a>.
+              </td>
+            </tr>`
+                : ""
+            }
             <tr>
               <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid rgba(232,243,241,0.14);padding-top:22px;">
                 You're getting this because you joined Orbit's interest list.
@@ -256,6 +278,7 @@ export function buildInterestListWelcomeEmail(input: {
 export function buildInterestListFollowUpEmail(input: {
   unsubscribeUrl: string;
   planet: WelcomePlanet;
+  links?: EmailLinks;
 }) {
   const appUrl = getAppBaseUrl();
   const signUpUrl = `${appUrl}/sign-up`;
@@ -276,6 +299,7 @@ export function buildInterestListFollowUpEmail(input: {
     "",
     `If you'd rather it nagged you for you: ${signUpUrl}`,
     "",
+    ...(input.links ? [`Your ticket is still here: ${input.links.ticketUrl}`, ""] : []),
     "— Jason",
     "",
     "—",
@@ -328,6 +352,15 @@ export function buildInterestListFollowUpEmail(input: {
             ${paragraph(
               `That works whether or not you use Orbit — a note in your phone is a fine start. If you'd rather it nagged you for you, <a href="${signUpUrl}" style="color:${ACCENT};text-decoration:underline;">it's here</a>.`
             )}
+            ${
+              input.links
+                ? `<tr>
+              <td style="font-size:14px;line-height:1.7;color:${MUTED};padding-bottom:26px;">
+                <a href="${escapeHtml(input.links.ticketUrl)}" style="color:${ACCENT};text-decoration:underline;">Your ticket</a> is still here.
+              </td>
+            </tr>`
+                : ""
+            }
             <tr>
               <td style="padding-top:8px;padding-bottom:26px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -427,13 +460,14 @@ async function deliver(
 export async function sendInterestListWelcomeEmail(
   email: string,
   unsubscribeUrl: string,
-  planet: WelcomePlanet
+  planet: WelcomePlanet,
+  links?: EmailLinks
 ) {
   await deliver(
     "welcome",
     email,
     unsubscribeUrl,
-    buildInterestListWelcomeEmail({ unsubscribeUrl, planet })
+    buildInterestListWelcomeEmail({ unsubscribeUrl, planet, links })
   );
 }
 
@@ -441,12 +475,13 @@ export async function sendInterestListWelcomeEmail(
 export async function sendInterestListFollowUpEmail(
   email: string,
   unsubscribeUrl: string,
-  planet: WelcomePlanet
+  planet: WelcomePlanet,
+  links?: EmailLinks
 ): Promise<boolean> {
   return deliver(
     "follow-up",
     email,
     unsubscribeUrl,
-    buildInterestListFollowUpEmail({ unsubscribeUrl, planet })
+    buildInterestListFollowUpEmail({ unsubscribeUrl, planet, links })
   );
 }

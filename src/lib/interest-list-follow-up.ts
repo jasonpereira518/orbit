@@ -1,11 +1,13 @@
 import { and, eq, isNull, lt, notExists, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups, userSettings } from "@/db/schema";
+import { getAppBaseUrl } from "@/lib/app-url";
 import {
   asWelcomePlanet,
   buildUnsubscribeUrl,
   sendInterestListFollowUpEmail,
 } from "@/lib/interest-list-email";
+import { buildShareUrl, buildTicketUrl } from "@/lib/interest-list";
 
 /**
  * How long a signup waits before the follow-up. Long enough that the welcome note is no
@@ -58,6 +60,7 @@ export async function sweepInterestListFollowUps(): Promise<FollowUpSweepStats> 
       email: interestListSignups.email,
       unsubscribeToken: interestListSignups.unsubscribeToken,
       welcomePlanet: interestListSignups.welcomePlanet,
+      shareToken: interestListSignups.shareToken,
     })
     .from(interestListSignups)
     .where(
@@ -93,10 +96,14 @@ export async function sweepInterestListFollowUps(): Promise<FollowUpSweepStats> 
 
     if (!claimed[0]) continue;
 
+    const appUrl = getAppBaseUrl();
     const ok = await sendInterestListFollowUpEmail(
       row.email,
       buildUnsubscribeUrl(row.unsubscribeToken),
-      asWelcomePlanet(row.welcomePlanet)
+      asWelcomePlanet(row.welcomePlanet),
+      row.shareToken
+        ? { ticketUrl: buildTicketUrl(appUrl, row.shareToken), shareUrl: buildShareUrl(appUrl, row.shareToken) }
+        : undefined
     );
 
     if (ok) {

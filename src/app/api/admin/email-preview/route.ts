@@ -35,6 +35,10 @@ function isTemplate(value: string | null): value is Template {
 
 /** Obviously fake, so a preview can never be mistaken for a real subscriber's link. */
 const SAMPLE_UNSUBSCRIBE = "https://example.invalid/unsubscribe?token=preview";
+const SAMPLE_LINKS = {
+  ticketUrl: "https://orbit.example/interest?me=sample-token",
+  shareUrl: "https://orbit.example/interest?ref=sample-token",
+};
 
 export async function GET(request: NextRequest) {
   try {
@@ -69,11 +73,13 @@ export async function GET(request: NextRequest) {
     message = buildInterestListFollowUpEmail({
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
       planet,
+      links: SAMPLE_LINKS,
     });
   } else {
     message = buildInterestListWelcomeEmail({
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
       planet,
+      links: SAMPLE_LINKS,
     });
   }
 

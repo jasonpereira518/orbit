@@ -25,6 +25,9 @@ import {
 } from "../src/lib/interest-list-ticket";
 import { INTEREST_LIST_COUNT_FLOOR } from "../src/lib/interest-list";
 import { planetForSignupNumber } from "../src/lib/welcome-planets";
+import { joinInterestListCore, type JoinContext } from "../src/lib/interest-list-join";
+import { MIN_FILL_MS } from "../src/lib/interest-list";
+import type { EmailLinks } from "../src/lib/interest-list-email";
 
 const PREFIX = "smoke-join-";
 
@@ -110,9 +113,101 @@ async function readModel() {
   await db.delete(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}r5@example.test`));
 }
 
+async function joinPath() {
+  console.log("\njoin path…");
+  const db = await getDb();
+  const sent: Array<{ email: string; links: EmailLinks }> = [];
+  const ctx = (ip: string): JoinContext => ({
+    ip: `smoke-${ip}`,
+    attribution: { referrer: "reddit.com", utmSource: "reddit", utmMedium: null, utmCampaign: null, landingPath: "/interest" },
+    sendWelcome: async (email, _unsub, _planet, links) => {
+      sent.push({ email, links });
+    },
+  });
+  const base = { website: "", elapsedMs: MIN_FILL_MS + 10 };
+  const rowFor = async (email: string) =>
+    (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
+
+  // --- new join
+  const a = await joinInterestListCore({ ...base, email: `${PREFIX}A@Example.test` }, ctx("a"));
+  check("new join is ok", a.ok);
+  if (!a.ok) return;
+  const rowA = await rowFor(`${PREFIX}a@example.test`);
+  check("email is normalised on insert", Boolean(rowA));
+  check("ticket carries the stored share token", rowA?.shareToken === a.ticket.shareToken);
+  check("ticket planet matches the stored one", rowA?.welcomePlanet === a.ticket.planet);
+  check("attribution is stored", rowA?.utmSource === "reddit" && rowA.landingPath === "/interest");
+  check("welcome sent once with both links", sent.length === 1 && sent[0]!.links.ticketUrl.includes(`me=${a.ticket.shareToken}`) && sent[0]!.links.shareUrl.includes(`ref=${a.ticket.shareToken}`));
+
+  // --- duplicate: same ticket, no second mail, still one row
+  const a2 = await joinInterestListCore({ ...base, email: `${PREFIX}a@example.test` }, ctx("a"));
+  check("duplicate is ok", a2.ok);
+  check("duplicate returns the same ticket", a2.ok && a2.ticket.shareToken === a.ticket.shareToken && a2.ticket.number === a.ticket.number);
+  check("duplicate sends nothing", sent.length === 1);
+  check("duplicate creates no row", (await db.select().from(interestListSignups).where(like(interestListSignups.email, `${PREFIX}a@%`))).length === 1);
+
+  // --- referral: B joins through A's link
+  const b = await joinInterestListCore({ ...base, email: `${PREFIX}b@example.test`, ref: a.ticket.shareToken }, ctx("b"));
+  check("referred join is ok", b.ok);
+  const rowB = await rowFor(`${PREFIX}b@example.test`);
+  check("referred row points at the referrer", rowB?.referredById === rowA?.id);
+  const a3 = await joinInterestListCore({ ...base, email: `${PREFIX}a@example.test` }, ctx("a"));
+  check("referrer now has one moon", a3.ok && a3.ticket.moons === 1, a3.ok ? String(a3.ticket.moons) : "not ok");
+  check("referred ticket is the next number", b.ok && a.ok && b.ticket.number === a.ticket.number + 1);
+
+  // --- self-referral and unknown ref
+  const c = await joinInterestListCore({ ...base, email: `${PREFIX}c@example.test`, ref: "no-such-token" }, ctx("c"));
+  check("unknown ref still joins", c.ok);
+  check("unknown ref stores no referrer", (await rowFor(`${PREFIX}c@example.test`))?.referredById === null);
+  // Rejoining with your own token must never credit yourself (the branch is unreachable
+  // for an active row, but an unsubscribed one rejoins through the update path).
+  await db.update(interestListSignups).set({ unsubscribedAt: new Date(), followUpSentAt: new Date() }).where(eq(interestListSignups.email, `${PREFIX}c@example.test`));
+  const cTicket = c.ok ? c.ticket : null;
+  const c2 = await joinInterestListCore({ ...base, email: `${PREFIX}c@example.test`, ref: cTicket!.shareToken }, ctx("c"));
+  const rowC = await rowFor(`${PREFIX}c@example.test`);
+  check("rejoin reactivates and re-arms the follow-up", c2.ok && rowC?.unsubscribedAt === null && rowC.followUpSentAt === null);
+  check("rejoin keeps the planet and token", rowC?.welcomePlanet === cTicket!.planet && rowC?.shareToken === cTicket!.shareToken);
+  check("rejoin never credits a referrer", rowC?.referredById === null);
+  check("rejoin sends the welcome again", sent.filter((s) => s.email === `${PREFIX}c@example.test`).length === 2);
+
+  // --- legacy row without a share token gets one on the next submit
+  await db.insert(interestListSignups).values({ email: `${PREFIX}legacy@example.test`, unsubscribeToken: generateUnsubscribeToken(), welcomePlanet: "saturn" });
+  const legacy = await joinInterestListCore({ ...base, email: `${PREFIX}legacy@example.test` }, ctx("legacy"));
+  const rowL = await rowFor(`${PREFIX}legacy@example.test`);
+  check("legacy row is minted a share token", legacy.ok && Boolean(rowL?.shareToken) && legacy.ticket.shareToken === rowL?.shareToken);
+  check("legacy mint sends no mail", !sent.some((s) => s.email === `${PREFIX}legacy@example.test`));
+
+  // --- honeypot, too fast: ok, plausible ticket, no row
+  const before = (await db.select().from(interestListSignups)).length;
+  const bot = await joinInterestListCore({ ...base, website: "http://spam", email: `${PREFIX}bot@example.test` }, ctx("bot"));
+  const fast = await joinInterestListCore({ ...base, elapsedMs: 10, email: `${PREFIX}fast@example.test` }, ctx("fast"));
+  check("honeypot answers ok with a ticket", bot.ok && bot.ticket.number > 0 && bot.ticket.shareToken.length > 10);
+  check("too-fast answers ok with a ticket", fast.ok && fast.ticket.moons === 0);
+  check("neither writes a row", (await db.select().from(interestListSignups)).length === before);
+  check("fake tokens resolve to nothing", bot.ok && (await getTicketByShareToken(bot.ticket.shareToken)) === null);
+
+  // --- invalid email is the one visible error
+  const bad = await joinInterestListCore({ ...base, email: "not-an-email" }, ctx("bad"));
+  check("a bad address is refused with the form's copy", !bad.ok && bad.message === "That address doesn't look right.");
+
+  // --- rate limit: the sixth submit from one IP gets a fake ticket and no row
+  for (let i = 1; i <= 5; i += 1) {
+    const r = await joinInterestListCore({ ...base, email: `${PREFIX}rl${i}@example.test` }, ctx("rl"));
+    check(`submit ${i} of 5 lands`, r.ok && Boolean(await rowFor(`${PREFIX}rl${i}@example.test`)));
+  }
+  const sixth = await joinInterestListCore({ ...base, email: `${PREFIX}rl6@example.test` }, ctx("rl"));
+  check("sixth submit still answers ok", sixth.ok);
+  check("sixth submit writes no row", (await rowFor(`${PREFIX}rl6@example.test`)) === undefined);
+
+  // --- the proof memo was invalidated by the inserts
+  const proof = await getInterestProof();
+  check("proof reflects the joins", proof.count >= 8, String(proof.count));
+}
+
 async function main() {
   await cleanup();
   await readModel();
+  await joinPath();
   await cleanup();
   console.log("\ninterest-list join: all checks passed");
   process.exit(0);
