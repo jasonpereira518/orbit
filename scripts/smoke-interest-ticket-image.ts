@@ -54,6 +54,12 @@ async function main() {
   check("bogus token: still 200", bogus.status === 200, String(bogus.status));
   check("bogus token: png", bogus.headers.get("content-type") === "image/png");
   check("bogus token: cacheable", (bogus.headers.get("cache-control") ?? "").includes("s-maxage=86400"));
+  const bogusBytes = new Uint8Array(await bogus.arrayBuffer());
+  check(
+    "bogus token: is a PNG",
+    bogusBytes[0] === 0x89 && bogusBytes[1] === 0x50 && bogusBytes[2] === 0x4e && bogusBytes[3] === 0x47
+  );
+  check("bogus token: has a body", bogusBytes.length > 10_000, String(bogusBytes.length));
 
   const missing = await call("");
   check("missing token: still 200", missing.status === 200);

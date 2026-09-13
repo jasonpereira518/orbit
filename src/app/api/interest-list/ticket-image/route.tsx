@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ImageResponse } from "next/og";
 import type { NextRequest } from "next/server";
-import { SHARE_TOKEN_MAX, formatTicketNumber } from "@/lib/interest-list";
+import { SHARE_TOKEN_MAX, formatTicketNumber, type InterestTicket } from "@/lib/interest-list";
 import { getTicketByShareToken } from "@/lib/interest-list-ticket";
 import { PLANET_GLOW, planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
 
@@ -160,18 +160,61 @@ function Card({
 export async function GET(request: NextRequest) {
   const raw = request.nextUrl.searchParams.get("token")?.trim() ?? "";
   const token = raw.length > 0 && raw.length <= SHARE_TOKEN_MAX ? raw : "";
-  const ticket = token ? await getTicketByShareToken(token) : null;
+
+  // A lookup failure (a transient DB hiccup) must not become a 500 — it renders the
+  // generic card instead, same as a bogus token.
+  let ticket: InterestTicket | null = null;
+  if (token) {
+    try {
+      ticket = await getTicketByShareToken(token);
+    } catch (err) {
+      console.error("[interest-list] ticket lookup failed for the image route", err);
+    }
+  }
 
   const planet: WelcomePlanet = ticket?.planet ?? "earth";
-  const { fonts, planetSrc } = await loadAssets(planet);
 
-  return new ImageResponse(
-    <Card planet={planet} planetSrc={planetSrc} number={ticket?.number ?? null} />,
-    {
-      width: 1200,
-      height: 630,
-      fonts,
-      headers: { "Cache-Control": CACHE_CONTROL },
-    }
-  );
+  // A missing/corrupt font or planet PNG, or any other failure building the full card,
+  // must not 500 either — X and LinkedIn cache a failed preview and never retry. The
+  // fallback below uses no vendored assets at all: plain text, Satori's built-in font,
+  // on the same background, at the same size, with the same cache header.
+  try {
+    const { fonts, planetSrc } = await loadAssets(planet);
+    return new ImageResponse(
+      <Card planet={planet} planetSrc={planetSrc} number={ticket?.number ?? null} />,
+      {
+        width: 1200,
+        height: 630,
+        fonts,
+        headers: { "Cache-Control": CACHE_CONTROL },
+      }
+    );
+  } catch (err) {
+    console.error("[interest-list] ticket image assets failed; serving the bare card", err);
+    return new ImageResponse(
+      <div
+        style={{
+          width: 1200,
+          height: 630,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          background: BG,
+          color: TEXT,
+          fontSize: 56,
+        }}
+      >
+        <div style={{ display: "flex", fontSize: 20, letterSpacing: 4, color: ACCENT }}>
+          ORBIT · INTEREST LIST
+        </div>
+        <div style={{ display: "flex", marginTop: 24 }}>
+          {ticket
+            ? `Passenger ${formatTicketNumber(ticket.number)}, bound for ${planetLabel(ticket.planet)}.`
+            : "Every person who joins is handed a planet."}
+        </div>
+      </div>,
+      { width: 1200, height: 630, headers: { "Cache-Control": CACHE_CONTROL } }
+    );
+  }
 }
