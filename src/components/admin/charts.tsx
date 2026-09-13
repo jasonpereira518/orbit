@@ -201,6 +201,15 @@ export function RevenueCostChart({
               className="flex flex-1 flex-col items-center gap-1"
               onMouseEnter={() => setActive(i)}
               onMouseLeave={() => setActive(null)}
+              onClick={() => setActive((cur) => (cur === i ? null : i))}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                setActive((cur) => (cur === i ? null : i));
+              }}
+              tabIndex={0}
+              role="button"
+              aria-pressed={isActive}
             >
               {/*
                 The numbers, unconditionally. Hover only emphasises them.
@@ -390,6 +399,15 @@ export function DistributionChart({
               className="flex items-center gap-3 text-sm"
               onMouseEnter={() => setActive(i)}
               onMouseLeave={() => setActive(null)}
+              onClick={() => setActive((cur) => (cur === i ? null : i))}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                setActive((cur) => (cur === i ? null : i));
+              }}
+              tabIndex={0}
+              role="button"
+              aria-pressed={isActive}
             >
               <span className="w-20 shrink-0 truncate text-xs text-muted-foreground">
                 {point.label}
@@ -479,6 +497,15 @@ export function RankedBars({
           key={row.label}
           onMouseEnter={() => setActive(i)}
           onMouseLeave={() => setActive(null)}
+          onClick={() => setActive((cur) => (cur === i ? null : i))}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault();
+            setActive((cur) => (cur === i ? null : i));
+          }}
+          tabIndex={0}
+          role="button"
+          aria-pressed={active === i}
         >
           <div className="flex items-center gap-3 text-sm">
             <span className="w-36 shrink-0 truncate text-muted-foreground">
@@ -520,7 +547,7 @@ export function RankedBars({
             </span>
           </div>
           {row.detail && active === i && (
-            <div className="mt-1 pl-[9.75rem] text-xs text-muted-foreground">
+            <div className="mt-1 pl-3 text-xs text-muted-foreground sm:pl-[9.75rem]">
               {row.detail}
             </div>
           )}
