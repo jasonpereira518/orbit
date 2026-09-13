@@ -33,7 +33,9 @@ export function EventCard({
       className="group block overflow-hidden rounded-2xl border border-border/70 bg-card transition-shadow hover:shadow-md"
     >
       <div
-        className="relative h-24 w-full"
+        // 5:2 rather than a fixed 96px strip: platform covers are mostly square (Luma's
+        // always are), and a strip showed the middle sixth of one — half a word of its title.
+        className="relative aspect-[5/2] w-full"
         // Every event has a theme colour from creation (the hash rung guarantees it), so a
         // card is never a grey rectangle waiting on enrichment.
         style={
@@ -53,8 +55,6 @@ export function EventCard({
             loading="lazy"
           />
         ) : null}
-        {/* Left, because the top right corner now belongs to "Not mine" — and a control
-            beats a label for that spot. */}
         {event.role === "hosted" ? (
           <span className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-medium text-white">
             Hosted
@@ -99,11 +99,11 @@ export function EventCard({
         </div>
       </div>
     </Link>
-      {/* Only for events Orbit added itself. Something the user typed already has Edit and
-          Delete on its own page, and offering "not mine" for it would be nonsense. */}
-      {event.discoveredVia ? (
-        <DismissEventButton eventId={event.id} title={event.title} hidden={hidden} />
-      ) : null}
+      {/* Restore only, and only in the hidden list. There is no "not mine" on a live card any
+          more: discovery adds only events the user is going to, and a hide control on every
+          one of them read as "I'm not the host" — which is true of nearly all of them. An
+          event that really is wrong has Delete on its own page. */}
+      {hidden ? <DismissEventButton eventId={event.id} title={event.title} hidden /> : null}
     </div>
   );
 }

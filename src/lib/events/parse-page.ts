@@ -416,10 +416,11 @@ export function parseEventPage(html: string, sourceUrl: string): EventPageDetail
 
   // The platform overlay, where the page belongs to a platform we know.
   //
-  // It wins on three fields and only three: the event's own id (JSON-LD has none), the IANA
-  // zone name (JSON-LD can only carry an offset, which is wrong half the year), and the
-  // people — because JSON-LD's `performer` is empty on every one of these platforms while
-  // their embedded JSON names the hosts outright.
+  // It wins on four fields and only four: the event's own id (JSON-LD has none), the IANA
+  // zone name (JSON-LD can only carry an offset, which is wrong half the year), the people —
+  // because JSON-LD's `performer` is empty on every one of these platforms while their
+  // embedded JSON names the hosts outright — and the cover, where the platform's share image
+  // is a generated card rather than the picture itself (see `coverImageUrl`).
   const platform = attempt(warnings, "platform", () => parsePlatformPage(html, sourceUrl));
   if (platform) {
     details.platform = platform.platform;
@@ -429,6 +430,8 @@ export function parseEventPage(html: string, sourceUrl: string): EventPageDetail
     details.guestCount = platform.guestCount;
     details.organizerName = details.organizerName ?? platform.organizerName;
     if (platform.timezone) details.timezone = platform.timezone;
+    const cover = absolute(platform.coverImageUrl ?? null, sourceUrl);
+    if (cover) details.imageUrl = cover;
     // A known platform whose page yielded no event is markup drift, and the one failure this
     // parser cannot notice on its own — everything else degrades to a missing field.
     if (platform.zeroYield) warnings.push("platform-zero-yield");

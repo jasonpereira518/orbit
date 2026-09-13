@@ -95,9 +95,18 @@ function revalidateEvents(eventId?: string) {
   if (eventId) revalidatePath(`/events/${eventId}`);
 }
 
-export async function listEvents(): Promise<EventListRow[]> {
+/** The events page's two tabs, read together: one auth check, two queries in parallel. */
+export async function listEventsByTab(): Promise<{
+  upcoming: EventListRow[];
+  past: EventListRow[];
+}> {
   const userId = await requireUserForSurface(SURFACE);
-  return listEventsForUser(userId);
+  const now = new Date();
+  const [upcoming, past] = await Promise.all([
+    listEventsForUser(userId, 100, { when: "upcoming", now }),
+    listEventsForUser(userId, 100, { when: "past", now }),
+  ]);
+  return { upcoming, past };
 }
 
 /** Everything the user has said "not mine" to, so a mistake is one click from undone. */

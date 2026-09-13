@@ -33,6 +33,7 @@ import { deadlineReached } from "@/lib/time-budget";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { enrichEvent } from "@/lib/events/enrich";
 import { persistEventCover } from "@/lib/events/cover";
+import { attendedEventFilter } from "@/lib/events/store";
 import type { FetchPageDeps } from "@/lib/events/guarded-fetch";
 
 /** How long a claimed event is off-limits to another pass. */
@@ -74,7 +75,8 @@ function hostOf(url: string): string | null {
  *
  * Ordered by how much the answer is likely to change: an event in the next month first, then
  * everything else by date. A dismissed event is never read — we were told it is not theirs,
- * and fetching its page anyway would be both wasteful and slightly rude.
+ * and fetching its page anyway would be both wasteful and slightly rude — and nor is one the
+ * user is only waitlisted for, whose card nobody sees.
  */
 export async function claimDueEnrichments(
   limit: number,
@@ -87,18 +89,18 @@ export async function claimDueEnrichments(
     await db.execute(sql`
       UPDATE events SET enrich_due_at = ${lease}, updated_at = now()
        WHERE id IN (
-         SELECT id FROM events
-          WHERE enrich_due_at IS NOT NULL
-            AND enrich_due_at <= ${now}
-            AND dismissed_at IS NULL
-            AND url IS NOT NULL
-            AND enrich_attempts < ${MAX_ATTEMPTS}
+         SELECT e.id FROM events e
+          WHERE e.enrich_due_at IS NOT NULL
+            AND e.enrich_due_at <= ${now}
+            AND ${attendedEventFilter()}
+            AND e.url IS NOT NULL
+            AND e.enrich_attempts < ${MAX_ATTEMPTS}
           ORDER BY
-            (starts_at IS NOT NULL
-              AND starts_at BETWEEN ${now}::timestamptz - interval '3 days'
-                                AND ${now}::timestamptz + interval '30 days') DESC,
-            starts_at DESC NULLS LAST,
-            id
+            (e.starts_at IS NOT NULL
+              AND e.starts_at BETWEEN ${now}::timestamptz - interval '3 days'
+                                  AND ${now}::timestamptz + interval '30 days') DESC,
+            e.starts_at DESC NULLS LAST,
+            e.id
           LIMIT ${limit}
        )
       RETURNING id, user_id, url, enrich_attempts
@@ -171,6 +173,7 @@ export async function runEnrichmentPass(
   const wait = options.wait ?? sleep;
   const stats: EnrichQueueStats = { claimed: 0, enriched: 0, failed: 0, hostThrottled: 0 };
 
+  await requeueUnreadEvents(now).catch(() => {});
   const claimed = await claimDueEnrichments(maxFetches, now);
   stats.claimed = claimed.length;
 
@@ -228,6 +231,52 @@ export async function runEnrichmentPass(
   }
 
   return stats;
+}
+
+/**
+ * Everything read before the Luma cover fix. Luma's `og:image` is a share card with the title
+ * and an RSVP button printed on it, and every Luma event read before then wears one; a single
+ * re-read after this date swaps in the real cover, and the date is what stops an event whose
+ * page has no cover of its own from being re-read on every pass for ever.
+ */
+const LUMA_COVER_FIX_AT = "2026-09-13T00:00:00Z";
+
+/** Per pass, so a large backlog drains over several passes instead of in one UPDATE. */
+const REQUEUE_BATCH = 50;
+
+/**
+ * Put back on the queue the events that should have been read and never were.
+ *
+ * Two holes, both about the picture on the card. Discovery used to queue only the first 25
+ * events of an import and leave the rest with no page read at all — so no cover, ever. And
+ * Luma events read before `LUMA_COVER_FIX_AT` carry the share card as their cover.
+ *
+ * Only events the user is going to (`attendedEventFilter`): reading the page of an event they
+ * were waitlisted for, to decorate a card they will never see, is a fetch for nothing.
+ */
+export async function requeueUnreadEvents(now: Date = new Date()): Promise<number> {
+  const db = await getDb();
+  const rows = rowsOf<{ id: string }>(
+    await db.execute(sql`
+      UPDATE events SET enrich_due_at = ${now}, updated_at = now()
+       WHERE id IN (
+         SELECT e.id FROM events e
+          WHERE e.enrich_due_at IS NULL
+            AND e.url IS NOT NULL
+            AND e.enrich_attempts < ${MAX_ATTEMPTS}
+            AND ${attendedEventFilter()}
+            AND (
+              (e.enriched_at IS NULL AND e.cover_image_url IS NULL)
+              OR (e.cover_source_url LIKE '%lumacdn.com%/event-social/%'
+                  AND e.enriched_at < ${LUMA_COVER_FIX_AT}::timestamptz)
+            )
+          ORDER BY e.starts_at DESC NULLS LAST
+          LIMIT ${REQUEUE_BATCH}
+       )
+      RETURNING id
+    `)
+  );
+  return rows.length;
 }
 
 async function requeue(eventId: string, minutes: number): Promise<void> {
