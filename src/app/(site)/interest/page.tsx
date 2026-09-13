@@ -12,11 +12,17 @@ import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { BackControl } from "@/components/pricing/back-control";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
-import { SHARE_TOKEN_MAX, buildTicketImageUrl, passengerLine } from "@/lib/interest-list";
+import {
+  SHARE_TOKEN_MAX,
+  buildTicketImageUrl,
+  passengerLine,
+  type InterestTicket,
+} from "@/lib/interest-list";
 import {
   getInterestProof,
   getInviterPlanet,
   getTicketByShareToken,
+  type InterestProof,
 } from "@/lib/interest-list-ticket";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 
@@ -43,7 +49,14 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const params = await searchParams;
   const token = tokenParam(params.me) ?? tokenParam(params.ref);
-  const ticket = token ? await getTicketByShareToken(token) : null;
+  let ticket: InterestTicket | null = null;
+  if (token) {
+    try {
+      ticket = await getTicketByShareToken(token);
+    } catch (err) {
+      console.error("[interest] ticket lookup failed in metadata", err);
+    }
+  }
   if (!ticket) {
     return { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION };
   }
@@ -61,6 +74,11 @@ export async function generateMetadata({
 
 const HEADING =
   "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
+
+/** What the proof line degrades to if the database read fails: count 0 stays below the
+ * floor (so the count itself is hidden) and "next planet up: Mercury" is true for an empty
+ * list and harmless otherwise. */
+const EMPTY_PROOF: InterestProof = { count: 0, nextPlanet: "mercury", recent: [] };
 
 const EXPECT = [
   {
@@ -117,9 +135,22 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
   const ref = me ? null : tokenParam(params.ref);
 
   const [proof, ticket, invite] = await Promise.all([
-    getInterestProof(),
-    me ? getTicketByShareToken(me) : Promise.resolve(null),
-    ref ? getInviterPlanet(ref) : Promise.resolve(null),
+    getInterestProof().catch((err: unknown) => {
+      console.error("[interest] proof read failed", err);
+      return EMPTY_PROOF;
+    }),
+    me
+      ? getTicketByShareToken(me).catch((err: unknown) => {
+          console.error("[interest] ticket lookup failed", err);
+          return null;
+        })
+      : Promise.resolve(null),
+    ref
+      ? getInviterPlanet(ref).catch((err: unknown) => {
+          console.error("[interest] inviter lookup failed", err);
+          return null;
+        })
+      : Promise.resolve(null),
   ]);
 
   const initial: HeroInitial = ticket

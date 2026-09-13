@@ -15,7 +15,12 @@ const PLANET_SIZE = 96;
 const RING_SIZE = 148;
 
 function joinedLabel(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(iso));
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(iso));
 }
 
 /**
