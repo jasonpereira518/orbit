@@ -797,11 +797,15 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   unsubscribed_at timestamptz,
   welcome_planet text,
   follow_up_sent_at timestamptz,
+  share_token text,
+  referred_by_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
+CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   subject text NOT NULL,
@@ -1352,7 +1356,12 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 52 = the same capture tables, re-stamped: the preview database was stamped 51 by this
 // branch BEFORE main's 50 (desktop_notifications_enabled) was merged in, so a database at
 // 51 must still pick up that column. Nothing is new at 52; the bump only forces the pass.
-export const SCHEMA_VERSION = 52;
+//
+// 53 is taken by the admin-provider-status branch, so this skips it.
+//
+// 54 = interest_list_signups.share_token + referred_by_id, the share link and referral
+// moons behind the /interest boarding pass. Built as 52 before #173 took that number.
+export const SCHEMA_VERSION = 54;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2449,6 +2458,11 @@ const alters = [
   // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
+  // v54: the share link and referral tracking behind the /interest boarding pass.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referred_by_id uuid`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token)`,
+  `CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id)`,
 
   // Feedback triage. The table shipped long before anything wrote to it, so every existing
   // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
