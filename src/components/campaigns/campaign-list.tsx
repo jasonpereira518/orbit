@@ -38,9 +38,9 @@ export function CampaignList({ campaigns }: { campaigns: CampaignListItem[] }) {
           </Link>
         </div>
       ) : (
-        <ul className="grid gap-3">
+        <ul className="grid grid-cols-1 gap-3">
           {campaigns.map((campaign) => (
-            <li key={campaign.id}>
+            <li key={campaign.id} className="min-w-0">
               <Link
                 href={`/outreach/${campaign.id}`}
                 className="block rounded-2xl border border-border/70 bg-card px-5 py-4 transition-colors hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-ring"

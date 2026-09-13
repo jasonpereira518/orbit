@@ -35,7 +35,6 @@ export function DescribeForm({ defaultIntro }: { defaultIntro: string }) {
   const notesId = useId();
   const introId = useId();
   const saveId = useId();
-  const channelLegendId = useId();
   const canSubmit = purpose.trim().length >= 10 && outcome.trim().length >= 3;
 
   function submit(event: FormEvent) {
@@ -97,11 +96,11 @@ export function DescribeForm({ defaultIntro }: { defaultIntro: string }) {
         </div>
       </div>
 
-      <fieldset aria-labelledby={channelLegendId} className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
-        <legend id={channelLegendId} className="text-sm font-medium text-ink">
+      <fieldset className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
+        <legend className="float-left mb-3 w-full text-sm font-medium text-ink">
           How will you reach people?
         </legend>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid clear-both gap-3 sm:grid-cols-2">
           {CHANNELS.map(({ value, label, hint, Icon }) => (
             <label
               key={value}
