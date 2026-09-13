@@ -137,11 +137,34 @@ export function parseLinkedInConnectionsCsv(csvText: string): {
     .filter((r) => r.firstName || r.lastName);
 
   if (!rows.length) {
-    const hint = fields.length
-      ? ` Found columns: ${fields.slice(0, 8).join(", ")}.`
-      : "";
+    // Three different situations used to share one sentence and one hint.
+    //
+    //   - A file that is not a CSV at all: `fields` is binary noise, and it was
+    //     interpolated raw into the message — a real one read "Found columns:
+    //     +KK4␓ll␁2C\uFFFDT\uFFFD\uFFFD\uFFFDf?..." where "this is not a CSV" was
+    //     the thing worth saying.
+    //   - The RIGHT export with no data rows: the columns named in the hint were
+    //     perfectly correct, which made the error read as though they were the problem.
+    //   - The wrong export (Messages instead of Connections).
+    const recognised = fields.some((f) =>
+      /first name|last name|email address|company|position/i.test(f)
+    );
+
+    if (!fields.length || !looksLikeTextColumns(fields)) {
+      throw new Error(
+        "That file doesn't look like a CSV. Export Connections from LinkedIn and upload the Connections.csv it gives you."
+      );
+    }
+    if (recognised) {
+      throw new Error(
+        "That Connections.csv has the right columns but no people in it. Ask LinkedIn for a fresh export, or check you uploaded the full file."
+      );
+    }
     throw new Error(
-      `No connections found in CSV. Export Connections from LinkedIn (not Messages).${hint}`
+      `No connections found in CSV. Export Connections from LinkedIn (not Messages). Found columns: ${fields
+        .slice(0, 8)
+        .map(printableColumn)
+        .join(", ")}.`
     );
   }
 
@@ -157,4 +180,35 @@ export function parseLinkedInConnectionsCsv(csvText: string): {
     rows,
     warnings,
   };
+}
+
+/**
+ * Whether parsed header cells look like text a human wrote, rather than the byte soup a
+ * binary file produces when Papa splits it on commas.
+ */
+function looksLikeTextColumns(fields: string[]): boolean {
+  if (!fields.length) return false;
+
+  // Control characters and replacement marks are a giveaway, but not a sufficient test:
+  // arbitrary bytes decode to printable Latin-1 surprisingly often (0xd4 -> "Ô"), which
+  // is how a 400KB binary file still produced a "Found columns:" hint. A real header cell
+  // also contains ASCII letters and is mostly ordinary text.
+  const wordish = fields.filter((f) => {
+    const v = f.trim();
+    if (!v || /[\u0000-\u0008\u000e-\u001f\uFFFD]/.test(v)) return false;
+    if (!/[A-Za-z]/.test(v)) return false;
+    const ordinary = v.replace(/[^A-Za-z0-9 _.'()\/-]/g, "").length;
+    return ordinary / v.length >= 0.8;
+  });
+
+  return wordish.length >= Math.ceil(fields.length / 2);
+}
+
+/** Never let raw bytes reach a toast: control characters out, length capped. */
+function printableColumn(field: string): string {
+  const cleaned = field
+    .replace(/[\u0000-\u001f\u007f\uFFFD]/g, "")
+    .trim();
+  if (!cleaned) return "?";
+  return cleaned.length > 24 ? `${cleaned.slice(0, 23)}…` : cleaned;
 }

@@ -22,6 +22,8 @@ export type ContactsPageFilters = {
   sort?: ContactSort;
   /** Jump the A–Z rail to a letter. "#" means everything sorting before "a". */
   letter?: string;
+  /** Restrict to contacts carrying this tag, matched case-insensitively. */
+  tag?: string;
   cursor?: string;
   limit?: number;
 };

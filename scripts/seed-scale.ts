@@ -5,7 +5,13 @@
  * The demo fixture is a handful of contacts, which is exactly the size at which every
  * performance problem here is invisible. A real LinkedIn export is thousands.
  *
- * Run: npx tsx scripts/seed-scale.ts [count]
+ * Run: npx tsx scripts/seed-scale.ts --user <id> [count]
+ *
+ * `--user` is REQUIRED and there is no default. This script's first act is to DELETE
+ * every contact, interaction and tag link the target account has; with `demo-user`
+ * hardcoded, anyone running it to measure graph performance silently destroyed the
+ * seeded demo network that everything else in the repo is exercised against. Pass
+ * `--user demo-user` deliberately if that is genuinely what you want.
  */
 import { config } from "dotenv";
 config({ path: ".env.local" });
@@ -17,8 +23,24 @@ import { contactTags, contacts, interactions, tags } from "../src/db/schema";
 import { recalibrateCloseness } from "../src/lib/closeness-cohort";
 import { scaleContactRows } from "./lib/scale-fixture";
 
-const USER = "demo-user";
-const COUNT = Number(process.argv[2] ?? 5000);
+const args = process.argv.slice(2);
+const userFlagIndex = args.findIndex((a) => a === "--user");
+const userArg = userFlagIndex >= 0 ? args[userFlagIndex + 1] : undefined;
+if (!userArg) {
+  console.error(
+    "Missing --user <id>.\n" +
+      "  This DELETES all of that account's contacts and interactions first.\n" +
+      "  A throwaway id is usually what you want:  --user scale-test\n" +
+      "  Use --user demo-user only if you really mean to wipe the demo network."
+  );
+  process.exit(1);
+}
+// Narrowed for the rest of the file; `process.exit` above is not a type guard.
+const USER: string = userArg;
+const positional = args.filter(
+  (a, i) => a !== "--user" && i !== userFlagIndex + 1
+);
+const COUNT = Number(positional[0] ?? 5000);
 const INSERT_CHUNK = 500;
 
 const TAGS = ["mentor","investor","alum","conference","warm intro","hiring","advisor","friend"];

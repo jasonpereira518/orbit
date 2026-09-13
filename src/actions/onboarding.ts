@@ -69,7 +69,10 @@ export async function resetOnboarding() {
     .update(userSettings)
     .set({
       onboardingCompletedAt: null,
-      onboardingStep: null,
+      // "welcome" is TOUR_STEPS[0].id. Setting it marks the tour as in progress, which
+      // is what keeps `needsOnboarding`'s backfill from re-completing it on the next page
+      // view — with null here, a replay lasted exactly one navigation.
+      onboardingStep: "welcome",
       updatedAt: new Date(),
     })
     .where(eq(userSettings.userId, userId));

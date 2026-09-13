@@ -48,6 +48,27 @@ function iso(d: Date | null | undefined) {
   return d ? new Date(d).toISOString() : null;
 }
 
+/**
+ * When this knowledge was actually acquired, rather than when the row was last written.
+ *
+ * All three profile-derived entry kinds used `contacts.updatedAt`, which is "now" for
+ * freshly seeded data and is bumped by ANY write to the contact — a tag change, a
+ * follow-up reschedule, an avatar backfill. On a 24-person network that stamped 57 of 95
+ * entries with today's date, so the reverse-chronological list opened with a wall of
+ * profile fragments and buried every real conversation beneath them.
+ *
+ * The last interaction is the honest answer for a summary, a note, or a key fact: it is
+ * the conversation the knowledge came out of. `createdAt` covers a contact nobody has
+ * spoken to yet.
+ */
+function knowledgeDate(c: {
+  lastInteractionAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return iso(c.lastInteractionAt ?? c.createdAt ?? c.updatedAt);
+}
+
 export async function getKnowledgeBase(): Promise<KnowledgeBasePayload> {
   const userId = await requireUserForSurface("page.knowledge");
   const db = await getDb();
@@ -143,7 +164,7 @@ export async function getKnowledgeBase(): Promise<KnowledgeBasePayload> {
         company: c.company,
         title: c.title,
         snippet: c.aiSummary.trim().slice(0, 420),
-        date: iso(c.updatedAt),
+        date: knowledgeDate(c),
         source: c.source,
       });
     }
@@ -156,7 +177,7 @@ export async function getKnowledgeBase(): Promise<KnowledgeBasePayload> {
         company: c.company,
         title: c.title,
         snippet: c.notes.trim().slice(0, 420),
-        date: iso(c.updatedAt),
+        date: knowledgeDate(c),
         source: "profile_notes",
       });
     }
@@ -170,7 +191,7 @@ export async function getKnowledgeBase(): Promise<KnowledgeBasePayload> {
         company: c.company,
         title: c.title,
         snippet: fact.trim().slice(0, 420),
-        date: iso(c.updatedAt),
+        date: knowledgeDate(c),
         source: "key_facts",
       });
     }

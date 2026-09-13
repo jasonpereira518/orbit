@@ -137,6 +137,9 @@ function overdueFollowUpLabel(nextFollowUpAt?: string | Date | null) {
   return `Overdue ${days} day${days === 1 ? "" : "s"}`;
 }
 
+/** Beyond this a row's tags start competing with the name for the eye. */
+const MAX_ROW_TAGS = 3;
+
 const TIER_TOOLTIP: Record<"inner" | "mid" | "outer", string> = {
   inner: "Inner orbit",
   mid: "Mid orbit",
@@ -150,6 +153,7 @@ export type ContactsListFilters = {
   followUp?: "due";
   sort?: ContactSort;
   letter?: string;
+  tag?: string;
 };
 
 export function ContactsList({
@@ -326,6 +330,7 @@ export function ContactsList({
     if (filters.company) params.set("company", filters.company);
     if (filters.minScore) params.set("minScore", String(filters.minScore));
     if (filters.followUp) params.set("followUp", filters.followUp);
+    if (filters.tag) params.set("tag", filters.tag);
     if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
     params.set("letter", letter);
     router.replace(`/contacts?${params.toString()}`);
@@ -540,6 +545,31 @@ export function ContactsList({
                                   details
                                 )}
                               </p>
+                            )}
+                            {/* The read surface tags never had.
+                                They could be written in the edit sheet and found by
+                                free-text search, but appeared on no screen — so a user
+                                organising by campaign (#referral-target, #applied-stripe)
+                                could type a tag and never see it again. `relative z-10`
+                                lifts them above the row's stretched link so each chip is
+                                its own filter. */}
+                            {c.tags.length > 0 && (
+                              <div className="relative z-10 mt-1 flex flex-wrap items-center gap-1">
+                                {c.tags.slice(0, MAX_ROW_TAGS).map((tag) => (
+                                  <Link
+                                    key={tag}
+                                    href={`/contacts?tag=${encodeURIComponent(tag)}`}
+                                    className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                  >
+                                    {tag}
+                                  </Link>
+                                ))}
+                                {c.tags.length > MAX_ROW_TAGS && (
+                                  <span className="text-[11px] text-muted-foreground/70">
+                                    +{c.tags.length - MAX_ROW_TAGS}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
 

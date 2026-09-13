@@ -12,10 +12,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowUp,
+  CornerUpLeft,
   History,
   Loader2,
   NotebookPen,
   Plus,
+  Square,
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -111,6 +113,14 @@ export function ChatPanel() {
   // Streaming is deliberately NOT a transition: updates inside `startTransition` are
   // deferred, which would hold every streamed token back until the whole answer landed.
   const [streaming, setStreaming] = useState(false);
+  /**
+   * Lets the user stop a request, and stops it for them if the provider hangs.
+   *
+   * `streamChat` has always accepted an `AbortSignal` and neither caller passed one, so a
+   * slow or wedged provider showed "Searching your network…" until the route's own
+   * `maxDuration = 60` cut it off — a full minute with no way out and no Stop button.
+   */
+  const abortRef = useRef<AbortController | null>(null);
   const busy = pending || streaming;
   // The "searching" bubble makes sense until the first token; after that the answer
   // itself is the progress indicator.
@@ -266,6 +276,11 @@ export function ChatPanel() {
 
       const assistantId = newId();
       setStreaming(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      // Comfortably past the server's own 60s ceiling, so this only fires when the
+      // response never arrives at all rather than pre-empting a slow-but-live answer.
+      const timeoutId = window.setTimeout(() => controller.abort(), 65_000);
       void (async () => {
         let activeId: string;
         try {
@@ -325,8 +340,11 @@ export function ChatPanel() {
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               setQuestion(q);
             },
-          }
+          },
+          controller.signal
         );
+        window.clearTimeout(timeoutId);
+        abortRef.current = null;
         setStreaming(false);
       })();
     },
@@ -552,28 +570,60 @@ export function ChatPanel() {
                   className="min-h-[44px] flex-1 resize-none"
                   disabled={busy || loadingThread}
                 />
+                {/* While streaming this is a Stop button, not a disabled spinner.
+                    `streamChat` always accepted an AbortSignal and nothing passed one, so
+                    a wedged provider left the user watching "Searching your network…"
+                    with no way out until the route's own 60s ceiling.
+
+                    The icon also now changes with the mode. With an empty box this
+                    button recalls the previous question rather than sending — only the
+                    aria-label said so, so a sighted user clicking "send" on an empty box
+                    watched text appear from nowhere. */}
                 <Button
                   type="button"
                   size="icon"
                   disabled={
-                    busy ||
+                    (!streaming && pending) ||
                     loadingThread ||
-                    (!question.trim() && !lastUserQuery)
+                    (!streaming && !question.trim() && !lastUserQuery)
                   }
                   className="h-11 w-11 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
                   onClick={() => {
+                    if (streaming) {
+                      abortRef.current?.abort();
+                      abortRef.current = null;
+                      setStreaming(false);
+                      return;
+                    }
                     if (!question.trim()) {
                       fillMostRecentUserMessage();
                       return;
                     }
                     sendQuestion(question);
                   }}
-                  aria-label={question.trim() ? "Send" : "Recall last message"}
+                  aria-label={
+                    streaming
+                      ? "Stop generating"
+                      : question.trim()
+                        ? "Send"
+                        : "Recall last message"
+                  }
+                  title={
+                    streaming
+                      ? "Stop generating"
+                      : question.trim()
+                        ? "Send"
+                        : "Recall last message"
+                  }
                 >
-                  {busy ? (
+                  {streaming ? (
+                    <Square className="size-3.5 fill-current" />
+                  ) : pending ? (
                     <Loader2 className="size-4 animate-spin" />
-                  ) : (
+                  ) : question.trim() ? (
                     <ArrowUp className="size-4" />
+                  ) : (
+                    <CornerUpLeft className="size-4" />
                   )}
                 </Button>
               </div>

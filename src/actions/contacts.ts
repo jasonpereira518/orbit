@@ -146,6 +146,20 @@ export async function listContactsPage(
     conditions.push(sql`${contacts.relationshipScore} >= ${filters.minScore}`);
   }
 
+  // Tags had a write path, a search index and no read surface at all: you could set
+  // them, find them via free-text search, and never see them again. This is the filter
+  // half; the chips on each row are the other.
+  const tag = filters?.tag?.trim();
+  if (tag) {
+    conditions.push(sql`exists (
+      select 1 from contact_tags ct
+      join tags t on t.id = ct.tag_id
+      where ct.contact_id = ${contacts.id}
+        and t.user_id = ${userId}
+        and lower(trim(t.name)) = ${tag.toLowerCase()}
+    )`);
+  }
+
   if (filters?.followUp === "due") {
     conditions.push(
       sql`${contacts.nextFollowUpAt} is not null and ${contacts.nextFollowUpAt} <= now()`

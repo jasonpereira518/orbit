@@ -33,7 +33,10 @@ const FILTERS: { id: Filter; label: string }[] = [
 ];
 
 const KIND_LABEL: Record<KnowledgeKind, string> = {
-  message: "LinkedIn message",
+  // "Message", not "LinkedIn message": `kindOf` in actions/knowledge.ts buckets both
+  // `linkedin_message` AND the generic `message` type here, so anything imported from
+  // another source was being labelled as LinkedIn.
+  message: "Message",
   note: "Note",
   summary: "AI summary",
   key_fact: "Key fact",
@@ -86,7 +89,10 @@ export function KnowledgeBaseView({
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Two columns from the smallest size: one column below 640px meant the four stat
+          cards filled a 390px screen on their own, pushing the search box and the first
+          result below the fold on the page whose entire job is finding something. */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat
           icon={<Users className="h-4 w-4" />}
           label="People"

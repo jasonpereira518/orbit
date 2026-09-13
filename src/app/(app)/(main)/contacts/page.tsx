@@ -24,6 +24,7 @@ export default async function ContactsPage({
     followUp?: string;
     sort?: string;
     letter?: string;
+    tag?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -38,6 +39,7 @@ export default async function ContactsPage({
     followUp: params.followUp === "due" ? ("due" as const) : undefined,
     sort,
     letter: params.letter,
+    tag: params.tag,
   };
 
   const [page, letters, planOverview, duplicateCount] = await Promise.all([
@@ -108,7 +110,7 @@ export default async function ContactsPage({
             down and rebuilt the whole subtree.
           */}
           <ContactsList
-            key={[params.q, params.company, params.minScore, params.followUp, sort].join("|")}
+            key={[params.q, params.company, params.minScore, params.followUp, params.tag, sort].join("|")}
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}
