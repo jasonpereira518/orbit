@@ -26,19 +26,30 @@ export function BriefCard({
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [pending, start] = useTransition();
-  const [draft, setDraft] = useState({
+  const draftFromProps = () => ({
     name,
     purpose: brief.purpose,
     desiredOutcome: brief.desiredOutcome,
     notes: brief.notes ?? "",
     senderIntro: senderIntro ?? "",
   });
+  const [draft, setDraft] = useState(draftFromProps);
   const headingId = useId();
   const nameId = useId();
   const purposeId = useId();
   const outcomeId = useId();
   const notesId = useId();
   const introId = useId();
+
+  function startEditing() {
+    setDraft(draftFromProps());
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    setDraft(draftFromProps());
+    setEditing(false);
+  }
 
   function save() {
     start(async () => {
@@ -64,7 +75,7 @@ export function BriefCard({
           What this campaign is for
         </h2>
         {!editing && (
-          <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+          <Button variant="ghost" size="sm" onClick={startEditing}>
             <Pencil className="size-3.5" aria-hidden />
             Edit
           </Button>
@@ -93,7 +104,7 @@ export function BriefCard({
             <Textarea id={introId} rows={2} value={draft.senderIntro} onChange={(e) => setDraft({ ...draft, senderIntro: e.target.value })} />
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setEditing(false)} disabled={pending}>
+            <Button variant="ghost" onClick={cancelEditing} disabled={pending}>
               Cancel
             </Button>
             <Button onClick={save} disabled={pending}>
