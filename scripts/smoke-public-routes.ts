@@ -103,6 +103,7 @@ function main() {
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
     "/api/sync/run",
+    "/api/outreach/worker",
     "/api/webhooks/outbound/drain",
     // The public API and MCP server authenticate with a per-user API key, which Clerk cannot
     // see. They are listed here so an unauthenticated call gets a JSON 401 rather than a 302

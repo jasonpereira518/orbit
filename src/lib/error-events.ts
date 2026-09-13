@@ -72,6 +72,8 @@ export const ERROR_SOURCES = {
    * photo), so this row is the only trace that the history will be missing a picture.
    */
   capturePhotoStore: "capture.photo_store",
+  /** A generation-2 Outreach job handler threw (`src/lib/outreach/jobs/worker.ts`). */
+  outreachWorker: "outreach.worker",
 } as const;
 
 export type ErrorEventInput = {
