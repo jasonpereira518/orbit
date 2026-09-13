@@ -937,7 +937,10 @@ export function InterestPageSkeleton() {
             <Skeleton className="h-14 flex-1 rounded-xl bg-white/5" />
             <Skeleton className="h-14 w-full rounded-xl bg-white/10 sm:w-32" />
           </div>
-          <Skeleton className="mt-3 h-3 w-64 max-w-full bg-white/5" />
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <Skeleton className="h-3.5 w-10 rounded-full bg-white/10" />
+            <Skeleton className="h-3 w-56 max-w-full bg-white/5" />
+          </div>
         </div>
 
         <section className="mt-20">
@@ -953,18 +956,6 @@ export function InterestPageSkeleton() {
               </li>
             ))}
           </ul>
-        </section>
-
-        <section className="mt-24 grid items-center gap-8 md:mt-32 lg:grid-cols-[minmax(0,1.1fr)_auto] lg:gap-14">
-          <div className="space-y-4">
-            <Skeleton className="h-8 w-full max-w-sm bg-white/10" />
-            <Skeleton className="h-4 w-full max-w-md bg-white/5" />
-            <Skeleton className="h-4 w-2/3 max-w-md bg-white/5" />
-          </div>
-          <div className="flex gap-3">
-            <Skeleton className="h-11 w-24 rounded-full bg-white/5" />
-            <Skeleton className="h-11 w-32 rounded-full bg-white/10" />
-          </div>
         </section>
 
         <section className="mt-24 md:mt-32">

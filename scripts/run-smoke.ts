@@ -155,6 +155,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-instrumentation-streams": "pglite",
   "smoke-interest-list-admin": "pglite",
   "smoke-interest-list-join": "pglite",
+  "smoke-interest-list-page": "pglite",
   "smoke-interest-ticket-image": "pglite",
   "smoke-internal-auth": "pglite", // imports route handlers that reach @/db
   "smoke-linkedin-direction": "pglite",

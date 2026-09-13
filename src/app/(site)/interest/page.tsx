@@ -5,18 +5,59 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
-import { InterestForm } from "@/components/interest/interest-form";
+import { InterestHero, type HeroInitial } from "@/components/interest/interest-hero";
 import { OrbitRingsBackdrop } from "@/components/interest/orbit-rings-backdrop";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { BackControl } from "@/components/pricing/back-control";
-import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
+import { SHARE_TOKEN_MAX, buildTicketImageUrl, passengerLine } from "@/lib/interest-list";
+import {
+  getInterestProof,
+  getInviterPlanet,
+  getTicketByShareToken,
+} from "@/lib/interest-list-ticket";
+import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 
-export const metadata: Metadata = {
-  title: "Interest list — Orbit",
-  description: `Occasional notes from the person building Orbit, only when there's real news. Orbit is already live and free for your first ${FREE_CONTACT_LIMIT} contacts.`,
-};
+// The proof line, the invited strip and the ticket all come from the URL and the database
+// on every request. The proof memo (60 s) keeps the count query off the hot path.
+export const dynamic = "force-dynamic";
+
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
+
+const DEFAULT_TITLE = "Interest list — Orbit";
+const DEFAULT_DESCRIPTION = `Occasional notes from the person building Orbit, only when there's real news. Join and you're handed a planet. Orbit is already live and free for your first ${FREE_CONTACT_LIMIT} contacts.`;
+
+/** One token from the query, or null: trimmed, single-valued, at most SHARE_TOKEN_MAX. */
+function tokenParam(value: string | string[] | undefined): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const token = raw?.trim() ?? "";
+  return token.length > 0 && token.length <= SHARE_TOKEN_MAX ? token : null;
+}
+
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}): Promise<Metadata> {
+  const params = await searchParams;
+  const token = tokenParam(params.me) ?? tokenParam(params.ref);
+  const ticket = token ? await getTicketByShareToken(token) : null;
+  if (!ticket) {
+    return { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION };
+  }
+  const image = buildTicketImageUrl(getAppBaseUrl(), ticket.shareToken);
+  const title = `${passengerLine(ticket)} — Orbit`;
+  const description =
+    "Every person who joins Orbit's interest list is handed a planet. Get yours.";
+  return {
+    title,
+    description,
+    openGraph: { title, description, images: [{ url: image, width: 1200, height: 630 }] },
+    twitter: { card: "summary_large_image", title, description, images: [image] },
+  };
+}
 
 const HEADING =
   "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
@@ -46,14 +87,14 @@ const FAQ: readonly FaqItem[] = [
   },
   {
     q: "Is this a waitlist?",
-    a: `No. Orbit is already live and free for your first ${FREE_CONTACT_LIMIT} contacts. The list is for people who'd rather hear what's new than check back.`,
+    a: `Not really. There's no queue and nothing to wait for — Orbit is live and free for your first ${FREE_CONTACT_LIMIT} contacts. The number and the planet are yours to keep; the notes are the point.`,
   },
   {
     q: "What happens to my address?",
     a: (
       <>
-        It gets the notes above and nothing else — never shared or sold. The
-        details are in the <Link href="/privacy">privacy policy</Link>.
+        It gets the notes above and nothing else — never shared or sold. The details are in
+        the <Link href="/privacy">privacy policy</Link>.
       </>
     ),
   },
@@ -64,13 +105,27 @@ const FAQ: readonly FaqItem[] = [
 ];
 
 /**
- * Static and shared by every visitor: the only server work is two synchronous env
- * reads, and who is signed in resolves in the browser (`LandingAuthControls`). The
- * form talks to `joinInterestList` directly, so nothing here needs a request.
+ * Dynamic: the card's state comes from `?me=` (a ticket) or `?ref=` (an invitation), and
+ * the proof line from the database. Who is signed in still resolves in the browser
+ * (`LandingAuthControls`). The form talks to `joinInterestList` directly.
  *
  * Not a warp journey destination (see `lib/warp/journeys.ts`), so no arrival beacon.
  */
-export default function InterestPage() {
+export default async function InterestPage({ searchParams }: { searchParams: SearchParams }) {
+  const params = await searchParams;
+  const me = tokenParam(params.me);
+  const ref = me ? null : tokenParam(params.ref);
+
+  const [proof, ticket, invite] = await Promise.all([
+    getInterestProof(),
+    me ? getTicketByShareToken(me) : Promise.resolve(null),
+    ref ? getInviterPlanet(ref) : Promise.resolve(null),
+  ]);
+
+  const initial: HeroInitial = ticket
+    ? { kind: "ticket", proof, ticket }
+    : { kind: "form", proof, invite, ref: invite ? ref : null };
+
   const clerkOn = isClerkConfigured();
   const demoMode = isDemoMode();
   const authProps = { clerkOn, demoMode };
@@ -104,94 +159,28 @@ export default function InterestPage() {
       </header>
 
       <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
-        <section className="pt-10 text-center md:pt-16">
-          <Reveal className="reveal-celestial">
-            <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
-              Interest list
-            </p>
-          </Reveal>
-          <Reveal className="reveal-celestial" delay={60}>
-            <h1 className={`${HEADING} mt-4 text-[clamp(32px,5vw,56px)]`}>
-              {/* Fraunces' true italic, declared in the root layout — the word that
-                  carries the idea is the word that leans. */}
-              Stay in <em className="italic">orbit</em>.
-            </h1>
-          </Reveal>
-          <Reveal className="reveal-celestial" delay={120}>
-            <p className="mx-auto mt-5 max-w-[46ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
-              An occasional note from the person building Orbit — when there&apos;s
-              real news, and not otherwise. It isn&apos;t a waitlist: the app is
-              already live. One click to leave, any time.
-            </p>
-          </Reveal>
-        </section>
-
-        <section
-          id="interest-join"
-          aria-labelledby="interest-join-heading"
-          className="relative mt-12 scroll-mt-24 md:mt-16"
-        >
-          <h2 id="interest-join-heading" className="sr-only">
-            Join the interest list
-          </h2>
+        <div className="relative">
           <OrbitRingsBackdrop />
-          <Reveal className="reveal-celestial mx-auto block max-w-xl" delay={170}>
-            <InterestForm signUpHref={signUpHref} />
-          </Reveal>
-        </section>
+          <InterestHero initial={initial} appUrl={getAppBaseUrl()} signUpHref={signUpHref} />
+        </div>
 
         <Reveal className="reveal-celestial mt-20 block">
           <ul className="grid gap-6 sm:grid-cols-3">
             {EXPECT.map(({ icon: Icon, title, body }) => (
               <li key={title} className="flex gap-3.5">
-                <Icon
-                  className="mt-0.5 size-[18px] shrink-0 text-[#f2c14e]"
-                  aria-hidden="true"
-                />
+                <Icon className="mt-0.5 size-[18px] shrink-0 text-[#f2c14e]" aria-hidden="true" />
                 <div>
                   <h3 className="text-sm font-medium text-[#e8f3f1]">{title}</h3>
-                  <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
-                    {body}
-                  </p>
+                  <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">{body}</p>
                 </div>
               </li>
             ))}
           </ul>
         </Reveal>
 
-        <section
-          className="mt-24 md:mt-32"
-          aria-labelledby="interest-live"
-        >
-          <div className="grid items-center gap-8 lg:grid-cols-[minmax(0,1.1fr)_auto] lg:gap-14">
-            <div>
-              <Reveal className="reveal-celestial">
-                <h2 id="interest-live" className={`${HEADING} text-[clamp(26px,3.4vw,38px)]`}>
-                  There&apos;s nothing to <em className="italic">wait</em> for.
-                </h2>
-              </Reveal>
-              <Reveal className="reveal-celestial" delay={90}>
-                <p className="mt-4 max-w-[48ch] text-base leading-relaxed text-[#9aada8]">
-                  Orbit is live today and free for your first {FREE_CONTACT_LIMIT}{" "}
-                  contacts. You don&apos;t have to connect LinkedIn or Gmail — add
-                  five people by hand and see whether it earns a place in your week.
-                </p>
-              </Reveal>
-            </div>
-            {/* Visible on phones too, unlike the pricing page's hero copy of these
-                buttons: this is the page's honest detour and needs a tap target. */}
-            <Reveal className="reveal-celestial w-full lg:w-auto" delay={170}>
-              <LandingAuthControls {...authProps} variant="hero" mobileVisible />
-            </Reveal>
-          </div>
-        </section>
-
         <section className="mt-24 md:mt-32" aria-labelledby="interest-faq">
           <Reveal className="reveal-celestial">
-            <h2
-              id="interest-faq"
-              className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}
-            >
+            <h2 id="interest-faq" className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}>
               Before you hand over an address.
             </h2>
           </Reveal>
@@ -204,10 +193,7 @@ export default function InterestPage() {
           <div
             aria-hidden="true"
             className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[720px] w-[720px] -translate-x-1/2 -translate-y-1/2 rounded-full"
-            style={{
-              background:
-                "radial-gradient(circle, rgba(242,193,78,0.13), transparent 62%)",
-            }}
+            style={{ background: "radial-gradient(circle, rgba(242,193,78,0.13), transparent 62%)" }}
           />
           <Reveal className="reveal-celestial">
             <h2 className={`${HEADING} text-[clamp(28px,3.8vw,42px)]`}>
