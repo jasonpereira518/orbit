@@ -29,9 +29,6 @@ export const IGNITE = 2900;
 /** Whole-stage shake from the ignition; skip stays locked until it decays. */
 export const SHAKE_MS = 380;
 
-/** The headline slams in just after the flash peak, revealed by it. */
-export const HEADLINE_AT = 2960;
-
 /** The held beat ends here; the first perk is written in. */
 export const CASCADE_START = 3650;
 
@@ -59,16 +56,6 @@ export function finaleAt(perkCount: number) {
 
 /** The ring-ignition sweep around the mark, starting at `finaleAt`. */
 export const RING_SWEEP_MS = 650;
-
-/** The DOM logo fades in over the contracted star. */
-export function logoAt(perkCount: number) {
-  return finaleAt(perkCount) + 150;
-}
-
-/** Welcome line, once the ring is most of the way around. */
-export function welcomeAt(perkCount: number) {
-  return finaleAt(perkCount) + 400;
-}
 
 /** Resting state: ambient drift, breathing halo, dismiss button. */
 export function restAt(perkCount: number) {

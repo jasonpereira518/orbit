@@ -206,7 +206,3 @@ function getServerSnapshot() {
 export function useKeptNotifications() {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
-
-export function useUnreadKeptCount() {
-  return useKeptNotifications().filter((entry) => !entry.read).length;
-}

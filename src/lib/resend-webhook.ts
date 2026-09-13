@@ -88,18 +88,6 @@ export function verifyResendSignature(input: {
   return matched ? { ok: true } : { ok: false, reason: "bad_signature" };
 }
 
-/**
- * The Resend event types this app acts on.
- *
- * A hard bounce means the address does not exist; a complaint means the recipient pressed
- * "spam". Both must stop mail immediately — continuing to send to either is precisely what
- * gets a sending domain throttled, and a complaint is also an unambiguous request to stop.
- *
- * `email.bounced` covers soft bounces too (a full mailbox, a temporary defer), which must
- * NOT suppress: the payload's bounce type is what separates them, and only `hard` counts.
- */
-export const SUPPRESSING_EVENTS = new Set(["email.bounced", "email.complained"]);
-
 export type ResendEvent = {
   type?: string;
   created_at?: string;

@@ -49,6 +49,7 @@ import {
 import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
+  type DuplicateSubject,
 } from "@/lib/duplicates";
 import { friendlyError } from "@/lib/errors";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
@@ -295,15 +296,30 @@ export async function parseBulkCaptureNotes(
         ? detected.text
         : notes;
 
-    // Run both extractions concurrently. The commitment pass is failure-isolated:
-    // contact extraction is the core value and must survive a bad dates response.
+    // Run all three concurrently. The commitment pass is failure-isolated: contact
+    // extraction is the core value and must survive a bad dates response. The duplicate
+    // lookup only depends on userId, so it doesn't need to wait on either AI call.
     const today = new Date();
-    const [personParse, rawCommitments] = await Promise.all([
+    const [personParse, rawCommitments, existing] = await Promise.all([
       parseMultiPersonNotesWithAI(userId, corpus, mergedHints),
       fetchRawCommitments(userId, corpus, {
         today,
         knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
       }).catch(() => [] as Awaited<ReturnType<typeof fetchRawCommitments>>),
+      getDb().then((db) =>
+        db.query.contacts.findMany({
+          where: eq(contacts.userId, userId),
+          columns: {
+            id: true,
+            fullName: true,
+            email: true,
+            linkedinUrl: true,
+            xHandle: true,
+            company: true,
+            title: true,
+          } satisfies Record<keyof DuplicateSubject, true>,
+        })
+      ),
     ]);
 
     const { shared_notes, interaction_date } = personParse;
@@ -335,11 +351,6 @@ export async function parseBulkCaptureNotes(
         return emptyCommitmentResult();
       }
     })();
-
-    const db = await getDb();
-    const existing = await db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-    });
 
     const defaultDate = interaction_date || mergedHints.eventDate || null;
     const interactionType = mergedHints.interactionType || "meeting_note";
