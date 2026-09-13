@@ -7,7 +7,6 @@ import { LandingAuthControls } from "@/components/landing/landing-auth-controls"
 import { WaitlistForm } from "@/components/landing/waitlist-form";
 import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { Reveal } from "@/components/motion/reveal";
-import { MONTHLY_AMOUNT } from "@/lib/plan-copy";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 
 // All narrative copy is server-rendered here so it ships in the document;
@@ -131,111 +130,68 @@ export function SceneFinale({
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-[640px] bg-[linear-gradient(to_bottom,transparent_0%,rgba(0,2,8,0.55)_55%,#00010a_100%)]"
       />
-      {/* One ask, answered — not two offers side by side. The interest list used
-       * to sit in a glass card of its own next to these buttons, which made the
-       * secondary path the heavier object on the page. It is now a single line
-       * below the questions. */}
-      <div className="mx-auto flex w-full max-w-3xl -translate-y-4 flex-col items-center text-center md:-translate-y-6">
-        <Reveal className="reveal-celestial">
-          <h2 id="cta-heading" className={HEADING}>
-            Don&apos;t lose the person who gets you hired.
-          </h2>
-        </Reveal>
-        <Reveal className="reveal-celestial" delay={100}>
-          <p className={`${BODY} mx-auto`}>
-            Connect LinkedIn and Gmail once, and Orbit runs the follow-up loop
-            while you keep interviewing.
-          </p>
-        </Reveal>
-        {/* w-full below sm so the stacked buttons fill the column — the
-          * parent's items-center would otherwise size this to its content. */}
-        <Reveal className="reveal-celestial w-full sm:w-auto" delay={200}>
-          {/* Visible at every width — this is the page's closing ask, and
-            * the hero's copy of these buttons is hidden below md. */}
-          <div className="mt-8 w-full sm:w-auto">
-            <LandingAuthControls
-              clerkOn={clerkOn}
-              demoMode={demoMode}
-              signedIn={signedIn}
-              variant="hero"
-              mobileVisible
-            />
-          </div>
-        </Reveal>
-        {/* The price, in view at the moment of the decision. It used to be a
-          * clause mid-paragraph with the number behind a link, which put a
-          * navigation between the visitor and the one fact they weigh.
-          * Amounts come from plan-limits/plan-copy so this line cannot drift
-          * from the pricing page or from what Stripe actually charges. */}
-        <Reveal className="reveal-celestial" delay={260}>
-          <p className="mt-5 text-sm text-[#9aada8]">
-            Free for your first {FREE_CONTACT_LIMIT} contacts, then $
-            {MONTHLY_AMOUNT} a month.{" "}
-            <Link
-              href="/pricing"
-              className="underline underline-offset-4 transition-opacity hover:opacity-80"
-            >
-              See pricing
-            </Link>
-          </p>
-        </Reveal>
-      </div>
-
-      {/* The objections that actually stop someone connecting an inbox, answered
-       * before the ask rather than in a policy page nobody opens. Every claim
-       * here is load-bearing: keep it in step with what the product does. */}
-      <div className="mx-auto mt-20 w-full max-w-4xl">
-        <Reveal className="reveal-celestial">
-          <p className={`${KICKER} text-center`}>Before you connect anything</p>
-        </Reveal>
-        <dl className="mt-8 grid gap-8 text-left md:grid-cols-2 md:gap-12">
-          <Reveal className="reveal-celestial" delay={80}>
-            <dt className="font-[family-name:var(--font-display)] text-lg text-[#e8f3f1]">
-              Does Orbit email people for me?
-            </dt>
-            {/* Verified against the send path: drafts are generated, you edit
-              * and choose recipients, and only then does a send happen. No cron
-              * job and no route handler sends mail. */}
-            <dd className="mt-2 text-sm leading-relaxed text-[#9aada8]">
-              Yes — from your own Gmail, and only after you have read it. Orbit
-              writes the draft and queues it; you edit it, choose who it goes
-              to, and press send. Nothing leaves your account on a schedule or
-              without you.
-            </dd>
+      <div className="mx-auto grid w-full max-w-5xl -translate-y-4 items-center gap-12 md:-translate-y-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="flex flex-col items-center text-center lg:items-start lg:text-left">
+          <Reveal className="reveal-celestial">
+            <h2 id="cta-heading" className={HEADING}>
+              Don&apos;t lose the person who gets you hired.
+            </h2>
           </Reveal>
-          <Reveal className="reveal-celestial" delay={160}>
-            <dt className="font-[family-name:var(--font-display)] text-lg text-[#e8f3f1]">
-              What does it read?
-            </dt>
-            <dd className="mt-2 text-sm leading-relaxed text-[#9aada8]">
-              Your Gmail, Google Contacts and calendar, so it can build a
-              timeline for the people you actually talk to. Sending is a
-              separate permission it uses only when you press send.{" "}
+          <Reveal className="reveal-celestial" delay={100}>
+            <p className={BODY}>
+              Free for your first {FREE_CONTACT_LIMIT} contacts. Connect LinkedIn and Gmail once,
+              and Orbit runs the follow-up loop while you keep interviewing.{" "}
               <Link
-                href="/privacy"
+                href="/pricing"
                 className="underline underline-offset-4 transition-opacity hover:opacity-80"
               >
-                The full list is in the privacy policy
+                See pricing
               </Link>
               .
-            </dd>
+            </p>
           </Reveal>
-        </dl>
+          {/* w-full below sm so the stacked buttons fill the column — the
+            * parent's items-center would otherwise size this to its content. */}
+          <Reveal className="reveal-celestial w-full sm:w-auto" delay={200}>
+            {/* Visible at every width — this is the page's closing ask, and
+             * the hero's copy of these buttons is hidden below md. */}
+            <div className="mt-8 w-full sm:w-auto">
+              <LandingAuthControls
+                clerkOn={clerkOn}
+                demoMode={demoMode}
+                signedIn={signedIn}
+                variant="hero"
+                mobileVisible
+              />
+            </div>
+          </Reveal>
+        </div>
+
+        <Reveal
+          className="reveal-celestial mx-auto w-full max-w-lg lg:mx-0 lg:justify-self-end"
+          delay={160}
+        >
+          <GlassCard className="rounded-3xl p-6 text-left md:p-8">
+            {/* Secondary path only. The app is live, so this is a mailing
+             * list — not a waitlist — and must not compete with the CTA. */}
+            <p className={KICKER}>Interest list</p>
+            <p className="mt-2 text-lg text-[#e8f3f1]">
+              Not ready to sign up?
+            </p>
+            <p className="mt-1 text-sm text-[#9aada8]">
+              Get the occasional note on what&apos;s new in Orbit.
+            </p>
+            <div className="mt-4">
+              <WaitlistForm />
+            </div>
+            <p className="mt-3 text-xs text-[#6d807c]">
+              No commitments. Interest list only.
+            </p>
+          </GlassCard>
+        </Reveal>
       </div>
 
-      {/* Secondary path, and now weighted like one. The app is live, so this is
-       * a mailing list — not a waitlist — and must not compete with the CTA. */}
-      <Reveal className="reveal-celestial" delay={120}>
-        <div className="mx-auto mt-16 w-full max-w-xl border-t border-[#e8f3f1]/[0.07] pt-8 text-center">
-          <p className="text-sm text-[#9aada8]">
-            Not ready to sign up? Get the occasional note on what&apos;s new in
-            Orbit.
-          </p>
-          <div className="mx-auto mt-4 max-w-md">
-            <WaitlistForm variant="inline" />
-          </div>
-        </div>
-      </Reveal>
+      <FinaleCloser clerkOn={clerkOn} demoMode={demoMode} signedIn={signedIn} />
 
       <div
         aria-hidden="true"
@@ -260,5 +216,133 @@ export function SceneFinale({
        * follow it, since its bottom edge is the page's. */}
       <FooterWordmark className="relative z-10 mx-auto max-w-6xl" />
     </section>
+  );
+}
+
+/**
+ * The page's last word: the headline again, set as the largest type on the page
+ * inside a still orbit ring, with one button under it.
+ *
+ * A <p>, not a heading. It repeats the h2 directly above it word for word, and
+ * a second identical heading would read twice in a screen reader's outline.
+ *
+ * The questions sit in a native <details> so the ask stays uncluttered while the
+ * answers ship in the document for anyone who opens them (and for search).
+ * The button above creates a FREE account, so no answer may promise a Pro
+ * feature as if it came with it. "Does Orbit email people for me? Yes" was cut
+ * for exactly that: Gmail sync and sending are Pro (plan-copy.ts).
+ */
+function FinaleCloser({
+  clerkOn,
+  demoMode,
+  signedIn,
+}: {
+  clerkOn: boolean;
+  demoMode: boolean;
+  signedIn: boolean;
+}) {
+  return (
+    <div className="relative mx-auto mt-32 flex w-full max-w-4xl flex-col items-center text-center md:mt-40">
+      <Reveal className="reveal-celestial relative isolate">
+        {/* Stretched to the headline's box rather than drawn at a fixed aspect,
+          * so it frames three lines on a phone and two on a desktop alike.
+          * non-scaling-stroke keeps the line 1px however far it stretches. The
+          * inset stays under the section's px-8, so it never widens the page. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -inset-x-[6%] -inset-y-[38%] -z-10"
+        >
+          <svg
+            className="size-full"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+          >
+            <ellipse
+              cx="50"
+              cy="50"
+              rx="49"
+              ry="46"
+              fill="none"
+              stroke="rgba(242,193,78,0.22)"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+            <ellipse
+              cx="50"
+              cy="50"
+              rx="38"
+              ry="33"
+              fill="none"
+              stroke="rgba(232,243,241,0.07)"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+          {/* On the outer ring at 150deg: (50 + 49cos, 50 + 46sin) in percent. */}
+          <span className="absolute left-[7.6%] top-[73%] size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#f2c14e] shadow-[0_0_0_6px_rgba(242,193,78,0.14)]" />
+        </div>
+        <p className="font-[family-name:var(--font-display)] text-[clamp(36px,6.4vw,72px)] font-light leading-[1.06] tracking-[-0.03em] text-balance text-[#e8f3f1]">
+          Don&apos;t lose the person who{" "}
+          <em className="text-[#f2c14e]">gets you hired.</em>
+        </p>
+      </Reveal>
+
+      <Reveal className="reveal-celestial w-full sm:w-auto" delay={120}>
+        <div className="mt-12 w-full sm:w-auto md:mt-16">
+          <LandingAuthControls
+            clerkOn={clerkOn}
+            demoMode={demoMode}
+            signedIn={signedIn}
+            variant="hero"
+            mobileVisible
+            primaryOnly
+            primaryLabel="Create your free account"
+          />
+        </div>
+      </Reveal>
+
+      <Reveal className="reveal-celestial w-full" delay={200}>
+        <details className="group mx-auto mt-14 w-full max-w-xl border-y border-[#e8f3f1]/[0.08] text-left">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 py-3 text-sm text-[#e8f3f1] transition-colors hover:text-white focus-visible:rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f2c14e] [&::-webkit-details-marker]:hidden">
+            Before you connect anything
+            <span
+              aria-hidden="true"
+              className="text-base text-[#f2c14e] transition-transform duration-200 group-open:rotate-45 motion-reduce:transition-none"
+            >
+              +
+            </span>
+          </summary>
+          <dl className="grid gap-5 pb-6 pt-1">
+            <div>
+              <dt className="font-[family-name:var(--font-display)] text-base text-[#e8f3f1]">
+                Do I need to type everyone in?
+              </dt>
+              <dd className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
+                No. Upload LinkedIn&apos;s Connections.csv and your whole
+                network arrives at once, one page per person. Add anyone else by
+                hand, or from your notes.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-[family-name:var(--font-display)] text-base text-[#e8f3f1]">
+                What does it read?
+              </dt>
+              <dd className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
+                Your Gmail, Google Contacts and calendar, so it can build a
+                timeline for the people you actually talk to. Sending is a
+                separate permission it uses only when you press send.{" "}
+                <Link
+                  href="/privacy"
+                  className="underline underline-offset-4 transition-opacity hover:opacity-80"
+                >
+                  The full list is in the privacy policy
+                </Link>
+                .
+              </dd>
+            </div>
+          </dl>
+        </details>
+      </Reveal>
+    </div>
   );
 }
