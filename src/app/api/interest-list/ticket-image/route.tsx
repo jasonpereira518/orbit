@@ -130,18 +130,35 @@ function Card({
           <div style={{ display: "flex", fontSize: 20, letterSpacing: 4, color: ACCENT }}>
             ORBIT · INTEREST LIST
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", fontSize: 56, lineHeight: 1.1, marginTop: 20, letterSpacing: -1.5 }}>
-            {number !== null ? (
-              <span>
-                Passenger {formatTicketNumber(number)}, bound for{" "}
-                <span style={{ fontStyle: "italic", color: ACCENT }}>{label}</span>.
+          {/*
+            Two real element children, never a fragment and never a `{" "}` text node: Satori
+            drops standalone whitespace (the headline read "bound forMercury") and lays a
+            fragment out as one nowrap row, so the accent word ran off the card instead of
+            wrapping. The first span carries its own trailing gap as a margin; the planet and
+            its period sit in one span so they can never be split across lines.
+          */}
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "baseline",
+              fontSize: 56,
+              lineHeight: 1.1,
+              marginTop: 20,
+              letterSpacing: -1.5,
+            }}
+          >
+            <span style={{ marginRight: 16 }}>
+              {number !== null
+                ? `Passenger ${formatTicketNumber(number)}, bound for`
+                : "Every person who joins is handed a"}
+            </span>
+            <span style={{ display: "flex" }}>
+              <span style={{ fontStyle: "italic", color: ACCENT }}>
+                {number !== null ? label : "planet"}
               </span>
-            ) : (
-              <span>
-                Every person who joins is handed a{" "}
-                <span style={{ fontStyle: "italic", color: ACCENT }}>planet</span>.
-              </span>
-            )}
+              <span>.</span>
+            </span>
           </div>
           <div style={{ display: "flex", fontSize: 26, color: MUTED, marginTop: 28, lineHeight: 1.4 }}>
             {number !== null
