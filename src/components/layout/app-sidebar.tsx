@@ -18,9 +18,10 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
 import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
-import { buttonVariants } from "@/components/ui/button";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { clerkAppearance } from "@/lib/clerk-appearance";
+import { useModKeyLabel } from "@/lib/use-mod-key";
 
 function SidebarNavLink({
   item,
@@ -91,6 +92,8 @@ export function AppSidebar({
   const core = APP_NAV_CORE.filter((item) => !isHrefHidden(item.href, hidden));
   const extras = APP_NAV_EXTRAS.filter((item) => !isHrefHidden(item.href, hidden));
   const captureHidden = hidden.has("page.capture");
+  const mod = useModKeyLabel();
+  const shortcut = mod === "⌘" ? "⌘K" : "Ctrl K";
   const tagged = (item: AppNavItem) => {
     const key = surfaceKeyForHref(item.href);
     return key !== null && hiddenForUsers.has(key);
@@ -98,10 +101,12 @@ export function AppSidebar({
 
   return (
     <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
-      <div className="flex items-center justify-between gap-2 px-3 py-5 lg:px-5 lg:py-6">
+      {/* Stacked on the icon rail, where logo and search cannot share a row; side by side
+          once the panel is wide enough to carry the wordmark. */}
+      <div className="flex flex-col items-center gap-3 px-3 py-5 lg:flex-row lg:justify-between lg:gap-2 lg:px-5 lg:py-6">
         <Link
           href="/"
-          className="flex min-w-0 flex-1 items-center justify-center gap-2.5 lg:justify-start"
+          className="flex min-w-0 items-center justify-center gap-2.5 lg:flex-1 lg:justify-start"
           title="Back to landing page"
         >
           <span data-app-logo className="inline-flex shrink-0">
@@ -116,7 +121,30 @@ export function AppSidebar({
             </p>
           </div>
         </Link>
-        <ThemeToggle className="hidden shrink-0 lg:inline-flex" />
+        {/* The palette's visible door, in the corner the theme toggle used to hold — theme
+            lives in Settings → Appearance, and this gets pressed far more often. */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label={`Search (${shortcut})`}
+                onClick={() => window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT))}
+                className="shrink-0 rounded-full border-border/70 text-muted-foreground hover:text-ink"
+              >
+                <Search className="size-4" />
+              </Button>
+            }
+          />
+          <TooltipContent side="bottom">
+            Search
+            <kbd className="ml-1.5 rounded border border-current/20 px-1 text-[10px] opacity-80">
+              {shortcut}
+            </kbd>
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Not part of the nav array, so filtering that list would leave this shortcut as a
@@ -139,20 +167,6 @@ export function AppSidebar({
       )}
 
       <nav className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
-        {/* The palette's visible door. A shortcut nobody can see is a shortcut nobody
-            learns — and the kbd hint here is how the ⌘K gets learned. */}
-        <button
-          type="button"
-          onClick={() => window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT))}
-          title="Search (⌘K)"
-          className="relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm text-muted-foreground transition-colors hover:text-foreground lg:justify-start lg:px-3 lg:py-2"
-        >
-          <Search className="h-4 w-4 shrink-0" />
-          <span className="hidden lg:inline">Search</span>
-          <kbd className="ml-auto hidden rounded-md border border-border/70 bg-muted/50 px-1.5 py-px text-[10px] text-muted-foreground lg:inline">
-            ⌘K
-          </kbd>
-        </button>
         {core.map((item) => (
           <SidebarNavLink
             key={item.href}

@@ -86,6 +86,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ics-feed": "pure",
   "smoke-import-progress-card": "pure",
   "smoke-landing-anchors": "pure",
+  "smoke-landing-cards": "pure",
   "smoke-lifetime-pricing": "pure",
   "smoke-locked-participant": "pure",
   "smoke-marketing-footer": "pure",
@@ -102,6 +103,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
+  "smoke-settings-layout": "pure",
   "smoke-sky-figures": "pure",
   "smoke-timeline-vocabulary": "pure",
   "smoke-webhook-signing": "pure",
@@ -164,6 +166,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
+  "smoke-dashboard-aggregates": "pglite",
+  "smoke-migration-guards": "pglite", // the pure half is here too: both guards belong in one place
   "smoke-note-batch": "pglite",
   "smoke-capture-history": "pglite",
   "smoke-meeting-sessions": "pglite",

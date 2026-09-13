@@ -39,6 +39,9 @@ export const EXPECTED_IN_PRODUCTION = [
   // and /admin/analytics says so — deliberately not REQUIRED, because that list fails the
   // production build, and an analytics secret must never be able to block a deploy.
   "ANALYTICS_SALT",
+  // Not read by the app at all — it exists so `checkMigrationTarget` below can tell a
+  // preview build pointed at its own Neon branch from one pointed at production.
+  "PRODUCTION_DB_HOST",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [
@@ -141,6 +144,11 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
         warnings.push(`${name} is unset (required in production)`);
       }
     }
+    // A preview build runs db:migrate too. Without this, nothing can tell whether it is
+    // about to write to its own Neon branch or to production. See `checkMigrationTarget`.
+    if (!has(env, "PRODUCTION_DB_HOST")) {
+      warnings.push("PRODUCTION_DB_HOST is unset; the preview-migration guard is unarmed");
+    }
     return { errors, warnings, missingRequired };
   }
 
@@ -154,4 +162,83 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
 /** The report for this process. */
 export function getEnvReport(): EnvReport {
   return validateEnv(process.env, { vercelEnv: process.env.VERCEL_ENV as VercelEnv });
+}
+
+/**
+ * The host of a `postgres://` URL, or null if it is unparseable. Never the credentials.
+ */
+export function databaseHost(url: string | undefined): string | null {
+  const raw = url?.trim();
+  if (!raw) return null;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host || null;
+  } catch {
+    return null;
+  }
+}
+
+export type MigrationTargetVerdict = {
+  allowed: boolean;
+  /** Why, in a sentence, for the build log. Names variables and hosts, never credentials. */
+  reason: string;
+  /** True when the check ran but had nothing to compare against. */
+  unarmed?: boolean;
+};
+
+/**
+ * Whether this build may run `db:migrate` against the database it is pointed at.
+ *
+ * `vercel.json`'s build command runs `npm run db:migrate` in EVERY environment, and
+ * `scripts/migrate.ts` reconciles DDL, backfills `contact_identities` and merges confident
+ * duplicates — two of which write. If `DATABASE_URL` is scoped to "All Environments" in
+ * Vercel (the default when a variable is added without picking environments), then every
+ * pull-request preview build performs those writes against production customer data.
+ *
+ * The real fix is scoping the variable and giving previews their own Neon branch. This is
+ * the backstop, because a guard that depends on a dashboard setting staying right is not a
+ * guard. It compares the target host against `PRODUCTION_DB_HOST` — a hostname, not a
+ * credential, so it is safe to set on all environments, which is exactly what makes it
+ * readable from a preview build.
+ *
+ * Deliberately NOT fail-closed when `PRODUCTION_DB_HOST` is unset: refusing every preview
+ * build until someone sets a new variable breaks previews to prevent a hypothetical, and a
+ * broken preview pipeline is how guards get deleted. It reports `unarmed` instead, and
+ * `check-env` warns.
+ */
+export function checkMigrationTarget(
+  env: EnvBag,
+  options: { vercelEnv: VercelEnv }
+): MigrationTargetVerdict {
+  if (!has(env, "VERCEL")) {
+    return { allowed: true, reason: "not a Vercel build; the target is whatever DATABASE_URL says" };
+  }
+  if (options.vercelEnv === "production") {
+    return { allowed: true, reason: "production build migrating the production database" };
+  }
+
+  const target = databaseHost(env.DATABASE_URL);
+  const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
+
+  if (!production) {
+    return {
+      allowed: true,
+      unarmed: true,
+      reason:
+        "PRODUCTION_DB_HOST is unset, so a preview build pointed at production cannot be told " +
+        "from one pointed at its own branch. Set it (to the production database hostname) on " +
+        "all environments to arm this check.",
+    };
+  }
+  if (target && target === production) {
+    return {
+      allowed: false,
+      reason:
+        `VERCEL_ENV=${options.vercelEnv ?? "unset"} but DATABASE_URL points at ${target}, which ` +
+        "PRODUCTION_DB_HOST names as production. This build would run DDL and the identity/duplicate " +
+        "backfills against live customer data. Scope DATABASE_URL to Production only and give " +
+        "previews their own Neon branch.",
+    };
+  }
+  return { allowed: true, reason: `target ${target ?? "(unparseable)"} is not the production host` };
 }

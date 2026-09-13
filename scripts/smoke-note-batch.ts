@@ -16,7 +16,6 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { actionItems, contacts, interactionMentions, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
 import { dismissNoteReminderForUser, saveNoteBatch, undoNoteBatchForUser, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
-import { emptyNoteBatchResult } from "../src/lib/note-batches";
 import { hashSourceNote, isoDay } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
 

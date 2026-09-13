@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { CometStreak } from "@/components/landing/comet-streak";
 import { ConstellationFigure } from "@/components/landing/constellation-figure";
+import { FooterWordmark } from "@/components/landing/footer-wordmark";
+import { GlassCard } from "@/components/landing/glass-card";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { WaitlistForm } from "@/components/landing/waitlist-form";
 import { MarketingFooter } from "@/components/marketing/marketing-footer";
@@ -76,7 +78,7 @@ export function SceneComets() {
           {/* landing-glass, not liquid-glass: liquid-glass's light variant
            * has no `.dark` ancestor to invert against on this page, so it
            * rendered as a washed-out white panel instead of a card. */}
-          <div className="landing-glass mt-10 max-w-sm rounded-2xl p-5">
+          <GlassCard className="mt-10 max-w-sm rounded-2xl p-5">
             {/* Below md the pill drops to its own line: on a phone the name
              * block was squeezed to ~97px, wrapping the subtitle to three
              * lines beside a shrink-0 badge. */}
@@ -96,7 +98,7 @@ export function SceneComets() {
                 Follow up today
               </span>
             </div>
-          </div>
+          </GlassCard>
         </Reveal>
       </div>
     </section>
@@ -169,7 +171,7 @@ export function SceneFinale({
           className="reveal-celestial mx-auto w-full max-w-lg lg:mx-0 lg:justify-self-end"
           delay={160}
         >
-          <div className="landing-glass rounded-3xl p-6 text-left md:p-8">
+          <GlassCard className="rounded-3xl p-6 text-left md:p-8">
             {/* Secondary path only. The app is live, so this is a mailing
              * list — not a waitlist — and must not compete with the CTA. */}
             <p className={KICKER}>Interest list</p>
@@ -185,9 +187,11 @@ export function SceneFinale({
             <p className="mt-3 text-xs text-[#6d807c]">
               No commitments. Interest list only.
             </p>
-          </div>
+          </GlassCard>
         </Reveal>
       </div>
+
+      <FinaleCloser clerkOn={clerkOn} demoMode={demoMode} signedIn={signedIn} />
 
       <div
         aria-hidden="true"
@@ -207,6 +211,138 @@ export function SceneFinale({
           }}
         />
       </MarketingFooter>
+
+      {/* Landing only: the other marketing pages end on the plain footer. Nothing may
+       * follow it, since its bottom edge is the page's. */}
+      <FooterWordmark className="relative z-10 mx-auto max-w-6xl" />
     </section>
+  );
+}
+
+/**
+ * The page's last word: the headline again, set as the largest type on the page
+ * inside a still orbit ring, with one button under it.
+ *
+ * A <p>, not a heading. It repeats the h2 directly above it word for word, and
+ * a second identical heading would read twice in a screen reader's outline.
+ *
+ * The questions sit in a native <details> so the ask stays uncluttered while the
+ * answers ship in the document for anyone who opens them (and for search).
+ * The button above creates a FREE account, so no answer may promise a Pro
+ * feature as if it came with it. "Does Orbit email people for me? Yes" was cut
+ * for exactly that: Gmail sync and sending are Pro (plan-copy.ts).
+ */
+function FinaleCloser({
+  clerkOn,
+  demoMode,
+  signedIn,
+}: {
+  clerkOn: boolean;
+  demoMode: boolean;
+  signedIn: boolean;
+}) {
+  return (
+    <div className="relative mx-auto mt-32 flex w-full max-w-4xl flex-col items-center text-center md:mt-40">
+      <Reveal className="reveal-celestial relative isolate">
+        {/* Stretched to the headline's box rather than drawn at a fixed aspect,
+          * so it frames three lines on a phone and two on a desktop alike.
+          * non-scaling-stroke keeps the line 1px however far it stretches. The
+          * inset stays under the section's px-8, so it never widens the page. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -inset-x-[6%] -inset-y-[38%] -z-10"
+        >
+          <svg
+            className="size-full"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+          >
+            <ellipse
+              cx="50"
+              cy="50"
+              rx="49"
+              ry="46"
+              fill="none"
+              stroke="rgba(242,193,78,0.22)"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+            <ellipse
+              cx="50"
+              cy="50"
+              rx="38"
+              ry="33"
+              fill="none"
+              stroke="rgba(232,243,241,0.07)"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+          {/* On the outer ring at 150deg: (50 + 49cos, 50 + 46sin) in percent. */}
+          <span className="absolute left-[7.6%] top-[73%] size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#f2c14e] shadow-[0_0_0_6px_rgba(242,193,78,0.14)]" />
+        </div>
+        <p className="font-[family-name:var(--font-display)] text-[clamp(36px,6.4vw,72px)] font-light leading-[1.06] tracking-[-0.03em] text-balance text-[#e8f3f1]">
+          Don&apos;t lose the person who{" "}
+          <em className="text-[#f2c14e]">gets you hired.</em>
+        </p>
+      </Reveal>
+
+      <Reveal className="reveal-celestial w-full sm:w-auto" delay={120}>
+        <div className="mt-12 w-full sm:w-auto md:mt-16">
+          <LandingAuthControls
+            clerkOn={clerkOn}
+            demoMode={demoMode}
+            signedIn={signedIn}
+            variant="hero"
+            mobileVisible
+            primaryOnly
+            primaryLabel="Create your free account"
+          />
+        </div>
+      </Reveal>
+
+      <Reveal className="reveal-celestial w-full" delay={200}>
+        <details className="group mx-auto mt-14 w-full max-w-xl border-y border-[#e8f3f1]/[0.08] text-left">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 py-3 text-sm text-[#e8f3f1] transition-colors hover:text-white focus-visible:rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f2c14e] [&::-webkit-details-marker]:hidden">
+            Before you connect anything
+            <span
+              aria-hidden="true"
+              className="text-base text-[#f2c14e] transition-transform duration-200 group-open:rotate-45 motion-reduce:transition-none"
+            >
+              +
+            </span>
+          </summary>
+          <dl className="grid gap-5 pb-6 pt-1">
+            <div>
+              <dt className="font-[family-name:var(--font-display)] text-base text-[#e8f3f1]">
+                Do I need to type everyone in?
+              </dt>
+              <dd className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
+                No. Upload LinkedIn&apos;s Connections.csv and your whole
+                network arrives at once, one page per person. Add anyone else by
+                hand, or from your notes.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-[family-name:var(--font-display)] text-base text-[#e8f3f1]">
+                What does it read?
+              </dt>
+              <dd className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
+                Your Gmail, Google Contacts and calendar, so it can build a
+                timeline for the people you actually talk to. Sending is a
+                separate permission it uses only when you press send.{" "}
+                <Link
+                  href="/privacy"
+                  className="underline underline-offset-4 transition-opacity hover:opacity-80"
+                >
+                  The full list is in the privacy policy
+                </Link>
+                .
+              </dd>
+            </div>
+          </dl>
+        </details>
+      </Reveal>
+    </div>
   );
 }
