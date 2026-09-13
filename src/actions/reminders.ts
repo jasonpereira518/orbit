@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
+import { asActionResult, UserFacingError } from "@/lib/errors";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   inferReminderActionKind,
@@ -36,8 +37,50 @@ import {
   generateDueFollowUps,
   getDashboardData,
   maybeRefreshOutreachSuggestions,
+  reopenReminder,
   snoozeReminder,
+  unsnoozeReminder,
+  type CompletionSnapshot,
+  type SnoozeSnapshot,
 } from "@/lib/reminders";
+
+/*
+ * Undo snapshots come back from the client, so they are input like any other. Every
+ * inverse is already scoped to the signed-in user and guarded on the row's current
+ * state; these checks additionally stop a hand-edited snapshot from writing a status
+ * the app never produces.
+ */
+const REMINDER_STATUSES = new Set(["pending", "done"]);
+const FOLLOW_UP_STATUSES = new Set(["none", "pending"]);
+
+function isIsoOrNull(value: unknown): value is string | null {
+  return value === null || (typeof value === "string" && !Number.isNaN(Date.parse(value)));
+}
+
+function validSnoozeSnapshot(snap: SnoozeSnapshot): boolean {
+  return (
+    typeof snap?.reminderId === "string" &&
+    typeof snap.snoozedTo === "string" &&
+    !Number.isNaN(Date.parse(snap.snoozedTo)) &&
+    isIsoOrNull(snap.previousDueDate) &&
+    REMINDER_STATUSES.has(snap.previousStatus) &&
+    (snap.contactId === null || typeof snap.contactId === "string") &&
+    isIsoOrNull(snap.previousNextFollowUpAt) &&
+    (snap.previousFollowUpStatus === null ||
+      FOLLOW_UP_STATUSES.has(snap.previousFollowUpStatus))
+  );
+}
+
+function validCompletionSnapshot(snap: CompletionSnapshot): boolean {
+  return (
+    typeof snap?.reminderId === "string" &&
+    REMINDER_STATUSES.has(snap.previousStatus) &&
+    snap.previousStatus !== "done" &&
+    Array.isArray(snap.closedActionItemIds) &&
+    snap.closedActionItemIds.length <= 500 &&
+    snap.closedActionItemIds.every((id) => typeof id === "string")
+  );
+}
 
 export async function fetchDashboard() {
   const userId = await requireUserId();
@@ -347,100 +390,111 @@ export async function moveReminderToList(id: string, listId: string) {
   return updateReminder(id, { listId });
 }
 
+/*
+ * The three list actions return their validation as data (`asActionResult`) rather than
+ * throwing it: a thrown message becomes a digest in production, so "You already have a
+ * list with that name" used to arrive as a paragraph about Server Components renders.
+ */
 export async function createReminderList(name: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  await ensureReminderLists(userId);
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const db = await getDb();
+    await ensureReminderLists(userId);
 
-  const display = displayListName(name);
-  if (!display) throw new Error("List name is required");
-  const normalized = normalizeListName(display);
-  if (normalized === "inbox") {
-    throw new Error("Inbox already exists");
-  }
+    const display = displayListName(name);
+    if (!display) throw new UserFacingError("Give the list a name first");
+    const normalized = normalizeListName(display);
+    if (normalized === "inbox") {
+      throw new UserFacingError("You already have an Inbox — pick another name");
+    }
 
-  const existing = await db.query.reminderLists.findFirst({
-    where: and(
-      eq(reminderLists.userId, userId),
-      eq(reminderLists.nameNormalized, normalized)
-    ),
+    const existing = await db.query.reminderLists.findFirst({
+      where: and(
+        eq(reminderLists.userId, userId),
+        eq(reminderLists.nameNormalized, normalized)
+      ),
+    });
+    if (existing) throw new UserFacingError("You already have a list with that name");
+
+    const maxPos = await db.query.reminderLists.findMany({
+      where: eq(reminderLists.userId, userId),
+      columns: { position: true },
+    });
+    const nextPos = maxPos.reduce((m, l) => Math.max(m, l.position), 0) + 1;
+
+    const [row] = await db
+      .insert(reminderLists)
+      .values({
+        userId,
+        name: display,
+        nameNormalized: normalized,
+        position: nextPos,
+        isInbox: 0,
+      })
+      .returning();
+
+    revalidatePath("/reminders");
+    return row;
   });
-  if (existing) throw new Error("A list with that name already exists");
-
-  const maxPos = await db.query.reminderLists.findMany({
-    where: eq(reminderLists.userId, userId),
-    columns: { position: true },
-  });
-  const nextPos = maxPos.reduce((m, l) => Math.max(m, l.position), 0) + 1;
-
-  const [row] = await db
-    .insert(reminderLists)
-    .values({
-      userId,
-      name: display,
-      nameNormalized: normalized,
-      position: nextPos,
-      isInbox: 0,
-    })
-    .returning();
-
-  revalidatePath("/reminders");
-  return row;
 }
 
 export async function renameReminderList(id: string, name: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const db = await getDb();
 
-  const list = await findReminderListForUser(userId, id);
-  if (!list) throw new Error("List not found");
-  if (list.isInbox === 1) throw new Error("Cannot rename Inbox");
+    const list = await findReminderListForUser(userId, id);
+    if (!list) throw new Error("List not found");
+    if (list.isInbox === 1) throw new UserFacingError("The Inbox can’t be renamed");
 
-  const display = displayListName(name);
-  if (!display) throw new Error("List name is required");
-  const normalized = normalizeListName(display);
-  if (normalized === "inbox") throw new Error("Cannot rename to Inbox");
+    const display = displayListName(name);
+    if (!display) throw new UserFacingError("Give the list a name first");
+    const normalized = normalizeListName(display);
+    if (normalized === "inbox") throw new UserFacingError("Inbox is taken — pick another name");
 
-  const clash = await db.query.reminderLists.findFirst({
-    where: and(
-      eq(reminderLists.userId, userId),
-      eq(reminderLists.nameNormalized, normalized)
-    ),
+    const clash = await db.query.reminderLists.findFirst({
+      where: and(
+        eq(reminderLists.userId, userId),
+        eq(reminderLists.nameNormalized, normalized)
+      ),
+    });
+    if (clash && clash.id !== id) {
+      throw new UserFacingError("You already have a list with that name");
+    }
+
+    const [row] = await db
+      .update(reminderLists)
+      .set({ name: display, nameNormalized: normalized })
+      .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
+      .returning();
+
+    revalidatePath("/reminders");
+    return row;
   });
-  if (clash && clash.id !== id) {
-    throw new Error("A list with that name already exists");
-  }
-
-  const [row] = await db
-    .update(reminderLists)
-    .set({ name: display, nameNormalized: normalized })
-    .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
-    .returning();
-
-  revalidatePath("/reminders");
-  return row;
 }
 
 export async function deleteReminderList(id: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const db = await getDb();
 
-  const list = await findReminderListForUser(userId, id);
-  if (!list) throw new Error("List not found");
-  if (list.isInbox === 1) throw new Error("Cannot delete Inbox");
+    const list = await findReminderListForUser(userId, id);
+    if (!list) throw new Error("List not found");
+    if (list.isInbox === 1) throw new UserFacingError("The Inbox can’t be deleted");
 
-  const inboxId = await getInboxListId(userId);
-  await db
-    .update(reminders)
-    .set({ listId: inboxId })
-    .where(and(eq(reminders.userId, userId), eq(reminders.listId, id)));
+    const inboxId = await getInboxListId(userId);
+    await db
+      .update(reminders)
+      .set({ listId: inboxId })
+      .where(and(eq(reminders.userId, userId), eq(reminders.listId, id)));
 
-  await db
-    .delete(reminderLists)
-    .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)));
+    await db
+      .delete(reminderLists)
+      .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)));
 
-  revalidatePath("/reminders");
-  return { ok: true, inboxId };
+    revalidatePath("/reminders");
+    return { inboxId };
+  });
 }
 
 export async function scheduleContactFollowUp(
@@ -671,8 +725,19 @@ export async function completeFollowUpWithTouch(
 
 export async function markReminderDone(id: string) {
   const userId = await requireUserId();
-  await completeReminder(userId, id);
+  const snapshot = await completeReminder(userId, id);
   revalidateReminderPaths();
+  // Handed back so the toast can offer Undo; see `reopenReminderAction`.
+  return snapshot;
+}
+
+/** Undo for `markReminderDone`. */
+export async function reopenReminderAction(snapshot: CompletionSnapshot) {
+  const userId = await requireUserId();
+  if (!validCompletionSnapshot(snapshot)) return { restored: false };
+  const result = await reopenReminder(userId, snapshot);
+  revalidateReminderPaths();
+  return result;
 }
 
 /** Draft a follow-up message grounded in the reminder contact's conversation history. */
@@ -684,10 +749,23 @@ export async function draftFollowUpResponse(reminderId: string) {
 
 export async function snoozeReminderAction(id: string, days = 7) {
   const userId = await requireUserId();
-  await snoozeReminder(userId, id, days);
+  const snapshot = await snoozeReminder(userId, id, days);
   revalidateReminderPaths();
   revalidatePathIfRequestScoped("/contacts");
-  revalidatePath("/graph");
+  revalidatePathIfRequestScoped("/graph");
+  // Handed back so the toast can offer Undo; see `unsnoozeReminderAction`.
+  return snapshot;
+}
+
+/** Undo for `snoozeReminderAction`. */
+export async function unsnoozeReminderAction(snapshot: SnoozeSnapshot) {
+  const userId = await requireUserId();
+  if (!validSnoozeSnapshot(snapshot)) return { restored: false };
+  const result = await unsnoozeReminder(userId, snapshot);
+  revalidateReminderPaths();
+  revalidatePathIfRequestScoped("/contacts");
+  revalidatePathIfRequestScoped("/graph");
+  return result;
 }
 
 /** Full inbox for the in-app notifications panel. */
@@ -749,8 +827,34 @@ export async function dismissSuggestion(id: string) {
     .update(aiSuggestions)
     .set({ status: "dismissed" })
     .where(and(eq(aiSuggestions.id, id), eq(aiSuggestions.userId, userId)));
-  revalidatePath("/");
-  revalidatePath("/dashboard");
+  revalidatePathIfRequestScoped("/");
+  revalidatePathIfRequestScoped("/dashboard");
+}
+
+/**
+ * Undo for `dismissSuggestion`. Restores to "pending" without being told what the prior
+ * status was, because it can only ever have been pending: every surface that offers a
+ * dismiss (the notifications panel, the dashboard, chat attention) lists only pending
+ * suggestions. Only touches a row that is still dismissed.
+ */
+export async function restoreSuggestion(id: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const { aiSuggestions } = await import("@/db/schema");
+  const restored = await db
+    .update(aiSuggestions)
+    .set({ status: "pending" })
+    .where(
+      and(
+        eq(aiSuggestions.id, id),
+        eq(aiSuggestions.userId, userId),
+        eq(aiSuggestions.status, "dismissed")
+      )
+    )
+    .returning();
+  revalidatePathIfRequestScoped("/");
+  revalidatePathIfRequestScoped("/dashboard");
+  return { restored: restored.length > 0 };
 }
 
 export async function scheduleFromSuggestion(suggestionId: string, days = 7) {

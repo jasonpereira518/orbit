@@ -35,6 +35,10 @@ export const EXPECTED_IN_PRODUCTION = [
   "HEALTH_TOKEN",
   "SENTRY_DSN",
   "NEXT_PUBLIC_SENTRY_DSN",
+  // The daily salt behind cookieless visitor identity. Absent, /api/track records nothing
+  // and /admin/analytics says so — deliberately not REQUIRED, because that list fails the
+  // production build, and an analytics secret must never be able to block a deploy.
+  "ANALYTICS_SALT",
   // Not read by the app at all — it exists so `checkMigrationTarget` below can tell a
   // preview build pointed at its own Neon branch from one pointed at production.
   "PRODUCTION_DB_HOST",
@@ -96,6 +100,11 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       if (secret.length < 32 || secret === ENCRYPTION_PLACEHOLDER) {
         errors.push("ENCRYPTION_SECRET must be at least 32 characters and not the .env.example placeholder");
       }
+    }
+    // A short salt is worse than none: the hash it produces is a plain digest of an IP,
+    // which is reversible by anyone willing to try four billion of them.
+    if (has(env, "ANALYTICS_SALT") && env.ANALYTICS_SALT!.trim().length < 16) {
+      errors.push("ANALYTICS_SALT must be at least 16 characters");
     }
     if (has(env, "CRON_SECRET") && env.CRON_SECRET!.trim().length < 16) {
       errors.push("CRON_SECRET must be at least 16 characters");

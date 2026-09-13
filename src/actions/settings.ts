@@ -65,6 +65,14 @@ export async function getSettings() {
     // Whether "Fill from Apollo" on the contact page has anything to call — computed via
     // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
     hasApolloKey,
+    /**
+     * Whether voice capture will try Wispr first.
+     *
+     * Presence only, like `keys` above — this decides whether the capture panel is
+     * entitled to say "Wispr didn't answer", and a rejected key still counts as
+     * configured, since that is precisely the case worth reporting.
+     */
+    hasWisprKey: Boolean(settings?.wisprApiKeyEncrypted),
     hasApiKey:
       provider === "gemini"
         ? Boolean(settings?.geminiApiKeyEncrypted) ||
@@ -127,6 +135,8 @@ export async function getSettings() {
       github: settings?.socialLinks?.github || "",
       website: settings?.socialLinks?.website || "",
     },
+    /** Null until the account has recorded a choice — see the column in schema.ts. */
+    desktopNotificationsEnabled: settings?.desktopNotificationsEnabled ?? null,
   };
 }
 
@@ -264,6 +274,45 @@ export async function clearApiKey(provider?: AiProvider) {
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
   revalidatePath("/settings");
+}
+
+/**
+ * Store or clear the Wispr transcription key.
+ *
+ * Its own action rather than a field on `saveAiSettings`, because Wispr is not an
+ * `AiProvider`: it transcribes and never completes, so it takes no part in provider or
+ * model selection and none of that action's re-indexing logic applies to it.
+ *
+ * An empty string clears the key; `undefined` leaves it untouched. That asymmetry is what
+ * lets the settings form send the field unconditionally without wiping a stored key every
+ * time an unrelated control is saved.
+ */
+export async function saveVoiceSettings(input: { wisprApiKey?: string }) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const existing = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+
+  const trimmed = input.wisprApiKey?.trim();
+  const wisprApiKeyEncrypted =
+    input.wisprApiKey === undefined
+      ? (existing?.wisprApiKeyEncrypted ?? null)
+      : trimmed
+        ? encrypt(trimmed)
+        : null;
+
+  if (existing) {
+    await db
+      .update(userSettings)
+      .set({ wisprApiKeyEncrypted, updatedAt: new Date() })
+      .where(eq(userSettings.userId, userId));
+  } else {
+    await db.insert(userSettings).values({ userId, wisprApiKeyEncrypted });
+  }
+
+  revalidatePath("/settings");
+  return { ok: true as const };
 }
 
 export async function saveOutreachSettings(input: {

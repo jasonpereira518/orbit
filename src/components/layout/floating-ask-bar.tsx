@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   useTransition,
@@ -15,11 +16,14 @@ import { AnimatePresence, motion } from "motion/react";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
-import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
+import { friendlyError } from "@/lib/errors";
+import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events";
 import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
+import { SuggestionPills } from "@/components/chat/suggestion-cards";
+import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
+import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
@@ -31,6 +35,7 @@ import {
   type KeywordSearchHit,
 } from "@/lib/keyword-search";
 import { cn } from "@/lib/utils";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 /**
  * Split out of the shell's chunk.
@@ -79,19 +84,17 @@ type ThreadMessage = UserMessage | AssistantMessage;
 const CONTACT_PATH_RE =
   /^\/contacts\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
-const SUGGESTIONS = [
-  "Who do I know at AWS?",
-  "Who have I not followed up with recently?",
-  "Who are the best recruiters for my search?",
-  "Who should I reconnect with this week?",
-];
-
-const PROFILE_SUGGESTIONS = [
-  "What should I know before we talk?",
-  "Summarize our relationship",
-  "What have we talked about recently?",
-  "Suggest a warm follow-up angle",
-];
+/**
+ * Only the contact-scoped set is hardcoded here now.
+ *
+ * The general ones were a verbatim copy of the chat panel's, which is how they drifted from
+ * what the pipeline could actually answer. They come from `useChatSuggestions` instead —
+ * the same personalised row `/chat` shows, rendered as pills because this popover is too
+ * narrow for a card. On a contact's page these still win: the pathname is a stronger signal
+ * about what you are asking than anything a general rule could infer.
+ */
+/** How many fit the bar's panel without crowding out the search results below. */
+const ASK_BAR_SUGGESTIONS = 4;
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -188,7 +191,9 @@ export function FloatingAskBar() {
 
   useEffect(() => {
     function onKey(e: globalThis.KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // ⌘J, not ⌘K: ⌘K opens the command palette, which can also hand a typed question
+      // straight to this bar — so the old shortcut still gets here, one Enter later.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
         focusBar();
       }
@@ -202,9 +207,15 @@ export function FloatingAskBar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [focusBar, open]);
 
+  // Read through a ref so the listener below is registered once, not re-bound every time
+  // `sendQuestion`'s identity changes with a pending reply.
+  const sendQuestionRef = useRef<(q: string) => void>(() => {});
+
   useEffect(() => {
-    function onOpenRequest() {
+    function onOpenRequest(e: Event) {
       focusBar();
+      const question = (e as CustomEvent<OpenAskBarDetail | null>).detail?.question?.trim();
+      if (question) sendQuestionRef.current(question);
     }
     window.addEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
     return () => window.removeEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
@@ -325,7 +336,7 @@ export function FloatingAskBar() {
   }, []);
 
   const sendQuestion = useCallback(
-    (raw: string) => {
+    (raw: string, opts?: { contextContactIds?: readonly string[] }) => {
       const q = raw.trim();
       if (!q || chatPending) return;
 
@@ -348,7 +359,9 @@ export function FloatingAskBar() {
         try {
           threadId = await ensureChatThread();
         } catch (err) {
-          toast.error(toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message);
+          // Creating a thread only inserts a row — it never needs an AI key, so the key
+          // message was the wrong fallback here.
+          toast.error(friendlyError(err, TOAST_COPY.chatStartFailed));
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuery(q);
           setChatPending(false);
@@ -377,7 +390,17 @@ export function FloatingAskBar() {
         };
 
         await streamChat(
-          { question: q, threadId, contactId: contactId ?? undefined },
+          {
+            question: q,
+            threadId,
+            contactId: contactId ?? undefined,
+            // A suggestion card names someone without an `@` token, so its id rides along
+            // here — that is what routes the question through `loadAttachedPeople` and puts
+            // the real timeline in front of the model.
+            contextContactIds: opts?.contextContactIds
+              ? [...opts.contextContactIds]
+              : undefined,
+          },
           {
             onAnswer: (delta) => {
               ensurePlaceholder();
@@ -403,6 +426,9 @@ export function FloatingAskBar() {
     },
     [activeContactId, chatPending, ensureChatThread]
   );
+  useEffect(() => {
+    sendQuestionRef.current = (q) => sendQuestion(q);
+  }, [sendQuestion]);
 
   function clearThread() {
     setMessages([]);
@@ -413,8 +439,30 @@ export function FloatingAskBar() {
 
   const showPanel = open;
   const visible = !hidden || stayVisibleWhileWaiting;
-  const suggestionChips =
-    personContextActive && open ? PROFILE_SUGGESTIONS : SUGGESTIONS;
+  // Fetched only once the bar is open: it is mounted on nearly every route, and a closed
+  // bar has no business issuing a query. Shares a module-level cache with /chat.
+  const personalised = useChatSuggestions(open && !personContextActive);
+  // Shaped as suggestions so one component renders both sets. `kind` is "generic" because
+  // that is what these are — fixed strings, not a rule's output — and nothing here reads it
+  // beyond picking an icon the pill variant does not draw.
+  const profileChips: ChatSuggestion[] = useMemo(
+    () =>
+      CONTACT_PAGE_SUGGESTIONS.map((question, i) => ({
+        id: `profile:${i}`,
+        kind: "generic" as const,
+        question,
+        basis: "",
+        contactIds: [],
+        interactionType: null,
+        rank: 10,
+      })),
+    [],
+  );
+  // Capped: this popover is `w-80` inside a 48vh scroller, and six long questions wrapped
+  // to five lines of pills, which pushed the results below the fold.
+  const suggestionChips = (
+    personContextActive && open ? profileChips : (personalised ?? [])
+  ).slice(0, ASK_BAR_SUGGESTIONS);
   const placeholder =
     personContextActive && open && activeContactName
       ? `Ask about ${activeContactName}…`
@@ -440,7 +488,7 @@ export function FloatingAskBar() {
         // "Ask your network" item in the More sheet opens it. Desktop keeps
         // the persistent collapsed pill.
         open ? "flex" : "hidden md:flex",
-        "bottom-[calc(7.5rem+env(safe-area-inset-bottom))] md:bottom-5",
+        "bottom-[calc(6.5rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
       aria-hidden={!visible}
@@ -518,19 +566,15 @@ export function FloatingAskBar() {
                             ? `Ask anything about ${activeContactName}—relationship history, talking points, or follow-ups.`
                             : "Ask anything about people, companies, or follow-ups in your network."}
                         </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {suggestionChips.map((chip) => (
-                            <button
-                              key={chip}
-                              type="button"
-                              disabled={chatPending}
-                              className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                              onClick={() => sendQuestion(chip)}
-                            >
-                              {chip}
-                            </button>
-                          ))}
-                        </div>
+                        <SuggestionPills
+                          items={suggestionChips}
+                          disabled={chatPending}
+                          onPick={(s) =>
+                            sendQuestion(s.question, {
+                              contextContactIds: s.contactIds.length ? s.contactIds : undefined,
+                            })
+                          }
+                        />
                       </>
                     )}
                   </div>
@@ -663,7 +707,6 @@ export function FloatingAskBar() {
                 contactId={profileContact.id}
                 firstName={profileContact.firstName}
                 fullName={profileContact.fullName}
-                linkedinUrl={profileContact.linkedinUrl}
                 profileImageUrl={profileContact.profileImageUrl}
                 size="sm"
                 className="size-6"
@@ -707,7 +750,10 @@ export function FloatingAskBar() {
             disabled={chatPending}
             autoComplete="off"
             className={cn(
-              "h-full min-w-0 flex-1 bg-transparent text-sm outline-none",
+              // 16px on phones: iOS Safari zooms the page into any focused input with
+              // smaller text, which panned the whole dashboard sideways and cut its
+              // edges off the moment the bar opened. Same rule as ui/input.tsx.
+              "h-full min-w-0 flex-1 bg-transparent text-base outline-none md:text-sm",
               "placeholder:text-muted-foreground disabled:opacity-60"
             )}
             onFocus={() => setOpen(true)}
@@ -732,7 +778,7 @@ export function FloatingAskBar() {
           />
           {!open && !query && (
             <kbd className="hidden shrink-0 rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground sm:inline">
-              ⌘K
+              ⌘J
             </kbd>
           )}
           {(query || open) && !chatPending && query && (
@@ -827,7 +873,7 @@ function MiniRecommendation({
                     Date.now() + 3 * 24 * 60 * 60 * 1000
                   ).toISOString(),
                 });
-                toast.success("Reminder created");
+                toast.success(TOAST_COPY.reminderSet);
               })
             }
           >

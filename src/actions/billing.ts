@@ -1,6 +1,7 @@
 "use server";
 
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
+import { getShowcaseAccountId } from "@/lib/demo-account";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getEntitlements } from "@/lib/entitlements";
 import {
@@ -194,7 +195,7 @@ export async function getCurrentPlan(): Promise<Plan> {
  */
 export async function triggerDemoCelebration(): Promise<{ ok: boolean }> {
   const userId = await requireUserId();
-  const demoAccountId = process.env.DEMO_ACCOUNT_USER_ID?.trim();
+  const demoAccountId = getShowcaseAccountId();
   if (!demoAccountId || userId !== demoAccountId) return { ok: false };
 
   await setCompedPlan(userId, "lifetime", {

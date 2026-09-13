@@ -1050,11 +1050,31 @@ export async function getDashboardData(
   };
 }
 
+/**
+ * What `snoozeReminder` overwrote, so an Undo can put it back.
+ *
+ * `snoozedTo` is the guard: an Undo only restores a field that still holds the value the
+ * snooze wrote. If something else rescheduled the reminder or the contact's follow-up in
+ * the seconds since — the dashboard's day presets write the same `nextFollowUpAt` — that
+ * newer choice wins and the Undo leaves it alone rather than clobbering it.
+ *
+ * ISO strings rather than Dates so it crosses the Server Action boundary unambiguously.
+ */
+export type SnoozeSnapshot = {
+  reminderId: string;
+  snoozedTo: string;
+  previousDueDate: string | null;
+  previousStatus: string;
+  contactId: string | null;
+  previousNextFollowUpAt: string | null;
+  previousFollowUpStatus: string | null;
+};
+
 export async function snoozeReminder(
   userId: string,
   reminderId: string,
   days = 7
-) {
+): Promise<SnoozeSnapshot | null> {
   const db = await getDb();
   const due = new Date();
   // Same 1..90 clamp as `scheduleContactFollowUp`. Both write `contacts.nextFollowUpAt`
@@ -1064,9 +1084,18 @@ export async function snoozeReminder(
 
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
-    columns: { id: true, contactId: true },
+    columns: { id: true, contactId: true, dueDate: true, status: true },
   });
-  if (!reminder) return;
+  if (!reminder) return null;
+
+  // Read the contact's clock BEFORE overwriting it — this used to be discarded, which is
+  // what made a snooze impossible to take back.
+  const contact = reminder.contactId
+    ? await db.query.contacts.findFirst({
+        where: and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId)),
+        columns: { nextFollowUpAt: true, followUpStatus: true },
+      })
+    : null;
 
   await db
     .update(reminders)
@@ -1086,16 +1115,148 @@ export async function snoozeReminder(
         and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId))
       );
   }
+
+  return {
+    reminderId,
+    snoozedTo: due.toISOString(),
+    previousDueDate: reminder.dueDate ? reminder.dueDate.toISOString() : null,
+    previousStatus: reminder.status,
+    contactId: reminder.contactId ?? null,
+    previousNextFollowUpAt: contact?.nextFollowUpAt
+      ? contact.nextFollowUpAt.toISOString()
+      : null,
+    previousFollowUpStatus: contact?.followUpStatus ?? null,
+  };
 }
 
-export async function completeReminder(userId: string, reminderId: string) {
+/**
+ * Put back what a snooze overwrote. Each field is restored only if it still holds the
+ * value the snooze wrote — see `SnoozeSnapshot`. Returns whether the reminder itself was
+ * restored, so the caller can say so honestly rather than claiming "Undone".
+ */
+export async function unsnoozeReminder(
+  userId: string,
+  snap: SnoozeSnapshot
+): Promise<{ restored: boolean }> {
   const db = await getDb();
+  const snoozedTo = new Date(snap.snoozedTo).getTime();
+
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)),
+    columns: { dueDate: true },
+  });
+  if (!reminder || reminder.dueDate?.getTime() !== snoozedTo) {
+    return { restored: false };
+  }
+
+  await db
+    .update(reminders)
+    .set({
+      dueDate: snap.previousDueDate ? new Date(snap.previousDueDate) : null,
+      status: snap.previousStatus,
+    })
+    .where(and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)));
+
+  if (snap.contactId) {
+    const contact = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, snap.contactId), eq(contacts.userId, userId)),
+      columns: { nextFollowUpAt: true },
+    });
+    if (contact?.nextFollowUpAt?.getTime() === snoozedTo) {
+      await db
+        .update(contacts)
+        .set({
+          nextFollowUpAt: snap.previousNextFollowUpAt
+            ? new Date(snap.previousNextFollowUpAt)
+            : null,
+          followUpStatus: snap.previousFollowUpStatus,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(contacts.id, snap.contactId), eq(contacts.userId, userId)));
+    }
+  }
+
+  return { restored: true };
+}
+
+/** What `completeReminder` changed, so an Undo can reverse exactly that and no more. */
+export type CompletionSnapshot = {
+  reminderId: string;
+  previousStatus: string;
+  closedActionItemIds: string[];
+};
+
+export async function completeReminder(
+  userId: string,
+  reminderId: string
+): Promise<CompletionSnapshot | null> {
+  const db = await getDb();
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
+    columns: { status: true },
+  });
+  if (!reminder) return null;
+
   await db
     .update(reminders)
     .set({ status: "done" })
     .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)));
-  await db
+
+  // Only the OPEN items. This used to set every linked item to done, which also
+  // re-stamped `completedAt` on items finished days earlier — a silent rewrite of when
+  // they were done, and the reason an Undo could not tell which items it had closed.
+  const closed = await db
     .update(actionItems)
     .set({ status: "done", completedAt: new Date() })
-    .where(and(eq(actionItems.userId, userId), eq(actionItems.reminderId, reminderId)));
+    .where(
+      and(
+        eq(actionItems.userId, userId),
+        eq(actionItems.reminderId, reminderId),
+        eq(actionItems.status, "open")
+      )
+    )
+    .returning();
+
+  return {
+    reminderId,
+    previousStatus: reminder.status,
+    closedActionItemIds: closed.map((row) => row.id),
+  };
+}
+
+/**
+ * Reverse a `completeReminder`: the reminder's status, and the action items that call
+ * closed — not every item on the reminder, because some were already done beforehand and
+ * reopening those would undo the person's own earlier work. Only acts on a reminder that
+ * is still done; if it has moved on since, there is nothing honest to undo.
+ */
+export async function reopenReminder(
+  userId: string,
+  snap: CompletionSnapshot
+): Promise<{ restored: boolean }> {
+  const db = await getDb();
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)),
+    columns: { status: true },
+  });
+  if (!reminder || reminder.status !== "done") return { restored: false };
+
+  await db
+    .update(reminders)
+    .set({ status: snap.previousStatus })
+    .where(and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)));
+
+  if (snap.closedActionItemIds.length > 0) {
+    await db
+      .update(actionItems)
+      .set({ status: "open", completedAt: null })
+      .where(
+        and(
+          eq(actionItems.userId, userId),
+          inArray(actionItems.id, snap.closedActionItemIds)
+        )
+      );
+  }
+
+  return { restored: true };
 }

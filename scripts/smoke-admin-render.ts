@@ -102,7 +102,7 @@ async function main() {
   await db.insert(contacts).values({ userId: NAMED, fullName: "A Contact" });
 
   const { default: AdminUsersPage } = await import(
-    "../src/app/(admin)/admin/users/page"
+    "../src/app/(clerk)/(admin)/admin/users/page"
   );
 
   const tree = await AdminUsersPage({
