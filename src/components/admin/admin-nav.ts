@@ -3,6 +3,7 @@ import {
   Activity,
   Flame,
   Gauge,
+  Globe,
   HandCoins,
   LayoutTemplate,
   MessageSquareText,
@@ -37,6 +38,9 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { href: "/admin/product", label: "Product", icon: LayoutTemplate },
   // Trends live here rather than on the overview, which stays triage-only by design.
   { href: "/admin/feedback", label: "Feedback", icon: MessageSquareText },
+  // Upstream of Growth, and deliberately before it: everything on that screen starts at
+  // "Signed up", and this is the only place the console can see what happened before that.
+  { href: "/admin/analytics", label: "Traffic", icon: Globe },
   { href: "/admin/growth", label: "Growth", icon: TrendingUp },
   // Route is /admin/billing, but the screen covers money in AND money out — "Billing"
   // alone reads as revenue-only.

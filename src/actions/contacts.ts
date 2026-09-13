@@ -51,10 +51,11 @@ import {
   AVATAR_BACKFILL_BATCH_SIZE,
   AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
+  fetchGravatarPhotoUrl,
   fetchLinkedInPhotoUrl,
-  MicrolinkRateLimitError,
+  AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
-import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
+import { clientAvatarUrlSql, contactsListSelection } from "@/lib/contact-avatar-sql";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   countAvatarBackfillCandidates,
@@ -166,27 +167,7 @@ export async function listContactsPage(
   if (cursor) conditions.push(cursorCondition(cursor));
 
   const rows = await db
-    .select({
-      id: contacts.id,
-      fullName: contacts.fullName,
-      firstName: contacts.firstName,
-      lastName: contacts.lastName,
-      preferredName: contacts.preferredName,
-      title: contacts.title,
-      company: contacts.company,
-      school: contacts.school,
-      location: contacts.location,
-      linkedinUrl: contacts.linkedinUrl,
-      profileImageUrl: contacts.profileImageUrl,
-      relationshipScore: contacts.relationshipScore,
-      closeness: contacts.closeness,
-      closenessTier: contacts.closenessTier,
-      priorityLevel: contacts.priorityLevel,
-      nextFollowUpAt: contacts.nextFollowUpAt,
-      lastInteractionAt: contacts.lastInteractionAt,
-      sortKey: contacts.sortKey,
-      updatedAt: contacts.updatedAt,
-    })
+    .select(contactsListSelection)
     .from(contacts)
     .where(and(...conditions))
     .orderBy(...orderFor(sort))
@@ -213,8 +194,9 @@ export async function listContactsPage(
       school: row.school,
       location: row.location,
       linkedinUrl: row.linkedinUrl,
-      // Never ship base64 data URLs in list payloads.
-      profileImageUrl: clientContactAvatarUrl(row.id, row.profileImageUrl),
+      // Already browser-safe: `clientAvatarUrlSql` resolved this in Postgres.
+      profileImageUrl: row.profileImageUrl,
+      canResolveAvatar: Boolean(row.canResolveAvatar),
       relationshipScore: row.relationshipScore,
       closeness: (row.closeness ?? 0) / 100,
       closenessTier: row.closenessTier ?? "outer",
@@ -325,7 +307,17 @@ function searchCondition(q: string) {
  */
 export async function searchContactsForPicker(
   q?: string,
-  limit = 50
+  limit = 50,
+  /**
+   * `alphabetical` is right for browsing a long list in a `<select>`, which is what the
+   * capture form, the reminder dialog and the onboarding wizard do with this.
+   *
+   * `recent` is right for a type-ahead that has just been opened with nothing typed: the
+   * composer's `@` menu offered whoever came first in the address book, which reads as
+   * broken rather than as waiting. Defaulted to the old behaviour so those three callers
+   * are untouched.
+   */
+  order: "alphabetical" | "recent" = "alphabetical"
 ): Promise<ContactPickerOption[]> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -340,10 +332,24 @@ export async function searchContactsForPicker(
       fullName: contacts.fullName,
       preferredName: contacts.preferredName,
       company: contacts.company,
+      firstName: contacts.firstName,
+      // Never `profileImageUrl` itself: that column carries base64 up to 120 KB a row when
+      // Blob storage is unconfigured, and a 200-row picker would drag all of it across the
+      // wire only to rewrite it to `/api/avatars/{id}` anyway.
+      avatarUrl: clientAvatarUrlSql.as("avatar_url"),
     })
     .from(contacts)
     .where(and(...conditions))
-    .orderBy(asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id))
+    .orderBy(
+      ...(order === "recent"
+        ? [
+            // Never-spoken-to contacts fall to the back and sort alphabetically among
+            // themselves, so the tail is still browsable rather than arbitrary.
+            sql`${contacts.lastInteractionAt} desc nulls last`,
+            asc(contacts.sortKey),
+          ]
+        : [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)])
+    )
     .limit(Math.min(Math.max(limit, 1), 200));
 
   return rows;
@@ -1053,10 +1059,19 @@ export async function backfillContactAvatars(
         deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
         persistRemote: downloadAndPersistAvatar,
         resolveLinkedIn: fetchLinkedInPhotoUrl,
+        resolveGravatar: fetchGravatarPhotoUrl,
         save: async (contactId, photoUrl) => {
           await db
             .update(contacts)
             .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+            .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        },
+        markChecked: async (contactId) => {
+          // Deliberately does NOT touch updatedAt: a failed photo lookup is not a
+          // change to the contact, and bumping it would reorder the "recent" sort.
+          await db
+            .update(contacts)
+            .set({ profileImageCheckedAt: new Date() })
             .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
         },
       }),
@@ -1217,7 +1232,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
             contact.linkedinUrl
           );
         } catch (err) {
-          if (err instanceof MicrolinkRateLimitError) {
+          if (err instanceof AvatarSourceRateLimitError) {
             rateLimited = true;
             unmatched += 1;
             continue;

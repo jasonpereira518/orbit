@@ -3,10 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronDown, ChevronUp, Pencil, Sparkles, X } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { runToastAction } from "@/lib/toast";
 import {
   confirmSuggestedReminder,
   discardSuggestedReminder,
+  restoreSuggestedReminder,
   type SuggestedReminderRow,
 } from "@/actions/suggested-reminders";
 import { Button } from "@/components/ui/button";
@@ -60,6 +61,15 @@ export function SuggestedRemindersPanel({
             onResolved={() =>
               setDismissed((prev) => new Set(prev).add(item.id))
             }
+            // Hiding is local, so an Undo has to un-hide it here too: the refreshed
+            // props bring the row back, but it would stay filtered out of `visible`.
+            onRestored={() =>
+              setDismissed((prev) => {
+                const next = new Set(prev);
+                next.delete(item.id);
+                return next;
+              })
+            }
           />
         ))}
       </ul>
@@ -70,9 +80,11 @@ export function SuggestedRemindersPanel({
 function SuggestionRow({
   item,
   onResolved,
+  onRestored,
 }: {
   item: SuggestedReminderRow;
   onResolved: () => void;
+  onRestored: () => void;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -81,17 +93,30 @@ function SuggestionRow({
   const [title, setTitle] = useState(item.title);
   const [dueDate, setDueDate] = useState(isoDayValue(new Date(item.dueDate)));
 
-  function run(label: string, fn: () => Promise<unknown>) {
-    start(async () => {
-      try {
-        await fn();
-        toast.success(label);
-        onResolved();
-        router.refresh();
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Something went wrong");
-      }
-    });
+  function run(
+    label: string,
+    failure: string,
+    fn: () => Promise<unknown>,
+    undo?: () => Promise<{ restored: boolean }>
+  ) {
+    start(() =>
+      runToastAction({
+        run: async () => {
+          await fn();
+          onResolved();
+        },
+        success: label,
+        failure,
+        refresh: () => router.refresh(),
+        undo: undo
+          ? () => async () => {
+              const result = await undo();
+              if (result.restored) onRestored();
+              return result;
+            }
+          : undefined,
+      }).then(() => undefined)
+    );
   }
 
   return (
@@ -169,7 +194,7 @@ function SuggestionRow({
             aria-label="Confirm reminder"
             disabled={pending || !title.trim()}
             onClick={() =>
-              run("Reminder added", () =>
+              run("Reminder added", "Couldn’t add that reminder — try again?", () =>
                 confirmSuggestedReminder(item.id, {
                   title: title.trim(),
                   dueDate,
@@ -185,8 +210,11 @@ function SuggestionRow({
             aria-label="Discard suggestion"
             disabled={pending}
             onClick={() =>
-              run("Suggestion discarded", () =>
-                discardSuggestedReminder(item.id)
+              run(
+                "Dismissed",
+                "Couldn’t dismiss that — try again?",
+                () => discardSuggestedReminder(item.id),
+                () => restoreSuggestedReminder(item.id)
               )
             }
           >

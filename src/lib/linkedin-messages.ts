@@ -5,7 +5,11 @@ import {
   linkedinSlug,
   type DuplicateSubject,
 } from "@/lib/duplicates";
-import { csvGet } from "@/lib/linkedin-connections";
+import {
+  LinkedInExportError,
+  csvGet,
+  looksLikeConnectionsExport,
+} from "@/lib/linkedin-connections";
 
 export type LinkedInMessageRow = {
   conversationId: string;
@@ -152,7 +156,15 @@ export function parseLinkedInMessagesCsv(csvText: string): {
   });
 
   if (parsed.errors.length && !parsed.data.length) {
-    throw new Error(parsed.errors[0]?.message || "Failed to parse messages CSV");
+    throw new LinkedInExportError(
+      "Couldn’t read that file as a CSV — download messages.csv from LinkedIn again and upload it as it is"
+    );
+  }
+
+  if (looksLikeConnectionsExport(parsed.meta.fields || [])) {
+    throw new LinkedInExportError(
+      "This looks like a Connections export, not Messages — upload it on the Connections tab instead"
+    );
   }
 
   const messages = parsed.data

@@ -41,6 +41,14 @@ import {
   listOrganizationEvents,
 } from "@/lib/events/connectors/eventbrite";
 import { upsertProviderEvent, upsertProviderAttendees } from "@/lib/events/provider-writes";
+import { IcsFeedGoneError, syncIcsFeed } from "@/lib/events/discovery/from-ics-feed";
+import {
+  scanGmailForEvents,
+  type GmailScanCursor,
+} from "@/lib/events/discovery/from-gmail";
+import { getValidAccessToken } from "@/lib/gmail";
+import type { EventProviderSyncCursor } from "@/db/schema";
+import type { FetchPageDeps } from "@/lib/events/guarded-fetch";
 import type { ProviderAttendee, ProviderEvent, ProviderPage } from "@/lib/events/types";
 
 /** Matches `CONNECTIONS_PER_RUN` in the calendar scheduler. */
@@ -74,9 +82,62 @@ async function drain<T>(
   return items;
 }
 
-async function syncOne(
+/**
+ * A personal calendar feed: everything the user registered for, hosted or not.
+ *
+ * The counterpart to `syncHostApi` below, and the more valuable half for most people — a host
+ * API can only ever see the events you RUN. Feeds create and update events and never touch a
+ * roster, because an iCal feed carries no guests.
+ */
+async function syncFeed(
   conn: ClaimedEventConnection,
-  stats: EventSyncStats
+  stats: EventSyncStats,
+  deps?: FetchPageDeps
+): Promise<void> {
+  if (!conn.secret) {
+    await markNeedsReauth(conn.id, "That calendar link could not be read. Reconnect to fix.");
+    stats.failed++;
+    return;
+  }
+
+  const discovered = await syncIcsFeed(conn.userId, conn.secret, conn.provider, deps);
+  stats.eventsUpserted += discovered.created + discovered.attached;
+  await markEventSyncResult(conn.id, { ok: true, cursor: null });
+  stats.synced++;
+}
+
+/**
+ * The opt-in mailbox scan.
+ *
+ * Rides on the Gmail grant the user already has — this connection row stores no secret at
+ * all, it IS the opt-in — and keeps its own cursor here rather than in `gmail_connections`,
+ * whose `sync_cursor` belongs to the calendar sync and is replaced wholesale on every run.
+ */
+async function syncGmail(
+  conn: ClaimedEventConnection,
+  stats: EventSyncStats,
+  deps: { getAccessToken: (userId: string) => Promise<string>; scan: typeof scanGmailForEvents }
+): Promise<void> {
+  const accessToken = await deps.getAccessToken(conn.userId);
+  const cursor = (conn.cursor ?? null) as (EventProviderSyncCursor & { gmail?: GmailScanCursor }) | null;
+
+  const result = await deps.scan(conn.userId, accessToken, cursor?.gmail ?? null);
+  stats.eventsUpserted += result.stats.created + result.stats.attached;
+
+  await markEventSyncResult(conn.id, {
+    ok: true,
+    cursor: { ...(cursor ?? {}), gmail: result.cursor } as EventProviderSyncCursor,
+    // Mid-listing: come back immediately rather than waiting out the half-hour cadence, or a
+    // year of backlog would take days to walk at 100 messages per run.
+    nextSyncAt: result.cursor.pageToken ? new Date() : undefined,
+  });
+  stats.synced++;
+}
+
+async function syncHostApi(
+  conn: ClaimedEventConnection,
+  stats: EventSyncStats,
+  passDeadline: number
 ): Promise<void> {
   if (!conn.secret) {
     // The credential could not be decrypted — a rotated ENCRYPTION_SECRET, or a row written
@@ -86,7 +147,9 @@ async function syncOne(
     return;
   }
 
-  const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS);
+  // One connection may have a minute, but never more of it than the pass itself has left.
+  const deadline = Math.min(deadlineAfter(PER_CONNECTION_BUDGET_MS), passDeadline);
+  const provider = conn.provider === "luma" ? "luma" : "eventbrite";
   const events: ProviderEvent[] =
     conn.provider === "luma"
       ? await drain((c) => listCalendarEvents(conn.secret!, c), deadline)
@@ -100,7 +163,7 @@ async function syncOne(
     // Everything a provider API can reach is an event the user HOSTS — neither Luma nor
     // Eventbrite exposes guest lists for events you merely attended. Marking the row honestly
     // is what lets the UI explain why some events have rosters and others need a paste.
-    const eventId = await upsertProviderEvent(conn.userId, conn.provider, event);
+    const eventId = await upsertProviderEvent(conn.userId, provider, event);
     stats.eventsUpserted++;
 
     const attendees: ProviderAttendee[] =
@@ -115,7 +178,7 @@ async function syncOne(
       conn.userId,
       eventId,
       attendees,
-      conn.provider
+      provider
     );
   }
 
@@ -123,7 +186,19 @@ async function syncOne(
   stats.synced++;
 }
 
-export async function runEventSyncPass(now: Date = new Date()): Promise<EventSyncStats> {
+export async function runEventSyncPass(
+  now: Date = new Date(),
+  options: {
+    deadline?: number;
+    /** How a calendar feed is fetched. Injectable so a test never reaches the network. */
+    feedDeps?: FetchPageDeps;
+    /** The mailbox scan's token minter and scanner. Injectable for the same reason. */
+    gmailDeps?: {
+      getAccessToken: (userId: string) => Promise<string>;
+      scan: typeof scanGmailForEvents;
+    };
+  } = {}
+): Promise<EventSyncStats> {
   const stats: EventSyncStats = {
     claimed: 0,
     synced: 0,
@@ -131,7 +206,13 @@ export async function runEventSyncPass(now: Date = new Date()): Promise<EventSyn
     eventsUpserted: 0,
     attendeesUpserted: 0,
   };
-  const passDeadline = deadlineAfter(PASS_BUDGET_MS);
+  // The caller's deadline wins when it is tighter. `runSyncPass` runs this LAST, inside its
+  // own 4.5-minute budget, so a private 240s budget here could only ever overrun the function
+  // ceiling the outer pass is protecting — this pass would still be draining guest lists
+  // after the invocation that owns it was supposed to return.
+  const ownDeadline = deadlineAfter(PASS_BUDGET_MS);
+  const passDeadline =
+    options.deadline !== undefined ? Math.min(options.deadline, ownDeadline) : ownDeadline;
   const claimed = await claimDueEventConnections(CONNECTIONS_PER_RUN, now);
   stats.claimed = claimed.length;
 
@@ -140,13 +221,30 @@ export async function runEventSyncPass(now: Date = new Date()): Promise<EventSyn
     // done, where its lease has to expire before anyone touches it again.
     if (deadlineReached(passDeadline)) break;
     try {
-      await syncOne(conn, stats);
+      // Dispatch on HOW this connection authenticates, not on which company it points at:
+      // `luma` is a host API key and `luma_ics` a personal feed, and they share nothing but
+      // a brand. `gmail` is handled in its own pass — see `from-gmail.ts`.
+      if (conn.authKind === "ics") await syncFeed(conn, stats, options.feedDeps);
+      else if (conn.authKind === "google_grant") {
+        await syncGmail(conn, stats, {
+          getAccessToken: options.gmailDeps?.getAccessToken ?? getValidAccessToken,
+          scan: options.gmailDeps?.scan ?? scanGmailForEvents,
+        });
+      } else if (conn.authKind === "api_key" || conn.authKind === "oauth") {
+        await syncHostApi(conn, stats, passDeadline);
+      }
     } catch (error) {
       stats.failed++;
       // An auth failure is a consent problem, not a transport one. Walking it up the backoff
       // ladder would keep retrying a credential that will never work again while telling the
       // user nothing; flagging it puts a "reconnect" prompt in front of them instead.
-      if (error instanceof LumaAuthError || error instanceof EventbriteAuthError) {
+      // A feed URL that 404s has been revoked — regenerating the link is how these platforms
+      // revoke one. Same class as a dead token: retrying it every half hour says nothing.
+      if (
+        error instanceof LumaAuthError ||
+        error instanceof EventbriteAuthError ||
+        error instanceof IcsFeedGoneError
+      ) {
         await markNeedsReauth(conn.id, (error as Error).message).catch(() => {});
         continue;
       }

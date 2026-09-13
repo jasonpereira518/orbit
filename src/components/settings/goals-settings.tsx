@@ -3,12 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Trash2 } from "lucide-react";
-import { toast } from "@/lib/toast";
-import { addGoal, deleteGoal } from "@/actions/goals";
+import { runToastAction, toast } from "@/lib/toast";
+import { addGoal, deleteGoal, restoreGoal } from "@/actions/goals";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import type { UserGoal } from "@/db/schema";
+import { friendlyError } from "@/lib/errors";
+import { SettingsSection } from "@/components/settings/settings-section";
 
 export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
   const router = useRouter();
@@ -17,14 +19,10 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
   const [pending, start] = useTransition();
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Goals</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Active goals improve closeness scoring and surface aligned contacts on
-          your dashboard.
-        </p>
-      </div>
+    <SettingsSection
+      title="Goals"
+      description="Active goals improve closeness scoring and surface aligned contacts on your dashboard."
+    >
 
       {goals.length === 0 ? (
         <p className="text-sm text-muted-foreground">No goals yet.</p>
@@ -42,18 +40,38 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
                 variant="ghost"
                 disabled={pending}
                 onClick={() =>
-                  start(async () => {
-                    try {
-                      await deleteGoal(g.id);
-                      setGoals((prev) => prev.filter((x) => x.id !== g.id));
-                      toast.success("Goal removed");
-                      router.refresh();
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Could not delete goal"
-                      );
-                    }
-                  })
+                  start(() =>
+                    runToastAction({
+                      run: async () => {
+                        const snapshot = await deleteGoal(g.id);
+                        setGoals((prev) => prev.filter((x) => x.id !== g.id));
+                        return snapshot;
+                      },
+                      success: "Goal removed",
+                      failure: "Couldn’t remove that goal — try again?",
+                      refresh: () => router.refresh(),
+                      undo: (snapshot) =>
+                        snapshot
+                          ? async () => {
+                              const result = await restoreGoal(snapshot);
+                              // `goals` is useState(initialGoals), which ignores new
+                              // props after mount — so a refresh alone could never
+                              // bring the row back. Re-add it here, in createdAt
+                              // order to match `listGoals`, so it returns to its place.
+                              if (result.restored) {
+                                setGoals((prev) =>
+                                  [...prev.filter((x) => x.id !== g.id), g].sort(
+                                    (a, b) =>
+                                      new Date(b.createdAt).getTime() -
+                                      new Date(a.createdAt).getTime()
+                                  )
+                                );
+                              }
+                              return result;
+                            }
+                          : null,
+                    }).then(() => undefined)
+                  )
                 }
               >
                 <Trash2 className="h-4 w-4" />
@@ -71,13 +89,17 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
           if (!trimmed) return;
           start(async () => {
             try {
-              const row = await addGoal(trimmed);
-              setGoals((prev) => [row, ...prev]);
+              const res = await addGoal(trimmed);
+              if (!res.ok) {
+                toast.error(res.error);
+                return;
+              }
+              setGoals((prev) => [res.value, ...prev]);
               setText("");
               toast.success("Goal added");
               router.refresh();
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Could not add goal");
+              toast.error(friendlyError(err, "Couldn’t add that goal — try again?"));
             }
           });
         }}
@@ -94,6 +116,6 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
           Add goal
         </Button>
       </form>
-    </section>
+    </SettingsSection>
   );
 }

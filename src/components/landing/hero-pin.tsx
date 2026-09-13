@@ -187,7 +187,7 @@ export const HeroPin = forwardRef<
               // from centre (Neptune at 234 of 440 view units, widened by the
               // resting tilt's perspective) and its planet art adds a few px
               // on top, so a column-width stage pushed the outer planets into
-              // .landing-root's overflow-x-clip. 78vw keeps the whole system
+              // .landing-root's clip edge. 78vw keeps the whole system
               // on screen while still letting it bleed past the 32px gutter.
               // The svh term is what keeps it fitting on short viewports.
               className="relative mx-auto aspect-square w-[min(78vw,40svh,400px)] sm:w-[min(78vw,44svh,440px)] md:w-[min(100%,44svh,400px)] lg:mx-0 lg:w-full lg:max-w-[min(100%,560px)] lg:justify-self-end"

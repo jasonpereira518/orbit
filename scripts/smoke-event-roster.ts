@@ -12,15 +12,29 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
-import { connectAttendees, previewConnect } from "../src/lib/events/connect";
+import {
+  connectAttendees,
+  previewConnect,
+  restampEventInteractions,
+} from "../src/lib/events/connect";
 import {
   createEventForUser,
   linkAttendeesToContacts,
   listRosterForUser,
   upsertEventAttendees,
   unlinkAttendeeForUser,
+  updateAttendeeForUser,
+  deleteAttendeeForUser,
 } from "../src/lib/events/store";
-import { parseRosterText } from "../src/lib/events/parse-roster";
+import {
+  parseRosterText,
+  speakersNotOnRoster,
+  speakersToAttendees,
+} from "../src/lib/events/parse-roster";
+import {
+  upsertProviderAttendees,
+  upsertProviderEvent,
+} from "../src/lib/events/provider-writes";
 import { attendeeIdentityKey } from "../src/lib/events/identity";
 import { eventExternalIdBase } from "../src/lib/ingest/external-id";
 import { interactionExternalId } from "../src/lib/ingest/external-id";
@@ -181,6 +195,288 @@ run(async () => {
     check("already-connected attendees are skipped", again.created === 0 && again.matched === 0);
   }
 
+  // --- editing and deleting a single row --------------------------------------------------------
+  {
+    const fix = await createEventForUser(USER, { title: "Bad Parse Meetup" });
+    await upsertEventAttendees(
+      USER,
+      fix.id,
+      parseRosterText("Ada Lovelace Engineer\nGrace Hopper <grace@cobol.mil>").attendees,
+      "paste"
+    );
+    let rows = await listRosterForUser(USER, fix.id);
+    const bad = rows.find((r) => r.fullName?.startsWith("Ada"))!;
+
+    // The correction: a title swallowed into the name. Before this there was no write path
+    // that could overwrite a non-null field at all — the COALESCE upsert only fills blanks.
+    const fixed = await updateAttendeeForUser(USER, bad.id, {
+      fullName: "Ada Lovelace",
+      email: "ada@analytical.io",
+      company: "Analytical",
+      title: "Engineer",
+      linkedinUrl: null,
+      xHandle: null,
+      attendeeRole: null,
+    });
+    check("a bad row can be corrected", fixed.ok === true, JSON.stringify(fixed));
+    rows = await listRosterForUser(USER, fix.id);
+    const now = rows.find((r) => r.id === bad.id)!;
+    check("the name is actually overwritten", now.fullName === "Ada Lovelace", String(now.fullName));
+    check("and the title is split out", now.title === "Engineer", String(now.title));
+
+    // The point of recomputing identity_key: the row keyed `nm:ada lovelace engineer` before
+    // the edit. If the key had been left stale, this import would miss the conflict target
+    // and insert a SECOND Ada.
+    await upsertEventAttendees(
+      USER,
+      fix.id,
+      parseRosterText("Ada Lovelace <ada@analytical.io>").attendees,
+      "paste"
+    );
+    rows = await listRosterForUser(USER, fix.id);
+    check(
+      "a later import dedupes onto the corrected row",
+      rows.filter((r) => r.fullName === "Ada Lovelace").length === 1,
+      `${rows.length} rows total`
+    );
+
+    // Refusals. Merging is deliberately out of scope, so a collision is reported with the
+    // other row named — deleting one is the resolution.
+    const collide = await updateAttendeeForUser(USER, bad.id, {
+      fullName: "Ada Lovelace",
+      email: "grace@cobol.mil",
+      company: null,
+      title: null,
+      linkedinUrl: null,
+      xHandle: null,
+      attendeeRole: null,
+    });
+    check("an edit that collides is refused", collide.ok === false && collide.reason === "collision", JSON.stringify(collide));
+    check(
+      "and names the row it collided with",
+      collide.ok === false && collide.reason === "collision" && collide.otherName === "Grace Hopper",
+      JSON.stringify(collide)
+    );
+
+    const emptied = await updateAttendeeForUser(USER, bad.id, {
+      fullName: "   ",
+      email: null,
+      company: "Analytical",
+      title: null,
+      linkedinUrl: null,
+      xHandle: null,
+      attendeeRole: null,
+    });
+    check("an edit leaving nothing identifying is refused", emptied.ok === false && emptied.reason === "empty", JSON.stringify(emptied));
+    rows = await listRosterForUser(USER, fix.id);
+    check(
+      "and a refused edit changes nothing",
+      rows.find((r) => r.id === bad.id)?.fullName === "Ada Lovelace"
+    );
+
+    // Deleting a CONNECTED row must not take the contact or the interaction with it.
+    const roster = await listRosterForUser(USER, fix.id);
+    await connectAttendees(USER, fix, [roster.find((r) => r.fullName === "Grace Hopper")!.id]);
+    const before = await counts();
+    const connected = (await listRosterForUser(USER, fix.id)).find((r) => r.contactId)!;
+    await deleteAttendeeForUser(USER, connected.id);
+    const after = await counts();
+    const left = await listRosterForUser(USER, fix.id);
+    check("the row is gone", !left.some((r) => r.id === connected.id), `${left.length} rows`);
+    check("but the contact stays", after.contacts === before.contacts, `${before.contacts} -> ${after.contacts}`);
+    check("and so does the interaction", after.interactions === before.interactions, `${before.interactions} -> ${after.interactions}`);
+  }
+
+  // --- a resync must not disturb the roster -----------------------------------------------------
+  {
+    // Refreshing an event re-reads the page and re-seeds its speaker line-up. That runs
+    // through the same idempotent upsert as any other source, which is the whole reason a
+    // refresh is safe to press twice — but "safe" here has to mean specifically: no second
+    // row for the same person, and no unpicking of a connection the user already made.
+    const ev = await createEventForUser(USER, { title: "Refresh Me Summit" });
+    const lineUp = speakersToAttendees([
+      { name: "Ada Lovelace", url: "https://www.linkedin.com/in/ada-refresh" },
+      { name: "Grace Hopper", url: null },
+    ]);
+    await upsertEventAttendees(USER, ev.id, lineUp, "page");
+
+    const seeded = await listRosterForUser(USER, ev.id);
+    await connectAttendees(USER, ev, [seeded.find((r) => r.fullName === "Ada Lovelace")!.id]);
+    const linkedBefore = (await listRosterForUser(USER, ev.id)).find((r) => r.fullName === "Ada Lovelace")!;
+    const before = await counts();
+
+    // The refresh: the same page, read again.
+    await upsertEventAttendees(USER, ev.id, lineUp, "page");
+
+    const after = await listRosterForUser(USER, ev.id);
+    const linkedAfter = after.find((r) => r.fullName === "Ada Lovelace")!;
+    check("a refresh adds no duplicate rows", after.length === 2, String(after.length));
+    check("the connected person keeps their contact", linkedAfter.contactId === linkedBefore.contactId);
+    check("and stays marked spoken-to", linkedAfter.spokeTo === true);
+    const now = await counts();
+    check("no contact is created by refreshing", now.contacts === before.contacts, `${before.contacts} -> ${now.contacts}`);
+    check("and no interaction either", now.interactions === before.interactions, `${before.interactions} -> ${now.interactions}`);
+
+    // THE regression. Correcting a speaker's row moves its identity key off `nm:` — which is
+    // correct and necessary — and the page's name-only key then stops matching it. Before the
+    // name filter, refreshing manufactured a second Grace on every single press.
+    const grace = (await listRosterForUser(USER, ev.id)).find((r) => r.fullName === "Grace Hopper")!;
+    await updateAttendeeForUser(USER, grace.id, {
+      fullName: "Grace Hopper",
+      email: "grace@navy.mil",
+      company: null,
+      title: null,
+      linkedinUrl: null,
+      xHandle: null,
+      attendeeRole: "speaker",
+    });
+    const enriched = speakersNotOnRoster(
+      lineUp,
+      (await listRosterForUser(USER, ev.id)).map((r) => r.fullName)
+    );
+    check("an edited speaker is not re-seeded by a refresh", enriched.length === 0, `${enriched.length} would be inserted`);
+    await upsertEventAttendees(USER, ev.id, enriched, "page");
+    check(
+      "so the roster does not grow",
+      (await listRosterForUser(USER, ev.id)).length === 2,
+      String((await listRosterForUser(USER, ev.id)).length)
+    );
+    check(
+      "and the correction survives",
+      (await listRosterForUser(USER, ev.id)).find((r) => r.fullName === "Grace Hopper")?.email === "grace@navy.mil"
+    );
+
+    // A newly announced speaker IS added — the line-up is additive, never a replacement.
+    const announced = speakersNotOnRoster(
+      speakersToAttendees([{ name: "Katherine Johnson", url: null }]),
+      (await listRosterForUser(USER, ev.id)).map((r) => r.fullName)
+    );
+    await upsertEventAttendees(USER, ev.id, announced, "page");
+    check("a newly announced speaker is still added", (await listRosterForUser(USER, ev.id)).length === 3);
+  }
+
+  // --- event edits flow through to interactions already written ---------------------------------
+  {
+    const ev = await createEventForUser(USER, {
+      title: "Restamp Summit",
+      startsAt: new Date("2026-05-01T18:00:00.000Z"),
+      venue: "Old Hall",
+      city: "Boston",
+    });
+    await upsertEventAttendees(
+      USER,
+      ev.id,
+      parseRosterText("Katherine Johnson <kj@nasa.gov>\nMargaret Hamilton <mh@mit.edu>").attendees,
+      "paste"
+    );
+    const people = await listRosterForUser(USER, ev.id);
+    await connectAttendees(USER, ev, people.map((r) => r.id));
+
+    const db = await getDb();
+    const noteOf = async (email: string) =>
+      rowsOf<{ raw_notes: string | null; ai_summary: string | null; interaction_date: Date }>(
+        await db.execute(sql`
+          SELECT i.raw_notes, i.ai_summary, i.interaction_date
+          FROM interactions i JOIN contacts c ON c.id = i.contact_id
+          WHERE i.user_id = ${USER} AND c.email = ${email}
+        `)
+      )[0]!;
+
+    check("the note is derived from the event", (await noteOf("kj@nasa.gov")).raw_notes === "Met at Restamp Summit (Old Hall, Boston).", String((await noteOf("kj@nasa.gov")).raw_notes));
+
+    // One person's note is edited by hand, the way it would be from a contact's timeline.
+    await db.execute(sql`
+      UPDATE interactions SET raw_notes = 'We talked about Apollo guidance software.'
+      WHERE user_id = ${USER}
+        AND contact_id = (SELECT id FROM contacts WHERE user_id = ${USER} AND email = 'mh@mit.edu')
+    `);
+
+    const moved = { ...ev, venue: "New Hall", startsAt: new Date("2026-05-02T18:00:00.000Z") };
+    const touched = await restampEventInteractions(USER, ev, moved);
+    check("the restamp reports what it changed", touched === 2, String(touched));
+
+    const kj = await noteOf("kj@nasa.gov");
+    check("an untouched note is refreshed", kj.raw_notes === "Met at Restamp Summit (New Hall, Boston).", String(kj.raw_notes));
+    check(
+      "and its date follows the event",
+      new Date(kj.interaction_date).toISOString() === "2026-05-02T18:00:00.000Z",
+      String(kj.interaction_date)
+    );
+
+    const mh = await noteOf("mh@mit.edu");
+    // The load-bearing one: staleness is a smaller harm than destroying what someone wrote.
+    check(
+      "a hand-edited note is left alone",
+      mh.raw_notes === "We talked about Apollo guidance software.",
+      String(mh.raw_notes)
+    );
+    check(
+      "while its untouched date is still refreshed",
+      new Date(mh.interaction_date).toISOString() === "2026-05-02T18:00:00.000Z",
+      String(mh.interaction_date)
+    );
+
+    check("an unchanged event restamps nothing", (await restampEventInteractions(USER, moved, moved)) === 0);
+  }
+
+  // --- attendee_role survives the write path ---------------------------------------------------
+  {
+    // This column existed from day one, was computed by both connectors, and was dropped on
+    // the way to the database by `upsertEventAttendees` and again by `upsertProviderAttendees`
+    // — so it was NULL on every row ever written. The check is that it now round-trips.
+    const talk = await createEventForUser(USER, { title: "Speakers Night" });
+    const speakers = speakersToAttendees([
+      { name: "Ada Lovelace", url: "https://www.linkedin.com/in/ada-speaker" },
+      { name: "Grace Hopper", url: null },
+    ]);
+    await upsertEventAttendees(USER, talk.id, speakers, "page");
+    const seeded = await listRosterForUser(USER, talk.id);
+    check("speakers land on the roster", seeded.length === 2, String(seeded.length));
+    check("with their role stored", seeded.every((r) => r.attendeeRole === "speaker"));
+    check("and are attributed to the page", seeded.every((r) => r.source === "page"));
+    // The rule #140 set and this change did NOT relax: reading a page creates no contacts.
+    check("and nobody was connected by reading a page", seeded.every((r) => r.contactId === null));
+    check("nor marked as spoken to", seeded.every((r) => r.spokeTo === false));
+
+    // What happens when the user later pastes the real list, and why.
+    //
+    // A speaker known only by name keys on `nm:grace hopper`; the same human pasted WITH an
+    // email keys on `em:grace@navy.mil`. Different keys, so two rows — and that is correct,
+    // not a gap. Collapsing them would mean merging on a bare full name, which is precisely
+    // what the next block refuses and what `DUPLICATE_MERGE_CONFIDENCE` exists to prevent:
+    // two different Grace Hoppers would be welded into one person.
+    //
+    // The cost is a visible duplicate the user can delete. The alternative cost is a silent,
+    // unrecoverable merge of two humans. This asserts we keep paying the cheaper one.
+    await upsertEventAttendees(
+      USER,
+      talk.id,
+      parseRosterText("Grace Hopper <grace@navy.mil> — Rear Admiral at USN").attendees,
+      "paste"
+    );
+    const merged = await listRosterForUser(USER, talk.id);
+    check("a name-only speaker and an emailed paste stay separate rows", merged.length === 3, String(merged.length));
+    const byName = merged.filter((r) => r.fullName === "Grace Hopper");
+    check("both Grace rows are present", byName.length === 2, String(byName.length));
+    check("the speaker row keeps its role", byName.some((r) => r.attendeeRole === "speaker"));
+    check("and the pasted row carries the email", byName.some((r) => r.email === "grace@navy.mil"));
+
+    // The identity tiers DO collapse when the signal is strong enough: same LinkedIn URL,
+    // one row, whichever source arrived first.
+    await upsertEventAttendees(
+      USER,
+      talk.id,
+      parseRosterText("Ada Lovelace https://www.linkedin.com/in/ada-speaker").attendees,
+      "paste"
+    );
+    const afterAda = await listRosterForUser(USER, talk.id);
+    check("a matching LinkedIn URL collapses onto the speaker row", afterAda.length === 3, String(afterAda.length));
+    check(
+      "and that row is still marked a speaker",
+      afterAda.find((r) => r.fullName === "Ada Lovelace")?.attendeeRole === "speaker"
+    );
+  }
+
   // --- two different people who share a name must NOT be merged ------------------------------
   {
     // The reason this path uses DUPLICATE_MERGE_CONFIDENCE (0.85) rather than calendar's 0.6.
@@ -204,12 +500,16 @@ run(async () => {
   // --- unlinking leaves the contact alone -----------------------------------------------------
   {
     const target = (await listRosterForUser(USER, event.id))[0]!;
+    // Snapshotted immediately before the unlink rather than reusing an earlier count: the
+    // property is "unlinking changes nothing", and a distant baseline makes this assertion
+    // fail for any unrelated block added in between rather than for the thing it tests.
+    const beforeUnlink = await counts();
     await unlinkAttendeeForUser(USER, target.id);
     const now = await counts();
     const refreshed = (await listRosterForUser(USER, event.id)).find((r) => r.id === target.id)!;
     check("unlinking clears the attendee's contact", refreshed.contactId === null);
     check("unlinking clears spoke-to", refreshed.spokeTo === false);
-    check("unlinking does NOT delete the contact", now.contacts === after.contacts);
+    check("unlinking does NOT delete the contact", now.contacts === beforeUnlink.contacts, `${beforeUnlink.contacts} -> ${now.contacts}`);
     // Restore so the cascade check below is meaningful.
     await linkAttendeesToContacts(USER, [
       { attendeeId: target.id, contactId: target.contactId! },
@@ -234,6 +534,84 @@ run(async () => {
       typeof s.blockedByPlan === "number",
       String(s.blockedByPlan)
     );
+  }
+
+  // --- what a provider sync writes that nothing used to store -----------------------------------
+  {
+    const db = await getDb();
+    // A provider event that reached the table some other way first — which is what discovery
+    // will do routinely: the user's calendar shows the event long before the host API is
+    // connected. The row therefore starts as `attended`.
+    const seeded = await createEventForUser(USER, {
+      title: "Provider Promotion Summit",
+      role: "attended",
+      provider: "luma",
+      providerEventId: "evt-promote",
+      source: "manual",
+    });
+    const promotedId = await upsertProviderEvent(USER, "luma", {
+      providerEventId: "evt-promote",
+      title: "Provider Promotion Summit",
+      startsAt: new Date("2026-06-01T17:00:00.000Z"),
+      endsAt: null,
+      timezone: "America/Los_Angeles",
+      venue: null,
+      city: null,
+      url: "https://lu.ma/promote",
+      description: null,
+      coverImageUrl: null,
+      attendeeCount: 3,
+    });
+    check("the provider event upserts onto the existing row", promotedId === seeded.id);
+    const role = rowsOf<{ role: string }>(
+      await db.execute(sql`SELECT role FROM events WHERE id = ${promotedId}`)
+    )[0]?.role;
+    // Only a host-scoped credential can list an event at all, so the API listing it IS the
+    // evidence the user hosts it. Without the promotion the UI goes on asking for a pasted
+    // guest list for an event it is already syncing.
+    check("and is promoted to hosted", role === "hosted", String(role));
+
+    await upsertProviderAttendees(
+      USER,
+      promotedId,
+      [
+        {
+          externalRef: "guest-1",
+          fullName: "Ada Lovelace",
+          email: "ada@analytical.io",
+          company: null,
+          title: null,
+          linkedinUrl: null,
+          xHandle: null,
+          phone: "+15550101",
+          attendeeRole: "attendee",
+        },
+      ],
+      "luma"
+    );
+    const stored = rowsOf<{ external_ref: string | null; phone: string | null }>(
+      await db.execute(sql`
+        SELECT external_ref, phone FROM event_attendees WHERE event_id = ${promotedId}
+      `)
+    )[0]!;
+    // Both columns existed from day one and nothing ever wrote them: the connectors computed
+    // an external ref and it was dropped between the mapper and the insert.
+    check("the provider's guest id is stored", stored.external_ref === "guest-1", String(stored.external_ref));
+    check("and so is the phone number", stored.phone === "+15550101", String(stored.phone));
+
+    // Fill-blanks, like every other column: a later paste cannot erase the provider's id.
+    await upsertEventAttendees(
+      USER,
+      promotedId,
+      parseRosterText("Ada Lovelace <ada@analytical.io>").attendees,
+      "paste"
+    );
+    const after = rowsOf<{ external_ref: string | null }>(
+      await db.execute(sql`
+        SELECT external_ref FROM event_attendees WHERE event_id = ${promotedId}
+      `)
+    )[0]!;
+    check("and a later paste does not blank it", after.external_ref === "guest-1", String(after.external_ref));
   }
 
   // --- deleting an event cascades its roster ----------------------------------------------------
