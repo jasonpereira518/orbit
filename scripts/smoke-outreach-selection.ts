@@ -18,6 +18,7 @@ import { getDb } from "../src/db";
 import * as schema from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { createCampaignV2 } from "../src/lib/outreach/campaigns";
+import { getCreditBalance } from "../src/lib/outreach/credits/ledger";
 import {
   excludePeople,
   listPeople,
@@ -104,6 +105,35 @@ async function main() {
     .where(and(eq(schema.outreachProspects.campaignId, campaignId), eq(schema.outreachProspects.status, "excluded")));
   check("…so exclusions are unchanged", untouched.length === 1);
 
+  const beforeDuplicateGuard = (await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, ids[6])))[0];
+  await resolveDuplicate(OTHER, ids[6], "merged");
+  const afterDuplicateGuard = (await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, ids[6])))[0];
+  check(
+    "another user's resolveDuplicate changes nothing",
+    afterDuplicateGuard.status === beforeDuplicateGuard.status && afterDuplicateGuard.duplicateReview === beforeDuplicateGuard.duplicateReview
+  );
+
+  // researchOnePerson's tenancy check (the prospect lookup, scoped by id + userId) runs BEFORE
+  // any provider resolution — so OTHER is rejected as a tenancy failure even without keys. Give
+  // OTHER encrypted dummy keys anyway, so the rejection can't be mistaken for a missing-key one.
+  await ensureUserSettings(OTHER);
+  await db
+    .update(schema.userSettings)
+    .set({ braveApiKeyEncrypted: encrypt("other-brave-key"), apolloApiKeyEncrypted: encrypt("other-apollo-key") })
+    .where(eq(schema.userSettings.userId, OTHER));
+  let otherRejected = false;
+  try {
+    await researchOnePerson(OTHER, ids[6], "personal");
+  } catch (err) {
+    otherRejected = true;
+    check(
+      "another user's researchOnePerson is rejected as tenancy, not a missing key",
+      String((err as Error).message).includes("isn’t in your campaign"),
+      String((err as Error).message)
+    );
+  }
+  check("the call was rejected", otherRejected);
+
   console.log("researchOnePerson double-claim...");
   // Personal funding needs keys the resolver can decrypt; no network call happens because no
   // job runs in this smoke (allocateResearch only enqueues it).
@@ -134,6 +164,91 @@ async function main() {
     .from(schema.outreachResearchAttempts)
     .where(and(eq(schema.outreachResearchAttempts.userId, USER), eq(schema.outreachResearchAttempts.prospectId, raceProspect.id)));
   check("exactly one research attempt row was created", attempts.length === 1, String(attempts.length));
+
+  console.log("researchOnePerson hold paths...");
+  await db.update(schema.userSettings).set({ compedPlan: "orbit" }).where(eq(schema.userSettings.userId, USER));
+  const priorBraveKey = process.env.BRAVE_SEARCH_API_KEY;
+  const priorApolloKey = process.env.APOLLO_API_KEY;
+  // Orbit funding resolves its search provider from BRAVE_SEARCH_API_KEY and its enrichment
+  // provider from APOLLO_API_KEY (both Orbit's own keys, not the user's) — researchOnePerson
+  // requires a non-null enrichment provider before it will claim anything, so both need a
+  // (dummy) value. No network call happens: no job runs in this smoke.
+  process.env.BRAVE_SEARCH_API_KEY = "dummy-brave-key-for-smoke";
+  process.env.APOLLO_API_KEY = "dummy-apollo-key-for-smoke";
+  try {
+    const baseline = await getCreditBalance(USER);
+
+    const [holdSuccessProspect] = await db
+      .insert(schema.outreachProspects)
+      .values({ userId: USER, campaignId, externalId: "li:hold-success", fullName: "Hold Success", rankTier: "strong", rankScore: 1, rankedCriteriaVersion: 0 })
+      // Bare `.returning()` — see the note above.
+      .returning();
+    const { attemptId } = await researchOnePerson(USER, holdSuccessProspect.id, "orbit");
+    check("orbit-funded research returns an attempt id", Boolean(attemptId));
+    const heldAttempts = await db
+      .select()
+      .from(schema.outreachResearchAttempts)
+      .where(and(eq(schema.outreachResearchAttempts.userId, USER), eq(schema.outreachResearchAttempts.prospectId, holdSuccessProspect.id)));
+    check(
+      "exactly one attempt row, held with a hold id",
+      heldAttempts.length === 1 && heldAttempts[0].creditState === "held" && heldAttempts[0].holdId !== null,
+      JSON.stringify(heldAttempts)
+    );
+    const [afterHoldProspect] = await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, holdSuccessProspect.id));
+    check("the prospect is queued", afterHoldProspect.researchState === "queued", afterHoldProspect.researchState ?? "null");
+    const afterHoldBalance = await getCreditBalance(USER);
+    check("held went up by 1", afterHoldBalance.held === baseline.held + 1, `${afterHoldBalance.held} vs ${baseline.held}`);
+
+    // Exhaust this user's credits directly on their research_credit_accounts row (scoped to
+    // USER only), rather than reserving in a loop — the account's monthly allowance was already
+    // granted above, so using it up (not zeroing the allowance) avoids ensureCreditAccount's
+    // mid-period top-up logic silently undoing this.
+    const [acct] = await db.select().from(schema.researchCreditAccounts).where(eq(schema.researchCreditAccounts.userId, USER));
+    const available = Math.max(0, acct.monthlyAllowance - acct.monthlyUsed - acct.monthlyHeld);
+    await db
+      .update(schema.researchCreditAccounts)
+      .set({ monthlyUsed: acct.monthlyUsed + available })
+      .where(eq(schema.researchCreditAccounts.userId, USER));
+
+    const [outOfCreditsProspect] = await db
+      .insert(schema.outreachProspects)
+      .values({ userId: USER, campaignId, externalId: "li:out-of-credits", fullName: "Out Of Credits", rankTier: "strong", rankScore: 1, rankedCriteriaVersion: 0 })
+      // Bare `.returning()` — see the note above.
+      .returning();
+    check("the fresh prospect starts unresearched", outOfCreditsProspect.researchState === "none", outOfCreditsProspect.researchState ?? "null");
+    const heldBefore = (await getCreditBalance(USER)).held;
+
+    let outOfCreditsRejected = false;
+    try {
+      await researchOnePerson(USER, outOfCreditsProspect.id, "orbit");
+    } catch (err) {
+      outOfCreditsRejected = true;
+      check(
+        "rejects with an out-of-credits message",
+        String((err as Error).message).includes("out of research credits"),
+        String((err as Error).message)
+      );
+    }
+    check("the call was rejected", outOfCreditsRejected);
+    const [afterFailProspect] = await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, outOfCreditsProspect.id));
+    check(
+      "the prospect's research state is back to its prior value",
+      afterFailProspect.researchState === "none",
+      afterFailProspect.researchState ?? "null"
+    );
+    const failedAttempts = await db
+      .select()
+      .from(schema.outreachResearchAttempts)
+      .where(and(eq(schema.outreachResearchAttempts.userId, USER), eq(schema.outreachResearchAttempts.prospectId, outOfCreditsProspect.id)));
+    check("no attempt row exists for the rejected prospect", failedAttempts.length === 0, String(failedAttempts.length));
+    const heldAfter = (await getCreditBalance(USER)).held;
+    check("held is unchanged by the rejected reservation", heldAfter === heldBefore, `${heldAfter} vs ${heldBefore}`);
+  } finally {
+    if (priorBraveKey === undefined) delete process.env.BRAVE_SEARCH_API_KEY;
+    else process.env.BRAVE_SEARCH_API_KEY = priorBraveKey;
+    if (priorApolloKey === undefined) delete process.env.APOLLO_API_KEY;
+    else process.env.APOLLO_API_KEY = priorApolloKey;
+  }
 
   console.log("All outreach selection checks passed.");
 }

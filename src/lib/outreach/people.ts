@@ -7,6 +7,7 @@ import { getCampaignV2 } from "@/lib/outreach/campaigns";
 import { getCreditBalance, releaseHold, reserveCredits } from "@/lib/outreach/credits/ledger";
 import { resolveResearchProviders } from "@/lib/outreach/providers/resolve";
 import { allocateResearch } from "@/lib/outreach/research/attempt";
+import { RANK_TIERS } from "@/lib/outreach/types";
 import type {
   OutreachConfidence,
   OutreachEmailStatus,
@@ -70,7 +71,10 @@ const NOT_IN_CONVERSATION = sql`NOT EXISTS (SELECT 1 FROM outreach_conversations
 function conditions(userId: string, campaignId: string, filter: PeopleFilter): SQL[] {
   const out: SQL[] = [eq(outreachProspects.userId, userId), eq(outreachProspects.campaignId, campaignId)];
   if (!filter.includeExcluded) out.push(ne(outreachProspects.status, "excluded"));
-  if (filter.tiers?.length) out.push(inArray(outreachProspects.rankTier, filter.tiers));
+  // Clamp to the known tier set: an empty result after filtering (no tiers, or only bogus ones)
+  // falls through to the default branch rather than an `inArray` with nothing in it.
+  const validTiers = filter.tiers?.filter((t) => (RANK_TIERS as readonly string[]).includes(t));
+  if (validTiers?.length) out.push(inArray(outreachProspects.rankTier, validTiers));
   else if (!filter.includeFiltered) out.push(or(isNull(outreachProspects.rankTier), ne(outreachProspects.rankTier, "filtered"))!);
   if (filter.selection === "selected") out.push(eq(outreachProspects.status, "selected"));
   if (filter.selection === "unselected") out.push(eq(outreachProspects.status, "suggested"));
@@ -328,10 +332,19 @@ export async function researchOnePerson(
     if (!attemptId) throw new UserFacingError("Research couldn’t start — try again");
     return { attemptId };
   } catch (err) {
+    // Undo only OUR claim: gated on research_state still being 'queued', so a newer state
+    // written by someone else in this window (a job that raced ahead, another restore) is
+    // never clobbered.
     await db
       .update(outreachProspects)
       .set({ researchState: priorState, updatedAt: new Date() })
-      .where(and(eq(outreachProspects.id, prospectId), eq(outreachProspects.userId, userId)));
+      .where(
+        and(
+          eq(outreachProspects.id, prospectId),
+          eq(outreachProspects.userId, userId),
+          eq(outreachProspects.researchState, "queued")
+        )
+      );
     if (holdId) await releaseHold(userId, holdId);
     throw err;
   }
