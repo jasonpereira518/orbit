@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, Share2 } from "lucide-react";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import { buildShareUrl, shareText, type InterestTicket } from "@/lib/interest-list";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 const PILL =
   "inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e8f3f1]/[0.14] px-3 text-sm text-[#e8f3f1] transition-colors hover:border-[#e8f3f1]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60";
@@ -18,7 +19,7 @@ const PILL =
  * `?ref=` link, so whoever follows it lands on the invited state and the referral counts.
  */
 export function ShareRow({ ticket, appUrl, play }: { ticket: InterestTicket; appUrl: string; play: boolean }) {
-  const reduced = useReducedMotion();
+  const reduced = usePrefersReducedMotion();
   const url = buildShareUrl(appUrl, ticket.shareToken);
   const text = shareText(ticket);
   const [copied, setCopied] = useState(false);

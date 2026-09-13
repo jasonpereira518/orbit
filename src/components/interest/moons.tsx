@@ -1,9 +1,10 @@
 "use client";
 
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import { MOONS_DRAWN_MAX } from "@/lib/interest-list";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 /**
  * The people who joined through a ticket, drawn as moons on one ring around its planet.
@@ -13,7 +14,7 @@ import { cn } from "@/lib/utils";
  * is sized to sit just outside the planet: `size` is the ring's diameter.
  */
 export function Moons({ count, play, size }: { count: number; play: boolean; size: number }) {
-  const reduced = useReducedMotion();
+  const reduced = usePrefersReducedMotion();
   const n = Math.min(count, MOONS_DRAWN_MAX);
   if (n === 0) return null;
   const r = size / 2;
@@ -22,8 +23,7 @@ export function Moons({ count, play, size }: { count: number; play: boolean; siz
     <span
       aria-hidden="true"
       className={cn(
-        "pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#7aa896]/30",
-        !reduced && "interest-moons-drift"
+        "pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#7aa896]/30 interest-moons-drift"
       )}
       style={{ width: size, height: size }}
     >

@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import { Moons } from "@/components/interest/moons";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { RollingCount } from "@/components/interest/proof-line";
 import { ShareRow } from "@/components/interest/share-row";
 import { formatTicketNumber, moonsLine, passengerLine, type InterestTicket } from "@/lib/interest-list";
 import { DUR, EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { planetLabel } from "@/lib/welcome-planets";
 
 const PLANET_SIZE = 96;
@@ -40,7 +41,7 @@ export function BoardingPass({
   entrance: "flip" | "direct";
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
-  const reduced = useReducedMotion();
+  const reduced = usePrefersReducedMotion();
   const full = entrance === "flip" && !reduced;
 
   const rise = (delay: number) =>
@@ -70,16 +71,34 @@ export function BoardingPass({
         <p className="mt-1.5 text-xs uppercase tracking-[0.14em] text-[#9aada8]">{planetLabel(ticket.planet)}</p>
       </div>
 
-      {/* Seam: an SVG line so it can draw itself. Horizontal on phones, vertical from sm. */}
-      <svg aria-hidden="true" className="h-px w-full sm:hidden" viewBox="0 0 100 1" preserveAspectRatio="none">
-        <motion.line x1="0" y1="0.5" x2="100" y2="0.5" stroke="rgba(232,243,241,0.22)" strokeWidth="1" strokeDasharray="3 4" initial={full ? { pathLength: 0 } : false} animate={{ pathLength: 1 }} transition={full ? { duration: DUR.slow, ease: EASE_HOUSE, delay: 0.1 } : { duration: 0 }} />
-      </svg>
+      {/* Seam: a plain dashed line, drawn by clipping its container (not `pathLength`,
+          which overwrites `stroke-dasharray` every frame and renders the seam solid).
+          Horizontal on phones, vertical from sm. */}
+      <motion.div
+        aria-hidden="true"
+        className="h-px w-full overflow-hidden sm:hidden"
+        initial={full ? { width: "0%" } : false}
+        animate={{ width: "100%" }}
+        transition={full ? { duration: DUR.slow, ease: EASE_HOUSE, delay: 0.1 } : { duration: 0 }}
+      >
+        <svg className="h-px w-full" viewBox="0 0 100 1" preserveAspectRatio="none">
+          <line x1="0" y1="0.5" x2="100" y2="0.5" stroke="rgba(232,243,241,0.22)" strokeWidth="1" strokeDasharray="3 4" />
+        </svg>
+      </motion.div>
 
       {/* Details */}
       <div className="relative px-5 pb-5 pt-5 sm:pl-6">
-        <svg aria-hidden="true" className="absolute left-0 top-4 hidden h-[calc(100%-2rem)] w-px sm:block" viewBox="0 0 1 100" preserveAspectRatio="none">
-          <motion.line x1="0.5" y1="0" x2="0.5" y2="100" stroke="rgba(232,243,241,0.22)" strokeWidth="1" strokeDasharray="3 4" initial={full ? { pathLength: 0 } : false} animate={{ pathLength: 1 }} transition={full ? { duration: DUR.slow, ease: EASE_HOUSE, delay: 0.1 } : { duration: 0 }} />
-        </svg>
+        <motion.div
+          aria-hidden="true"
+          className="absolute left-0 top-4 hidden h-[calc(100%-2rem)] w-px overflow-hidden sm:block"
+          initial={full ? { height: "0%" } : false}
+          animate={{ height: "100%" }}
+          transition={full ? { duration: DUR.slow, ease: EASE_HOUSE, delay: 0.1 } : { duration: 0 }}
+        >
+          <svg className="h-full w-px" viewBox="0 0 1 100" preserveAspectRatio="none">
+            <line x1="0.5" y1="0" x2="0.5" y2="100" stroke="rgba(232,243,241,0.22)" strokeWidth="1" strokeDasharray="3 4" />
+          </svg>
+        </motion.div>
 
         <motion.p {...rise(0.95)} className="text-xs uppercase tracking-[0.16em] text-[#9aada8]">
           Orbit · Interest list
