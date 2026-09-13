@@ -37,7 +37,8 @@ function joinedLabel(iso: string) {
  * The moons wait for mount before they may hide themselves. `Moons` renders its hidden
  * `initial` styles whenever `play` is true, and on a `?me=` visit that markup is server
  * HTML — so passing `play` on the first render would strip the moons off a JS-less page
- * and leave them stripped. Mounted-only `play` puts them in the HTML and replays the drop.
+ * and leave them stripped. Mounted-only `play` puts them in the HTML; the `key` remount is what
+ * replays the drop, because motion reads `initial` only at first render.
  */
 export function BoardingPass({
   ticket,
@@ -75,7 +76,14 @@ export function BoardingPass({
           animate={{ scale: 1, opacity: 1 }}
           transition={full ? { ...SPRING_SOFT, delay: 0.55 } : { duration: 0 }}
         >
-          <Moons count={ticket.moons} play={mounted && !reduced} size={RING_SIZE} />
+          <Moons
+            // Keyed on mount: motion reads `initial` once, when the element first renders.
+            // Remounting after hydration is what makes the drop actually play.
+            key={mounted ? "play" : "ssr"}
+            count={ticket.moons}
+            play={mounted && !reduced}
+            size={RING_SIZE}
+          />
           <PlanetArt planet={ticket.planet} size={PLANET_SIZE} />
         </motion.span>
         <p className="mt-3 font-[family-name:var(--font-display)] text-[28px] leading-none tracking-tight text-[#e8f3f1]">
