@@ -56,7 +56,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "notes",
     label: "Interactions and notes",
     description:
-      "Every logged conversation, meeting and note, plus the raw pasted text each was parsed out of. Takes action items and mentions with it.",
+      "Every logged conversation, meeting and note — the raw pasted text, captured photos, meeting recordings and transcripts, and any capture still mid-review — plus the action items and mentions it produced.",
   },
   {
     id: "reminders",
@@ -80,7 +80,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "events",
     label: "Events and attendees",
     description:
-      "Events you tracked and their attendee rosters — names, emails and employers of people you met.",
+      "Events you tracked, their attendee rosters — names, emails and employers of people you met — and the companies you linked to each one.",
   },
   {
     id: "goals",
@@ -96,7 +96,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "recruiters",
     label: "Recruiter links and messages",
     description:
-      "Recruiters you linked yourself to, your ratings of them, and your drafts and sent messages. The shared recruiter directory itself stays.",
+      "Recruiters you linked yourself to, your ratings of them, your drafts and sent messages, and the Gmail scan's watermark of how far it has read. The shared recruiter directory itself stays.",
   },
   {
     id: "api",
@@ -108,7 +108,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "activity",
     label: "Usage and diagnostics",
     description:
-      "Feature-usage counters, extension rate-limit windows, and the errors and upgrade prompts Orbit recorded against your account.",
+      "Feature-usage counters, extension rate-limit windows, the errors and upgrade prompts Orbit recorded against your account, and the identifying link on your page-view history (the visit counts themselves stay, anonymous).",
   },
   {
     id: "feedback",
@@ -126,7 +126,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "contacts",
     label: "Contacts and companies",
     description:
-      "Everyone in your network, with their profiles, work history and company records.",
+      "Everyone in your network, with their profiles, work history and company records — plus the merge history and duplicate-matching records behind them, and any companies you've marked as a target to work at.",
     // Not a tidiness rule — `interactions`, `reminders`, `contact_embeddings` and
     // `contact_tags` are all `on delete cascade` from `contacts`, so the database removes
     // them whether or not the box is ticked.
@@ -142,7 +142,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "preferences",
     label: "Preferences and onboarding state",
     description:
-      "Onboarding progress, dismissed prompts, social links and the calendar feed URL. Your plan, billing and AI provider keys are kept.",
+      "Onboarding progress, dismissed prompts, social links and the calendar feed URL. Your plan, billing, theme and provider API keys are kept.",
   },
 ] as const;
 
