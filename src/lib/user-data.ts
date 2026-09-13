@@ -41,6 +41,7 @@ import {
   pageViews,
   planUpgradeEvents,
   recruiterMessages,
+  recruiterScanState,
   reminderLists,
   reminders,
   suggestedReminders,
@@ -236,6 +237,9 @@ export async function purgeUserData(
     // Best-effort: a stale counter must not block deleting someone's data.
     await recomputeRecruiterRating(recruiterId).catch(() => {});
   }
+  // The recruiter scan's watermark. Not derived from `gmail_connections`, so it survives a
+  // disconnect/reconnect on purpose — but it must not survive the account itself.
+  await db.delete(recruiterScanState).where(eq(recruiterScanState.userId, userId));
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
   // The connector platform's four tables.

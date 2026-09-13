@@ -347,6 +347,10 @@ async function seed() {
     body: "prose the user wrote about a real person",
   });
 
+  // The recruiter scan's watermark, kept separate from `gmail_connections` on purpose but
+  // no less user data than anything else here.
+  await db.insert(schema.recruiterScanState).values({ userId: USER });
+
   // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
   // no foreign key to either contact (the losing contact's row is deleted by design), so
   // nothing cascades it — and `loser_snapshot` is a whole archived contact, every field of

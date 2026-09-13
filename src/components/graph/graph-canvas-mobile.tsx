@@ -19,12 +19,11 @@ import {
 import { hitTest } from "@/lib/graph/hit-test";
 import {
   clampPan,
-  computeSunExtents,
+  fitStarsToPane,
   fitWorldRect,
   lerpCamera,
   rectOf,
   screenToWorld,
-  zoomToFitSunCentered,
   type Camera,
   type Vec2,
 } from "@/lib/graph/sky-camera";
@@ -39,6 +38,13 @@ import { markGraphViewportReady } from "@/lib/graph/intro-signal";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
+
+/**
+ * Screen-pixel margins for the default framing, measured on a 402px phone: the cluster
+ * chip and search row cover the top ~100px of the pane and the Key / fullscreen / home
+ * buttons the bottom ~45px. Each gets a little air on top; the sides get a fingertip.
+ */
+const HOME_INSET = { x: 28, top: 112, bottom: 60 };
 
 /**
  * The constellation as one canvas.
@@ -210,20 +216,21 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     [cancelTween, draw, prefersReducedMotion, requestDraw]
   );
 
-  /** The default view: sun locked to the centre, whole sky in frame. */
+  /**
+   * The default view: the sky as large as the clear part of the pane allows, with its
+   * outermost few loose stars a pan away rather than setting the zoom for everyone.
+   *
+   * Not sun-centred, unlike the DOM chart: see `fitStarsToPane` for why a phone frames the
+   * stars' own bounds instead. The insets keep them out from under the chart's overlays —
+   * the cluster chip and search row across the top, the Key / fullscreen / home buttons
+   * along the bottom — and a finger's width off the side edges.
+   */
   const goHome = useCallback(
     (animated: boolean) => {
       const pane = paneRef.current;
       if (pane.width < 2) return;
-      /**
-       * No `liveNodes` pass. `computeSunExtents` takes measured DOM boxes only to refine
-       * its estimate, which is why the React Flow path needs a fitter that retries until
-       * the nodes have been laid out. The canvas draws exactly the constant half-extents
-       * this function assumes, so they *are* the truth and one pass is enough.
-       */
-      const extents = computeSunExtents(layout.nodes, positionOverrides, []);
-      const k = zoomToFitSunCentered(extents.maxAbsX, extents.maxAbsY, pane.width, pane.height);
-      flyTo({ x: pane.width / 2, y: pane.height / 2, k }, animated ? CAMERA_MS.move : 0);
+      const camera = fitStarsToPane(layout.nodes, positionOverrides, pane, HOME_INSET);
+      flyTo(camera, animated ? CAMERA_MS.move : 0);
     },
     [flyTo, layout.nodes, positionOverrides]
   );

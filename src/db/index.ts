@@ -560,6 +560,17 @@ CREATE TABLE IF NOT EXISTS recruiter_messages (
 CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status);
 CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id);
 CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at);
+CREATE TABLE IF NOT EXISTS recruiter_scan_state (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  last_scan_at timestamptz,
+  last_full_scan_at timestamptz,
+  prompt_version integer NOT NULL DEFAULT 1,
+  window_months integer NOT NULL DEFAULT 24,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_scan_state_user_idx ON recruiter_scan_state(user_id);
 CREATE TABLE IF NOT EXISTS gmail_connections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -1307,7 +1318,7 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
- * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
+ * too, renumber and regenerate scripts/schema-ddl.lock.json rather than reusing 34.)
  */
 // Pick a number above anything ANY branch has claimed and anything a database may already
 // be stamped with, not just one above main. A repeated version is the one real failure
@@ -1369,13 +1380,18 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 52 = the same capture tables, re-stamped: the preview database was stamped 51 by this
 // branch BEFORE main's 50 (desktop_notifications_enabled) was merged in, so a database at
 // 51 must still pick up that column. Nothing is new at 52; the bump only forces the pass.
-// 53 = provider status + upgrade celebrations: admin_provider_snapshots,
-// plan_upgrade_events and their three indexes. This branch built them on 49, then
-// renumbered to 51 when main took 49 (capture history) and 50 (desktop notifications);
-// main has since taken 51 and 52 for the capture redesign. A database stamped by any of
-// those builds would skip both tables entirely, so the counter moves again. Renumbering
-// on merge is the rule this counter exists for, not an exception to it.
-export const SCHEMA_VERSION = 53;
+// 53 = recruiter scan v2: recruiter_scan_state (per-user watermark so a bounded, incremental
+// Gmail query replaces the full-mailbox walk that was blowing the Gmail "Total Query Cost"
+// quota). Built as 34 before this branch merged main's DDL through 52.
+// 54 = provider status + upgrade celebrations: admin_provider_snapshots,
+// plan_upgrade_events and their three indexes. Built on 49, renumbered to 51 when main
+// took 49 (capture history) and 50 (desktop notifications), to 53 when main took 51 and
+// 52 for the capture redesign, and now to 54 because main's recruiter scan v2 landed on
+// 53 first. Note the shape of that last collision: both sides wrote `SCHEMA_VERSION = 53`,
+// so git merged that line without a conflict and only the changelog above it clashed. The
+// number agreeing is exactly what makes reuse silent — a database stamped 53 by a
+// recruiter-scan build would skip this branch's two tables and nothing would fail.
+export const SCHEMA_VERSION = 54;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
