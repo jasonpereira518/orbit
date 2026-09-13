@@ -1,18 +1,15 @@
 import Link from "next/link";
-import { AlertTriangle, CircleAlert, Sparkles } from "lucide-react";
+import { AdminPageHeader, AdminPanel, MetricTile } from "@/components/admin/primitives";
 import {
-  AdminPageHeader,
-  AdminPanel,
-  EmptyState,
-  MetricTile,
-  MiniBars,
-  PlanBadge,
-  RelativeTime,
-} from "@/components/admin/primitives";
+  LiveActivationPanel,
+  LiveAlertsPanel,
+  LiveRecentSignupsPanel,
+  OverviewLiveProvider,
+  type OverviewLiveData,
+} from "@/components/admin/overview-live";
 import { getAdminOverview } from "@/lib/admin-metrics";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { countLifetimePurchases } from "@/lib/user-settings";
-import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Admin · Overview" };
 
@@ -34,12 +31,27 @@ export default async function AdminOverviewPage() {
     countLifetimePurchases().catch(() => 0),
   ]);
 
-  const { plans, alerts, funnel, rows } = overview;
-  const recent = rows.slice(0, 6);
+  const { plans, alerts, rows } = overview;
   const totalCost = rows.reduce((acc, r) => acc + r.estimatedCostMicros, 0);
 
+  const initialLive: OverviewLiveData = {
+    alerts: overview.alerts,
+    funnel: overview.funnel,
+    recent: rows.slice(0, 6).map((r) => ({
+      userId: r.userId,
+      email: r.email,
+      signupAt: r.signupAt.toISOString(),
+      plan: r.plan,
+      planSource: r.planSource,
+      counts: { contacts: r.counts.contacts, interactions: r.counts.interactions },
+      hasProviderKey: r.hasProviderKey,
+    })),
+    signups: overview.signups,
+    activeLast7d: overview.activeLast7d,
+  };
+
   return (
-    <>
+    <OverviewLiveProvider initial={initialLive}>
       <AdminPageHeader
         title="Overview"
         subtitle={
@@ -61,103 +73,11 @@ export default async function AdminOverviewPage() {
       />
 
       <div className="space-y-6">
-        <AdminPanel title="Needs attention">
-          {alerts.length === 0 ? (
-            <EmptyState>
-              Nothing needs you. {overview.totalUsers} account
-              {overview.totalUsers === 1 ? "" : "s"}, all healthy.
-            </EmptyState>
-          ) : (
-            <ul className="divide-y divide-border/50">
-              {alerts.map((alert, i) => (
-                <li key={`${alert.userId}-${i}`}>
-                  <Link
-                    href={`/admin/users/${encodeURIComponent(alert.userId)}`}
-                    className="flex items-center gap-3 py-2 transition-colors duration-fast hover:text-primary"
-                  >
-                    {alert.severity === "warn" ? (
-                      <AlertTriangle
-                        className="size-3.5 shrink-0 text-destructive"
-                        aria-hidden
-                      />
-                    ) : (
-                      <Sparkles
-                        className="size-3.5 shrink-0 text-accent-foreground"
-                        aria-hidden
-                      />
-                    )}
-                    <span className="w-56 shrink-0 truncate">
-                      {alert.email ?? alert.userId}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                      {alert.message}
-                    </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">→</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </AdminPanel>
+        <LiveAlertsPanel totalUsers={overview.totalUsers} />
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <AdminPanel title="Activation">
-            <MiniBars rows={funnel.map((s) => ({ label: s.label, count: s.count }))} />
-            <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground tabular-nums">
-              {overview.signups.current} new in the last 30 days (
-              {overview.signups.previous} in the 30 before) ·{" "}
-              {overview.activeLast7d} active this week
-            </p>
-          </AdminPanel>
-
-          <AdminPanel
-            title="Signed up recently"
-            action={
-              <Link
-                href="/admin/users"
-                className="text-xs text-muted-foreground hover:text-primary"
-              >
-                All {overview.totalUsers} →
-              </Link>
-            }
-          >
-            {recent.length === 0 ? (
-              <EmptyState>No accounts yet.</EmptyState>
-            ) : (
-              <ul className="divide-y divide-border/50">
-                {recent.map((row) => (
-                  <li key={row.userId}>
-                    <Link
-                      href={`/admin/users/${encodeURIComponent(row.userId)}`}
-                      className="flex items-center gap-3 py-2 transition-colors duration-fast hover:text-primary"
-                    >
-                      <span className="min-w-0 flex-1 truncate">
-                        {row.email ?? row.userId}
-                      </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        <RelativeTime date={row.signupAt} />
-                      </span>
-                      <PlanBadge plan={row.plan} source={row.planSource} />
-                      <span
-                        className={cn(
-                          "w-20 shrink-0 text-right text-xs tabular-nums",
-                          row.counts.contacts === 0 && "text-muted-foreground"
-                        )}
-                      >
-                        {row.counts.contacts} · {row.counts.interactions}
-                      </span>
-                      {!row.hasProviderKey && (
-                        <CircleAlert
-                          className="size-3.5 shrink-0 text-destructive"
-                          aria-label="No AI key configured"
-                        />
-                      )}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </AdminPanel>
+          <LiveActivationPanel />
+          <LiveRecentSignupsPanel totalUsers={overview.totalUsers} />
         </div>
 
         <AdminPanel
@@ -197,6 +117,6 @@ export default async function AdminOverviewPage() {
           </div>
         </AdminPanel>
       </div>
-    </>
+    </OverviewLiveProvider>
   );
 }
