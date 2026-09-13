@@ -117,9 +117,9 @@ export function FooterWordmark({ className }: { className?: string }) {
         if (k <= 0) continue;
         ctx!.fillStyle = `rgba(${HALO_RGB}, ${0.22 * k})`;
         ctx!.beginPath();
-        ctx!.arc(d.x, d.y, radius * (1.8 + 2 * k), 0, Math.PI * 2);
+        ctx!.arc(d.x, d.y, radius * (1.6 + 1.6 * k), 0, Math.PI * 2);
         ctx!.fill();
-        ctx!.fillStyle = `rgba(${FLARE_RGB}, ${Math.min(1, 0.3 + 0.65 * k)})`;
+        ctx!.fillStyle = `rgba(${FLARE_RGB}, ${Math.min(1, 0.35 + 0.7 * k)})`;
         ctx!.beginPath();
         ctx!.arc(d.x, d.y, radius * (1 + 1.6 * k), 0, Math.PI * 2);
         ctx!.fill();
@@ -152,7 +152,7 @@ export function FooterWordmark({ className }: { className?: string }) {
       const now = performance.now();
       for (const [i, strength] of dotsNearSegment(dots, a.x, a.y, b.x, b.y, TRAIL_RADIUS)) {
         const d = dots[i];
-        const peak = strength * (0.6 + 0.3 * Math.random());
+        const peak = strength * (0.7 + 0.3 * Math.random());
         const current = active.has(i) ? twinkle(now - d.lit, d.life, d.phase) * d.peak : 0;
         // Never dim a dot that is already brighter than this pass would make it.
         if (peak <= current) continue;
