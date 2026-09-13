@@ -1,7 +1,7 @@
 # /interest redesign: a waitlist-shaped page for a list with no queue
 
 **Date:** 2026-09-13
-**Status:** Approved design, not yet implemented
+**Status:** Implemented on this branch (Sep 13 2026); three parked follow-ups listed in the PR
 **Branch:** `claude/interest-list-redesign-232471` (behind `origin/main` at the time of
 writing; merge main before implementation)
 
