@@ -2571,12 +2571,27 @@ export const interestListSignups = pgTable(
      * row by stamping this before it sends, so a crash mid-batch cannot double-send.
      */
     followUpSentAt: timestamp("follow_up_sent_at", { withTimezone: true }),
+    /**
+     * Opaque token behind the public share link (`/interest?ref=…`) and the personal ticket
+     * page (`/interest?me=…`). Separate from `unsubscribeToken` on purpose: this one is
+     * designed to be pasted into public places, that one must never be. Nullable because
+     * rows predate it; `joinInterestListCore` mints one the next time the address is
+     * submitted.
+     */
+    shareToken: text("share_token"),
+    /**
+     * The row whose share link brought this signup in — the referrer's `id`. Written once,
+     * on insert, never on a rejoin. No FK, like every other cross-row reference here.
+     */
+    referredById: uuid("referred_by_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     uniqueIndex("interest_list_signups_email_uidx").on(t.email),
     uniqueIndex("interest_list_signups_token_uidx").on(t.unsubscribeToken),
     index("interest_list_signups_created_idx").on(t.createdAt),
+    uniqueIndex("interest_list_signups_share_token_uidx").on(t.shareToken),
+    index("interest_list_signups_referred_by_idx").on(t.referredById),
   ]
 );
 
