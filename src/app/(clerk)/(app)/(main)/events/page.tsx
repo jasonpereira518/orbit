@@ -3,12 +3,14 @@ import { EventsHeader } from "@/components/events/events-header";
 import { EventCard } from "@/components/events/event-card";
 import { AddEventDialog } from "@/components/events/add-event-dialog";
 import { EventConnectionsCard } from "@/components/events/event-connections-card";
+import { EventsTabs } from "@/components/events/events-tabs";
 import { RepeatPeoplePanel } from "@/components/events/repeat-people-panel";
 import { EventsListSkeleton } from "@/components/loading/page-skeletons";
+import type { EventListRow } from "@/lib/events/store";
 import {
   getEventConnections,
   getRepeatCoAttendees,
-  listEvents,
+  listEventsByTab,
   listHiddenEvents,
 } from "@/actions/events";
 
@@ -33,8 +35,10 @@ async function RepeatPeopleSection() {
  *
  * Rendered only when there IS something hidden — an empty "Hidden" heading on everybody
  * else's page would be a permanent reminder of a feature they have not used. It exists
- * because "not mine" is otherwise a trapdoor: a mis-click on a real event would be
- * unrecoverable, and the user would have no way to know the event was ever there.
+ * because a hidden event is otherwise a trapdoor: a mis-click on a real event would be
+ * unrecoverable, and the user would have no way to know the event was ever there. Nothing
+ * hides events from the card any more — discovery now only adds the ones the user went to —
+ * but everything hidden before that is still here, one click from restored.
  */
 async function HiddenList() {
   const hidden = await listHiddenEvents();
@@ -57,27 +61,54 @@ async function HiddenList() {
   );
 }
 
-async function EventsList() {
-  const events = await listEvents();
-
+function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.ReactNode }) {
   if (events.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
-        <p className="text-sm text-muted-foreground">
-          No events yet. Add one by pasting its link — the event page or your ticket, from
-          Luma, Eventbrite, Partiful and the rest — and Orbit will pull in the details. Or
-          connect a calendar below and they&rsquo;ll arrive on their own.
-        </p>
+        <p className="text-sm text-muted-foreground">{empty}</p>
       </div>
     );
   }
-
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {events.map((event) => (
         <EventCard key={event.id} event={event} />
       ))}
     </div>
+  );
+}
+
+async function EventsList() {
+  const { upcoming, past } = await listEventsByTab();
+
+  if (upcoming.length === 0 && past.length === 0) {
+    return (
+      <EventGrid
+        events={[]}
+        empty={
+          <>
+            No events yet. Add one by pasting its link — the event page or your ticket, from
+            Luma, Eventbrite, Partiful and the rest — and Orbit will pull in the details. Or
+            connect your Luma or Partiful calendar below and the events you go to will arrive on
+            their own.
+          </>
+        }
+      />
+    );
+  }
+
+  return (
+    <EventsTabs
+      upcomingCount={upcoming.length}
+      pastCount={past.length}
+      upcoming={
+        <EventGrid
+          events={upcoming}
+          empty="Nothing coming up. Events you RSVP to will appear here as soon as you're confirmed."
+        />
+      }
+      past={<EventGrid events={past} empty="No past events yet." />}
+    />
   );
 }
 
