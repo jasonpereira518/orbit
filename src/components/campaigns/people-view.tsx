@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState, useTransition, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useTransition, type ReactNode } from "react";
 import {
   cancelRunAction,
   excludePeopleAction,
@@ -35,6 +35,8 @@ const TIERS: Array<{ key: OutreachRankTier; label: string }> = [
   { key: "weak", label: "Weak" },
 ];
 const POLL_INTERVAL_MS = 2500;
+const POLL_MAX_DELAY_MS = 30_000;
+const POLL_MAX_FAILURES = 6;
 const isActive = (run: RunSummary | null) => Boolean(run && (run.status === "queued" || run.status === "running"));
 
 function Toggle({ pressed, onClick, children }: { pressed: boolean; onClick: () => void; children: ReactNode }) {
@@ -77,6 +79,8 @@ export function PeopleView({
     keys.fundingPreference ?? (keys.orbitSearchAvailable ? "orbit" : "personal")
   );
   const [busy, startBusy] = useTransition();
+  const [pollingStalled, setPollingStalled] = useState(false);
+  const pollFailures = useRef(0);
   const headingId = useId();
 
   const loaded = page.rows.length;
@@ -94,11 +98,14 @@ export function PeopleView({
   // A self-scheduling setTimeout loop rather than setInterval: the next tick is only queued
   // once the previous one (including its network round trip) has settled, so a slow poll can
   // never overlap the next. `getRunAction` / `listPeopleAction` / `getCreditsAction` throw on
-  // failure rather than returning ActionResult, so a missed tick must not crash the view — it
-  // is swallowed and the next tick tries again with whatever state is still on screen. Polling
+  // failure rather than returning ActionResult, so a missed tick must not crash the view — the
+  // last good state stays on screen. A run of consecutive failures backs off exponentially
+  // (capped at 30s) rather than hammering a dead endpoint every 2.5s, and after enough of them
+  // in a row polling stops outright — resuming needs a page refresh, not a silent retry loop
+  // running forever. A hidden tab just skips the fetch; it never counts as a failure. Polling
   // pauses (without unscheduling) while the tab is hidden, and resumes on its own once visible.
   useEffect(() => {
-    if (!polling) return;
+    if (!polling || pollingStalled) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -110,16 +117,24 @@ export function PeopleView({
             listPeopleAction({ campaignId, filter, offset: 0, limit: Math.max(25, loaded) }),
             getCreditsAction(),
           ]);
-          if (!cancelled) {
-            setRun(nextRun);
-            setPage(nextPage);
-            setCredits(nextCredits);
-          }
+          if (cancelled) return;
+          pollFailures.current = 0;
+          setRun(nextRun);
+          setPage(nextPage);
+          setCredits(nextCredits);
         } catch {
-          // A missed tick is harmless; the next one retries.
+          // A missed tick keeps the last good data on screen.
+          if (cancelled) return;
+          pollFailures.current += 1;
+          if (pollFailures.current >= POLL_MAX_FAILURES) {
+            setPollingStalled(true);
+            return;
+          }
         }
       }
-      if (!cancelled) timer = setTimeout(tick, POLL_INTERVAL_MS);
+      if (!cancelled) {
+        timer = setTimeout(tick, Math.min(POLL_MAX_DELAY_MS, POLL_INTERVAL_MS * 2 ** pollFailures.current));
+      }
     }
 
     timer = setTimeout(tick, POLL_INTERVAL_MS);
@@ -127,7 +142,7 @@ export function PeopleView({
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [polling, campaignId, filter, loaded]);
+  }, [polling, pollingStalled, campaignId, filter, loaded]);
 
   const act = (fallback: string, work: () => Promise<void>) =>
     startBusy(async () => {
@@ -229,7 +244,10 @@ export function PeopleView({
   function toggleRow(id: string, checked: boolean) {
     act("Couldn’t update the selection", async () => {
       const result = await selectPeopleAction(campaignId, { scope: "ids", ids: [id], selected: checked });
-      if (!result.ok) toast.error(result.error);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
       await refresh(filter, loaded);
     });
   }
@@ -237,7 +255,10 @@ export function PeopleView({
   function exclude(id: string) {
     act("Couldn’t exclude that person", async () => {
       const result = await excludePeopleAction(campaignId, [id], null);
-      if (!result.ok) toast.error(result.error);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
       await refresh(filter, loaded);
     });
   }
@@ -245,7 +266,10 @@ export function PeopleView({
   function restore(id: string) {
     act("Couldn’t restore that person", async () => {
       const result = await restorePeopleAction(campaignId, [id]);
-      if (!result.ok) toast.error(result.error);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
       await refresh({ ...filter, includeExcluded: true }, loaded);
     });
   }
@@ -265,7 +289,10 @@ export function PeopleView({
   function resolveDuplicate(id: string, decision: "distinct" | "merged") {
     act("Couldn’t update that person", async () => {
       const result = await resolveDuplicateAction(id, decision);
-      if (!result.ok) toast.error(result.error);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
       await refresh(filter, loaded);
     });
   }
@@ -284,6 +311,11 @@ export function PeopleView({
   return (
     <div className="space-y-6">
       {run && <RunProgress run={run} busy={busy} onCancel={cancel} />}
+      {pollingStalled && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Live updates paused — refresh the page to resume
+        </p>
+      )}
       {!isActive(run) && (
         <FundingCard
           credits={credits}

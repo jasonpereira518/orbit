@@ -21,19 +21,17 @@ export function SelectionBanner({
   onClear: () => void;
 }) {
   return (
-    <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-primary/5 px-4 py-2.5 text-sm">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-primary/5 px-4 py-2.5 text-sm">
       {mode === "page" ? (
         <>
-          <span>
-            {pageCount} on this page selected.
-          </span>
+          <span role="status">{pageCount} on this page selected.</span>
           <Button variant="link" size="sm" className="h-auto p-0" disabled={busy} onClick={onSelectAll}>
             Select all {matching} matching
           </Button>
         </>
       ) : (
         <>
-          <span>All {selected} matching people selected.</span>
+          <span role="status">All {selected} matching people selected.</span>
           <Button variant="link" size="sm" className="h-auto p-0" disabled={busy} onClick={onClear}>
             Clear selection
           </Button>
