@@ -1811,7 +1811,13 @@ export const outreachResearchRuns = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("outreach_research_runs_campaign_idx").on(t.userId, t.campaignId, t.createdAt)]
+  (t) => [
+    index("outreach_research_runs_campaign_idx").on(t.userId, t.campaignId, t.createdAt),
+    /** One active run per campaign (Task 15 ruling 1) — structural, not check-then-insert. */
+    uniqueIndex("outreach_research_runs_one_active_uidx")
+      .on(t.campaignId)
+      .where(sql`status IN ('queued', 'running')`),
+  ]
 );
 
 export const outreachEvidence = pgTable(
