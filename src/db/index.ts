@@ -8,6 +8,7 @@ import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -237,11 +238,29 @@ CREATE TABLE IF NOT EXISTS note_batches (
   anchor_basis text NOT NULL DEFAULT 'upload',
   status text NOT NULL DEFAULT 'saved',
   result jsonb NOT NULL,
+  input_sources jsonb NOT NULL DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now(),
   undone_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS note_batches_user_created_idx ON note_batches(user_id, created_at);
 CREATE INDEX IF NOT EXISTS note_batches_user_source_idx ON note_batches(user_id, source_hash);
+CREATE TABLE IF NOT EXISTS capture_photos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  note_batch_id uuid REFERENCES note_batches(id) ON DELETE CASCADE,
+  position integer NOT NULL DEFAULT 0,
+  file_name text,
+  storage text NOT NULL,
+  blob_url text,
+  inline_data text,
+  content_type text NOT NULL,
+  byte_size integer NOT NULL,
+  width integer,
+  height integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS capture_photos_batch_idx ON capture_photos(note_batch_id, position);
+CREATE INDEX IF NOT EXISTS capture_photos_user_created_idx ON capture_photos(user_id, created_at);
 CREATE TABLE IF NOT EXISTS interaction_mentions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1239,6 +1258,10 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
  * its branch, moving each time main's DDL merged in (meeting capture, then scan notes):
  * this PR's previews stamped each of those numbers without the merged-in tables, so
  * neither can carry them. 44 and 46 are burned for the same reason 40, 41 and 43 are.
+ * v49 = capture history (#164): the capture_photos table and note_batches.input_sources.
+ * Built as 41, then 46 (see v47 — burned by the page_views branch too), then 48 — which
+ * the event-platform branch below also landed on independently. Same DDL-change rule:
+ * two branches on one number means one of them silently never runs its migration.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1292,11 +1315,20 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // carry it twice over: the traffic-analytics branch's previews stamped 46, and so did this
 // PR's own preview (#168) — with the event tables but without page_views. 47 is main's.
 //
-// 49 = provider status + upgrade celebrations: admin_provider_snapshots,
-// plan_upgrade_events and their three indexes. 48 is main's and cannot carry them, and 46
-// was separately consumed by the admin-operations merge branch, whose builds stamped
-// databases without these tables.
-export const SCHEMA_VERSION = 49;
+// 49 = capture history (#164): the capture_photos table and note_batches.input_sources.
+// Landed on 48 independently of the event-platform branch above — two different DDL sets
+// cannot share one number, so this one moves again.
+//
+// 50 = user_settings.desktop_notifications_enabled, so the desktop-notification preference
+// syncs across devices instead of living only in one browser's localStorage.
+//
+// 51 = provider status + upgrade celebrations: admin_provider_snapshots,
+// plan_upgrade_events and their three indexes. This branch built them on 49, which main
+// has since given to capture history, and 50 is main's too — so a database either of those
+// builds already stamped would skip both tables entirely. 46 was separately consumed by
+// the admin-operations merge branch. Renumbering on merge is the rule this counter exists
+// for, not an exception to it.
+export const SCHEMA_VERSION = 51;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1546,6 +1578,13 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS duplicate_suggestions_pending_idx
      ON duplicate_suggestions(user_id, confidence DESC)
      WHERE status = 'pending'`,
+
+  // --- Capture history ---------------------------------------------------------------
+  //
+  // How a capture's notes arrived (typed, voice, photos...), for the history list's icons.
+  // Here rather than only in the CREATE TABLE above, which never adds a column to a
+  // note_batches table that already exists.
+  `ALTER TABLE note_batches ADD COLUMN IF NOT EXISTS input_sources jsonb NOT NULL DEFAULT '[]'`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -1801,6 +1840,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "desktop_notified_ids",
     "jsonb DEFAULT '[]'"
   );
+  await ensureColumn(client, "user_settings", "desktop_notifications_enabled", "boolean");
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
   await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
@@ -2294,6 +2334,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_from_number text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notified_ids jsonb DEFAULT '[]'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notifications_enabled boolean`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
@@ -2686,6 +2727,109 @@ async function ready(): Promise<void> {
   await globalForDb.orbitReady;
 }
 
+/** How long a builder may hold the migration lease before another may steal it. */
+const MIGRATION_LEASE_MS = 5 * 60 * 1000;
+/** How long to wait for someone else's lease before giving up and sweeping anyway. */
+const MIGRATION_LOCK_WAIT_MS = 3 * 60 * 1000;
+const MIGRATION_LOCK_POLL_MS = 2000;
+
+/**
+ * Serialises the DDL sweep across concurrent builders.
+ *
+ * NOT `pg_advisory_lock`. That is the obvious answer and it is wrong here: an advisory lock
+ * is scoped to a *session*, and on `neon-http` every statement is its own HTTPS request with
+ * no session behind it, so the lock would be released the instant the statement returned.
+ * `pg_advisory_xact_lock` fails for the same reason — each statement is its own transaction.
+ * What works over a sessionless driver is a lease row, which is what this is.
+ *
+ * Why it is needed at all: the statements are individually idempotent, but two of the
+ * sequences are not safe to interleave. `migratePgvector` adds a column and then builds an
+ * HNSW index over it, and the embeddings dedupe deletes duplicate rows and then builds a
+ * unique index over what is left — one builder deleting while another indexes is a failed
+ * build at best. Two builds racing is not hypothetical: a production deploy and a preview
+ * build, or two pushes in a minute, both call this.
+ *
+ * Never fails the caller. If the lease cannot be won within the wait, this logs and runs the
+ * sweep anyway — exactly the behaviour that existed before this function did. A lock that can
+ * turn a deploy into a hard failure when a previous builder died holding it would be a worse
+ * trade than the race it prevents; the lease TTL covers that case, and this covers the TTL
+ * being wrong.
+ */
+async function withMigrationLock<T>(
+  run: StatementRunner,
+  body: () => Promise<T>
+): Promise<T> {
+  // The lease table has to exist before the sweep that creates every other table, so it is
+  // created here rather than in the DDL. Concurrent `CREATE TABLE IF NOT EXISTS` can still
+  // raise a duplicate-key error from the catalog insert; that means it exists, which is all
+  // we wanted.
+  const holder = randomUUID();
+  let held = false;
+  try {
+    await run(
+      `CREATE TABLE IF NOT EXISTS schema_migration_lock (
+         id integer PRIMARY KEY DEFAULT 1,
+         holder text NOT NULL,
+         acquired_at timestamptz NOT NULL DEFAULT now(),
+         expires_at timestamptz NOT NULL,
+         CONSTRAINT schema_migration_lock_single_row CHECK (id = 1)
+       )`
+    );
+  } catch {
+    // Already there, or raced. Either way the acquire below is the real test.
+  }
+
+  const deadline = Date.now() + MIGRATION_LOCK_WAIT_MS;
+  while (Date.now() < deadline) {
+    try {
+      // Wins only when the row is absent or the previous holder's lease has expired. The
+      // WHERE on the DO UPDATE is what makes this a lock rather than a last-writer-wins
+      // stamp: a live lease makes the upsert affect no rows, so RETURNING is empty.
+      const result = await run(
+        `INSERT INTO schema_migration_lock (id, holder, acquired_at, expires_at)
+         VALUES (1, '${holder}', now(), now() + interval '${MIGRATION_LEASE_MS} milliseconds')
+         ON CONFLICT (id) DO UPDATE
+           SET holder = EXCLUDED.holder,
+               acquired_at = EXCLUDED.acquired_at,
+               expires_at = EXCLUDED.expires_at
+           WHERE schema_migration_lock.expires_at < now()
+         RETURNING holder`
+      );
+      if (rowsOf<{ holder: string }>(result).length > 0) {
+        held = true;
+        break;
+      }
+    } catch (err) {
+      // Cannot even attempt the lease. Proceeding unlocked is the old behaviour, and the
+      // sweep is idempotent; blocking the build over the lock itself is the worse failure.
+      console.warn("[db] migration lease unavailable; sweeping without it\n", err);
+      return body();
+    }
+    await new Promise((resolve) => setTimeout(resolve, MIGRATION_LOCK_POLL_MS));
+  }
+
+  if (!held) {
+    console.warn(
+      `[db] another builder has held the migration lease for ${MIGRATION_LOCK_WAIT_MS}ms; sweeping anyway`
+    );
+    return body();
+  }
+
+  try {
+    return await body();
+  } finally {
+    try {
+      // Scoped to our own holder id: if our lease expired and someone else took it, this
+      // must not release theirs.
+      await run(
+        `DELETE FROM schema_migration_lock WHERE id = 1 AND holder = '${holder}'`
+      );
+    } catch {
+      // The lease expires on its own. Nothing here is worth failing a build over.
+    }
+  }
+}
+
 export type SchemaReconcileResult = {
   version: number;
   /** False when the recorded version already matched and nothing ran. */
@@ -2722,14 +2866,23 @@ export async function reconcileSchema(): Promise<SchemaReconcileResult> {
     return { version: SCHEMA_VERSION, applied: false, failed: [] };
   }
 
-  const failed = neonSql
-    ? await migrateNeon(neonSql)
-    : await migratePglite(globalForDb.orbitPglite!);
-  for (const f of failed) {
-    console.error(`[db] DDL statement failed: ${f.statement}\n`, f.message);
-  }
-  if (failed.length === 0) await recordSchemaVersion(run);
-  return { version: SCHEMA_VERSION, applied: true, failed };
+  return withMigrationLock(run, async () => {
+    // Re-check inside the lock. Whoever held it before us may have just finished the very
+    // sweep we were about to run — this is the whole reason the lock is worth taking.
+    if (await schemaIsCurrent(run)) {
+      await detectExtensions(run);
+      return { version: SCHEMA_VERSION, applied: false, failed: [] };
+    }
+
+    const failed = neonSql
+      ? await migrateNeon(neonSql)
+      : await migratePglite(globalForDb.orbitPglite!);
+    for (const f of failed) {
+      console.error(`[db] DDL statement failed: ${f.statement}\n`, f.message);
+    }
+    if (failed.length === 0) await recordSchemaVersion(run);
+    return { version: SCHEMA_VERSION, applied: true, failed };
+  });
 }
 
 export async function getDb(): Promise<Db> {

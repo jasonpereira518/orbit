@@ -4,6 +4,7 @@ import { imports } from "@/db/schema";
 import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
 import { GOOGLE_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/google-contacts";
 import { OUTLOOK_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/outlook-contacts";
+import { CONTACTS_FILE_IMPORT_TYPE } from "@/lib/import-adapters/contacts-file";
 import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-messages";
 import {
   CALENDAR_CSV_IMPORT_TYPE,
@@ -24,6 +25,7 @@ export {
   LINKEDIN_IMPORT_TYPE,
   GOOGLE_CONTACTS_IMPORT_TYPE,
   OUTLOOK_CONTACTS_IMPORT_TYPE,
+  CONTACTS_FILE_IMPORT_TYPE,
   LINKEDIN_MESSAGES_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
   CALENDAR_CSV_IMPORT_TYPE,
@@ -44,6 +46,7 @@ export const RESUMABLE_IMPORT_TYPES = [
   LINKEDIN_IMPORT_TYPE,
   GOOGLE_CONTACTS_IMPORT_TYPE,
   OUTLOOK_CONTACTS_IMPORT_TYPE,
+  CONTACTS_FILE_IMPORT_TYPE,
   LINKEDIN_MESSAGES_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
   CALENDAR_CSV_IMPORT_TYPE,
@@ -71,6 +74,7 @@ export async function runImportJobById(importId: string): Promise<void> {
     case LINKEDIN_IMPORT_TYPE:
     case GOOGLE_CONTACTS_IMPORT_TYPE:
     case OUTLOOK_CONTACTS_IMPORT_TYPE:
+    case CONTACTS_FILE_IMPORT_TYPE:
     case LINKEDIN_MESSAGES_IMPORT_TYPE:
     case CALENDAR_ICS_IMPORT_TYPE:
     case CALENDAR_CSV_IMPORT_TYPE:

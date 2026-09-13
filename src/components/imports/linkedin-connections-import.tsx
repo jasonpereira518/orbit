@@ -18,7 +18,7 @@ import {
   startImportJob,
   useImportJob,
 } from "@/lib/import-job-runner";
-import { friendlyError } from "@/lib/errors";
+import { UserFacingError, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 type PreviewResult = Awaited<ReturnType<typeof previewLinkedInCsv>>;
@@ -105,7 +105,10 @@ export function LinkedInConnectionsImport() {
               const text = await file.text();
               setCsvText(text);
               const res = await previewLinkedInCsv(text);
-              if ("error" in res) throw new Error(res.error);
+              // `UserFacingError`, not `Error`: these messages were written to be read
+              // ("This looks like a Messages export…"), and `friendlyError` replaces any
+              // plain Error with the generic fallback.
+              if ("error" in res) throw new UserFacingError(res.error);
               applyPreview(res);
               toast.success(`Loaded ${res.totalRows} people`);
             } catch (err) {
@@ -130,7 +133,7 @@ export function LinkedInConnectionsImport() {
             start(async () => {
               try {
                 const res = await previewLinkedInCsv(csvText);
-                if ("error" in res) throw new Error(res.error);
+                if ("error" in res) throw new UserFacingError(res.error);
                 applyPreview(res);
                 toast.success(`Loaded ${res.totalRows} people`);
               } catch (err) {

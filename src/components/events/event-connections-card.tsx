@@ -20,7 +20,7 @@
  */
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarPlus, Loader2, Mail, Plug, Trash2 } from "lucide-react";
+import { CalendarPlus, ChevronDown, Loader2, Mail, Plug, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/lib/toast";
@@ -194,11 +194,47 @@ export function EventConnectionsCard({
     );
   }
 
-  return (
-    <div className="rounded-2xl border border-border/70 bg-card p-5">
-      <h2 className="font-medium text-ink">Where your events come from</h2>
+  // What the collapsed row says. It is the only part most people will ever see, so it has to
+  // carry the one thing worth knowing without opening it: whether anything is broken.
+  const needsAttention = connections.filter((c) => c.status === "needs_reauth").length;
+  const summary =
+    needsAttention > 0
+      ? `${needsAttention} ${needsAttention === 1 ? "connection needs" : "connections need"} attention`
+      : connections.length > 0
+        ? `${connections.length} connected${googleConnected ? " · Google Calendar" : ""}`
+        : googleConnected
+          ? "Google Calendar · connect Luma, Partiful and more"
+          : "Connect Luma, Partiful, Gmail and more";
 
-      <div className="mt-4 space-y-3">
+  return (
+    // Collapsed by default and at the foot of the page: this is set-up you do once, and it
+    // used to sit above the events themselves as the largest thing on the page. `<details>`
+    // with the grid-rows height transition is the pattern `network-stats-card.tsx` set.
+    <details className="group rounded-2xl border border-border/70 bg-card">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-4 py-3 transition-colors duration-fast ease-house hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
+        <div className="flex min-w-0 items-center gap-2">
+          <Plug className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <h2 className="text-sm font-medium text-ink">Where your events come from</h2>
+          <span
+            className={
+              needsAttention > 0
+                ? "truncate text-xs font-medium text-destructive"
+                : "truncate text-xs text-muted-foreground"
+            }
+          >
+            {summary}
+          </span>
+        </div>
+        <ChevronDown
+          className="size-4 shrink-0 text-muted-foreground transition-transform duration-slow ease-house group-open:rotate-180"
+          aria-hidden
+        />
+      </summary>
+      {/* `<details>` hides collapsed content with `content-visibility`, which would skip the
+          transition, so the panel is force-shown and the grid row does the hiding. */}
+      <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-slow ease-house group-open:grid-rows-[1fr] [content-visibility:visible]">
+      <div className="overflow-hidden">
+      <div className="space-y-3 border-t border-border/60 px-4 pb-4 pt-3">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Events you go to
         </p>
@@ -323,6 +359,8 @@ export function EventConnectionsCard({
           )}
         </div>
       </div>
-    </div>
+      </div>
+      </div>
+    </details>
   );
 }

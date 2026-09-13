@@ -66,6 +66,17 @@ export const ERROR_SOURCES = {
    * and without this there is no trace that someone tried to say something and could not.
    */
   feedbackSubmit: "feedback.submit",
+  /**
+   * A capture photo that could not be kept — the configured Blob store refused it, or the
+   * insert failed. The capture itself carries on (the text was already read out of the
+   * photo), so this row is the only trace that the history will be missing a picture.
+   */
+  capturePhotoStore: "capture.photo_store",
+  /**
+   * A provider health check that could not complete. Without it the status panel just
+   * shows a stale or unavailable row and nothing says why — and the volume is bounded by
+   * a four-provider poll sitting behind a sixty-second cache.
+   */
   providerHealthCheck: "provider.health_check",
 } as const;
 

@@ -210,7 +210,10 @@ const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
     key: `settings.${section.id.replace(/^settings-/, "")}`,
     kind: "settings" as const,
     label: section.label,
-    description: `The ${section.label} card on the settings page.`,
+    description:
+      section.group === "integrations"
+        ? `The ${section.label} tab in Settings → Integrations.`
+        : `The ${section.label} section on the settings page.`,
     settingsId: section.id,
     ...(reason ? { alwaysVisible: true as const, reason } : {}),
   };
