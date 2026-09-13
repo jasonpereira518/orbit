@@ -105,6 +105,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-security-headers": "pure",
   "smoke-settings-layout": "pure",
   "smoke-sky-figures": "pure",
+  "smoke-sky-target": "pure",
   "smoke-timeline-vocabulary": "pure",
   "smoke-webhook-signing": "pure",
   "smoke-warp-chrono": "pure",
