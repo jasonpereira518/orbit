@@ -5,7 +5,6 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
-import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { InterestHero, type HeroInitial } from "@/components/interest/interest-hero";
 import { OrbitRingsBackdrop } from "@/components/interest/orbit-rings-backdrop";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
@@ -255,10 +254,6 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
       </main>
 
       <MarketingFooter className="max-w-6xl px-6 md:px-10" />
-
-      {/* Signs off in the wordmark, as the landing page does. Nothing may follow it:
-          its bottom edge is the page's. */}
-      <FooterWordmark className="relative z-10 mx-auto max-w-6xl" />
     </div>
   );
 }

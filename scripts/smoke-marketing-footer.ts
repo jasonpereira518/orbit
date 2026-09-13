@@ -1,6 +1,6 @@
 /**
  * The marketing footer: one component, thumb-sized links, the header's two buttons with a
- * 44px hit area, and the closing wordmark the landing page and /interest sign off in.
+ * 44px hit area, and the landing page's closing wordmark.
  *
  * Rendering pins what a visitor can reach. The structural checks pin why the component
  * exists: the footer used to be pasted into three pages, and a fix applied to one copy is a
@@ -35,11 +35,11 @@ function code(file: string): string {
     .replace(/^\s*\/\/.*$/gm, " ");
 }
 
-const LANDING = "src/components/landing/landing-scenes.tsx";
-const INTEREST = "src/app/(site)/interest/page.tsx";
-const PAGES = [LANDING, "src/app/(clerk)/(marketing)/pricing/page.tsx", INTEREST];
-/** The pages that sign off in the wordmark. The rest end on the plain footer. */
-const WORDMARK_PAGES = [LANDING, INTEREST];
+const PAGES = [
+  "src/components/landing/landing-scenes.tsx",
+  "src/app/(clerk)/(marketing)/pricing/page.tsx",
+  "src/app/(site)/interest/page.tsx",
+];
 
 function main() {
   console.log("Footer renders:");
@@ -142,20 +142,16 @@ function main() {
   // Its bottom edge is the page's: anything after it (a Reveal wrapper closing, a sibling)
   // brings back the empty band below the footer. And <Reveal> would hide it forever on a
   // phone, where the whole wordmark fits inside the band its observer ignores.
-  for (const page of WORDMARK_PAGES) {
-    const src = code(page);
-    check(
-      `${page} renders it after the footer`,
-      src.indexOf("<FooterWordmark") > src.indexOf("<MarketingFooter")
-    );
-    // The next thing in the file has to be a closing tag, never a sibling.
-    check(`${page}: nothing follows the wordmark`, /<FooterWordmark\b[^>]*\/>\s*<\//.test(src));
-  }
+  const scenes = code("src/components/landing/landing-scenes.tsx");
+  check(
+    "the landing page renders it after the footer",
+    scenes.indexOf("<FooterWordmark") > scenes.indexOf("<MarketingFooter")
+  );
   check(
     "it is the last thing in the finale, not wrapped in <Reveal>",
-    /<FooterWordmark\b[^>]*\/>\s*<\/section>/.test(code(LANDING))
+    /<FooterWordmark\b[^>]*\/>\s*<\/section>/.test(scenes)
   );
-  for (const page of PAGES.filter((p) => !WORDMARK_PAGES.includes(p))) {
+  for (const page of PAGES.slice(1)) {
     check(`${page} ends on the plain footer`, !code(page).includes("FooterWordmark"));
   }
 
