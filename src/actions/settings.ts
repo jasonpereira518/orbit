@@ -135,6 +135,8 @@ export async function getSettings() {
       github: settings?.socialLinks?.github || "",
       website: settings?.socialLinks?.website || "",
     },
+    /** Null until the account has recorded a choice — see the column in schema.ts. */
+    desktopNotificationsEnabled: settings?.desktopNotificationsEnabled ?? null,
   };
 }
 

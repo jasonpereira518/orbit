@@ -20,6 +20,7 @@ export function CaptureFormLazy({
   initialContactName = null,
   defaultMode = "messy",
   hasApiKey = true,
+  userId,
   canTranscribe = false,
   resumableMeeting = null,
 }: {
@@ -27,6 +28,8 @@ export function CaptureFormLazy({
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
+  /** Scopes the autosaved draft to this account — see `captureDraftKey`. */
+  userId: string;
   canTranscribe?: boolean;
   resumableMeeting?: ResumableMeeting | null;
 }) {
@@ -36,6 +39,7 @@ export function CaptureFormLazy({
       initialContactName={initialContactName}
       defaultMode={defaultMode}
       hasApiKey={hasApiKey}
+      userId={userId}
       canTranscribe={canTranscribe}
       resumableMeeting={resumableMeeting}
     />

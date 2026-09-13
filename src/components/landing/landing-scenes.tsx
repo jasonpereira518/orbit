@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CometStreak } from "@/components/landing/comet-streak";
 import { ConstellationFigure } from "@/components/landing/constellation-figure";
+import { FooterWordmark } from "@/components/landing/footer-wordmark";
 import { GlassCard } from "@/components/landing/glass-card";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { WaitlistForm } from "@/components/landing/waitlist-form";
@@ -254,6 +255,10 @@ export function SceneFinale({
           }}
         />
       </MarketingFooter>
+
+      {/* Landing only: the other marketing pages end on the plain footer. Nothing may
+       * follow it, since its bottom edge is the page's. */}
+      <FooterWordmark className="relative z-10 mx-auto max-w-6xl" />
     </section>
   );
 }

@@ -144,12 +144,23 @@ function formatThreadLabel(thread: ThreadSummary) {
   return thread.title?.trim() || "New chat";
 }
 
+/**
+ * `/chat?q=…` — where the command palette sends a question typed on a page that has no ask
+ * bar. Read as the initial value: this panel is `ssr: false` (see `ChatPanelLazy`), so no
+ * server render exists for a window-derived value to disagree with. Prefilled, never sent:
+ * having just landed on a new page, the person should see the question before it goes.
+ */
+function initialQuestionFromUrl() {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
+}
+
 export function ChatPanel() {
   const router = useRouter();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(initialQuestionFromUrl);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -190,7 +201,7 @@ export function ChatPanel() {
   /** What currently occupies that span, so the next result can replace exactly it. */
   const spanRef = useRef("");
   /** The value as of the last change, to tell the user's edits from our own. */
-  const lastValueRef = useRef("");
+  const lastValueRef = useRef(question);
   const pendingCaretRef = useRef<number | null>(null);
   /**
    * Where the caret was last time, so a snap out of a mention knows which way it was
@@ -363,6 +374,17 @@ export function ChatPanel() {
   useEffect(() => {
     void refreshThreads();
   }, [refreshThreads]);
+
+  // The other half of `initialQuestionFromUrl`: take `q` back out of the address bar, so a
+  // reload or a shared link does not re-seed a question that was already dealt with.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("q")) return;
+    params.delete("q");
+    const rest = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+    textareaRef.current?.focus();
+  }, []);
 
   const isNearBottom = useCallback(() => {
     const el = listRef.current;

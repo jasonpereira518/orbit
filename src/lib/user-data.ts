@@ -22,10 +22,13 @@ import {
   contactIdentities,
   contactMerges,
   duplicateSuggestions,
+  eventAliases,
   eventAttendees,
+  eventCompanies,
   eventProviderConnections,
   events,
   gmailConnections,
+  targetCompanies,
   imports,
   interactions,
   meetingSessions,
@@ -34,6 +37,7 @@ import {
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
+  pageViews,
   recruiterMessages,
   reminderLists,
   reminders,
@@ -45,6 +49,7 @@ import {
   userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
+import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
 import { recomputeRecruiterRating } from "@/lib/recruiters";
 
 /**
@@ -136,6 +141,11 @@ export async function purgeUserData(
   await db.delete(contactIdentities).where(eq(contactIdentities.userId, userId));
   await db.delete(duplicateSuggestions).where(eq(duplicateSuggestions.userId, userId));
   await db.delete(contactMerges).where(eq(contactMerges.userId, userId));
+  // Capture photos before the batches they belong to. The rows WOULD cascade from
+  // `note_batches`, but an unattached photo (a capture that was never saved) has no batch to
+  // cascade from, and the Blob objects behind all of them have no foreign key at all — the
+  // same reason feedback screenshots are removed by hand below.
+  await purgeCapturePhotosForUser(userId);
   // `note_batches` carries the raw pasted note text and has no cascading FK to `contacts`
   // or `interactions` (its `seed_contact_id` is a plain column) — it survives both of
   // those deletes below unless removed explicitly.
@@ -171,6 +181,18 @@ export async function purgeUserData(
   // carry their own `user_id` (which is why `smoke-purge` finds them), and a roster holds
   // names, emails and employers of people the user met.
   await db.delete(eventAttendees).where(eq(eventAttendees.userId, userId));
+  // Both cascade from their parents, and both are deleted explicitly for the same reason
+  // `event_attendees` is: they carry their own `user_id`, so `smoke-purge` requires them, and
+  // leaving them to a cascade means a change to either FK silently strips them from account
+  // deletion. `target_companies` is also a statement of intent — where this person wants to
+  // work — which is not something to leave behind.
+  await db.delete(eventCompanies).where(eq(eventCompanies.userId, userId));
+  await db.delete(targetCompanies).where(eq(targetCompanies.userId, userId));
+  // Before `events`, and explicitly: an alias row survives its event by design (`ON DELETE
+  // SET NULL` is what makes a dismissal stick), so deleting events first would leave a
+  // tombstone per event behind — a list of every Luma link and calendar UID the user ever
+  // had, pointing at nothing, outliving the account.
+  await db.delete(eventAliases).where(eq(eventAliases.userId, userId));
   await db.delete(events).where(eq(events.userId, userId));
   // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as the
   // Gmail/Outlook rows below, and it must not outlive the account.
@@ -277,6 +299,22 @@ export async function purgeUserData(
     .update(billingEvents)
     .set({ userId: null })
     .where(eq(billingEvents.userId, userId));
+
+  // ANONYMISED, NOT DELETED — for the same reason, and with a sharper one behind it.
+  //
+  // `page_views` is an aggregate traffic record. Deleting a departing account's rows would
+  // retroactively change how many people visited the site last March, which is both wrong
+  // and the kind of wrong nobody would ever notice. Nulling `user_id` keeps the count and
+  // removes the person.
+  //
+  // It also makes the privacy page true rather than nearly true. That page says traffic
+  // records hold nothing pointing back to you — which is so for anonymous views by
+  // construction, since the visitor hash is salted per day and expires, but `user_id` is
+  // set on views from a signed-in session. This is the statement that closes that gap.
+  await db
+    .update(pageViews)
+    .set({ userId: null })
+    .where(eq(pageViews.userId, userId));
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 

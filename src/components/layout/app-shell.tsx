@@ -20,6 +20,10 @@ import { DueNotificationsWatcher } from "@/components/notifications/due-notifica
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
+import { CommandPalette } from "@/components/layout/command-palette";
+import { Button } from "@/components/ui/button";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
+import { Search } from "lucide-react";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { ThemeSync } from "@/components/theme-sync";
@@ -83,6 +87,14 @@ export function AppShell({
     !isSettings &&
     !isConstellation &&
     !hiddenSet.has("page.chat");
+  // Where the palette sends a typed question: the ask bar when it is on screen, /chat when
+  // the page has no bar, and nowhere on /chat itself (its composer is already right there)
+  // or when chat is hidden outright.
+  const paletteAskMode = showAskBar
+    ? "bar"
+    : !isChat && !hiddenSet.has("page.chat")
+      ? "chat"
+      : null;
 
   if (isOnboarding) {
     return (
@@ -124,6 +136,7 @@ export function AppShell({
           <PlanCelebrationWatcher plan={plan} />
           <ImportJobWatcher />
           <GlobalJobProgressBar />
+          <CommandPalette hidden={hiddenSet} askMode={paletteAskMode} />
           <div
             className="hidden h-full shrink-0 p-3 md:block lg:p-4"
             style={{ viewTransitionName: "app-sidebar" }}
@@ -169,6 +182,19 @@ export function AppShell({
                   Left of the bell: the bell is the more-used control and keeps the outer
                   corner, matching the desktop rail where feedback sits below it. */}
               <div className="flex items-center gap-2">
+                {/* Phones have no ⌘K, so this is the palette's only door on one — and
+                    jumping straight to a person is most of what it is for. */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="Search"
+                  // The same round glass as the feedback and bell buttons beside it.
+                  className="size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
+                  onClick={() => window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT))}
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
                 {!hiddenSet.has(FEEDBACK_SURFACE_KEY) && <FeedbackTrigger />}
                 <NotificationsPanelButton />
               </div>

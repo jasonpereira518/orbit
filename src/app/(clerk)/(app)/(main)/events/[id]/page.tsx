@@ -6,7 +6,27 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EventHero } from "@/components/events/event-hero";
 import { AttendeeRoster, type RosterMatch } from "@/components/events/attendee-roster";
 import { RosterImportPanel } from "@/components/events/roster-import-panel";
-import { getEvent, getRoster, matchRosterToNetwork } from "@/actions/events";
+import { EventCompaniesPanel } from "@/components/events/event-companies-panel";
+import { WhoToTalkToCard } from "@/components/events/who-to-talk-to-card";
+import {
+  getEvent,
+  getEventCompanies,
+  getRoster,
+  getWhoToTalkTo,
+  getRosterHistory,
+  matchRosterToNetwork,
+} from "@/actions/events";
+
+async function WhoToTalkTo({ eventId }: { eventId: string }) {
+  const data = await getWhoToTalkTo(eventId);
+  if (!data) return null;
+  return <WhoToTalkToCard eventId={eventId} data={data} aiAvailable={data.aiAvailable} />;
+}
+
+async function Companies({ eventId }: { eventId: string }) {
+  const rows = await getEventCompanies(eventId);
+  return <EventCompaniesPanel eventId={eventId} rows={rows} />;
+}
 
 type RosterResult =
   | { ok: true; rows: Awaited<ReturnType<typeof getRoster>> }
@@ -16,10 +36,12 @@ async function Roster({
   eventId,
   rosterPromise,
   matchesPromise,
+  historyPromise,
 }: {
   eventId: string;
   rosterPromise: Promise<RosterResult>;
   matchesPromise: Promise<Awaited<ReturnType<typeof matchRosterToNetwork>>>;
+  historyPromise: Promise<Awaited<ReturnType<typeof getRosterHistory>>>;
 }) {
   const result = await rosterPromise;
 
@@ -48,7 +70,17 @@ async function Roster({
       : []
   );
 
-  return <AttendeeRoster eventId={eventId} rows={result.rows} matches={matches} />;
+  // The history is an aggregate over the user's whole roster past; a failure there costs a
+  // badge, never the list, so it degrades to "we did not say" exactly as matches do.
+  const history = await historyPromise;
+  return (
+    <AttendeeRoster
+      eventId={eventId}
+      rows={result.rows}
+      matches={matches}
+      history={history}
+    />
+  );
 }
 
 export default async function EventDetailPage({
@@ -68,6 +100,7 @@ export default async function EventDetailPage({
     () => ({ ok: false as const })
   );
   const matchesPromise = matchRosterToNetwork(id).catch(() => []);
+  const historyPromise = getRosterHistory(id).catch(() => []);
 
   const event = await getEvent(id);
   // Before any Suspense boundary, so the route returns a real 404 rather than streaming a
@@ -97,6 +130,22 @@ export default async function EventDetailPage({
         <RosterImportPanel eventId={event.id} />
       </div>
 
+      {/* The shortlist first: it is the answer, and the roster below it is the evidence.
+          `fallback={null}` because it renders nothing when the facts single nobody out. */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "70ms" } as React.CSSProperties}>
+        <Suspense fallback={null}>
+          <WhoToTalkTo eventId={event.id} />
+        </Suspense>
+      </div>
+
+      {/* Companies before the roster: at a career fair the booth list IS the event, and at a
+          conference it is the shape that makes four hundred names navigable. */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>
+        <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
+          <Companies eventId={event.id} />
+        </Suspense>
+      </div>
+
       <div className="reveal-mount" style={{ "--reveal-delay": "120ms" } as React.CSSProperties}>
         <h2 className="mb-3 font-[family-name:var(--font-display)] text-xl text-ink">
           Who was there
@@ -106,6 +155,7 @@ export default async function EventDetailPage({
             eventId={event.id}
             rosterPromise={rosterPromise}
             matchesPromise={matchesPromise}
+            historyPromise={historyPromise}
           />
         </Suspense>
       </div>

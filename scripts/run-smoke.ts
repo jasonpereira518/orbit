@@ -37,6 +37,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-tiers": "pure",
   "smoke-backdrop-filter": "pure",
   "smoke-capture-body-limits": "pure",
+  "smoke-capture-draft": "pure",
   "smoke-chat-mentions": "pure",
   "smoke-chat-pipeline": "pure",
   "smoke-chat-prompt": "pure",
@@ -46,8 +47,12 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-clerk-free-site": "pure",
   "smoke-clerk-session-hint": "pure",
   "smoke-closeness": "pure",
+  "smoke-command-palette": "pure",
   "smoke-event-canonical-url": "pure",
   "smoke-event-connectors": "pure",
+  "smoke-event-discovery": "pure",
+  "smoke-event-gmail-scan": "pure",
+  "smoke-event-relevance": "pure",
   "smoke-event-parse": "pure",
   "smoke-event-resync": "pure",
   "smoke-event-theme": "pure",
@@ -58,6 +63,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-constellation-eligibility": "pure",
   "smoke-constellation-match": "pure",
   "smoke-contact-profile-format": "pure",
+  "smoke-contacts-file": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
   "smoke-dictation": "pure",
@@ -93,6 +99,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
+  "smoke-settings-layout": "pure",
   "smoke-sky-figures": "pure",
   "smoke-timeline-vocabulary": "pure",
   "smoke-webhook-signing": "pure",
@@ -125,6 +132,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-resolve": "pglite",
   "smoke-demo-data": "pglite",
   "smoke-duplicate-review": "pglite",
+  "smoke-event-companies": "pglite",
+  "smoke-event-discovery-store": "pglite",
   "smoke-event-roster": "pglite",
   "smoke-constellation-admin": "pglite",
   "smoke-constellation-payload-leak": "pglite",
@@ -151,8 +160,10 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
   "smoke-note-batch": "pglite",
+  "smoke-capture-history": "pglite",
   "smoke-meeting-sessions": "pglite",
   "smoke-ops-sweep": "pglite",
+  "smoke-admin-analytics": "pglite",
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",
   "smoke-presence": "pglite",
@@ -249,9 +260,20 @@ function main() {
   const env: NodeJS.ProcessEnv = { ...process.env, ORBIT_PGLITE_DIR: pgliteDir, FORCE_COLOR: "0" };
   delete env.DATABASE_URL; // belt and braces; the preamble does this too
 
-  const tsx = join("node_modules", ".bin", "tsx");
-  if (!existsSync(tsx)) {
-    console.error("run-smoke: node_modules/.bin/tsx not found — run npm ci first.");
+  // The CLI entry point rather than the `.bin` shim.
+  //
+  // On Windows the shim comes in three flavours and none of them spawns: `.bin/tsx` is a shell
+  // script for Git Bash, which `spawnSync` cannot execute, and `.bin/tsx.cmd` is refused with
+  // EINVAL because Node stopped spawning batch files without an explicit shell. Both fail with
+  // `status: null` and no error text, which this runner's summary rendered as every script
+  // failing in 0.0s — so the whole suite looked broken on Windows while each script passed
+  // when run by hand.
+  //
+  // Running the CLI's own JS under `process.execPath` sidesteps the shims entirely and needs
+  // no shell (which would bring quoting problems of its own), and it is what the shims do.
+  const tsxCli = join("node_modules", "tsx", "dist", "cli.mjs");
+  if (!existsSync(tsxCli)) {
+    console.error(`run-smoke: ${tsxCli} not found — run npm ci first.`);
     process.exit(2);
   }
 
@@ -265,7 +287,7 @@ function main() {
     // timeout fires. Only stderr is piped, and only because the PENDING marker is written
     // there (see below); it is replayed the instant the child exits, so a failing script's
     // stack trace is still shown, just after its stdout rather than interleaved with it.
-    const r = spawnSync(tsx, [join("scripts", `${name}.ts`)], {
+    const r = spawnSync(process.execPath, [tsxCli, join("scripts", `${name}.ts`)], {
       env,
       stdio: ["inherit", "inherit", "pipe"],
       timeout,

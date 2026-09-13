@@ -28,6 +28,7 @@ import {
   getAdminUserDetail,
   listAdminContacts,
 } from "@/lib/admin-user-detail";
+import { accountTraffic, formatDuration } from "@/lib/admin-analytics";
 import { loadAdminTimeline } from "@/lib/admin-timeline";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,7 @@ const SECTIONS = [
   { id: "health", label: "Health" },
   { id: "footprint", label: "Footprint" },
   { id: "usage", label: "AI usage" },
+  { id: "traffic", label: "Traffic" },
   { id: "config", label: "Configuration" },
   { id: "timeline", label: "Timeline" },
   { id: "contacts", label: "Contacts" },
@@ -85,7 +87,7 @@ export default async function AdminUserDetailPage({
   // `recordAccountView` depends only on `adminUserId`/`decoded`, not on `detail` — it stays
   // after the `notFound()` gate so a mistyped/nonexistent id never gets logged as a view,
   // but otherwise has no reason to block starting the three reads below.
-  const [, audit, contactPage, timeline] = await Promise.all([
+  const [, audit, contactPage, timeline, traffic] = await Promise.all([
     // Opening an account is itself a recorded act. This is what remains of the reveal
     // gate: the operator no longer justifies a look, but the look is still on the record.
     // Throttled to one row an hour inside `recordAccountView`, and it never throws.
@@ -99,6 +101,9 @@ export default async function AdminUserDetailPage({
     loadAdminTimeline(decoded, {
       before: before && !Number.isNaN(before.getTime()) ? before : null,
     }),
+    // Degrades on its own: this account predates the traffic pipeline, or ANALYTICS_SALT
+    // is unset, and neither is a reason for the inspector to 500.
+    accountTraffic(decoded).catch(() => null),
   ]);
 
   const { identity, billing, configuration, footprint, health, usage } = detail;
@@ -173,6 +178,25 @@ export default async function AdminUserDetailPage({
         </div>
       </div>
 
+      {/* Mobile stand-in for the sticky rail below, which disappears at this width — plain
+          jump links, no active-section tracking, so no client boundary is needed here. */}
+      <nav
+        aria-label="Sections"
+        className="sticky top-14 z-10 -mx-4 mb-4 overflow-x-auto border-b border-border/60 bg-background/95 px-4 py-2 backdrop-blur lg:hidden"
+      >
+        <div className="flex w-max gap-1.5">
+          {SECTIONS.map((section) => (
+            <a
+              key={section.id}
+              href={`#${section.id}`}
+              className="shrink-0 whitespace-nowrap rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-fast hover:text-foreground"
+            >
+              {section.label}
+            </a>
+          ))}
+        </div>
+      </nav>
+
       <div className="flex gap-8">
         <nav
           aria-label="Sections"
@@ -193,7 +217,7 @@ export default async function AdminUserDetailPage({
         </nav>
 
         <div className="min-w-0 flex-1 space-y-6">
-          <section id="identity" className="scroll-mt-20">
+          <section id="identity" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Identity">
               <dl>
                 <DefinitionRow label="Email">
@@ -249,7 +273,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="plan" className="scroll-mt-20">
+          <section id="plan" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Plan & billing">
               {/*
                 Resolved plan first, then the raw inputs beneath it. Precedence
@@ -369,7 +393,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="health" className="scroll-mt-20">
+          <section id="health" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Health & errors">
               {health.length === 0 ? (
                 <EmptyState>Nothing failing.</EmptyState>
@@ -410,7 +434,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="footprint" className="scroll-mt-20">
+          <section id="footprint" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Data footprint">
               <dl className="grid gap-x-8 sm:grid-cols-2">
                 <DefinitionRow label="Contacts">{footprint.contacts}</DefinitionRow>
@@ -475,7 +499,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="usage" className="scroll-mt-20">
+          <section id="usage" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="AI usage">
               {usage.totalCalls === 0 ? (
                 <EmptyState>No AI calls recorded.</EmptyState>
@@ -561,7 +585,90 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="config" className="scroll-mt-20">
+          {/*
+            What they actually opened, and for how long.
+
+            The only per-person behavioural record in the console. It exists because
+            `page_views.user_id` is set on views from a signed-in session — the anonymous
+            half of the pipeline stays anonymous, but a logged-in visit is attributable and
+            pretending otherwise would be theatre. The obligation that follows is
+            disclosure, not restraint: the privacy page says signed-in page views are
+            recorded against the account.
+
+            Opening this screen is itself audit-logged by `recordAccountView` above, which
+            is the existing answer to "who looked at whom".
+          */}
+          <section id="traffic" className="scroll-mt-32 lg:scroll-mt-20">
+            <AdminPanel title="Traffic">
+              {!traffic || traffic.views === 0 ? (
+                <EmptyState>
+                  No page views recorded in the last 30 days. Traffic collection needs
+                  ANALYTICS_SALT set, and only covers visits since it was switched on.
+                </EmptyState>
+              ) : (
+                <>
+                  <dl className="grid gap-x-8 sm:grid-cols-2">
+                    <DefinitionRow label="Page views">{traffic.views}</DefinitionRow>
+                    <DefinitionRow label="Sessions">{traffic.sessions}</DefinitionRow>
+                    <DefinitionRow label="Days seen">
+                      {traffic.activeDays}
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        of the last 30
+                      </span>
+                    </DefinitionRow>
+                    <DefinitionRow label="Median session">
+                      {traffic.medianSessionSeconds == null
+                        ? "—"
+                        : formatDuration(traffic.medianSessionSeconds)}
+                    </DefinitionRow>
+                    <DefinitionRow label="Measured time in app">
+                      {formatDuration(traffic.totalDwellSeconds)}
+                      {/* A sum over a best-effort measurement. Saying so beside the number
+                          is the difference between a total and a guess. */}
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        from {Math.round(traffic.dwellCoverage * 100)}% of views
+                      </span>
+                    </DefinitionRow>
+                    <DefinitionRow label="Last seen">
+                      {traffic.lastSeen ? (
+                        <>
+                          <RelativeTime date={traffic.lastSeen} /> ago
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </DefinitionRow>
+                  </dl>
+
+                  {traffic.routes.length > 0 && (
+                    <div className="mt-3 border-t border-border/60 pt-3">
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                        Pages they open
+                      </div>
+                      <ul className="mt-2 space-y-1">
+                        {traffic.routes.map((r: (typeof traffic.routes)[number]) => (
+                          <li
+                            key={r.route}
+                            className="flex items-baseline justify-between gap-3 text-sm"
+                          >
+                            <span className="font-mono text-xs">{r.route}</span>
+                            <span className="text-muted-foreground tabular-nums">
+                              {r.views} view{r.views === 1 ? "" : "s"}
+                              {r.medianDwellSeconds != null && (
+                                <> · {formatDuration(r.medianDwellSeconds)} typical</>
+                              )}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+            </AdminPanel>
+          </section>
+
+          <section id="config" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Configuration">
               {/*
                 Booleans only. Never call decryptOrNull() in admin code — not behind a reveal,
@@ -617,7 +724,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="timeline" className="scroll-mt-20">
+          <section id="timeline" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Activity timeline">
               {timeline.entries.length === 0 ? (
                 <EmptyState>No recorded activity.</EmptyState>
@@ -679,7 +786,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="contacts" className="scroll-mt-20">
+          <section id="contacts" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel
               title={`Contacts (${contactPage.total})`}
               action={
@@ -762,7 +869,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="audit" className="scroll-mt-20">
+          <section id="audit" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Audit trail">
               {audit.length === 0 ? (
                 <EmptyState>No admin actions on this account.</EmptyState>
@@ -791,7 +898,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="actions" className="scroll-mt-20">
+          <section id="actions" className="scroll-mt-32 lg:scroll-mt-20">
             <AccountDangerZone
               targetUserId={identity.userId}
               email={identity.email}
