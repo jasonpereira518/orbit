@@ -353,6 +353,7 @@ export function CaptureFlow({
               preferredContactId={initialContactId}
               onDecide={applyDecision}
               onBack={(key) => applyDecision(key, null)}
+              onStartOver={() => void startOver()}
             />
           </motion.div>
         )}

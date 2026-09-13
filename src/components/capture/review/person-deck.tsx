@@ -90,6 +90,7 @@ export function PersonDeck({
   lockedName,
   onDecide,
   onBack,
+  onStartOver,
 }: {
   items: BulkNotePersonPreview[];
   decisions: CaptureDecisions;
@@ -100,6 +101,8 @@ export function PersonDeck({
   onDecide: (key: string, decision: CaptureDecision) => void;
   /** Reopen the previous card (its decision is cleared). */
   onBack: (key: string) => void;
+  /** Abandon the whole capture. */
+  onStartOver?: () => void;
 }) {
   const people = peopleDecisions(decisions);
   const [drafts, setDrafts] = useState<Record<string, PersonDraft>>({});
@@ -192,9 +195,16 @@ export function PersonDeck({
             );
           })}
         </div>
-        <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={previousDecided < 0} onClick={back}>
-          <Undo2 className="size-3.5" /> Back
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={previousDecided < 0} onClick={back}>
+            <Undo2 className="size-3.5" /> Back
+          </Button>
+          {onStartOver && (
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onStartOver}>
+              Start over
+            </Button>
+          )}
+        </div>
       </div>
 
       <p aria-live="polite" className="sr-only">
