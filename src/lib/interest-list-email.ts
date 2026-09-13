@@ -2,6 +2,19 @@ import { randomBytes } from "node:crypto";
 import { Resend } from "resend";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
+import { planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
+
+// Re-exported so existing importers keep working; the definitions moved to a client-safe
+// module because the boarding pass needs them in the browser.
+export {
+  WELCOME_PLANETS,
+  asWelcomePlanet,
+  planetForSignupNumber,
+  type WelcomePlanet,
+} from "@/lib/welcome-planets";
+
+/** The two personal links a signup gets once it has a share token. */
+export type EmailLinks = { ticketUrl: string; shareUrl: string };
 
 /** Opaque, same convention as `generateCalendarFeedToken` — no session, no guessable id. */
 export function generateUnsubscribeToken() {
@@ -10,50 +23,6 @@ export function generateUnsubscribeToken() {
 
 export function buildUnsubscribeUrl(token: string) {
   return `${getAppBaseUrl()}/api/interest-list/unsubscribe?token=${token}`;
-}
-
-/**
- * The eight planets in `public/landing/planets/`, ordered by distance from the sun.
- * Successive signups get successive planets, so the list walks outward from Mercury and
- * wraps back round after Neptune.
- *
- * `sun.png` sits in that folder too and is deliberately absent: it is not a planet.
- */
-export const WELCOME_PLANETS = [
-  "mercury",
-  "venus",
-  "earth",
-  "mars",
-  "jupiter",
-  "saturn",
-  "uranus",
-  "neptune",
-] as const;
-
-export type WelcomePlanet = (typeof WELCOME_PLANETS)[number];
-
-/**
- * Maps a 1-based signup number onto the planet that signup receives: the 1st gets Mercury,
- * the 8th Neptune, the 9th Mercury again.
- *
- * Defensive about its input because the caller derives it from a COUNT that could in
- * principle come back 0 or non-finite — a negative index would otherwise read off the end
- * of the array and hand `undefined` to the template.
- */
-export function planetForSignupNumber(signupNumber: number): WelcomePlanet {
-  const n = Number.isFinite(signupNumber) ? Math.floor(signupNumber) : 1;
-  return WELCOME_PLANETS[Math.max(0, n - 1) % WELCOME_PLANETS.length];
-}
-
-/**
- * Narrows the stored `welcome_planet` text back to the union. Rows written before that
- * column existed hold null, so the fallback is not theoretical — and an unrecognised value
- * must not reach the template, where it would build a 404 image URL.
- */
-export function asWelcomePlanet(value: string | null | undefined): WelcomePlanet {
-  return (WELCOME_PLANETS as readonly string[]).includes(value ?? "")
-    ? (value as WelcomePlanet)
-    : WELCOME_PLANETS[0];
 }
 
 export const BG = "#05070f";
@@ -65,10 +34,6 @@ export const ACCENT = "#f2c14e";
 const WARN = "#e8a84e";
 export const FONT_STACK =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
-
-function titleCase(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
 
 export function escapeHtml(value: string) {
   return value
@@ -109,6 +74,7 @@ export function buildInterestListWelcomeEmail(input: {
   unsubscribeUrl: string;
   /** Which planet this send gets. See `planetForSignupNumber`. */
   planet: WelcomePlanet;
+  links?: EmailLinks;
 }) {
   const appUrl = getAppBaseUrl();
   const signUpUrl = `${appUrl}/sign-up`;
@@ -136,7 +102,14 @@ export function buildInterestListWelcomeEmail(input: {
     "",
     "— Jason",
     "",
-    `PS — everyone on this list gets a different planet, in order out from the sun. You got ${titleCase(input.planet)}.`,
+    `PS — everyone on this list gets a different planet, in order out from the sun. You got ${planetLabel(input.planet)}.`,
+    ...(input.links
+      ? [
+          "",
+          `Your ticket, with your number and your planet: ${input.links.ticketUrl}`,
+          `Know someone who'd like a planet? Send them your link: ${input.links.shareUrl}`,
+        ]
+      : []),
     "",
     "—",
     "You're getting this because you joined Orbit's interest list.",
@@ -260,9 +233,20 @@ export function buildInterestListWelcomeEmail(input: {
             <tr>
               <td style="font-size:13px;line-height:1.6;color:${FAINT};padding-bottom:28px;">
                 PS — everyone on this list gets a different planet, in order out from the sun.
-                You got <span style="color:${MUTED};">${titleCase(input.planet)}</span>.
+                You got <span style="color:${MUTED};">${planetLabel(input.planet)}</span>.
               </td>
             </tr>
+            ${
+              input.links
+                ? `<tr>
+              <td style="font-size:14px;line-height:1.7;color:${MUTED};padding-bottom:26px;">
+                <a href="${escapeHtml(input.links.ticketUrl)}" style="color:${ACCENT};text-decoration:underline;">Your ticket</a>, with your number and your planet.
+                Know someone who'd like a planet?
+                <a href="${escapeHtml(input.links.shareUrl)}" style="color:${ACCENT};text-decoration:underline;">Send them your link</a>.
+              </td>
+            </tr>`
+                : ""
+            }
             <tr>
               <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid rgba(232,243,241,0.14);padding-top:22px;">
                 You're getting this because you joined Orbit's interest list.
@@ -294,6 +278,7 @@ export function buildInterestListWelcomeEmail(input: {
 export function buildInterestListFollowUpEmail(input: {
   unsubscribeUrl: string;
   planet: WelcomePlanet;
+  links?: EmailLinks;
 }) {
   const appUrl = getAppBaseUrl();
   const signUpUrl = `${appUrl}/sign-up`;
@@ -314,6 +299,7 @@ export function buildInterestListFollowUpEmail(input: {
     "",
     `If you'd rather it nagged you for you: ${signUpUrl}`,
     "",
+    ...(input.links ? [`Your ticket is still here: ${input.links.ticketUrl}`, ""] : []),
     "— Jason",
     "",
     "—",
@@ -366,6 +352,15 @@ export function buildInterestListFollowUpEmail(input: {
             ${paragraph(
               `That works whether or not you use Orbit — a note in your phone is a fine start. If you'd rather it nagged you for you, <a href="${signUpUrl}" style="color:${ACCENT};text-decoration:underline;">it's here</a>.`
             )}
+            ${
+              input.links
+                ? `<tr>
+              <td style="font-size:14px;line-height:1.7;color:${MUTED};padding-bottom:26px;">
+                <a href="${escapeHtml(input.links.ticketUrl)}" style="color:${ACCENT};text-decoration:underline;">Your ticket</a> is still here.
+              </td>
+            </tr>`
+                : ""
+            }
             <tr>
               <td style="padding-top:8px;padding-bottom:26px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -465,13 +460,14 @@ async function deliver(
 export async function sendInterestListWelcomeEmail(
   email: string,
   unsubscribeUrl: string,
-  planet: WelcomePlanet
+  planet: WelcomePlanet,
+  links?: EmailLinks
 ) {
   await deliver(
     "welcome",
     email,
     unsubscribeUrl,
-    buildInterestListWelcomeEmail({ unsubscribeUrl, planet })
+    buildInterestListWelcomeEmail({ unsubscribeUrl, planet, links })
   );
 }
 
@@ -479,12 +475,13 @@ export async function sendInterestListWelcomeEmail(
 export async function sendInterestListFollowUpEmail(
   email: string,
   unsubscribeUrl: string,
-  planet: WelcomePlanet
+  planet: WelcomePlanet,
+  links?: EmailLinks
 ): Promise<boolean> {
   return deliver(
     "follow-up",
     email,
     unsubscribeUrl,
-    buildInterestListFollowUpEmail({ unsubscribeUrl, planet })
+    buildInterestListFollowUpEmail({ unsubscribeUrl, planet, links })
   );
 }

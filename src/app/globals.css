@@ -1371,6 +1371,36 @@
   will-change: transform;
 }
 
+/* The /interest card's Y-axis flip (form → boarding pass). The wrapper supplies the
+ * perspective; the face is what motion rotates. `transform-style` keeps the glass's
+ * backdrop-filter composited during the turn. */
+.interest-flip-stage {
+  perspective: 1400px;
+}
+.interest-flip-face {
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+
+/* Referral moons drift around the planet once they have dropped in. Slow enough to read
+ * as an orbit, not a spinner. Paused, not removed, under reduced motion so the moons
+ * still sit on their ring. */
+@keyframes interest-moon-drift {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.interest-moons-drift {
+  animation: interest-moon-drift 40s linear infinite;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .interest-moons-drift {
+    animation-play-state: paused;
+  }
+}
+
 /* Orbit Lifetime's badge is the one place the brand gold appears as a surface
  * rather than as text, so it gets a metal glint: one band crosses the pill and
  * then rests off-frame for most of the cycle, which reads as material catching

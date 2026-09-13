@@ -825,11 +825,15 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   unsubscribed_at timestamptz,
   welcome_planet text,
   follow_up_sent_at timestamptz,
+  share_token text,
+  referred_by_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
+CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   subject text NOT NULL,
@@ -1387,11 +1391,19 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // plan_upgrade_events and their three indexes. Built on 49, renumbered to 51 when main
 // took 49 (capture history) and 50 (desktop notifications), to 53 when main took 51 and
 // 52 for the capture redesign, and now to 54 because main's recruiter scan v2 landed on
-// 53 first. Note the shape of that last collision: both sides wrote `SCHEMA_VERSION = 53`,
-// so git merged that line without a conflict and only the changelog above it clashed. The
+// 53 first. Note the shape of that collision: both sides wrote `SCHEMA_VERSION = 53`, so
+// git merged that line without a conflict and only the changelog above it clashed. The
 // number agreeing is exactly what makes reuse silent — a database stamped 53 by a
 // recruiter-scan build would skip this branch's two tables and nothing would fail.
-export const SCHEMA_VERSION = 54;
+//
+// 55 = interest_list_signups.share_token + referred_by_id, the share link and referral
+// moons behind the /interest boarding pass. Built as 52, then 54, before this merge of
+// main revealed 54 was ALSO the provider-status branch's number — the same silent
+// collision described above, one entry later. Both sides again agreed on the literal
+// `SCHEMA_VERSION = 54`, so only this changelog conflicted; a database already at 54 from
+// either branch still needs this table's two columns, hence one more bump rather than
+// reusing the number either side shipped it under.
+export const SCHEMA_VERSION = 55;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2491,6 +2503,11 @@ const alters = [
   // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
+  // v54: the share link and referral tracking behind the /interest boarding pass.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referred_by_id uuid`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token)`,
+  `CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id)`,
 
   // Feedback triage. The table shipped long before anything wrote to it, so every existing
   // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
