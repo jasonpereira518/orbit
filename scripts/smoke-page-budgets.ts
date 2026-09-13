@@ -11,6 +11,15 @@
  * it is asserted here on the SQL the functions actually issue, against a 3,000-contact
  * network with a realistic share of inline avatars.
  *
+ * What none of that measured is ROW COUNT, and that turned out to be the omission that
+ * mattered. `getDashboardData` runs `findMany({ where: userId })` with no limit and then
+ * filters, sorts and aggregates the result in JavaScript; `loadGraphData` does the same.
+ * Statement count is bounded, row count is not — so the budget built to catch dashboard
+ * regressions was structurally blind to the one actually happening, and the `maxDuration`
+ * on `(app)/(main)/layout.tsx` was raised to 300 s to convert the resulting timeouts into
+ * slow successes. The "Payload scaling" section at the end of this file measures the same
+ * loaders at two account sizes so that growth is a number rather than an assumption.
+ *
  * Also covers the avatar backfill, which is mounted on every page and used to load the
  * base64 for every contact just to decide which ones still needed a photo, then resolved
  * them sequentially with 15–20s network timeouts — the most likely producer of the
@@ -39,6 +48,9 @@ import { scaleContactRows } from "./lib/scale-fixture";
 
 const USER = "smoke-page-budgets-user";
 const N = 3000;
+/** The comparison account for the scaling section: a quarter of the size, same shape. */
+const SCALE_USER = "smoke-page-budgets-scale-user";
+const SCALE_N = 750;
 /** Row index whose follow-up is due — deliberately past any "first 300 rows" cut. */
 const DUE_ROW = 2900;
 
@@ -76,6 +88,32 @@ const DAY_MS = 86_400_000;
 async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
+}
+
+/** A second, smaller account. Its only job is to give the scaling section a comparison. */
+async function seedScaleUser() {
+  const db = await getDb();
+  await resetScaleUser();
+  const rows = scaleContactRows(SCALE_USER, SCALE_N, {
+    inlineAvatarShare: 0.3,
+    longNotesShare: 0.5,
+    dueFollowUpRows: [Math.floor(SCALE_N * 0.9)],
+  });
+  for (let start = 0; start < rows.length; start += 250) {
+    await db.insert(contacts).values(rows.slice(start, start + 250));
+  }
+  // The same number of hand-shaped rows the main fixture adds, so the two accounts differ
+  // only in size. Keyed off SPECIAL_ROWS rather than a literal: this drifted once already
+  // when the main fixture grew from five to eight.
+  for (let i = 0; i < SPECIAL_ROWS; i++) {
+    await db.insert(contacts).values({ userId: SCALE_USER, fullName: `Special ${i}` });
+  }
+  await db.execute(sql`ANALYZE contacts`);
+}
+
+async function resetScaleUser() {
+  const db = await getDb();
+  await db.delete(contacts).where(eq(contacts.userId, SCALE_USER));
 }
 
 async function seed() {
@@ -153,8 +191,16 @@ async function main() {
   const dashboardScans = contactScans(capturedQueries());
   console.log(`  statements: ${dashboardCount}`);
   if (process.env.DEBUG_QUERIES) for (const q of capturedQueries()) console.log("    ·", q.replace(/\s+/g, " ").slice(0, 110));
-  // 13 for the same one reason as the graph's 9 — see the note there.
-  check("dashboard issues ≤ 13 statements", dashboardCount <= 13, `got ${dashboardCount}`);
+  // 16, up from 13, and deliberately: the extra statements are what make the ROW count
+  // bounded. Four aggregates and a by-id hydration replaced "read the whole account and work
+  // it out in JavaScript". On neon-http a statement is an HTTPS round trip, so this trades a
+  // handful of FIXED round trips for a payload that no longer grows with the account —
+  // 3,005 rows down to 766 at 3,000 contacts, and 983 bytes a contact down to 141.
+  //
+  // Statement count is a cost to watch, not a number to minimise. If it creeps past this,
+  // the question to ask is whether something started scanning again, not whether two
+  // aggregates can be folded together.
+  check("dashboard issues ≤ 16 statements", dashboardCount <= 16, `got ${dashboardCount}`);
   check("dashboard scans contacts at least once", dashboardScans.length >= 1);
   check(
     "dashboard contacts scan does not pull notes",
@@ -468,6 +514,161 @@ async function main() {
   check("a call over the threshold is recorded once", recorded.length === 1 && recorded[0].kind === "slow.thing");
   await traced("fast.thing", async () => 1, { thresholdMs: 10_000, now: clock, record: async (e) => void recorded.push(e) });
   check("a call under the threshold is not recorded", recorded.length === 1);
+
+  // ---- Payload scaling ---------------------------------------------------------------
+  //
+  // Everything above runs at ONE account size, so it can prove a payload is narrow but not
+  // that it is BOUNDED. This runs the same loaders at a quarter of the size and compares.
+  // A bounded surface returns at most its SQL limit either way; an unbounded one returns
+  // the account.
+  console.log("\nPayload scaling (the same loaders at two account sizes)…");
+  await seedScaleUser();
+
+  const smallDashboard = await getDashboardData(SCALE_USER);
+  const smallGraph = await loadGraphData(SCALE_USER, { profile: Promise.resolve(null), scope: "all" });
+  const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false });
+
+  type Surface = {
+    name: string;
+    small: number;
+    large: number;
+    /**
+     * The most rows this surface may ever return, or null when it has no bound at all.
+     * A number here must be traceable to a LIMIT in SQL — not to what today's fixture
+     * happens to produce.
+     */
+    bound: number | null;
+    /**
+     * Whether the bound is low enough that a 4× account is expected to return roughly the
+     * same number of rows. True for the dashboard, whose ceiling sits below the fixture's
+     * smaller size. The panel is bounded at 235 and simply has not saturated at 750
+     * contacts yet — 34 → 100 is correct behaviour for it, not drift.
+     */
+    flat?: boolean;
+  };
+
+  const surfaces: Surface[] = [
+    // Bounded by what the page can render plus the link analysis's own cap:
+    // METRICS_MAX_CONTACTS (750) + the preview (150) + the two card lists + the contacts the
+    // reminder and suggestion rows name. Overlapping sets, so the real figure sits just above
+    // 750 rather than at the sum.
+    { name: "dashboard", small: smallDashboard.contactById.size, large: dashboard.contactById.size, bound: 1000, flat: true },
+    // Unbounded BY DESIGN — "show all" means all. The default (engaged-only) view above is
+    // the bounded one users actually get, and the assertions there cover it.
+    { name: "graph (show all)", small: smallGraph.contacts.length, large: graphAll.contacts.length, bound: null },
+    // Bounded in SQL: four limited queries (80 + 100 + 30 + 25) feed `items`. This is the
+    // shape the other two should end up in.
+    { name: "notifications panel", small: smallPanel.items.length, large: panel.items.length, bound: 235 },
+  ];
+  const sizeRatio = (N + SPECIAL_ROWS) / (SCALE_N + SPECIAL_ROWS);
+
+  for (const s of surfaces) {
+    const growth = s.small === 0 ? 0 : s.large / s.small;
+    console.log(
+      `  ${s.name.padEnd(20)} ${String(s.small).padStart(5)} rows at ${SCALE_N}` +
+        ` → ${String(s.large).padStart(5)} rows at ${N}` +
+        `  (${growth.toFixed(1)}× for a ${sizeRatio.toFixed(1)}× account)`
+    );
+  }
+
+  for (const s of surfaces) {
+    if (s.bound !== null) {
+      check(
+        `${s.name} stays within its SQL bound of ${s.bound} rows`,
+        s.large <= s.bound,
+        `${s.large} rows`
+      );
+      check(
+        `${s.name} does not return the whole account`,
+        s.large < N,
+        `${s.large} rows for a ${N + SPECIAL_ROWS}-contact account`
+      );
+      // The point of the whole exercise, for the surface it was the point for.
+      if (s.flat) {
+        check(
+          `${s.name} barely moves for a 4× account`,
+          s.small === 0 || s.large / s.small < 1.5,
+          `${s.small} → ${s.large}`
+        );
+      }
+    } else {
+      // Characterisation, not approval. These two return the entire network on every visit;
+      // pinning it means the number is in CI output rather than in someone's memory, and a
+      // FOURTH surface joining them has to change this file to do it.
+      //
+      // Phase B of docs/superpowers/plans/2026-09-10-production-readiness.md is what fixes
+      // the dashboard: aggregates into SQL, lists bounded with ORDER BY … LIMIT, and the
+      // whole-graph pieces materialised. When it lands this entry gets a real `bound` and
+      // `maxDuration` in (app)/(main)/layout.tsx goes back to 60.
+      // "Show all" is the one surface that means all, and is the reason the scope toggle
+      // exists. The default (engaged-only) view above is the bounded one users get.
+      check(
+        `${s.name} still returns the whole account (by design)`,
+        s.large === N + SPECIAL_ROWS,
+        `${s.large} rows for a ${N + SPECIAL_ROWS}-contact account`
+      );
+    }
+  }
+
+  // Row count is one half of "unbounded"; the SQL is the other, and it is the half that
+  // cannot be faked. `contactById.size` measures what the loader RETAINS — so trimming the
+  // Map while the scan still reads the whole table would make the numbers above improve
+  // with nothing fixed. This asserts the scan itself.
+  //
+  // Phase B flips both together: the contacts scan gets an ORDER BY … LIMIT, this check
+  // inverts, and the surfaces above get real bounds.
+  // The network scan still reads one row per contact — clustering and constellation
+  // eligibility are whole-network questions that a sample cannot answer — but it is now
+  // NARROW, and that is the property worth pinning. A display column reappearing here would
+  // be selected for the entire account in order to render a few hundred rows, which is the
+  // mistake this whole section exists to catch.
+  //
+  // Identified by `constellation_pin`: the hydration queries below also select from
+  // `contacts`, so the scan has to be named by something only it asks for.
+  const networkScan = dashboardScans.find((q) => selectsBare(q, "constellation_pin"));
+  check("the dashboard's network scan is identifiable", Boolean(networkScan));
+  for (const column of [
+    "full_name", "ai_summary", "email", "title", "last_interaction_at", "created_at",
+  ]) {
+    check(
+      `the network scan does not select ${column}`,
+      Boolean(networkScan) && !selectsBare(networkScan!, column),
+      networkScan?.slice(0, 220)
+    );
+  }
+
+  // The dashboard's real size.
+  //
+  // The "dashboard payload under 1.5 MB" check above cannot see this: `contactById` is a
+  // Map, and `JSON.stringify` renders a Map as `{}`. So the byte budget has been measuring
+  // the bounded card lists while the largest object on the page — one row per contact —
+  // passed through it unweighed. Measured properly here, from the Map's values.
+  const rowBytes = (d: { contactById: Map<string, unknown> }) =>
+    JSON.stringify([...d.contactById.values()]).length;
+  const smallBytes = rowBytes(smallDashboard);
+  const largeBytes = rowBytes(dashboard);
+  console.log(
+    `  dashboard contact rows  ${(smallBytes / 1024).toFixed(0)} KB at ${SCALE_N}` +
+      ` → ${(largeBytes / 1024).toFixed(0)} KB at ${N}` +
+      `  (${(largeBytes / smallBytes).toFixed(1)}×, ` +
+      `${(largeBytes / (dashboard.contactById.size || 1)).toFixed(0)} bytes a contact)`
+  );
+  // A ceiling on the rows the dashboard moves per contact. Row COUNT is Phase B's problem;
+  // row WIDTH is this file's original one, and this is the guard that keeps a re-added
+  // `notes` or base64 avatar from hiding inside an already-large payload.
+  //
+  // Currently ~983 bytes, so the headroom is deliberately thin: one more column on the
+  // dashboard scan trips it. That is the intent. If a new field genuinely belongs there,
+  // raise this WITH the measurement in the commit message — the thing that must not happen
+  // silently is the per-contact cost drifting, because it multiplies by the account size
+  // this section just showed is unbounded (2.9 MB at 3,000 contacts, ~9.6 MB at 10,000).
+  check(
+    "dashboard moves under 250 bytes per contact",
+    largeBytes / (dashboard.contactById.size || 1) < 250,
+    `${(largeBytes / (dashboard.contactById.size || 1)).toFixed(0)} bytes a contact`
+  );
+
+  await resetScaleUser();
 
   await reset();
   if (failures > 0) {

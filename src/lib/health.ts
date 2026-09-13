@@ -46,6 +46,11 @@ export type HealthReport = {
     sentry: boolean;
     slack: boolean;
     pgvector: boolean | null;
+    /**
+     * The session's `statement_timeout`, as Postgres reports it ("20s", or "0" for none).
+     * Null when the probe could not read it.
+     */
+    statementTimeout: string | null;
   };
   alerts?: Array<{ id: string; severity: string; openedAt: string; title: string | null }>;
   /** Slow calls recorded in the last hour (see perf-trace.ts). */
@@ -70,6 +75,22 @@ async function probeSchemaVersion(): Promise<{ recorded: number | null }> {
   const res = await db.execute(sql`SELECT version FROM schema_migrations WHERE id = 1`);
   const row = rowsOf<{ version: number | string }>(res)[0];
   return { recorded: row ? Number(row.version) : null };
+}
+
+/**
+ * The role's `statement_timeout`.
+ *
+ * `docs/RUNBOOK.md` instructs setting this on the Neon role and nothing ever checked that
+ * anyone did — and the HTTP driver cannot set it per session, so if the role does not carry
+ * it, no query in production has an upper bound and one runaway scan degrades every user on
+ * a shared compute. A setting nobody checks is a setting nobody has, so it is reported here
+ * where the ops sweep and /admin/health can both see it.
+ */
+async function probeStatementTimeout(): Promise<string | null> {
+  const db = await getDb();
+  const res = await db.execute(sql`SHOW statement_timeout`);
+  const row = rowsOf<{ statement_timeout: string }>(res)[0];
+  return row?.statement_timeout ?? null;
 }
 
 /** Best-effort: a failing section reads as null rather than failing the probe. */
@@ -116,7 +137,7 @@ export async function checkHealth(options: {
 
   if (!options.deep || report.status === "down") return report;
 
-  const [nightly, sweep, webhooks, issues, alerts, slow, pgvector] = await Promise.all([
+  const [nightly, sweep, webhooks, issues, alerts, slow, pgvector, statementTimeout] = await Promise.all([
     section(() => getCronHealth("imports.process-stalled", now), timeoutMs),
     section(() => getCronHealth("ops.sweep", now), timeoutMs),
     section(() => recentWebhookOutcomes(5, now), timeoutMs),
@@ -143,6 +164,7 @@ export async function checkHealth(options: {
       return row?.n ?? 0;
     }, timeoutMs),
     section(async () => Boolean(await isPgvectorAvailable()), timeoutMs),
+    section(probeStatementTimeout, timeoutMs),
   ]);
 
   const envReport = getEnvReport();
@@ -165,6 +187,7 @@ export async function checkHealth(options: {
     sentry: Boolean(process.env.SENTRY_DSN),
     slack: Boolean(process.env.SLACK_OPS_WEBHOOK_URL),
     pgvector,
+    statementTimeout,
   };
   report.alerts = (alerts ?? []).map((a) => ({
     id: a.id,

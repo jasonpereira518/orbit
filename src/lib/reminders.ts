@@ -8,14 +8,18 @@ import {
   reminders,
   userGoals,
 } from "@/db/schema";
-import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
 import {
   buildConstellationClusters,
   toNamedGraphClusters,
 } from "@/lib/constellation-clusters";
-import { computeNetworkMetrics } from "@/lib/network-metrics";
+import { computeNetworkMetrics, selectMetricsSample } from "@/lib/network-metrics";
+import {
+  getDashboardCounts,
+  getDashboardVocabularies,
+  getGoalAlignedContactIds,
+} from "@/lib/dashboard-aggregates";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
@@ -39,6 +43,16 @@ const MAX_AUTO_SUGGESTIONS = 12;
  * matching the card's own "closer ties sit nearer the center" framing.
  */
 const GRAPH_PREVIEW_CONTACT_CAP = 150;
+/** Rows on the "aligned with your goals" card. */
+const GOAL_ALIGNED_CAP = 5;
+/** Rows on the "recently updated" card. */
+const RECENT_CONTACT_CAP = 6;
+/** Rows on the "due follow-ups" card. */
+const DUE_FOLLOW_UP_CAP = 12;
+/** Rows on the reminders card. */
+const REMINDER_CAP = 20;
+/** Rows on the suggestions card. */
+const SUGGESTION_CAP = 40;
 
 const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
   post_event: 3,
@@ -411,6 +425,140 @@ export async function maybeRefreshOutreachSuggestions(userId: string) {
   await refreshOutreachSuggestions(userId);
 }
 
+/**
+ * Everything `getDashboardData`'s network scan deliberately does not select.
+ *
+ * The scan reads what the WHOLE network is needed for — clustering and constellation
+ * eligibility — and nothing else. Every field here belongs to a contact that is actually
+ * going to be rendered or analysed, and every one of those sets is bounded: the metrics
+ * sample (≤750), the constellation preview (≤150), the goal-aligned card (5), and the
+ * contacts named by the reminder and suggestion lists (≤60).
+ */
+type ContactDetailColumns = {
+  fullName: string;
+  preferredName: string | null;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  linkedinUrl: string | null;
+  website: string | null;
+  dateMet: Date | null;
+  lastInteractionAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  profileImageUrl: string | null;
+  tags: string[];
+  aiSummary: string | null;
+  keyFacts: string[] | null;
+  sharedInterests: string[] | null;
+  howMet: string | null;
+  metContext: string | null;
+};
+
+/**
+ * Fetch the wide text columns for a bounded set of contacts.
+ *
+ * One statement, or none at all when the set is empty — which is the common case for a new
+ * account and must not cost a round trip. The `inArray` is bounded by construction: every
+ * caller passes either the metrics sample (at most `METRICS_MAX_CONTACTS`) or the preview
+ * payload (at most `GRAPH_PREVIEW_CONTACT_CAP`).
+ */
+async function hydrateContactDetail(
+  userId: string,
+  ids: string[]
+): Promise<Map<string, ContactDetailColumns>> {
+  const out = new Map<string, ContactDetailColumns>();
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return out;
+
+  const db = await getDb();
+  const rows = await db.query.contacts.findMany({
+    where: and(eq(contacts.userId, userId), inArray(contacts.id, unique)),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      title: true,
+      email: true,
+      phone: true,
+      linkedinUrl: true,
+      website: true,
+      dateMet: true,
+      lastInteractionAt: true,
+      createdAt: true,
+      updatedAt: true,
+      profileImageUrl: false,
+      aiSummary: true,
+      keyFacts: true,
+      sharedInterests: true,
+      howMet: true,
+      metContext: true,
+    },
+    extras: { avatarUrl: clientAvatarUrlSql.as("avatar_url") },
+    with: { contactTags: { with: { tag: true } } },
+  });
+
+  for (const r of rows) {
+    out.set(r.id, {
+      fullName: r.fullName,
+      preferredName: r.preferredName ?? null,
+      title: r.title ?? null,
+      email: r.email ?? null,
+      phone: r.phone ?? null,
+      linkedinUrl: r.linkedinUrl ?? null,
+      website: r.website ?? null,
+      dateMet: r.dateMet ?? null,
+      lastInteractionAt: r.lastInteractionAt ?? null,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      profileImageUrl: r.avatarUrl,
+      tags: r.contactTags.map((ct) => ct.tag.name),
+      aiSummary: r.aiSummary ?? null,
+      keyFacts: r.keyFacts ?? null,
+      sharedInterests: r.sharedInterests ?? null,
+      howMet: r.howMet ?? null,
+      metContext: r.metContext ?? null,
+    });
+  }
+  return out;
+}
+
+/**
+ * The six contacts on the "recently updated" card.
+ *
+ * Its own query rather than the head of the network scan, because the scan no longer
+ * selects `updated_at` — or a name, or an avatar — for anyone. Six rows, ordered in SQL.
+ *
+ * `updated_at` alone is not a total order: after a bulk import every contact carries the
+ * same one, so `LIMIT 6` over it returns an arbitrary six that can change between loads
+ * with nothing having changed. Hence the tiebreak on `id`.
+ */
+async function loadRecentContacts(userId: string) {
+  const db = await getDb();
+  return db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      company: true,
+      title: true,
+      school: true,
+      email: true,
+      linkedinUrl: true,
+      relationshipScore: true,
+      nextFollowUpAt: true,
+      lastInteractionAt: true,
+      createdAt: true,
+      updatedAt: true,
+      profileImageUrl: false,
+    },
+    extras: { avatarUrl: clientAvatarUrlSql.as("avatar_url") },
+    orderBy: (c, { desc }) => [desc(c.updatedAt), desc(c.id)],
+    limit: RECENT_CONTACT_CAP,
+  });
+}
+
 export async function getDashboardData(
   userId: string,
   // userName may be a promise so the Clerk profile fetch can run concurrently
@@ -432,52 +580,49 @@ export async function getDashboardData(
       // notes; it now matches /graph, which never had them. The browser-safe avatar URL
       // is computed in SQL instead (`avatarUrl` below). `contacts_user_updated_idx` backs
       // the ordering. `scripts/smoke-page-budgets.ts` asserts this shape.
+      // ONLY what the whole network is needed for: clustering (company, school) and
+      // constellation eligibility (the pin, notes, stated closeness, priority, the next
+      // follow-up and a tag COUNT). Everything a contact needs in order to be *rendered* —
+      // name, title, contact details, avatar, timestamps, the wide text — belongs to a
+      // bounded set and is fetched by `hydrateContactDetail`.
+      //
+      // `last_interaction_at` is gone from here specifically: it was the widest field on the
+      // row, and the only whole-network question it answered was "how many are dormant",
+      // which `getDashboardCounts` now asks Postgres.
+      //
+      // The `contact_tags` JOIN is gone for the same reason. Eligibility wants a count, not
+      // the names, and the vocabulary that wanted names is `getDashboardVocabularies`.
       columns: {
         id: true,
-        userId: true,
-        fullName: true,
-        firstName: true,
-        lastName: true,
-        preferredName: true,
         company: true,
-        title: true,
-        location: true,
         school: true,
-        email: true,
-        phone: true,
-        linkedinUrl: true,
-        website: true,
-        profileImageUrl: false,
         relationshipScore: true,
         statedCloseness: true,
         priorityLevel: true,
         constellationPin: true,
-        source: true,
-        industry: true,
-        metContext: true,
-        dateMet: true,
-        howMet: true,
-        keyFacts: true,
-        sharedInterests: true,
-        aiSummary: true,
-        firstInteractionAt: true,
-        lastInteractionAt: true,
         nextFollowUpAt: true,
-        followUpStatus: true,
-        closeness: true,
-        closenessTier: true,
-        orbitScore: true,
-        createdAt: true,
+        // Kept, unlike the rest of the display columns, because it is an ORDERING key rather
+        // than something rendered: orbit scores are integers 1-5, so the preview's "closest
+        // 150" is mostly a tie, and which 150 appear has always been decided by the scan's
+        // `updated_at DESC` order underneath that sort. Dropping it would silently change
+        // who is on the chart.
         updatedAt: true,
-        notes: false,
       },
       extras: {
-        avatarUrl: clientAvatarUrlSql.as("avatar_url"),
         // Computed, never the column — see contact-notes-sql.ts and the budget smoke.
         hasNotes: contactHasNotesSql.as("has_notes"),
       },
-      orderBy: (c, { desc }) => [desc(c.updatedAt)],
-      with: { contactTags: { with: { tag: true } } },
+      // The join key alone. Eligibility wants a tag COUNT, and the vocabulary that wanted
+      // tag NAMES is `getDashboardVocabularies` now — so this carries one narrow row per
+      // tag rather than a whole tags row (id, user, name, timestamp) per tag.
+      //
+      // NOT a correlated `(select count(*) …)` in `extras`: written that way it returned
+      // zero for every contact rather than failing, which quietly made every tag-qualified
+      // contact ineligible for the constellation. Drizzle builds the correlation for a
+      // declared relation; hand-writing it here did not.
+      with: { contactTags: { columns: { contactId: true } } },
+      // The order the preview and the metrics sample break ties in. `id` makes it total.
+      orderBy: (c, { desc }) => [desc(c.updatedAt), desc(c.id)],
     })
   );
 
@@ -486,9 +631,11 @@ export async function getDashboardData(
     pendingReminders,
     suggestions,
     goals,
-    goalTexts,
     closenessCohort,
     constellationConfig,
+    counts,
+    vocabularies,
+    goalAlignedIds,
   ] = await Promise.all([
     contactRowsPromise,
     db.query.reminders.findMany({
@@ -509,189 +656,123 @@ export async function getDashboardData(
       where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
       orderBy: (g, { desc }) => [desc(g.createdAt)],
     }),
-    listActiveGoalTextsForUser(userId),
-    // Donates the scan above rather than repeating it.
-    getClosenessCohort(userId, contactRowsPromise),
+    // No longer donates the scan above: that scan is now narrow, and the cohort builder
+    // needs the wide text columns to score goal relevance. The donation only ever mattered
+    // on the REBUILD path — the normal path reads each contact's stored breakdown and never
+    // looks at these rows at all — so what this gives up is one scan on the rare render that
+    // also has to recalibrate, in exchange for every other render carrying five fewer
+    // columns per contact. `ClosenessCohortRow` is typed precisely so this trade has to be
+    // made deliberately rather than discovered.
+    getClosenessCohort(userId),
     getConstellationConfig(),
+    // Aggregates Postgres answers better than a pass over the scan would — and, more to the
+    // point, each one lets a column come off that scan. See dashboard-aggregates.ts.
+    getDashboardCounts(userId),
+    getDashboardVocabularies(userId),
+    getGoalAlignedContactIds(userId, GOAL_ALIGNED_CAP),
   ]);
 
   // `profileImageUrl` keeps its name for the cards that render these rows, but it is now
   // the browser-safe URL from SQL — never the stored data: URL.
-  const allContactRows = scannedRows.map((c) => ({ ...c, profileImageUrl: c.avatarUrl }));
+  // The scan is minimal now, so nothing below reads a display field off it. These rows
+  // answer exactly two whole-network questions — who clusters with whom, and who is on the
+  // chart — and every contact that gets rendered is hydrated by id afterwards.
+  const lightContacts = scannedRows;
+  const lightById = new Map(lightContacts.map((c) => [c.id, c]));
+  /** Every contact in the account, by id. The scan's one remaining whole-network duty. */
+  const allContactIds = new Set(lightContacts.map((c) => c.id));
 
-  const enrichedContacts = allContactRows.map((c) => {
-    const tags = c.contactTags.map((ct) => ct.tag.name);
-    return { ...c, tags };
-  });
-
-  const { metrics: networkMetrics, contactsWithNetwork } =
-    computeNetworkMetrics(
-      enrichedContacts,
-      goalTexts,
-      closenessCohort.byId
+  // Constellation eligibility, for the whole network. Same shared predicate as
+  // `loadGraphData` — this payload path is a parallel implementation, so the decision has to
+  // come from one place or the two surfaces will quietly disagree about who is on the chart.
+  const eligibleIds = new Set<string>();
+  for (const c of lightContacts) {
+    const { eligible } = constellationEligibility(
+      closenessCohort.constellationSignals.get(c.id),
+      {
+        pin: c.constellationPin ?? null,
+        hasNotesText: Boolean(c.hasNotes),
+        statedCloseness: c.statedCloseness ?? null,
+        priorityLevel: c.priorityLevel ?? 0,
+        nextFollowUpAt: c.nextFollowUpAt ?? null,
+        // A COUNT from SQL, where this used to be `(c.tags ?? []).length` over a joined
+        // array of tag rows. The predicate only ever wanted the number.
+        tagCount: c.contactTags.length,
+      },
+      constellationConfig.thresholds
     );
+    if (eligible) eligibleIds.add(c.id);
+  }
 
-  const closenessById = new Map(
-    contactsWithNetwork.map((c) => [c.id, c])
+  // `selectMetricsSample` is the same function `computeNetworkMetrics` samples with, so
+  // these are exactly the contacts the link analysis will read — not a query that resembles
+  // that set.
+  const metricsSampleIds = selectMetricsSample(lightContacts, closenessCohort.byId).map(
+    (c) => c.id
   );
 
-  const graphContacts = enrichedContacts.map((c) => {
-    const closeness = closenessById.get(c.id);
-    const lastAt = c.lastInteractionAt
-      ? c.lastInteractionAt instanceof Date
-        ? c.lastInteractionAt
-        : new Date(c.lastInteractionAt)
-      : null;
-    const dormant = isCometContact(lastAt);
-    return {
-      id: c.id,
-      fullName: c.fullName,
-      preferredName: c.preferredName ?? null,
-      company: c.company ?? null,
-      school: c.school ?? null,
-      title: c.title ?? null,
-      relationshipScore: c.relationshipScore ?? 2,
-      closeness: closeness?.closeness ?? 0,
-      closenessTier: closeness?.tier ?? ("outer" as const),
-      orbitScore: closeness?.orbitScore ?? 2,
-      lastInteractionAt: lastAt,
-      hasLoggedInteraction: closenessCohort.interactedIds.has(c.id),
-      nextFollowUpAt: c.nextFollowUpAt
-        ? c.nextFollowUpAt instanceof Date
-          ? c.nextFollowUpAt
-          : new Date(c.nextFollowUpAt)
-        : null,
-      tags: c.tags ?? [],
-      aiSummary: c.aiSummary ?? null,
-      keyFacts: c.keyFacts ?? null,
-      howMet: c.howMet ?? null,
-      metContext: c.metContext ?? null,
-      dateMet: c.dateMet ?? null,
-      notes: null as string | null,
-      sharedInterests: c.sharedInterests ?? null,
-      email: c.email ?? null,
-      phone: c.phone ?? null,
-      linkedinUrl: c.linkedinUrl ?? null,
-      website: c.website ?? null,
-      profileImageUrl: c.profileImageUrl,
-      dormant,
-      // Same rule and the same shared predicate as `loadGraphData` — this payload path is a
-      // parallel implementation, so the decision has to come from one place or the two
-      // surfaces will quietly disagree about who is on the chart.
-      substantive: constellationEligibility(
-        closenessCohort.constellationSignals.get(c.id),
-        {
-          pin: c.constellationPin ?? null,
-          hasNotesText: Boolean(c.hasNotes),
-          statedCloseness: c.statedCloseness ?? null,
-          priorityLevel: c.priorityLevel ?? 0,
-          nextFollowUpAt: c.nextFollowUpAt ?? null,
-          tagCount: (c.tags ?? []).length,
-        },
-        constellationConfig.thresholds
-      ).eligible,
-    };
-  });
-
-  const userName = (await options?.userName) || "You";
+  const orbitScoreOf = (c: { id: string; relationshipScore: number | null }) =>
+    closenessCohort.byId.get(c.id)?.orbitScore ?? 2;
 
   // The preview mirrors /graph: engaged-only by default. It has no "show all" of its own —
   // the link into /graph is where that lives — so this is always the engaged scope.
-  const previewEligibleCount = graphContacts.filter((c) => c.substantive).length;
   const previewFilterActive = constellationConfig.enabled;
-  const previewVisible = previewFilterActive
-    ? graphContacts.filter((c) => c.substantive)
-    : graphContacts;
+  const previewEligibleCount = eligibleIds.size;
+  const previewVisibleContacts = previewFilterActive
+    ? lightContacts.filter((c) => eligibleIds.has(c.id))
+    : lightContacts;
 
-  const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
-  const clusters = toNamedGraphClusters(builtClusters);
-
-  const companies = [
-    ...new Set(
-      graphContacts.map((c) => (c.company || "").trim()).filter(Boolean)
-    ),
-  ].sort((a, b) => a.localeCompare(b));
-
-  const schools = [
-    ...new Set(
-      graphContacts.map((c) => (c.school || "").trim()).filter(Boolean)
-    ),
-  ].sort((a, b) => a.localeCompare(b));
-
-  const tags = [
-    ...new Set(
-      allContactRows.flatMap((c) =>
-        c.contactTags.map((ct) => ct.tag.name)
-      )
-    ),
-  ];
-
-  const scoreCounts: Record<number, number> = {
-    1: 0,
-    2: 0,
-    3: 0,
-    4: 0,
-    5: 0,
-  };
-  let dormantCount = 0;
-  let overdueCount = 0;
-  for (const c of graphContacts) {
-    const s = Math.min(5, Math.max(1, (c.orbitScore ?? c.relationshipScore) || 2));
-    scoreCounts[s] = (scoreCounts[s] || 0) + 1;
-    if (c.dormant) dormantCount += 1;
-    if (c.nextFollowUpAt && c.nextFollowUpAt.getTime() < Date.now()) {
-      overdueCount += 1;
-    }
-  }
-
-  const goalAlignedContacts = [...contactsWithNetwork]
-    .filter((c) => c.goalRelevance > 0)
-    .sort((a, b) => b.goalRelevance - a.goalRelevance)
-    .slice(0, 5);
-
-  const contactNameById = new Map(
-    allContactRows.map((c) => [c.id, c.preferredName || c.fullName])
-  );
+  // Filter FIRST, then cap. Capping first would spend the budget on contacts that are about
+  // to be hidden and render far fewer than the cap allows.
+  const previewIds = (
+    previewVisibleContacts.length > GRAPH_PREVIEW_CONTACT_CAP
+      ? [...previewVisibleContacts]
+          .sort((a, b) => orbitScoreOf(b) - orbitScoreOf(a))
+          .slice(0, GRAPH_PREVIEW_CONTACT_CAP)
+      : previewVisibleContacts
+  ).map((c) => c.id);
 
   const now = new Date();
   const dueFollowUpIds = new Set(
-    allContactRows
+    lightContacts
       .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
       .map((c) => c.id)
   );
 
   const tierRank = { inner: 0, mid: 1, outer: 2 } as const;
-
-  const dueFollowUps = allContactRows
+  const dueFollowUpOrder = lightContacts
     .filter((c) => dueFollowUpIds.has(c.id))
     .sort((a, b) => {
-      const aTime = a.nextFollowUpAt
-        ? new Date(a.nextFollowUpAt).getTime()
-        : 0;
-      const bTime = b.nextFollowUpAt
-        ? new Date(b.nextFollowUpAt).getTime()
-        : 0;
+      const aTime = a.nextFollowUpAt ? new Date(a.nextFollowUpAt).getTime() : 0;
+      const bTime = b.nextFollowUpAt ? new Date(b.nextFollowUpAt).getTime() : 0;
       if (aTime !== bTime) return aTime - bTime;
-      const aTier = closenessById.get(a.id)?.tier ?? "outer";
-      const bTier = closenessById.get(b.id)?.tier ?? "outer";
+      const aTier = closenessCohort.byId.get(a.id)?.tier ?? "outer";
+      const bTier = closenessCohort.byId.get(b.id)?.tier ?? "outer";
       const tierDiff = tierRank[aTier] - tierRank[bTier];
       if (tierDiff !== 0) return tierDiff;
-      return (b.priorityLevel || 0) - (a.priorityLevel || 0);
+      const priorityDiff = (b.priorityLevel || 0) - (a.priorityLevel || 0);
+      if (priorityDiff !== 0) return priorityDiff;
+      // Without a final tiebreaker two contacts due the same day, in the same tier, at the
+      // same priority order arbitrarily, and the list this is sliced to twelve from
+      // reshuffles on every load.
+      return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
     });
+  const dueFollowUpTopIds = dueFollowUpOrder.slice(0, DUE_FOLLOW_UP_CAP).map((c) => c.id);
 
+  // The reminder and suggestion lists are filtered and capped HERE, before hydration, so
+  // that the contacts hydrated are exactly the contacts rendered. Filtering afterwards
+  // would hydrate the first twenty pending reminders and then render a different twenty,
+  // leaving the card unable to name its own subjects.
   const filteredReminders = pendingReminders.filter((r) => {
     if (r.reminderType !== "generated") return true;
     if (!r.contactId) return true;
     return !dueFollowUpIds.has(r.contactId);
   });
 
-  const contactById = new Map(allContactRows.map((c) => [c.id, c]));
-
   // Belt and braces against a cross-instance rebuild race writing the same suggestion
   // twice (see refreshOutreachSuggestions): one row per contact and type, whatever the
   // table holds. Also repairs rows a previous race already wrote, with no migration.
   const seenSuggestionKeys = new Set<string>();
-
   const filteredSuggestions = suggestions.filter((s) => {
     const contactId = s.relatedContactIds?.[0];
     const key = `${s.suggestionType}:${contactId ?? s.id}`;
@@ -702,38 +783,226 @@ export async function getDashboardData(
     // its suggestions. Left in, the card renders a row headed "Contact" with a real-looking
     // "gone quiet 105 days ago" under it — a ghost of someone the user removed. The
     // rebuild clears them on its own TTL; this stops them being shown in the meantime.
-    if (!contactById.has(contactId)) return false;
+    //
+    // Tested against the light scan's ids, which is every contact in the account. It used
+    // to test `contactById`, which was the same set only because that map held everyone;
+    // now that it holds the rendered contacts, using it here would drop every suggestion
+    // whose subject is not already on screen.
+    if (!allContactIds.has(contactId)) return false;
     return !dueFollowUpIds.has(contactId);
   });
+
+  // Bounded: at most REMINDER_CAP + SUGGESTION_CAP contacts, and exactly the ones the two
+  // cards will name through `contactMeta`.
+  const referencedIds = [
+    ...filteredReminders.slice(0, REMINDER_CAP).map((r) => r.contactId),
+    ...filteredSuggestions.slice(0, SUGGESTION_CAP).map((s) => s.relatedContactIds?.[0]),
+  ].filter((id): id is string => Boolean(id));
+
+  // ONE hydration for every bounded set that needs a renderable contact.
+  const [detail, recentContacts] = await Promise.all([
+    hydrateContactDetail(userId, [
+      ...metricsSampleIds,
+      ...previewIds,
+      ...dueFollowUpTopIds,
+      ...goalAlignedIds.map((g) => g.id),
+      ...referencedIds,
+    ]),
+    loadRecentContacts(userId),
+  ]);
+
+  const networkMetrics = computeNetworkMetrics(
+    metricsSampleIds.flatMap((id) => {
+      const d = detail.get(id);
+      const light = lightById.get(id);
+      if (!d || !light) return [];
+      return [{
+        id,
+        fullName: d.fullName,
+        preferredName: d.preferredName,
+        company: light.company ?? null,
+        school: light.school ?? null,
+        title: d.title,
+        relationshipScore: light.relationshipScore ?? 2,
+        lastInteractionAt: d.lastInteractionAt,
+        nextFollowUpAt: null,
+        tags: d.tags,
+        notes: null,
+        aiSummary: d.aiSummary,
+        keyFacts: d.keyFacts,
+        howMet: d.howMet,
+        sharedInterests: d.sharedInterests,
+      }];
+    }),
+    closenessCohort.byId,
+    counts.totalContacts
+  );
+
+  // The cohort IS the closeness map. It used to be rebuilt as a joined copy of every
+  // contact (`contactsWithNetwork`) so that consumers could read `.tier` off it; they can
+  // read it here, from the map the cohort already returned.
+  const closenessById = closenessCohort.byId;
+
+  /** The full graph-contact shape, built only for the contacts the preview draws. */
+  const graphContacts = previewIds.flatMap((id) => {
+    const d = detail.get(id);
+    const light = lightById.get(id);
+    if (!d || !light) return [];
+    const closeness = closenessById.get(id);
+    const lastAt = d.lastInteractionAt ?? null;
+    return [{
+      id,
+      fullName: d.fullName,
+      preferredName: d.preferredName,
+      company: light.company ?? null,
+      school: light.school ?? null,
+      title: d.title,
+      relationshipScore: light.relationshipScore ?? 2,
+      closeness: closeness?.closeness ?? 0,
+      closenessTier: closeness?.tier ?? ("outer" as const),
+      orbitScore: closeness?.orbitScore ?? 2,
+      lastInteractionAt: lastAt,
+      hasLoggedInteraction: closenessCohort.interactedIds.has(id),
+      nextFollowUpAt: light.nextFollowUpAt ?? null,
+      tags: d.tags,
+      aiSummary: d.aiSummary,
+      keyFacts: d.keyFacts,
+      howMet: d.howMet,
+      metContext: d.metContext,
+      dateMet: d.dateMet,
+      notes: null as string | null,
+      sharedInterests: d.sharedInterests,
+      email: d.email,
+      phone: d.phone,
+      linkedinUrl: d.linkedinUrl,
+      website: d.website,
+      profileImageUrl: d.profileImageUrl,
+      dormant: isCometContact(lastAt),
+      substantive: eligibleIds.has(id),
+    }];
+  });
+
+  const userName = (await options?.userName) || "You";
+
+  // Clusters still see the whole network — a cluster's count is "how many people at Acme",
+  // which a capped sample cannot answer — but they only ever needed three columns, and the
+  // light scan has them.
+  const { clusters: builtClusters } = buildConstellationClusters(lightContacts);
+  const clusters = toNamedGraphClusters(builtClusters);
+
+  // companies, schools and tags come from `getDashboardVocabularies`, not from a pass over
+  // the scan. That is what lets the `contact_tags` join come off it: eligibility needs a tag
+  // COUNT, which is a scalar subquery, where the vocabulary needed the tag NAMES.
+  const { companies, schools, tags } = vocabularies;
+
+  const scoreCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  // The histogram stays in JavaScript on purpose. `orbitScore` here is the cohort's, not the
+  // `orbit_score` column — those agree for a scored contact and diverge for an unscored one
+  // — and the cohort is already in memory, so counting it costs nothing while asking
+  // Postgres would cost a round trip AND answer a subtly different question. The note in
+  // dashboard-aggregates.ts records this in full.
+  for (const c of lightContacts) {
+    const s = Math.min(5, Math.max(1, orbitScoreOf(c) || 2));
+    scoreCounts[s] = (scoreCounts[s] || 0) + 1;
+  }
+  // Both from SQL: `dormantCount` is why `last_interaction_at` — the widest column on the
+  // row — no longer has to be selected for every contact.
+  const dormantCount = counts.dormantCount;
+  const overdueCount = counts.overdueCount;
+
+  // Ranked and capped by Postgres (`getGoalAlignedContactIds`), then joined to the rows the
+  // card renders. Goal relevance is a stored component of the closeness breakdown, so this
+  // is an ordered read of a column — never a pass over every contact's summary and facts.
+  const goalAlignedContacts = goalAlignedIds.flatMap(({ id, goalRelevance }) => {
+    const d = detail.get(id);
+    const light = lightById.get(id);
+    if (!d || !light) return [];
+    return [{
+      id,
+      fullName: d.fullName,
+      preferredName: d.preferredName,
+      company: light.company ?? null,
+      title: d.title,
+      goalRelevance,
+    }];
+  });
+
+  const dueFollowUps = dueFollowUpTopIds.flatMap((id) => {
+    const d = detail.get(id);
+    const light = lightById.get(id);
+    if (!d || !light) return [];
+    return [{
+      id,
+      fullName: d.fullName,
+      preferredName: d.preferredName,
+      company: light.company ?? null,
+      school: light.school ?? null,
+      title: d.title,
+      email: d.email,
+      linkedinUrl: d.linkedinUrl,
+      profileImageUrl: d.profileImageUrl,
+      relationshipScore: light.relationshipScore ?? 2,
+      priorityLevel: light.priorityLevel ?? 0,
+      nextFollowUpAt: light.nextFollowUpAt ?? null,
+      lastInteractionAt: d.lastInteractionAt,
+      tags: d.tags,
+    }];
+  });
+
+  // Only the contacts something on this page can name: the two cards' rows, the reminder
+  // and suggestion subjects, and the preview. It used to be one entry per contact in the
+  // account, to serve at most sixty lookups.
+  const contactById = new Map<string, {
+    id: string;
+    fullName: string;
+    preferredName: string | null;
+    title: string | null;
+    company: string | null;
+  }>();
+  const contactNameById = new Map<string, string>();
+  for (const [id, d] of detail) {
+    contactById.set(id, {
+      id,
+      fullName: d.fullName,
+      preferredName: d.preferredName,
+      title: d.title,
+      company: lightById.get(id)?.company ?? null,
+    });
+    contactNameById.set(id, d.preferredName || d.fullName);
+  }
+  for (const c of recentContacts) {
+    contactById.set(c.id, {
+      id: c.id,
+      fullName: c.fullName,
+      preferredName: c.preferredName ?? null,
+      title: c.title ?? null,
+      company: c.company ?? null,
+    });
+    contactNameById.set(c.id, c.preferredName || c.fullName);
+  }
 
   const strongTies =
     networkMetrics.tierCounts.inner + networkMetrics.tierCounts.mid;
 
-  // Filter FIRST, then cap. Capping first would spend the budget on contacts that are about
-  // to be hidden and render far fewer than the cap allows.
-  const graphPreviewContacts =
-    previewVisible.length > GRAPH_PREVIEW_CONTACT_CAP
-      ? [...previewVisible]
-          .sort(
-            (a, b) =>
-              (b.orbitScore ?? b.relationshipScore ?? 0) -
-              (a.orbitScore ?? a.relationshipScore ?? 0)
-          )
-          .slice(0, GRAPH_PREVIEW_CONTACT_CAP)
-      : previewVisible;
+  // Already chosen (`previewIds`), already hydrated, already built: `graphContacts` IS the
+  // preview. It used to be the whole network, built in full and then thrown away down to
+  // this cap.
+  const graphPreviewContacts = graphContacts;
 
   return {
     stats: {
-      totalContacts: allContactRows.length,
-      dueFollowUps: dueFollowUps.length,
+      totalContacts: counts.totalContacts,
+      // The count of everyone due, not the length of the capped list below — the stat and
+      // the card answer different questions and the card only ever showed twelve.
+      dueFollowUps: counts.dueFollowUpCount,
       strongConnections: strongTies,
       pendingReminders: filteredReminders.length,
       topCompany: null as { name: string; count: number } | null,
     },
-    recentContacts: allContactRows.slice(0, 6),
-    dueFollowUps: dueFollowUps.slice(0, 12),
-    reminders: filteredReminders.slice(0, 20),
-    suggestions: filteredSuggestions.slice(0, 40),
+    recentContacts,
+    dueFollowUps,
+    reminders: filteredReminders.slice(0, REMINDER_CAP),
+    suggestions: filteredSuggestions.slice(0, SUGGESTION_CAP),
     totalSuggestions: filteredSuggestions.length,
     goals,
     networkMetrics,
@@ -750,7 +1019,7 @@ export async function getDashboardData(
       clusters,
       userId,
       summary: {
-        total: allContactRows.length,
+        total: counts.totalContacts,
         companyCount: companies.length,
         scoreCounts,
         // Absolute-tier count, matching /graph — see the note there on why the
@@ -767,7 +1036,9 @@ export async function getDashboardData(
           scope: "engaged" as const,
           shown: graphPreviewContacts.length,
           engaged: previewEligibleCount,
-          available: graphContacts.length,
+          // The whole network, not the preview: this is what "show all" would reveal, and
+          // `graphContacts` is now the capped preview rather than everyone.
+          available: counts.totalContacts,
         },
         userName,
         userImageUrl: null,
