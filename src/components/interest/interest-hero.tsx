@@ -44,7 +44,8 @@ type Phase = "form" | "turning" | "ticket";
  *
  * The flip: the card face rotates to 90° with the form on it (`turning`), the content
  * swaps, and a fresh face keyed on the ticket enters from −90°. Height follows via
- * `layout`. Reduced motion skips straight to the ticket.
+ * `layout`. Reduced motion skips straight to the ticket, and a timeout finishes the turn
+ * if `onAnimationComplete` never fires.
  *
  * `history.replaceState` runs only once the action has resolved and the ticket is in
  * state — a `replaceState` while a server action is queued drops the action (see the
@@ -87,6 +88,16 @@ export function InterestHero({
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // Escape hatch for the flip's first half. `onAnimationComplete` is the primary path, but
+  // it never fires while the tab is hidden (rAF is starved there), and the join would be
+  // stranded on a card turned edge-on. The flip's own half is DUR.slow; 800 ms is past it
+  // on any machine, so this only ever fires when the callback did not.
+  useEffect(() => {
+    if (phase !== "turning") return;
+    const id = window.setTimeout(() => setPhase("ticket"), 800);
+    return () => window.clearTimeout(id);
+  }, [phase]);
 
   // Once the ticket is up after a join: make the URL its page, and hand focus to its
   // heading after the assembly so the browser's focus scroll does not fight the motion.

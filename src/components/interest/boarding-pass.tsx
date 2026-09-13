@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
 import { Moons } from "@/components/interest/moons";
@@ -32,6 +33,11 @@ function joinedLabel(iso: string) {
  * (seam draws, number rolls, planet springs in, moons drop, lines rise). `"direct"` is a
  * `?me=` visit: the ticket is fully in the HTML and only the number roll and the moon
  * drop play, once. Reduced motion: everything is simply there.
+ *
+ * The moons wait for mount before they may hide themselves. `Moons` renders its hidden
+ * `initial` styles whenever `play` is true, and on a `?me=` visit that markup is server
+ * HTML — so passing `play` on the first render would strip the moons off a JS-less page
+ * and leave them stripped. Mounted-only `play` puts them in the HTML and replays the drop.
  */
 export function BoardingPass({
   ticket,
@@ -48,6 +54,10 @@ export function BoardingPass({
 }) {
   const reduced = usePrefersReducedMotion();
   const full = entrance === "flip" && !reduced;
+  // Same mount-detection shape as the rest of the repo: false on the server and on the
+  // first client render, true from the first effect on.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const rise = (delay: number) =>
     full
@@ -65,7 +75,7 @@ export function BoardingPass({
           animate={{ scale: 1, opacity: 1 }}
           transition={full ? { ...SPRING_SOFT, delay: 0.55 } : { duration: 0 }}
         >
-          <Moons count={ticket.moons} play={!reduced} size={RING_SIZE} />
+          <Moons count={ticket.moons} play={mounted && !reduced} size={RING_SIZE} />
           <PlanetArt planet={ticket.planet} size={PLANET_SIZE} />
         </motion.span>
         <p className="mt-3 font-[family-name:var(--font-display)] text-[28px] leading-none tracking-tight text-[#e8f3f1]">

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
+import { animate, motion, useMotionValue, useTransform } from "motion/react";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { formatTicketNumber } from "@/lib/interest-list";
 import type { InterestProof } from "@/lib/interest-list-ticket";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { planetLabel } from "@/lib/welcome-planets";
 
 /**
@@ -43,7 +44,7 @@ export function ProofLine({ proof, showCount }: { proof: InterestProof; showCoun
 
 /** Rolls from `value − 40` to `value` after mount; instant under reduced motion. */
 export function RollingCount({ value, delay = 0 }: { value: number; delay?: number }) {
-  const reduced = useReducedMotion();
+  const reduced = usePrefersReducedMotion();
   const mv = useMotionValue(value);
   const text = useTransform(mv, (v) => formatTicketNumber(Math.round(v)));
   const [mounted, setMounted] = useState(false);

@@ -35,12 +35,23 @@ export function ShareRow({ ticket, appUrl, play }: { ticket: InterestTicket; app
   }, []);
 
   async function copy() {
+    // "Copied" has to be true. The clipboard API throws where it is denied, and the
+    // `execCommand` fallback answers false rather than throwing — so both are checked, and
+    // when neither worked the label stays "Copy". The field's text is selected either way,
+    // which leaves the manual copy one keystroke off.
+    let ok = false;
     try {
       await navigator.clipboard.writeText(url);
+      ok = true;
     } catch {
       inputRef.current?.select();
-      document.execCommand("copy");
+      try {
+        ok = document.execCommand("copy");
+      } catch {
+        ok = false;
+      }
     }
+    if (!ok) return;
     setCopied(true);
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setCopied(false), 1600);

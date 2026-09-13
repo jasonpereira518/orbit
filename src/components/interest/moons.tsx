@@ -12,6 +12,10 @@ import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
  * Up to `MOONS_DRAWN_MAX`; the count line carries the rest. When `play` is true each moon
  * drops in with a 90 ms stagger, then the whole ring drifts on a CSS rotation. The ring
  * is sized to sit just outside the planet: `size` is the ring's diameter.
+ *
+ * `play` already folds in the caller's reduced-motion answer AND whether it has mounted,
+ * so the hidden `initial` styles never reach the server HTML: a `?me=` visit shows the
+ * moons even with JS off, and they replay the drop once after hydration.
  */
 export function Moons({ count, play, size }: { count: number; play: boolean; size: number }) {
   const reduced = usePrefersReducedMotion();
@@ -36,7 +40,7 @@ export function Moons({ count, play, size }: { count: number; play: boolean; siz
             key={i}
             className="absolute size-[7px] rounded-full bg-[#e8f3f1] shadow-[0_0_8px_rgba(232,243,241,0.85)]"
             style={{ left: x - 3.5, top: y - 3.5 }}
-            initial={play && !reduced ? { scale: 0, opacity: 0 } : false}
+            initial={play ? { scale: 0, opacity: 0 } : false}
             animate={{ scale: 1, opacity: 1 }}
             transition={
               reduced
