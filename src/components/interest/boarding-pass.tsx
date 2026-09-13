@@ -71,14 +71,17 @@ export function BoardingPass({
         <p className="mt-1.5 text-xs uppercase tracking-[0.14em] text-[#9aada8]">{planetLabel(ticket.planet)}</p>
       </div>
 
-      {/* Seam: a plain dashed line, drawn by clipping its container (not `pathLength`,
-          which overwrites `stroke-dasharray` every frame and renders the seam solid).
-          Horizontal on phones, vertical from sm. */}
+      {/* Seam: a plain dashed line, drawn with a scale transform (not `pathLength`, which
+          overwrites `stroke-dasharray` every frame and renders the seam solid; and not a
+          width/height animation, which fights a `sm:` `w-px`/`h-[calc(...)]` layout size
+          set in the same className). A transform never touches layout, so the box keeps
+          its final size throughout — only the dashes stretch slightly as they draw, and
+          settle exact at scale 1. Horizontal on phones, vertical from sm. */}
       <motion.div
         aria-hidden="true"
-        className="h-px w-full overflow-hidden sm:hidden"
-        initial={full ? { width: "0%" } : false}
-        animate={{ width: "100%" }}
+        className="h-px w-full origin-left sm:hidden"
+        initial={full ? { scaleX: 0 } : false}
+        animate={{ scaleX: 1 }}
         transition={full ? { duration: DUR.slow, ease: EASE_HOUSE, delay: 0.1 } : { duration: 0 }}
       >
         <svg className="h-px w-full" viewBox="0 0 100 1" preserveAspectRatio="none">
@@ -90,9 +93,9 @@ export function BoardingPass({
       <div className="relative px-5 pb-5 pt-5 sm:pl-6">
         <motion.div
           aria-hidden="true"
-          className="absolute left-0 top-4 hidden h-[calc(100%-2rem)] w-px overflow-hidden sm:block"
-          initial={full ? { height: "0%" } : false}
-          animate={{ height: "100%" }}
+          className="absolute left-0 top-4 hidden h-[calc(100%-2rem)] w-px origin-top sm:block"
+          initial={full ? { scaleY: 0 } : false}
+          animate={{ scaleY: 1 }}
           transition={full ? { duration: DUR.slow, ease: EASE_HOUSE, delay: 0.1 } : { duration: 0 }}
         >
           <svg className="h-full w-px" viewBox="0 0 1 100" preserveAspectRatio="none">

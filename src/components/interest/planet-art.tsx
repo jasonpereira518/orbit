@@ -31,7 +31,7 @@ export function PlanetArt({
       style={{ width: size, height: size, ["--planet-glow" as string]: PLANET_GLOW[planet] }}
       aria-hidden="true"
     >
-      <picture style={ringed ? { transform: `scale(${ART_RING_SCALE})`, transformOrigin: "50% 50%" } : undefined}>
+      <picture>
         <source type="image/avif" srcSet={`/landing/planets/${planet}.avif`} />
         <source type="image/webp" srcSet={`/landing/planets/${planet}.webp`} />
         <img
@@ -41,6 +41,7 @@ export function PlanetArt({
           width={size}
           height={size}
           draggable={false}
+          style={ringed ? { transform: `scale(${ART_RING_SCALE})`, transformOrigin: "50% 50%" } : undefined}
         />
       </picture>
       <span className="hero-planet-atmosphere" />
