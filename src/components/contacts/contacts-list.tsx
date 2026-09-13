@@ -720,14 +720,20 @@ function AlphabetScrubber({
   useEffect(() => {
     const root = document.documentElement;
     /**
-     * The rail occupies 2.125rem of the right edge — `right-1.5` (0.375rem) plus its own
-     * `w-7` (1.75rem). The content column already carries 1rem of base padding, so the
-     * gutter only has to make up the difference plus a little air: 1 + 1.625 = 2.625rem
-     * total, which stops the content 0.5rem clear of the rail. Publishing the full
-     * 2.625rem here instead would double-count the padding and squeeze the header hard
-     * enough to change how its buttons wrap.
+     * The gutter only makes up what the content column's own padding doesn't cover,
+     * plus a little air — publishing the rail's full footprint would double-count the
+     * padding and squeeze the header hard enough to change how its buttons wrap.
+     *
+     *  - Below `md` the rail is thinner: `right-1.5` (0.375rem) + `w-7` (1.75rem) =
+     *    2.125rem. The column carries 1rem of padding, so 1.625rem stops the content
+     *    0.5rem clear.
+     *  - From `md` it is the desktop rail: `right-4` (1rem) + `w-9` (2.25rem) = 3.25rem,
+     *    against 2.5rem of padding, so 2.25rem leaves 1.5rem of air.
+     *
+     * An inline style can't vary by breakpoint, so this publishes a reference and
+     * globals.css (`--content-rail-gutter-size`) holds the per-breakpoint values.
      */
-    root.style.setProperty("--content-rail-gutter", "1.625rem");
+    root.style.setProperty("--content-rail-gutter", "var(--content-rail-gutter-size)");
     return () => {
       root.style.removeProperty("--content-rail-gutter");
     };
@@ -775,7 +781,7 @@ function AlphabetScrubber({
   return createPortal(
     <div
       className={cn(
-        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 sm:right-3",
+        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-4",
         // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
         // viewport it rose into the header and covered the notification bell, and its
         // 27 letters had about 6pt each between the header and the nav. The gutter it
@@ -790,6 +796,9 @@ function AlphabetScrubber({
         aria-label="Jump to letter"
         className={cn(
           "pointer-events-auto relative flex h-[min(70vh,32rem)] w-7 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
+          // Thinner on phones, where every pixel of width is the list's; the desktop rail
+          // keeps its original size and card shape.
+          "md:w-9 md:rounded-2xl md:py-2.5 md:shadow-md",
           "touch-none ring-1 ring-foreground/5"
         )}
         onPointerDown={onPointerDown}

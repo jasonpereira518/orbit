@@ -2378,6 +2378,20 @@ html[data-celebration-handoff] [data-app-logo] {
   );
 }
 
+/* How much room the contacts A-Z rail reserves beside the content column. The rail
+ * is thinner below `md` (28px on phones) than on desktop (36px), so the gutter follows
+ * it: the rail publishes `var(--content-rail-gutter-size)` rather than a number, and
+ * this picks the size per breakpoint. Each value stops the content 0.5rem (phone) /
+ * 1.5rem (desktop) clear of the rail; the arithmetic is in contacts-list.tsx. */
+:root {
+  --content-rail-gutter-size: 1.625rem;
+}
+@media (min-width: 48rem) {
+  :root {
+    --content-rail-gutter-size: 2.25rem;
+  }
+}
+
 /* The contacts A-Z rail hides itself on short viewports (a landscape phone), so the
  * page must stop reserving room for it at the same height. The rail publishes the
  * gutter as an inline style on the root element, which only an important declaration
