@@ -1241,6 +1241,19 @@ export type ImportStats = {
   recruitersFound?: number;
   /** Senders the classifier rejected or scored below the confidence floor. */
   sendersRejected?: number;
+  /**
+   * Window this job resolved at its first invocation, as an ISO string, plus whether it
+   * ignored the watermark. Frozen into the job rather than recomputed per invocation: a
+   * continuation that re-derived "24 months ago" would use a slightly different boundary
+   * than the pages already walked, leaving a seam of unread mail.
+   */
+  scanAfter?: string;
+  scanIsFull?: boolean;
+  /**
+   * Job start, used to advance the watermark on completion. Deliberately the start and not
+   * the finish — mail that arrived mid-scan was never in this job's result set.
+   */
+  scanStartedAt?: string;
 
   /** Wall-clock milliseconds across every invocation of this job. */
   durationMs?: number;
@@ -1870,6 +1883,39 @@ function syncStateColumns() {
     syncFailures: integer("sync_failures").notNull().default(0),
   };
 }
+
+/**
+ * Per-user watermark for the Gmail recruiter scan.
+ *
+ * Separate from `gmail_connections` on purpose: disconnecting and reconnecting Gmail must
+ * not silently reset the watermark and trigger a surprise full re-scan on the user's own
+ * API key. The connection is a credential; this is scan history.
+ */
+export const recruiterScanState = pgTable(
+  "recruiter_scan_state",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull().unique(),
+    /**
+     * Start of the next incremental window. Advanced only when a scan reaches `completed`,
+     * so a job that fails or is cancelled half-way re-reads its window rather than skipping
+     * the messages it never got to.
+     */
+    lastScanAt: timestamp("last_scan_at", { withTimezone: true }),
+    lastFullScanAt: timestamp("last_full_scan_at", { withTimezone: true }),
+    /**
+     * Classifier generation that produced the cached verdicts. Bumping
+     * `RECRUITER_PROMPT_VERSION` in code invalidates every cache entry — that is the
+     * mechanism behind the manual "re-scan everything" action.
+     */
+    promptVersion: integer("prompt_version").default(1).notNull(),
+    /** How far back a full scan reaches. User-adjustable; 24 months by default. */
+    windowMonths: integer("window_months").default(24).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("recruiter_scan_state_user_idx").on(t.userId)]
+);
 
 export const gmailConnections = pgTable(
   "gmail_connections",
@@ -3747,6 +3793,7 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type Recruiter = typeof recruiters.$inferSelect;
 export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
 export type RecruiterMessage = typeof recruiterMessages.$inferSelect;
+export type RecruiterScanState = typeof recruiterScanState.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;
@@ -3777,3 +3824,60 @@ export type DuplicateSuggestion = typeof duplicateSuggestions.$inferSelect;
 export type NewDuplicateSuggestion = typeof duplicateSuggestions.$inferInsert;
 export type PageView = typeof pageViews.$inferSelect;
 export type NewPageView = typeof pageViews.$inferInsert;
+
+/* ------------------------------------------------------------------------------------
+ * Provider status and upgrade celebrations
+ *
+ * Two standalone tables, no foreign keys. `admin_provider_snapshots` caches the last
+ * health check per provider so the admin surface reads a row instead of fanning out to
+ * four APIs on every render. `plan_upgrade_events` is the durable, once-only record that
+ * an account's plan moved upward — the celebration watcher's localStorage key cannot be
+ * that, because it is per-device and per-browser-profile.
+ * --------------------------------------------------------------------------------- */
+
+/**
+ * Durable, one-shot celebrations created only when the resolved plan moves upward.
+ *
+ * `event_key` makes provider retries idempotent. The partial pending index prevents two
+ * concurrent webhook deliveries from queuing duplicate celebrations for the same plan,
+ * while still allowing a later downgrade and re-upgrade after the first row is claimed.
+ */
+export const planUpgradeEvents = pgTable(
+  "plan_upgrade_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    plan: text("plan").$type<"orbit" | "lifetime">().notNull(),
+    source: text("source")
+      .$type<"subscription" | "lifetime" | "comp">()
+      .notNull(),
+    eventKey: text("event_key").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("plan_upgrade_events_claim_idx").on(t.userId, t.claimedAt, t.createdAt),
+    uniqueIndex("plan_upgrade_events_pending_uidx")
+      .on(t.userId, t.plan)
+      .where(sql`${t.claimedAt} is null`),
+  ]
+);
+
+/** Last safe summary from each external provider, used when a live check times out. */
+export const adminProviderSnapshots = pgTable(
+  "admin_provider_snapshots",
+  {
+    provider: text("provider").primaryKey(),
+    status: text("status")
+      .$type<"healthy" | "degraded" | "unavailable" | "unconfigured">()
+      .notNull(),
+    summary: jsonb("summary").$type<Record<string, string | number | boolean | null>>().default({}),
+    errorKind: text("error_kind"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [index("admin_provider_snapshots_expires_idx").on(t.expiresAt)]
+);
+
+export type PlanUpgradeEventRow = typeof planUpgradeEvents.$inferSelect;
+export type AdminProviderSnapshotRow = typeof adminProviderSnapshots.$inferSelect;

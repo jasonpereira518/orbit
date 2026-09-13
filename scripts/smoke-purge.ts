@@ -347,6 +347,10 @@ async function seed() {
     body: "prose the user wrote about a real person",
   });
 
+  // The recruiter scan's watermark, kept separate from `gmail_connections` on purpose but
+  // no less user data than anything else here.
+  await db.insert(schema.recruiterScanState).values({ userId: USER });
+
   // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
   // no foreign key to either contact (the losing contact's row is deleted by design), so
   // nothing cascades it — and `loser_snapshot` is a whole archived contact, every field of
@@ -470,6 +474,14 @@ async function seed() {
   // else, so it is easy to forget it is personal data at all — which is how it became the
   // fourth user-scoped table to ship unpurged (found the first time this suite ran on a
   // fresh database instead of one that happened to hold a leftover row).
+  // The account's own upgrade-celebration queue — deleted outright on purge.
+  await db.insert(schema.planUpgradeEvents).values({
+    userId: USER,
+    plan: "orbit",
+    source: "subscription",
+    eventKey: `${USER}-upgrade`,
+  });
+
   await db.insert(schema.extensionUsage).values({ userId: USER, requestCount: 3, aiCount: 1 });
 
   // The connector platform. `api_keys` is the one that would matter most if it survived a
