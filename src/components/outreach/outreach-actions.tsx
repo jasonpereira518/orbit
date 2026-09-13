@@ -60,9 +60,13 @@ export function OutreachActions({
         : body;
     navigator.clipboard.writeText(text);
     start(async () => {
-      await markMessageAction({ messageId, status: "copied" });
-      toast.success(TOAST_COPY.copied);
-      refresh();
+      try {
+        await markMessageAction({ messageId, status: "copied" });
+        toast.success(TOAST_COPY.copied);
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+      }
     });
   }
 
@@ -81,8 +85,12 @@ export function OutreachActions({
     }
 
     start(async () => {
-      await markMessageAction({ messageId, status: "opened" });
-      refresh();
+      try {
+        await markMessageAction({ messageId, status: "opened" });
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+      }
     });
   }
 
