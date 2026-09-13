@@ -25,7 +25,7 @@ export function pitchFor(width: number): number {
 export const DOT_SHARE = 0.22;
 
 /** How far from the pointer's path a dot still catches the trail, in CSS px. */
-export const TRAIL_RADIUS = 9;
+export const TRAIL_RADIUS = 13;
 /** A flare's nominal lifetime; each dot's own is scattered around it. */
 export const FLARE_MS = 1200;
 /** Rise time, so a flare swells in rather than popping on. */
@@ -75,10 +75,8 @@ export function buildGrid(
 
 /**
  * The dots within `radius` of the segment a→b, each with a strength that falls off from 1
- * on the path to 0 at the radius. The falloff is quadratic, so it holds near full strength
- * across the path and drops only near the edge: a crisp line rather than a soft smear.
- * Measured to the whole segment, not its ends, so a fast swipe that moves 200px between
- * two pointer events still lights everything it crossed.
+ * on the path to 0 at the radius. Measured to the whole segment, not its ends, so a fast
+ * swipe that moves 200px between two pointer events still lights everything it crossed.
  */
 export function dotsNearSegment(
   dots: readonly Dot[],
@@ -102,8 +100,8 @@ export function dotsNearSegment(
     const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((d.x - ax) * dx + (d.y - ay) * dy) / len2));
     const ex = d.x - (ax + t * dx);
     const ey = d.y - (ay + t * dy);
-    const dist2 = ex * ex + ey * ey;
-    if (dist2 < radius * radius) out.push([i, 1 - dist2 / (radius * radius)]);
+    const dist = Math.sqrt(ex * ex + ey * ey);
+    if (dist < radius) out.push([i, 1 - dist / radius]);
   }
   return out;
 }
