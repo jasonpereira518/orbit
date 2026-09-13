@@ -217,16 +217,19 @@ values: string[], priority: number }`. Required and preferred are structurally s
 | `email_source` | text null | `apollo` \| `user` \| `legacy` |
 | `possible_duplicate_of` | uuid null | name-only match; never auto-merged |
 | `duplicate_review` | text null | `pending` \| `merged` \| `distinct` |
+| `flags` | jsonb | `{ existingContactId?, previousCampaigns?, suppressed? }`, computed on insert |
 
 ### 5.3 New: discovery and research
 
-**`outreach_identities`** — `id, user_id, campaign_id, prospect_id, kind (linkedin|email|apollo),
+**`outreach_identities`** — `id, user_id, campaign_id, prospect_id, kind (linkedin_slug|email|apollo),
 value (normalized), created_at`.
 - `UNIQUE (campaign_id, kind, value)` — dedupe within a campaign is structural: a candidate
   whose identity already exists merges its evidence into that prospect.
 - `INDEX (user_id, kind, value)` — "Contacted in *other campaign*" and suppression lookups.
 - LinkedIn values use the existing normalizer in `src/lib/duplicates.ts` (which must stay
   byte-identical to `extension/src/inject/dom/url.ts`); emails are lower-cased and trimmed.
+- Normalized with `identityKeysFor` from `src/lib/duplicates.ts`, the same rule `contact_identities`
+  uses.
 
 **`outreach_evidence`** — `id, user_id, campaign_id, prospect_id, run_id null,
 kind (search_result|enrichment|web_page|user_note), provider (brave|apollo|user|demo),
@@ -236,7 +239,8 @@ url, title, snippet (≤1,000 chars), facts jsonb, observed_at, content_hash, cr
 a confirmed mismatch is a verdict that cites evidence.
 
 **`outreach_research_runs`** — `id, user_id, campaign_id, criteria_version, status
-(queued|running|completed|partial|failed|cancelled), funding_source (orbit|personal),
+(queued|running|completed|partial|failed|cancelled), phase
+(planning|searching|ranking|researching|finishing), funding_source (orbit|personal),
 query_budget, queries_used, research_budget, research_used, candidates_found, plan jsonb
 (the queries and per-query outcome), stats jsonb (per-provider calls, errors, costs),
 hold_id null, error, started_at, finished_at, created_at`.
@@ -255,16 +259,17 @@ selection (flag) and at claim time (block).
 
 **`research_credit_accounts`** (one row per user, PK `user_id`): `monthly_allowance,
 monthly_used, monthly_held, period_start, period_end, lifetime_remaining, lifetime_held,
-lifetime_granted_at, last_hold_monthly` (scratch column written by the reserve statement so
-`RETURNING` can report the split), `updated_at`.
+lifetime_granted_at, last_hold_monthly, last_hold_lifetime` (scratch columns written by the
+reserve statement so `RETURNING` can report the split), `updated_at`.
 
 **`research_credit_holds`**: `id, user_id, run_id null, amount_monthly, amount_lifetime,
-used_monthly, used_lifetime, period_start, status (active|settled|released), created_at,
-updated_at`.
+used_monthly, used_lifetime, period_start, status (active|settled|released),
+last_charge_bucket (monthly|lifetime null — scratch: which bucket the latest charge drew
+from), created_at, updated_at`.
 
 **`research_credit_ledger`** (append-only audit): `id, user_id, entry_type
-(grant|reserve|charge|release|expire|adjust), bucket (monthly|lifetime|adjustment),
-amount (signed), hold_id, run_id, attempt_id, period_start, idempotency_key, note,
+(grant|reserve|charge|release|expire|adjust), amount_monthly, amount_lifetime (signed),
+hold_id, run_id, attempt_id, period_start, idempotency_key, note,
 created_at`; `UNIQUE (user_id, idempotency_key)`.
 
 Mechanics in [§7.6](#76-credits).

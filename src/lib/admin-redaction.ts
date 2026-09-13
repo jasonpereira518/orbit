@@ -36,6 +36,8 @@ export const NEVER_REVEALABLE: readonly string[] = [
   "gmail_connections.refresh_token_encrypted",
   "outlook_connections.access_token_encrypted",
   "outlook_connections.refresh_token_encrypted",
+  "user_settings.brave_api_key_encrypted",
+  "outreach_runner_sessions.token_hash",
 ];
 
 const DENIED = new Set(NEVER_REVEALABLE);

@@ -1148,6 +1148,351 @@ CREATE INDEX IF NOT EXISTS page_views_route_created_idx ON page_views(route, cre
 CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, created_at);
 CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
 CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
+CREATE TABLE IF NOT EXISTS outreach_sender_accounts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  transport text NOT NULL,
+  address text NOT NULL,
+  display_name text,
+  signature text,
+  linkedin_note_limit integer,
+  status text NOT NULL DEFAULT 'active',
+  last_verified_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_sender_accounts_identity_uidx ON outreach_sender_accounts(user_id, kind, transport, address);
+CREATE TABLE IF NOT EXISTS outreach_identities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  prospect_id uuid NOT NULL REFERENCES outreach_prospects(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  value text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_identities_campaign_kind_value_uidx ON outreach_identities(campaign_id, kind, value);
+CREATE INDEX IF NOT EXISTS outreach_identities_user_kind_value_idx ON outreach_identities(user_id, kind, value);
+CREATE INDEX IF NOT EXISTS outreach_identities_prospect_idx ON outreach_identities(prospect_id);
+CREATE TABLE IF NOT EXISTS outreach_research_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  criteria_version integer NOT NULL,
+  status text NOT NULL DEFAULT 'queued',
+  phase text NOT NULL DEFAULT 'planning',
+  funding_source text NOT NULL,
+  query_budget integer NOT NULL DEFAULT 0,
+  queries_used integer NOT NULL DEFAULT 0,
+  research_budget integer NOT NULL DEFAULT 0,
+  research_used integer NOT NULL DEFAULT 0,
+  candidates_found integer NOT NULL DEFAULT 0,
+  plan jsonb NOT NULL DEFAULT '{"queries":[]}'::jsonb,
+  stats jsonb NOT NULL DEFAULT '{}'::jsonb,
+  hold_id uuid,
+  error text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS outreach_research_runs_campaign_idx ON outreach_research_runs(user_id, campaign_id, created_at);
+CREATE TABLE IF NOT EXISTS outreach_evidence (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  prospect_id uuid NOT NULL REFERENCES outreach_prospects(id) ON DELETE CASCADE,
+  run_id uuid REFERENCES outreach_research_runs(id) ON DELETE SET NULL,
+  kind text NOT NULL,
+  provider text NOT NULL,
+  url text,
+  title text,
+  snippet text,
+  facts jsonb NOT NULL DEFAULT '{}'::jsonb,
+  observed_at timestamptz NOT NULL DEFAULT now(),
+  content_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_evidence_prospect_hash_uidx ON outreach_evidence(prospect_id, content_hash);
+CREATE INDEX IF NOT EXISTS outreach_evidence_user_idx ON outreach_evidence(user_id);
+CREATE TABLE IF NOT EXISTS outreach_research_attempts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  prospect_id uuid NOT NULL REFERENCES outreach_prospects(id) ON DELETE CASCADE,
+  run_id uuid REFERENCES outreach_research_runs(id) ON DELETE SET NULL,
+  funding_source text NOT NULL,
+  status text NOT NULL DEFAULT 'queued',
+  credit_state text NOT NULL DEFAULT 'none',
+  hold_id uuid,
+  provider_calls jsonb NOT NULL DEFAULT '{}'::jsonb,
+  error text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS outreach_research_attempts_prospect_idx ON outreach_research_attempts(prospect_id);
+CREATE INDEX IF NOT EXISTS outreach_research_attempts_run_idx ON outreach_research_attempts(user_id, run_id);
+CREATE TABLE IF NOT EXISTS outreach_suppressions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  value text NOT NULL,
+  reason text NOT NULL,
+  source_conversation_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_suppressions_identity_uidx ON outreach_suppressions(user_id, kind, value);
+CREATE TABLE IF NOT EXISTS research_credit_accounts (
+  user_id text PRIMARY KEY,
+  monthly_allowance integer NOT NULL DEFAULT 0,
+  monthly_used integer NOT NULL DEFAULT 0,
+  monthly_held integer NOT NULL DEFAULT 0,
+  period_start timestamptz NOT NULL,
+  period_end timestamptz NOT NULL,
+  lifetime_remaining integer NOT NULL DEFAULT 0,
+  lifetime_held integer NOT NULL DEFAULT 0,
+  lifetime_granted_at timestamptz,
+  last_hold_monthly integer NOT NULL DEFAULT 0,
+  last_hold_lifetime integer NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS research_credit_holds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  run_id uuid,
+  amount_monthly integer NOT NULL DEFAULT 0,
+  amount_lifetime integer NOT NULL DEFAULT 0,
+  used_monthly integer NOT NULL DEFAULT 0,
+  used_lifetime integer NOT NULL DEFAULT 0,
+  period_start timestamptz,
+  status text NOT NULL DEFAULT 'active',
+  last_charge_bucket text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS research_credit_holds_user_idx ON research_credit_holds(user_id, status);
+CREATE TABLE IF NOT EXISTS research_credit_ledger (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  entry_type text NOT NULL,
+  amount_monthly integer NOT NULL DEFAULT 0,
+  amount_lifetime integer NOT NULL DEFAULT 0,
+  hold_id uuid,
+  run_id uuid,
+  attempt_id uuid,
+  period_start timestamptz,
+  idempotency_key text NOT NULL,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS research_credit_ledger_key_uidx ON research_credit_ledger(user_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS research_credit_ledger_user_idx ON research_credit_ledger(user_id, created_at);
+CREATE TABLE IF NOT EXISTS outreach_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status text NOT NULL DEFAULT 'queued',
+  priority integer NOT NULL DEFAULT 0,
+  run_after timestamptz NOT NULL DEFAULT now(),
+  lease_owner text,
+  lease_expires_at timestamptz,
+  attempts integer NOT NULL DEFAULT 0,
+  max_attempts integer NOT NULL DEFAULT 5,
+  progress jsonb NOT NULL DEFAULT '{}'::jsonb,
+  result jsonb,
+  last_error text,
+  idempotency_key text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_jobs_idempotency_uidx ON outreach_jobs(user_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS outreach_jobs_due_idx ON outreach_jobs(run_after) WHERE status IN ('queued', 'running');
+CREATE INDEX IF NOT EXISTS outreach_jobs_user_status_idx ON outreach_jobs(user_id, status);
+CREATE TABLE IF NOT EXISTS outreach_conversations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  prospect_id uuid NOT NULL REFERENCES outreach_prospects(id) ON DELETE CASCADE,
+  channel text NOT NULL,
+  sender_account_id uuid REFERENCES outreach_sender_accounts(id) ON DELETE SET NULL,
+  provider text NOT NULL,
+  provider_thread_id text,
+  linkedin_invite_state text,
+  invite_accepted_at timestamptz,
+  outcome text,
+  outcome_source text,
+  outcome_set_at timestamptz,
+  needs_attention boolean NOT NULL DEFAULT false,
+  last_inbound_at timestamptz,
+  last_outbound_at timestamptz,
+  last_human_reply_at timestamptz,
+  follow_up_due_at timestamptz,
+  follow_up_state text NOT NULL DEFAULT 'none',
+  follow_ups_suggested integer NOT NULL DEFAULT 0,
+  suppressed_reason text,
+  closed_at timestamptz,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_conversations_thread_uidx ON outreach_conversations(user_id, provider, provider_thread_id) WHERE provider_thread_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS outreach_conversations_campaign_idx ON outreach_conversations(campaign_id);
+CREATE INDEX IF NOT EXISTS outreach_conversations_attention_idx ON outreach_conversations(user_id, needs_attention);
+CREATE INDEX IF NOT EXISTS outreach_conversations_follow_up_idx ON outreach_conversations(follow_up_due_at) WHERE follow_up_due_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS outreach_drafts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  prospect_id uuid NOT NULL REFERENCES outreach_prospects(id) ON DELETE CASCADE,
+  conversation_id uuid REFERENCES outreach_conversations(id) ON DELETE SET NULL,
+  kind text NOT NULL,
+  step integer NOT NULL DEFAULT 0,
+  current_version_id uuid,
+  approved_version_id uuid,
+  state text NOT NULL DEFAULT 'editing',
+  blocked_reason text,
+  legacy_message_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS outreach_drafts_campaign_idx ON outreach_drafts(campaign_id, state);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_drafts_legacy_uidx ON outreach_drafts(legacy_message_id);
+CREATE TABLE IF NOT EXISTS outreach_draft_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  draft_id uuid NOT NULL REFERENCES outreach_drafts(id) ON DELETE CASCADE,
+  version integer NOT NULL,
+  channel text NOT NULL,
+  to_address text,
+  recipient_profile_url text,
+  from_address text NOT NULL,
+  from_name text,
+  subject text,
+  body text NOT NULL,
+  signature text,
+  rendered_text text NOT NULL,
+  char_count integer NOT NULL DEFAULT 0,
+  content_hash text NOT NULL,
+  created_by text NOT NULL DEFAULT 'ai',
+  generation_meta jsonb NOT NULL DEFAULT '{}'::jsonb,
+  approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_draft_versions_draft_version_uidx ON outreach_draft_versions(draft_id, version);
+CREATE TABLE IF NOT EXISTS outreach_send_batches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  sender_account_id uuid REFERENCES outreach_sender_accounts(id) ON DELETE SET NULL,
+  method text NOT NULL,
+  status text NOT NULL DEFAULT 'queued',
+  blocked_reason text,
+  total integer NOT NULL DEFAULT 0,
+  idempotency_key text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  started_at timestamptz,
+  paused_at timestamptz,
+  cancelled_at timestamptz,
+  finished_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_send_batches_idempotency_uidx ON outreach_send_batches(user_id, idempotency_key);
+CREATE TABLE IF NOT EXISTS outreach_runner_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  install_id text,
+  token_hash text NOT NULL,
+  token_expires_at timestamptz,
+  sites jsonb NOT NULL DEFAULT '[]'::jsonb,
+  accounts jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status text NOT NULL DEFAULT 'active',
+  last_heartbeat_at timestamptz,
+  last_tracking_check_at jsonb NOT NULL DEFAULT '{}'::jsonb,
+  started_at timestamptz NOT NULL DEFAULT now(),
+  stopped_at timestamptz,
+  stop_reason text
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_runner_sessions_token_uidx ON outreach_runner_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS outreach_runner_sessions_user_idx ON outreach_runner_sessions(user_id, status);
+CREATE TABLE IF NOT EXISTS outreach_send_attempts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  batch_id uuid REFERENCES outreach_send_batches(id) ON DELETE SET NULL,
+  draft_id uuid NOT NULL REFERENCES outreach_drafts(id) ON DELETE CASCADE,
+  draft_version_id uuid NOT NULL REFERENCES outreach_draft_versions(id) ON DELETE CASCADE,
+  content_hash text NOT NULL,
+  sender_account_id uuid REFERENCES outreach_sender_accounts(id) ON DELETE SET NULL,
+  method text NOT NULL,
+  state text NOT NULL DEFAULT 'pending',
+  run_after timestamptz NOT NULL DEFAULT now(),
+  lease_owner text,
+  lease_expires_at timestamptz,
+  runner_session_id uuid REFERENCES outreach_runner_sessions(id) ON DELETE SET NULL,
+  provider_draft_id text,
+  provider_message_id text,
+  provider_thread_id text,
+  rfc_message_id text,
+  error_code text,
+  error_detail text,
+  retryable boolean NOT NULL DEFAULT false,
+  checkpoint jsonb NOT NULL DEFAULT '{}'::jsonb,
+  claimed_at timestamptz,
+  submitted_at timestamptz,
+  accepted_at timestamptz,
+  confirmed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_send_attempts_live_draft_uidx ON outreach_send_attempts(draft_id) WHERE state IN ('pending', 'claimed', 'submitting', 'accepted', 'confirmed', 'needs_verification');
+CREATE INDEX IF NOT EXISTS outreach_send_attempts_due_idx ON outreach_send_attempts(user_id, state, run_after);
+CREATE TABLE IF NOT EXISTS outreach_conversation_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  conversation_id uuid NOT NULL REFERENCES outreach_conversations(id) ON DELETE CASCADE,
+  direction text NOT NULL,
+  kind text NOT NULL,
+  send_attempt_id uuid REFERENCES outreach_send_attempts(id) ON DELETE SET NULL,
+  provider_message_id text,
+  rfc_message_id text,
+  in_reply_to text,
+  references_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  from_address text,
+  to_addresses jsonb NOT NULL DEFAULT '[]'::jsonb,
+  subject text,
+  body_text text,
+  body_hash text,
+  occurred_at timestamptz NOT NULL,
+  observed_via text NOT NULL,
+  sent_outside_orbit boolean NOT NULL DEFAULT false,
+  match_confidence text NOT NULL DEFAULT 'exact',
+  dedupe_key text NOT NULL,
+  legacy_message_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_conversation_messages_dedupe_uidx ON outreach_conversation_messages(user_id, dedupe_key);
+CREATE INDEX IF NOT EXISTS outreach_conversation_messages_conversation_idx ON outreach_conversation_messages(conversation_id, occurred_at);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_conversation_messages_legacy_uidx ON outreach_conversation_messages(legacy_message_id);
+CREATE TABLE IF NOT EXISTS outreach_mail_sync_state (
+  sender_account_id uuid PRIMARY KEY REFERENCES outreach_sender_accounts(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  cursor jsonb NOT NULL DEFAULT '{}'::jsonb,
+  last_success_at timestamptz,
+  last_attempt_at timestamptz,
+  status text NOT NULL DEFAULT 'idle',
+  error text,
+  failures integer NOT NULL DEFAULT 0,
+  next_sync_at timestamptz,
+  lease_expires_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS outreach_mail_sync_state_user_idx ON outreach_mail_sync_state(user_id);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1303,7 +1648,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 50 = user_settings.desktop_notifications_enabled, so the desktop-notification preference
 // syncs across devices instead of living only in one browser's localStorage.
-export const SCHEMA_VERSION = 50;
+//
+// 53 = generation-2 Outreach: eighteen tables (senders, identities, evidence, research runs and
+// attempts, suppressions, the research-credit ledger, jobs, drafts and versions, send batches and
+// attempts, conversations and messages, mail sync state, runner sessions) plus new columns on
+// outreach_campaigns, outreach_prospects and user_settings. 51 and 52 are claimed by the
+// capture-page and interest-list branches. See docs/superpowers/specs/2026-09-13-outreach-campaigns-design.md.
+export const SCHEMA_VERSION = 53;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1816,6 +2167,50 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "jsonb DEFAULT '[]'"
   );
   await ensureColumn(client, "user_settings", "desktop_notifications_enabled", "boolean");
+  // v53 — generation-2 Outreach. Mirrors the `alters` block of the same version.
+  await ensureColumn(client, "outreach_campaigns", "generation", "integer NOT NULL DEFAULT 1");
+  await ensureColumn(client, "outreach_campaigns", "brief", "jsonb");
+  await ensureColumn(client, "outreach_campaigns", "channel", "text");
+  await ensureColumn(
+    client,
+    "outreach_campaigns",
+    "sender_account_id",
+    "uuid REFERENCES outreach_sender_accounts(id) ON DELETE SET NULL"
+  );
+  await ensureColumn(client, "outreach_campaigns", "sending_method", "text");
+  await ensureColumn(client, "outreach_campaigns", "sender_intro", "text");
+  await ensureColumn(client, "outreach_campaigns", "criteria", "jsonb");
+  await ensureColumn(client, "outreach_campaigns", "criteria_version", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "outreach_campaigns", "criteria_confirmed_at", "timestamptz");
+  await ensureColumn(client, "outreach_campaigns", "setup_step", "text");
+  await ensureColumn(client, "outreach_campaigns", "launched_at", "timestamptz");
+  await ensureColumn(client, "outreach_prospects", "user_id", "text");
+  await ensureColumn(client, "outreach_prospects", "origin", "text");
+  await ensureColumn(client, "outreach_prospects", "excluded_reason", "text");
+  await ensureColumn(client, "outreach_prospects", "headline", "text");
+  await ensureColumn(client, "outreach_prospects", "rank_score", "real");
+  await ensureColumn(client, "outreach_prospects", "rank_tier", "text");
+  await ensureColumn(client, "outreach_prospects", "rank_explanation", "jsonb");
+  await ensureColumn(client, "outreach_prospects", "ranked_criteria_version", "integer");
+  await ensureColumn(client, "outreach_prospects", "ranked_at", "timestamptz");
+  await ensureColumn(client, "outreach_prospects", "research_state", "text NOT NULL DEFAULT 'none'");
+  await ensureColumn(client, "outreach_prospects", "research_confidence", "text");
+  await ensureColumn(client, "outreach_prospects", "email_status", "text");
+  await ensureColumn(client, "outreach_prospects", "email_source", "text");
+  await ensureColumn(
+    client,
+    "outreach_prospects",
+    "possible_duplicate_of",
+    "uuid REFERENCES outreach_prospects(id) ON DELETE SET NULL"
+  );
+  await ensureColumn(client, "outreach_prospects", "duplicate_review", "text");
+  await ensureColumn(client, "outreach_prospects", "flags", "jsonb NOT NULL DEFAULT '{}'::jsonb");
+  await ensureColumn(client, "user_settings", "outreach_sender_intro", "text");
+  await ensureColumn(client, "user_settings", "brave_api_key_encrypted", "text");
+  await ensureColumn(client, "user_settings", "brave_key_verified_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "apollo_key_verified_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "outreach_funding_preference", "text");
+  await ensureColumn(client, "user_settings", "linkedin_risk_acknowledged_at", "timestamptz");
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
   await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
@@ -2546,6 +2941,44 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS event_companies_event_company_role_uidx ON event_companies(event_id, company_id, role)`,
   `CREATE INDEX IF NOT EXISTS event_companies_user_company_idx ON event_companies(user_id, company_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS target_companies_user_company_uidx ON target_companies(user_id, company_id)`,
+  // v53 — generation-2 Outreach (docs/superpowers/specs/2026-09-13-outreach-campaigns-design.md §5).
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS generation integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS brief jsonb`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS channel text`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sender_account_id uuid REFERENCES outreach_sender_accounts(id) ON DELETE SET NULL`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sending_method text`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sender_intro text`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS criteria jsonb`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS criteria_version integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS criteria_confirmed_at timestamptz`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS setup_step text`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS launched_at timestamptz`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS user_id text`,
+  // Legacy prospects scope through their campaign; give them the column every new query filters on.
+  `UPDATE outreach_prospects p SET user_id = c.user_id FROM outreach_campaigns c WHERE p.campaign_id = c.id AND p.user_id IS NULL`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS origin text`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS excluded_reason text`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS headline text`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS rank_score real`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS rank_tier text`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS rank_explanation jsonb`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS ranked_criteria_version integer`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS ranked_at timestamptz`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS research_state text NOT NULL DEFAULT 'none'`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS research_confidence text`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS email_status text`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS email_source text`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS possible_duplicate_of uuid REFERENCES outreach_prospects(id) ON DELETE SET NULL`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS duplicate_review text`,
+  `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS flags jsonb NOT NULL DEFAULT '{}'::jsonb`,
+  `CREATE INDEX IF NOT EXISTS outreach_prospects_user_campaign_idx ON outreach_prospects(user_id, campaign_id)`,
+  `CREATE INDEX IF NOT EXISTS outreach_prospects_rank_idx ON outreach_prospects(campaign_id, rank_score)`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS outreach_sender_intro text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS brave_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS brave_key_verified_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_key_verified_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS outreach_funding_preference text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_risk_acknowledged_at timestamptz`,
 ];
 
 /**

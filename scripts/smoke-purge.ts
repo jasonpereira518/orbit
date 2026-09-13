@@ -307,6 +307,89 @@ async function seed() {
 
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
 
+  // Generation-2 outreach: every one of these tables carries user_id, so each needs a row.
+  const [senderAccount] = await db
+    .insert(schema.outreachSenderAccounts)
+    .values({ userId: USER, kind: "gmail", transport: "api", address: "ada@analytical.io" })
+    .returning();
+  const [campaignV2] = await db
+    .insert(schema.outreachCampaigns)
+    .values({ userId: USER, name: "Campaign v2", generation: 2, senderAccountId: senderAccount.id })
+    .returning();
+  const [prospectV2] = await db
+    .insert(schema.outreachProspects)
+    .values({ userId: USER, campaignId: campaignV2.id, externalId: "li:ada", fullName: "Ada Lovelace" })
+    .returning();
+  await db.insert(schema.outreachIdentities).values({
+    userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, kind: "linkedin_slug", value: "ada",
+  });
+  const [runV2] = await db
+    .insert(schema.outreachResearchRuns)
+    .values({ userId: USER, campaignId: campaignV2.id, criteriaVersion: 1, fundingSource: "orbit" })
+    .returning();
+  await db.insert(schema.outreachEvidence).values({
+    userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, runId: runV2.id,
+    kind: "search_result", provider: "brave", contentHash: "h1", snippet: "Ada Lovelace — Analytical Engines",
+  });
+  await db.insert(schema.outreachResearchAttempts).values({
+    userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, runId: runV2.id, fundingSource: "orbit",
+  });
+  await db
+    .insert(schema.outreachSuppressions)
+    .values({ userId: USER, kind: "email", value: "ada@analytical.io", reason: "opted_out" });
+  await db.insert(schema.researchCreditAccounts).values({
+    userId: USER, periodStart: now, periodEnd: new Date(now.getTime() + 30 * 86_400_000),
+  });
+  const [creditHold] = await db
+    .insert(schema.researchCreditHolds)
+    .values({ userId: USER, runId: runV2.id })
+    .returning();
+  await db
+    .insert(schema.researchCreditLedger)
+    .values({ userId: USER, entryType: "reserve", holdId: creditHold.id, idempotencyKey: "smoke-purge" });
+  await db.insert(schema.outreachJobs).values({ userId: USER, campaignId: campaignV2.id, kind: "discovery.run" });
+  const [conversationV2] = await db
+    .insert(schema.outreachConversations)
+    .values({
+      userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, channel: "email",
+      provider: "gmail", providerThreadId: "thread-1",
+    })
+    .returning();
+  const [draftV2] = await db
+    .insert(schema.outreachDrafts)
+    .values({ userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, kind: "initial" })
+    .returning();
+  const [draftVersion] = await db
+    .insert(schema.outreachDraftVersions)
+    .values({
+      userId: USER, draftId: draftV2.id, version: 1, channel: "email", fromAddress: "me@example.test",
+      body: "prose the user approved", renderedText: "prose the user approved", contentHash: "c1",
+    })
+    .returning();
+  const [sendBatch] = await db
+    .insert(schema.outreachSendBatches)
+    .values({ userId: USER, campaignId: campaignV2.id, method: "gmail_api", idempotencyKey: "b1" })
+    .returning();
+  const [runnerSession] = await db
+    .insert(schema.outreachRunnerSessions)
+    .values({ userId: USER, tokenHash: "f".repeat(64) })
+    .returning();
+  const [sendAttempt] = await db
+    .insert(schema.outreachSendAttempts)
+    .values({
+      userId: USER, campaignId: campaignV2.id, batchId: sendBatch.id, draftId: draftV2.id,
+      draftVersionId: draftVersion.id, contentHash: "c1", method: "gmail_api", runnerSessionId: runnerSession.id,
+    })
+    .returning();
+  await db.insert(schema.outreachConversationMessages).values({
+    userId: USER, conversationId: conversationV2.id, direction: "inbound", kind: "message",
+    sendAttemptId: sendAttempt.id, bodyText: "a reply from a real person", occurredAt: now,
+    observedVia: "gmail", dedupeKey: "gmail:m1",
+  });
+  await db
+    .insert(schema.outreachMailSyncState)
+    .values({ senderAccountId: senderAccount.id, userId: USER, provider: "gmail" });
+
   await db.insert(schema.contactEmbeddings).values({
     userId: USER,
     contactId: contact.id,

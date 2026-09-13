@@ -37,10 +37,17 @@ import {
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
+  outreachJobs,
+  outreachRunnerSessions,
+  outreachSenderAccounts,
+  outreachSuppressions,
   pageViews,
   recruiterMessages,
   reminderLists,
   reminders,
+  researchCreditAccounts,
+  researchCreditHolds,
+  researchCreditLedger,
   suggestedReminders,
   tags,
   usageEvents,
@@ -318,6 +325,18 @@ export async function purgeUserData(
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 
+  // Generation-2 outreach. Deleting campaigns cascades their prospects, identities, evidence,
+  // research runs and attempts, drafts, versions, batches, send attempts, conversations and
+  // messages. These are the rows that hang off no campaign.
+  await db.delete(outreachJobs).where(eq(outreachJobs.userId, userId));
+  await db.delete(outreachSuppressions).where(eq(outreachSuppressions.userId, userId));
+  await db.delete(researchCreditLedger).where(eq(researchCreditLedger.userId, userId));
+  await db.delete(researchCreditHolds).where(eq(researchCreditHolds.userId, userId));
+  await db.delete(researchCreditAccounts).where(eq(researchCreditAccounts.userId, userId));
+  await db.delete(outreachRunnerSessions).where(eq(outreachRunnerSessions.userId, userId));
+  // Cascades outreach_mail_sync_state.
+  await db.delete(outreachSenderAccounts).where(eq(outreachSenderAccounts.userId, userId));
+
   // `contact_tags` has no `user_id` of its own, so it is deleted through its contacts. One
   // statement with a subquery, not a query for every contact followed by a delete for each —
   // that shape meant purging a 5,000-contact account took 5,001 round trips.
@@ -341,6 +360,9 @@ export async function purgeUserData(
           openaiApiKeyEncrypted: true,
           anthropicApiKeyEncrypted: true,
           apolloApiKeyEncrypted: true,
+          braveApiKeyEncrypted: true,
+          braveKeyVerifiedAt: true,
+          apolloKeyVerifiedAt: true,
           resendApiKeyEncrypted: true,
           twilioAccountSidEncrypted: true,
           twilioAuthTokenEncrypted: true,

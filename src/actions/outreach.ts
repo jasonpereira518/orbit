@@ -341,6 +341,7 @@ export async function searchProspects(campaignId: string, page = 1) {
     await db
       .insert(outreachProspects)
       .values({
+        userId,
         campaignId,
         externalId: prospect.externalId,
         fullName: prospect.fullName,
