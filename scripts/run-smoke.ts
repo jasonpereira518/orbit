@@ -178,6 +178,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-outreach-research": "pglite",
   "smoke-outreach-schema": "pglite",
   "smoke-outreach-selection": "pglite",
+  "smoke-outreach-tenancy": "pglite",
   "smoke-admin-analytics": "pglite",
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",
@@ -204,6 +205,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-write-path": "pglite",
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
+  "smoke-outreach-races": "manual", // real Postgres concurrency; run by hand against a disposable Neon branch
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {
