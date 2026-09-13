@@ -22,8 +22,8 @@ import {
   monthLabel,
   monthShort,
 } from "@/components/contacts/timeline-date-scrubber";
-import { InteractionDetailSheet } from "@/components/contacts/interaction-detail-sheet";
-import { LogInteractionSheet } from "@/components/contacts/log-interaction-sheet";
+import { InteractionDetailSheetLazy } from "@/components/contacts/interaction-detail-sheet-lazy";
+import { LogInteractionSheetLazy } from "@/components/contacts/log-interaction-sheet-lazy";
 import {
   INTERACTION_FLIGHT_EVENT,
   type InteractionFlightDetail,
@@ -45,6 +45,7 @@ import { EASE_HOUSE } from "@/lib/motion";
 import { timelineDayLabel, timelineGapLabel } from "@/lib/timeline-date";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 export type TimelineInteraction = {
   id: string;
@@ -379,7 +380,7 @@ export function ContactTimeline({
         );
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not reorder");
+        toast.error(friendlyError(err, "Couldn’t reorder that — try again?"));
       }
     });
   }
@@ -774,7 +775,7 @@ export function ContactTimeline({
         )}
       </CardContent>
 
-      <InteractionDetailSheet
+      <InteractionDetailSheetLazy
         interactionId={openId}
         canReorder={{
           // Reordering writes the whole day at once, so it is only offered on the unfiltered
@@ -861,7 +862,7 @@ export function ContactTimeline({
         ) : null}
       </AnimatePresence>
 
-      <LogInteractionSheet
+      <LogInteractionSheetLazy
         contactId={contactId}
         contactName={contactName}
         hasApiKey={hasApiKey}

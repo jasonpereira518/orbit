@@ -38,7 +38,7 @@ export async function submitFeedback(
     await consumeBucket("feedback", userId, RATE_LIMITS.feedback);
   } catch (err) {
     if (isRateLimitedError(err)) {
-      return { ok: false, message: "You've sent a few already — give it a minute." };
+      return { ok: false, message: "You’ve sent a few already — give it a minute" };
     }
     throw err;
   }
@@ -63,14 +63,14 @@ export async function submitFeedback(
     if (!decoded) {
       return {
         ok: false,
-        message: `Screenshot ${index + 1} isn't a readable image. Remove it and try again.`,
+        message: `Screenshot ${index + 1} isn’t a readable image — remove it and try again`,
       };
     }
     totalBytes += decoded.buf.byteLength;
     if (totalBytes > MAX_SUBMISSION_BYTES) {
       return {
         ok: false,
-        message: "Those screenshots are too large together. Remove one and try again.",
+        message: "Those screenshots are too large together — remove one and try again",
       };
     }
     screenshots.push({
@@ -133,6 +133,6 @@ export async function submitFeedback(
       message: err instanceof Error ? err.message : String(err),
       context: { screenshotCount: screenshots.length, totalBytes },
     });
-    return { ok: false, message: "Couldn't save that. Try again in a moment." };
+    return { ok: false, message: "That didn’t save — try again in a moment" };
   }
 }

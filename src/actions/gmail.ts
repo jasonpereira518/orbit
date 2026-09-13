@@ -18,6 +18,7 @@ import {
   getGmailOAuthConfigSummary,
   hasSendScope,
 } from "@/lib/gmail";
+import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
 
@@ -158,52 +159,54 @@ function toScanStatus(row: typeof imports.$inferSelect): GmailScanStatus {
  * backstop), so it survives navigation, a closed tab, and a dead invocation. The client
  * only polls.
  */
-export async function startGmailRecruiterScan(): Promise<{ importId: string }> {
-  const userId = await requireSyncUser();
-  const db = await getDb();
+export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId: string }>> {
+  return asActionResult(async () => {
+    const userId = await requireSyncUser();
+    const db = await getDb();
 
-  const conn = await db.query.gmailConnections.findFirst({
-    where: eq(gmailConnections.userId, userId),
+    const conn = await db.query.gmailConnections.findFirst({
+      where: eq(gmailConnections.userId, userId),
+    });
+    if (!conn || conn.status !== "active") {
+      throw new UserFacingError("Connect Gmail first, then scan");
+    }
+
+    // Fail here rather than after the mailbox sweep: classification is the whole point of
+    // the scan, and `getAiConfig` throws for a user with no key configured.
+    try {
+      await getAiConfig(userId);
+    } catch {
+      throw new Error(
+        "Add an AI provider key in Settings before scanning — the scan uses it to identify recruiters and summarize your threads."
+      );
+    }
+
+    const running = await db.query.imports.findFirst({
+      where: and(
+        eq(imports.userId, userId),
+        eq(imports.importType, GMAIL_SCAN_IMPORT_TYPE),
+        eq(imports.status, "processing")
+      ),
+    });
+    if (running) return { importId: running.id };
+
+    const [row] = await db
+      .insert(imports)
+      .values({
+        userId,
+        importType: GMAIL_SCAN_IMPORT_TYPE,
+        fileName: conn.emailAddress,
+        status: "processing",
+        totalRows: null,
+        rowsProcessed: 0,
+        stats: { discoveryComplete: false, messagesScanned: 0 },
+      })
+      .returning();
+
+    after(() => runGmailRecruiterScanJob(row.id).catch(() => {}));
+    revalidatePath("/recruiters");
+    return { importId: row.id };
   });
-  if (!conn || conn.status !== "active") {
-    throw new Error("Connect Gmail before scanning.");
-  }
-
-  // Fail here rather than after the mailbox sweep: classification is the whole point of
-  // the scan, and `getAiConfig` throws for a user with no key configured.
-  try {
-    await getAiConfig(userId);
-  } catch {
-    throw new Error(
-      "Add an AI provider key in Settings before scanning — the scan uses it to identify recruiters and summarize your threads."
-    );
-  }
-
-  const running = await db.query.imports.findFirst({
-    where: and(
-      eq(imports.userId, userId),
-      eq(imports.importType, GMAIL_SCAN_IMPORT_TYPE),
-      eq(imports.status, "processing")
-    ),
-  });
-  if (running) return { importId: running.id };
-
-  const [row] = await db
-    .insert(imports)
-    .values({
-      userId,
-      importType: GMAIL_SCAN_IMPORT_TYPE,
-      fileName: conn.emailAddress,
-      status: "processing",
-      totalRows: null,
-      rowsProcessed: 0,
-      stats: { discoveryComplete: false, messagesScanned: 0 },
-    })
-    .returning();
-
-  after(() => runGmailRecruiterScanJob(row.id).catch(() => {}));
-  revalidatePath("/recruiters");
-  return { importId: row.id };
 }
 
 /** Read-only poll target for the scan panel. */

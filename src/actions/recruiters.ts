@@ -26,33 +26,12 @@ import {
   upsertCanonicalRecruiter,
   type PublicRecruiter,
 } from "@/lib/recruiters";
+import { asActionResult, UserFacingError } from "@/lib/errors";
 
 function revalidateRecruiterPaths(id?: string) {
   revalidatePath("/recruiters");
   revalidatePath("/chat");
   if (id) revalidatePath(`/recruiters/${id}`);
-}
-
-export async function searchRecruiters(q?: string): Promise<PublicRecruiter[]> {
-  const userId = await requireRecruitersUser();
-  const db = await getDb();
-  const sharing = await isViewerSharing(userId);
-  const rows = await searchCanonicalRecruiters({
-    q,
-    limit: 50,
-    viewerUserId: userId,
-    viewerIsSharing: sharing,
-  });
-  const links = await db.query.userRecruiterLinks.findMany({
-    where: eq(userRecruiterLinks.userId, userId),
-  });
-  const byRecruiter = new Map(links.map((l) => [l.recruiterId, l]));
-  const pooled = sharing
-    ? await pooledRecruiterIds(rows.map((r) => r.id))
-    : new Set<string>();
-  return rows.map((r) =>
-    toPublicRecruiter(r, byRecruiter.get(r.id) || null, pooled.has(r.id))
-  );
 }
 
 /** Pool recruiters the user has not logged. Empty unless they are sharing. */
@@ -179,64 +158,66 @@ export type LogRecruiterInput = {
 };
 
 export async function logRecruiter(input: LogRecruiterInput) {
-  const userId = await requireRecruitersUser();
-  const fullName = input.fullName?.trim();
-  if (!fullName && !input.recruiterId) {
-    throw new Error("Recruiter name is required");
-  }
-
-  let recruiterId = input.recruiterId;
-
-  if (recruiterId) {
-    const db = await getDb();
-    const existing = await db.query.recruiters.findFirst({
-      where: eq(recruiters.id, recruiterId),
-    });
-    if (!existing) throw new Error("Recruiter not found");
-    if (fullName || input.email || input.firm || input.linkedinUrl) {
-      await upsertCanonicalRecruiter({
-        fullName: fullName || existing.fullName,
-        firm: input.firm ?? existing.firm,
-        specialty: input.specialty,
-        email: input.email ?? existing.email,
-        linkedinUrl: input.linkedinUrl ?? existing.linkedinUrl,
-        phone: input.phone ?? existing.phone,
-      });
+  return asActionResult(async () => {
+    const userId = await requireRecruitersUser();
+    const fullName = input.fullName?.trim();
+    if (!fullName && !input.recruiterId) {
+      throw new UserFacingError("Add the recruiter’s name first");
     }
-  } else {
-    const created = await upsertCanonicalRecruiter({
-      fullName: fullName!,
-      firm: input.firm,
-      specialty: input.specialty,
-      email: input.email,
-      linkedinUrl: input.linkedinUrl,
-      phone: input.phone,
+
+    let recruiterId = input.recruiterId;
+
+    if (recruiterId) {
+      const db = await getDb();
+      const existing = await db.query.recruiters.findFirst({
+        where: eq(recruiters.id, recruiterId),
+      });
+      if (!existing) throw new Error("Recruiter not found");
+      if (fullName || input.email || input.firm || input.linkedinUrl) {
+        await upsertCanonicalRecruiter({
+          fullName: fullName || existing.fullName,
+          firm: input.firm ?? existing.firm,
+          specialty: input.specialty,
+          email: input.email ?? existing.email,
+          linkedinUrl: input.linkedinUrl ?? existing.linkedinUrl,
+          phone: input.phone ?? existing.phone,
+        });
+      }
+    } else {
+      const created = await upsertCanonicalRecruiter({
+        fullName: fullName!,
+        firm: input.firm,
+        specialty: input.specialty,
+        email: input.email,
+        linkedinUrl: input.linkedinUrl,
+        phone: input.phone,
+      });
+      recruiterId = created.id;
+    }
+
+    const rating =
+      typeof input.personalRating === "number" &&
+      input.personalRating >= 1 &&
+      input.personalRating <= 5
+        ? input.personalRating
+        : null;
+
+    await ensureUserLink({
+      userId,
+      recruiterId: recruiterId!,
+      status: input.status || "planned",
+      notes: input.notes || null,
+      source: input.source || "manual",
+      personalRating: rating,
     });
-    recruiterId = created.id;
-  }
 
-  const rating =
-    typeof input.personalRating === "number" &&
-    input.personalRating >= 1 &&
-    input.personalRating <= 5
-      ? input.personalRating
-      : null;
+    if (rating !== null) {
+      await recomputeRecruiterRating(recruiterId!);
+    }
 
-  await ensureUserLink({
-    userId,
-    recruiterId: recruiterId!,
-    status: input.status || "planned",
-    notes: input.notes || null,
-    source: input.source || "manual",
-    personalRating: rating,
+    revalidateRecruiterPaths(recruiterId);
+    return { id: recruiterId! };
   });
-
-  if (rating !== null) {
-    await recomputeRecruiterRating(recruiterId!);
-  }
-
-  revalidateRecruiterPaths(recruiterId);
-  return { id: recruiterId! };
 }
 
 export async function updateMyLink(

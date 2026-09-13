@@ -15,6 +15,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { ClosenessBreakdown } from "@/lib/closeness";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export function ContactProfileOverview({
   contactId,
@@ -67,9 +69,7 @@ export function ContactProfileOverview({
                     router.refresh();
                   } catch (err) {
                     toast.error(
-                      err instanceof Error
-                        ? err.message
-                        : "Could not generate summary"
+                      friendlyError(err, TOAST_COPY.summaryFailed)
                     );
                   }
                 })

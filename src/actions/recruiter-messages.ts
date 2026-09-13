@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -25,6 +25,7 @@ import {
   type RecruiterDraft,
   type SendDraftsResult,
 } from "@/lib/recruiter-message-types";
+import { ActionResult, asActionResult, friendlyError, UserFacingError } from "@/lib/errors";
 
 /** Spacing between sends in a batch, so an approved batch trickles rather than bursts. */
 const SEND_SPACING_MS = 1200;
@@ -83,83 +84,85 @@ export async function getRecruiterSendQuota() {
 export async function generateRecruiterDrafts(
   recruiterIds: string[],
   intent: string
-): Promise<RecruiterDraft[]> {
-  const userId = await requireRecruitersUser();
-  if (!isRecruiterIntent(intent)) throw new Error("Unknown message intent");
-  const ids = Array.from(new Set(recruiterIds.filter(Boolean)));
-  if (ids.length === 0) throw new Error("Select at least one recruiter");
-  if (ids.length > DAILY_RECRUITER_SEND_LIMIT) {
-    throw new Error(
-      `Draft at most ${DAILY_RECRUITER_SEND_LIMIT} at a time — that is the daily send limit.`
-    );
-  }
+): Promise<ActionResult<RecruiterDraft[]>> {
+  return asActionResult(async () => {
+    const userId = await requireRecruitersUser();
+    if (!isRecruiterIntent(intent)) throw new Error("Unknown message intent");
+    const ids = Array.from(new Set(recruiterIds.filter(Boolean)));
+    if (ids.length === 0) throw new UserFacingError("Pick at least one recruiter first");
+    if (ids.length > DAILY_RECRUITER_SEND_LIMIT) {
+      throw new Error(
+        `Draft at most ${DAILY_RECRUITER_SEND_LIMIT} at a time — that is the daily send limit.`
+      );
+    }
 
-  const db = await getDb();
+    const db = await getDb();
 
-  // Only recruiters this user has actually logged: drafting needs the private history,
-  // and a pool recruiter you have no relationship with has none to draw on.
-  const links = await db.query.userRecruiterLinks.findMany({
-    where: and(
-      eq(userRecruiterLinks.userId, userId),
-      inArray(userRecruiterLinks.recruiterId, ids)
-    ),
-    with: { recruiter: true },
-  });
-  if (links.length === 0) {
-    throw new Error("You have not logged any of the selected recruiters");
-  }
+    // Only recruiters this user has actually logged: drafting needs the private history,
+    // and a pool recruiter you have no relationship with has none to draw on.
+    const links = await db.query.userRecruiterLinks.findMany({
+      where: and(
+        eq(userRecruiterLinks.userId, userId),
+        inArray(userRecruiterLinks.recruiterId, ids)
+      ),
+      with: { recruiter: true },
+    });
+    if (links.length === 0) {
+      throw new UserFacingError("None of those recruiters are logged yet — log them first");
+    }
 
-  const goals = await db.query.userGoals.findMany({
-    where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
-  });
-  const goalTexts = goals.map((g) => g.text.trim()).filter(Boolean);
+    const goals = await db.query.userGoals.findMany({
+      where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
+    });
+    const goalTexts = goals.map((g) => g.text.trim()).filter(Boolean);
 
-  const profile = await getCurrentUserProfile().catch(() => null);
-  const senderName = profile?.name?.trim() || null;
+    const profile = await getCurrentUserProfile().catch(() => null);
+    const senderName = profile?.name?.trim() || null;
 
-  const drafts = await generateRecruiterDraftsBatch(
-    userId,
-    links.map((link) => ({
-      intent,
-      recruiter: {
-        fullName: link.recruiter.fullName,
-        firm: link.recruiter.firm,
-        specialty: link.recruiter.specialty || [],
-      },
-      history: link.aiSummary,
-      companiesMentioned: link.companiesMentioned || [],
-      rolesDiscussed: link.rolesDiscussed || [],
-      lastEmailAt: link.lastEmailAt,
-      userGoals: goalTexts,
-      senderName,
-    }))
-  );
-
-  const created: RecruiterDraft[] = [];
-  for (let i = 0; i < links.length; i += 1) {
-    const draft = drafts[i];
-    if (!draft || "error" in draft) continue;
-    const [row] = await db
-      .insert(recruiterMessages)
-      .values({
-        userId,
-        recruiterId: links[i].recruiterId,
+    const drafts = await generateRecruiterDraftsBatch(
+      userId,
+      links.map((link) => ({
         intent,
-        subject: draft.subject,
-        body: draft.body,
-        status: "draft",
-        gmailThreadId: links[i].gmailThreadId,
-      })
-      .returning();
-    created.push(toDraft(row, links[i].recruiter));
-  }
+        recruiter: {
+          fullName: link.recruiter.fullName,
+          firm: link.recruiter.firm,
+          specialty: link.recruiter.specialty || [],
+        },
+        history: link.aiSummary,
+        companiesMentioned: link.companiesMentioned || [],
+        rolesDiscussed: link.rolesDiscussed || [],
+        lastEmailAt: link.lastEmailAt,
+        userGoals: goalTexts,
+        senderName,
+      }))
+    );
 
-  if (created.length === 0) {
-    throw new Error("Every draft failed to generate. Check your AI provider key.");
-  }
+    const created: RecruiterDraft[] = [];
+    for (let i = 0; i < links.length; i += 1) {
+      const draft = drafts[i];
+      if (!draft || "error" in draft) continue;
+      const [row] = await db
+        .insert(recruiterMessages)
+        .values({
+          userId,
+          recruiterId: links[i].recruiterId,
+          intent,
+          subject: draft.subject,
+          body: draft.body,
+          status: "draft",
+          gmailThreadId: links[i].gmailThreadId,
+        })
+        .returning();
+      created.push(toDraft(row, links[i].recruiter));
+    }
 
-  revalidatePath("/recruiters/compose");
-  return created;
+    if (created.length === 0) {
+      throw new UserFacingError("None of the drafts came through — check your AI key in Settings");
+    }
+
+    revalidatePath("/recruiters/compose");
+    return created;
+  });
 }
 
 export async function listRecruiterDrafts(): Promise<RecruiterDraft[]> {
@@ -227,128 +230,116 @@ export async function discardRecruiterDrafts(ids: string[]) {
  */
 export async function sendRecruiterDrafts(
   ids: string[]
-): Promise<SendDraftsResult> {
-  const userId = await requireSyncUser();
-  await requireRecruitersUser();
-  const db = await getDb();
+): Promise<ActionResult<SendDraftsResult>> {
+  return asActionResult(async () => {
+    const userId = await requireSyncUser();
+    await requireRecruitersUser();
+    const db = await getDb();
 
-  const unique = Array.from(new Set(ids.filter(Boolean)));
-  if (unique.length === 0) throw new Error("Select at least one draft to send");
+    const unique = Array.from(new Set(ids.filter(Boolean)));
+    if (unique.length === 0) throw new UserFacingError("Pick at least one draft to send");
 
-  const used = await countSendsToday(userId);
-  const remaining = DAILY_RECRUITER_SEND_LIMIT - used;
-  if (remaining <= 0) {
-    throw new Error(
-      `You've hit today's limit of ${DAILY_RECRUITER_SEND_LIMIT} recruiter emails. Try again tomorrow.`
-    );
-  }
-  if (unique.length > remaining) {
-    throw new Error(
-      `You can send ${remaining} more today (limit ${DAILY_RECRUITER_SEND_LIMIT}). Deselect ${unique.length - remaining}.`
-    );
-  }
+    const used = await countSendsToday(userId);
+    const remaining = DAILY_RECRUITER_SEND_LIMIT - used;
+    if (remaining <= 0) {
+      throw new Error(
+        `You've hit today's limit of ${DAILY_RECRUITER_SEND_LIMIT} recruiter emails. Try again tomorrow.`
+      );
+    }
+    if (unique.length > remaining) {
+      throw new Error(
+        `You can send ${remaining} more today (limit ${DAILY_RECRUITER_SEND_LIMIT}). Deselect ${unique.length - remaining}.`
+      );
+    }
 
-  // Resolve the sending identity once, not per message: every email in a batch must
-  // leave from the same address, and re-reading it mid-batch could straddle a reconnect.
-  const conn = await db.query.gmailConnections.findFirst({
-    where: eq(gmailConnections.userId, userId),
-  });
-  if (!conn || conn.status !== "active") {
-    throw new Error("Connect Gmail before sending.");
-  }
-  const profile = await getCurrentUserProfile().catch(() => null);
-  const from = { name: profile?.name?.trim() || null, email: conn.emailAddress };
+    // Resolve the sending identity once, not per message: every email in a batch must
+    // leave from the same address, and re-reading it mid-batch could straddle a reconnect.
+    const conn = await db.query.gmailConnections.findFirst({
+      where: eq(gmailConnections.userId, userId),
+    });
+    if (!conn || conn.status !== "active") {
+      throw new UserFacingError("Connect Gmail first, then send");
+    }
+    const profile = await getCurrentUserProfile().catch(() => null);
+    const from = { name: profile?.name?.trim() || null, email: conn.emailAddress };
 
-  const rows = await db
-    .select({ message: recruiterMessages, recruiter: recruiters })
-    .from(recruiterMessages)
-    .innerJoin(recruiters, eq(recruiters.id, recruiterMessages.recruiterId))
-    .where(
-      and(
-        eq(recruiterMessages.userId, userId),
-        eq(recruiterMessages.status, "draft"),
-        inArray(recruiterMessages.id, unique)
+    const rows = await db
+      .select({ message: recruiterMessages, recruiter: recruiters })
+      .from(recruiterMessages)
+      .innerJoin(recruiters, eq(recruiters.id, recruiterMessages.recruiterId))
+      .where(
+        and(
+          eq(recruiterMessages.userId, userId),
+          eq(recruiterMessages.status, "draft"),
+          inArray(recruiterMessages.id, unique)
+        )
       )
-    )
-    .orderBy(asc(recruiterMessages.createdAt));
+      .orderBy(asc(recruiterMessages.createdAt));
 
-  const failed: SendDraftsResult["failed"] = [];
-  let sent = 0;
+    const failed: SendDraftsResult["failed"] = [];
+    let sent = 0;
 
-  for (const [index, row] of rows.entries()) {
-    const to = row.recruiter.email;
-    if (!to) {
-      failed.push({
-        id: row.message.id,
-        recruiterName: row.recruiter.fullName,
-        error: "No email address on file",
-      });
-      continue;
+    for (const [index, row] of rows.entries()) {
+      const to = row.recruiter.email;
+      if (!to) {
+        failed.push({
+          id: row.message.id,
+          recruiterName: row.recruiter.fullName,
+          error: `${row.recruiter.fullName} has no email address on file`,
+        });
+        continue;
+      }
+
+      try {
+        const result = await sendGmailMessage(userId, {
+          to,
+          from,
+          subject: row.message.subject,
+          body: row.message.body,
+          threadId: row.message.gmailThreadId,
+        });
+        await db
+          .update(recruiterMessages)
+          .set({
+            status: "sent",
+            sentAt: new Date(),
+            gmailMessageId: result.gmailMessageId,
+            gmailThreadId: result.gmailThreadId ?? row.message.gmailThreadId,
+            errorMessage: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(recruiterMessages.id, row.message.id));
+        sent += 1;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Send failed";
+        await db
+          .update(recruiterMessages)
+          .set({
+            status: "failed",
+            errorMessage: message.slice(0, 500),
+            updatedAt: new Date(),
+          })
+          .where(eq(recruiterMessages.id, row.message.id));
+        failed.push({
+          id: row.message.id,
+          recruiterName: row.recruiter.fullName,
+          // Returned as data, so never stripped — and `message` can be a raw Gmail API
+          // body. The raw text stays in `errorMessage` above, which no screen renders.
+          error: friendlyError(err, `Couldn’t send to ${row.recruiter.fullName} — try again?`),
+        });
+      }
+
+      if (index < rows.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, SEND_SPACING_MS));
+      }
     }
 
-    try {
-      const result = await sendGmailMessage(userId, {
-        to,
-        from,
-        subject: row.message.subject,
-        body: row.message.body,
-        threadId: row.message.gmailThreadId,
-      });
-      await db
-        .update(recruiterMessages)
-        .set({
-          status: "sent",
-          sentAt: new Date(),
-          gmailMessageId: result.gmailMessageId,
-          gmailThreadId: result.gmailThreadId ?? row.message.gmailThreadId,
-          errorMessage: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(recruiterMessages.id, row.message.id));
-      sent += 1;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Send failed";
-      await db
-        .update(recruiterMessages)
-        .set({
-          status: "failed",
-          errorMessage: message.slice(0, 500),
-          updatedAt: new Date(),
-        })
-        .where(eq(recruiterMessages.id, row.message.id));
-      failed.push({
-        id: row.message.id,
-        recruiterName: row.recruiter.fullName,
-        error: message,
-      });
-    }
-
-    if (index < rows.length - 1) {
-      await new Promise((resolve) => setTimeout(resolve, SEND_SPACING_MS));
-    }
-  }
-
-  revalidatePath("/recruiters/compose");
-  revalidatePath("/recruiters");
-  return {
-    sent,
-    failed,
-    quotaRemaining: Math.max(0, DAILY_RECRUITER_SEND_LIMIT - used - sent),
-  };
-}
-
-/** Sent history for a single recruiter's detail page. */
-export async function listRecruiterMessageHistory(
-  recruiterId: string
-): Promise<RecruiterMessage[]> {
-  const userId = await requireRecruitersUser();
-  const db = await getDb();
-  return db.query.recruiterMessages.findMany({
-    where: and(
-      eq(recruiterMessages.userId, userId),
-      eq(recruiterMessages.recruiterId, recruiterId)
-    ),
-    orderBy: [desc(recruiterMessages.createdAt)],
-    limit: 20,
+    revalidatePath("/recruiters/compose");
+    revalidatePath("/recruiters");
+    return {
+      sent,
+      failed,
+      quotaRemaining: Math.max(0, DAILY_RECRUITER_SEND_LIMIT - used - sent),
+    };
   });
 }

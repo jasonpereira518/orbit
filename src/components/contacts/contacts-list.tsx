@@ -25,7 +25,7 @@ import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
-import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
+import { FollowUpDraftSheetLazy } from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import {
   Dialog,
   DialogContent,
@@ -67,6 +67,8 @@ export type ContactListItem = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl?: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar?: boolean;
   relationshipScore: number;
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
@@ -289,6 +291,37 @@ export function ContactsList({
     [serverLetters]
   );
 
+  // Per-row derived labels, computed once for every currently-loaded contact rather than
+  // inline inside the render `.map()` below — that recomputed all of them (four date-math
+  // calls + a join per row) on every render, including ones triggered by unrelated
+  // sibling state (a dialog opening, a popover, the alphabet scrubber dragging).
+  const rowMeta = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        overdue: boolean;
+        scheduledLabel: string | null;
+        overdueText: string | null;
+        lastTouch: string | null;
+        details: string;
+      }
+    >();
+    for (const c of contacts) {
+      const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
+      const lastTouch = lastTouchLabel(c.lastInteractionAt);
+      map.set(c.id, {
+        overdue: isOverdue(c.nextFollowUpAt),
+        scheduledLabel: dueLabel(c.nextFollowUpAt),
+        overdueText,
+        lastTouch,
+        details: [detailLine(c.school, c.location), overdueText, lastTouch]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    }
+    return map;
+  }, [contacts]);
+
   /**
    * Jump the list to a letter.
    *
@@ -354,7 +387,7 @@ export function ContactsList({
           toast.success(`${name} deleted`);
           router.refresh();
         } catch {
-          toast.error("Could not delete contact");
+          toast.error("Couldn’t delete that contact — try again?");
           setContacts(restore);
           router.refresh();
         }
@@ -395,17 +428,8 @@ export function ContactsList({
               <ul className="divide-y divide-border/60">
                 {section.contacts.map((c) => {
                   const exiting = exitingId === c.id;
-                  const overdue = isOverdue(c.nextFollowUpAt);
-                  const scheduledLabel = dueLabel(c.nextFollowUpAt);
-                  const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
-                  const lastTouch = lastTouchLabel(c.lastInteractionAt);
-                  const details = [
-                    detailLine(c.school, c.location),
-                    overdueText,
-                    lastTouch,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ");
+                  const { overdue, scheduledLabel, overdueText, lastTouch, details } =
+                    rowMeta.get(c.id)!;
 
                   function openContact() {
                     if (exiting) return;
@@ -450,9 +474,14 @@ export function ContactsList({
                               contactId={c.id}
                               firstName={c.firstName}
                               fullName={c.fullName}
-                              linkedinUrl={c.linkedinUrl}
                               profileImageUrl={c.profileImageUrl}
                               size="lg"
+                              // Rows you are actually looking at fill in first, instead of
+                              // waiting for the background backfill to reach them in id
+                              // order. `loading="lazy"` on the underlying <img> means only
+                              // near-viewport rows ever issue a request, and the route
+                              // caches its misses so scrolling back does not re-ask.
+                              resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
                             />
                           </ContactAvatarPreview>
 
@@ -600,7 +629,7 @@ export function ContactsList({
         )}
 
         {/* One draft sheet for the whole list — see FollowUpRowButton. */}
-        <FollowUpDraftSheet
+        <FollowUpDraftSheetLazy
           open={draftContact !== null}
           onOpenChange={(open) => {
             if (!open) setDraftContact(null);
@@ -698,6 +727,40 @@ function AlphabetScrubber({
     setMounted(true);
   }, []);
 
+  /**
+   * Reserve the rail's width in the page, rather than floating over it.
+   *
+   * The rail is portalled to `<body>` and fixed to the right edge, so nothing in the
+   * page knows it is there. It is also an opaque card, so everything it covers is not
+   * dimmed but gone: the "Add contact" button, the Recruiters tab, the plan notice, and
+   * a row's own delete button were all being clipped by it on a phone.
+   *
+   * Publishing the footprint as a variable — rather than hard-coding padding on each
+   * page — keeps the gutter tied to the rail's actual presence: it is only paid while
+   * the rail is mounted, and it disappears with it.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    /**
+     * The gutter only makes up what the content column's own padding doesn't cover,
+     * plus a little air — publishing the rail's full footprint would double-count the
+     * padding and squeeze the header hard enough to change how its buttons wrap.
+     *
+     *  - Below `md` the rail is thinner: `right-1.5` (0.375rem) + `w-7` (1.75rem) =
+     *    2.125rem. The column carries 1rem of padding, so 1.625rem stops the content
+     *    0.5rem clear.
+     *  - From `md` it is the desktop rail: `right-4` (1rem) + `w-9` (2.25rem) = 3.25rem,
+     *    against 2.5rem of padding, so 2.25rem leaves 1.5rem of air.
+     *
+     * An inline style can't vary by breakpoint, so this publishes a reference and
+     * globals.css (`--content-rail-gutter-size`) holds the per-breakpoint values.
+     */
+    root.style.setProperty("--content-rail-gutter", "var(--content-rail-gutter-size)");
+    return () => {
+      root.style.removeProperty("--content-rail-gutter");
+    };
+  }, []);
+
   function letterFromClientY(clientY: number) {
     const el = railRef.current;
     if (!el) return null;
@@ -740,7 +803,12 @@ function AlphabetScrubber({
   return createPortal(
     <div
       className={cn(
-        "pointer-events-none fixed top-1/2 right-2 z-40 -translate-y-1/2 sm:right-4",
+        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-4",
+        // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
+        // viewport it rose into the header and covered the notification bell, and its
+        // 27 letters had about 6pt each between the header and the nav. The gutter it
+        // reserves is dropped at the same height in globals.css.
+        "[@media(max-height:500px)]:hidden",
         "pb-[env(safe-area-inset-bottom)]"
       )}
     >
@@ -749,7 +817,10 @@ function AlphabetScrubber({
         role="navigation"
         aria-label="Jump to letter"
         className={cn(
-          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-9 cursor-ns-resize select-none flex-col items-center justify-between rounded-2xl border border-border/70 bg-card/95 py-2.5 shadow-md backdrop-blur",
+          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-7 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
+          // Thinner on phones, where every pixel of width is the list's; the desktop rail
+          // keeps its original size and card shape.
+          "md:w-9 md:rounded-2xl md:py-2.5 md:shadow-md",
           "touch-none ring-1 ring-foreground/5"
         )}
         onPointerDown={onPointerDown}

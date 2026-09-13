@@ -13,6 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-purge.ts
  */
+import { randomUUID } from "node:crypto";
 import "./smoke/_env";
 
 import { eq, getTableColumns, getTableName, sql } from "drizzle-orm";
@@ -148,12 +149,52 @@ async function seed() {
   // The pasted text a note was parsed out of. Nothing cascades this — both
   // `note_batch_id` columns are plain uuids with no foreign key — so it only leaves with
   // the explicit delete in `purgeUserData`.
-  await db.insert(schema.noteBatches).values({
+  const [noteBatch] = await db
+    .insert(schema.noteBatches)
+    .values({
+      userId: USER,
+      sourceHash: "note-batch-hash",
+      sourceText: "the raw notes the user pasted, about named people",
+      anchorDate: now,
+      result: {} as never,
+    })
+    .returning();
+
+  // A photo of the user's notes, one attached and one from a capture never saved. The
+  // unattached one is the case a cascade from `note_batches` cannot reach.
+  await db.insert(schema.capturePhotos).values([
+    {
+      userId: USER,
+      noteBatchId: noteBatch.id,
+      storage: "inline",
+      inlineData: "aGVsbG8=",
+      contentType: "image/jpeg",
+      byteSize: 5,
+    },
+    {
+      userId: USER,
+      noteBatchId: null,
+      storage: "inline",
+      inlineData: "aGVsbG8=",
+      contentType: "image/jpeg",
+      byteSize: 5,
+    },
+  ]);
+
+  // A recorded call and one line of it. The segment carries its own `user_id` and is
+  // deleted explicitly, though it would also cascade from the session.
+  const [meetingRow] = await db
+    .insert(schema.meetingSessions)
+    .values({ userId: USER, title: "Weekly sync" })
+    .returning();
+  await db.insert(schema.meetingTranscriptSegments).values({
+    sessionId: meetingRow.id,
     userId: USER,
-    sourceHash: "note-batch-hash",
-    sourceText: "the raw notes the user pasted, about named people",
-    anchorDate: now,
-    result: {} as never,
+    seq: 0,
+    startMs: 0,
+    endMs: 60_000,
+    text: "what everyone on the call said, verbatim",
+    engine: "whisper",
   });
 
   // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
@@ -249,6 +290,29 @@ async function seed() {
     icsUrl: "https://example.test/feed.ics",
   });
 
+  // A scan handoff in flight when the account is deleted: a live grant, and a transcript
+  // of the user's notes sitting behind it.
+  await db.insert(schema.captureHandoffs).values({
+    userId: USER,
+    tokenHash: "0".repeat(64),
+    expiresAt: new Date(Date.now() + 600_000),
+    transcript: "Ada Lovelace — Analytical Engines",
+  });
+
+  // A capture mid-review, and the name it set aside.
+  await db.insert(schema.captureJobs).values({
+    userId: USER,
+    sourceKind: "messy",
+    status: "reviewing",
+    inputText: "Met Ada Lovelace at the engine demo",
+  });
+  await db.insert(schema.ignoredPeople).values({
+    userId: USER,
+    nameKey: "charles babbage",
+    displayName: "Charles Babbage",
+    reason: "mentioned",
+  });
+
   await db.insert(schema.aiSuggestions).values({
     userId: USER,
     suggestionType: "reconnect",
@@ -326,6 +390,37 @@ async function seed() {
     email: "ada@analytical.io",
     contactId: contact.id,
     identityKey: "em:ada@analytical.io",
+  });
+  // Two aliases: one live, one a TOMBSTONE (`event_id` null), which is the row that would
+  // outlive the account if purge left it to the `ON DELETE SET NULL` cascade. It holds the
+  // user's calendar UIDs and event links.
+  await db.insert(schema.eventAliases).values([
+    {
+      userId: USER,
+      kind: "url",
+      value: "luma.com/deep-learning-summit",
+      eventId: eventRow.id,
+      source: "gcal",
+    },
+    { userId: USER, kind: "source_ref", value: "gcal:dismissed-uid", eventId: null, source: "gcal" },
+  ]);
+  // A company at the event, and the same company on the user's target list — a statement
+  // about where they want to work, which must not outlive the account.
+  const [exhibitor] = await db
+    .insert(schema.companies)
+    .values({ userId: USER, name: "Stripe", nameNormalized: "stripe" })
+    .returning();
+  await db.insert(schema.eventCompanies).values({
+    userId: USER,
+    eventId: eventRow.id,
+    companyId: exhibitor.id,
+    role: "exhibitor",
+    source: "paste",
+  });
+  await db.insert(schema.targetCompanies).values({
+    userId: USER,
+    companyId: exhibitor.id,
+    priority: 1,
   });
   // Same class of secret as the Gmail/Outlook rows below.
   await db.insert(schema.eventProviderConnections).values({
@@ -409,6 +504,17 @@ async function seed() {
     eventId: "evt_purge_fixture",
     eventType: "contact.created",
     payload: {},
+  });
+
+  // A page view from a signed-in session. Purge ANONYMISES this rather than deleting it,
+  // the same way it treats billing_events — so like that row, it survives its own cleanup.
+  await db.insert(schema.pageViews).values({
+    id: randomUUID(),
+    visitorHash: "purge-fixture-visitor",
+    sessionId: randomUUID(),
+    userId: USER,
+    route: "/dashboard",
+    device: "desktop",
   });
 
   return { recruiterId: recruiter.id };

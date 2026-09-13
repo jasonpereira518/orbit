@@ -827,6 +827,86 @@ function extractBody(payload: RawGmailMessage["payload"]): string {
   return "";
 }
 
+/**
+ * Every URL in a message, hrefs included.
+ *
+ * `extractBody` above strips tags wholesale, which throws away every `href` — fine for a
+ * classifier reading prose, useless for finding the event link in a confirmation email, where
+ * the link is almost always behind a button and appears nowhere in the visible text.
+ *
+ * Deliberately dumb about what it collects. The caller decides what counts as an event link
+ * (`extractEventLinks` in `src/lib/events/platforms`, which accepts only known platforms), and
+ * a collector that tried to be clever here would be the thing deciding which URL in somebody's
+ * mail gets fetched.
+ */
+function collectLinks(payload: RawGmailMessage["payload"], out: string[], depth = 0): string[] {
+  if (!payload || depth > 8 || out.length > 200) return out;
+  const data = payload.body?.data;
+  if (data) {
+    const text = decodeBase64Url(data);
+    if (payload.mimeType === "text/html") {
+      for (const hit of text.matchAll(/href=["']([^"']+)["']/gi)) {
+        if (hit[1]) out.push(hit[1]);
+      }
+    }
+    for (const hit of text.matchAll(/https?:\/\/[^\s<>"'`]+/gi)) out.push(hit[0]);
+  }
+  for (const part of payload.parts || []) collectLinks(part, out, depth + 1);
+  return out;
+}
+
+/**
+ * One message, reduced to the few facts event discovery needs.
+ *
+ * `authenticationResults` is here for one reason: this path reads a link out of an email and
+ * then FETCHES it. A "From: lu.ma" header is free to forge, so the DKIM verdict is what makes
+ * the sender check mean anything at all.
+ *
+ * No body. Nothing downstream stores or reasons over message content — see `from-gmail.ts`.
+ */
+export type GmailLinkMessage = GmailHeaderSummary & {
+  authenticationResults: string;
+  links: string[];
+};
+
+export async function fetchGmailMessageLinks(
+  accessToken: string,
+  ids: string[],
+  concurrency = 4
+): Promise<GmailLinkMessage[]> {
+  const results = await mapWithConcurrency(ids, concurrency, async (id) => {
+    try {
+      const res = await gmailFetchWithRetry(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          timeoutMs: 15_000,
+        }
+      );
+      if (!res.ok) return null;
+      const msg = (await res.json()) as RawGmailMessage;
+      const internal = Number(msg.internalDate);
+      return {
+        id,
+        threadId: msg.threadId || "",
+        from: headerValue(msg, "From"),
+        to: headerValue(msg, "To"),
+        subject: headerValue(msg, "Subject"),
+        snippet: msg.snippet || "",
+        internalDate: Number.isFinite(internal) ? internal : null,
+        listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
+        listId: headerValue(msg, "List-Id"),
+        precedence: headerValue(msg, "Precedence"),
+        authenticationResults: headerValue(msg, "Authentication-Results"),
+        links: collectLinks(msg.payload, []).slice(0, 200),
+      } satisfies GmailLinkMessage;
+    } catch {
+      return null;
+    }
+  });
+  return results.filter((r): r is GmailLinkMessage => r !== null);
+}
+
 export type GmailMessageContent = GmailHeaderSummary & { body: string };
 
 export async function fetchGmailMessages(

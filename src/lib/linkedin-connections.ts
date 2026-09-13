@@ -75,6 +75,34 @@ function looksLikeMessagesExport(fields: string[]) {
 }
 
 /**
+ * The inverse, for the Messages card: a Connections.csv has name columns and a
+ * "Connected On" date, and never a conversation id.
+ */
+export function looksLikeConnectionsExport(fields: string[]) {
+  const lower = fields.map((f) => f.trim().toLowerCase());
+  return (
+    lower.includes("first name") &&
+    lower.includes("last name") &&
+    lower.includes("connected on") &&
+    !lower.includes("conversation id")
+  );
+}
+
+/**
+ * A LinkedIn export the parser refused, with a message written for the person who picked
+ * the file — which is the one thing the preview actions forward to the toast. Anything
+ * else a parser throws is a bug (or PapaParse's own wording, "Unable to auto-detect
+ * delimiting character"), and gets the generic copy instead. Same split as
+ * `ContactsFileError` in `src/lib/contacts-file.ts`.
+ */
+export class LinkedInExportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LinkedInExportError";
+  }
+}
+
+/**
  * Parse LinkedIn "Connected On" values.
  * Handles:
  * - "15 Jan 2024", "01/15/2024" (text exports)
@@ -111,7 +139,7 @@ export function parseLinkedInConnectionsCsv(csvText: string): {
   warnings: string[];
 } {
   if (!csvText.trim().length) {
-    throw new Error("That file is empty.");
+    throw new LinkedInExportError("That file is empty");
   }
 
   const text = stripLinkedInConnectionsPreamble(csvText);
@@ -121,14 +149,17 @@ export function parseLinkedInConnectionsCsv(csvText: string): {
   });
 
   if (parsed.errors.length && !parsed.data.length) {
-    throw new Error(parsed.errors[0]?.message || "Failed to parse CSV");
+    // PapaParse's own wording is for developers; say what to do instead.
+    throw new LinkedInExportError(
+      "Couldn’t read that file as a CSV — download Connections.csv from LinkedIn again and upload it as it is"
+    );
   }
 
   const fields = (parsed.meta.fields || []).map((f) => f.trim()).filter(Boolean);
 
   if (looksLikeMessagesExport(fields)) {
-    throw new Error(
-      "This looks like a Messages export, not Connections. Use the Messages import below instead."
+    throw new LinkedInExportError(
+      "This looks like a Messages export, not Connections — upload it on the Messages tab instead"
     );
   }
 
@@ -137,18 +168,19 @@ export function parseLinkedInConnectionsCsv(csvText: string): {
     .filter((r) => r.firstName || r.lastName);
 
   if (!rows.length) {
-    const hint = fields.length
-      ? ` Found columns: ${fields.slice(0, 8).join(", ")}.`
-      : "";
-    throw new Error(
-      `No connections found in CSV. Export Connections from LinkedIn (not Messages).${hint}`
+    const hint = fields.length ? ` (it has ${fields.slice(0, 8).join(", ")})` : "";
+    throw new LinkedInExportError(
+      `No connections found in that file${hint} — export Connections from LinkedIn, not Messages`
     );
   }
 
   const warnings: string[] = [];
   if (parsed.errors.length) {
+    // Not "skipped": PapaParse keeps a row with too few or too many columns, and it is
+    // imported like any other as long as it has a name. What is true is that some of its
+    // fields may have landed in the wrong column.
     warnings.push(
-      `${parsed.errors.length} row${parsed.errors.length === 1 ? "" : "s"} could not be read and ${parsed.errors.length === 1 ? "was" : "were"} skipped.`
+      `${parsed.errors.length} row${parsed.errors.length === 1 ? "" : "s"} had an unexpected number of columns — ${parsed.errors.length === 1 ? "that person" : "those people"} may have a company or title in the wrong field, so check them after importing.`
     );
   }
 

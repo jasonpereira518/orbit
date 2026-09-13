@@ -1,5 +1,9 @@
 /**
- * Asserts that every page under `src/app/(marketing)/` is reachable without signing in.
+ * Asserts that every marketing page is reachable without signing in. Marketing pages live in
+ * two places since Clerk was taken off the top of the funnel: `src/app/(site)/` (the landing
+ * page, /interest and the docs, which load no Clerk) and `src/app/(clerk)/(marketing)/`
+ * (/pricing, which does). Both are scanned — dropping either would silently stop checking
+ * the pages in it, and the failure only shows in production.
  *
  * This exists because the failure mode is invisible in development: `proxy.ts` only calls
  * `auth.protect()` when Clerk is configured, so locally (no keys) every route returns 200
@@ -12,11 +16,39 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createRouteMatcher } from "@clerk/nextjs/server";
 import { PUBLIC_ROUTES } from "../src/lib/public-routes";
+import { config as proxyConfig } from "../src/proxy";
 
-const MARKETING_DIR = "src/app/(marketing)";
+const MARKETING_DIRS = ["src/app/(site)", "src/app/(clerk)/(marketing)"];
+const PUBLIC_DIR = "public";
+
+/** Every distinct file extension actually shipped in `public/`. */
+function publicAssetExtensions(dir = PUBLIC_DIR): Map<string, string> {
+  const found = new Map<string, string>();
+  const walk = (current: string, prefix: string) => {
+    for (const entry of readdirSync(current)) {
+      const full = join(current, entry);
+      if (statSync(full).isDirectory()) {
+        walk(full, `${prefix}/${entry}`);
+        continue;
+      }
+      const ext = entry.includes(".") ? entry.split(".").pop()! : "";
+      // Remember one real example path per extension so a failure names a real file.
+      if (ext && !found.has(ext)) found.set(ext, `${prefix}/${entry}`);
+    }
+  };
+  walk(dir, "");
+  return found;
+}
+
+/**
+ * The matcher entry whose negative lookahead lists the static extensions middleware skips.
+ * Next compiles these entries as regexes, so testing it the same way is faithful.
+ */
+const exclusionEntry = proxyConfig.matcher.find((m) => m.includes("_next"))!;
+const exclusionRe = new RegExp(`^${exclusionEntry}$`);
 
 /** Every route a `page.tsx` under the marketing group serves, as a URL path. */
-function marketingRoutes(dir = MARKETING_DIR, prefix = ""): string[] {
+function marketingRoutes(dir: string, prefix = ""): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
@@ -39,7 +71,7 @@ const check = (path: string) =>
   isPublic({ nextUrl: { pathname: path } } as Parameters<typeof isPublic>[0]);
 
 function main() {
-  const routes = marketingRoutes().sort();
+  const routes = MARKETING_DIRS.flatMap((dir) => marketingRoutes(dir)).sort();
   console.log(`Marketing routes found: ${routes.join(", ")}\n`);
 
   const missing: string[] = [];
@@ -67,6 +99,7 @@ function main() {
   const internalRoutes = [
     "/api/imports/process-stalled",
     "/api/imports/imp_abc123/continue",
+    "/api/capture/jobs/job_abc123/run",
     "/api/embeddings/backfill",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
@@ -85,6 +118,11 @@ function main() {
     "/api/health",
     // Browsers report CSP violations without one.
     "/api/csp-report",
+    // The phone half of note scanning, authenticated by the opaque token in the path. If
+    // these fall out of PUBLIC_ROUTES the QR code leads to a sign-in page in production
+    // and nowhere else — the phone has no session and cannot get one usefully.
+    "/scan/orb_scan_7f3a9c2b_" + "a".repeat(43),
+    "/api/scan/orb_scan_7f3a9c2b_" + "a".repeat(43) + "/pages",
   ];
   const blocked: string[] = [];
   for (const route of internalRoutes) {
@@ -93,9 +131,33 @@ function main() {
     if (!ok) blocked.push(route);
   }
 
+  // Static assets in public/. `proxy.ts`'s matcher skips middleware for a fixed list of
+  // extensions; anything missing from that list is matched, fails isPublicRoute and gets a
+  // 307 to /sign-in instead of its bytes. Invisible in dev for the same reason as above,
+  // and for a <picture> it is unrecoverable — once a <source> matches by type the browser
+  // commits to that URL and never falls back to the <img>. That is how `avif` blanked every
+  // planet on the marketing hero while the .png and .webp siblings served fine.
+  console.log("");
+  const assets = publicAssetExtensions();
+  const gated: string[] = [];
+  for (const [ext, example] of [...assets].sort()) {
+    const ok = !exclusionRe.test(example);
+    console.log(`  ${ok ? "ok  " : "FAIL"} .${ext} bypasses middleware (${example})`);
+    if (!ok) gated.push(`.${ext} (e.g. ${example})`);
+  }
+
   const guardedOk = leaked.length === 0;
 
-  if (missing.length > 0 || !guardedOk || blocked.length > 0) {
+  if (gated.length > 0) {
+    console.error(
+      `\nFAILED: ${gated.join(", ")} in public/ is matched by the proxy matcher, so it will` +
+        ` be answered by Clerk in production (a 404 protect-rewrite for a signed-out` +
+        ` asset request, or a 307 to /sign-in) instead of serving. Add the extension to the` +
+        ` negative lookahead in src/proxy.ts.`
+    );
+  }
+
+  if (missing.length > 0 || !guardedOk || blocked.length > 0 || gated.length > 0) {
     if (missing.length > 0) {
       console.error(
         `\nFAILED: add ${missing.join(", ")} to PUBLIC_ROUTES in src/lib/public-routes.ts`

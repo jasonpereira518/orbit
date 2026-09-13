@@ -27,7 +27,12 @@ import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
  * instead of vanishing, and a gap that silently closes up is a chart that lies.
  */
 
-export type Grain = "week" | "month";
+/**
+ * `"day"` exists for the traffic page, which reports on a scale where a week is already
+ * a summary. Widening this rather than forking `series()` — a second copy of the
+ * gap-filling spine is a second chance to get an empty bucket wrong.
+ */
+export type Grain = "day" | "week" | "month";
 export type TrendPoint = { bucketStart: Date; count: number };
 
 export type ActivationPoint = {
@@ -70,7 +75,8 @@ function num(value: string | number | null | undefined): number {
 
 /** Grain is a closed set, never interpolated from a query string. */
 function grainInterval(grain: Grain): string {
-  return grain === "month" ? "1 month" : "1 week";
+  if (grain === "month") return "1 month";
+  return grain === "day" ? "1 day" : "1 week";
 }
 
 /**

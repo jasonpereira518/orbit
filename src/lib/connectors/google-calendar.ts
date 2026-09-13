@@ -73,6 +73,15 @@ type GoogleEvent = {
   end?: { dateTime?: string; date?: string };
   attendees?: GoogleAttendee[];
   organizer?: { email?: string; displayName?: string; self?: boolean };
+  /** Where the event came from, when another app created it — a Luma or Partiful page. */
+  source?: { url?: string; title?: string };
+  /**
+   * Google's own privacy switch. False means the organiser chose to hide the guest list from
+   * guests, and the API still returns it to the calendar owner — so honouring it is on us.
+   */
+  guestsCanSeeOtherGuests?: boolean;
+  /** Set when Google truncated the guest list; what came back is not the whole room. */
+  attendeesOmitted?: boolean;
 };
 
 type GoogleEventsPage = {
@@ -126,6 +135,13 @@ export function toParsedEvent(raw: GoogleEvent): ParsedCalendarEvent | null {
     organizer: raw.organizer
       ? { name: raw.organizer.displayName || "", email: raw.organizer.email || "" }
       : null,
+    url: raw.source?.url || null,
+    status: raw.status || null,
+    // Two ways the guest list is not ours to keep: the organiser hid it, or Google itself
+    // truncated it. Either way, storing what we happen to have been handed would be storing
+    // other people's contact details they did not agree to share with this room.
+    guestsVisible: raw.guestsCanSeeOtherGuests !== false && raw.attendeesOmitted !== true,
+    selfResponse: (raw.attendees || []).find((a) => a.self)?.responseStatus ?? null,
   };
 }
 

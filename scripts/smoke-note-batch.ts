@@ -3,7 +3,9 @@
  * interactions, dated commitments become reminders immediately, a re-paste creates nothing
  * new, and Undo dismisses without deleting (so the re-paste guard survives it).
  *
- * Writes to the local PGlite file. Stop this worktree's dev server first.
+ * `./smoke/_env` points PGlite at a throwaway directory, so this neither contends with a
+ * dev server's `.data/pglite` nor touches the remote database — the header used to say to
+ * stop your dev server first, which has not been true since that preamble landed.
  * Run: npx tsx scripts/smoke-note-batch.ts
  */
 import "./smoke/_env";
@@ -43,7 +45,7 @@ function parsed(name: string, company: string | null, actionItems: string[], fol
     name, company, role: null, presence: "participant" as const, location: null, email: null, linkedin_url: null, met_at: null,
     topics: ["fundraising"], action_items: actionItems,
     follow_up_recommendation: followUpDays ? `Follow up with ${name}` : null, follow_up_days: followUpDays,
-    relationship_score_suggestion: 3, tags: [], summary: `Chat with ${name}`, key_facts: [], opportunities: [],
+    relationship_score_suggestion: 3, relevance: null, tags: [], summary: `Chat with ${name}`, key_facts: [], opportunities: [],
     shared_interests: [], suggested_next_message: null, confidence: 0.9, interaction_date: "2026-09-01",
     low_confidence_fields: [],
   };

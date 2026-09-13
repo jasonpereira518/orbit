@@ -428,19 +428,3 @@ export async function fetchRawCommitments(
   });
   return datedCommitmentsSchema.parse(JSON.parse(content)).commitments;
 }
-
-export async function extractDatedCommitments(
-  userId: string,
-  notes: string,
-  options?: { today?: Date; anchor?: Date; knownPeople?: string[] }
-): Promise<DatedCommitmentResult> {
-  const today = options?.today ?? new Date();
-  const raw = await fetchRawCommitments(userId, notes, {
-    today,
-    knownPeople: options?.knownPeople,
-  });
-  return validateCommitments(raw, notes.trim().slice(0, MAX_NOTE_CHARS), {
-    today,
-    anchor: options?.anchor,
-  });
-}

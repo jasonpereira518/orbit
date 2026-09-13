@@ -6,6 +6,9 @@ import { saveOutreachSettings } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { SettingsSection } from "@/components/settings/settings-section";
 
 type OutreachSettingsState = {
   apollo: boolean;
@@ -28,15 +31,10 @@ export function OutreachSettings({
   const [pending, start] = useTransition();
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Outreach integrations</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Apollo powers people search. Resend and Twilio are optional for automated
-          sending — use with caution and follow CAN-SPAM, carrier, and LinkedIn
-          terms of service.
-        </p>
-      </div>
+    <SettingsSection
+      title="Outreach"
+      description="Apollo powers people search. Resend and Twilio are optional for automated sending — use with caution and follow CAN-SPAM, carrier, and LinkedIn terms of service."
+    >
 
       <div className="space-y-1.5">
         <Label htmlFor="apollo-key">Apollo API key</Label>
@@ -125,13 +123,13 @@ export function OutreachSettings({
               });
               toast.success("Outreach settings saved");
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Failed to save");
+              toast.error(friendlyError(err, TOAST_COPY.saveFailed));
             }
           })
         }
       >
         Save outreach settings
       </Button>
-    </section>
+    </SettingsSection>
   );
 }
