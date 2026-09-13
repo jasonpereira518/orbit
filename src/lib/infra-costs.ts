@@ -1,4 +1,4 @@
-import { desc, gte, sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { infraCosts } from "@/db/schema";
 
@@ -17,18 +17,6 @@ import { infraCosts } from "@/db/schema";
  * typing five numbers a month ever becomes tedious, that tedium is the signal that the
  * integration is finally worth it.
  */
-
-/** Providers Orbit actually pays. Free-text in the column so a new one needs no migration. */
-export const KNOWN_PROVIDERS = [
-  "vercel",
-  "neon",
-  "blob",
-  "clerk",
-  "resend",
-  "twilio",
-  "apollo",
-  "domain",
-] as const;
 
 /** Normalise any date to the first instant of its month, so a month has one row. */
 export function monthStart(date: Date): Date {
@@ -91,23 +79,6 @@ export async function infraBreakdown(month: Date) {
     .from(infraCosts)
     .where(sql`${infraCosts.periodMonth} = ${start}`)
     .orderBy(desc(infraCosts.amountCents));
-}
-
-/** Recent months, for the trend and for spotting a month nobody entered. */
-export async function recentInfraMonths(months = 6) {
-  const db = await getDb();
-  const since = monthStart(new Date());
-  since.setUTCMonth(since.getUTCMonth() - months);
-
-  return db
-    .select({
-      periodMonth: infraCosts.periodMonth,
-      total: sql<string>`coalesce(sum(${infraCosts.amountCents}), 0)`,
-    })
-    .from(infraCosts)
-    .where(gte(infraCosts.periodMonth, since))
-    .groupBy(infraCosts.periodMonth)
-    .orderBy(desc(infraCosts.periodMonth));
 }
 
 /**

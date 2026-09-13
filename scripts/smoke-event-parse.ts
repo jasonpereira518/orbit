@@ -298,6 +298,7 @@ function main() {
                 name: "AI Tinkerers SF",
                 timezone: "America/Los_Angeles",
                 guest_count: 214,
+                cover_url: "https://images.lumacdn.com/uploads/r8/cover.jpg",
               },
               calendar: { name: "AI Tinkerers" },
               hosts: [
@@ -322,6 +323,7 @@ function main() {
     const lumaPage =
       `<html><head><title>AI Tinkerers SF</title>` +
       `<meta property="og:title" content="AI Tinkerers SF">` +
+      `<meta property="og:image" content="https://images.lumacdn.com/cdn-cgi/image/w=800/event-social/41/card.png">` +
       `</head><body><div>${"padding ".repeat(2000)}</div>` +
       `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script>` +
       `</body></html>`;
@@ -332,6 +334,12 @@ function main() {
     check("the platform's own event id is read", details.providerEventId === "evt-6mLuOvNxaIcg", String(details.providerEventId));
     // An offset is only right half the year; a zone name is right always.
     check("an IANA zone beats an offset", details.timezone === "America/Los_Angeles", String(details.timezone));
+    // Luma's og:image is a share card with the title and an RSVP button printed on it.
+    check(
+      "the event's own cover beats Luma's share card",
+      details.imageUrl === "https://images.lumacdn.com/uploads/r8/cover.jpg",
+      String(details.imageUrl)
+    );
     check("the hosts are named", details.hosts.length === 2, String(details.hosts.length));
     check("with LinkedIn normalised to a URL", details.hosts[0]?.linkedinUrl === "https://www.linkedin.com/in/ada-lovelace", String(details.hosts[0]?.linkedinUrl));
     check("and the @ stripped off X", details.hosts[0]?.xHandle === "adal", String(details.hosts[0]?.xHandle));

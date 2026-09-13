@@ -95,6 +95,7 @@ function main() {
       id: "e1",
       title: "Deep Learning Summit",
       startsAt: new Date("2026-03-04T18:00:00Z"),
+      endsAt: null,
       venue: "Moscone",
       city: "San Francisco",
       url: null,

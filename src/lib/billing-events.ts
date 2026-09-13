@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { billingEvents, userSettings } from "@/db/schema";
 import type { BillingEventKind } from "@/db/schema";
@@ -378,25 +378,4 @@ export async function mrrReconciliation(now: Date = new Date()): Promise<{
   const ledgerCents = Number.isFinite(raw) ? raw : 0;
 
   return { ledgerCents, liveCents, driftCents: liveCents - ledgerCents };
-}
-
-/** Most recent movements, for the ledger panel. */
-export async function recentBillingEvents(limit = 25) {
-  const db = await getDb();
-  return db
-    .select()
-    .from(billingEvents)
-    .orderBy(desc(billingEvents.effectiveAt))
-    .limit(limit);
-}
-
-/** Every movement for one account, for the inspector. */
-export async function billingEventsForUser(userId: string, limit = 50) {
-  const db = await getDb();
-  return db
-    .select()
-    .from(billingEvents)
-    .where(eq(billingEvents.userId, userId))
-    .orderBy(desc(billingEvents.effectiveAt))
-    .limit(limit);
 }

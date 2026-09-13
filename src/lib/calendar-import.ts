@@ -34,6 +34,12 @@ export type ParsedCalendarEvent = {
    * the flag, and its ATTENDEE lines are there in plain sight either way.
    */
   guestsVisible?: boolean;
+  /**
+   * The calendar owner's own answer — Google's `responseStatus` on the `self` attendee, or the
+   * `PARTSTAT` on a personal feed's single ATTENDEE line. `status` is the EVENT's state (a
+   * confirmed event you were only invited to is still `CONFIRMED`); this is the user's.
+   */
+  selfResponse?: string | null;
 };
 
 /**
@@ -202,6 +208,14 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       .map(parsePerson)
       .filter((p) => p.email || p.name);
 
+    // A personal feed (Luma, Partiful) that lists anyone lists exactly one person: its owner.
+    // More than one ATTENDEE line is somebody's shared calendar, and then no line is "ours".
+    const attendeeLines = getAllPropLines(block, "ATTENDEE");
+    const selfResponse =
+      attendeeLines.length === 1
+        ? /;PARTSTAT=([^;:]+)/i.exec(attendeeLines[0]!.slice(0, attendeeLines[0]!.indexOf(":") + 1))?.[1] ?? null
+        : null;
+
     const organizerLine = block
       .split(/\r?\n/)
       .find((l) => /^ORGANIZER[;:]/i.test(l));
@@ -224,6 +238,7 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       url: getProp(block, "URL") || null,
       status: getProp(block, "STATUS") || null,
       timezone,
+      selfResponse,
     });
   }
 
