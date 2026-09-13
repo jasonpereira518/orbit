@@ -18,6 +18,7 @@ import { GET as processStalled } from "../src/app/api/imports/process-stalled/ro
 import { POST as continueImport } from "../src/app/api/imports/[id]/continue/route";
 import { POST as embeddingBackfill } from "../src/app/api/embeddings/backfill/route";
 import { POST as timelineBackfill } from "../src/app/api/linkedin/timeline-events/backfill/route";
+import { POST as runCaptureJob } from "../src/app/api/capture/jobs/[id]/run/route";
 
 const SECRET = "smoke-internal-auth-secret";
 
@@ -103,6 +104,8 @@ async function main() {
   check("embeddings/backfill → 401", emb.status === 401, `got ${emb.status}`);
   const tl = await timelineBackfill(req());
   check("linkedin/timeline-events/backfill → 401", tl.status === 401, `got ${tl.status}`);
+  const cap = await runCaptureJob(req(), { params: Promise.resolve({ id: "smoke-capture" }) });
+  check("capture/jobs/[id]/run → 401", cap.status === 401, `got ${cap.status}`);
 
   console.log("\nRoutes reject a wrong bearer when a secret is configured...");
   env({ CRON_SECRET: SECRET, VERCEL: "1", NODE_ENV: "production" });
@@ -111,9 +114,10 @@ async function main() {
     continueImport(req("Bearer nope"), { params: Promise.resolve({ id: "smoke-import" }) }),
     embeddingBackfill(req("Bearer nope")),
     timelineBackfill(req("Bearer nope")),
+    runCaptureJob(req("Bearer nope"), { params: Promise.resolve({ id: "smoke-capture" }) }),
   ]);
   check(
-    "all four → 401",
+    "all five → 401",
     wrong.every((r) => r.status === 401),
     wrong.map((r) => r.status).join(",")
   );

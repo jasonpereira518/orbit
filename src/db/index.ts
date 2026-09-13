@@ -1126,6 +1126,48 @@ CREATE TABLE IF NOT EXISTS capture_handoffs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS capture_handoffs_token_uidx ON capture_handoffs(token_hash);
 CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expires_at);
+CREATE TABLE IF NOT EXISTS capture_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_kind text NOT NULL,
+  status text NOT NULL DEFAULT 'queued',
+  entry_point text NOT NULL DEFAULT 'capture',
+  seed_contact_id uuid,
+  input_text text,
+  input_hints jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ingested_blocks jsonb NOT NULL DEFAULT '[]'::jsonb,
+  sources jsonb NOT NULL DEFAULT '[]'::jsonb,
+  photo_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  transcription_engine text,
+  source_text text,
+  source_hash text,
+  meeting_session_id uuid,
+  result jsonb,
+  decisions jsonb NOT NULL DEFAULT '{}'::jsonb,
+  claim_token text,
+  claimed_at timestamptz,
+  note_batch_id uuid,
+  error text,
+  stall_resumes integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS capture_jobs_user_status_idx ON capture_jobs(user_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS capture_jobs_stall_idx ON capture_jobs(status, updated_at);
+CREATE TABLE IF NOT EXISTS ignored_people (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  name_key text NOT NULL,
+  display_name text NOT NULL,
+  reason text NOT NULL,
+  context text,
+  company text,
+  capture_job_id uuid,
+  note_batch_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ignored_people_user_name_uidx ON ignored_people(user_id, name_key);
 CREATE TABLE IF NOT EXISTS page_views (
   id uuid PRIMARY KEY,
   visitor_hash text NOT NULL,
@@ -1304,7 +1346,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 50 = user_settings.desktop_notifications_enabled, so the desktop-notification preference
 // syncs across devices instead of living only in one browser's localStorage.
-export const SCHEMA_VERSION = 50;
+// 51 = capture jobs (the /capture redesign): capture_jobs (with photo_ids), ignored_people,
+// and capture_handoffs.capture_job_id. Built as 50 before #164 merged, then 51 once #164
+// took 49 and settings-page-improvements took 50.
+// 52 = the same capture tables, re-stamped: the preview database was stamped 51 by this
+// branch BEFORE main's 50 (desktop_notifications_enabled) was merged in, so a database at
+// 51 must still pick up that column. Nothing is new at 52; the bump only forces the pass.
+export const SCHEMA_VERSION = 52;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2078,6 +2126,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "status_changed_at", "timestamptz");
   await ensureColumn(client, "feedback", "status_changed_by", "text");
   await ensureColumn(client, "feedback", "resolution_note", "text");
+  // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
+  await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
+  await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -2277,6 +2328,9 @@ const alters = [
   `CREATE TABLE IF NOT EXISTS event_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, role text NOT NULL, source text NOT NULL, evidence text, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS target_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, priority integer NOT NULL DEFAULT 2, note text, created_at timestamptz NOT NULL DEFAULT now())`,
   // v48 (event platform) as well: the cached one-line "why" and opener, keyed by a hash of what produced it.
+  // v51: the phone scan handoff appends its pages to a capture job instead of holding a transcript.
+  `ALTER TABLE capture_handoffs ADD COLUMN IF NOT EXISTS capture_job_id uuid`,
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS photo_ids jsonb NOT NULL DEFAULT '[]'::jsonb`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS ai_note jsonb`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_kind text`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_value text`,

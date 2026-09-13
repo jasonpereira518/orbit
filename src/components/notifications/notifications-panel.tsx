@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  NotebookPen,
   Shield,
   Sparkles,
   UserRound,
@@ -687,7 +688,9 @@ function NotificationRow({
         ? UserRound
         : item.kind === "suggested_reminder"
           ? CalendarClock
-          : Sparkles;
+          : item.kind === "capture_review"
+            ? NotebookPen
+            : Sparkles;
 
   return (
     <div
@@ -718,7 +721,9 @@ function NotificationRow({
                 ? "Outreach tip"
                 : item.kind === "suggested_reminder"
                   ? "Found in your notes"
-                  : "No due date"}
+                  : item.kind === "capture_review"
+                    ? "Waiting on you"
+                    : "No due date"}
           </p>
         </div>
       </div>
