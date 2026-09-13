@@ -1198,6 +1198,7 @@ CREATE TABLE IF NOT EXISTS outreach_research_runs (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS outreach_research_runs_campaign_idx ON outreach_research_runs(user_id, campaign_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_research_runs_one_active_uidx ON outreach_research_runs(campaign_id) WHERE status IN ('queued', 'running');
 CREATE TABLE IF NOT EXISTS outreach_evidence (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,

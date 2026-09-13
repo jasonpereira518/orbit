@@ -1593,6 +1593,11 @@ export type OutreachRunStats = {
   unparsedResults?: number;
   providerErrors?: Record<string, number>;
   stoppedReason?: string;
+  /**
+   * Set once the ranking phase has swept for prospects whose `created` list was lost to a
+   * crashed searching-phase retry (Task 15 ruling 2). The sweep runs at most once per run.
+   */
+  rankSweep?: boolean;
 };
 export type OutreachJobKind =
   | "discovery.run"
