@@ -36,8 +36,8 @@ import {
   invalidateInterestProof,
   ticketForRow,
 } from "@/lib/interest-list-ticket";
-import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
-import { planetForSignupNumber, type WelcomePlanet } from "@/lib/welcome-planets";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { asWelcomePlanet, planetForSignupNumber, type WelcomePlanet } from "@/lib/welcome-planets";
 
 export type WelcomeSender = (
   email: string,
@@ -100,7 +100,10 @@ export async function joinInterestListCore(
   //    not break a real person's signup either — so any throw is the fake ticket.
   try {
     await consumeBucket("interest.join", ctx.ip, RATE_LIMITS.interestJoin);
-  } catch {
+  } catch (err) {
+    // Past the limit, or a limiter that cannot count. Either way the caller gets the fake
+    // ticket — the write must never fail open — but only the first is expected.
+    if (!isRateLimitedError(err)) console.error("[interest-list] limiter failed", err);
     return { ok: true, ticket: await plausibleTicket() };
   }
 
@@ -195,23 +198,24 @@ export async function joinInterestListCore(
     return { ok: true, ticket: await plausibleTicket() };
   }
 
+  if (welcome) {
+    const appUrl = getAppBaseUrl();
+    const send = ctx.sendWelcome ?? sendInterestListWelcomeEmail;
+    // Sent before the ticket's counting queries on purpose: the row is durable now, and a
+    // throw in those reads must not cost the welcome — a retry would land on the active
+    // branch, which sends nothing. The real sender only ever logs.
+    await send(row.email, buildUnsubscribeUrl(row.unsubscribeToken), asWelcomePlanet(row.welcomePlanet), {
+      ticketUrl: buildTicketUrl(appUrl, row.shareToken),
+      shareUrl: buildShareUrl(appUrl, row.shareToken),
+    });
+  }
+
   const ticket = await ticketForRow({
     id: row.id,
     createdAt: row.createdAt,
     welcomePlanet: row.welcomePlanet,
     shareToken: row.shareToken,
   });
-
-  if (welcome) {
-    const appUrl = getAppBaseUrl();
-    const send = ctx.sendWelcome ?? sendInterestListWelcomeEmail;
-    // Best-effort: the signup above already succeeded, so a Resend hiccup must not turn
-    // this into a failed submission. The real sender only ever logs.
-    await send(row.email, buildUnsubscribeUrl(row.unsubscribeToken), ticket.planet, {
-      ticketUrl: buildTicketUrl(appUrl, row.shareToken),
-      shareUrl: buildShareUrl(appUrl, row.shareToken),
-    });
-  }
 
   return { ok: true, ticket };
 }
