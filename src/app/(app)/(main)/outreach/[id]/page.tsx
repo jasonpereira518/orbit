@@ -3,10 +3,16 @@ import { notFound } from "next/navigation";
 import { getCampaign } from "@/actions/outreach";
 import { CampaignEditor } from "@/components/outreach/campaign-editor";
 import { CampaignWorkspace } from "@/components/outreach/campaign-workspace";
+import { OutreachReadinessStrip } from "@/components/outreach/outreach-readiness-strip";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { requireUserId } from "@/lib/auth";
 import { formatReplyRate } from "@/lib/outreach-metrics";
-import type { SequenceStep } from "@/lib/outreach-types";
+import {
+  campaignReadinessFacts,
+  getOutreachReadiness,
+} from "@/lib/outreach-readiness-server";
+import type { OutreachChannel, SequenceStep } from "@/lib/outreach-types";
 
 export default async function OutreachCampaignPage({
   params,
@@ -21,6 +27,15 @@ export default async function OutreachCampaignPage({
   } catch {
     notFound();
   }
+
+  // Scoped to this campaign's channel and its selected prospects, so the strip answers
+  // "can I send THIS" rather than listing every transport the product supports. The
+  // prospect facts are computed from rows `getCampaign` already returned — no extra query.
+  const channel = (campaign.defaultChannel || "email") as OutreachChannel;
+  const readiness = await getOutreachReadiness(
+    await requireUserId(),
+    campaignReadinessFacts(channel, campaign.prospects)
+  );
 
   const editorCampaign = {
     id: campaign.id,
@@ -70,6 +85,8 @@ export default async function OutreachCampaignPage({
           </Link>
         </div>
       </div>
+
+      <OutreachReadinessStrip items={readiness} />
 
       <CampaignWorkspace
         campaign={{

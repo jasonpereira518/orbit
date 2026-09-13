@@ -34,6 +34,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-body-limits": "pure",
   "smoke-phase0-primitives": "pure",
   "smoke-honest-reporting": "pure",
+  "smoke-outreach-readiness": "pure",
   "smoke-chat-pipeline": "pure",
   "smoke-chat-prompt": "pure",
   "smoke-chat-retrieval": "pure",

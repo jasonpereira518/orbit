@@ -2,14 +2,23 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { listCampaigns } from "@/actions/outreach";
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
+import { OutreachReadinessStrip } from "@/components/outreach/outreach-readiness-strip";
 import { buttonVariants } from "@/components/ui/button";
+import { requireUserId } from "@/lib/auth";
 import { formatReplyRate } from "@/lib/outreach-metrics";
+import { getOutreachReadiness } from "@/lib/outreach-readiness-server";
 import { cn } from "@/lib/utils";
 
 export default async function OutreachPage() {
   // The paywall lives in this section's layout, so it covers /outreach/new and
   // /outreach/[id] too. Reaching this line means the user is entitled.
-  const campaigns = await listCampaigns();
+  //
+  // Account-level readiness: no campaign, so both transports are reported. The question on
+  // this page is "what could I run", not "can I send this one".
+  const [campaigns, readiness] = await Promise.all([
+    listCampaigns(),
+    getOutreachReadiness(await requireUserId()),
+  ]);
 
   const totals = campaigns.reduce(
     (acc, c) => {
@@ -57,6 +66,8 @@ export default async function OutreachPage() {
           New campaign
         </Link>
       </div>
+
+      <OutreachReadinessStrip items={readiness} />
 
       {campaigns.length > 0 && (
         <div className="rounded-2xl border border-border/70 bg-card px-5 py-4">
