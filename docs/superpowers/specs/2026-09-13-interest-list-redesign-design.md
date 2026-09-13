@@ -7,7 +7,7 @@ writing; merge main before implementation)
 
 ## Problem / motivation
 
-`/interest` (`src/app/(marketing)/interest/page.tsx`, PR #139) is a quiet mailing-list
+`/interest` (`src/app/(site)/interest/page.tsx`, PR #139) is a quiet mailing-list
 opt-in: hero, glass email card, three expectations, a sign-up detour, FAQ, final CTA. It
 works, and its form already has real choreography (orbiting loader, starfield burst,
 drawn checkmark). What it lacks is the thing that makes a YC-style waitlist page spread:
@@ -129,9 +129,9 @@ getInterestProof(): Promise<{ count: number; nextPlanet: WelcomePlanet; recent: 
 
 - **Ordinal:** `count(*) where created_at < mine or (created_at = mine and id <= mine)`.
   Two rows inserted in the same instant get distinct numbers.
-- **Proof** is wrapped in `unstable_cache` with `revalidate: 60` and tag
-  `"interest-list"` (the project has no Cache Components; this is the documented path in
-  `caching-without-cache-components.md`). `count` is total rows ever joined — the same
+- **Proof** is memoised in the module for 60 s; `invalidateInterestProof()` clears it on
+  insert. Not `unstable_cache`: Next 16 deprecates the one-argument `revalidateTag`, and
+  the helper cannot run inside a tsx smoke script. `count` is total rows ever joined — the same
   population the ordinals are drawn from, so "#1,285" and "1,284 have joined" agree.
   `nextPlanet = planetForSignupNumber(count + 1)`. `recent` is the `welcome_planet` of the
   last three rows by `created_at desc`, nulls mapped through `asWelcomePlanet`.
@@ -178,7 +178,7 @@ Order of operations:
    - Self-referral: if `ref` resolves to the row we are about to touch, ignore it. (Only
      reachable on the insert branch by submitting the email that owns the token — which
      means the row exists, so the insert branch is never taken. Guard anyway.)
-7. `revalidateTag("interest-list")` on the insert branch.
+7. `invalidateInterestProof()` on the insert branch.
 8. Return the real ticket via `getTicketByShareToken`.
 
 The welcome and follow-up email builders gain `ticketUrl` and `shareUrl`
@@ -187,7 +187,7 @@ send is best-effort as today.
 
 `src/components/landing/waitlist-form.tsx` reads only `result.ok` and needs no change.
 
-## Page and metadata: `src/app/(marketing)/interest/page.tsx`
+## Page and metadata: `src/app/(site)/interest/page.tsx`
 
 - `export const dynamic = "force-dynamic"`. Reads `searchParams` (`me`, `ref`; both
   trimmed, max 64 chars, anything else ignored).
@@ -293,8 +293,7 @@ and is rendered only after mount when the API exists.
 - `?ref=` and `?me=` together: `me` wins; `ref` is ignored.
 - The counter floor is compared against the cached `count`, so a page can show "50 have
   joined" up to a minute after the 50th join. Acceptable.
-- `revalidateTag` inside the action is fine; the duplicates page's note about
-  `revalidatePath` during render does not apply here.
+- The proof memo is per instance; a second instance can lag up to 60 s behind a join. Fine.
 - The page is now dynamic: the marketing `loading.tsx` / `InterestPageSkeleton` shows on
   client navigations. Keep it structurally faithful to the new hero.
 
@@ -329,8 +328,8 @@ Existing gates: `scripts/smoke-interest-list-admin.ts` (new columns are nullable
 stay green), `npm run db:check`, `npm run build`, `npx eslint` at zero errors (the baseline
 memory: any error is yours).
 
-Browser verification: headless Chrome over CDP (`scripts/dev/cdp.mjs`, per the
-occluded-tab memory — never a hidden pane) at 1280 and 390 wide, plus one pass with
+Browser verification: the in-app Browser pane running the `orbit-web` launch config on
+port 3001, kept FRONTED (a hidden pane starves rAF — see the occluded-tab memory), at desktop and the 390-wide mobile preset, plus one pass with
 `prefers-reduced-motion: reduce`. Walk: load → proof line → invited strip via `?ref` →
 join → flip → ticket assembly → Copy → reload keeps the ticket → `?me` direct visit →
 image route renders. Screenshots in the PR.
@@ -350,17 +349,19 @@ New:
 - `src/lib/interest-list-ticket.ts`
 - `src/lib/interest-list-join.ts` (headers-free core of the join action)
 - `src/components/interest/boarding-pass.tsx` (the ticket, client)
-- `src/components/interest/interest-card.tsx` (the state machine: form / invited / ticket,
-  the flip; absorbs today's `interest-form.tsx`)
+- `src/components/interest/interest-hero.tsx` (eyebrow, crossfading headline, sub-line, and
+  the card state machine: form / invited / turning / ticket, the flip; absorbs today's `interest-form.tsx`)
 - `src/components/interest/share-row.tsx`
 - `src/components/interest/proof-line.tsx`
-- `src/components/interest/moons.tsx`
+- `src/components/interest/moons.tsx`, `src/components/interest/planet-art.tsx`
+- `src/lib/welcome-planets.ts` (client-safe planets; the email module re-exports them)
+- `next.config.ts` gains `outputFileTracingIncludes` for the fonts and planet PNGs
 - `src/app/api/interest-list/ticket-image/route.tsx` + `fonts/`
 - `scripts/smoke-interest-list-join.ts`, `scripts/smoke-interest-list-page.ts`,
   `scripts/smoke-interest-ticket-image.ts`
 
 Changed:
-- `src/app/(marketing)/interest/page.tsx`
+- `src/app/(site)/interest/page.tsx`
 - `src/actions/interest-list.ts`, `src/lib/interest-list.ts`
 - `src/lib/interest-list-email.ts` (two links per template)
 - `src/db/schema.ts`, `src/db/index.ts` (template, alters, `SCHEMA_VERSION` 52)
@@ -371,4 +372,4 @@ Changed:
 - `scripts/run-smoke.ts` (manifest)
 
 Removed:
-- `src/components/interest/interest-form.tsx` (folded into `interest-card.tsx`)
+- `src/components/interest/interest-form.tsx` (folded into `interest-hero.tsx`)
