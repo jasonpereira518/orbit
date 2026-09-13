@@ -8,7 +8,7 @@
  * and a rate-limited caller all get the same shape, so which check a submit tripped is
  * not inferable from the response. What IS inferable, by design (see the spec's privacy
  * section): a duplicate gets its real ticket, whose number is below the current total —
- * membership of an address can be probed at five tries per ten minutes per IP. The
+ * membership of an address can be probed at ten tries per ten minutes per IP. The
  * address itself is never returned.
  */
 import { eq, sql } from "drizzle-orm";
@@ -102,8 +102,11 @@ export async function joinInterestListCore(
     await consumeBucket("interest.join", ctx.ip, RATE_LIMITS.interestJoin);
   } catch (err) {
     // Past the limit, or a limiter that cannot count. Either way the caller gets the fake
-    // ticket — the write must never fail open — but only the first is expected.
-    if (!isRateLimitedError(err)) console.error("[interest-list] limiter failed", err);
+    // ticket — the write must never fail open — but only the first is expected. The
+    // response stays indistinguishable from a real join, so this log is the only signal
+    // that a real person was dropped.
+    if (isRateLimitedError(err)) console.warn("[interest-list] join rate-limited", { ip: ctx.ip });
+    else console.error("[interest-list] limiter failed", err);
     return { ok: true, ticket: await plausibleTicket() };
   }
 

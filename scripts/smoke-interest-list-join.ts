@@ -23,10 +23,9 @@ import {
   proofShowsCount,
   readInterestProof,
 } from "../src/lib/interest-list-ticket";
-import { INTEREST_LIST_COUNT_FLOOR } from "../src/lib/interest-list";
+import { INTEREST_LIST_COUNT_FLOOR, MIN_FILL_MS } from "../src/lib/interest-list";
 import { planetForSignupNumber } from "../src/lib/welcome-planets";
 import { joinInterestListCore, type JoinContext } from "../src/lib/interest-list-join";
-import { MIN_FILL_MS } from "../src/lib/interest-list";
 import type { EmailLinks } from "../src/lib/interest-list-email";
 
 const PREFIX = "smoke-join-";
@@ -67,6 +66,9 @@ async function seedReadModel() {
 
 async function readModel() {
   console.log("\nread model…");
+  // Counts are asserted as deltas: the smoke PGlite directory is shared, so rows this
+  // script did not write can already be there.
+  const before = (await readInterestProof()).count;
   await seedReadModel();
 
   const t1 = await getTicketByShareToken("smoke-share-1");
@@ -90,8 +92,8 @@ async function readModel() {
   check("inviter for an unknown token is null", (await getInviterPlanet("nope")) === null);
 
   const proof = await readInterestProof();
-  check("proof counts every row", proof.count === 4, String(proof.count));
-  check("next planet follows the count", proof.nextPlanet === planetForSignupNumber(5));
+  check("proof counts every row", proof.count === before + 4, String(proof.count));
+  check("next planet follows the count", proof.nextPlanet === planetForSignupNumber(before + 5));
   check("recent planets are newest first, legacy as Mercury", proof.recent.join(",") === "mercury,earth,venus" || proof.recent.join(",") === "mercury,venus,earth", proof.recent.join(","));
   check("count is hidden below the floor", proof.count < INTEREST_LIST_COUNT_FLOOR && !proofShowsCount(proof));
   check("count shows at the floor", proofShowsCount({ ...proof, count: INTEREST_LIST_COUNT_FLOOR }));
@@ -106,16 +108,18 @@ async function readModel() {
     welcomePlanet: "jupiter",
   });
   const memo2 = await getInterestProof();
-  check("proof is memoised inside the window", memo1.count === memo2.count && memo2.count === 4);
+  check("proof is memoised inside the window", memo1.count === memo2.count && memo2.count === before + 4);
   invalidateInterestProof();
   const memo3 = await getInterestProof();
-  check("invalidation refreshes the proof", memo3.count === 5, String(memo3.count));
+  check("invalidation refreshes the proof", memo3.count === before + 5, String(memo3.count));
   await db.delete(interestListSignups).where(eq(interestListSignups.email, `${PREFIX}r5@example.test`));
 }
 
 async function joinPath() {
   console.log("\njoin path…");
   const db = await getDb();
+  // Delta baseline, for the same reason as in `readModel`.
+  const before = (await readInterestProof()).count;
   const sent: Array<{ email: string; links: EmailLinks }> = [];
   const ctx = (ip: string): JoinContext => ({
     ip: `smoke-${ip}`,
@@ -178,30 +182,30 @@ async function joinPath() {
   check("legacy mint sends no mail", !sent.some((s) => s.email === `${PREFIX}legacy@example.test`));
 
   // --- honeypot, too fast: ok, plausible ticket, no row
-  const before = (await db.select().from(interestListSignups)).length;
+  const rowsBefore = (await db.select().from(interestListSignups)).length;
   const bot = await joinInterestListCore({ ...base, website: "http://spam", email: `${PREFIX}bot@example.test` }, ctx("bot"));
   const fast = await joinInterestListCore({ ...base, elapsedMs: 10, email: `${PREFIX}fast@example.test` }, ctx("fast"));
   check("honeypot answers ok with a ticket", bot.ok && bot.ticket.number > 0 && bot.ticket.shareToken.length > 10);
   check("too-fast answers ok with a ticket", fast.ok && fast.ticket.moons === 0);
-  check("neither writes a row", (await db.select().from(interestListSignups)).length === before);
+  check("neither writes a row", (await db.select().from(interestListSignups)).length === rowsBefore);
   check("fake tokens resolve to nothing", bot.ok && (await getTicketByShareToken(bot.ticket.shareToken)) === null);
 
   // --- invalid email is the one visible error
   const bad = await joinInterestListCore({ ...base, email: "not-an-email" }, ctx("bad"));
   check("a bad address is refused with the form's copy", !bad.ok && bad.message === "That address doesn't look right.");
 
-  // --- rate limit: the sixth submit from one IP gets a fake ticket and no row
-  for (let i = 1; i <= 5; i += 1) {
+  // --- rate limit: the eleventh submit from one IP gets a fake ticket and no row
+  for (let i = 1; i <= 10; i += 1) {
     const r = await joinInterestListCore({ ...base, email: `${PREFIX}rl${i}@example.test` }, ctx("rl"));
-    check(`submit ${i} of 5 lands`, r.ok && Boolean(await rowFor(`${PREFIX}rl${i}@example.test`)));
+    check(`submit ${i} of 10 lands`, r.ok && Boolean(await rowFor(`${PREFIX}rl${i}@example.test`)));
   }
-  const sixth = await joinInterestListCore({ ...base, email: `${PREFIX}rl6@example.test` }, ctx("rl"));
-  check("sixth submit still answers ok", sixth.ok);
-  check("sixth submit writes no row", (await rowFor(`${PREFIX}rl6@example.test`)) === undefined);
+  const eleventh = await joinInterestListCore({ ...base, email: `${PREFIX}rl11@example.test` }, ctx("rl"));
+  check("eleventh submit still answers ok", eleventh.ok);
+  check("eleventh submit writes no row", (await rowFor(`${PREFIX}rl11@example.test`)) === undefined);
 
   // --- the proof memo was invalidated by the inserts
   const proof = await getInterestProof();
-  check("proof reflects the joins", proof.count >= 8, String(proof.count));
+  check("proof reflects the joins", proof.count >= before + 8, String(proof.count));
 }
 
 async function main() {

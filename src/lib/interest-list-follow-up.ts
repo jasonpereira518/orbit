@@ -83,6 +83,8 @@ export async function sweepInterestListFollowUps(): Promise<FollowUpSweepStats> 
 
   stats.eligible = candidates.length;
 
+  const appUrl = getAppBaseUrl();
+
   for (const row of candidates) {
     // Claim first. The `IS NULL` guard is what makes this safe under a concurrent run:
     // whoever updates the row first gets a returned row, the loser gets none and skips.
@@ -96,7 +98,6 @@ export async function sweepInterestListFollowUps(): Promise<FollowUpSweepStats> 
 
     if (!claimed[0]) continue;
 
-    const appUrl = getAppBaseUrl();
     const ok = await sendInterestListFollowUpEmail(
       row.email,
       buildUnsubscribeUrl(row.unsubscribeToken),
