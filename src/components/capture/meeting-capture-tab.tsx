@@ -8,7 +8,7 @@ import { useSyncExternalStore } from "react";
 import { MeetingCapturePanel } from "@/components/capture/meeting-capture-panel";
 import type { MeetingAnalysis } from "@/actions/meetings";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
-import { isMeetingCaptureSupported } from "@/lib/use-meeting-recorder";
+import { isMeetingCaptureSupported, isMicMeetingCaptureSupported } from "@/lib/use-meeting-recorder";
 
 /**
  * Whether this browser can record a call. Only knowable on the client, so the server
@@ -24,6 +24,12 @@ function useMeetingCaptureSupported(): boolean {
     isMeetingCaptureSupported,
     () => false
   );
+}
+
+const noop = () => () => {};
+
+function useMicMeetingSupported(): boolean {
+  return useSyncExternalStore(noop, isMicMeetingCaptureSupported, () => false);
 }
 
 export function MeetingCaptureTab({
@@ -44,6 +50,7 @@ export function MeetingCaptureTab({
   tabId: string;
 }) {
   const supported = useMeetingCaptureSupported();
+  const micSupported = useMicMeetingSupported();
   return (
     <div id={panelId} role="tabpanel" aria-labelledby={tabId}>
       <MeetingCapturePanel
@@ -51,6 +58,7 @@ export function MeetingCaptureTab({
         hasApiKey={hasApiKey}
         canTranscribe={canTranscribe}
         captureSupported={supported}
+        micSupported={micSupported}
         onBusyChange={onBusyChange}
         onAnalyzed={onAnalyzed}
       />

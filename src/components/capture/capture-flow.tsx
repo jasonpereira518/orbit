@@ -10,7 +10,7 @@
  * click, before the server has a row) and "the resume notice was dismissed". Everything
  * a reload must restore lives on the job; everything else is decoration.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -77,13 +77,16 @@ export function CaptureFlow({
 }) {
   const router = useRouter();
   const { job: storeJob } = useCaptureJob();
-  // The server's job wins on first paint; after that the store is the truth.
+  // The server's job is shown on first paint and pushed into the store right after mount
+  // (not during render: the store has other subscribers, and emitting mid-render is a
+  // React error). After that the store is the truth — including "cleared".
   const seeded = useRef(false);
-  if (!seeded.current) {
+  useLayoutEffect(() => {
+    if (seeded.current) return;
     seeded.current = true;
     if (initialJob) seedCaptureJob(initialJob, { force: true });
-  }
-  const job = storeJob;
+  }, [initialJob]);
+  const job = seeded.current ? storeJob : (storeJob ?? initialJob);
 
   const [mode, setMode] = useState<CaptureMode>(() =>
     initialJob && (initialJob.status === "transcribed" || initialJob.status === "ingesting") ? tabForSource(initialJob.sourceKind) : defaultMode

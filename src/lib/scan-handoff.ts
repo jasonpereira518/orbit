@@ -33,8 +33,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, lt } from "drizzle-orm";
 import { getDb } from "@/db";
-import { captureHandoffs, userSettings } from "@/db/schema";
+import { captureHandoffs, captureJobs, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { appendIngestedBlocks, createCaptureJob, discardCaptureJobRow, markCaptureJobTranscribed } from "@/lib/capture-jobs";
 
 const SCAN_PREFIX = "orb_scan";
 
@@ -87,6 +88,7 @@ export type ScanHandoff = {
   sources: string | null;
   error: string | null;
   expiresAt: Date;
+  captureJobId: string | null;
 };
 
 /**
@@ -101,8 +103,14 @@ export async function sweepExpiredHandoffs(): Promise<void> {
   await db.delete(captureHandoffs).where(lt(captureHandoffs.expiresAt, new Date()));
 }
 
-export type MintedHandoff = { token: string; url: string; expiresAt: Date };
+export type MintedHandoff = { token: string; url: string; expiresAt: Date; captureJobId: string };
 
+/**
+ * Mint a grant. It is born attached to a capture job (`ingesting`): every batch of pages
+ * the phone sends is transcribed and appended to that job, and the desktop watches the
+ * job rather than this row — so a second send is an append, not a 404, and the text is
+ * already where extraction will read it from.
+ */
 export async function mintScanHandoff(userId: string): Promise<MintedHandoff> {
   await sweepExpiredHandoffs().catch(() => {
     // Tidying is not the caller's job. A full table is a problem for later; a person
@@ -112,10 +120,11 @@ export async function mintScanHandoff(userId: string): Promise<MintedHandoff> {
   const { token, tokenHash } = generateHandoffToken();
   const expiresAt = new Date(Date.now() + HANDOFF_TTL_MS);
 
+  const job = await createCaptureJob(userId, { sourceKind: "phone", status: "ingesting" });
   const db = await getDb();
-  await db.insert(captureHandoffs).values({ userId, tokenHash, expiresAt });
+  await db.insert(captureHandoffs).values({ userId, tokenHash, expiresAt, captureJobId: job.id });
 
-  return { token, url: buildScanHandoffUrl(token), expiresAt };
+  return { token, url: buildScanHandoffUrl(token), expiresAt, captureJobId: job.id };
 }
 
 /**
@@ -152,6 +161,7 @@ export async function findScanHandoff(rawToken: string): Promise<ScanHandoff | n
     sources: row.sources,
     error: row.error,
     expiresAt: row.expiresAt,
+    captureJobId: row.captureJobId,
   };
 }
 
@@ -164,22 +174,45 @@ export async function markHandoffUploading(id: string): Promise<void> {
     .where(and(eq(captureHandoffs.id, id), eq(captureHandoffs.status, "pending")));
 }
 
+/**
+ * One batch of pages, transcribed: appended to the grant's capture job as a block, and
+ * counted on the row. The grant stays redeemable so the phone can send more; the text
+ * lives on the job, never here.
+ */
 export async function recordHandoffTranscript(
   id: string,
   result: { transcript: string; pageCount: number; sources: string }
 ): Promise<void> {
   const db = await getDb();
+  const row = await db.query.captureHandoffs.findFirst({ where: eq(captureHandoffs.id, id) });
+  if (row?.captureJobId && result.transcript.trim()) {
+    await appendIngestedBlocks(row.captureJobId, [{ text: result.transcript.trim(), source: result.sources }], {
+      sources: [result.sources],
+    });
+  }
   await db
     .update(captureHandoffs)
     .set({
       status: "ready",
-      transcript: result.transcript,
-      pageCount: result.pageCount,
+      pageCount: (row?.pageCount ?? 0) + result.pageCount,
       sources: result.sources,
       error: null,
       updatedAt: new Date(),
     })
     .where(eq(captureHandoffs.id, id));
+}
+
+/**
+ * The phone (or the desktop) says it is done: the grant is consumed and the job moves to
+ * `transcribed`, where the desktop shows the text and offers Extract. Idempotent.
+ */
+export async function finishScanHandoff(id: string): Promise<{ captureJobId: string | null }> {
+  const db = await getDb();
+  const row = await db.query.captureHandoffs.findFirst({ where: eq(captureHandoffs.id, id) });
+  if (!row) return { captureJobId: null };
+  await db.delete(captureHandoffs).where(eq(captureHandoffs.id, row.id));
+  if (row.captureJobId) await markCaptureJobTranscribed(row.captureJobId);
+  return { captureJobId: row.captureJobId };
 }
 
 /**
@@ -196,59 +229,44 @@ export async function recordHandoffError(id: string, message: string): Promise<v
     .where(eq(captureHandoffs.id, id));
 }
 
-export type HandoffClaim =
-  | { state: "pending" | "uploading" }
-  | { state: "expired" }
-  | { state: "error"; message: string }
-  | { state: "ready"; transcript: string; pageCount: number; sources: string | null };
-
-/**
- * The desktop's poll. Reading a ready transcript also consumes it: the row is deleted, so
- * the grant cannot be replayed and the text does not outlive the handoff that carried it.
- *
- * Scoped by `userId` as well as the token so that a token which somehow reached another
- * signed-in account cannot be used to drain it.
- */
-export async function claimScanHandoff(
-  userId: string,
-  rawToken: string
-): Promise<HandoffClaim> {
-  if (!looksLikeHandoffToken(rawToken)) return { state: "expired" };
-
-  const db = await getDb();
-  const row = await db.query.captureHandoffs.findFirst({
-    where: and(
-      eq(captureHandoffs.tokenHash, hashHandoffToken(rawToken)),
-      eq(captureHandoffs.userId, userId)
-    ),
-  });
-  if (!row) return { state: "expired" };
-  if (row.expiresAt.getTime() <= Date.now()) return { state: "expired" };
-  if (row.error) return { state: "error", message: row.error };
-  if (row.status !== "ready" || !row.transcript) {
-    return { state: row.status === "uploading" ? "uploading" : "pending" };
-  }
-
-  await db.delete(captureHandoffs).where(eq(captureHandoffs.id, row.id));
-
-  return {
-    state: "ready",
-    transcript: row.transcript,
-    pageCount: row.pageCount,
-    sources: row.sources,
-  };
-}
-
 /** Drop a grant the desktop has given up on, so a stale QR cannot be redeemed later. */
 export async function cancelScanHandoff(userId: string, rawToken: string): Promise<void> {
   if (!looksLikeHandoffToken(rawToken)) return;
   const db = await getDb();
-  await db
+  const rows = await db
     .delete(captureHandoffs)
     .where(
       and(
         eq(captureHandoffs.tokenHash, hashHandoffToken(rawToken)),
         eq(captureHandoffs.userId, userId)
       )
-    );
+    )
+    .returning();
+  // The job it was feeding goes too, unless the phone already sent something worth keeping.
+  for (const row of rows) {
+    if (row.captureJobId) await discardEmptyCaptureJob(userId, row.captureJobId);
+  }
+}
+
+/** A `phone` job that never received a page is noise; one with text is left `transcribed`. */
+async function discardEmptyCaptureJob(userId: string, id: string): Promise<void> {
+  const db = await getDb();
+  const job = await db.query.captureJobs.findFirst({ where: and(eq(captureJobs.id, id), eq(captureJobs.userId, userId)) });
+  if (!job || job.status !== "ingesting") return;
+  if ((job.ingestedBlocks ?? []).length) {
+    await markCaptureJobTranscribed(id);
+    return;
+  }
+  await discardCaptureJobRow(userId, id);
+}
+
+/** For the desktop: which job a live grant feeds, scoped to the minting account. */
+export async function handoffJobFor(userId: string, rawToken: string): Promise<{ captureJobId: string | null; status: HandoffStatus; error: string | null } | null> {
+  if (!looksLikeHandoffToken(rawToken)) return null;
+  const db = await getDb();
+  const row = await db.query.captureHandoffs.findFirst({
+    where: and(eq(captureHandoffs.tokenHash, hashHandoffToken(rawToken)), eq(captureHandoffs.userId, userId)),
+  });
+  if (!row || row.expiresAt.getTime() <= Date.now()) return null;
+  return { captureJobId: row.captureJobId, status: row.status, error: row.error };
 }

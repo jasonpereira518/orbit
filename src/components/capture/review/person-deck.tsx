@@ -62,6 +62,7 @@ export function decisionFromDraft(kind: CaptureDecisionKind, index: number, draf
 }
 
 type Custom = { dir: 1 | -1; leaving: CaptureDecisionKind | "back" };
+type Leaving = { key: string; kind: CaptureDecisionKind } | null;
 
 const cardVariants = {
   enter: ({ dir }: Custom) => ({ opacity: 0, x: dir >= 0 ? 48 : -48, rotate: dir >= 0 ? 1.5 : -1.5, y: 0, scale: 1 }),
@@ -97,7 +98,9 @@ export function PersonDeck({
 }) {
   const people = peopleDecisions(decisions);
   const [drafts, setDrafts] = useState<Record<string, PersonDraft>>({});
-  const [custom, setCustom] = useState<Custom>({ dir: 1, leaving: "accept" });
+  const [custom, setCustom] = useState<Custom>({ dir: 1, leaving: "back" });
+  /** The card whose stamp is forced on for its fly-out — only that card, never the next. */
+  const [leaving, setLeaving] = useState<Leaving>(null);
   const [announce, setAnnounce] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const actionRowRef = useRef<HTMLDivElement>(null);
@@ -115,26 +118,24 @@ export function PersonDeck({
     [drafts, people, preferredContactId]
   );
 
-  // Drag lives on the deck so it survives the card's remount; reset per card.
-  const x = useMotionValue(0);
-  const rotate = useTransform(x, [-240, 240], [-8, 8]);
-  const keepOpacity = useTransform(x, [40, 140], [0, 1]);
-  const notNowOpacity = useTransform(x, [-140, -40], [1, 0]);
-  const controls = useDragControls();
   useEffect(() => {
-    x.set(0);
     rootRef.current?.focus({ preventScroll: true });
-  }, [index, x]);
+  }, [index]);
 
   const decide = useCallback(
     (kind: CaptureDecisionKind) => {
       if (!current) return;
       const draft = draftFor(current);
       setCustom({ dir: 1, leaving: kind });
+      // Two renders on purpose: first the stamp lands on THIS card, then the card leaves.
+      // Done in one render, AnimatePresence would keep the card's previous props (no stamp)
+      // for the fly-out.
+      setLeaving({ key: current.key, kind });
       const name = draft.fields.name.trim() || "This person";
       const verb = kind === "accept" ? "kept" : kind === "reject" ? "set aside" : "left for later";
       setAnnounce(next ? `${name} ${verb}. Next: ${next.parsed.name || "Unnamed person"}, ${index + 2} of ${items.length}.` : `${name} ${verb}. That was the last card.`);
-      onDecide(current.key, decisionFromDraft(kind, index, draft));
+      const decision = decisionFromDraft(kind, index, draft);
+      window.setTimeout(() => onDecide(current.key, decision), 40);
     },
     [current, draftFor, index, items.length, next, onDecide]
   );
@@ -147,11 +148,6 @@ export function PersonDeck({
     onBack(prev.key);
   }, [items, onBack, previousDecided]);
 
-  function onDragEnd(_: unknown, info: PanInfo) {
-    const past = Math.abs(info.offset.x) > COMMIT_DISTANCE || Math.abs(info.velocity.x) > COMMIT_VELOCITY;
-    if (!past) return;
-    decide(info.offset.x > 0 || info.velocity.x > 0 ? "accept" : "reject");
-  }
 
   function onKeyDown(e: React.KeyboardEvent) {
     const target = e.target as HTMLElement;
@@ -221,40 +217,18 @@ export function PersonDeck({
         )}
 
         <AnimatePresence initial={false} custom={custom} mode="popLayout">
-          <motion.div
+          <DeckCard
             key={current.key}
-            role="group"
-            aria-roledescription="review card"
-            aria-label={`${index + 1} of ${items.length}: ${current.parsed.name || "Unnamed person"}`}
+            item={current}
+            index={index}
+            total={items.length}
             custom={custom}
-            variants={cardVariants}
-            initial="enter"
-            animate="center"
-            exit="exit"
-            transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
-            drag="x"
-            dragListener={false}
-            dragControls={controls}
-            dragConstraints={{ left: 0, right: 0 }}
-            dragElastic={0.9}
-            dragMomentum={false}
-            onDragEnd={onDragEnd}
-            style={{ x, rotate, touchAction: "pan-y" }}
-            className="relative z-10 rounded-2xl border border-border/70 bg-card p-5 shadow-md sm:p-6"
-          >
-            <DecisionStamp kind="accept" side="left" opacity={custom.leaving === "accept" ? 1 : keepOpacity} />
-            <DecisionStamp kind="reject" side="right" opacity={custom.leaving === "reject" ? 1 : notNowOpacity} />
-            <PersonCardBody
-              item={current}
-              index={index}
-              total={items.length}
-              draft={draftFor(current)}
-              onDraft={(patch) => setDrafts((prev) => ({ ...prev, [current.key]: { ...draftFor(current), ...patch } }))}
-              lockedName={lockedName}
-              idPrefix={`card-${index}`}
-              handleProps={{ onPointerDown: (e) => controls.start(e) }}
-            />
-          </motion.div>
+            leaving={leaving?.key === current.key ? leaving.kind : null}
+            draft={draftFor(current)}
+            onDraft={(patch) => setDrafts((prev) => ({ ...prev, [current.key]: { ...draftFor(current), ...patch } }))}
+            lockedName={lockedName}
+            onSwipe={decide}
+          />
         </AnimatePresence>
       </div>
 
@@ -292,5 +266,82 @@ export function PersonDeck({
         <ArrowLeft className="inline size-3" /> not now · <span className="font-medium">→</span> keep · <span className="font-medium">↓</span> later · drag the name to swipe
       </p>
     </div>
+  );
+}
+
+/**
+ * One card in the deck, with its own drag state. Per card on purpose: a MotionValue shared
+ * between the card flying out and the card sliding in makes the two fight, and the exit
+ * never completes.
+ */
+function DeckCard({
+  item,
+  index,
+  total,
+  custom,
+  leaving,
+  draft,
+  onDraft,
+  lockedName,
+  onSwipe,
+}: {
+  item: BulkNotePersonPreview;
+  index: number;
+  total: number;
+  custom: Custom;
+  leaving: CaptureDecisionKind | null;
+  draft: PersonDraft;
+  onDraft: (patch: Partial<PersonDraft>) => void;
+  lockedName?: string | null;
+  onSwipe: (kind: CaptureDecisionKind) => void;
+}) {
+  const x = useMotionValue(0);
+  const rotate = useTransform(x, [-240, 240], [-8, 8]);
+  const keepOpacity = useTransform(x, [40, 140], [0, 1]);
+  const notNowOpacity = useTransform(x, [-140, -40], [1, 0]);
+  const controls = useDragControls();
+
+  function onDragEnd(_: unknown, info: PanInfo) {
+    const past = Math.abs(info.offset.x) > COMMIT_DISTANCE || Math.abs(info.velocity.x) > COMMIT_VELOCITY;
+    if (!past) return;
+    onSwipe(info.offset.x > 0 || info.velocity.x > 0 ? "accept" : "reject");
+  }
+
+  return (
+    <motion.div
+      role="group"
+      aria-roledescription="review card"
+      aria-label={`${index + 1} of ${total}: ${item.parsed.name || "Unnamed person"}`}
+      data-leaving={leaving ?? undefined}
+      custom={custom}
+      variants={cardVariants}
+      initial="enter"
+      animate="center"
+      exit="exit"
+      transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
+      drag={leaving ? false : "x"}
+      dragListener={false}
+      dragControls={controls}
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.9}
+      dragMomentum={false}
+      onDragEnd={onDragEnd}
+      style={{ x, rotate, touchAction: "pan-y" }}
+      className="relative z-10 rounded-2xl border border-border/70 bg-card p-5 shadow-md sm:p-6"
+    >
+      <DecisionStamp kind="accept" side="left" opacity={leaving === "accept" ? 1 : keepOpacity} />
+      <DecisionStamp kind="reject" side="right" opacity={leaving === "reject" ? 1 : notNowOpacity} />
+      {leaving === "skip" && <DecisionStamp kind="skip" side="center" opacity={1} />}
+      <PersonCardBody
+        item={item}
+        index={index}
+        total={total}
+        draft={draft}
+        onDraft={onDraft}
+        lockedName={lockedName}
+        idPrefix={`card-${index}`}
+        handleProps={{ onPointerDown: (e) => controls.start(e) }}
+      />
+    </motion.div>
   );
 }

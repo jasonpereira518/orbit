@@ -78,7 +78,7 @@ export function MessyNotesCapture({
           disabled={busy}
           onRawFiles={ingest.handleFilesSelected}
           onPages={ingest.ingestScanPages}
-          onTranscript={(text, sources) => ingest.onPhoneTranscript(text, sources)}
+          onTranscript={(text, sources, jobId) => ingest.onPhoneTranscript(text, sources, jobId ?? null)}
         />
         <div className="flex flex-wrap items-center gap-2">
           {ingest.busy && (

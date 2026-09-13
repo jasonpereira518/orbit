@@ -35,6 +35,10 @@ let sequence = 0;
 
 function set(next: Partial<CaptureJobSnapshot>) {
   snapshot = { ...snapshot, ...next };
+  if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+    // Inspectable from the console while developing: `window.__captureJob`.
+    (window as Window & { __captureJob?: CaptureJobSnapshot }).__captureJob = snapshot;
+  }
   for (const l of listeners) l();
   syncTimer();
 }

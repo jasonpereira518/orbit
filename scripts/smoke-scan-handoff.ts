@@ -5,11 +5,11 @@
  * app that accepts user content without a Clerk session — so the interesting cases are all
  * the ways it must refuse. A malformed token must cost zero queries, an expired one must be
  * indistinguishable from a nonexistent one, a suspended account must go quiet, a transcript
- * must be readable exactly once, and a token must never drain an account other than the one
- * that minted it. Each of those is a silent failure if it regresses: the happy path keeps
- * working and only the refusals stop.
+ * transcript must land on the minting account's capture job and nowhere else, and a token
+ * must never expose that job to another account. Each of those is a silent failure if it
+ * regresses: the happy path keeps working and only the refusals stop.
  *
- * It also pins the promise that no photograph is ever stored. The table holds text.
+ * It also pins the promise that no photograph is ever stored. The tables hold text.
  *
  * Runs against a throwaway PGlite (see ./smoke/_env).
  * Run: npx tsx scripts/smoke-scan-handoff.ts
@@ -19,14 +19,15 @@ import "./smoke/_env";
 import { eq } from "drizzle-orm";
 import { run } from "./smoke/_env";
 import { getDb } from "../src/db";
-import { captureHandoffs, userSettings } from "../src/db/schema";
+import { captureHandoffs, captureJobs, userSettings } from "../src/db/schema";
 import {
   HANDOFF_TTL_MS,
   buildScanHandoffUrl,
   cancelScanHandoff,
-  claimScanHandoff,
   findScanHandoff,
+  finishScanHandoff,
   generateHandoffToken,
+  handoffJobFor,
   hashHandoffToken,
   looksLikeHandoffToken,
   markHandoffUploading,
@@ -87,52 +88,53 @@ async function main() {
   check("a well-formed but unknown token does not", (await findScanHandoff(generateHandoffToken().token)) === null);
   check("a malformed token does not", (await findScanHandoff("nope")) === null);
 
+  console.log("\nMinting attaches a capture job...");
+  check("the grant carries a job id", Boolean(minted.captureJobId));
+  const jobBefore = await db.query.captureJobs.findFirst({ where: eq(captureJobs.id, minted.captureJobId) });
+  check("the job belongs to the minting account and is collecting", jobBefore?.userId === USER && jobBefore?.status === "ingesting" && jobBefore.sourceKind === "phone");
+  check("the row links to it", stored!.captureJobId === minted.captureJobId);
+
   console.log("\nThe phone uploads...");
   await markHandoffUploading(found!.id);
-  const uploading = await claimScanHandoff(USER, minted.token);
-  check("the desktop sees 'uploading' before any text", uploading.state === "uploading", uploading.state);
+  const watching = await handoffJobFor(USER, minted.token);
+  check("the desktop sees 'uploading' before any text", watching?.status === "uploading", watching?.status);
 
   await recordHandoffTranscript(found!.id, {
     transcript: "Ada Lovelace — Analytical Engines. Follow up next week.",
     pageCount: 2,
     sources: "photos:2",
   });
+  await recordHandoffTranscript(found!.id, { transcript: "Grace Hopper — call before the 20th.", pageCount: 1, sources: "photos:1" });
+  const jobAfter = await db.query.captureJobs.findFirst({ where: eq(captureJobs.id, minted.captureJobId) });
+  check("each batch appends a block to the job, in order", jobAfter?.ingestedBlocks.map((b) => b.text.split(" ")[0]).join(",") === "Ada,Grace", JSON.stringify(jobAfter?.ingestedBlocks));
+  check("the job is still collecting — the phone can send more", jobAfter?.status === "ingesting");
+  const rowAfter = await db.query.captureHandoffs.findFirst({ where: eq(captureHandoffs.userId, USER) });
+  check("the grant counts pages and stays redeemable", rowAfter?.pageCount === 3 && rowAfter.status === "ready");
+  check("the row itself holds no transcript", rowAfter?.transcript === null);
 
-  console.log("\nOnly the minting account can claim...");
-  const intruder = await claimScanHandoff(OTHER, minted.token);
-  check("another signed-in account cannot drain the grant", intruder.state === "expired", intruder.state);
-  const stillThere = await db.query.captureHandoffs.findFirst({
-    where: eq(captureHandoffs.userId, USER),
-  });
-  check("...and the failed claim did not consume it", Boolean(stillThere));
+  console.log("\nOnly the minting account can see the job...");
+  check("another signed-in account gets nothing from the token", (await handoffJobFor(OTHER, minted.token)) === null);
+  check("...and the grant is untouched", Boolean(await findScanHandoff(minted.token)));
 
-  console.log("\nClaiming is single-use...");
-  const claimed = await claimScanHandoff(USER, minted.token);
-  check("the transcript comes back", claimed.state === "ready");
-  if (claimed.state !== "ready") throw new Error("unreachable");
-  check("with its text", claimed.transcript.includes("Ada Lovelace"));
-  check("its page count", claimed.pageCount === 2);
-  check("and its partial-success label", claimed.sources === "photos:2");
-
-  const afterClaim = await db.query.captureHandoffs.findFirst({
-    where: eq(captureHandoffs.userId, USER),
-  });
-  // The transcript must not outlive the handoff that carried it.
-  check("the row is deleted on pickup", !afterClaim);
-  const replay = await claimScanHandoff(USER, minted.token);
-  check("a replayed claim gets nothing", replay.state === "expired", replay.state);
+  console.log("\nFinishing is single-use...");
+  const finished = await finishScanHandoff(found!.id);
+  check("finish hands back the job", finished.captureJobId === minted.captureJobId);
+  const jobDone = await db.query.captureJobs.findFirst({ where: eq(captureJobs.id, minted.captureJobId) });
+  check("the job is now waiting on Extract", jobDone?.status === "transcribed");
+  // The grant must not outlive the handoff.
+  check("the grant is deleted", !(await findScanHandoff(minted.token)));
+  check("finishing again is harmless", (await finishScanHandoff(found!.id)).captureJobId === null);
 
   console.log("\nA failed page is reported without burning the grant...");
   const retry = await mintScanHandoff(USER);
   const retryRow = await findScanHandoff(retry.token);
   await recordHandoffError(retryRow!.id, "That photo could not be read.");
-  const errored = await claimScanHandoff(USER, retry.token);
-  check("the desktop is told why", errored.state === "error", errored.state);
-  if (errored.state === "error") {
-    check("with the message", errored.message.includes("could not be read"));
-  }
+  const errored = await handoffJobFor(USER, retry.token);
+  check("the desktop is told why", errored?.error?.includes("could not be read") === true, errored?.error ?? "");
   // Walking back to the laptop for a fresh QR code just to retake one photo is a bad trade.
   check("the token still resolves, so the phone can retry", Boolean(await findScanHandoff(retry.token)));
+  await cancelScanHandoff(USER, retry.token);
+  check("cancelling a grant that never got a page discards its job", (await db.query.captureJobs.findFirst({ where: eq(captureJobs.id, retry.captureJobId) }))?.status === "discarded");
 
   console.log("\nExpiry is indistinguishable from 'never existed'...");
   const expiring = await mintScanHandoff(USER);
@@ -141,7 +143,7 @@ async function main() {
     .set({ expiresAt: new Date(Date.now() - 1000) })
     .where(eq(captureHandoffs.tokenHash, hashHandoffToken(expiring.token)));
   check("an expired token does not resolve", (await findScanHandoff(expiring.token)) === null);
-  check("and cannot be claimed", (await claimScanHandoff(USER, expiring.token)).state === "expired");
+  check("and shows the desktop nothing", (await handoffJobFor(USER, expiring.token)) === null);
 
   console.log("\nExpired grants are swept...");
   await sweepExpiredHandoffs();
@@ -162,11 +164,12 @@ async function main() {
   check("a cancelled grant is gone", (await findScanHandoff(suspended.token)) === null);
 
   console.log("\nNo photograph is ever stored...");
-  const columns = Object.keys(captureHandoffs);
+  const columns = [...Object.keys(captureHandoffs), ...Object.keys(captureJobs)];
   const imageish = columns.filter((c) => /image|photo|blob|bytes|base64|data/i.test(c));
-  check("the table has no column that could hold pixels", imageish.length === 0, imageish.join(", "));
+  check("neither table has a column that could hold pixels", imageish.length === 0, imageish.join(", "));
 
   await db.delete(captureHandoffs);
+  await db.delete(captureJobs).where(eq(captureJobs.userId, USER));
   console.log("\nAll scan-handoff checks passed.");
 }
 

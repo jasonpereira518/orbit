@@ -9,7 +9,7 @@ import Link from "next/link";
 import { motion } from "motion/react";
 import { ArrowUpRight, Check, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { PlanetBadge } from "@/components/capture/review/planet-badge";
 import { acceptedPeople } from "@/lib/capture/review-reducer";
 import type { CaptureDecisions, CaptureJobResult } from "@/lib/capture/types";
@@ -104,14 +104,14 @@ export function CaptureSaved({
           <Sparkles className="size-4" /> Capture more
         </Button>
         {single && saved?.contactIdByKey[single.item.key] && (
-          <Button variant="outline" render={<Link href={`/contacts/${saved.contactIdByKey[single.item.key]}`} />}>
+          <Link href={`/contacts/${saved.contactIdByKey[single.item.key]}`} className={buttonVariants({ variant: "outline" })}>
             Open contact <ArrowUpRight className="size-3.5" />
-          </Button>
+          </Link>
         )}
         {saved?.batchId && (
-          <Button variant="ghost" className="text-muted-foreground" render={<Link href={`/capture/${saved.batchId}`} />}>
+          <Link href={`/capture/${saved.batchId}`} className={buttonVariants({ variant: "ghost", className: "text-muted-foreground" })}>
             See everything created
-          </Button>
+          </Link>
         )}
       </div>
     </motion.div>
