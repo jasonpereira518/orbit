@@ -31,16 +31,19 @@ const PRO = "smoke-credits-pro";
 const LIFE = "smoke-credits-lifetime";
 const BOTH = "smoke-credits-both";
 const FREE = "smoke-credits-free";
+/** A second comped-orbit user, used only for the tenancy checks below. */
+const OTHER = "smoke-credits-other";
 
 async function setup() {
   const db = await getDb();
-  for (const id of [PRO, LIFE, BOTH, FREE]) await ensureUserSettings(id);
+  for (const id of [PRO, LIFE, BOTH, FREE, OTHER]) await ensureUserSettings(id);
   await db.update(schema.userSettings).set({ compedPlan: "orbit" }).where(eq(schema.userSettings.userId, PRO));
   await db.update(schema.userSettings).set({ compedPlan: "lifetime" }).where(eq(schema.userSettings.userId, LIFE));
   await db
     .update(schema.userSettings)
     .set({ lifetimePurchasedAt: new Date(), subscriptionPlan: "orbit", subscriptionStatus: "active" })
     .where(eq(schema.userSettings.userId, BOTH));
+  await db.update(schema.userSettings).set({ compedPlan: "orbit" }).where(eq(schema.userSettings.userId, OTHER));
 }
 
 async function attemptFor(userId: string, holdId: string) {
@@ -94,6 +97,35 @@ async function main() {
   check("net effect is exactly the two charges", afterRun.total === 248 && afterRun.held === 0, JSON.stringify(afterRun));
   const kinds = (await listCreditLedger(PRO)).map((r) => r.entryType).sort().join(",");
   check("the ledger records grant, reserve, two charges, release", kinds === "charge,charge,grant,release,reserve", kinds);
+
+  console.log("Tenancy...");
+  const tenancyHold = await reserveCredits(PRO, { want: 5, idempotencyKey: "tenancy" }, now);
+  const heldAttempt = await attemptFor(PRO, tenancyHold!.holdId);
+  check("another user cannot charge someone else's held attempt", !(await chargeAttempt(OTHER, heldAttempt, now)));
+  const [holdAfterCrossCharge] = await db
+    .select()
+    .from(schema.researchCreditHolds)
+    .where(eq(schema.researchCreditHolds.id, tenancyHold!.holdId));
+  check(
+    "the cross-tenant charge attempt moved nothing",
+    holdAfterCrossCharge.usedMonthly === 0 && holdAfterCrossCharge.usedLifetime === 0
+  );
+  const crossReserve = await reserveCredits(OTHER, { want: 1, idempotencyKey: "run-a" }, now);
+  check(
+    "replaying another user's idempotency key does not return their hold",
+    crossReserve !== null && crossReserve.holdId !== hold!.holdId && crossReserve.holdId !== tenancyHold!.holdId
+  );
+  const releasedTenancy = await releaseHold(PRO, tenancyHold!.holdId, now);
+  check("release returns the whole untouched hold", releasedTenancy === 5, String(releasedTenancy));
+  const [attemptAfterRelease] = await db
+    .select()
+    .from(schema.outreachResearchAttempts)
+    .where(eq(schema.outreachResearchAttempts.id, heldAttempt));
+  check(
+    "a hold released while an attempt is still held flips the attempt to released",
+    attemptAfterRelease.creditState === "released",
+    attemptAfterRelease.creditState
+  );
 
   console.log("Split reservations...");
   await db.update(schema.researchCreditAccounts).set({ monthlyUsed: 247 }).where(eq(schema.researchCreditAccounts.userId, BOTH));

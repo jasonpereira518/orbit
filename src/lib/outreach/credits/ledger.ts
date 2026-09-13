@@ -152,7 +152,10 @@ async function holdForKey(userId: string, idempotencyKey: string) {
     .from(researchCreditLedger)
     .where(and(eq(researchCreditLedger.userId, userId), eq(researchCreditLedger.idempotencyKey, idempotencyKey)));
   if (!entry?.holdId) return null;
-  const [hold] = await db.select().from(researchCreditHolds).where(eq(researchCreditHolds.id, entry.holdId));
+  const [hold] = await db
+    .select()
+    .from(researchCreditHolds)
+    .where(and(eq(researchCreditHolds.id, entry.holdId), eq(researchCreditHolds.userId, userId)));
   return hold ? { holdId: hold.id, amount: hold.amountMonthly + hold.amountLifetime } : null;
 }
 
@@ -206,19 +209,33 @@ export async function reserveCredits(
   }
 }
 
-/** Charge one credit for a held attempt. Exactly once per attempt: the attempt row is the lock. */
+/**
+ * Charge one credit for a held attempt. Exactly once per attempt: `locked_hold` takes the
+ * hold row's lock FIRST (before the attempt row), so `chargeAttempt` and `releaseHold` always
+ * lock hold before attempt(s) — the same order — and cannot deadlock against each other. The
+ * `SELECT ... FOR UPDATE` also re-reads the hold's newest committed version after waiting on
+ * its lock, so two attempts racing for a hold's last credit serialize correctly instead of one
+ * reading a stale "credit available" snapshot.
+ */
 export async function chargeAttempt(userId: string, attemptId: string, now: Date = new Date()): Promise<boolean> {
   const db = await getDb();
   const result = await db.execute(sql`
-    WITH att AS (
+    WITH locked_hold AS (
+      SELECT hh.id
+        FROM outreach_research_attempts a
+        JOIN research_credit_holds hh ON hh.id = a.hold_id
+       WHERE a.id = ${attemptId}::uuid
+         AND a.user_id = ${userId}
+         AND a.credit_state = 'held'
+         AND hh.user_id = ${userId}
+         AND hh.status = 'active'
+         AND (hh.amount_monthly - hh.used_monthly) + (hh.amount_lifetime - hh.used_lifetime) > 0
+         FOR UPDATE OF hh
+    ), att AS (
       UPDATE outreach_research_attempts
          SET credit_state = 'charged', updated_at = ${now}
-       WHERE id = ${attemptId}::uuid AND user_id = ${userId} AND credit_state = 'held' AND hold_id IS NOT NULL
-         AND EXISTS (
-           SELECT 1 FROM research_credit_holds hh
-            WHERE hh.id = outreach_research_attempts.hold_id AND hh.status = 'active'
-              AND (hh.amount_monthly - hh.used_monthly) + (hh.amount_lifetime - hh.used_lifetime) > 0
-         )
+       WHERE id = ${attemptId}::uuid AND user_id = ${userId} AND credit_state = 'held'
+         AND hold_id = (SELECT id FROM locked_hold)
       RETURNING hold_id, run_id
     ), h AS (
       UPDATE research_credit_holds
@@ -226,8 +243,7 @@ export async function chargeAttempt(userId: string, attemptId: string, now: Date
              used_monthly = used_monthly + CASE WHEN amount_monthly - used_monthly > 0 THEN 1 ELSE 0 END,
              used_lifetime = used_lifetime + CASE WHEN amount_monthly - used_monthly > 0 THEN 0 ELSE 1 END,
              updated_at = ${now}
-       WHERE id = (SELECT hold_id FROM att) AND user_id = ${userId} AND status = 'active'
-         AND (amount_monthly - used_monthly) + (amount_lifetime - used_lifetime) > 0
+       WHERE id = (SELECT id FROM locked_hold) AND EXISTS (SELECT 1 FROM att)
       RETURNING id, last_charge_bucket
     ), acct AS (
       UPDATE research_credit_accounts
