@@ -100,6 +100,55 @@ async function main() {
   const ev2 = { kind: "search_result" as const, provider: "brave" as const, url: "https://example.com", title: "a", snippet: "bc" };
   check("evidence hash is boundary-sensitive", evidenceHash(ev1) !== evidenceHash(ev2));
 
+  // FIX C Check 1: Merge-time identity conflict
+  const p1 = await upsertCandidate(USER, campaign.id, {
+    fullName: "Lin Only", linkedinUrl: "https://www.linkedin.com/in/lin-only", origin: "discovered",
+    evidence: [hit("https://www.linkedin.com/in/lin-only", "Lin Only - Profile")],
+  });
+  const p2 = await upsertCandidate(USER, campaign.id, {
+    fullName: "Mail Only", email: "lin@example.org", origin: "discovered",
+    evidence: [{ kind: "enrichment" as const, provider: "apollo" as const, url: null, title: null, snippet: null }],
+  });
+  const merged = await upsertCandidate(USER, campaign.id, {
+    fullName: "Lin Only", linkedinUrl: "https://www.linkedin.com/in/lin-only", email: "lin@example.org", origin: "discovered",
+    evidence: [hit("https://www.linkedin.com/in/lin-only", "Lin Only - Profile")],
+  });
+  check("merge-time identity conflict creates one prospect", !merged.created);
+  const mergedId = merged.prospectId;
+  const otherProspectId = mergedId === p1.prospectId ? p2.prospectId : p1.prospectId;
+  check("merge-time conflict returns the other prospect", merged.possibleDuplicateOf === otherProspectId);
+  const [mergedRow] = await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, mergedId));
+  check("merged row is flagged for review", mergedRow.possibleDuplicateOf === otherProspectId && mergedRow.duplicateReview === "pending");
+
+  // FIX C Check 2: Raced insert path
+  const [raceSeeded] = await db.insert(schema.outreachProspects).values({
+    userId: USER, campaignId: campaign.id, externalId: "li:race-person", fullName: "Race Person",
+  }).returning();
+  const raceUpserted = await upsertCandidate(USER, campaign.id, {
+    fullName: "Race Person", linkedinUrl: "https://www.linkedin.com/in/race-person", origin: "discovered",
+    evidence: [hit("https://www.linkedin.com/in/race-person", "Race Person - Profile")],
+  });
+  check("raced insert recovers and reuses prospect", !raceUpserted.created && raceUpserted.prospectId === raceSeeded.id);
+  const [raceIdentity] = await db.select().from(schema.outreachIdentities)
+    .where(and(eq(schema.outreachIdentities.campaignId, campaign.id), eq(schema.outreachIdentities.prospectId, raceSeeded.id)));
+  check("raced insert path attaches identity", raceIdentity && raceIdentity.value === "race-person");
+
+  // FIX C Check 3: Concurrent double upsert
+  const [twinResult1, twinResult2] = await Promise.all([
+    upsertCandidate(USER, campaign.id, {
+      fullName: "Twin Call", linkedinUrl: "https://www.linkedin.com/in/twin-call", origin: "discovered",
+      evidence: [hit("https://www.linkedin.com/in/twin-call", "Twin Call - Profile 1")],
+    }),
+    upsertCandidate(USER, campaign.id, {
+      fullName: "Twin Call", linkedinUrl: "https://www.linkedin.com/in/twin-call", origin: "discovered",
+      evidence: [hit("https://www.linkedin.com/in/twin-call", "Twin Call - Profile 2")],
+    }),
+  ]);
+  check("concurrent upserts converge on same prospect", twinResult1.prospectId === twinResult2.prospectId);
+  const twinProspects = await db.select().from(schema.outreachProspects)
+    .where(and(eq(schema.outreachProspects.userId, USER), eq(schema.outreachProspects.campaignId, campaign.id), eq(schema.outreachProspects.linkedinUrl, "https://www.linkedin.com/in/twin-call")));
+  check("concurrent upserts produce one prospect", twinProspects.length === 1);
+
   console.log("All outreach candidate checks passed.");
 }
 

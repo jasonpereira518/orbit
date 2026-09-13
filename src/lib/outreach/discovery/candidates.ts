@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   contactIdentities,
@@ -225,7 +225,7 @@ async function mergeInto(
   prospectId: string,
   input: CandidateInput,
   identities: OutreachIdentity[]
-) {
+): Promise<string | null> {
   const db = await getDb();
   await db
     .update(outreachProspects)
@@ -238,8 +238,15 @@ async function mergeInto(
       updatedAt: new Date(),
     })
     .where(and(eq(outreachProspects.id, prospectId), eq(outreachProspects.userId, userId)));
-  await attachIdentities(userId, campaignId, prospectId, identities);
+  const conflict = await attachIdentities(userId, campaignId, prospectId, identities);
+  if (conflict) {
+    await db
+      .update(outreachProspects)
+      .set({ possibleDuplicateOf: conflict, duplicateReview: "pending" })
+      .where(and(eq(outreachProspects.id, prospectId), eq(outreachProspects.userId, userId), isNull(outreachProspects.possibleDuplicateOf)));
+  }
   await addEvidence(userId, campaignId, prospectId, input.evidence);
+  return conflict;
 }
 
 /**
@@ -264,8 +271,8 @@ export async function upsertCandidate(
   const identities = outreachIdentitiesFor(input);
   const existing = await findByIdentity(campaignId, identities);
   if (existing) {
-    await mergeInto(userId, campaignId, existing, input, identities);
-    return { prospectId: existing, created: false, possibleDuplicateOf: null };
+    const conflict = await mergeInto(userId, campaignId, existing, input, identities);
+    return { prospectId: existing, created: false, possibleDuplicateOf: conflict };
   }
 
   const history = opts.history ?? (await loadOutreachHistory(userId, campaignId));
@@ -303,8 +310,8 @@ export async function upsertCandidate(
       .select({ id: outreachProspects.id })
       .from(outreachProspects)
       .where(and(eq(outreachProspects.campaignId, campaignId), eq(outreachProspects.externalId, externalId)));
-    await mergeInto(userId, campaignId, raced.id, input, identities);
-    return { prospectId: raced.id, created: false, possibleDuplicateOf: null };
+    const conflict = await mergeInto(userId, campaignId, raced.id, input, identities);
+    return { prospectId: raced.id, created: false, possibleDuplicateOf: conflict };
   }
 
   const lostTo = await attachIdentities(userId, campaignId, inserted.id, identities);
@@ -312,7 +319,7 @@ export async function upsertCandidate(
     await db
       .update(outreachProspects)
       .set({ possibleDuplicateOf: lostTo, duplicateReview: "pending" })
-      .where(eq(outreachProspects.id, inserted.id));
+      .where(and(eq(outreachProspects.id, inserted.id), eq(outreachProspects.userId, userId)));
   }
   await addEvidence(userId, campaignId, inserted.id, input.evidence);
   return { prospectId: inserted.id, created: true, possibleDuplicateOf: nameDuplicate ?? lostTo };
