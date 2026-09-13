@@ -178,6 +178,25 @@ export default async function AdminUserDetailPage({
         </div>
       </div>
 
+      {/* Mobile stand-in for the sticky rail below, which disappears at this width — plain
+          jump links, no active-section tracking, so no client boundary is needed here. */}
+      <nav
+        aria-label="Sections"
+        className="sticky top-14 z-10 -mx-4 mb-4 overflow-x-auto border-b border-border/60 bg-background/95 px-4 py-2 backdrop-blur lg:hidden"
+      >
+        <div className="flex w-max gap-1.5">
+          {SECTIONS.map((section) => (
+            <a
+              key={section.id}
+              href={`#${section.id}`}
+              className="shrink-0 whitespace-nowrap rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-fast hover:text-foreground"
+            >
+              {section.label}
+            </a>
+          ))}
+        </div>
+      </nav>
+
       <div className="flex gap-8">
         <nav
           aria-label="Sections"
@@ -198,7 +217,7 @@ export default async function AdminUserDetailPage({
         </nav>
 
         <div className="min-w-0 flex-1 space-y-6">
-          <section id="identity" className="scroll-mt-20">
+          <section id="identity" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Identity">
               <dl>
                 <DefinitionRow label="Email">
@@ -254,7 +273,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="plan" className="scroll-mt-20">
+          <section id="plan" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Plan & billing">
               {/*
                 Resolved plan first, then the raw inputs beneath it. Precedence
@@ -374,7 +393,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="health" className="scroll-mt-20">
+          <section id="health" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Health & errors">
               {health.length === 0 ? (
                 <EmptyState>Nothing failing.</EmptyState>
@@ -415,7 +434,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="footprint" className="scroll-mt-20">
+          <section id="footprint" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Data footprint">
               <dl className="grid gap-x-8 sm:grid-cols-2">
                 <DefinitionRow label="Contacts">{footprint.contacts}</DefinitionRow>
@@ -480,7 +499,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="usage" className="scroll-mt-20">
+          <section id="usage" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="AI usage">
               {usage.totalCalls === 0 ? (
                 <EmptyState>No AI calls recorded.</EmptyState>
@@ -579,7 +598,7 @@ export default async function AdminUserDetailPage({
             Opening this screen is itself audit-logged by `recordAccountView` above, which
             is the existing answer to "who looked at whom".
           */}
-          <section id="traffic" className="scroll-mt-20">
+          <section id="traffic" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Traffic">
               {!traffic || traffic.views === 0 ? (
                 <EmptyState>
@@ -649,7 +668,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="config" className="scroll-mt-20">
+          <section id="config" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Configuration">
               {/*
                 Booleans only. Never call decryptOrNull() in admin code — not behind a reveal,
@@ -705,7 +724,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="timeline" className="scroll-mt-20">
+          <section id="timeline" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Activity timeline">
               {timeline.entries.length === 0 ? (
                 <EmptyState>No recorded activity.</EmptyState>
@@ -767,7 +786,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="contacts" className="scroll-mt-20">
+          <section id="contacts" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel
               title={`Contacts (${contactPage.total})`}
               action={
@@ -850,7 +869,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="audit" className="scroll-mt-20">
+          <section id="audit" className="scroll-mt-32 lg:scroll-mt-20">
             <AdminPanel title="Audit trail">
               {audit.length === 0 ? (
                 <EmptyState>No admin actions on this account.</EmptyState>
@@ -879,7 +898,7 @@ export default async function AdminUserDetailPage({
             </AdminPanel>
           </section>
 
-          <section id="actions" className="scroll-mt-20">
+          <section id="actions" className="scroll-mt-32 lg:scroll-mt-20">
             <AccountDangerZone
               targetUserId={identity.userId}
               email={identity.email}

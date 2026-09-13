@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
+import { captureImageFiles, normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
+import { discardCapturePhotos, storeCapturePhotos } from "@/lib/capture-photos";
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
 import { friendlyError } from "@/lib/errors";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
@@ -91,12 +92,25 @@ export async function POST(
 
   await markHandoffUploading(handoff.id);
 
+  // The pages are kept for the capture history the same way a desktop upload's are —
+  // shrunk and re-encoded server-side, unattached until the job saves. Text is still what
+  // crosses to the desktop; the photo rows live behind the owner-checked photo route.
+  const [normalizedResult, storedResult] = await Promise.allSettled([
+    normalizeCaptureInput(handoff.userId, { files }),
+    storeCapturePhotos(handoff.userId, captureImageFiles(files).map((img) => ({ filename: img.filename, base64: img.base64 }))),
+  ]);
+  const photos = storedResult.status === "fulfilled" ? storedResult.value : [];
   try {
-    const normalized = await normalizeCaptureInput(handoff.userId, { files });
+    if (normalizedResult.status === "rejected") {
+      await discardCapturePhotos(handoff.userId, photos.map((p) => p.id)).catch(() => {});
+      throw normalizedResult.reason;
+    }
+    const normalized = normalizedResult.value;
     await recordHandoffTranscript(handoff.id, {
       transcript: normalized.text,
       pageCount: files.length,
       sources: normalized.sources.join(", "),
+      photoIds: photos.map((p) => p.id),
     });
     return NextResponse.json({ ok: true, pageCount: files.length });
   } catch (err) {

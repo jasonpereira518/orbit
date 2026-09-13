@@ -24,6 +24,27 @@ import { purgeUserData } from "../src/lib/user-data";
 
 const USER = "smoke-purge-user";
 
+/**
+ * User-scoped tables that "delete all data" deliberately leaves in place. Each is asserted
+ * to SURVIVE below — that is as much the contract as the rest being emptied — and all of them
+ * are asserted gone after the entire-account delete (`keepSettings: false`) at the end.
+ *   - `user_settings`: the BYO provider keys and account metadata (see `purgeUserData`).
+ *   - `research_credit_accounts` / `_holds` / `_ledger`: Orbit's accounting of research-credit
+ *     allowances, on the same footing as `billing_events`. The lifetime grant is tracked by
+ *     `lifetime_granted_at` and the monthly grant by the account's period, so deleting the
+ *     account row while the account is live would re-grant 100 lifetime credits or a fresh
+ *     250-credit month.
+ *   - `outreach_suppressions`: opt-outs and bounces. It protects the people who were
+ *     contacted; deleting it would let the next campaign reach someone who asked not to be.
+ */
+const SURVIVES_DELETE_ALL = new Set([
+  "user_settings",
+  "research_credit_accounts",
+  "research_credit_holds",
+  "research_credit_ledger",
+  "outreach_suppressions",
+]);
+
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
   console.log(`  ok  ${label}`);
@@ -299,6 +320,20 @@ async function seed() {
     transcript: "Ada Lovelace — Analytical Engines",
   });
 
+  // A capture mid-review, and the name it set aside.
+  await db.insert(schema.captureJobs).values({
+    userId: USER,
+    sourceKind: "messy",
+    status: "reviewing",
+    inputText: "Met Ada Lovelace at the engine demo",
+  });
+  await db.insert(schema.ignoredPeople).values({
+    userId: USER,
+    nameKey: "charles babbage",
+    displayName: "Charles Babbage",
+    reason: "mentioned",
+  });
+
   await db.insert(schema.aiSuggestions).values({
     userId: USER,
     suggestionType: "reconnect",
@@ -415,6 +450,10 @@ async function seed() {
     subject: "Following up on the role",
     body: "prose the user wrote about a real person",
   });
+
+  // The recruiter scan's watermark, kept separate from `gmail_connections` on purpose but
+  // no less user data than anything else here.
+  await db.insert(schema.recruiterScanState).values({ userId: USER });
 
   // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
   // no foreign key to either contact (the losing contact's row is deleted by design), so
@@ -539,6 +578,14 @@ async function seed() {
   // else, so it is easy to forget it is personal data at all — which is how it became the
   // fourth user-scoped table to ship unpurged (found the first time this suite ran on a
   // fresh database instead of one that happened to hold a leftover row).
+  // The account's own upgrade-celebration queue — deleted outright on purge.
+  await db.insert(schema.planUpgradeEvents).values({
+    userId: USER,
+    plan: "orbit",
+    source: "subscription",
+    eventKey: `${USER}-upgrade`,
+  });
+
   await db.insert(schema.extensionUsage).values({ userId: USER, requestCount: 3, aiCount: 1 });
 
   // The connector platform. `api_keys` is the one that would matter most if it survived a
@@ -593,10 +640,12 @@ async function main() {
   const tables = userScopedTables();
   console.log(`Seeding one row in each of ${tables.length} user-scoped tables…`);
 
-  // Start clean in case a previous run died mid-way. The billing row needs deleting by
+  // Start clean in case a previous run died mid-way. The entire-account form, because the
+  // default purge leaves the credit account (keyed on user id) and the suppression list in
+  // place, and the next seed would collide with both. The billing row needs deleting by
   // hand: purge anonymises it rather than removing it, so it survives its own cleanup and
   // the unique `(source, event_id)` index would reject the next run's insert.
-  await purgeUserData(USER).catch(() => {});
+  await purgeUserData(USER, { keepSettings: false }).catch(() => {});
   await (await getDb())
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
@@ -621,9 +670,9 @@ async function main() {
 
   let leaked = 0;
   for (const { name } of tables) {
-    // Asserted separately below: the BYO provider key is a deliberate survivor (see
-    // `purgeUserData`), so this table legitimately keeps a row under the same user id.
-    if (name === "user_settings") continue;
+    // Asserted separately below: each is a deliberate survivor (see `SURVIVES_DELETE_ALL`),
+    // so it legitimately keeps rows under the same user id.
+    if (SURVIVES_DELETE_ALL.has(name)) continue;
     const remaining = await countFor(name);
     if (remaining === 0) {
       console.log(`  ok  ${name} is empty`);
@@ -665,6 +714,29 @@ async function main() {
     "...but the calendar feed token cleared",
     settingsAfterPurge?.calendarFeedToken === null
   );
+
+  // The outreach survivors — see `SURVIVES_DELETE_ALL`. As with `billing_events`, the no-leak
+  // sweep above would still pass if a later edit "tidied" any of these into a delete, so the
+  // survival itself is what gets asserted.
+  for (const name of [
+    "research_credit_accounts",
+    "research_credit_holds",
+    "research_credit_ledger",
+    "outreach_suppressions",
+  ]) {
+    check(`${name} survives "delete all data"`, (await countFor(name)) > 0);
+  }
+  // The seeded hold was active and its research run is now gone. The `outreach` step must
+  // release it first, or its credits stay stuck in `*_held` with nothing left to free them.
+  const holdsAfterPurge = await ledgerDb
+    .select({ status: schema.researchCreditHolds.status })
+    .from(schema.researchCreditHolds)
+    .where(eq(schema.researchCreditHolds.userId, USER));
+  check(
+    "...with the active credit hold released rather than stranded",
+    holdsAfterPurge.length === 1 && holdsAfterPurge[0].status === "released"
+  );
+
   await ledgerDb
     .delete(schema.userSettings)
     .where(eq(schema.userSettings.userId, USER));
@@ -683,6 +755,21 @@ async function main() {
   check(
     "keepSettings: false leaves no user_settings row at all",
     settingsAfterHardDelete === undefined
+  );
+  // ...and nothing else either: the entire-account case is the one path that takes the
+  // survivors, so here the sweep runs over every user-scoped table with no exemptions.
+  let hardLeaked = 0;
+  for (const { name } of tables) {
+    const remaining = await countFor(name);
+    if (remaining > 0) {
+      console.log(`  LEAK  ${name} still has ${remaining} row(s) after the entire-account delete`);
+      hardLeaked += 1;
+    }
+  }
+  check(
+    "keepSettings: false empties every user-scoped table, survivors included",
+    hardLeaked === 0,
+    `${hardLeaked} table(s) leaked`
   );
 
   // contact_tags has no user_id of its own, so the derived sweep above cannot see it.
@@ -715,6 +802,6 @@ main()
   })
   .catch(async (e) => {
     console.error("\nFAILED:", e.message);
-    await purgeUserData(USER).catch(() => {});
+    await purgeUserData(USER, { keepSettings: false }).catch(() => {});
     process.exit(1);
   });

@@ -445,6 +445,15 @@ async function main() {
     `got ${raced?.dwellMs}`
   );
 
+  // Back onto the fixture's clock. `recordPageView` stamps the database's `now()`, and every
+  // other visitor-A row is `ago(…)` minutes old — so a run in the first quarter hour after
+  // UTC midnight put visitor A's /pricing views on two different days, and the funnel below
+  // (which counts visitor-DAYS) read 2 where it means 1. CI hit it at 00:04 UTC.
+  await db
+    .update(pageViews)
+    .set({ createdAt: ago(10) })
+    .where(inArray(pageViews.id, [resumeId, raceId]));
+
   const dupeId = randomUUID();
   await recordPageView({ ...base, id: dupeId, visitorHash: visitorA, sessionId: s1, route: "/chat" });
   await recordPageView({ ...base, id: dupeId, visitorHash: visitorA, sessionId: s1, route: "/chat" });

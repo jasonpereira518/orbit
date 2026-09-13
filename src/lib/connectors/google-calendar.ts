@@ -141,6 +141,7 @@ export function toParsedEvent(raw: GoogleEvent): ParsedCalendarEvent | null {
     // truncated it. Either way, storing what we happen to have been handed would be storing
     // other people's contact details they did not agree to share with this room.
     guestsVisible: raw.guestsCanSeeOtherGuests !== false && raw.attendeesOmitted !== true,
+    selfResponse: (raw.attendees || []).find((a) => a.self)?.responseStatus ?? null,
   };
 }
 

@@ -113,40 +113,11 @@ export async function fetchDashboard() {
     { userId }
   );
 
-  // Reuse the contact rows already loaded for the dashboard instead of a
-  // second full-network scan for NetworkStatsCard.
+  // No rows donated: getNetworkStats derives its four whole-network figures in SQL now. It
+  // used to take the dashboard's scan, which is what forced last_interaction_at and
+  // created_at to be selected for the entire account to produce four integers.
   const { getNetworkStats } = await import("@/lib/network-stats");
-  const contactRows = [...data.contactById.values()];
-  const networkStats = await getNetworkStats(userId, {
-    contacts: contactRows.map((c) => ({
-      id: c.id,
-      relationshipScore: c.relationshipScore,
-      lastInteractionAt: c.lastInteractionAt,
-      createdAt: c.createdAt,
-      company: c.company,
-      title: c.title,
-      industry: c.industry,
-      howMet: c.howMet,
-      // The dashboard scan no longer pulls notes (see getDashboardData); the stats
-      // input declares the field but has never read it.
-      notes: null,
-      aiSummary: c.aiSummary,
-      keyFacts: c.keyFacts,
-      sharedInterests: c.sharedInterests,
-      nextFollowUpAt: c.nextFollowUpAt,
-      contactTags:
-        (
-          c as {
-            contactTags?: Array<{ tag: { name: string } }>;
-          }
-        ).contactTags ??
-        (Array.isArray((c as { tags?: string[] }).tags)
-          ? ((c as { tags?: string[] }).tags || []).map((name) => ({
-              tag: { name },
-            }))
-          : []),
-    })),
-  });
+  const networkStats = await getNetworkStats(userId);
 
   return { data, networkStats };
 }

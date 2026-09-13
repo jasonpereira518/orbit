@@ -99,6 +99,7 @@ function main() {
   const internalRoutes = [
     "/api/imports/process-stalled",
     "/api/imports/imp_abc123/continue",
+    "/api/capture/jobs/job_abc123/run",
     "/api/embeddings/backfill",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
@@ -12,10 +12,9 @@ import {
   confirmBulkCapture,
   ingestCaptureMedia,
   parseBulkCaptureNotes,
-  type BulkNotePersonPreview,
   type BulkParseOptions,
-  type SuggestedReminderPreview,
 } from "@/actions/capture";
+import type { BulkNotePersonPreview, SuggestedReminderPreview } from "@/lib/capture/types";
 import type { MeetingExtraReminderInput } from "@/lib/note-batch-save";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { capturePhotoSrc } from "@/components/capture/capture-source-meta";
@@ -392,11 +391,20 @@ export function BulkNotesPanel({
     setRestoredJustNow(false);
   }
 
-  const accepted = items.filter((i) => i.decision === "accepted");
-  const discarded = items.filter((i) => i.decision === "discarded");
+  const accepted = useMemo(
+    () => items.filter((i) => i.decision === "accepted"),
+    [items]
+  );
+  const discarded = useMemo(
+    () => items.filter((i) => i.decision === "discarded"),
+    [items]
+  );
   const current = items[reviewIndex] ?? null;
   const isLastCard = reviewIndex >= items.length - 1 && items.length > 0;
-  const checkedDates = suggestions.filter((s) => s.checked).length;
+  const checkedDates = useMemo(
+    () => suggestions.filter((s) => s.checked).length,
+    [suggestions]
+  );
   const saveLabel = (() => {
     const parts: string[] = [];
     if (meeting) parts.push("meeting");

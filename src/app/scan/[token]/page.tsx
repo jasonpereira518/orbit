@@ -38,8 +38,8 @@ export default async function ScanHandoffPage({
 
   return (
     <main
-      className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-6 px-5 py-10"
-      style={{ paddingBottom: "calc(2.5rem + env(safe-area-inset-bottom))" }}
+      className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-6 px-5 pt-5"
+      style={{ paddingTop: "calc(1.25rem + env(safe-area-inset-top))" }}
     >
       {handoff ? (
         <ScanPhoneCapture token={token} />
@@ -49,7 +49,7 @@ export default async function ScanHandoffPage({
           suspended account. `findScanHandoff` deliberately cannot tell them apart, and a
           raw 404 here would read as "Orbit is broken" rather than "get a fresh code".
         */
-        <div className="space-y-2 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center space-y-2 text-center">
           <h1 className="font-heading text-xl font-medium text-ink">
             This link has expired
           </h1>

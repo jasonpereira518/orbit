@@ -9,10 +9,12 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import {
   cancelScanHandoffAction,
+  finishScanHandoffAction,
   mintScanHandoffAction,
-  pollScanHandoffAction,
+  watchScanHandoffAction,
   type MintedScanHandoff,
 } from "@/actions/scan";
+import type { CaptureJobView } from "@/lib/capture-jobs";
 
 /** Matches `POLL_INTERVAL_MS` in `import-job-runner.ts`, so the app polls at one cadence. */
 const POLL_INTERVAL_MS = 1500;
@@ -22,12 +24,20 @@ function formatRemaining(ms: number) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
+/** The text the phone has sent so far, in page order. */
+export function transcriptFromJob(job: CaptureJobView): string {
+  return job.blocks.map((b) => b.text.trim()).filter(Boolean).join("\n\n---\n\n");
+}
+
 /**
  * "Send it from your phone": a QR code, and a live view of what the phone is doing.
  *
  * The phone that scans this has no Clerk session and never gets one — signing into a CRM
  * on a phone keyboard is the friction this whole path exists to remove. The grant behind
  * the code is single-use and expires in ten minutes; see `src/lib/scan-handoff.ts`.
+ *
+ * Pages land on a capture job as they arrive, so the phone can send several batches and
+ * either side can say "that's everything": Done on the phone, or the button here.
  */
 export function ScanQrHandoff({
   active = true,
@@ -42,13 +52,15 @@ export function ScanQrHandoff({
    * unmount would leave a code "closed" on screen but still redeemable, and still polled.
    */
   active?: boolean;
-  onTranscript: (result: { transcript: string; sources: string[] }) => void;
+  onTranscript: (result: { transcript: string; sources: string[]; captureJobId: string }) => void;
   onCancel: () => void;
 }) {
   const [handoff, setHandoff] = useState<MintedScanHandoff | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [phase, setPhase] = useState<"waiting" | "uploading">("waiting");
+  const [phase, setPhase] = useState<"waiting" | "uploading" | "ready">("waiting");
+  const [pages, setPages] = useState(0);
   const [remaining, setRemaining] = useState<number>(0);
+  const [finishing, setFinishing] = useState(false);
   const reduced = usePrefersReducedMotion();
 
   // Kept in a ref so the poll and the unmount cleanup always see the live token without
@@ -99,9 +111,9 @@ export function ScanQrHandoff({
   }, [handoff]);
 
   const finish = useCallback(
-    (transcript: string, sources: string[]) => {
+    (job: CaptureJobView) => {
       doneRef.current = true;
-      onTranscript({ transcript, sources });
+      onTranscript({ transcript: transcriptFromJob(job), sources: job.sources, captureJobId: job.id });
     },
     [onTranscript]
   );
@@ -109,28 +121,30 @@ export function ScanQrHandoff({
   useEffect(() => {
     if (!handoff) return;
     let stopped = false;
+    const jobId = handoff.captureJobId;
 
     const id = window.setInterval(async () => {
       const token = tokenRef.current;
       if (!token || stopped || doneRef.current) return;
 
-      const res = await pollScanHandoffAction(token);
+      const res = await watchScanHandoffAction(token, jobId);
       if (stopped || doneRef.current) return;
       if (!res.ok) return; // A transient failure is not worth tearing the card down for.
 
-      const claim = res.claim;
-      if (claim.state === "uploading") {
-        setPhase("uploading");
-      } else if (claim.state === "error") {
-        toast.error(claim.message);
-        setPhase("waiting");
-      } else if (claim.state === "expired") {
+      const watch = res.watch;
+      if (watch.state === "expired") {
         stopped = true;
         setError("That code expired. Generate a new one.");
-      } else if (claim.state === "ready") {
-        stopped = true;
-        finish(claim.transcript, claim.sources ? [claim.sources] : []);
+        return;
       }
+      if (watch.error) toast.error(watch.error);
+      setPages(watch.pages);
+      if (watch.state === "done" && watch.job) {
+        stopped = true;
+        finish(watch.job);
+        return;
+      }
+      setPhase(watch.state === "uploading" ? "uploading" : watch.pages > 0 ? "ready" : "waiting");
     }, POLL_INTERVAL_MS);
 
     return () => {
@@ -138,6 +152,19 @@ export function ScanQrHandoff({
       window.clearInterval(id);
     };
   }, [handoff, finish]);
+
+  async function finishFromDesktop() {
+    const token = tokenRef.current;
+    if (!token || finishing) return;
+    setFinishing(true);
+    const res = await finishScanHandoffAction(token);
+    setFinishing(false);
+    if (!res.ok || !res.job) {
+      toast.error(res.ok ? "Couldn’t find those pages — try again?" : res.error);
+      return;
+    }
+    finish(res.job);
+  }
 
   const expired = handoff !== null && remaining <= 0;
 
@@ -164,6 +191,7 @@ export function ScanQrHandoff({
           className="w-40 text-ink [&>svg]:h-auto [&>svg]:w-full"
           aria-label="QR code linking to the phone camera page"
           role="img"
+          data-scan-url={handoff.url}
           dangerouslySetInnerHTML={{ __html: handoff.svg }}
         />
       ) : (
@@ -178,7 +206,7 @@ export function ScanQrHandoff({
         <div aria-live="polite" className="h-5 text-xs text-muted-foreground">
           <AnimatePresence mode="wait" initial={false}>
             <motion.p
-              key={phase}
+              key={`${phase}-${pages}`}
               initial={reduced ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={reduced ? undefined : { opacity: 0 }}
@@ -186,7 +214,9 @@ export function ScanQrHandoff({
             >
               {phase === "uploading"
                 ? "Phone connected — reading your pages…"
-                : "Waiting for your phone…"}
+                : phase === "ready"
+                  ? `${pages} ${pages === 1 ? "batch" : "batches"} received — send more, or finish here`
+                  : "Waiting for your phone…"}
             </motion.p>
           </AnimatePresence>
         </div>
@@ -197,9 +227,16 @@ export function ScanQrHandoff({
         )}
       </div>
 
-      <Button size="sm" variant="ghost" onClick={onCancel}>
-        Cancel
-      </Button>
+      <div className="flex gap-2">
+        {phase === "ready" && (
+          <Button size="sm" className="bg-import-scan text-white hover:bg-import-scan/90" disabled={finishing} onClick={() => void finishFromDesktop()}>
+            {finishing ? "Finishing…" : "That’s everything"}
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
     </div>
   );
 }

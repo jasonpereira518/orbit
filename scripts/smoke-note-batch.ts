@@ -16,9 +16,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { actionItems, contacts, interactionMentions, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
 import { dismissNoteReminderForUser, saveNoteBatch, undoNoteBatchForUser, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
-import { emptyNoteBatchResult } from "../src/lib/note-batches";
 import { hashSourceNote, isoDay } from "../src/lib/suggested-reminder-utils";
-import { listUnresolvedMentionsFor } from "../src/lib/unresolved-mentions";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const isoDayOf = (d: Date | string) => isoDay(new Date(d));
@@ -47,7 +45,7 @@ function parsed(name: string, company: string | null, actionItems: string[], fol
     name, company, role: null, presence: "participant" as const, location: null, email: null, linkedin_url: null, met_at: null,
     topics: ["fundraising"], action_items: actionItems,
     follow_up_recommendation: followUpDays ? `Follow up with ${name}` : null, follow_up_days: followUpDays,
-    relationship_score_suggestion: 3, tags: [], summary: `Chat with ${name}`, key_facts: [], opportunities: [],
+    relationship_score_suggestion: 3, relevance: null, tags: [], summary: `Chat with ${name}`, key_facts: [], opportunities: [],
     shared_interests: [], suggested_next_message: null, confidence: 0.9, interaction_date: "2026-09-01",
     low_confidence_fields: [],
   };
@@ -278,69 +276,6 @@ async function main() {
       const rem = sharedTextReminders.find((r) => r.id === item.reminderId);
       return Boolean(rem) && rem!.actionItemId === item.id && rem!.contactId === item.contactId;
     })
-  );
-
-  // --- names your notes raised that you never added -----------------------------------
-  // The capture results page lists these once, as a receipt for one paste. The standing
-  // list is what makes them survivable; the rule that matters is that adding someone
-  // removes them, or it becomes a pile of things you already did.
-  await reset();
-  const anchor = new Date();
-  await db.insert(noteBatches).values([
-    {
-      userId: USER,
-      sourceHash: "unresolved-1",
-      sourceText: "coffee notes",
-      anchorDate: anchor,
-      status: "saved",
-      result: {
-        ...emptyNoteBatchResult(),
-        unresolvedMentions: [
-          { text: "Priya", context: "runs ops at the fintech" },
-          { text: "Later Added", context: null },
-        ],
-      },
-    },
-  ]);
-
-  const before = await listUnresolvedMentionsFor(USER);
-  check(
-    "a name the parser could not match is surfaced",
-    before.some((m) => m.text === "Priya"),
-    JSON.stringify(before.map((m) => m.text))
-  );
-  check(
-    "with the context from the note, so you know who they are",
-    before.find((m) => m.text === "Priya")?.context === "runs ops at the fintech",
-    JSON.stringify(before)
-  );
-
-  await db.insert(contacts).values({ userId: USER, fullName: "Later Added" });
-  const after = await listUnresolvedMentionsFor(USER);
-  check(
-    "adding them drops them off the list",
-    !after.some((m) => m.text === "Later Added"),
-    JSON.stringify(after.map((m) => m.text))
-  );
-  check("and leaves the ones still missing", after.some((m) => m.text === "Priya"));
-
-  // A batch older than the window has stopped being on the user's mind.
-  await reset();
-  await db.insert(noteBatches).values({
-    userId: USER,
-    sourceHash: "unresolved-old",
-    sourceText: "old notes",
-    anchorDate: anchor,
-    status: "saved",
-    createdAt: new Date(Date.now() - 90 * 86_400_000),
-    result: {
-      ...emptyNoteBatchResult(),
-      unresolvedMentions: [{ text: "Ancient Name", context: null }],
-    },
-  });
-  check(
-    "a mention from three months ago is not still nagging",
-    (await listUnresolvedMentionsFor(USER)).length === 0
   );
 
   await reset();

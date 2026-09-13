@@ -52,6 +52,14 @@ export type PlatformPageData = {
   timezone: string | null;
   /** True when the page had platform JSON but no event in it — markup drift, worth logging. */
   zeroYield: boolean;
+  /**
+   * The event's own cover, where the platform's data names it.
+   *
+   * Beats `og:image` on Luma, whose share image is a generated card — the cover shrunk into a
+   * frame with the title and date printed over it, which is the wrong picture to put ABOVE a
+   * title and date.
+   */
+  coverImageUrl?: string | null;
 };
 
 /** Both caps are hostile-input bounds; real line-ups are far smaller. */
@@ -170,6 +178,7 @@ const luma: PlatformAdapter = {
       organizerName: calendar ? str(calendar.name) : null,
       timezone: str(event.timezone),
       zeroYield: false,
+      coverImageUrl: str(event.cover_url),
     };
   },
 };

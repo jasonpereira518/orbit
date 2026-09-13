@@ -8,6 +8,7 @@ import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -559,6 +560,17 @@ CREATE TABLE IF NOT EXISTS recruiter_messages (
 CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status);
 CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id);
 CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at);
+CREATE TABLE IF NOT EXISTS recruiter_scan_state (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  last_scan_at timestamptz,
+  last_full_scan_at timestamptz,
+  prompt_version integer NOT NULL DEFAULT 1,
+  window_months integer NOT NULL DEFAULT 24,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_scan_state_user_idx ON recruiter_scan_state(user_id);
 CREATE TABLE IF NOT EXISTS gmail_connections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -619,6 +631,23 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS plan_upgrade_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  plan text NOT NULL,
+  source text NOT NULL,
+  event_key text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS admin_provider_snapshots (
+  provider text PRIMARY KEY,
+  status text NOT NULL,
+  summary jsonb DEFAULT '{}',
+  error_kind text,
+  checked_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_audit_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_user_id text NOT NULL,
@@ -796,11 +825,15 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   unsubscribed_at timestamptz,
   welcome_planet text,
   follow_up_sent_at timestamptz,
+  share_token text,
+  referred_by_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
+CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   subject text NOT NULL,
@@ -1125,6 +1158,48 @@ CREATE TABLE IF NOT EXISTS capture_handoffs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS capture_handoffs_token_uidx ON capture_handoffs(token_hash);
 CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expires_at);
+CREATE TABLE IF NOT EXISTS capture_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_kind text NOT NULL,
+  status text NOT NULL DEFAULT 'queued',
+  entry_point text NOT NULL DEFAULT 'capture',
+  seed_contact_id uuid,
+  input_text text,
+  input_hints jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ingested_blocks jsonb NOT NULL DEFAULT '[]'::jsonb,
+  sources jsonb NOT NULL DEFAULT '[]'::jsonb,
+  photo_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  transcription_engine text,
+  source_text text,
+  source_hash text,
+  meeting_session_id uuid,
+  result jsonb,
+  decisions jsonb NOT NULL DEFAULT '{}'::jsonb,
+  claim_token text,
+  claimed_at timestamptz,
+  note_batch_id uuid,
+  error text,
+  stall_resumes integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS capture_jobs_user_status_idx ON capture_jobs(user_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS capture_jobs_stall_idx ON capture_jobs(status, updated_at);
+CREATE TABLE IF NOT EXISTS ignored_people (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  name_key text NOT NULL,
+  display_name text NOT NULL,
+  reason text NOT NULL,
+  context text,
+  company text,
+  capture_job_id uuid,
+  note_batch_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ignored_people_user_name_uidx ON ignored_people(user_id, name_key);
 CREATE TABLE IF NOT EXISTS page_views (
   id uuid PRIMARY KEY,
   visitor_hash text NOT NULL,
@@ -1593,7 +1668,7 @@ CREATE INDEX IF NOT EXISTS outreach_mail_sync_state_user_idx ON outreach_mail_sy
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
- * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
+ * too, renumber and regenerate scripts/schema-ddl.lock.json rather than reusing 34.)
  */
 // Pick a number above anything ANY branch has claimed and anything a database may already
 // be stamped with, not just one above main. A repeated version is the one real failure
@@ -1649,13 +1724,40 @@ CREATE INDEX IF NOT EXISTS outreach_mail_sync_state_user_idx ON outreach_mail_sy
 //
 // 50 = user_settings.desktop_notifications_enabled, so the desktop-notification preference
 // syncs across devices instead of living only in one browser's localStorage.
+// 51 = capture jobs (the /capture redesign): capture_jobs (with photo_ids), ignored_people,
+// and capture_handoffs.capture_job_id. Built as 50 before #164 merged, then 51 once #164
+// took 49 and settings-page-improvements took 50.
+// 52 = the same capture tables, re-stamped: the preview database was stamped 51 by this
+// branch BEFORE main's 50 (desktop_notifications_enabled) was merged in, so a database at
+// 51 must still pick up that column. Nothing is new at 52; the bump only forces the pass.
+// 53 = recruiter scan v2: recruiter_scan_state (per-user watermark so a bounded, incremental
+// Gmail query replaces the full-mailbox walk that was blowing the Gmail "Total Query Cost"
+// quota). Built as 34 before this branch merged main's DDL through 52.
+// 54 = provider status + upgrade celebrations: admin_provider_snapshots,
+// plan_upgrade_events and their three indexes. Built on 49, renumbered to 51 when main
+// took 49 (capture history) and 50 (desktop notifications), to 53 when main took 51 and
+// 52 for the capture redesign, and now to 54 because main's recruiter scan v2 landed on
+// 53 first. Note the shape of that collision: both sides wrote `SCHEMA_VERSION = 53`, so
+// git merged that line without a conflict and only the changelog above it clashed. The
+// number agreeing is exactly what makes reuse silent — a database stamped 53 by a
+// recruiter-scan build would skip this branch's two tables and nothing would fail.
 //
-// 53 = generation-2 Outreach: eighteen tables (senders, identities, evidence, research runs and
+// 55 = interest_list_signups.share_token + referred_by_id, the share link and referral
+// moons behind the /interest boarding pass. Built as 52, then 54, before this merge of
+// main revealed 54 was ALSO the provider-status branch's number — the same silent
+// collision described above, one entry later. Both sides again agreed on the literal
+// `SCHEMA_VERSION = 54`, so only this changelog conflicted; a database already at 54 from
+// either branch still needs this table's two columns, hence one more bump rather than
+// reusing the number either side shipped it under.
+//
+// 56 = generation-2 Outreach: eighteen tables (senders, identities, evidence, research runs and
 // attempts, suppressions, the research-credit ledger, jobs, drafts and versions, send batches and
 // attempts, conversations and messages, mail sync state, runner sessions) plus new columns on
-// outreach_campaigns, outreach_prospects and user_settings. 51 and 52 are claimed by the
-// capture-page and interest-list branches. See docs/superpowers/specs/2026-09-13-outreach-campaigns-design.md.
-export const SCHEMA_VERSION = 53;
+// outreach_campaigns, outreach_prospects and user_settings. Built as 53 — main's recruiter scan
+// v2 had already shipped 53, and main reached 55 (provider status 54, interest list 55) before
+// this merge, so a database stamped 53, 54 or 55 by main would have skipped all of it. 56 is
+// the smallest number above every branch's. See docs/superpowers/specs/2026-09-13-outreach-campaigns-design.md.
+export const SCHEMA_VERSION = 56;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2473,6 +2575,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "status_changed_at", "timestamptz");
   await ensureColumn(client, "feedback", "status_changed_by", "text");
   await ensureColumn(client, "feedback", "resolution_note", "text");
+  // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
+  await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
+  await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -2500,6 +2605,9 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
   `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
   `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+  `CREATE INDEX IF NOT EXISTS plan_upgrade_events_claim_idx ON plan_upgrade_events(user_id, claimed_at, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS plan_upgrade_events_pending_uidx ON plan_upgrade_events(user_id, plan) WHERE claimed_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS admin_provider_snapshots_expires_idx ON admin_provider_snapshots(expires_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
   `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
   `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
@@ -2672,6 +2780,9 @@ const alters = [
   `CREATE TABLE IF NOT EXISTS event_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, role text NOT NULL, source text NOT NULL, evidence text, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS target_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, priority integer NOT NULL DEFAULT 2, note text, created_at timestamptz NOT NULL DEFAULT now())`,
   // v48 (event platform) as well: the cached one-line "why" and opener, keyed by a hash of what produced it.
+  // v51: the phone scan handoff appends its pages to a capture job instead of holding a transcript.
+  `ALTER TABLE capture_handoffs ADD COLUMN IF NOT EXISTS capture_job_id uuid`,
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS photo_ids jsonb NOT NULL DEFAULT '[]'::jsonb`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS ai_note jsonb`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_kind text`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_value text`,
@@ -2790,6 +2901,11 @@ const alters = [
   // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
+  // v54: the share link and referral tracking behind the /interest boarding pass.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referred_by_id uuid`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token)`,
+  `CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id)`,
 
   // Feedback triage. The table shipped long before anything wrote to it, so every existing
   // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
@@ -3133,6 +3249,109 @@ async function ready(): Promise<void> {
   await globalForDb.orbitReady;
 }
 
+/** How long a builder may hold the migration lease before another may steal it. */
+const MIGRATION_LEASE_MS = 5 * 60 * 1000;
+/** How long to wait for someone else's lease before giving up and sweeping anyway. */
+const MIGRATION_LOCK_WAIT_MS = 3 * 60 * 1000;
+const MIGRATION_LOCK_POLL_MS = 2000;
+
+/**
+ * Serialises the DDL sweep across concurrent builders.
+ *
+ * NOT `pg_advisory_lock`. That is the obvious answer and it is wrong here: an advisory lock
+ * is scoped to a *session*, and on `neon-http` every statement is its own HTTPS request with
+ * no session behind it, so the lock would be released the instant the statement returned.
+ * `pg_advisory_xact_lock` fails for the same reason — each statement is its own transaction.
+ * What works over a sessionless driver is a lease row, which is what this is.
+ *
+ * Why it is needed at all: the statements are individually idempotent, but two of the
+ * sequences are not safe to interleave. `migratePgvector` adds a column and then builds an
+ * HNSW index over it, and the embeddings dedupe deletes duplicate rows and then builds a
+ * unique index over what is left — one builder deleting while another indexes is a failed
+ * build at best. Two builds racing is not hypothetical: a production deploy and a preview
+ * build, or two pushes in a minute, both call this.
+ *
+ * Never fails the caller. If the lease cannot be won within the wait, this logs and runs the
+ * sweep anyway — exactly the behaviour that existed before this function did. A lock that can
+ * turn a deploy into a hard failure when a previous builder died holding it would be a worse
+ * trade than the race it prevents; the lease TTL covers that case, and this covers the TTL
+ * being wrong.
+ */
+async function withMigrationLock<T>(
+  run: StatementRunner,
+  body: () => Promise<T>
+): Promise<T> {
+  // The lease table has to exist before the sweep that creates every other table, so it is
+  // created here rather than in the DDL. Concurrent `CREATE TABLE IF NOT EXISTS` can still
+  // raise a duplicate-key error from the catalog insert; that means it exists, which is all
+  // we wanted.
+  const holder = randomUUID();
+  let held = false;
+  try {
+    await run(
+      `CREATE TABLE IF NOT EXISTS schema_migration_lock (
+         id integer PRIMARY KEY DEFAULT 1,
+         holder text NOT NULL,
+         acquired_at timestamptz NOT NULL DEFAULT now(),
+         expires_at timestamptz NOT NULL,
+         CONSTRAINT schema_migration_lock_single_row CHECK (id = 1)
+       )`
+    );
+  } catch {
+    // Already there, or raced. Either way the acquire below is the real test.
+  }
+
+  const deadline = Date.now() + MIGRATION_LOCK_WAIT_MS;
+  while (Date.now() < deadline) {
+    try {
+      // Wins only when the row is absent or the previous holder's lease has expired. The
+      // WHERE on the DO UPDATE is what makes this a lock rather than a last-writer-wins
+      // stamp: a live lease makes the upsert affect no rows, so RETURNING is empty.
+      const result = await run(
+        `INSERT INTO schema_migration_lock (id, holder, acquired_at, expires_at)
+         VALUES (1, '${holder}', now(), now() + interval '${MIGRATION_LEASE_MS} milliseconds')
+         ON CONFLICT (id) DO UPDATE
+           SET holder = EXCLUDED.holder,
+               acquired_at = EXCLUDED.acquired_at,
+               expires_at = EXCLUDED.expires_at
+           WHERE schema_migration_lock.expires_at < now()
+         RETURNING holder`
+      );
+      if (rowsOf<{ holder: string }>(result).length > 0) {
+        held = true;
+        break;
+      }
+    } catch (err) {
+      // Cannot even attempt the lease. Proceeding unlocked is the old behaviour, and the
+      // sweep is idempotent; blocking the build over the lock itself is the worse failure.
+      console.warn("[db] migration lease unavailable; sweeping without it\n", err);
+      return body();
+    }
+    await new Promise((resolve) => setTimeout(resolve, MIGRATION_LOCK_POLL_MS));
+  }
+
+  if (!held) {
+    console.warn(
+      `[db] another builder has held the migration lease for ${MIGRATION_LOCK_WAIT_MS}ms; sweeping anyway`
+    );
+    return body();
+  }
+
+  try {
+    return await body();
+  } finally {
+    try {
+      // Scoped to our own holder id: if our lease expired and someone else took it, this
+      // must not release theirs.
+      await run(
+        `DELETE FROM schema_migration_lock WHERE id = 1 AND holder = '${holder}'`
+      );
+    } catch {
+      // The lease expires on its own. Nothing here is worth failing a build over.
+    }
+  }
+}
+
 export type SchemaReconcileResult = {
   version: number;
   /** False when the recorded version already matched and nothing ran. */
@@ -3169,14 +3388,23 @@ export async function reconcileSchema(): Promise<SchemaReconcileResult> {
     return { version: SCHEMA_VERSION, applied: false, failed: [] };
   }
 
-  const failed = neonSql
-    ? await migrateNeon(neonSql)
-    : await migratePglite(globalForDb.orbitPglite!);
-  for (const f of failed) {
-    console.error(`[db] DDL statement failed: ${f.statement}\n`, f.message);
-  }
-  if (failed.length === 0) await recordSchemaVersion(run);
-  return { version: SCHEMA_VERSION, applied: true, failed };
+  return withMigrationLock(run, async () => {
+    // Re-check inside the lock. Whoever held it before us may have just finished the very
+    // sweep we were about to run — this is the whole reason the lock is worth taking.
+    if (await schemaIsCurrent(run)) {
+      await detectExtensions(run);
+      return { version: SCHEMA_VERSION, applied: false, failed: [] };
+    }
+
+    const failed = neonSql
+      ? await migrateNeon(neonSql)
+      : await migratePglite(globalForDb.orbitPglite!);
+    for (const f of failed) {
+      console.error(`[db] DDL statement failed: ${f.statement}\n`, f.message);
+    }
+    if (failed.length === 0) await recordSchemaVersion(run);
+    return { version: SCHEMA_VERSION, applied: true, failed };
+  });
 }
 
 export async function getDb(): Promise<Db> {

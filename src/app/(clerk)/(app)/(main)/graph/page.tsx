@@ -35,7 +35,10 @@ export default function GraphPage() {
           <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
             Constellation
           </h1>
-          <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
+          {/* Desktop only. On a phone these lines cost the chart ~62px of height, and the
+              Key in the chart's corner explains the same picture on demand. The stage
+              height below `md` (CONSTELLATION_STAGE_HEIGHT) is sized for its absence. */}
+          <p className="mt-0.5 hidden max-w-xl text-sm text-muted-foreground md:block">
             You are the sun. Companies and schools form constellations around
             you — each figure traced by its own people.
           </p>

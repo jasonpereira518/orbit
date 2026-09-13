@@ -72,6 +72,12 @@ export const ERROR_SOURCES = {
    * photo), so this row is the only trace that the history will be missing a picture.
    */
   capturePhotoStore: "capture.photo_store",
+  /**
+   * A provider health check that could not complete. Without it the status panel just
+   * shows a stale or unavailable row and nothing says why — and the volume is bounded by
+   * a four-provider poll sitting behind a sixty-second cache.
+   */
+  providerHealthCheck: "provider.health_check",
   /** A generation-2 Outreach job handler threw (`src/lib/outreach/jobs/worker.ts`). */
   outreachWorker: "outreach.worker",
 } as const;

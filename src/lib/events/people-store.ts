@@ -33,6 +33,7 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { personKeyOf, type PersonKeyKind } from "@/lib/events/people";
+import { attendedEventFilter } from "@/lib/events/store";
 
 export type RepeatPerson = {
   /** Stable per cluster, for React keys and for linking through to a filtered view. */
@@ -124,8 +125,9 @@ export async function listRepeatCoAttendees(
         ${IDENTITY_JOIN}
        WHERE a.user_id = ${userId}
          AND a.person_key_value IS NOT NULL
-         -- Hidden events are not events the user went to, so they cannot make a pattern.
-         AND e.dismissed_at IS NULL
+         -- Hidden events, and ones the user was only waitlisted or invited to, are not events
+         -- they went to, so they cannot make a pattern.
+         AND ${attendedEventFilter()}
          AND COALESCE(e.rsvp_status, '') <> 'cancelled'
          ${
            options.includeWeak
@@ -194,7 +196,7 @@ export async function eventsTogetherForRoster(
           ON a.user_id = ${userId}
          AND a.person_key_kind = r.person_key_kind
          AND a.person_key_value = r.person_key_value
-        JOIN events e ON e.id = a.event_id AND e.user_id = ${userId} AND e.dismissed_at IS NULL
+        JOIN events e ON e.id = a.event_id AND e.user_id = ${userId} AND ${attendedEventFilter()}
        GROUP BY r.id
     `)
   );
@@ -240,7 +242,7 @@ export async function listEventsTogetherForContact(
       SELECT DISTINCT ON (e.id)
              e.id AS event_id, e.title, e.starts_at, a.spoke_to
         FROM event_attendees a
-        JOIN events e ON e.id = a.event_id AND e.user_id = ${userId} AND e.dismissed_at IS NULL
+        JOIN events e ON e.id = a.event_id AND e.user_id = ${userId} AND ${attendedEventFilter()}
        WHERE a.user_id = ${userId}
          AND (
            a.contact_id = ${contactId}

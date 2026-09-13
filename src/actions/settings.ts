@@ -15,7 +15,13 @@ import {
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
-import { purgeUserData } from "@/lib/user-data";
+import {
+  DATA_CATEGORY_IDS,
+  expandCategories,
+  getDataFootprint,
+  purgeUserData,
+  type DataCategory,
+} from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
 import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
@@ -426,14 +432,41 @@ export async function exportAllData() {
   };
 }
 
-export async function deleteAllData() {
+/** Row counts per category, for the delete dialog. */
+export async function getDeletableDataFootprint() {
   const userId = await requireUserId();
-  await purgeUserData(userId);
+  return getDataFootprint(userId);
+}
+
+/**
+ * Delete the chosen categories of the caller's own data.
+ *
+ * `categories` is validated against `DATA_CATEGORY_IDS` rather than trusted: this is a
+ * server action, so its argument is a request body, and an unrecognised id must not silently
+ * widen or narrow a destructive call. An empty selection is a no-op, not a full purge —
+ * the failure mode of getting that backwards is unrecoverable.
+ */
+export async function deleteAllData(categories?: readonly DataCategory[]) {
+  const userId = await requireUserId();
+
+  let only: DataCategory[] | undefined;
+  if (categories) {
+    only = categories.filter((c): c is DataCategory =>
+      (DATA_CATEGORY_IDS as string[]).includes(c)
+    );
+    if (only.length === 0) return { deleted: [] as DataCategory[] };
+  }
+
+  await purgeUserData(userId, only ? { only } : {});
 
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/settings");
   revalidatePath("/outreach");
+
+  return {
+    deleted: only ? [...expandCategories(only)] : [...DATA_CATEGORY_IDS],
+  };
 }
 
 /** Everything the settings billing card needs, in one round trip. */

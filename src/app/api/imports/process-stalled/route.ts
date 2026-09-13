@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
 import { resumeStalledImports } from "@/lib/import-stall";
+import { resumeStalledCaptureJobs } from "@/lib/capture-jobs";
+import { runCaptureJobById } from "@/lib/capture-job-runner";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import {
   finishCronRun,
@@ -114,6 +116,11 @@ export async function GET(request: Request) {
     resumeFailed: 0,
     /** Marked failed after MAX_STALL_RESUMES; the user has to re-upload. */
     resumeGaveUp: 0,
+    /** The capture-job backstop: extractions and saves that went quiet. */
+    captureStalledFound: 0,
+    captureResumed: 0,
+    captureGaveUp: 0,
+    captureSwept: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
@@ -139,6 +146,16 @@ export async function GET(request: Request) {
     stats.resumed = sweep.resumed;
     stats.resumeFailed = sweep.resumeFailed;
     stats.resumeGaveUp = sweep.gaveUp;
+
+    try {
+      const captures = await resumeStalledCaptureJobs({ now: new Date(), runner: runCaptureJobById });
+      stats.captureStalledFound = captures.found;
+      stats.captureResumed = captures.resumed;
+      stats.captureGaveUp = captures.gaveUp;
+      stats.captureSwept = captures.swept;
+    } catch {
+      status = "partial";
+    }
 
     try {
       stats.usageEventsPruned = await pruneOlderThan(

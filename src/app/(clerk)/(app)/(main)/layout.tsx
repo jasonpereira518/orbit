@@ -12,13 +12,20 @@ import { surfaceForPathname } from "@/lib/surfaces";
  * AvatarBackfill lives in AppShell (above the remounting template) so nav
  * does not abort/restart background photo fills.
  */
-/** Floating ask bar + chat actions need longer than the default serverless limit. */
-// TEMPORARY STOPGAP (Sept 2026): 300, not 60. Heavy accounts were hitting the 60s wall on
-// /dashboard and /graph (Vercel "Task timed out after 60 seconds"); the real fix is the
-// query-shape work tracked in the production-readiness plan, and this converts a hard
-// error into a slow success only while that lands. Revert to 60 once `perf.slow` traces
-// stay quiet for a week. 300 is the Fluid Compute ceiling on the Hobby plan.
-export const maxDuration = 300;
+/**
+ * Floating ask bar + chat actions need longer than the default serverless limit.
+ *
+ * Back to 60. This was 300 as a stopgap while heavy accounts hit the 60-second wall on
+ * /dashboard — the dashboard loaded every contact in the account and did its filtering,
+ * sorting and aggregation in JavaScript, so the work grew with the network and a large one
+ * ran out of function. That is fixed: the payload is bounded now (see the "Payload scaling"
+ * section of scripts/smoke-page-budgets.ts, which fails if it starts growing again), and
+ * 300 was only ever converting a hard error into a slow success.
+ *
+ * /graph is NOT fixed and does not need this: its "show all" scope means all by design, and
+ * it has its own scope toggle so the default view is the bounded one.
+ */
+export const maxDuration = 60;
 
 export default async function MainAppLayout({
   children,

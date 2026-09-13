@@ -1,16 +1,14 @@
 "use client";
 
 /**
- * "Not mine" on an auto-added event.
+ * Hide an auto-added event, or bring a hidden one back.
  *
- * The single most important control in event discovery. Orbit is putting rows on someone's
- * page that they never asked for, and the bargain that makes that acceptable is that saying
- * no is instant, obvious, and permanent — a dismissal the next sync ignores would be worse
- * than never having discovered the event at all.
+ * Only the restore half is rendered today — the hidden list on the events page — because the
+ * card no longer offers "not mine" (see `event-card.tsx`). The hide half is unused for now and
+ * kept so the control can return elsewhere without re-deriving its Undo behaviour.
  *
- * Undo is offered rather than a confirmation dialog: the action is reversible and cheap, and
- * a modal on every stray calendar entry would be its own kind of nagging. `runToastAction`
- * already decides how Undo behaves everywhere else in the app.
+ * Undo is offered rather than a confirmation dialog: the action is reversible and cheap.
+ * `runToastAction` already decides how Undo behaves everywhere else in the app.
  */
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";

@@ -63,6 +63,66 @@ export function captureExcerpt(sourceText: string, max = 160): string {
 export type PreviewMention = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | null };
 
 export const DEFAULT_FOLLOW_UP_WINDOW_DAYS = 14;
+
+/**
+ * How soon to follow up, by how close you are. The review card no longer asks for a day
+ * count: closeness is the one number the person sets, and the cadence falls out of it.
+ * Closer people get shorter windows — a mentor you saw this week should not sit for six
+ * months, and someone you barely know does not need a fortnightly nudge.
+ */
+export const FOLLOW_UP_DAYS_BY_CLOSENESS: Readonly<Record<1 | 2 | 3 | 4 | 5, number>> = {
+  5: 14,
+  4: 30,
+  3: 60,
+  2: 90,
+  1: 180,
+};
+
+const MAX_AI_FOLLOW_UP_DAYS = 365;
+
+/**
+ * The follow-up window for one person: the model's suggestion when the notes implied a
+ * timeframe ("call her next week" → 7), else the closeness table. The model's number wins
+ * because it came from the notes; the table is what we assume when the notes said nothing.
+ */
+export function followUpDaysFor(closeness: number | null | undefined, aiDays: number | null | undefined): number {
+  if (typeof aiDays === "number" && Number.isFinite(aiDays)) {
+    const days = Math.round(aiDays);
+    if (days >= 1 && days <= MAX_AI_FOLLOW_UP_DAYS) return days;
+  }
+  const level = clampLevel(closeness);
+  return level ? FOLLOW_UP_DAYS_BY_CLOSENESS[level] : DEFAULT_FOLLOW_UP_WINDOW_DAYS;
+}
+
+/**
+ * Whether an accepted person gets a follow-up reminder at all. Decided here rather than
+ * with a checkbox: the model already said whether the notes call for a follow-up, and
+ * closeness plus relevance-to-goals say whether the relationship is worth keeping warm.
+ *
+ *   - the notes themselves recommend a follow-up → yes, whatever the scores
+ *   - goals were scored (relevance is a number): yes when either score is a 5, or the two
+ *     together reach 6 — so a real conversation with someone plausibly useful (3 + 3)
+ *     qualifies and a one-off met-once tangent (2 + 2) does not
+ *   - no goals on file (relevance null): yes from "real conversation" up
+ */
+export function shouldCreateFollowUp(
+  closeness: number | null | undefined,
+  relevance: number | null | undefined,
+  aiRecommends: boolean
+): boolean {
+  if (aiRecommends) return true;
+  const c = clampLevel(closeness) ?? 2;
+  const r = clampLevel(relevance);
+  if (r == null) return c >= 3;
+  if (c === 5 || r === 5) return true;
+  return c + r >= 6;
+}
+
+function clampLevel(value: number | null | undefined): 1 | 2 | 3 | 4 | 5 | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  const n = Math.round(value);
+  return (n < 1 ? 1 : n > 5 ? 5 : n) as 1 | 2 | 3 | 4 | 5;
+}
 export const COLLISION_WINDOW_DAYS = 3;
 export const NOTE_INTERACTION_EXTERNAL_ID_PREFIX = "notes:";
 

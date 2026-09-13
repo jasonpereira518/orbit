@@ -26,6 +26,9 @@ export const PUBLIC_ROUTES = [
   // Clicked from an email, by someone who has never signed in. Authenticated by the
   // opaque token in the query string instead, same pattern as the calendar feed above.
   "/api/interest-list/unsubscribe",
+  // The boarding-pass link preview. Fetched by X, LinkedIn and iMessage, which carry no
+  // session; authenticated by nothing, because it reveals only a number and a planet.
+  "/api/interest-list/ticket-image",
   // Not actually public: these authenticate via requireExtensionUserId, which reads the
   // Clerk state clerkMiddleware populates. They are exempted from auth.protect() only so
   // an unauthenticated call gets a JSON 401 the extension can act on, rather than a 302
@@ -38,6 +41,8 @@ export const PUBLIC_ROUTES = [
   // (`src/lib/internal-auth.ts`), which is fail-closed in production.
   "/api/imports/process-stalled",
   "/api/imports/(.*)/continue",
+  // The capture job runner's internal kick — same gate, same reasons.
+  "/api/capture/jobs/(.*)/run",
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",

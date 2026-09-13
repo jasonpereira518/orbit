@@ -208,7 +208,7 @@ export async function scanGmailForEvents(
   });
 
   const result: GmailScanResult = {
-    stats: { created: 0, attached: 0, suppressed: 0, enrichQueued: 0 },
+    stats: { created: 0, attached: 0, suppressed: 0, enrichQueued: 0, notAttending: 0 },
     cursor: { after, pageToken: page.nextPageToken },
     listed: page.messages.length,
     opened: 0,

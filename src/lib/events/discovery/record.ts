@@ -35,6 +35,7 @@ import {
   type DiscoveryStats,
 } from "@/lib/events/discovery/types";
 import { mergeCandidates } from "@/lib/events/discovery/keys";
+import { isAttendingReport } from "@/lib/events/attendance";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { upsertEventAttendees } from "@/lib/events/store";
 import { resolveThemeColor } from "@/lib/events/theme";
@@ -43,9 +44,11 @@ import type { ParsedAttendee } from "@/lib/events/parse-roster";
 
 export type RecordOptions = {
   /**
-   * How many newly created events may be queued for a page read. The queue itself is bounded
-   * per pass (`enrich-queue.ts`); this only stops one enormous calendar import from filling
-   * it with a year of backlog before anything recent gets a turn.
+   * How many newly created events are due a page read straight away. The rest are due in
+   * hourly waves rather than never: the page read is where an event's cover image comes from,
+   * and a first import of 80 events used to leave 55 of them as bare gradients for good. The
+   * queue itself is bounded per pass (`enrich-queue.ts`); the waves only stop one enormous
+   * import from crowding out everybody else's fresh events.
    */
   maxEnrichQueued?: number;
 };
@@ -144,7 +147,7 @@ async function writeGuests(
 async function createFromCandidate(
   userId: string,
   candidate: DiscoveryCandidate,
-  queueEnrichment: boolean
+  enrichDelayMinutes: number
 ): Promise<string> {
   const db = await getDb();
   const title = candidate.title?.trim() || UNTITLED_EVENT;
@@ -161,7 +164,11 @@ async function createFromCandidate(
          ${candidate.roleHint ?? "attended"}, 'inferred', 'manual',
          ${candidate.source}, ${candidate.rsvpHint},
          ${theme.color}, ${theme.source},
-         ${queueEnrichment && candidate.url ? sql`now()` : sql`NULL`})
+         ${
+           candidate.url
+             ? sql`now() + (${enrichDelayMinutes} * interval '1 minute')`
+             : sql`NULL`
+         })
       RETURNING id
     `)
   );
@@ -193,7 +200,11 @@ async function attachToEvent(
       timezone       = COALESCE(timezone, ${candidate.timezone}),
       venue          = COALESCE(venue, ${candidate.location}),
       url            = COALESCE(url, ${candidate.url}),
-      discovered_via = COALESCE(discovered_via, ${candidate.source}),
+      -- Only an attending report may say how an event got here: a newsletter that happens to
+      -- mention an event the user typed in must not relabel it "found in an email".
+      discovered_via = CASE WHEN ${isAttendingReport(candidate)}
+                            THEN COALESCE(discovered_via, ${candidate.source})
+                            ELSE discovered_via END,
       rsvp_status    = COALESCE(${candidate.rsvpHint}, rsvp_status),
       role           = CASE WHEN ${candidate.roleHint ?? null}::text = 'hosted'
                              AND COALESCE(role_source, 'inferred') <> 'user'
@@ -214,6 +225,7 @@ export async function recordDiscoveryCandidates(
   const stats = emptyDiscoveryStats();
   if (candidates.length === 0) return stats;
   const maxEnrichQueued = options.maxEnrichQueued ?? 25;
+  let createdWithUrl = 0;
 
   const merged = mergeCandidates(candidates);
   const keysFor = new Map<DiscoveryCandidate, AliasKey[]>();
@@ -271,8 +283,17 @@ export async function recordDiscoveryCandidates(
       continue;
     }
 
-    const queueEnrichment = stats.enrichQueued < maxEnrichQueued;
-    const created = await createFromCandidate(userId, candidate, queueEnrichment);
+    // Nothing to attach to, and the user is not going: create nothing. If they come off the
+    // waitlist, the feed says "going" on a later pass and the event is created then.
+    if (!isAttendingReport(candidate)) {
+      stats.notAttending++;
+      continue;
+    }
+
+    const wave = Math.floor(createdWithUrl / Math.max(1, maxEnrichQueued));
+    const queueEnrichment = wave === 0;
+    const created = await createFromCandidate(userId, candidate, wave * 60);
+    if (candidate.url) createdWithUrl++;
     const settled = await claimOrYield(userId, created, keys, candidate);
     if (settled === created) {
       stats.created++;

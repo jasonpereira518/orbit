@@ -36,6 +36,7 @@ export type EventListRow = Pick<
   | "id"
   | "title"
   | "startsAt"
+  | "endsAt"
   | "venue"
   | "city"
   | "url"
@@ -55,7 +56,28 @@ export type EventListRow = Pick<
  * in a total, or in a suggestion about who to talk to at an event they said they were not at.
  */
 function visibleEvents() {
-  return sql`e.dismissed_at IS NULL`;
+  return attendedEventFilter();
+}
+
+/**
+ * Not hidden, and — for an event Orbit added on its own — one the user is actually going to.
+ *
+ * The SQL twin of `isAttendingReport` (`attendance.ts`), for rows written before discovery
+ * stopped creating the others: a Luma feed lists every waitlisted and pending registration, and
+ * those rows are still in the table. Filtered rather than deleted, because the next sync that
+ * says "going" makes the same row appear with its roster and aliases intact.
+ *
+ * `role_source = 'inferred'` is what marks a row discovery CREATED. An event the user typed in,
+ * or one a host API synced, is theirs whatever a feed later says about it. Expects the events
+ * table aliased `e`.
+ */
+export function attendedEventFilter() {
+  return sql`(e.dismissed_at IS NULL AND (
+    e.role_source IS DISTINCT FROM 'inferred'
+    OR e.role = 'hosted'
+    OR e.rsvp_status = 'going'
+    OR (e.rsvp_status IS NULL AND e.discovered_via IS DISTINCT FROM 'gmail')
+  ))`;
 }
 
 /**
@@ -68,15 +90,33 @@ function visibleEvents() {
  * Ordered newest-first with nulls last: an event whose date nobody recorded belongs at the
  * bottom, not pinned above everything by a NULL sort. `id` trails the sort key to keep the
  * ordering total.
+ *
+ * `when` splits the list the way the page's tabs do. An event is upcoming until it ENDS, so a
+ * conference on its second day is still on the Upcoming tab; one with no date at all is past,
+ * because an event nobody can place in the future is not something to plan around. Upcoming
+ * runs soonest-first — the next thing on the calendar belongs at the top — and past runs
+ * newest-first.
  */
 export async function listEventsForUser(
   userId: string,
   limit = 100,
-  options: { hidden?: boolean } = {}
+  options: { hidden?: boolean; when?: "upcoming" | "past"; now?: Date } = {}
 ): Promise<EventListRow[]> {
   const db = await getDb();
+  const now = options.now ?? new Date();
+  const endsAt = sql`COALESCE(e.ends_at, e.starts_at)`;
+  const whenFilter =
+    options.when === "upcoming"
+      ? sql`AND ${endsAt} >= ${now}`
+      : options.when === "past"
+        ? sql`AND (${endsAt} < ${now} OR ${endsAt} IS NULL)`
+        : sql``;
+  const order =
+    options.when === "upcoming"
+      ? sql`e.starts_at ASC NULLS LAST, e.id ASC`
+      : sql`e.starts_at DESC NULLS LAST, e.id DESC`;
   const rows = await db.execute(sql`
-    SELECT e.id, e.title, e.starts_at, e.venue, e.city, e.url, e.role, e.source,
+    SELECT e.id, e.title, e.starts_at, e.ends_at, e.venue, e.city, e.url, e.role, e.source,
            e.cover_image_url, e.theme_color, e.discovered_via, e.rsvp_status,
            COALESCE(a.total, 0)     AS attendee_count,
            COALESCE(a.connected, 0) AS connected_count
@@ -91,13 +131,15 @@ export async function listEventsForUser(
       ) a ON a.event_id = e.id
      WHERE e.user_id = ${userId}
        AND ${options.hidden ? sql`e.dismissed_at IS NOT NULL` : visibleEvents()}
-     ORDER BY e.starts_at DESC NULLS LAST, e.id DESC
+       ${whenFilter}
+     ORDER BY ${order}
      LIMIT ${limit}
   `);
   type Raw = {
     id: string;
     title: string;
     starts_at: string | Date | null;
+    ends_at: string | Date | null;
     venue: string | null;
     city: string | null;
     url: string | null;
@@ -116,6 +158,7 @@ export async function listEventsForUser(
     id: r.id,
     title: r.title,
     startsAt: r.starts_at ? new Date(r.starts_at) : null,
+    endsAt: r.ends_at ? new Date(r.ends_at) : null,
     venue: r.venue,
     city: r.city,
     url: r.url,

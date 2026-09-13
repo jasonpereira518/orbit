@@ -33,7 +33,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { EventsHeader } from "../src/components/events/events-header";
 import { IngestResultCard } from "../src/components/events/ingest-result-card";
 import { EventCard } from "../src/components/events/event-card";
-import { APP_NAV_CORE, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
+import { APP_NAV_CORE, APP_NAV_EXTRAS, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
 import { surfaceKeyForHref } from "../src/lib/surfaces";
 
 let failures = 0;
@@ -95,6 +95,7 @@ function main() {
       id: "e1",
       title: "Deep Learning Summit",
       startsAt: new Date("2026-03-04T18:00:00Z"),
+      endsAt: null,
       venue: "Moscone",
       city: "San Francisco",
       url: null,
@@ -118,7 +119,7 @@ function main() {
 
   console.log("\nnav and surface registration");
   {
-    const hrefs = APP_NAV_CORE.map((i) => i.href);
+    const hrefs = [...APP_NAV_CORE, ...APP_NAV_EXTRAS].map((i) => i.href);
     check("/events is in the sidebar", hrefs.includes("/events"), hrefs.join(" "));
     // Without this the page is unreachable on mobile.
     check("/events is in the mobile More menu", MOBILE_MORE_NAV.some((i) => i.href === "/events"));

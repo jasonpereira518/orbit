@@ -1,11 +1,20 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Menu } from "lucide-react";
 import { ADMIN_NAV, ADMIN_YC_NAV, isAdminNavActive } from "@/components/admin/admin-nav";
 import { YCModeToggle } from "@/components/admin/yc-mode-toggle";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 /**
@@ -43,6 +52,15 @@ export function AdminShell({
 }) {
   const pathname = usePathname();
   const navItems = ycMode ? ADMIN_YC_NAV : ADMIN_NAV;
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const badgeCount = hiddenSurfaceCount + unresolvedFeedbackCount;
+
+  // Client-side navigation from a `Link` inside the sheet does not unmount it, so every row
+  // closes the drawer itself on click; this is the fallback for back/forward navigation,
+  // which doesn't go through one of those `onClick` handlers.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [pathname]);
 
   return (
     <div className={cn("min-h-dvh bg-background text-sm", ycMode && "yc-theme")}>
@@ -51,7 +69,7 @@ export function AdminShell({
       <div aria-hidden className="h-0.5 w-full bg-accent" />
 
       <header className="sticky top-0 z-30 border-b border-border/70 bg-card/90 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-6 px-6 py-3">
+        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-3 px-4 py-3 md:gap-6 md:px-6">
           <Link href="/admin" className="flex items-center gap-2">
             <span className="font-[family-name:var(--font-display)] text-base text-ink">
               Orbit
@@ -61,7 +79,7 @@ export function AdminShell({
             </span>
           </Link>
 
-          <nav className="flex items-center gap-1">
+          <nav className="hidden items-center gap-1 md:flex">
             {navItems.map((item) => {
               const active = isAdminNavActive(pathname, item.href);
               return (
@@ -116,7 +134,7 @@ export function AdminShell({
             })}
           </nav>
 
-          <div className="ml-auto flex items-center gap-4 text-xs text-muted-foreground">
+          <div className="ml-auto hidden items-center gap-4 text-xs text-muted-foreground md:flex">
             <YCModeToggle active={ycMode} />
             {adminEmail && (
               <span className="hidden sm:inline truncate max-w-[16rem]">
@@ -131,10 +149,88 @@ export function AdminShell({
               <ArrowUpRight className="size-3" aria-hidden />
             </Link>
           </div>
+
+          <div className="ml-auto md:hidden">
+            <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+              <SheetTrigger
+                render={
+                  <Button variant="ghost" size="icon" className="relative">
+                    <Menu className="size-4" aria-hidden />
+                    <span className="sr-only">Open admin navigation</span>
+                    {badgeCount > 0 && (
+                      <span
+                        aria-hidden
+                        className="absolute top-1 right-1 size-2 rounded-full bg-accent"
+                      />
+                    )}
+                  </Button>
+                }
+              />
+              <SheetContent side="right">
+                <SheetHeader className="sr-only">
+                  <SheetTitle>Admin navigation</SheetTitle>
+                </SheetHeader>
+                <nav className="flex flex-col gap-1 overflow-y-auto p-4 pt-10">
+                  {navItems.map((item) => {
+                    const active = isAdminNavActive(pathname, item.href);
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        aria-current={active ? "page" : undefined}
+                        onClick={() => setDrawerOpen(false)}
+                        className={cn(
+                          "flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",
+                          active
+                            ? "bg-muted text-foreground"
+                            : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                        )}
+                      >
+                        <item.icon className="size-4 shrink-0" aria-hidden />
+                        {item.label}
+                        {item.href === "/admin/product" && hiddenSurfaceCount > 0 && (
+                          <span
+                            title={`${hiddenSurfaceCount} surface${hiddenSurfaceCount === 1 ? "" : "s"} hidden from users`}
+                            className="ml-auto rounded-full bg-accent/25 px-1.5 text-[0.625rem] font-medium tabular-nums text-accent-foreground"
+                          >
+                            {hiddenSurfaceCount}
+                          </span>
+                        )}
+                        {item.href === "/admin/feedback" && unresolvedFeedbackCount > 0 && (
+                          <span
+                            title={`${unresolvedFeedbackCount} unresolved`}
+                            className="ml-auto rounded-full bg-accent/25 px-1.5 text-[0.625rem] font-medium tabular-nums text-accent-foreground"
+                          >
+                            {unresolvedFeedbackCount}
+                          </span>
+                        )}
+                      </Link>
+                    );
+                  })}
+                </nav>
+                <div className="mt-auto flex flex-col gap-3 border-t border-border/70 p-4">
+                  <YCModeToggle active={ycMode} />
+                  {adminEmail && (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {adminEmail}
+                    </span>
+                  )}
+                  <Link
+                    href="/dashboard"
+                    onClick={() => setDrawerOpen(false)}
+                    className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors duration-fast hover:text-foreground"
+                  >
+                    Open app
+                    <ArrowUpRight className="size-3.5" aria-hidden />
+                  </Link>
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1400px] px-6 py-6">{children}</main>
+      <main className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-6">{children}</main>
     </div>
   );
 }

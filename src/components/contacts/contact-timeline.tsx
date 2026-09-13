@@ -22,8 +22,8 @@ import {
   monthLabel,
   monthShort,
 } from "@/components/contacts/timeline-date-scrubber";
-import { InteractionDetailSheet } from "@/components/contacts/interaction-detail-sheet";
-import { LogInteractionSheet } from "@/components/contacts/log-interaction-sheet";
+import { InteractionDetailSheetLazy } from "@/components/contacts/interaction-detail-sheet-lazy";
+import { LogInteractionSheetLazy } from "@/components/contacts/log-interaction-sheet-lazy";
 import {
   INTERACTION_FLIGHT_EVENT,
   type InteractionFlightDetail,
@@ -775,7 +775,7 @@ export function ContactTimeline({
         )}
       </CardContent>
 
-      <InteractionDetailSheet
+      <InteractionDetailSheetLazy
         interactionId={openId}
         canReorder={{
           // Reordering writes the whole day at once, so it is only offered on the unfiltered
@@ -862,7 +862,7 @@ export function ContactTimeline({
         ) : null}
       </AnimatePresence>
 
-      <LogInteractionSheet
+      <LogInteractionSheetLazy
         contactId={contactId}
         contactName={contactName}
         hasApiKey={hasApiKey}

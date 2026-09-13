@@ -74,8 +74,13 @@ export type DiscoveryStats = {
   suppressed: number;
   /** Events queued for a background read of their public page. */
   enrichQueued: number;
+  /**
+   * Reports of events the user is not going to — waitlisted, pending, maybe, invited — that
+   * matched nothing we hold, and so created nothing. See `attendance.ts`.
+   */
+  notAttending: number;
 };
 
 export function emptyDiscoveryStats(): DiscoveryStats {
-  return { created: 0, attached: 0, suppressed: 0, enrichQueued: 0 };
+  return { created: 0, attached: 0, suppressed: 0, enrichQueued: 0, notAttending: 0 };
 }

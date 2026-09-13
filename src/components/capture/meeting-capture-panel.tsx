@@ -112,6 +112,7 @@ const SURFACE_LABEL: Record<Exclude<MeetingSurface, null>, string> = {
   browser: "Listening to a browser tab",
   window: "Listening to a window",
   monitor: "Listening to your computer",
+  mic: "Listening through your microphone",
 };
 
 export function MeetingCapturePanel({
@@ -119,7 +120,9 @@ export function MeetingCapturePanel({
   hasApiKey,
   canTranscribe,
   captureSupported,
+  micSupported = false,
   onBusyChange,
+  onAnalyzed,
 }: {
   resumable: ResumableMeeting | null;
   /** A completion key, for the analysis. */
@@ -131,10 +134,25 @@ export function MeetingCapturePanel({
    * anywhere — but not recorded.
    */
   captureSupported: boolean;
+  /**
+   * Any secure browser with a microphone — phones and Safari included. When call audio
+   * can't be shared, the meeting is recorded through the mic instead (on speaker, or in
+   * the room).
+   */
+  micSupported?: boolean;
   /** True while a meeting is recording or being finished — the page locks its other tabs. */
   onBusyChange?: (busy: boolean) => void;
+  /**
+   * The new capture flow: hand the analysis over instead of mounting the review panel
+   * here. The caller queues the durable job and renders the summary card itself.
+   */
+  onAnalyzed?: (analysis: MeetingAnalysis, sessionId: string) => void;
 }) {
   const router = useRouter();
+  const onAnalyzedRef = useRef(onAnalyzed);
+  useEffect(() => {
+    onAnalyzedRef.current = onAnalyzed;
+  });
   const [phase, setPhase] = useState<Phase>("setup");
   const [title, setTitle] = useState("");
   const [attendeesText, setAttendeesText] = useState("");
@@ -286,6 +304,13 @@ export function MeetingCapturePanel({
       }
       setAnalysis(res.analysis);
       setItems(toSelectable(res.analysis));
+      if (onAnalyzedRef.current) {
+        // Handed off: the caller owns what happens next. Back to setup so a return to
+        // this tab does not show a stale review.
+        onAnalyzedRef.current(res.analysis, id);
+        setPhase("setup");
+        return;
+      }
       setPhase("review");
     },
     []
@@ -401,7 +426,7 @@ export function MeetingCapturePanel({
     []
   );
 
-  function startRecording(mode: "new" | "resume") {
+  function startRecording(mode: "new" | "resume", source: "display" | "mic" = "display") {
     if (mode === "resume" && (!resumable || !resumePoint)) return;
     modeRef.current = mode;
     recorderIdRef.current = crypto.randomUUID();
@@ -422,6 +447,7 @@ export function MeetingCapturePanel({
     // Synchronous from the click all the way to `getDisplayMedia` — see the hook.
     recorder.start({
       includeMic,
+      source,
       startSeq: mode === "resume" ? resumePoint!.startSeq : 0,
       startOffsetMs: offsetRef.current,
     });
@@ -751,8 +777,8 @@ export function MeetingCapturePanel({
             </Button>
             <Button
               variant="outline"
-              disabled={busyAction !== null || blocked || !resumePoint || !captureSupported}
-              onClick={() => startRecording("resume")}
+              disabled={busyAction !== null || blocked || !resumePoint || !(captureSupported || micSupported)}
+              onClick={() => startRecording("resume", captureSupported ? "display" : "mic")}
             >
               Continue recording
             </Button>
@@ -769,7 +795,17 @@ export function MeetingCapturePanel({
       )}
 
       <div className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">
-        {!captureSupported && (
+        {!captureSupported && micSupported && (
+          <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-3 text-sm">
+            <p className="font-medium text-foreground">This browser can&apos;t hear the call itself</p>
+            <p className="mt-1 text-muted-foreground">
+              Safari and phones can&apos;t share a call&apos;s audio, so Orbit will listen through your
+              microphone instead. Put the call on speaker, keep this page open and in front, and let
+              everyone know you&apos;re taking notes.
+            </p>
+          </div>
+        )}
+        {!captureSupported && !micSupported && (
           <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-3 text-sm">
             <p className="font-medium text-foreground">{ERROR_COPY.unsupported.title}</p>
             <p className="mt-1 text-muted-foreground">
@@ -820,6 +856,7 @@ export function MeetingCapturePanel({
           Names you list here are spelled the way you typed them, and each becomes a person to review.
         </p>
 
+        {captureSupported && (
         <label className="flex items-start gap-2.5 text-sm">
           <Checkbox className="mt-0.5" checked={includeMic} onCheckedChange={(v) => setIncludeMic(Boolean(v))} />
           <span>
@@ -830,7 +867,9 @@ export function MeetingCapturePanel({
             </span>
           </span>
         </label>
+        )}
 
+        {captureSupported && (
         <div className="grid gap-3 rounded-xl bg-muted/40 p-4 text-sm sm:grid-cols-2">
           <div className="space-y-1">
             <p className="flex items-center gap-1.5 font-medium text-foreground">
@@ -851,6 +890,7 @@ export function MeetingCapturePanel({
             </p>
           </div>
         </div>
+        )}
 
         {recorder.state === "error" && recorder.error && (
           <div
@@ -867,14 +907,25 @@ export function MeetingCapturePanel({
         {fatal && <FatalNotice message={fatal} />}
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <Button
-            size="lg"
-            className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
-            disabled={blocked || busyAction !== null || !captureSupported}
-            onClick={() => startRecording("new")}
-          >
-            <AudioLines className="size-4" /> Start listening
-          </Button>
+          {captureSupported ? (
+            <Button
+              size="lg"
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+              disabled={blocked || busyAction !== null}
+              onClick={() => startRecording("new")}
+            >
+              <AudioLines className="size-4" /> Start listening
+            </Button>
+          ) : (
+            <Button
+              size="lg"
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+              disabled={blocked || busyAction !== null || !micSupported}
+              onClick={() => startRecording("new", "mic")}
+            >
+              <Mic className="size-4" /> Record with my microphone
+            </Button>
+          )}
           <p className="text-xs text-muted-foreground">
             Let everyone on the call know you&apos;re taking notes — some places require everyone&apos;s
             consent. Orbit keeps the transcript, never the audio. Transcription runs on your own key

@@ -312,4 +312,18 @@ export function releaseScanPage(page: ScanPage) {
   URL.revokeObjectURL(page.previewUrl);
 }
 
+/**
+ * Move a page earlier or later. Pure and bounds-safe: an out-of-range `to` clamps, and a
+ * no-op move returns the same array. The send order is the array order.
+ */
+export function movePage<T>(pages: readonly T[], from: number, to: number): T[] {
+  if (from < 0 || from >= pages.length) return [...pages];
+  const target = Math.max(0, Math.min(pages.length - 1, to));
+  if (target === from) return [...pages];
+  const next = [...pages];
+  const [page] = next.splice(from, 1);
+  next.splice(target, 0, page!);
+  return next;
+}
+
 export { MAX_SCAN_PAGES };

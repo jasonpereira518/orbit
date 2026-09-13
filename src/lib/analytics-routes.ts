@@ -62,6 +62,8 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/outreach",
   "/outreach/new",
   "/outreach/[id]",
+  "/outreach/[id]/audience",
+  "/outreach/[id]/people",
   "/recruiters",
   "/recruiters/new",
   "/recruiters/compose",
