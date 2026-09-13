@@ -114,6 +114,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-health": "pglite",
   "smoke-hybrid-search": "pglite",
   "smoke-import-engine": "pglite",
+  "smoke-import-revert": "pglite",
   "smoke-import-stall": "pglite",
   "smoke-ingest-events": "pglite",
   "smoke-import-resumption-auth": "pglite",

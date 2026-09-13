@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
@@ -29,6 +29,12 @@ import {
   CALENDAR_CSV_IMPORT_TYPE,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
+import { revertImport } from "@/lib/import-revert";
+import {
+  REVERT_REFUSAL_MESSAGE,
+  describeRevert,
+  hasRevertibleStatus,
+} from "@/lib/import-revert-policy";
 import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
 import {
   messageDirection,
@@ -494,13 +500,72 @@ export async function startLinkedInMessagesImport(
   return { importId: importRow.id, totalRows: selectedConversations.length };
 }
 
+/**
+ * Undo an import.
+ *
+ * Returns rather than throws on a refusal, so the UI can say which of the four reasons
+ * applied instead of surfacing a generic action error — a user whose import predates the
+ * provenance columns needs to be told that, not shown "something went wrong".
+ */
+export async function revertImportAction(importId: string) {
+  const userId = await requireUserId();
+  const result = await revertImport(userId, importId);
+
+  if (!result.ok) {
+    return { ok: false as const, message: REVERT_REFUSAL_MESSAGE[result.reason] };
+  }
+
+  // Everything an import touches, in reverse.
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath("/imports");
+  revalidatePath("/graph");
+  revalidatePath("/chat");
+  revalidatePath("/reminders");
+
+  return { ok: true as const, message: describeRevert(result.stats), stats: result.stats };
+}
+
+/**
+ * Import history, each row carrying whether it can actually be undone.
+ *
+ * `revertible` is two conditions, and both have to be checked here because the history row
+ * is a client component that cannot query: the job must have FINISHED in an undoable state
+ * (`hasRevertibleStatus`), and its rows must have recorded create-vs-merge at all. The
+ * second is only true of imports that ran on schema v34 or later — nothing recorded the
+ * distinction before, and it cannot be backfilled — so an older import shows no Undo button
+ * rather than one that refuses when pressed.
+ *
+ * One grouped query for the whole list, not one per import.
+ */
 export async function listImports() {
   const userId = await requireUserId();
   const db = await getDb();
-  return db.query.imports.findMany({
+  const rows = await db.query.imports.findMany({
     where: eq(imports.userId, userId),
     orderBy: (i, { desc }) => [desc(i.createdAt)],
   });
+  if (rows.length === 0) return [];
+
+  const traced = await db
+    .selectDistinct({ importId: importJobRows.importId })
+    .from(importJobRows)
+    .where(
+      and(
+        eq(importJobRows.userId, userId),
+        isNotNull(importJobRows.outcome),
+        inArray(
+          importJobRows.importId,
+          rows.map((r) => r.id)
+        )
+      )
+    );
+  const tracedIds = new Set(traced.map((t) => t.importId));
+
+  return rows.map((row) => ({
+    ...row,
+    revertible: hasRevertibleStatus(row) && tracedIds.has(row.id),
+  }));
 }
 
 export async function previewCalendarImport(payload: {

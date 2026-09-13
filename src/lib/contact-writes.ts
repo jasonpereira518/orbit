@@ -662,13 +662,19 @@ export async function createContactsBulkForUser(
  * `LEAST`/`GREATEST` ignore NULL operands and return the non-null one — verified against
  * this project's own PGlite, not assumed — so an input that supplies neither leaves both
  * columns untouched, and one that supplies only a later date advances only that side.
+ *
+ * Returns the `updated_at` it stamped on every row it touched, or null for an empty call.
+ * The import engine records that value in each merged row's revert snapshot: an undo
+ * compares it against the contact's current `updated_at` and refuses to restore a person
+ * who has been edited since. Returned rather than passed in, because this function also
+ * uses the same instant for `embedding_stale_at` and the two must not drift.
  */
 export async function bulkMergeContactsForUser(
   userId: string,
   merges: Array<{ contactId: string; input: Partial<ContactInput> }>,
   companyResolve: CompanyResolver
-) {
-  if (merges.length === 0) return;
+): Promise<Date | null> {
+  if (merges.length === 0) return null;
   const db = await getDb();
   const now = new Date();
 
@@ -734,6 +740,8 @@ export async function bulkMergeContactsForUser(
     )
     WHERE c.id = v.id AND c.user_id = ${userId}
   `);
+
+  return now;
 }
 
 export async function updateContactForUser(

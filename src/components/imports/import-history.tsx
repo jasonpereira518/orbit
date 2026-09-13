@@ -8,6 +8,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { ImportRevertButton } from "@/components/imports/import-revert-button";
 
 const SOURCE_META: Record<string, { icon: LucideIcon; badge: string }> = {
   linkedin_connections: {
@@ -38,6 +39,10 @@ export type ImportHistoryItem = {
   duplicatesFound: number | null;
   rowsProcessed?: number | null;
   errorMessage?: string | null;
+  /** Non-null once undone; see `imports.reverted_at`. */
+  revertedAt?: Date | string | null;
+  /** Computed by `listImports`: finished in an undoable state AND traceable. */
+  revertible?: boolean;
   stats?: {
     skipped?: number;
     // Legacy per-type breakdown: written by import types before they moved onto the
@@ -128,17 +133,33 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                     ) : null}
                   </div>
                 </div>
-                <Badge
-                  variant={
-                    h.status === "failed"
-                      ? "destructive"
-                      : h.status === "processing" || h.status === "cancelled"
-                        ? "secondary"
-                        : "outline"
-                  }
-                >
-                  {h.status}
-                </Badge>
+                <div className="flex shrink-0 items-center gap-1">
+                  {/* Offered only where it would actually work. An import from before the
+                      provenance columns existed (schema v34) has no record of what it
+                      created, so the action would refuse — showing the button anyway would
+                      be a control that exists to fail. `listImports` decides. */}
+                  {h.revertible ? (
+                    <ImportRevertButton
+                      importId={h.id}
+                      fileName={h.fileName}
+                      contactsCreated={h.contactsCreated ?? 0}
+                      contactsUpdated={h.contactsUpdated ?? 0}
+                    />
+                  ) : null}
+                  <Badge
+                    variant={
+                      h.status === "failed"
+                        ? "destructive"
+                        : h.revertedAt ||
+                            h.status === "processing" ||
+                            h.status === "cancelled"
+                          ? "secondary"
+                          : "outline"
+                    }
+                  >
+                    {h.revertedAt ? "undone" : h.status}
+                  </Badge>
+                </div>
               </li>
             );
           })}

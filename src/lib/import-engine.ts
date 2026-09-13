@@ -9,6 +9,8 @@ import {
   interactions,
   reminders,
   type ImportJobRowPayload,
+  type ImportRevertSnapshot,
+  type ImportRowOutcome,
   type ImportStats,
 } from "@/db/schema";
 import {
@@ -182,18 +184,37 @@ export const PLAN_LIMIT_ROW_REASON = "Contact limit reached on your plan";
  * `Promise.all`, which on `neon-http` is one HTTPS request per row, with no transaction to
  * make the chunk atomic. A single statement is both faster and all-or-nothing.
  */
-async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, string>) {
+async function markRowsDone(
+  rowIds: string[],
+  contactIdByRowId: Map<string, string>,
+  /**
+   * Created-vs-merged, and for a merge the contact's pre-merge column values. Folded into
+   * this statement rather than written by a second pass: the whole point of this function
+   * is that a chunk's row bookkeeping costs one statement, and the revert metadata is a
+   * property of the same rows, known at the same moment.
+   */
+  revertByRowId: Map<string, { outcome: ImportRowOutcome; snapshot: ImportRevertSnapshot | null }>
+) {
   if (rowIds.length === 0) return;
   const db = await getDb();
   const now = new Date();
-  const tuples = rowIds.map(
-    (rowId) =>
-      sql`(${rowId}::uuid, ${contactIdByRowId.get(rowId) ?? null}::uuid)`
-  );
+  const tuples = rowIds.map((rowId) => {
+    const revert = revertByRowId.get(rowId);
+    return sql`(
+      ${rowId}::uuid,
+      ${contactIdByRowId.get(rowId) ?? null}::uuid,
+      ${revert?.outcome ?? null}::text,
+      ${revert?.snapshot ? JSON.stringify(revert.snapshot) : null}::jsonb
+    )`;
+  });
   await db.execute(sql`
     UPDATE import_job_rows AS r
-    SET status = 'done', contact_id = v.contact_id, updated_at = ${now}
-    FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, contact_id)
+    SET status = 'done',
+        contact_id = v.contact_id,
+        outcome = v.outcome,
+        revert_snapshot = v.revert_snapshot,
+        updated_at = ${now}
+    FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, contact_id, outcome, revert_snapshot)
     WHERE r.id = v.id
   `);
 }
@@ -248,6 +269,64 @@ async function writeWithNarrowing<T>(
     await writeWithNarrowing(items.slice(0, mid), write, onBadRow);
     await writeWithNarrowing(items.slice(mid), write, onBadRow);
   }
+}
+
+/**
+ * A contact's merge-affected columns, as read immediately before a chunk merges into it.
+ * Structurally the snapshot minus `mergedAt`, with real `Date`s where the stored form has
+ * ISO strings.
+ */
+type PreMergeContact = {
+  id: string;
+  company: string | null;
+  companyId: string | null;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  linkedinUrl: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  profileImageUrl: string | null;
+  source: string | null;
+  howMet: string | null;
+  metContext: string | null;
+  dateMet: Date | null;
+  firstInteractionAt: Date | null;
+  lastInteractionAt: Date | null;
+};
+
+/**
+ * The stored form of a pre-merge read, or null when either half is missing.
+ *
+ * A null result means the row records `outcome: "merged"` with no snapshot, which
+ * `revertImport` reports as unrevertible rather than treating as "nothing to restore" —
+ * the two are not the same, and the second would silently leave the import's overwrite in
+ * place while claiming the merge had been rolled back.
+ */
+function snapshotOf(
+  prior: PreMergeContact | undefined,
+  mergedAt: Date | null
+): ImportRevertSnapshot | null {
+  if (!prior || !mergedAt) return null;
+  const iso = (d: Date | null) => (d ? d.toISOString() : null);
+  return {
+    mergedAt: mergedAt.toISOString(),
+    company: prior.company,
+    companyId: prior.companyId,
+    title: prior.title,
+    email: prior.email,
+    phone: prior.phone,
+    linkedinUrl: prior.linkedinUrl,
+    firstName: prior.firstName,
+    lastName: prior.lastName,
+    profileImageUrl: prior.profileImageUrl,
+    source: prior.source,
+    howMet: prior.howMet,
+    metContext: prior.metContext,
+    dateMet: iso(prior.dateMet),
+    firstInteractionAt: iso(prior.firstInteractionAt),
+    lastInteractionAt: iso(prior.lastInteractionAt),
+  };
 }
 
 /** Row-level reason recorded when narrowing isolates this row as the cause of a chunk failure. */
@@ -574,6 +653,11 @@ export async function runImportJob(importId: string): Promise<void> {
 
         const touchedContactIds: string[] = [];
         const contactIdByRowId = new Map<string, string>();
+        /** What each written row did, and what it overwrote — see `markRowsDone`. */
+        const revertByRowId = new Map<
+          string,
+          { outcome: ImportRowOutcome; snapshot: ImportRevertSnapshot | null }
+        >();
 
         // `createContactsBulk` admits only what the plan's contact headroom allows, taking
         // from the front, so anything past `created.length` was refused by the cap rather
@@ -627,6 +711,9 @@ export async function runImportJob(importId: string): Promise<void> {
               created.forEach((contact, i) => {
                 addToDuplicateIndex(duplicateIndex, contact);
                 contactIdByRowId.set(batch[i].row.id, contact.id);
+                // No snapshot: the undo for a created contact is the contact itself. There
+                // is no prior state to restore, only a row to remove.
+                revertByRowId.set(batch[i].row.id, { outcome: "created", snapshot: null });
                 touchedContactIds.push(contact.id);
                 const lookalike = batch[i].lookalike;
                 if (lookalike) {
@@ -655,16 +742,63 @@ export async function runImportJob(importId: string): Promise<void> {
         }
 
         if (toUpdate.length > 0) {
+          // What these contacts held BEFORE this chunk merged into them.
+          //
+          // One statement for the whole chunk, read once here rather than inside the write
+          // callback: `writeWithNarrowing` can invoke that callback several times over
+          // sub-batches of the same rows, and a re-read after the first sub-batch succeeded
+          // would snapshot values this very chunk had already overwritten — an "undo" that
+          // restores the import's own output.
+          //
+          // Projected to exactly the columns `bulkMergeContactsForUser` writes. See
+          // `ImportRevertSnapshot`, which is the same list and has to stay in step with it.
+          const priorById = new Map<string, PreMergeContact>(
+            (
+              await db
+                .select({
+                  id: contacts.id,
+                  company: contacts.company,
+                  companyId: contacts.companyId,
+                  title: contacts.title,
+                  email: contacts.email,
+                  phone: contacts.phone,
+                  linkedinUrl: contacts.linkedinUrl,
+                  firstName: contacts.firstName,
+                  lastName: contacts.lastName,
+                  profileImageUrl: contacts.profileImageUrl,
+                  source: contacts.source,
+                  howMet: contacts.howMet,
+                  metContext: contacts.metContext,
+                  dateMet: contacts.dateMet,
+                  firstInteractionAt: contacts.firstInteractionAt,
+                  lastInteractionAt: contacts.lastInteractionAt,
+                })
+                .from(contacts)
+                .where(
+                  and(
+                    eq(contacts.userId, userId),
+                    inArray(contacts.id, [
+                      ...new Set(toUpdate.map((item) => item.contactId)),
+                    ])
+                  )
+                )
+            ).map((row) => [row.id, row])
+          );
+
           await writeWithNarrowing(
             toUpdate,
             async (batch) => {
-              await bulkMergeContactsForUser(
+              const mergedAt = await bulkMergeContactsForUser(
                 userId,
                 batch.map((item) => ({ contactId: item.contactId, input: item.input })),
                 companyResolve
               );
               for (const item of batch) {
                 contactIdByRowId.set(item.row.id, item.contactId);
+                revertByRowId.set(item.row.id, {
+                  outcome: "merged",
+                  snapshot: snapshotOf(priorById.get(item.contactId), mergedAt),
+                });
                 touchedContactIds.push(item.contactId);
               }
               contactsUpdated += batch.length;
@@ -721,7 +855,12 @@ export async function runImportJob(importId: string): Promise<void> {
             const contactId = contactIdByRowId.get(row.id);
             if (!contactId) continue;
             interactionRows.push(
-              ...adapter.interactions(row.payload as ImportJobRowPayload, contactId, userId)
+              ...adapter
+                .interactions(row.payload as ImportJobRowPayload, contactId, userId)
+                // Provenance stamped here, not in each adapter: it is a property of the job,
+                // not of the row, and an adapter that forgot it would produce interactions
+                // no revert could find.
+                .map((interaction) => ({ ...interaction, importId }))
             );
           }
           if (interactionRows.length > 0) {
@@ -784,7 +923,9 @@ export async function runImportJob(importId: string): Promise<void> {
             const contactId = contactIdByRowId.get(row.id);
             if (!contactId) continue;
             reminderRows.push(
-              ...adapter.reminders(row.payload as ImportJobRowPayload, contactId, userId)
+              ...adapter
+                .reminders(row.payload as ImportJobRowPayload, contactId, userId)
+                .map((reminder) => ({ ...reminder, importId }))
             );
           }
           if (reminderRows.length > 0) {
@@ -850,7 +991,7 @@ export async function runImportJob(importId: string): Promise<void> {
                 })
                 .where(inArray(importJobRows.id, [...blockedRowIds]))
             : Promise.resolve(),
-          markRowsDone(doneRowIds, contactIdByRowId),
+          markRowsDone(doneRowIds, contactIdByRowId, revertByRowId),
           toSkip.length > 0
             ? db
                 .update(importJobRows)

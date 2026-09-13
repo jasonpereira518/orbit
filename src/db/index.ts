@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   source text,
   external_id text,
   note_batch_id uuid,
+  import_id uuid,
   raw_notes text,
   ai_summary text,
   topics jsonb DEFAULT '[]',
@@ -193,6 +194,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   action_kind text NOT NULL DEFAULT 'task',
   created_by text NOT NULL DEFAULT 'user',
   note_batch_id uuid,
+  import_id uuid,
   source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL,
   action_item_id uuid,
   source_excerpt text,
@@ -290,6 +292,8 @@ CREATE TABLE IF NOT EXISTS imports (
   error_message text,
   stats jsonb DEFAULT '{}',
   stall_resumes integer NOT NULL DEFAULT 0,
+  reverted_at timestamptz,
+  revert_stats jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -301,6 +305,8 @@ CREATE TABLE IF NOT EXISTS import_job_rows (
   payload jsonb NOT NULL,
   status text NOT NULL DEFAULT 'pending',
   contact_id uuid,
+  outcome text,
+  revert_snapshot jsonb,
   error_message text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -1074,8 +1080,14 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
+ *
+ * v34 = revertible imports: import_job_rows.outcome (created vs merged — the distinction an
+ * undo turns on) and .revert_snapshot, interactions.import_id and reminders.import_id
+ * (provenance, so a revert deletes exactly what the import inserted), imports.reverted_at
+ * and .revert_stats. None of the three can be backfilled, so imports that finished before
+ * this version stay unrevertible by construction.
  */
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 34;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2133,6 +2145,35 @@ const alters = [
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS raw_date_phrase text`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS date_basis text`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS item_hash text`,
+  // Schema v34: revertible imports.
+  //
+  // `import_id` is the provenance that makes an undo exact — the revert deletes the rows
+  // carrying its own id and nothing else. Written only on INSERT (the engine leaves it out
+  // of its ON CONFLICT set clause), so a re-import that refreshes a row someone logged by
+  // hand never claims it.
+  //
+  // `outcome` is the column this feature was waiting on: `import_job_rows` recorded WHICH
+  // contact a row produced but not whether the import created that person or merged into
+  // someone already there. Both are `done` with a contact id, and deleting a merged-into
+  // contact would destroy a person who predates the import entirely.
+  //
+  // `revert_snapshot` carries the pre-merge values of exactly the columns the merge writes,
+  // so a fold-in can be rolled back rather than only counted. NULL on every pre-v34 row,
+  // which `revertImport` reports as unrevertible instead of guessing.
+  //
+  // No backfill is possible for any of the three: nothing recorded create-vs-merge, and the
+  // overwritten values are gone. Imports finished before this lands stay unrevertible, and
+  // the UI says so rather than offering a button that would do the wrong thing.
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS import_id uuid`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS import_id uuid`,
+  `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS outcome text`,
+  `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS revert_snapshot jsonb`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS reverted_at timestamptz`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS revert_stats jsonb`,
+  // Partial: the overwhelming majority of interactions and reminders are hand-made and
+  // carry NULL here, and the only query that reads the column asks for one import's rows.
+  `CREATE INDEX IF NOT EXISTS interactions_import_idx ON interactions(import_id) WHERE import_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS reminders_import_idx ON reminders(import_id) WHERE import_id IS NOT NULL`,
   ...ADMIN_V2_STATEMENTS,
   // Embedding staleness: imports flag contacts here instead of embedding inline, and a
   // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
