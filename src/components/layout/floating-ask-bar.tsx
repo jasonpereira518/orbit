@@ -4,6 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -594,38 +595,13 @@ export function FloatingAskBar() {
                   <div className="space-y-2.5 px-2.5 py-2.5">
                     {messages.map((msg) =>
                       msg.role === "user" ? (
-                        <div key={msg.id} className="flex justify-end">
-                          <div className="max-w-[90%] rounded-2xl rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
-                            {msg.content}
-                          </div>
-                        </div>
+                        <UserBubble key={msg.id} msg={msg} />
                       ) : (
-                        <div key={msg.id} className="space-y-2">
-                          <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
-                            <ChatMarkdown>{msg.answer}</ChatMarkdown>
-                          </div>
-                          {msg.recommendations.map((r) => (
-                            <MiniRecommendation
-                              key={r.recruiter_id || r.contact_id || r.name}
-                              rec={r}
-                            />
-                          ))}
-                          {msg.retrieved.length > 0 &&
-                            msg.recommendations.length === 0 && (
-                              <div className="flex flex-wrap gap-1.5 px-1">
-                                {msg.retrieved.slice(0, 6).map((c) => (
-                                  <Link
-                                    key={c.id}
-                                    href={`/contacts/${c.id}`}
-                                    className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                    onClick={() => setOpen(false)}
-                                  >
-                                    {c.fullName}
-                                  </Link>
-                                ))}
-                              </div>
-                            )}
-                        </div>
+                        <AssistantBubble
+                          key={msg.id}
+                          msg={msg}
+                          onNavigate={setOpen}
+                        />
                       )
                     )}
                     {awaitingFirstToken && (
@@ -777,7 +753,54 @@ export function FloatingAskBar() {
   );
 }
 
-function MiniRecommendation({
+const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[90%] rounded-2xl rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
+        {msg.content}
+      </div>
+    </div>
+  );
+});
+
+const AssistantBubble = memo(function AssistantBubble({
+  msg,
+  onNavigate,
+}: {
+  msg: AssistantMessage;
+  onNavigate: (open: boolean) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
+        <ChatMarkdown>{msg.answer}</ChatMarkdown>
+      </div>
+      {msg.recommendations.map((r) => (
+        <MiniRecommendation
+          key={r.recruiter_id || r.contact_id || r.name}
+          rec={r}
+        />
+      ))}
+      {msg.retrieved.length > 0 &&
+        msg.recommendations.length === 0 && (
+          <div className="flex flex-wrap gap-1.5 px-1">
+            {msg.retrieved.slice(0, 6).map((c) => (
+              <Link
+                key={c.id}
+                href={`/contacts/${c.id}`}
+                className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={() => onNavigate(false)}
+              >
+                {c.fullName}
+              </Link>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+});
+
+const MiniRecommendation = memo(function MiniRecommendation({
   rec,
 }: {
   rec: ChatResult["recommendations"][number];
@@ -842,4 +865,4 @@ function MiniRecommendation({
       )}
     </div>
   );
-}
+});

@@ -332,7 +332,18 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
 
   const db = await getDb();
   const [existing, storedSelfUrl] = await Promise.all([
-    db.query.contacts.findMany({ where: eq(contacts.userId, userId) }),
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        linkedinUrl: true,
+        xHandle: true,
+        company: true,
+        title: true,
+      },
+    }),
     storedSelfLinkedInUrl(userId),
   ]);
 

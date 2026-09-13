@@ -25,7 +25,7 @@ import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
-import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
+import { FollowUpDraftSheetLazy } from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import {
   Dialog,
   DialogContent,
@@ -289,6 +289,37 @@ export function ContactsList({
     [serverLetters]
   );
 
+  // Per-row derived labels, computed once for every currently-loaded contact rather than
+  // inline inside the render `.map()` below — that recomputed all of them (four date-math
+  // calls + a join per row) on every render, including ones triggered by unrelated
+  // sibling state (a dialog opening, a popover, the alphabet scrubber dragging).
+  const rowMeta = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        overdue: boolean;
+        scheduledLabel: string | null;
+        overdueText: string | null;
+        lastTouch: string | null;
+        details: string;
+      }
+    >();
+    for (const c of contacts) {
+      const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
+      const lastTouch = lastTouchLabel(c.lastInteractionAt);
+      map.set(c.id, {
+        overdue: isOverdue(c.nextFollowUpAt),
+        scheduledLabel: dueLabel(c.nextFollowUpAt),
+        overdueText,
+        lastTouch,
+        details: [detailLine(c.school, c.location), overdueText, lastTouch]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    }
+    return map;
+  }, [contacts]);
+
   /**
    * Jump the list to a letter.
    *
@@ -395,17 +426,8 @@ export function ContactsList({
               <ul className="divide-y divide-border/60">
                 {section.contacts.map((c) => {
                   const exiting = exitingId === c.id;
-                  const overdue = isOverdue(c.nextFollowUpAt);
-                  const scheduledLabel = dueLabel(c.nextFollowUpAt);
-                  const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
-                  const lastTouch = lastTouchLabel(c.lastInteractionAt);
-                  const details = [
-                    detailLine(c.school, c.location),
-                    overdueText,
-                    lastTouch,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ");
+                  const { overdue, scheduledLabel, overdueText, lastTouch, details } =
+                    rowMeta.get(c.id)!;
 
                   function openContact() {
                     if (exiting) return;
@@ -600,7 +622,7 @@ export function ContactsList({
         )}
 
         {/* One draft sheet for the whole list — see FollowUpRowButton. */}
-        <FollowUpDraftSheet
+        <FollowUpDraftSheetLazy
           open={draftContact !== null}
           onOpenChange={(open) => {
             if (!open) setDraftContact(null);

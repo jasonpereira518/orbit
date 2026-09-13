@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -335,20 +335,4 @@ export async function sendRecruiterDrafts(
     failed,
     quotaRemaining: Math.max(0, DAILY_RECRUITER_SEND_LIMIT - used - sent),
   };
-}
-
-/** Sent history for a single recruiter's detail page. */
-export async function listRecruiterMessageHistory(
-  recruiterId: string
-): Promise<RecruiterMessage[]> {
-  const userId = await requireRecruitersUser();
-  const db = await getDb();
-  return db.query.recruiterMessages.findMany({
-    where: and(
-      eq(recruiterMessages.userId, userId),
-      eq(recruiterMessages.recruiterId, recruiterId)
-    ),
-    orderBy: [desc(recruiterMessages.createdAt)],
-    limit: 20,
-  });
 }

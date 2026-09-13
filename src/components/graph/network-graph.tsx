@@ -1415,6 +1415,8 @@ function GraphCanvasInner({
     [positionOverrides, onPositionOverridesChange]
   );
 
+  const onPaneClick = useCallback(() => onSelect(null), [onSelect]);
+
   const isEmpty = filteredContacts.length === 0;
 
   return (
@@ -1456,7 +1458,7 @@ function GraphCanvasInner({
         onNodeMouseLeave={onNodeMouseLeave}
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
-        onPaneClick={() => onSelect(null)}
+        onPaneClick={onPaneClick}
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{
           type: "straight",

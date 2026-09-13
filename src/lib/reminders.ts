@@ -280,6 +280,15 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
   const now = new Date();
   const all = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      priorityLevel: true,
+      relationshipScore: true,
+      lastInteractionAt: true,
+      nextFollowUpAt: true,
+    },
   });
 
   const alreadyDueIds = new Set(
@@ -308,42 +317,60 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
     .sort((a, b) => followUpCandidateScore(b) - followUpCandidateScore(a))
     .slice(0, Math.max(1, Math.min(24, limit)));
 
+  const candidateIds = candidates.map((c) => c.id);
   let created = 0;
-  for (const contact of candidates) {
-    const name = contact.preferredName || contact.fullName;
-    const title = `Follow up with ${name}`;
 
-    const existing = await db.query.reminders.findFirst({
+  if (candidateIds.length) {
+    // One lookup for every candidate's existing pending reminder, instead of a
+    // findFirst per candidate — the update-vs-insert branch below is unchanged,
+    // just informed in bulk rather than one round trip at a time.
+    const existingReminders = await db.query.reminders.findMany({
       where: and(
         eq(reminders.userId, userId),
-        eq(reminders.contactId, contact.id),
+        inArray(reminders.contactId, candidateIds),
         eq(reminders.status, "pending")
       ),
+      columns: { id: true, contactId: true },
     });
+    const reminderIdByContact = new Map(
+      existingReminders.map((r) => [r.contactId, r.id])
+    );
 
-    if (existing) {
-      await db
-        .update(reminders)
-        .set({
+    const rowsToInsert: (typeof reminders.$inferInsert)[] = [];
+
+    for (const contact of candidates) {
+      const name = contact.preferredName || contact.fullName;
+      const title = `Follow up with ${name}`;
+      const existingReminderId = reminderIdByContact.get(contact.id);
+
+      if (existingReminderId) {
+        await db
+          .update(reminders)
+          .set({
+            title,
+            dueDate: now,
+            reminderType: "generated",
+            actionKind: "follow_up",
+            createdBy: "system",
+          })
+          .where(eq(reminders.id, existingReminderId));
+      } else {
+        rowsToInsert.push({
+          userId,
+          contactId: contact.id,
           title,
+          description: "Generated from dashboard outreach queue",
           dueDate: now,
           reminderType: "generated",
           actionKind: "follow_up",
           createdBy: "system",
-        })
-        .where(eq(reminders.id, existing.id));
-    } else {
-      await db.insert(reminders).values({
-        userId,
-        contactId: contact.id,
-        title,
-        description: "Generated from dashboard outreach queue",
-        dueDate: now,
-        reminderType: "generated",
-        actionKind: "follow_up",
-        createdBy: "system",
-        status: "pending",
-      });
+          status: "pending",
+        });
+      }
+    }
+
+    if (rowsToInsert.length) {
+      await db.insert(reminders).values(rowsToInsert);
     }
 
     await db
@@ -353,13 +380,13 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
         followUpStatus: "pending",
         updatedAt: now,
       })
-      .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
+      .where(and(inArray(contacts.id, candidateIds), eq(contacts.userId, userId)));
 
-    created += 1;
+    created = candidates.length;
   }
 
   await refreshOutreachSuggestions(userId);
-  return { created, contactIds: candidates.map((c) => c.id) };
+  return { created, contactIds: candidateIds };
 }
 
 const SUGGESTION_REFRESH_TTL_MS = 30 * 60 * 1000;

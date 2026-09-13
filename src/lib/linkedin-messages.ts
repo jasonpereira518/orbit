@@ -1,9 +1,9 @@
 import Papa from "papaparse";
-import type { Contact } from "@/db/schema";
 import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
   linkedinSlug,
+  type DuplicateSubject,
 } from "@/lib/duplicates";
 import { csvGet } from "@/lib/linkedin-connections";
 
@@ -380,7 +380,7 @@ function resolveNameForUrl(
 
 export function resolveConversations(
   messages: ParsedLinkedInMessage[],
-  existing: Contact[],
+  existing: DuplicateSubject[],
   selfLinkedInUrl?: string | null
 ): ConversationResolution[] {
   const selfUrl = inferSelfLinkedInUrl(messages, selfLinkedInUrl);

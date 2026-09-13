@@ -21,7 +21,7 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, duplicateSuggestions } from "@/db/schema";
+import { duplicateSuggestions } from "@/db/schema";
 import { invalidateAfterMerge, mergeContacts } from "@/lib/contact-merge";
 
 export type SweepResult = {
@@ -197,42 +197,4 @@ export async function mergeConfidentDuplicates(
     );
 
   return { merged, leftForReview: Number(remaining?.n ?? 0) };
-}
-
-/**
- * The same sweep, narrowed to one contact.
- *
- * For the path a full sweep would be wasteful on: someone edits a contact's email to one
- * another contact already holds. `updateContactForUser` cannot merge (it would be an import
- * cycle), so it claims best-effort and the claim silently fails — leaving exactly the kind
- * of certain duplicate this feature is not supposed to leave sitting around.
- */
-export async function mergeConfidentDuplicatesFor(
-  userId: string,
-  contactId: string
-): Promise<string> {
-  const db = await getDb();
-  const [row] = await db
-    .select({ id: contacts.id })
-    .from(contacts)
-    .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
-    .limit(1);
-  if (!row) return contactId;
-
-  const pairs = await confidentPairs(userId, 50);
-  let surviving = contactId;
-  for (const pair of pairs) {
-    if (pair.keepId !== surviving && pair.mergeId !== surviving) continue;
-    try {
-      await mergeContacts(userId, pair.keepId, pair.mergeId, {
-        reason: pair.reason,
-        confidence: pair.confidence,
-      });
-      // Hand back whichever id survives — the caller may be about to redirect to it.
-      surviving = pair.keepId;
-    } catch {
-      // Already resolved by something else; nothing to do.
-    }
-  }
-  return surviving;
 }

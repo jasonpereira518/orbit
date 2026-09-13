@@ -2,9 +2,11 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -302,41 +304,47 @@ export function UpgradeTransition({
     [],
   );
 
-  function startExit(navigate: () => void) {
-    navigateRef.current = navigate;
-    if (reduced || exiting) {
-      // A second press means "stop waiting", so it still leaves immediately —
-      // but the first press's timer has to be cancelled first, or both fire
-      // and the visitor goes back TWO entries.
-      if (exitTimer.current !== null) {
-        window.clearTimeout(exitTimer.current);
-        exitTimer.current = null;
+  const startExit = useCallback(
+    (navigate: () => void) => {
+      navigateRef.current = navigate;
+      if (reduced || exiting) {
+        // A second press means "stop waiting", so it still leaves immediately —
+        // but the first press's timer has to be cancelled first, or both fire
+        // and the visitor goes back TWO entries.
+        if (exitTimer.current !== null) {
+          window.clearTimeout(exitTimer.current);
+          exitTimer.current = null;
+        }
+        navigate();
+        return;
       }
-      navigate();
-      return;
-    }
-    setExiting(true);
-    // The last piece to start is order 0, delayed by the full stagger run.
-    const totalMs = (maxOrder * EXIT_STAGGER + EXIT_DURATION) * 1000;
-    exitTimer.current = window.setTimeout(() => {
-      exitTimer.current = null;
-      navigateRef.current();
-    }, totalMs);
-  }
+      setExiting(true);
+      // The last piece to start is order 0, delayed by the full stagger run.
+      const totalMs = (maxOrder * EXIT_STAGGER + EXIT_DURATION) * 1000;
+      exitTimer.current = window.setTimeout(() => {
+        exitTimer.current = null;
+        navigateRef.current();
+      }, totalMs);
+    },
+    [reduced, exiting, maxOrder]
+  );
+
+  const value = useMemo<TransitionState>(
+    () => ({
+      exiting,
+      reduced,
+      maxOrder,
+      mode,
+      rewinding,
+      holding,
+      resolveLead,
+      startExit,
+    }),
+    [exiting, reduced, maxOrder, mode, rewinding, holding, resolveLead, startExit]
+  );
 
   return (
-    <TransitionContext.Provider
-      value={{
-        exiting,
-        reduced,
-        maxOrder,
-        mode,
-        rewinding,
-        holding,
-        resolveLead,
-        startExit,
-      }}
-    >
+    <TransitionContext.Provider value={value}>
       {children}
     </TransitionContext.Provider>
   );

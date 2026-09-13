@@ -20,7 +20,6 @@ import {
   type ContactsPage,
   type ContactsPageFilters,
 } from "@/lib/contacts-page";
-import { isPaywallError } from "@/lib/entitlements";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { type CompanyResolver } from "@/lib/companies";
@@ -673,26 +672,6 @@ export async function createContact(
     .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
     .limit(1);
   return contact;
-}
-
-/**
- * Like `createContact`, but returns `null` instead of throwing when the plan's contact
- * limit is full.
- *
- * Import loops use this: a free user importing 300 rows should keep everything that fits
- * and get a count of what did not, rather than having the whole import abort partway with
- * a paywall error.
- */
-export async function createContactIfRoom(
-  input: ContactInput,
-  options?: ContactWriteOptions
-) {
-  try {
-    return await createContact(input, options);
-  } catch (err) {
-    if (isPaywallError(err)) return null;
-    throw err;
-  }
 }
 
 /**

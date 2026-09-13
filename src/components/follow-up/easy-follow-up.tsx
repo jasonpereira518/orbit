@@ -8,7 +8,7 @@ import {
   scheduleContactFollowUp,
 } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
-import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
+import { FollowUpDraftSheetLazy } from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
 
@@ -202,7 +202,7 @@ export function EasyFollowUp({
       </div>
 
       {embedDraftSheet && (
-        <FollowUpDraftSheet
+        <FollowUpDraftSheetLazy
           open={sheetOpen}
           onOpenChange={setSheetOpen}
           contactId={contactId}

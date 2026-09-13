@@ -20,11 +20,9 @@ import { resolveThemeColor } from "@/lib/events/theme";
 import { parseRosterCsv, parseRosterText } from "@/lib/events/parse-roster";
 import {
   createEventForUser,
-  deleteEventForUser,
   getEventForUser,
   listEventsForUser,
   listRosterForUser,
-  setSpokeToForUser,
   unlinkAttendeeForUser,
   updateEventForUser,
   upsertEventAttendees,
@@ -183,24 +181,6 @@ async function enrichEventInternal(
   }
 }
 
-export async function updateEvent(
-  eventId: string,
-  patch: { title?: string; startsAt?: string | null; venue?: string | null; city?: string | null; notes?: string | null; role?: "attended" | "hosted" }
-): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
-  await updateEventForUser(userId, eventId, {
-    ...patch,
-    startsAt: patch.startsAt === undefined ? undefined : patch.startsAt ? new Date(patch.startsAt) : null,
-  });
-  revalidateEvents(eventId);
-}
-
-export async function deleteEvent(eventId: string): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
-  await deleteEventForUser(userId, eventId);
-  revalidateEvents();
-}
-
 /** The dominant cover colour, sampled in the browser. Ignored once the user picks their own. */
 export async function setEventThemeColor(
   eventId: string,
@@ -243,16 +223,6 @@ export async function importAttendeesFromCsv(
   await upsertEventAttendees(userId, eventId, parsed.attendees, "csv");
   revalidateEvents(eventId);
   return { added: parsed.attendees.length, skipped: parsed.skipped, deduped: parsed.deduped };
-}
-
-export async function setSpokeTo(
-  eventId: string,
-  attendeeIds: string[],
-  spokeTo: boolean
-): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
-  await setSpokeToForUser(userId, eventId, attendeeIds, spokeTo);
-  revalidateEvents(eventId);
 }
 
 /** A dry run, so the user sees who will merge and who will be created before committing. */

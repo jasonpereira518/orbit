@@ -211,12 +211,6 @@ export async function updateEventForUser(
     .where(and(eq(events.id, eventId), eq(events.userId, userId)));
 }
 
-export async function deleteEventForUser(userId: string, eventId: string): Promise<void> {
-  const db = await getDb();
-  // Attendees cascade; the contacts they were connected to are deliberately left alone.
-  await db.delete(events).where(and(eq(events.id, eventId), eq(events.userId, userId)));
-}
-
 /**
  * The one write path for attendees, whatever produced them.
  *

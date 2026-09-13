@@ -1,5 +1,3 @@
-"use client";
-
 import { ArrowUpRight, Rocket } from "lucide-react";
 import { WarpLink } from "@/components/warp/warp-link";
 import { FREE_CONTACT_LIMIT, type Plan } from "@/lib/plan-limits";
