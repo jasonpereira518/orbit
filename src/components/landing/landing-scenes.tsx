@@ -212,8 +212,9 @@ export function SceneFinale({
         />
       </MarketingFooter>
 
-      {/* Landing only: the other marketing pages end on the plain footer. Nothing may
-       * follow it, since its bottom edge is the page's. */}
+      {/* The landing page and /interest sign off in the wordmark; the other marketing
+       * pages end on the plain footer. Nothing may follow it, since its bottom edge is
+       * the page's. */}
       <FooterWordmark className="relative z-10 mx-auto max-w-6xl" />
     </section>
   );
