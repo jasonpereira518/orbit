@@ -2458,7 +2458,7 @@ const alters = [
   // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
-  // v52: the share link and referral tracking behind the /interest boarding pass.
+  // v54: the share link and referral tracking behind the /interest boarding pass.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token text`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referred_by_id uuid`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token)`,

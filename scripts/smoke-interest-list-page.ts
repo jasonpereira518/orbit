@@ -118,6 +118,15 @@ async function main() {
   check("me wins over ref", both.kind === "ticket");
   const bogus = findProp(await Page(sp({ me: "nope" })), "initial") as { kind: string };
   check("a bogus me token falls back to the form", bogus.kind === "form");
+  // `ref` loses to a ticket that resolved, not to the presence of `me`.
+  const bogusMe = findProp(await Page(sp({ me: "bogus", ref: TOKEN })), "initial") as {
+    kind: string;
+    invite: unknown;
+    ref: unknown;
+  };
+  check("a bogus me keeps the form", bogusMe.kind === "form", JSON.stringify(bogusMe));
+  check("a bogus me does not discard a valid ref", bogusMe.invite === "saturn", String(bogusMe.invite));
+  check("the surviving ref reaches the form", bogusMe.ref === TOKEN, String(bogusMe.ref));
   const tooLong = findProp(await Page(sp({ me: "x".repeat(200) })), "initial") as { kind: string };
   check("an oversized token is ignored", tooLong.kind === "form");
 

@@ -132,9 +132,9 @@ const FAQ: readonly FaqItem[] = [
 export default async function InterestPage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
   const me = tokenParam(params.me);
-  const ref = me ? null : tokenParam(params.ref);
 
-  const [proof, ticket, invite] = await Promise.all([
+  // The proof line never depends on either token, so it runs alongside the ticket.
+  const [proof, ticket] = await Promise.all([
     getInterestProof().catch((err: unknown) => {
       console.error("[interest] proof read failed", err);
       return EMPTY_PROOF;
@@ -145,13 +145,18 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
           return null;
         })
       : Promise.resolve(null),
-    ref
-      ? getInviterPlanet(ref).catch((err: unknown) => {
-          console.error("[interest] inviter lookup failed", err);
-          return null;
-        })
-      : Promise.resolve(null),
   ]);
+
+  // `?ref=` loses to a ticket that actually RESOLVED, not to the mere presence of `?me=`:
+  // a stale or mistyped `me` used to discard a perfectly good invitation and show a bare
+  // form. Sequential on purpose — there is no inviter to look up when a ticket won.
+  const ref = ticket ? null : tokenParam(params.ref);
+  const invite = ref
+    ? await getInviterPlanet(ref).catch((err: unknown) => {
+        console.error("[interest] inviter lookup failed", err);
+        return null;
+      })
+    : null;
 
   const initial: HeroInitial = ticket
     ? { kind: "ticket", proof, ticket }

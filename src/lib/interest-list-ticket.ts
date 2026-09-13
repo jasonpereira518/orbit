@@ -2,13 +2,15 @@
  * The read model behind the /interest boarding pass: a row's ordinal, its planet, the
  * people it referred, and the page's proof line.
  *
- * Server-only. Imports `@/db` and nothing from `next/*`, so the join core and the smoke
- * scripts can call it outside a request. The proof memo is module-level rather than
+ * Server-only. Imports `@/db` and, from the framework, only React's `cache` — nothing from
+ * `next/*` — so the join core and the smoke scripts can call it outside a request, where
+ * `cache()` is a pass-through. The proof memo is module-level rather than
  * `unstable_cache` for the same reason — that helper needs Next's request store, and its
  * companion `revalidateTag(tag)` is deprecated in Next 16 — and because per-instance is
  * the right scope: a second instance lagging a join by up to a minute changes nothing a
  * visitor can act on.
  */
+import { cache } from "react";
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
@@ -70,22 +72,29 @@ export async function ticketForRow(row: SignupRowForTicket): Promise<InterestTic
   };
 }
 
-export async function getTicketByShareToken(token: string): Promise<InterestTicket | null> {
-  if (!token) return null;
-  const db = await getDb();
-  const [row] = await db
-    .select({
-      id: interestListSignups.id,
-      createdAt: interestListSignups.createdAt,
-      welcomePlanet: interestListSignups.welcomePlanet,
-      shareToken: interestListSignups.shareToken,
-    })
-    .from(interestListSignups)
-    .where(eq(interestListSignups.shareToken, token))
-    .limit(1);
-  if (!row?.shareToken) return null;
-  return ticketForRow({ ...row, shareToken: row.shareToken });
-}
+/**
+ * Wrapped in React's `cache` so `generateMetadata` and the page body, which both resolve
+ * the same `?me=` token, share one lookup per request. Outside a request — the join core,
+ * the smoke scripts — `cache()` is a pass-through, so nothing else changes.
+ */
+export const getTicketByShareToken = cache(
+  async (token: string): Promise<InterestTicket | null> => {
+    if (!token) return null;
+    const db = await getDb();
+    const [row] = await db
+      .select({
+        id: interestListSignups.id,
+        createdAt: interestListSignups.createdAt,
+        welcomePlanet: interestListSignups.welcomePlanet,
+        shareToken: interestListSignups.shareToken,
+      })
+      .from(interestListSignups)
+      .where(eq(interestListSignups.shareToken, token))
+      .limit(1);
+    if (!row?.shareToken) return null;
+    return ticketForRow({ ...row, shareToken: row.shareToken });
+  }
+);
 
 /** The planet on the ticket a `?ref=` link points at, for the invited strip. */
 export async function getInviterPlanet(token: string): Promise<WelcomePlanet | null> {
