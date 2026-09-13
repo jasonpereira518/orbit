@@ -310,13 +310,13 @@ export function MobileNav({
                         setMoreOpen(true);
                       }}
                       className={cn(
-                        "flex w-full items-center justify-center py-0.5 text-[9.5px] font-medium transition-colors",
+                        "flex w-full items-center justify-center py-0.5 text-[10.5px] font-medium transition-colors",
                         displayActive
                           ? "text-primary dark:text-white"
                           : "text-muted-foreground hover:text-foreground dark:text-white/75"
                       )}
                     >
-                      <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1">
+                      <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5">
                         {displayActive && (
                           <motion.span
                             layoutId="mobile-nav-pill"
@@ -355,7 +355,7 @@ export function MobileNav({
                       // cannot do; the Messy Notes tab is still one tap away on arrival.
                       href={`${navItem.href}?mode=voice`}
                       draggable={false}
-                      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1 text-[9.5px] font-medium text-primary"
+                      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1.5 text-[10.5px] font-medium text-primary"
                     >
                       <span className="size-[18px]" aria-hidden />
                       <motion.span
@@ -383,13 +383,13 @@ export function MobileNav({
                     }}
                     draggable={false}
                     className={cn(
-                      "flex w-full items-center justify-center py-0.5 text-[9.5px] font-medium transition-colors",
+                      "flex w-full items-center justify-center py-0.5 text-[10.5px] font-medium transition-colors",
                       displayActive
                         ? "text-primary dark:text-white"
                         : "text-muted-foreground hover:text-foreground dark:text-white/75"
                     )}
                   >
-                    <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1">
+                    <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5">
                       {displayActive && (
                         <motion.span
                           layoutId="mobile-nav-pill"

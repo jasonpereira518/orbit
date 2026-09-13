@@ -720,14 +720,14 @@ function AlphabetScrubber({
   useEffect(() => {
     const root = document.documentElement;
     /**
-     * The rail occupies 1.875rem of the right edge — `right-1.5` (0.375rem) plus its own
-     * `w-6` (1.5rem). The content column already carries 1rem of base padding, so the
-     * gutter only has to make up the difference plus a little air: 1 + 1.375 = 2.375rem
+     * The rail occupies 2.125rem of the right edge — `right-1.5` (0.375rem) plus its own
+     * `w-7` (1.75rem). The content column already carries 1rem of base padding, so the
+     * gutter only has to make up the difference plus a little air: 1 + 1.625 = 2.625rem
      * total, which stops the content 0.5rem clear of the rail. Publishing the full
-     * 2.375rem here instead would double-count the padding and squeeze the header hard
+     * 2.625rem here instead would double-count the padding and squeeze the header hard
      * enough to change how its buttons wrap.
      */
-    root.style.setProperty("--content-rail-gutter", "1.375rem");
+    root.style.setProperty("--content-rail-gutter", "1.625rem");
     return () => {
       root.style.removeProperty("--content-rail-gutter");
     };
@@ -789,7 +789,7 @@ function AlphabetScrubber({
         role="navigation"
         aria-label="Jump to letter"
         className={cn(
-          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-6 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
+          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-7 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
           "touch-none ring-1 ring-foreground/5"
         )}
         onPointerDown={onPointerDown}
