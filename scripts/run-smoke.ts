@@ -83,6 +83,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ics-feed": "pure",
   "smoke-import-progress-card": "pure",
   "smoke-landing-anchors": "pure",
+  "smoke-landing-cards": "pure",
   "smoke-lifetime-pricing": "pure",
   "smoke-locked-participant": "pure",
   "smoke-marketing-footer": "pure",

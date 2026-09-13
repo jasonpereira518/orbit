@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useClerkSessionHint } from "@/lib/clerk-session-hint";
+import { cn } from "@/lib/utils";
 
 // On a phone these two are the page's only calls to action until the finale (the hero hides
 // its pair below md), and their boxes are 36px tall. The ::after layer adds 4px above and
@@ -40,6 +41,14 @@ type Props = {
    * stack full-width below sm — a real tap target instead of nothing.
    */
   mobileVisible?: boolean;
+  /**
+   * Hero variant only: render just the solid button, larger, for a closing ask
+   * that already has Sign in and the price in the block above it. Signed in, it
+   * is the same "Open app" as everywhere else.
+   */
+  primaryOnly?: boolean;
+  /** The signed-out label of the solid button. */
+  primaryLabel?: string;
 };
 
 /**
@@ -59,8 +68,15 @@ function AuthControlsView({
   isSignedIn,
   variant,
   mobileVisible = false,
+  primaryOnly = false,
+  primaryLabel = "Get Started",
 }: Props & { isSignedIn: boolean }) {
-  const solid = variant === "header" ? solidClass : ctaSolidClass;
+  const solid =
+    variant === "header"
+      ? solidClass
+      : primaryOnly
+        ? cn(ctaSolidClass, "px-8 py-4 text-base")
+        : ctaSolidClass;
   const ghost = variant === "header" ? ghostClass : ctaGhostClass;
   const wrapClass =
     variant === "hero"
@@ -73,11 +89,13 @@ function AuthControlsView({
     const href = demoMode ? "/dashboard" : "/sign-in";
     return (
       <div className={wrapClass}>
-        <Link href={href} className={ghost}>
-          Sign in
-        </Link>
+        {!primaryOnly && (
+          <Link href={href} className={ghost}>
+            Sign in
+          </Link>
+        )}
         <Link href={href} className={solid}>
-          Get Started
+          {primaryLabel}
         </Link>
       </div>
     );
@@ -95,11 +113,13 @@ function AuthControlsView({
 
   return (
     <div className={wrapClass}>
-      <Link href="/sign-in" className={ghost}>
-        Sign in
-      </Link>
+      {!primaryOnly && (
+        <Link href="/sign-in" className={ghost}>
+          Sign in
+        </Link>
+      )}
       <Link href="/sign-up" className={solid}>
-        Get Started
+        {primaryLabel}
       </Link>
     </div>
   );
