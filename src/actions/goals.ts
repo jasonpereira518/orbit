@@ -27,6 +27,33 @@ export async function addGoal(text: string) {
   if (trimmed.length > 200) throw new Error("Goal must be under 200 characters");
 
   const db = await getDb();
+
+  // Adding the same goal twice produced two identical pills, with no way to remove
+  // either from the dashboard card. Case- and whitespace-insensitive, because "Land a
+  // seed round" and "land a seed round " are the same intention.
+  const existing = await db.query.userGoals.findMany({
+    where: eq(userGoals.userId, userId),
+  });
+  const normalized = trimmed.toLowerCase().replace(/\s+/g, " ");
+  const duplicate = existing.find(
+    (g) => g.text.trim().toLowerCase().replace(/\s+/g, " ") === normalized
+  );
+
+  if (duplicate) {
+    // Re-adding a goal the user had archived is a request to bring it back, not an error.
+    if (!duplicate.active) {
+      const [revived] = await db
+        .update(userGoals)
+        .set({ active: 1 })
+        .where(eq(userGoals.id, duplicate.id))
+        .returning();
+      revalidatePath("/settings");
+      revalidatePath("/graph");
+      return revived;
+    }
+    return duplicate;
+  }
+
   const [row] = await db
     .insert(userGoals)
     .values({

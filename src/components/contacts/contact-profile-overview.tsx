@@ -27,6 +27,7 @@ export function ContactProfileOverview({
   hasLoggedInteraction,
   frequencyLabel,
   howMetSummary,
+  isRated,
 }: {
   contactId: string;
   aiSummary: string | null;
@@ -39,6 +40,16 @@ export function ContactProfileOverview({
   hasLoggedInteraction: boolean;
   frequencyLabel: string;
   howMetSummary: string | null;
+  /**
+   * Whether a human has actually rated this person 1-5.
+   *
+   * `strengthComponent` substitutes NEUTRAL_STRENGTH (0.5) when nobody has, and
+   * `lib/closeness.ts` says in as many words that this is "for display" and that an
+   * unrated contact's weight is redistributed rather than filled in with a guess. The
+   * card rendered that 0.5 as a flat "Strength 50%", which reads as a measurement of the
+   * relationship rather than the absence of one.
+   */
+  isRated: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -150,10 +161,20 @@ export function ContactProfileOverview({
               </div>
               <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-muted-foreground">Strength</p>
-                  <p className="mt-0.5 text-lg font-medium text-ink">
-                    {Math.round(closeness.strength * 100)}%
-                  </p>
+                  {/* "Your rating", not "Strength": this is the 1-5 the user set, which
+                      is one weighted component of the closeness score shown in the header
+                      pill. Two different numbers under two labels that both read as
+                      "how close are we" was the confusion. */}
+                  <p className="text-xs text-muted-foreground">Your rating</p>
+                  {isRated ? (
+                    <p className="mt-0.5 text-lg font-medium text-ink">
+                      {Math.round(closeness.strength * 100)}%
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      Not rated yet
+                    </p>
+                  )}
                 </div>
                 <div>
                   {/* Both lines feed the score: recency and cadence are

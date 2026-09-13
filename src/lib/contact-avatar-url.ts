@@ -6,10 +6,45 @@ const BROKEN_AVATAR_HOSTS = [
 /** Host suffix for our Vercel Blob avatar store. */
 const BLOB_AVATAR_HOST_SUFFIX = ".public.blob.vercel-storage.com";
 
+/**
+ * Marker written when a LinkedIn photo lookup found nothing.
+ *
+ * Without it, `/api/avatars/[contactId]` re-ran the whole Microlink + Unavatar resolution
+ * on EVERY page view of every photoless contact, because a failure persisted nothing.
+ * Browsing ~30 profiles in a minute exhausted `RATE_LIMITS.avatarResolve` (30/min) and
+ * started returning 429s — for contacts that were never going to have a photo.
+ *
+ * A sentinel in `profileImageUrl` rather than a new column: every reader already funnels
+ * through the two predicates below, so teaching them this shape makes the marker
+ * invisible everywhere else, and no migration is involved.
+ */
+const NO_PHOTO_PREFIX = "orbit:no-photo:";
+
+/** How long to trust a negative result before trying the provider again. */
+const NO_PHOTO_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function noPhotoMarker(now: Date = new Date()) {
+  return `${NO_PHOTO_PREFIX}${now.getTime()}`;
+}
+
+/** True while a "we looked and found nothing" marker is still fresh. */
+export function hasFreshNoPhotoMarker(
+  url: string | null | undefined,
+  now: Date = new Date()
+): boolean {
+  const u = url?.trim();
+  if (!u?.startsWith(NO_PHOTO_PREFIX)) return false;
+  const at = Number(u.slice(NO_PHOTO_PREFIX.length));
+  if (!Number.isFinite(at)) return false;
+  return now.getTime() - at < NO_PHOTO_TTL_MS;
+}
+
 /** True when a stored URL is known-bad in the browser (rate limits / placeholders). */
 export function isUnusableAvatarUrl(url: string | null | undefined): boolean {
   if (!url?.trim()) return true;
   const u = url.trim();
+  // The negative-cache marker is not a photo — every client must fall back to initials.
+  if (u.startsWith(NO_PHOTO_PREFIX)) return true;
   if (u.startsWith("data:image/")) return false;
   return BROKEN_AVATAR_HOSTS.some((h) => u.includes(h));
 }

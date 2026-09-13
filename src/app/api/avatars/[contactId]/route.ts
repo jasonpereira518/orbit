@@ -6,6 +6,8 @@ import { requireUserId } from "@/lib/auth";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   downloadAndPersistAvatar,
+  hasFreshNoPhotoMarker,
+  noPhotoMarker,
   fetchLinkedInPhotoUrl,
   isDurableAvatarUrl,
   isUnusableAvatarUrl,
@@ -100,14 +102,24 @@ export async function GET(_req: Request, { params }: Params) {
   // No durable photo yet — resolve from LinkedIn (Microlink + Unavatar fallback). Each
   // resolution spends third-party quota, so this branch alone is rate limited; the
   // redirect and data-URL paths above are one read and stay unmetered.
+  // A recent miss is remembered, so a contact with no findable photo costs one lookup a
+  // week instead of one per page view. Without this, browsing ~30 profiles in a minute
+  // spent the whole `avatarResolve` budget and started 429ing.
+  if (hasFreshNoPhotoMarker(stored)) {
+    return new NextResponse(null, { status: 404 });
+  }
+
   if (contact.linkedinUrl?.trim()) {
     try {
-      await consumeBucket("avatar.resolve", userId, RATE_LIMITS.avatarResolve);
+      // Scope string matches the policy key, as every other call site does.
+      await consumeBucket("avatarResolve", userId, RATE_LIMITS.avatarResolve);
       const photoUrl = await fetchLinkedInPhotoUrl(contactId, contact.linkedinUrl);
       if (photoUrl) {
         await persistProfileImage(contactId, userId, photoUrl);
         return NextResponse.redirect(photoUrl);
       }
+      // Looked, found nothing. Record it rather than asking again on the next render.
+      await persistProfileImage(contactId, userId, noPhotoMarker());
     } catch (err) {
       if (isRateLimitedError(err)) {
         return new NextResponse(null, {

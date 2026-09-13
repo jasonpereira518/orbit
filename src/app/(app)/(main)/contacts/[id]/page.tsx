@@ -17,7 +17,11 @@ import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
 import { Reveal } from "@/components/motion/reveal";
 import { Skeleton } from "@/components/ui/skeleton";
-import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
+import {
+  computeCloseness,
+  formatInteractionFrequency,
+  resolveStatedStrength,
+} from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import { constellationEligibility } from "@/lib/constellation-eligibility";
@@ -334,6 +338,12 @@ export default async function ContactDetailPage({
           hasLoggedInteraction={hasLoggedInteraction}
           frequencyLabel={frequencyLabel}
           howMetSummary={howMetSummary}
+          isRated={
+            resolveStatedStrength(
+              contact.statedCloseness,
+              contact.relationshipScore
+            ) !== null
+          }
         />
       </div>
 

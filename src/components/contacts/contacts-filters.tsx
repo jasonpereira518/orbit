@@ -301,7 +301,10 @@ function SearchPill({
           )}
         >
           <span className="truncate">
-            {closenessActive ? closenessLabel : "Strength"}
+            {/* The control filters on `minScore`, which is CLOSENESS — the blended
+                score — not the 1-5 rating the profile calls "Your rating". Labelling it
+                "Strength" made three different numbers share two names. */}
+            {closenessActive ? closenessLabel : "Closeness"}
           </span>
           <ChevronDown className="size-3 opacity-60" />
         </DropdownMenuTrigger>

@@ -270,7 +270,21 @@ export function ContactsList({
   // Grouping only, no sorting: the rows arrive in the order Postgres produced, and re-sorting
   // them here would both waste a pass of `localeCompare` and risk disagreeing with the
   // cursor — which would silently drop contacts at page boundaries.
+  /**
+   * Alphabetical chrome only means something under the alphabetical sort.
+   *
+   * Under `closeness` or `recent` the rows arrive in that order, so grouping consecutive
+   * runs produced headers like P, V, N, A, C, T over a list that is not alphabetical —
+   * and, because the same letter recurs in several non-adjacent runs, React warned
+   * "Encountered two children with the same key" once per repeat. Its own warning says
+   * this "may cause children to be duplicated and/or omitted".
+   */
+  const lettersMeaningful = !filters.sort || filters.sort === "name";
+
   const sections = useMemo(() => {
+    if (!lettersMeaningful) {
+      return [{ letter: "", contacts }];
+    }
     const groups: Array<{ letter: string; contacts: ContactListItem[] }> = [];
     for (const c of contacts) {
       const letter = letterOf(lastNameOf(c));
@@ -279,7 +293,7 @@ export function ContactsList({
       else groups.push({ letter, contacts: [c] });
     }
     return groups;
-  }, [contacts]);
+  }, [contacts, lettersMeaningful]);
 
   // Which letters exist across the *whole* network, not just the pages loaded so far. The
   // client can no longer answer that from the rows it holds.
@@ -382,17 +396,27 @@ export function ContactsList({
       <>
         {/* The A-Z rail is fixed over the right edge; reserve its width so the per-row
             reminder and delete buttons are not underneath it. */}
-        <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl pe-[var(--orbit-letter-rail)] sm:pe-0">
-          {sections.map((section) => (
-            <li key={section.letter} className="list-none">
-              <div
-                id={`contact-letter-${section.letter}`}
-                className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
-              >
-                <p className="text-xs font-semibold tracking-wide text-muted-foreground">
-                  {section.letter}
-                </p>
-              </div>
+        <ul
+          className={cn(
+            "divide-y divide-border/60 overflow-hidden rounded-2xl",
+            // Only reserve the rail's width when the rail is actually there.
+            lettersMeaningful && "pe-[var(--orbit-letter-rail)] sm:pe-0"
+          )}
+        >
+          {sections.map((section, sectionIndex) => (
+            // Keyed by position, not by letter: under a non-name sort the same letter can
+            // head several runs, and a duplicate key is how React ends up omitting rows.
+            <li key={`${section.letter}-${sectionIndex}`} className="list-none">
+              {section.letter && (
+                <div
+                  id={`contact-letter-${section.letter}`}
+                  className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
+                >
+                  <p className="text-xs font-semibold tracking-wide text-muted-foreground">
+                    {section.letter}
+                  </p>
+                </div>
+              )}
               <ul className="divide-y divide-border/60">
                 {section.contacts.map((c) => {
                   const exiting = exitingId === c.id;
@@ -616,6 +640,10 @@ export function ContactsList({
           contactName={draftContact?.name ?? ""}
         />
 
+        {/* Hidden under a non-name sort: jumping to "M" is meaningless in a list ordered
+            by closeness or recency, and the rail would scroll to a letter that is not
+            where the rows actually are. */}
+        {lettersMeaningful && (
         <AlphabetScrubber
           available={availableLetters}
           activeLetter={activeLetter}
@@ -627,6 +655,7 @@ export function ContactsList({
             setActiveLetter(null);
           }}
         />
+        )}
 
         <Dialog
           open={confirmId !== null}

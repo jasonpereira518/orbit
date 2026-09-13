@@ -96,11 +96,43 @@ export async function loadNotificationPanel(
 
   const items: PanelItem[] = [];
 
+  /**
+   * Contacts that already appear below as a due follow-up.
+   *
+   * The dashboard drops a *generated* reminder whose contact is in this set
+   * (`filteredReminders` in lib/reminders.ts); the panel did not, so the same piece of
+   * work was listed twice — "Send Sarah the retrieval write-up" and "Follow up with
+   * Sarah Chen", both 12 days ago — and the bell's badge was inflated for exactly the
+   * contacts the user was most behind on. A hand-written reminder is NOT dropped: that
+   * is a real, separate thing the user said they would do.
+   */
+  const dueFollowUpContactIds = new Set(
+    contactRows
+      .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
+      .map((c) => c.id)
+  );
+
   for (const r of pendingReminders) {
+    if (
+      r.reminderType === "generated" &&
+      r.contactId &&
+      dueFollowUpContactIds.has(r.contactId)
+    ) {
+      continue;
+    }
     const dueAt = r.dueDate ? new Date(r.dueDate) : null;
-    const isDue = !dueAt || dueAt <= now;
+    // An undated reminder is not overdue work. It used to count as "due now", so a note
+    // captured without a date went straight into the bell's due count.
+    const isDue = dueAt !== null && dueAt <= now;
     items.push({
-      id: `reminder:${r.id}`,
+      // Scoped by due date, exactly as the follow-up id below is.
+      //
+      // A bare `reminder:<uuid>` is permanent, and `desktopNotifiedIds` remembers every
+      // id it has ever fired for (capped at 200). So a reminder could raise an OS
+      // notification exactly once, ever: snooze it a week and the id was already spent,
+      // so it came due again in silence. Follow-ups never had this because their id
+      // carries the date; reminders now match.
+      id: `reminder:${r.id}:${dueAt ? dueAt.toISOString().slice(0, 10) : "undated"}`,
       kind: "reminder",
       title: r.title,
       body: r.description,

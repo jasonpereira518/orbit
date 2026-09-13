@@ -4,8 +4,10 @@ import { linkedinSlug } from "@/lib/duplicates";
 import { isDurableAvatarUrl, isUnusableAvatarUrl } from "@/lib/contact-avatar-url";
 
 export {
+  hasFreshNoPhotoMarker,
   isDurableAvatarUrl,
   isUnusableAvatarUrl,
+  noPhotoMarker,
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
 

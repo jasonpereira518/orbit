@@ -118,7 +118,11 @@ export async function enrichEventFromUrl(
 ): Promise<{ ok: boolean; error?: string }> {
   const userId = await requireUserForSurface(SURFACE);
   try {
-    await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
+    // Arguments were swapped: the signature is (scope, key, policy), so this wrote
+    // buckets named "<userId>:eventEnrich" and filled the `scope` column with user ids.
+    // It still produced a correct per-user bucket because the pair is unique either way —
+    // but a second swapped call site would have silently shared one bucket with this.
+    await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
       return { ok: false, error: "Too many lookups just now — try again in a few minutes." };
