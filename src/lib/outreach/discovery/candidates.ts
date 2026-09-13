@@ -50,7 +50,7 @@ const PIPELINE_STATUSES = ["contacted", "replied", "interested", "not_interested
 
 export function evidenceHash(e: EvidenceInput): string {
   return createHash("sha256")
-    .update([e.provider, e.kind, e.url ?? "", e.title ?? "", e.snippet ?? ""].join(""))
+    .update([e.provider, e.kind, e.url ?? "", e.title ?? "", e.snippet ?? ""].join("\u0001"))
     .digest("hex");
 }
 

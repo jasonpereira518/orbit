@@ -12,7 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { run } from "./smoke/_env";
 import { getDb } from "../src/db";
 import * as schema from "../src/db/schema";
-import { upsertCandidate } from "../src/lib/outreach/discovery/candidates";
+import { evidenceHash, upsertCandidate } from "../src/lib/outreach/discovery/candidates";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -94,6 +94,11 @@ async function main() {
     .from(schema.outreachIdentities)
     .where(and(eq(schema.outreachIdentities.campaignId, campaign.id), eq(schema.outreachIdentities.prospectId, jane.id)));
   check("identities are stored normalized", identities.length === 1 && identities[0].value === "jane-doe");
+
+  // Evidence hash boundary sensitivity: different title/snippet combos must not collide
+  const ev1 = { kind: "search_result" as const, provider: "brave" as const, url: "https://example.com", title: "ab", snippet: "c" };
+  const ev2 = { kind: "search_result" as const, provider: "brave" as const, url: "https://example.com", title: "a", snippet: "bc" };
+  check("evidence hash is boundary-sensitive", evidenceHash(ev1) !== evidenceHash(ev2));
 
   console.log("All outreach candidate checks passed.");
 }
