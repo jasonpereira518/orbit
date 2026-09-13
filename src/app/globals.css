@@ -1614,8 +1614,10 @@
 .scene-features {
   --scene-size: 2000px;
 }
+/* Includes the closing wordmark, which grows with the column until max-w-6xl caps it:
+ * measured 841 at 1024 and 891 from 1232 up. */
 .scene-finale {
-  --scene-size: 560px;
+  --scene-size: 900px;
 }
 
 /* Measured at 500x667 and biased up slightly, since narrower viewports wrap
@@ -1632,7 +1634,7 @@
     --scene-size: 2900px;
   }
   .scene-finale {
-    --scene-size: 820px;
+    --scene-size: 1140px;
   }
 }
 
@@ -1653,7 +1655,7 @@
     --scene-size: 3500px;
   }
   .scene-finale {
-    --scene-size: 1200px;
+    --scene-size: 1300px;
   }
 }
 
