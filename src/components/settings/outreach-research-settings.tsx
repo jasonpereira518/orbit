@@ -50,10 +50,20 @@ export function OutreachResearchSettings() {
   if (!settings || !settings.enabled) return null;
   const { keys, credits, ledger } = settings;
 
-  const reload = async () => setSettings(await getResearchSettings());
+  // Swallows its own failure: a refresh that fails right after a successful mutation must
+  // not surface as an error blaming that mutation, so this quietly keeps the last good
+  // settings on the screen instead.
+  const reload = async () => {
+    try {
+      setSettings(await getResearchSettings());
+    } catch {
+      // Keep showing the last good settings.
+    }
+  };
 
   function saveBrave() {
     start(async () => {
+      let succeeded = false;
       try {
         const result = await saveBraveKeyAction(braveKey);
         if (!result.ok) {
@@ -62,15 +72,17 @@ export function OutreachResearchSettings() {
         }
         setBraveKey("");
         toast.success(result.value.status === "valid" ? "Brave key saved and verified" : "Brave key saved — Brave didn’t answer, so it isn’t verified yet");
-        await reload();
+        succeeded = true;
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t save the Brave key"));
       }
+      if (succeeded) await reload();
     });
   }
 
   function removeBrave() {
     start(async () => {
+      let succeeded = false;
       try {
         const result = await clearBraveKeyAction();
         if (!result.ok) {
@@ -78,15 +90,17 @@ export function OutreachResearchSettings() {
           return;
         }
         toast.success("Brave key removed");
-        await reload();
+        succeeded = true;
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t remove the Brave key"));
       }
+      if (succeeded) await reload();
     });
   }
 
   function verifyApollo() {
     start(async () => {
+      let succeeded = false;
       try {
         const result = await verifyApolloKeyAction();
         if (!result.ok) {
@@ -102,10 +116,11 @@ export function OutreachResearchSettings() {
         const message = messages[result.value.status];
         if (result.value.status === "valid") toast.success(message);
         else toast.message(message);
-        await reload();
+        succeeded = true;
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t check the Apollo key"));
       }
+      if (succeeded) await reload();
     });
   }
 
