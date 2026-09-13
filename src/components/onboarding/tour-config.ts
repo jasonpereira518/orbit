@@ -48,9 +48,9 @@ export const TOUR_NAV_CORE = [
   { key: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
   { key: "contacts" as const, label: "Contacts", icon: Users },
   { key: "capture" as const, label: "Capture", icon: Sparkles },
-  { key: "imports" as const, label: "Imports", icon: Upload },
   { key: "reminders" as const, label: "Reminders", icon: Bell },
   { key: "chat" as const, label: "Chat", icon: MessageSquare },
+  { key: "imports" as const, label: "Imports", icon: Upload },
   { key: "graph" as const, label: "Constellation", icon: Network },
 ];
 
