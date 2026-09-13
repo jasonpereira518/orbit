@@ -7,6 +7,49 @@ import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
 const GOOGLE_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
 
 /**
+ * Gmail's "Units per minute per user" quota is cost-based, not request-count-based, so a
+ * heavy scan can trip it well before any individual endpoint's own rate limit. A 403 for
+ * that reason (`rateLimitExceeded` / `quotaExceeded` / `userRateLimitExceeded`, distinct
+ * from a genuine permission-denied 403) and any 429 are transient and worth waiting out
+ * rather than failing the whole scan.
+ */
+const GMAIL_MAX_RETRIES = 5;
+
+async function isRetryableGmailResponse(res: Response): Promise<boolean> {
+  if (res.status === 429) return true;
+  if (res.status !== 403) return false;
+  const text = await res.clone().text();
+  return /rateLimitExceeded|quotaExceeded|userRateLimitExceeded/i.test(text);
+}
+
+/**
+ * Wraps `fetch` with exponential backoff (plus jitter) on quota/rate-limit responses,
+ * honoring `Retry-After` when Google sends one. A fresh `AbortSignal.timeout` is created
+ * per attempt — reusing one across retries would leave later attempts pre-aborted.
+ */
+async function gmailFetchWithRetry(
+  url: string | URL,
+  init: { method?: string; headers?: HeadersInit; body?: BodyInit; timeoutMs: number }
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      signal: AbortSignal.timeout(init.timeoutMs),
+    });
+    if (res.ok || attempt >= GMAIL_MAX_RETRIES || !(await isRetryableGmailResponse(res))) {
+      return res;
+    }
+    const retryAfterSeconds = Number(res.headers.get("retry-after"));
+    const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+      ? retryAfterSeconds * 1000
+      : Math.min(30_000, 500 * 2 ** attempt) + Math.random() * 250;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+}
+
+/**
  * Sending as the user, rather than through Orbit's own Resend domain, is what makes a
  * recruiter reply land in their inbox and the message appear in their Sent folder.
  *
@@ -433,7 +476,7 @@ export async function fetchGooglePeopleContacts(
 const RECRUITER_TITLE_RE =
   /\b(recruiter|talent\s*acquisition|sourcer|staffing|headhunter|talent\s*partner|technical\s*recruiter)\b/i;
 
-const AGENCY_DOMAIN_HINTS = [
+export const AGENCY_DOMAIN_HINTS = [
   "robertwalters",
   "michaelpage",
   "hays",
@@ -504,6 +547,132 @@ export function looksLikeRecruiter(opts: {
 export const RECRUITER_QUERY_TERMS =
   '(recruiter OR "talent acquisition" OR sourcer OR staffing OR "job opportunity" OR "open role" OR "reaching out" OR headhunter OR "your background" OR "role at")';
 
+/**
+ * Positive terms for the sent-mail arm. A thread the user started that got a reply is
+ * already reachable from the inbound sweep (a Gmail thread carries both sides), so this
+ * exists only to catch cold emails that were never answered. Narrower than the inbound
+ * terms on purpose — an unanswered outbound thread has no recruiter language in it except
+ * the user's own.
+ */
+export const RECRUITER_SENT_QUERY_TERMS =
+  '(recruiter OR "talent acquisition" OR sourcer OR recruiting OR "open role" OR "your team" OR "reaching out about" OR "reaching out regarding")';
+
+/**
+ * Server-side subtraction. Gmail applies these for free, before a single byte reaches us —
+ * every hit removed here is a metadata fetch we never make and, downstream, an LLM call we
+ * never bill to the user's own key. Automated job-board and ATS mail is the bulk of what
+ * the classifier's negative list currently spends tokens rejecting one message at a time.
+ *
+ * Kept apart from the positive terms so the two can be tuned independently: widening recall
+ * and tightening precision are different decisions made at different times.
+ */
+/**
+ * Applicant-tracking systems and the automated career-site senders that behave like them.
+ *
+ * Deliberately NOT subtracted from the inbound query. Verified against a real mailbox: for
+ * anyone applying rather than being headhunted, this is where the pipeline actually lives —
+ * "we've decided not to proceed", "invitation to complete the assessment", "we have received
+ * your application" all arrive from these domains, and excluding them empties the stage
+ * history the scan exists to build.
+ *
+ * They carry no human to save, so triage routes them to opportunity stages only and never to
+ * recruiter contacts. Their templates are rigid enough that the stage is read by rule rather
+ * than by the classifier, which is why keeping them costs volume but almost no tokens.
+ */
+export const ATS_SENDER_DOMAINS = [
+  "greenhouse.io",
+  "lever.co",
+  "myworkday.com",
+  "icims.com",
+  "ashbyhq.com",
+  "jobvite.com",
+  "smartrecruiters.com",
+  "workable.com",
+  "bamboohr.com",
+  "taleo.net",
+  "pymetrics.com",
+  "hackerrankforwork.com",
+  "hirevue.com",
+  "codesignal.com",
+];
+
+/** Job boards and social networks. Never a hiring process — safe to subtract server-side. */
+export const EXCLUDED_JOB_BOARD_DOMAINS = [
+  "linkedin.com",
+  "indeed.com",
+  "ziprecruiter.com",
+  "glassdoor.com",
+  "monster.com",
+  "dice.com",
+  "hired.com",
+  "otta.com",
+  "wellfound.com",
+  "angel.co",
+];
+
+function orGroup(values: string[]): string {
+  return `(${values.join(" OR ")})`;
+}
+
+/**
+ * What Gmail can subtract for free.
+ *
+ * Note what is absent: automated senders and ATS domains. An earlier revision excluded both
+ * and was checked against a real mailbox, where it turned out to be discarding most of the
+ * user's actual stage history — see `ATS_SENDER_DOMAINS`. Newsletters are the other obvious
+ * candidate and are also absent, because Gmail cannot query arbitrary headers; they are cut
+ * at triage by `List-Unsubscribe`, which generalizes to senders no denylist anticipated.
+ */
+export const RECRUITER_QUERY_EXCLUSIONS = [
+  "-in:spam",
+  "-in:trash",
+  "-category:promotions",
+  "-category:social",
+  `-from:${orGroup(EXCLUDED_JOB_BOARD_DOMAINS)}`,
+];
+
+/**
+ * Outbound counterpart. In `in:sent` the sender is always the user, so a `-from:` domain
+ * clause matches nothing — the equivalent subtraction is `-to:`. Here ATS domains *are*
+ * excluded: a message to an applicant-tracking robot is not outreach to a recruiter.
+ *
+ * `-category:` is inbox-only and omitted rather than carried along as dead weight.
+ */
+export const RECRUITER_SENT_QUERY_EXCLUSIONS = [
+  "-in:spam",
+  "-in:trash",
+  `-to:${orGroup([...ATS_SENDER_DOMAINS, ...EXCLUDED_JOB_BOARD_DOMAINS])}`,
+  "-to:(noreply OR no-reply OR donotreply OR do-not-reply)",
+];
+
+/** Gmail wants `after:` as YYYY/MM/DD in the account's local sense; UTC date parts are close enough. */
+function gmailDate(d: Date): string {
+  return `${d.getUTCFullYear()}/${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+}
+
+export type RecruiterQueryOptions = {
+  /** Lower bound on message date. The single largest cost lever in the whole scan. */
+  after?: Date | null;
+  /** Sent-mail arm — unanswered cold outreach. Defaults to the inbound arm. */
+  direction?: "inbound" | "sent";
+};
+
+/**
+ * Builds the discovery query. Callers should never concatenate query fragments themselves:
+ * the exclusions are what keep a whole-mailbox scan affordable, and they are easy to drop
+ * by accident when the string is assembled at the call site.
+ */
+export function buildRecruiterQuery(opts: RecruiterQueryOptions = {}): string {
+  const sent = opts.direction === "sent";
+  const parts = [sent ? RECRUITER_SENT_QUERY_TERMS : RECRUITER_QUERY_TERMS];
+  if (sent) parts.push("in:sent");
+  if (opts.after) parts.push(`after:${gmailDate(opts.after)}`);
+  parts.push(
+    ...(sent ? RECRUITER_SENT_QUERY_EXCLUSIONS : RECRUITER_QUERY_EXCLUSIONS)
+  );
+  return parts.join(" ");
+}
+
 export type GmailMessageRef = { id: string; threadId: string };
 
 /**
@@ -519,9 +688,9 @@ export async function listGmailMessagePage(
   url.searchParams.set("maxResults", String(opts.maxResults ?? 500));
   if (opts.pageToken) url.searchParams.set("pageToken", opts.pageToken);
 
-  const res = await fetch(url, {
+  const res = await gmailFetchWithRetry(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
-    signal: AbortSignal.timeout(30_000),
+    timeoutMs: 30_000,
   });
   if (!res.ok) {
     throw new Error(`Gmail list failed: ${(await res.text()).slice(0, 200)}`);
@@ -540,9 +709,18 @@ export type GmailHeaderSummary = {
   id: string;
   threadId: string;
   from: string;
+  to: string;
   subject: string;
   snippet: string;
   internalDate: number | null;
+  /**
+   * Bulk-mail markers. Gmail's query language cannot filter on arbitrary headers, so this is
+   * the earliest point a newsletter can be told from a person — and it generalizes to senders
+   * no domain denylist anticipated, which is why triage cuts on this rather than on a list.
+   */
+  listUnsubscribe: string;
+  listId: string;
+  precedence: string;
 };
 
 type RawGmailMessage = {
@@ -567,7 +745,7 @@ function headerValue(msg: RawGmailMessage, name: string) {
 }
 
 /** Bounded-concurrency fetch, matching the pool the original scan used. */
-async function mapWithConcurrency<T, R>(
+export async function mapWithConcurrency<T, R>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<R>
@@ -593,11 +771,11 @@ export async function fetchGmailHeaders(
 ): Promise<GmailHeaderSummary[]> {
   const results = await mapWithConcurrency(refs, concurrency, async (ref) => {
     try {
-      const res = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
+      const res = await gmailFetchWithRetry(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
-          signal: AbortSignal.timeout(10_000),
+          timeoutMs: 10_000,
         }
       );
       if (!res.ok) return null;
@@ -607,9 +785,13 @@ export async function fetchGmailHeaders(
         id: ref.id,
         threadId: msg.threadId || ref.threadId,
         from: headerValue(msg, "From"),
+        to: headerValue(msg, "To"),
         subject: headerValue(msg, "Subject"),
         snippet: msg.snippet || "",
         internalDate: Number.isFinite(internal) ? internal : null,
+        listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
+        listId: headerValue(msg, "List-Id"),
+        precedence: headerValue(msg, "Precedence"),
       } satisfies GmailHeaderSummary;
     } catch {
       return null;
@@ -694,11 +876,11 @@ export async function fetchGmailMessageLinks(
 ): Promise<GmailLinkMessage[]> {
   const results = await mapWithConcurrency(ids, concurrency, async (id) => {
     try {
-      const res = await fetch(
+      const res = await gmailFetchWithRetry(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
-          signal: AbortSignal.timeout(15_000),
+          timeoutMs: 15_000,
         }
       );
       if (!res.ok) return null;
@@ -708,9 +890,13 @@ export async function fetchGmailMessageLinks(
         id,
         threadId: msg.threadId || "",
         from: headerValue(msg, "From"),
+        to: headerValue(msg, "To"),
         subject: headerValue(msg, "Subject"),
         snippet: msg.snippet || "",
         internalDate: Number.isFinite(internal) ? internal : null,
+        listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
+        listId: headerValue(msg, "List-Id"),
+        precedence: headerValue(msg, "Precedence"),
         authenticationResults: headerValue(msg, "Authentication-Results"),
         links: collectLinks(msg.payload, []).slice(0, 200),
       } satisfies GmailLinkMessage;
@@ -730,11 +916,11 @@ export async function fetchGmailMessages(
 ): Promise<GmailMessageContent[]> {
   const results = await mapWithConcurrency(ids, concurrency, async (id) => {
     try {
-      const res = await fetch(
+      const res = await gmailFetchWithRetry(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
-          signal: AbortSignal.timeout(15_000),
+          timeoutMs: 15_000,
         }
       );
       if (!res.ok) return null;
@@ -744,9 +930,13 @@ export async function fetchGmailMessages(
         id,
         threadId: msg.threadId || "",
         from: headerValue(msg, "From"),
+        to: headerValue(msg, "To"),
         subject: headerValue(msg, "Subject"),
         snippet: msg.snippet || "",
         internalDate: Number.isFinite(internal) ? internal : null,
+        listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
+        listId: headerValue(msg, "List-Id"),
+        precedence: headerValue(msg, "Precedence"),
         // Trimmed hard: quoted reply chains routinely run to tens of thousands of
         // characters and add nothing the classifier needs.
         body: extractBody(msg.payload).slice(0, 4000),
@@ -756,4 +946,204 @@ export async function fetchGmailMessages(
     }
   });
   return results.filter((r): r is GmailMessageContent => r !== null);
+}
+
+// --- Thread-first retrieval -------------------------------------------------------------
+
+/**
+ * A whole conversation. `threads.get` returns every message in one call, which is both
+ * cheaper than fetching each message and strictly more informative: it carries the user's own
+ * replies, so the outbound half of a conversation needs no separate sweep.
+ */
+export type GmailThreadSummary = {
+  id: string;
+  /** Oldest first, matching Gmail's own ordering. */
+  messages: GmailHeaderSummary[];
+};
+
+/**
+ * Google's guidance is a hard cap of 100 sub-requests with 50 recommended, because a batch
+ * counts toward the quota as n requests rather than one. Batching buys round trips, not
+ * quota — so the conservative number is the right one.
+ */
+const GMAIL_BATCH_SIZE = 50;
+
+const THREAD_METADATA_QS =
+  "format=metadata" +
+  "&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date" +
+  "&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence";
+
+type RawGmailThread = { id?: string; messages?: RawGmailMessage[] };
+
+function toHeaderSummary(msg: RawGmailMessage, threadId: string): GmailHeaderSummary {
+  const internal = Number(msg.internalDate);
+  return {
+    id: msg.id || "",
+    threadId: msg.threadId || threadId,
+    from: headerValue(msg, "From"),
+    to: headerValue(msg, "To"),
+    subject: headerValue(msg, "Subject"),
+    snippet: msg.snippet || "",
+    internalDate: Number.isFinite(internal) ? internal : null,
+    listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
+    listId: headerValue(msg, "List-Id"),
+    precedence: headerValue(msg, "Precedence"),
+  };
+}
+
+function parseThread(raw: RawGmailThread, fallbackId: string): GmailThreadSummary | null {
+  const id = raw.id || fallbackId;
+  if (!id || !Array.isArray(raw.messages)) return null;
+  const messages = raw.messages.map((m) => toHeaderSummary(m, id));
+  messages.sort((a, b) => (a.internalDate ?? 0) - (b.internalDate ?? 0));
+  return { id, messages };
+}
+
+/**
+ * Splits a `multipart/mixed` batch response into its parts' JSON bodies, keyed by the
+ * `Content-ID` we asked for.
+ *
+ * Order is deliberately not trusted — the batch documentation makes no ordering guarantee, so
+ * pairing responses to requests positionally would silently attach one thread's messages to
+ * another thread's id. The `Content-ID` echo is the only safe join key.
+ */
+function parseBatchParts(body: string, boundary: string): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  const parts = body.split(`--${boundary}`);
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed || trimmed === "--") continue;
+
+    // part headers \r\n\r\n inner HTTP status+headers \r\n\r\n body
+    const sections = trimmed.split(/\r?\n\r?\n/);
+    if (sections.length < 3) continue;
+
+    const idMatch = sections[0].match(/Content-ID:\s*<?response-([^>\s]+)>?/i);
+    if (!idMatch) continue;
+
+    const statusMatch = sections[1].match(/HTTP\/\d(?:\.\d)?\s+(\d{3})/);
+    if (!statusMatch || !statusMatch[1].startsWith("2")) continue;
+
+    // Rejoin: a JSON body containing a blank line would otherwise be truncated.
+    const raw = sections.slice(2).join("\n\n");
+    try {
+      out.set(idMatch[1], JSON.parse(raw));
+    } catch {
+      // A malformed part must not take the other 49 down with it.
+    }
+  }
+  return out;
+}
+
+async function fetchThreadBatch(
+  accessToken: string,
+  threadIds: string[]
+): Promise<GmailThreadSummary[]> {
+  const boundary = `orbit_batch_${threadIds.length}_${threadIds[0]}`;
+  const body =
+    threadIds
+      .map((id) =>
+        [
+          `--${boundary}`,
+          "Content-Type: application/http",
+          `Content-ID: <${id}>`,
+          "",
+          `GET /gmail/v1/users/me/threads/${id}?${THREAD_METADATA_QS}`,
+          "",
+        ].join("\r\n")
+      )
+      .join("\r\n") + `\r\n--${boundary}--`;
+
+  const res = await gmailFetchWithRetry("https://gmail.googleapis.com/batch/gmail/v1", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": `multipart/mixed; boundary=${boundary}`,
+    },
+    body,
+    timeoutMs: 30_000,
+  });
+  if (!res.ok) {
+    throw new Error(`Gmail batch failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  }
+
+  const responseBoundary = res.headers
+    .get("content-type")
+    ?.match(/boundary=(?:"([^"]+)"|([^;\s]+))/i);
+  const mark = responseBoundary?.[1] || responseBoundary?.[2];
+  if (!mark) throw new Error("Gmail batch response had no boundary");
+
+  const parsed = parseBatchParts(await res.text(), mark);
+  const threads: GmailThreadSummary[] = [];
+  for (const id of threadIds) {
+    const raw = parsed.get(id);
+    if (!raw) continue;
+    const thread = parseThread(raw as RawGmailThread, id);
+    if (thread) threads.push(thread);
+  }
+  return threads;
+}
+
+/** Single-thread fetch. The fallback when a batch is refused, and the retry for a lost part. */
+export async function fetchGmailThread(
+  accessToken: string,
+  threadId: string
+): Promise<GmailThreadSummary | null> {
+  try {
+    const res = await gmailFetchWithRetry(
+      `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?${THREAD_METADATA_QS}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeoutMs: 15_000,
+      }
+    );
+    if (!res.ok) return null;
+    return parseThread((await res.json()) as RawGmailThread, threadId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetches whole threads, batched.
+ *
+ * Falls back to bounded-concurrency individual GETs if the batch endpoint refuses — the
+ * result is identical either way, only slower, so a batch outage degrades the scan's speed
+ * rather than breaking it. Threads missing from an otherwise-successful batch are retried
+ * individually for the same reason.
+ */
+export async function fetchGmailThreadsBatched(
+  accessToken: string,
+  threadIds: string[],
+  opts: { concurrency?: number } = {}
+): Promise<GmailThreadSummary[]> {
+  if (threadIds.length === 0) return [];
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < threadIds.length; i += GMAIL_BATCH_SIZE) {
+    chunks.push(threadIds.slice(i, i + GMAIL_BATCH_SIZE));
+  }
+
+  const results: GmailThreadSummary[] = [];
+  for (const chunk of chunks) {
+    let batched: GmailThreadSummary[] = [];
+    try {
+      batched = await fetchThreadBatch(accessToken, chunk);
+    } catch {
+      batched = [];
+    }
+
+    const seen = new Set(batched.map((t) => t.id));
+    results.push(...batched);
+
+    const missing = chunk.filter((id) => !seen.has(id));
+    if (missing.length > 0) {
+      const singles = await mapWithConcurrency(missing, opts.concurrency ?? 8, (id) =>
+        fetchGmailThread(accessToken, id)
+      );
+      results.push(...singles.filter((t): t is GmailThreadSummary => t !== null));
+    }
+  }
+  return results;
 }
