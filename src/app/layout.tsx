@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Fraunces, Outfit } from "next/font/google";
+import { RouteProgress } from "@/components/layout/route-progress";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/components/auth-provider";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -59,6 +60,10 @@ export default function RootLayout({
                 two live in different route groups, so anything lower unmounts
                 mid-flight when the group swaps. */}
             <WarpProvider>{children}</WarpProvider>
+            {/* At the root, like the toaster: a route transition can cross route groups,
+                and anything mounted lower unmounts mid-navigation — taking the bar with it
+                exactly when it is meant to be showing. */}
+            <RouteProgress />
             <Toaster />
           </AuthProvider>
         </ThemeProvider>
