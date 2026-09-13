@@ -8,8 +8,10 @@
  * reports 0 changed, AND (where there is a row that could have moved) it re-reads that row from
  * the owner's side to confirm nothing happened. A check that only did the first half would also
  * pass if the tenancy guard were deleted and some *other* condition happened to reject the call
- * first — see the "single research" check below for the one place that risk is real, and how
- * it's closed by asserting on the error message rather than just "it threw".
+ * first — see the "single research" and "starting a run" checks below for the two places that
+ * risk is real (a second, unrelated guard — a missing Brave key, or the campaign-wide
+ * one-active-run index — would also throw), and how each is closed by asserting on the specific
+ * error message rather than just "it threw".
  *
  * Run: npx tsx scripts/smoke-outreach-tenancy.ts
  */
@@ -135,7 +137,23 @@ async function main() {
   );
   check("…the owner's research state is untouched", (await reread()).researchState === beforeResearch.researchState);
 
-  check("starting a run", await refuses(() => startDiscoveryRun(INTRUDER, { campaignId, funding: "orbit", researchBudget: 1 })));
+  let startRunErr: Error | null = null;
+  try {
+    await startDiscoveryRun(INTRUDER, { campaignId, funding: "orbit", researchBudget: 1 });
+  } catch (err) {
+    startRunErr = err instanceof Error ? err : new Error(String(err));
+  }
+  // The fixture already gave this campaign an OWNER-created run in status 'running', and
+  // outreach_research_runs_one_active_uidx (the one-active-run guard) is scoped by campaign_id
+  // alone, not by user — so a bare refuses() check here would also pass if startDiscoveryRun's
+  // ownership scoping (getCampaignV2 inside it) were deleted: the call would still throw "A
+  // search is already running for this campaign" from that campaign-wide guard. Assert the
+  // ownership-specific message instead, the same way the researchOnePerson check does above.
+  check(
+    "starting a run",
+    startRunErr !== null && startRunErr.message.includes("That campaign isn’t available"),
+    startRunErr?.message
+  );
   const intruderRuns = await db
     .select()
     .from(schema.outreachResearchRuns)
