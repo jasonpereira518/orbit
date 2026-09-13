@@ -362,5 +362,119 @@ console.log("\nEdges match the fit (the old hand-maintained invariant)");
   );
 }
 
+// ---------------------------------------------------------------------------
+console.log("\nLarge sky (real-network scale: many clusters, deep belt)");
+
+{
+  // ~75 clusters of mixed sizes plus a large deep-space population —
+  // roughly the shape of a real, imported network.
+  const large: GraphContactInput[] = [];
+  for (let c = 0; c < 75; c++) {
+    const size = 2 + ((c * 7) % 25);
+    for (let m = 0; m < size; m++) {
+      large.push(
+        contact(`c${c}m${m}`, {
+          company: `Company ${c}`,
+          orbitScore: 1 + ((c + m) % 5),
+        })
+      );
+    }
+  }
+  for (let d = 0; d < 220; d++) {
+    large.push(contact(`ds${d}`, { orbitScore: 1 + (d % 5) }));
+  }
+
+  const bigLayout = buildHybridGraphLayout(large, "Tester");
+  const bigNodes = bigLayout.nodes.filter((n) => n.type === "contact");
+  check(
+    "every contact gets a star",
+    bigNodes.length === large.length,
+    `${bigNodes.length}/${large.length}`
+  );
+  check(
+    "layout is deterministic at scale",
+    JSON.stringify(bigLayout) ===
+      JSON.stringify(buildHybridGraphLayout(large, "Tester"))
+  );
+
+  // Star–star and worst-case label boxes, over the whole sky.
+  let minPair = Infinity;
+  let labelClashes = 0;
+  for (let i = 0; i < bigNodes.length; i++) {
+    for (let j = i + 1; j < bigNodes.length; j++) {
+      const a = bigNodes[i].position;
+      const b = bigNodes[j].position;
+      const dx = Math.abs(a.x - b.x);
+      const dy = Math.abs(a.y - b.y);
+      minPair = Math.min(minPair, Math.hypot(dx, dy));
+      if (dx < LABEL_WIDTH && dy < LABEL_HEIGHT) labelClashes += 1;
+    }
+  }
+  check(
+    `no two stars overlap at scale (min ${minPair.toFixed(1)}px ≥ ${STAR_MIN_DIST})`,
+    minPair >= STAR_MIN_DIST
+  );
+  check("no label boxes overlap at scale", labelClashes === 0, String(labelClashes));
+  check(
+    "every star keeps clear of the sun at scale",
+    bigNodes.every((n) => Math.hypot(n.position.x, n.position.y) >= SUN_MIN_DIST)
+  );
+
+  // Cluster hulls stay disjoint even with jitter + spiral drift applied.
+  const bigFit = buildConstellationFit(large);
+  const byCluster = new Map<string, Array<{ x: number; y: number }>>();
+  for (const n of bigNodes) {
+    const d = n.data as GraphNodeData;
+    if (!d.clusterId || !bigFit.fits.has(d.clusterId)) continue;
+    const list = byCluster.get(d.clusterId) ?? [];
+    list.push(n.position);
+    byCluster.set(d.clusterId, list);
+  }
+  const hulls = [...byCluster.values()].map((pts) => {
+    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+    const r = pts.reduce(
+      (m, p) => Math.max(m, Math.hypot(p.x - cx, p.y - cy)),
+      0
+    );
+    return { cx, cy, r };
+  });
+  let apart = true;
+  for (let i = 0; i < hulls.length; i++) {
+    for (let j = i + 1; j < hulls.length; j++) {
+      if (
+        Math.hypot(hulls[i].cx - hulls[j].cx, hulls[i].cy - hulls[j].cy) <
+        hulls[i].r + hulls[j].r + STAR_MIN_DIST
+      ) {
+        apart = false;
+      }
+    }
+  }
+  check("cluster star fields stay pairwise disjoint at scale", apart);
+
+  // The deep-space rim is a belt, not a circle: its members span real radial
+  // depth instead of hugging one radius.
+  const beltRadii = bigNodes
+    .filter((n) => n.id.startsWith("ds"))
+    .map((n) => Math.hypot(n.position.x, n.position.y));
+  const beltDepth = Math.max(...beltRadii) - Math.min(...beltRadii);
+  check(
+    `deep-space rim has asteroid-belt depth (${beltDepth.toFixed(0)}px ≥ 120)`,
+    beltDepth >= 120
+  );
+
+  // Shells wind outward: clusters on one shell should not all sit at the
+  // same radius (spiral drift + jitter give each shell real radial texture).
+  const centersByShellBand = hulls
+    .map((h) => Math.hypot(h.cx, h.cy))
+    .sort((a, b) => a - b);
+  const uniqueish = new Set(centersByShellBand.map((r) => Math.round(r / 40)));
+  check(
+    "cluster radii vary (galaxy texture, not concentric circles)",
+    uniqueish.size > Math.min(12, hulls.length / 3),
+    `${uniqueish.size} distinct radius bands`
+  );
+}
+
 console.log("\nAll graph-layout smoke checks passed.\n");
 process.exit(0);
