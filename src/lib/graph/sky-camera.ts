@@ -217,6 +217,82 @@ export function fitWorldRect(
 }
 
 /**
+ * The narrowest span the phone framing will fit, in world units — about one cluster's
+ * width. It only keeps a one- or two-star sky from dividing by (nearly) zero; the real
+ * bound on how close a small network opens is `SKY_FIT_MAX_ZOOM`. A floor as wide as
+ * `computeSunExtents`' 240-unit half-extent would pin every small or mid-sized network
+ * at the sun-centred fit's zoom, which is exactly the framing this replaces.
+ */
+const MIN_STAR_SPAN = 160;
+
+/** Share of stars left out at each end of each axis when the phone frames its sky. */
+const FRAME_TRIM = 0.05;
+
+/** The [low, high] of `values` after trimming `FRAME_TRIM` off each end. */
+function trimmedRange(values: number[]): [number, number] {
+  const sorted = [...values].sort((a, b) => a - b);
+  const lo = Math.floor((sorted.length - 1) * FRAME_TRIM);
+  const hi = Math.ceil((sorted.length - 1) * (1 - FRAME_TRIM));
+  return [sorted[lo]!, sorted[hi]!];
+}
+
+/**
+ * The phone's default view: the stars themselves, framed in the part of the pane the
+ * chart's overlaid controls leave clear.
+ *
+ * The DOM chart opens sun-centred on `computeSunExtents`, which reserves a React Flow
+ * card's box around every contact and a 240-unit-wide box around every cluster name. The
+ * canvas draws neither at this zoom — contacts are dots, and names wait for
+ * `LABEL_MIN_ZOOM` — and locking the sun to the centre of a lopsided sky left the far side
+ * empty. On a phone-width pane that put the whole constellation in the middle third of
+ * the chart. Here the stars' own bounds are fitted and centred instead, and the insets are
+ * screen pixels rather than world units, so the margin stays the same size at every
+ * network size. The sun is always in frame; it is just no longer pinned dead centre.
+ *
+ * The bounds are trimmed: the outermost `FRAME_TRIM` of stars on each end of each axis
+ * don't count. A network's loose, unclustered contacts scatter far wider than its
+ * figures, so fitting every last one of them left the constellations themselves a small
+ * knot in the middle of a phone. The trimmed stars stay a pan away, and a network too
+ * small for the trim to reach a whole star is framed exactly.
+ */
+export function fitStarsToPane(
+  layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
+  positionOverrides: PositionMap,
+  pane: { width: number; height: number },
+  inset: { x: number; top: number; bottom: number }
+): Camera {
+  const points: Vec2[] = [];
+  for (const n of layoutNodes) {
+    if (n.type === "contact" || n.type === "user" || n.type === "clusterLabel") {
+      points.push(n.position);
+    }
+  }
+  for (const pos of Object.values(positionOverrides)) points.push(pos);
+
+  // The sun always stays in frame, whatever the trim does to the stars around it.
+  const [loX, hiX] = points.length > 0 ? trimmedRange(points.map((p) => p.x)) : [0, 0];
+  const [loY, hiY] = points.length > 0 ? trimmedRange(points.map((p) => p.y)) : [0, 0];
+  const rect = {
+    minX: Math.min(loX, 0),
+    maxX: Math.max(hiX, 0),
+    minY: Math.min(loY, 0),
+    maxY: Math.max(hiY, 0),
+  };
+  const spanX = Math.max(rect.maxX - rect.minX, MIN_STAR_SPAN);
+  const spanY = Math.max(rect.maxY - rect.minY, MIN_STAR_SPAN);
+  const clearW = Math.max(pane.width - 2 * inset.x, 1);
+  const clearH = Math.max(pane.height - inset.top - inset.bottom, 1);
+
+  const k = Math.min(
+    SKY_FIT_MAX_ZOOM,
+    Math.max(SKY_MIN_ZOOM, Math.min(clearW / spanX, clearH / spanY))
+  );
+  const cx = (rect.minX + rect.maxX) / 2;
+  const cy = (rect.minY + rect.maxY) / 2;
+  return { k, x: pane.width / 2 - cx * k, y: inset.top + clearH / 2 - cy * k };
+}
+
+/**
  * Keep the sky reachable without letting it be flung into the void.
  *
  * Deliberately generous: you may push content a viewport and a half off-centre, which

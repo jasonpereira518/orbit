@@ -81,6 +81,10 @@
   --transition-duration-celestial: 700ms; /* landing + constellation set-pieces */
 
   --ease-house: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Strong ease-in-out, for something travelling across the screen rather than arriving
+   * (the mobile nav's pill). Not named `--ease-in-out`: Tailwind v4 owns that variable,
+   * and overriding it would retune every `ease-in-out` utility in the app. */
+  --ease-glide: cubic-bezier(0.77, 0, 0.175, 1);
 
   /* Retime every bare `transition-*` utility (~100 call sites) onto the
    * interaction tier in one place. */
@@ -593,11 +597,18 @@
  * floating surfaces that detach from screen edges (mobile bottom nav).
  * Same sheen/blur/border as .liquid-glass, but with a lighter fill than
  * the base panel — leans toward see-through glass rather than a fully
- * frosted tinted panel, without going fully transparent — and no outer
- * drop-shadow: against a light fill the blurred shadow read as a
- * dark haze floating under the bar rather than a grounded shadow, so only
- * the hairline inset highlights (top sheen + bottom edge) are kept for
- * definition. Combined selector (not a bare class) so specificity (0,2,0)
+ * frosted tinted panel, without going fully transparent.
+ *
+ * The outer shadow is short and tinted, not the base panel's wide grey one.
+ * The pill once had no drop shadow at all: back when its blur was dead, the wide
+ * shadow read as a dark haze floating under the bar. Now that the pill really frosts
+ * the page, it needs something to lift it off that page, or the glass reads as a flat
+ * translucent band. A tight contact shadow plus a soft, low falloff (negative spread,
+ * so nothing spills past the ends) gives it a place to sit, and tinting it with the
+ * brand's deep teal keeps it from going grey against the light fill. The outer
+ * hairline gives the white rim an edge on a white page.
+ *
+ * Combined selector (not a bare class) so specificity (0,2,0)
  * reliably beats both .liquid-glass (0,1,0) and .dark .liquid-glass
  * (0,2,0, but declared earlier so loses the source-order tiebreak),
  * independent of Tailwind's layered utilities. */
@@ -607,14 +618,17 @@
   border-radius: 9999px;
   background: linear-gradient(
     165deg,
-    rgba(255, 255, 255, 0.5) 0%,
-    rgba(255, 255, 255, 0.32) 42%,
-    rgba(247, 248, 246, 0.28) 100%
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.2) 42%,
+    rgba(247, 248, 246, 0.16) 100%
   );
   border-color: rgba(255, 255, 255, 0.45);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
-    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset;
+    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset,
+    0 0 0 0.5px rgba(15, 61, 62, 0.1),
+    0 3px 8px -3px rgba(15, 61, 62, 0.16),
+    0 12px 24px -12px rgba(15, 61, 62, 0.3);
 }
 
 .liquid-glass.liquid-glass-pill::before {
@@ -624,14 +638,16 @@
 .dark .liquid-glass.liquid-glass-pill {
   background: linear-gradient(
     165deg,
-    rgba(43, 57, 86, 0.5) 0%,
-    rgba(26, 36, 56, 0.38) 45%,
-    rgba(14, 21, 36, 0.32) 100%
+    rgba(43, 57, 86, 0.36) 0%,
+    rgba(26, 36, 56, 0.26) 45%,
+    rgba(14, 21, 36, 0.2) 100%
   );
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
-    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset;
+    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset,
+    0 3px 8px -2px rgba(0, 0, 0, 0.4),
+    0 14px 28px -12px rgba(0, 0, 0, 0.65);
 }
 
 .dark .liquid-glass.liquid-glass-pill::before {
@@ -2398,6 +2414,20 @@ html[data-celebration-handoff] [data-app-logo] {
     color-mix(in oklab, black 28%, transparent) 45%,
     transparent 100%
   );
+}
+
+/* How much room the contacts A-Z rail reserves beside the content column. The rail
+ * is thinner below `md` (28px on phones) than on desktop (36px), so the gutter follows
+ * it: the rail publishes `var(--content-rail-gutter-size)` rather than a number, and
+ * this picks the size per breakpoint. Each value stops the content 0.5rem (phone) /
+ * 1.5rem (desktop) clear of the rail; the arithmetic is in contacts-list.tsx. */
+:root {
+  --content-rail-gutter-size: 1.625rem;
+}
+@media (min-width: 48rem) {
+  :root {
+    --content-rail-gutter-size: 2.25rem;
+  }
 }
 
 /* The contacts A-Z rail hides itself on short viewports (a landscape phone), so the
