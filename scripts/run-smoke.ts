@@ -89,6 +89,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-mention-resolution": "pure",
   "smoke-note-parse-schema": "pure",
   "smoke-ops-alerts": "pure",
+  "smoke-outreach-identity": "pure",
   "smoke-parsers": "pure",
   "smoke-public-routes": "pure",
   "smoke-recruiter-scan": "pure",
