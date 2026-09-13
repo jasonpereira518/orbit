@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ImageResponse } from "next/og";
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { SHARE_TOKEN_MAX, formatTicketNumber, type InterestTicket } from "@/lib/interest-list";
 import { getTicketByShareToken } from "@/lib/interest-list-ticket";
 import { PLANET_GLOW, planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
@@ -9,10 +9,12 @@ import { PLANET_GLOW, planetLabel, type WelcomePlanet } from "@/lib/welcome-plan
 /**
  * The boarding pass as a 1200×630 link preview, one per share token.
  *
- * Public (see `PUBLIC_ROUTES`): social crawlers carry no session. Any token answers 200 —
- * a bogus one gets the generic "get your planet" card — because X and LinkedIn cache a
- * failed preview and never come back for it. No moons on the image: they would go stale
- * under the day-long CDN cache, and the number and planet are the part people share.
+ * Public (see `PUBLIC_ROUTES`): social crawlers carry no session. A missing token renders
+ * the generic "get your planet" card with a 200; an unknown token 308s to that same
+ * tokenless URL, so every bogus token collapses onto one CDN entry and one render. Neither
+ * ever fails, because X and LinkedIn cache a failed preview and never come back for it.
+ * No moons on the image: they would go stale under the day-long CDN cache, and the number
+ * and planet are the part people share.
  *
  * Fonts are vendored TTFs (Satori reads TTF/OTF/WOFF, not woff2, and `next/font` exposes
  * no file). Read at request time, not imported: `next.config.ts` lists the directory in
@@ -178,8 +180,8 @@ export async function GET(request: NextRequest) {
   const raw = request.nextUrl.searchParams.get("token")?.trim() ?? "";
   const token = raw.length > 0 && raw.length <= SHARE_TOKEN_MAX ? raw : "";
 
-  // A lookup failure (a transient DB hiccup) must not become a 500 — it renders the
-  // generic card instead, same as a bogus token.
+  // A lookup failure (a transient DB hiccup) must not become a 500 — it falls through to
+  // the generic card, same as a bogus token.
   let ticket: InterestTicket | null = null;
   if (token) {
     try {
@@ -189,26 +191,40 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  if (token && !ticket) {
+    // Every bogus token would otherwise be its own cache key and its own render. Send them
+    // all to the one generic card, which the CDN keeps for a day.
+    const canonical = new URL(request.nextUrl);
+    canonical.search = "";
+    return NextResponse.redirect(canonical, { status: 308, headers: { "Cache-Control": CACHE_CONTROL } });
+  }
+
   const planet: WelcomePlanet = ticket?.planet ?? "earth";
 
   // A missing/corrupt font or planet PNG, or any other failure building the full card,
   // must not 500 either — X and LinkedIn cache a failed preview and never retry. The
   // fallback below uses no vendored assets at all: plain text, Satori's built-in font,
   // on the same background, at the same size, with the same cache header.
+  //
+  // Both cards are awaited to a buffer before they are answered: `ImageResponse` renders
+  // lazily as its body streams, so a render-time throw would escape this `try` entirely
+  // and reach the crawler as a 500 with the headers already sent.
   try {
     const { fonts, planetSrc } = await loadAssets(planet);
-    return new ImageResponse(
+    const png = await new ImageResponse(
       <Card planet={planet} planetSrc={planetSrc} number={ticket?.number ?? null} />,
       {
         width: 1200,
         height: 630,
         fonts,
-        headers: { "Cache-Control": CACHE_CONTROL },
       }
-    );
+    ).arrayBuffer();
+    return new Response(png, {
+      headers: { "Content-Type": "image/png", "Cache-Control": CACHE_CONTROL },
+    });
   } catch (err) {
     console.error("[interest-list] ticket image assets failed; serving the bare card", err);
-    return new ImageResponse(
+    const png = await new ImageResponse(
       <div
         style={{
           width: 1200,
@@ -231,7 +247,10 @@ export async function GET(request: NextRequest) {
             : "Every person who joins is handed a planet."}
         </div>
       </div>,
-      { width: 1200, height: 630, headers: { "Cache-Control": CACHE_CONTROL } }
-    );
+      { width: 1200, height: 630 }
+    ).arrayBuffer();
+    return new Response(png, {
+      headers: { "Content-Type": "image/png", "Cache-Control": CACHE_CONTROL },
+    });
   }
 }

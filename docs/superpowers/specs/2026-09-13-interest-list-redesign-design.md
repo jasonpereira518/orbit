@@ -218,8 +218,10 @@ send is best-effort as today.
   loaded with `readFile`. `next/font/google` does not expose files to `ImageResponse`, and
   fetching Google Fonts at request time is a network dependency in a link-preview path.
 - Headers: `Cache-Control: public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400`.
-- Unknown or missing token → the generic card (same layout, "Get your planet" instead of a
-  number), **200**, same cache headers. A shared link must never show a broken preview.
+- Missing token → the generic card (same layout, "Get your planet" instead of a number),
+  **200**, same cache headers. Unknown token → **308** to the tokenless URL, so every bogus
+  token shares one CDN entry and one render instead of minting its own. A shared link must
+  never show a broken preview.
 - `runtime = "nodejs"` (the project standard; edge is not used anywhere).
 
 ## Motion and interaction
