@@ -8,6 +8,10 @@ import { getDb } from "@/db";
 import { contacts, type ReminderActionKind } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
+  listUnresolvedMentionsFor,
+  type UnresolvedMention,
+} from "@/lib/unresolved-mentions";
+import {
   fetchRawCommitments,
   validateCommitments,
   emptyCommitmentResult,
@@ -22,10 +26,22 @@ import {
   type SharedNoteContext,
 } from "@/lib/ai";
 import {
+  captureImageFiles,
   normalizeCaptureInput,
   normalizePastedCaptureText,
   type CaptureMediaFile,
 } from "@/lib/capture-ingest";
+import {
+  attachCapturePhotos,
+  discardCapturePhotos,
+  storeCapturePhotos,
+  type StoredCapturePhoto,
+} from "@/lib/capture-photos";
+import {
+  CAPTURE_HISTORY_PAGE,
+  listCaptureHistoryFor,
+  type CaptureHistoryPage,
+} from "@/lib/capture-history";
 import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
@@ -34,17 +50,29 @@ import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
 } from "@/lib/duplicates";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
-import type { PreviewMention } from "@/lib/note-batches";
+import { captureSourceKinds, type PreviewMention } from "@/lib/note-batches";
 import {
   saveNoteBatch,
+  type MeetingExtraReminderInput,
   type NoteBatchCommitmentInput,
   type NoteBatchMentionInput,
   type NoteBatchParticipantInput,
 } from "@/lib/note-batch-save";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { isSelf } from "@/lib/meeting-digest";
+import {
+  getMeetingSession,
+  getMeetingTranscript,
+  getNoteBatchForUser,
+  loadMeetingSelf as loadSelfName,
+  markMeetingSessionSaved,
+  toNoteBatchMeeting,
+} from "@/lib/meeting-sessions";
+import type { NoteBatchMeeting } from "@/db/schema";
 
 export type BulkNoteDuplicate = {
   id: string;
@@ -137,7 +165,11 @@ function mergeTopics(
 
 /**
  * Ingest voice / photos / calendar / email into normalized capture text.
- * Media is processed ephemerally and not stored.
+ *
+ * Audio, calendar and email files are read and dropped. Photos are also kept — shrunk,
+ * stripped of metadata, and unattached until a save claims them — so the capture history
+ * can show the original next to what was pulled out of it (see `src/lib/capture-photos.ts`).
+ * The ids come back as `photos`; the panel hands them to `confirmBulkCapture`.
  */
 export async function ingestCaptureMedia(input: {
   text?: string;
@@ -163,32 +195,71 @@ export async function ingestCaptureMedia(input: {
     if (uploadBytes > CAPTURE_MAX_UPLOAD_BYTES) {
       return {
         ok: false as const,
-        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}. Try fewer or smaller files.`,
+        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer or smaller files`,
       };
     }
 
-    const normalized = await normalizeCaptureInput(userId, {
-      text: input.text,
-      files: input.files,
-    });
+    // Kept alongside the transcription rather than after it: re-encoding and uploading eight
+    // photos is seconds of work that has no reason to queue behind a model call. Settled,
+    // not raced, so a transcription failure can still find and discard what was stored.
+    const images = captureImageFiles(input.files);
+    const [normalizedResult, storedResult] = await Promise.allSettled([
+      normalizeCaptureInput(userId, {
+        text: input.text,
+        files: input.files,
+      }),
+      storeCapturePhotos(
+        userId,
+        images.map((img) => ({ filename: img.filename, base64: img.base64 }))
+      ),
+    ]);
+    const photos: StoredCapturePhoto[] =
+      storedResult.status === "fulfilled" ? storedResult.value : [];
+    if (normalizedResult.status === "rejected") {
+      // No text means nothing can be saved to claim these, so do not leave them for the
+      // prune to find tomorrow.
+      await discardCapturePhotos(
+        userId,
+        photos.map((p) => p.id)
+      ).catch(() => {});
+      throw normalizedResult.reason;
+    }
+    const normalized = normalizedResult.value;
 
     return {
       ok: true as const,
       text: normalized.text,
       hints: normalized.hints,
       sources: normalized.sources,
+      transcriptionEngine: normalized.transcriptionEngine ?? null,
+      photos,
+      /** Photos that were read but could not be kept, so the panel can say so. */
+      photosNotKept: Math.max(0, images.length - photos.length),
     };
   } catch (err) {
+    // Data, not a throw — so never stripped in production. See `friendlyError`.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: friendlyError(err, TOAST_COPY.fileReadFailed),
     };
   }
 }
 
+export type BulkParseOptions = {
+  /**
+   * Set when the notes are a recorded meeting's corpus (`analyzeMeetingSession`). Three
+   * things change: dated commitments are verified against the meeting's stored transcript
+   * rather than the AI-written corpus, the user is never offered as a person, and a
+   * meeting with no people and no dates is still a valid result — its summary, blockers
+   * and questions are worth saving on their own.
+   */
+  meetingSessionId?: string | null;
+};
+
 export async function parseBulkCaptureNotes(
   notes: string,
-  hints?: CaptureParseHints | null
+  hints?: CaptureParseHints | null,
+  opts: BulkParseOptions = {}
 ) {
   try {
     const userId = await requireUserId();
@@ -196,6 +267,14 @@ export async function parseBulkCaptureNotes(
     if (!notes.trim()) {
       return { ok: false as const, error: "Notes are required" };
     }
+
+    const meeting = opts.meetingSessionId
+      ? await getMeetingTranscript(userId, opts.meetingSessionId)
+      : null;
+    if (opts.meetingSessionId && !meeting) {
+      return { ok: false as const, error: "That meeting no longer exists" };
+    }
+    const self = meeting ? await loadSelfName(userId) : null;
 
     // Auto-detect pasted ICS / email forwards when caller didn't supply hints.
     const detected = normalizePastedCaptureText(notes);
@@ -227,7 +306,12 @@ export async function parseBulkCaptureNotes(
       }).catch(() => [] as Awaited<ReturnType<typeof fetchRawCommitments>>),
     ]);
 
-    const { people, shared_notes, interaction_date } = personParse;
+    const { shared_notes, interaction_date } = personParse;
+    // The person recording a meeting is on every call they record, and the corpus says
+    // "I am <name>" — which a parser reads as one more participant. Never a contact.
+    const people = self
+      ? personParse.people.filter((p) => !p.name || !isSelf(p.name, self))
+      : personParse.people;
     // people[] mixes two roles: participants (actually talked to) and mentions demoted into
     // people[] because the note gave them real profile detail. Only participants get a
     // review card; demoted mentions fold into mention resolution below.
@@ -244,7 +328,9 @@ export async function parseBulkCaptureNotes(
         : "upload";
     const commitmentResult = (() => {
       try {
-        return validateCommitments(rawCommitments, corpus, { today, anchor });
+        // For a meeting, the corpus is AI-written, so "the phrase appears in the note"
+        // would only prove the digest wrote it. The transcript is what was actually said.
+        return validateCommitments(rawCommitments, meeting ? meeting.text : corpus, { today, anchor });
       } catch {
         return emptyCommitmentResult();
       }
@@ -331,7 +417,7 @@ export async function parseBulkCaptureNotes(
     // A note can legitimately carry dates but no people ("Board review 15th of October"),
     // so only fail when both extractions came back empty.
     // Mentions alone are not saveable: they hang on a participant's interaction.
-    if (!participants.length && !commitmentResult.commitments.length) {
+    if (!meeting && !participants.length && !commitmentResult.commitments.length) {
       return {
         ok: false as const,
         error: "No people or dates found in those notes",
@@ -374,10 +460,11 @@ export async function parseBulkCaptureNotes(
       mentions,
     };
   } catch (err) {
-    const { toUserFacingError } = await import("@/lib/errors");
+    // Data, not a throw — so never stripped in production, and `toUserFacingError` put
+    // raw text such as "Failed to parse AI JSON: {…" in front of the person verbatim.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: friendlyError(err, TOAST_COPY.notesReadFailed),
     };
   }
 }
@@ -394,6 +481,12 @@ export async function confirmBulkCapture(
     commitments: NoteBatchCommitmentInput[];
     mentions?: NoteBatchMentionInput[];
     skipped: RejectedCounts;
+    /** Ids `ingestCaptureMedia` returned for this capture's photos. */
+    photoIds?: string[];
+    /** `ingestCaptureMedia`'s `sources` labels, for the history's icons. */
+    sources?: string[];
+    /** A recorded meeting being saved: which one, and the digest items ticked as reminders. */
+    meeting?: { sessionId: string; extraReminders: MeetingExtraReminderInput[] } | null;
   }
 ) {
   const userId = await requireUserId();
@@ -402,6 +495,23 @@ export async function confirmBulkCapture(
   // could collide with (or evade) another note's dedupe keys.
   const sourceHash = hashSourceNote(batch.sourceText);
   if (sourceHash !== batch.sourceHash) throw new Error("Note text changed since parsing; re-run extraction");
+
+  // The digest is read from the session, never taken from the client: it is what the
+  // results page will show as "what this meeting was", and it must be what the model said.
+  let meetingSummary: NoteBatchMeeting | null = null;
+  if (batch.meeting) {
+    const session = await getMeetingSession(userId, batch.meeting.sessionId);
+    if (!session) throw new Error("That meeting no longer exists");
+    if (session.status === "saved" && session.noteBatchId) {
+      // A double-click, or a second tab. The first save is the save.
+      const existing = await getNoteBatchForUser(userId, session.noteBatchId);
+      if (existing) {
+        return { batchId: existing.id, created: 0, updated: 0, contactIds: [], remindersCreated: 0, result: existing.result };
+      }
+    }
+    if (!session.digest) throw new Error("Analyze the meeting before saving it");
+    meetingSummary = toNoteBatchMeeting(session);
+  }
 
   const out = await saveNoteBatch(userId, {
     sourceText: batch.sourceText,
@@ -414,7 +524,25 @@ export async function confirmBulkCapture(
     commitments: batch.commitments,
     mentions: batch.mentions ?? [],
     skipped: batch.skipped,
+    inputSources: captureSourceKinds([
+      ...(batch.sources ?? []),
+      ...(batch.photoIds?.length ? ["photos"] : []),
+    ]),
+    meeting:
+      batch.meeting && meetingSummary
+        ? { summary: meetingSummary, extraReminders: batch.meeting.extraReminders.slice(0, 40) }
+        : null,
   });
+
+  // After the save, not inside it: a photo is a record of where the notes came from, and a
+  // failure to claim one must not roll back contacts and reminders the person just reviewed.
+  if (batch.photoIds?.length) {
+    await attachCapturePhotos(userId, out.batchId, batch.photoIds).catch(() => 0);
+  }
+
+  if (batch.meeting) {
+    await markMeetingSessionSaved(userId, batch.meeting.sessionId, out.batchId);
+  }
 
   // The lib skipped embeddings and summaries (it must run outside a request scope for the
   // smoke suite); this is the request scope, so schedule them here.
@@ -433,4 +561,28 @@ export async function confirmBulkCapture(
   revalidatePath("/graph");
   for (const id of out.contactIds) revalidatePath(`/contacts/${id}`);
   return out;
+}
+
+
+/**
+ * People named in your recent notes who are still not in your network.
+ *
+ * Thin wrapper; the work is in `@/lib/unresolved-mentions` so a smoke test can drive it
+ * with a real database and no auth, the same split `getChatSuggestions` uses.
+ */
+export async function listUnresolvedMentions(): Promise<UnresolvedMention[]> {
+  const userId = await requireUserId();
+  return listUnresolvedMentionsFor(userId);
+}
+
+/**
+ * One page of the capture history, newest first. `cursor` is the previous page's
+ * `nextCursor`; omit it for the first page.
+ */
+export async function listCaptureHistory(
+  cursor?: string | null,
+  limit: number = CAPTURE_HISTORY_PAGE
+): Promise<CaptureHistoryPage> {
+  const userId = await requireUserId();
+  return listCaptureHistoryFor(userId, { cursor, limit });
 }

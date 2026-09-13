@@ -10,7 +10,7 @@
  */
 import { and, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, contacts, interactionMentions, noteBatches, reminders, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
+import { actionItems, contacts, interactionMentions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
@@ -50,6 +50,18 @@ export type NoteBatchCommitmentInput = Pick<
 
 export type NoteBatchMentionInput = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | "user_pick" | null };
 
+/**
+ * A digest item from a recorded meeting that the user ticked "make a reminder" on: an
+ * action item nobody's card carried, a blocker, or an open question.
+ */
+export type MeetingExtraReminderInput = {
+  kind: "action" | "blocker" | "question";
+  title: string;
+  /** A participant's name, resolved to their contact when they are in this batch. */
+  ownerName: string | null;
+  sourceExcerpt: string | null;
+};
+
 export type SaveNoteBatchInput = {
   sourceText: string;
   sourceHash: string;
@@ -61,6 +73,19 @@ export type SaveNoteBatchInput = {
   commitments: NoteBatchCommitmentInput[];
   mentions?: NoteBatchMentionInput[];
   skipped: { relative: number; unverifiable: number; past: number };
+  /** How the notes arrived — see `noteBatches.inputSources`. Defaults to none recorded. */
+  inputSources?: CaptureSourceKind[];
+  /**
+   * Set when the batch is a recorded meeting. Its summary is stored on the result, and a
+   * meeting is saveable with no people and no dates — the summary is the point.
+   */
+  meeting?: { summary: NoteBatchMeeting; extraReminders: MeetingExtraReminderInput[] } | null;
+};
+
+const MEETING_REMINDER_PREFIX: Record<MeetingExtraReminderInput["kind"], string> = {
+  action: "",
+  blocker: "Unblock: ",
+  question: "Answer: ",
 };
 
 export type SaveNoteBatchOutput = {
@@ -95,12 +120,13 @@ type ReminderDraft = {
 };
 
 export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): Promise<SaveNoteBatchOutput> {
-  if (!input.participants.length && !input.commitments.length) {
+  if (!input.meeting && !input.participants.length && !input.commitments.length) {
     throw new Error("Nothing to save");
   }
   const db = await getDb();
   const result = emptyNoteBatchResult();
   result.skipped = { ...input.skipped, duplicate: 0 };
+  if (input.meeting) result.meeting = input.meeting.summary;
   const anchor = isoDayToLocalNoon(input.anchorIso);
   const [batch] = await db
     .insert(noteBatches)
@@ -114,6 +140,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       anchorBasis: input.anchorBasis,
       status: "saved",
       result,
+      inputSources: input.inputSources ?? [],
     })
     .returning();
   const batchId = batch.id;
@@ -275,6 +302,34 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         dateBasis: "window",
         rawDatePhrase: null,
         sourceExcerpt: null,
+        actionItemId: null,
+      });
+    }
+
+    // 3b. Meeting digest items the user ticked. Due on the default window, like an action
+    //     item. Skipped when a draft above already says the same thing — the per-person
+    //     parse and the call-level digest read the same meeting and often agree.
+    for (const extra of input.meeting?.extraReminders ?? []) {
+      const text = extra.title.replace(/\s+/g, " ").trim().slice(0, 300);
+      if (!text) continue;
+      const prefix = MEETING_REMINDER_PREFIX[extra.kind];
+      const title = prefix && !text.toLowerCase().startsWith(prefix.trim().toLowerCase()) ? `${prefix}${text}` : text;
+      if (drafts.some((d) => titlesCollide(d.title, text) || titlesCollide(d.title, title))) continue;
+      const contactId = extra.ownerName ? contactIdByName.get(extra.ownerName.trim().toLowerCase()) ?? null : null;
+      drafts.push({
+        contactId,
+        sourceInteractionId: contactId ? interactionIdByContact.get(contactId) ?? null : null,
+        title,
+        description: input.meeting!.summary.title ? `From the meeting "${input.meeting!.summary.title}"` : null,
+        dueDate: windowDueDate(anchor),
+        reminderType: "ai_suggested",
+        actionKind:
+          extra.kind === "action"
+            ? inferReminderActionKind({ title, description: null, reminderType: "ai_suggested", contactId })
+            : "task",
+        dateBasis: "window",
+        rawDatePhrase: null,
+        sourceExcerpt: extra.sourceExcerpt?.slice(0, 500) ?? null,
         actionItemId: null,
       });
     }

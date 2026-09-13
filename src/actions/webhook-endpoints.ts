@@ -73,7 +73,7 @@ export async function createWebhookEndpoint(
   }
 
   if (eventTypes.length === 0) {
-    return { ok: false, message: "Choose at least one event to send." };
+    return { ok: false, message: "Choose at least one event to send" };
   }
   try {
     await assertDeliverable(url);
@@ -135,7 +135,7 @@ export async function retryWebhookEndpoint(
     where: and(eq(webhookEndpoints.id, id), eq(webhookEndpoints.userId, userId)),
     columns: { id: true },
   });
-  if (!owned) return { ok: false, error: "No such endpoint." };
+  if (!owned) return { ok: false, error: "No such endpoint" };
   const result = await verifyEndpoint(id);
   revalidatePath("/settings");
   return result;

@@ -38,6 +38,15 @@ export async function GET(request: Request) {
       kind: "provider_denied",
       message: error,
     });
+    // A cancelled consent still carries the state, so honour its returnTo too — otherwise
+    // "Cancel" on Google's screen dumped the user on /recruiters whichever page they
+    // started from. Best-effort: a bad or missing state just keeps the default.
+    try {
+      const { returnTo } = await consumeGmailOAuthState(state);
+      if (returnTo) redirectBase = new URL(returnTo, url.origin);
+    } catch {
+      // keep the default destination
+    }
     redirectBase.searchParams.set("gmail", "error");
     redirectBase.searchParams.set("google", "error");
     redirectBase.searchParams.set("reason", error);
@@ -79,7 +88,10 @@ export async function GET(request: Request) {
     redirectBase.searchParams.set("google", "error");
     redirectBase.searchParams.set(
       "reason",
-      err instanceof Error ? err.message : "oauth_failed"
+      // A code, not the message. The full error is already in recordErrorEvent above;
+      // in the URL it only leaked token-endpoint bodies into a toast, browser history
+      // and access logs.
+      "oauth_failed"
     );
     return NextResponse.redirect(redirectBase);
   }

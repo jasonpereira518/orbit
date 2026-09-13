@@ -3,6 +3,7 @@
 import { type ReactNode, useRef } from "react";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { UserFacingError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { useEtaCountdown } from "@/lib/use-eta-countdown";
 
@@ -37,8 +38,10 @@ export async function readCsvOrZipMessages(file: File): Promise<{
         (f) => !f.dir && /messages\.csv$/i.test(f.name)
       );
     if (!entry) {
-      throw new Error(
-        "No messages.csv found in ZIP. Export Messages from LinkedIn."
+      // Thrown in the browser, so it survives — but a plain Error still reaches the toast
+      // as the generic fallback, which is why this is a `UserFacingError`.
+      throw new UserFacingError(
+        "No messages.csv in that ZIP — download Messages from LinkedIn’s data export and upload that"
       );
     }
     const text = await entry.async("string");
