@@ -45,6 +45,7 @@ import { EASE_HOUSE } from "@/lib/motion";
 import { timelineDayLabel, timelineGapLabel } from "@/lib/timeline-date";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 export type TimelineInteraction = {
   id: string;
@@ -379,7 +380,7 @@ export function ContactTimeline({
         );
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not reorder");
+        toast.error(friendlyError(err, "Couldn’t reorder that — try again?"));
       }
     });
   }

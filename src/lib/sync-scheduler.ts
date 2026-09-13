@@ -41,6 +41,10 @@ import {
 import { ReauthRequiredError } from "@/lib/errors";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { runEventSyncPass } from "@/lib/events/sync";
+import { runEnrichmentPass } from "@/lib/events/enrich-queue";
+import { backfillPersonKeys } from "@/lib/events/people-store";
+import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
+import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
 
 /** Matches the import engine's budget, and leaves headroom under the 300s function ceiling. */
 export const SYNC_TIME_BUDGET_MS = 4.5 * 60 * 1000;
@@ -73,6 +77,14 @@ export const SYNC_INTERVAL_MS = 30 * 60 * 1000;
 export type SyncDeps = {
   getAccessToken: typeof getValidAccessToken;
   fetchPage: typeof fetchCalendarPage;
+  /**
+   * How the enrichment pass reads an event's public page.
+   *
+   * Injectable for the same reason the two above are, and with a sharper edge: without it a
+   * smoke test that seeds an event with a URL makes a real outbound request to whatever host
+   * the fixture named. A test suite that quietly fetches lu.ma is both slow and rude.
+   */
+  eventPageFetch?: typeof fetch;
 };
 
 const DEFAULT_DEPS: SyncDeps = {
@@ -96,6 +108,14 @@ export type SyncRunStats = {
   eventConnectionsSynced: number;
   eventConnectionsFailed: number;
   eventRostersFetched: number;
+  /** Events found in a calendar or feed rather than added by hand. */
+  discoveryCreated: number;
+  discoveryAttached: number;
+  /** Reports refused because the user had already dismissed or deleted that event. */
+  discoverySuppressed: number;
+  /** Background reads of discovered events' public pages. */
+  enrichFetched: number;
+  enrichFailed: number;
   budgetExhausted: boolean;
 };
 
@@ -115,6 +135,11 @@ function emptyRunStats(): SyncRunStats {
     eventConnectionsSynced: 0,
     eventConnectionsFailed: 0,
     eventRostersFetched: 0,
+    discoveryCreated: 0,
+    discoveryAttached: 0,
+    discoverySuppressed: 0,
+    enrichFetched: 0,
+    enrichFailed: 0,
     budgetExhausted: false,
   };
 }
@@ -168,6 +193,24 @@ async function syncGoogleCalendar(
       stats.eventsIngested += ingested.eventsSeen;
       stats.contactsCreated += ingested.contactsCreated;
       stats.interactionsLogged += ingested.interactionsLogged;
+    }
+
+    // The same page, read for a different question: which of these are Luma/Partiful/
+    // Eventbrite invites rather than meetings? `classifyCalendarEvent` has already refused
+    // those above, so the two readings cannot double-count one entry.
+    //
+    // Never allowed to fail the calendar sync: a discovery error must not cost the user their
+    // meeting history, and the cursor has not advanced yet.
+    try {
+      const discovered = await recordDiscoveryCandidates(
+        conn.userId,
+        calendarEventsToCandidates(page.events, page.selfEmails, "gcal")
+      );
+      stats.discoveryCreated += discovered.created;
+      stats.discoveryAttached += discovered.attached;
+      stats.discoverySuppressed += discovered.suppressed;
+    } catch {
+      // Swallowed deliberately — see above.
     }
 
     cursor = advanceCursor(cursor, page);
@@ -297,7 +340,10 @@ export async function runSyncPass(
   // contact without a human saying so — and is safe to cut short and resume next run.
   if (!deadlineReached(deadline)) {
     try {
-      const eventStats = await runEventSyncPass(now);
+      const eventStats = await runEventSyncPass(now, {
+        deadline,
+        feedDeps: deps.eventPageFetch ? { fetch: deps.eventPageFetch } : undefined,
+      });
       stats.eventConnectionsClaimed = eventStats.claimed;
       stats.eventConnectionsSynced = eventStats.synced;
       stats.eventConnectionsFailed = eventStats.failed;
@@ -306,6 +352,30 @@ export async function runSyncPass(
       // Never rethrown, for the same reason as everything else in this function: a failure in
       // one provider must not lose the run's ledger row for the others.
       stats.eventConnectionsFailed++;
+    }
+  } else {
+    stats.budgetExhausted = true;
+  }
+
+  // Person keys for rows written before the column existed. A bounded slice per pass: it is
+  // pure catch-up work, and the panel it feeds is simply thinner until it finishes.
+  await backfillPersonKeys(2000).catch(() => 0);
+
+  // Reading discovered events' public pages comes LAST of all, and deliberately so: every
+  // pass above creates or updates data the user is waiting on, while this one makes rows that
+  // already exist better. It takes whatever budget is left and stops mid-queue without
+  // consequence — the claims it did not use are simply still due next time.
+  if (!deadlineReached(deadline)) {
+    try {
+      const enrichStats = await runEnrichmentPass({
+        now,
+        deadline,
+        deps: deps.eventPageFetch ? { fetch: deps.eventPageFetch } : undefined,
+      });
+      stats.enrichFetched = enrichStats.enriched;
+      stats.enrichFailed = enrichStats.failed;
+    } catch {
+      stats.enrichFailed++;
     }
   } else {
     stats.budgetExhausted = true;

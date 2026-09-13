@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 type GoalAlignedContact = {
   id: string;
@@ -88,12 +89,16 @@ export function GoalsSummary({
             if (!trimmed) return;
             start(async () => {
               try {
-                await addGoal(trimmed);
+                const res = await addGoal(trimmed);
+                if (!res.ok) {
+                  toast.error(res.error);
+                  return;
+                }
                 setText("");
                 toast.success("Goal added");
                 router.refresh();
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Could not add goal");
+                toast.error(friendlyError(err, "Couldn’t add that goal — try again?"));
               }
             });
           }}

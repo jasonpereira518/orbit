@@ -1,6 +1,8 @@
 import Link from "next/link";
-import { CalendarDays, MapPin, Users } from "lucide-react";
+import { CalendarDays, MapPin, Sparkles, Users } from "lucide-react";
 import { eventGradient } from "@/lib/events/theme";
+import { DISCOVERY_LABEL, RSVP_LABEL } from "@/components/events/event-provenance";
+import { DismissEventButton } from "@/components/events/dismiss-event-button";
 import type { EventListRow } from "@/lib/events/store";
 
 function formatDate(date: Date | null): string {
@@ -12,9 +14,20 @@ function formatDate(date: Date | null): string {
   });
 }
 
-export function EventCard({ event }: { event: EventListRow }) {
+export function EventCard({
+  event,
+  hidden = false,
+}: {
+  event: EventListRow;
+  hidden?: boolean;
+}) {
   const place = [event.venue, event.city].filter(Boolean).join(", ");
+  const found = event.discoveredVia ? DISCOVERY_LABEL[event.discoveredVia] : null;
+  const rsvp = event.rsvpStatus ? RSVP_LABEL[event.rsvpStatus] : null;
   return (
+    // `relative` so the dismiss control can sit above the link rather than inside it: a
+    // button nested in an anchor is not clickable without fighting the anchor for the event.
+    <div className="relative">
     <Link
       href={`/events/${event.id}`}
       className="group block overflow-hidden rounded-2xl border border-border/70 bg-card transition-shadow hover:shadow-md"
@@ -40,8 +53,10 @@ export function EventCard({ event }: { event: EventListRow }) {
             loading="lazy"
           />
         ) : null}
+        {/* Left, because the top right corner now belongs to "Not mine" — and a control
+            beats a label for that spot. */}
         {event.role === "hosted" ? (
-          <span className="absolute right-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-medium text-white">
+          <span className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-medium text-white">
             Hosted
           </span>
         ) : null}
@@ -49,6 +64,22 @@ export function EventCard({ event }: { event: EventListRow }) {
 
       <div className="p-4">
         <h2 className="truncate font-medium text-ink group-hover:underline">{event.title}</h2>
+        {found || rsvp ? (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {found ? (
+              // An event nobody added has to say so, in the place people look first.
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                <Sparkles className="size-3" aria-hidden />
+                {found}
+              </span>
+            ) : null}
+            {rsvp ? (
+              <span className="rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
+                {rsvp}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <CalendarDays className="size-3.5" aria-hidden />
@@ -68,5 +99,11 @@ export function EventCard({ event }: { event: EventListRow }) {
         </div>
       </div>
     </Link>
+      {/* Only for events Orbit added itself. Something the user typed already has Edit and
+          Delete on its own page, and offering "not mine" for it would be nonsense. */}
+      {event.discoveredVia ? (
+        <DismissEventButton eventId={event.id} title={event.title} hidden={hidden} />
+      ) : null}
+    </div>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Plus, Search } from "lucide-react";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
 import { UserButton } from "@clerk/nextjs";
 import { motion } from "motion/react";
 import {
@@ -138,6 +139,20 @@ export function AppSidebar({
       )}
 
       <nav className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
+        {/* The palette's visible door. A shortcut nobody can see is a shortcut nobody
+            learns — and the kbd hint here is how the ⌘K gets learned. */}
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT))}
+          title="Search (⌘K)"
+          className="relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm text-muted-foreground transition-colors hover:text-foreground lg:justify-start lg:px-3 lg:py-2"
+        >
+          <Search className="h-4 w-4 shrink-0" />
+          <span className="hidden lg:inline">Search</span>
+          <kbd className="ml-auto hidden rounded-md border border-border/70 bg-muted/50 px-1.5 py-px text-[10px] text-muted-foreground lg:inline">
+            ⌘K
+          </kbd>
+        </button>
         {core.map((item) => (
           <SidebarNavLink
             key={item.href}

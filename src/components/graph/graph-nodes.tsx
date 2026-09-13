@@ -20,7 +20,12 @@ import {
   type NebulaData,
   type OrbitRingsData,
 } from "@/lib/graph-layout";
-import { mixWithWhite, withAlpha } from "@/lib/school-color";
+import { withAlpha } from "@/lib/school-color";
+import {
+  STAR_HIT_PAD,
+  starVisual,
+  zoomRelief as starZoomRelief,
+} from "@/lib/graph/star-style";
 
 /** Invisible handles pinned to the star center so edges meet the nodes. */
 function StarHandles() {
@@ -154,23 +159,11 @@ function SunNodeComponent({
   );
 }
 
-function starSize(score: number) {
-  return 5 + score * 2.2;
-}
-
 /**
- * Diameter of the invisible disc that actually catches the click.
- *
- * A star is 7–16px in *node* space, which at the default fit view (zoom ≈ 0.11 for a
- * 114-person network) is under two screen pixels — the person is visible and, in
- * practice, unclickable. The pad extends 8px past the star's edge in every direction,
- * which is exactly half of the 18px minimum star separation that
- * `scripts/smoke-graph-layout.ts` guarantees, so no two pads can ever overlap and a
- * click still resolves to the nearest star. It is absolutely positioned, so it does not
- * change the node's measured box or the layout React Flow derives from it.
+ * The invisible disc that actually catches the click. It is absolutely positioned, so
+ * it does not change the node's measured box or the layout React Flow derives from it.
+ * See `STAR_HIT_PAD` in `@/lib/graph/star-style` for why it is sized the way it is.
  */
-const STAR_HIT_PAD = 16;
-
 function StarHitTarget({ disc }: { disc: number }) {
   const hit = disc + STAR_HIT_PAD;
   return (
@@ -182,14 +175,6 @@ function StarHitTarget({ disc }: { disc: number }) {
   );
 }
 
-/**
- * The line under a person's name: their role, or their company when we don't
- * know what they do. Never both — one quiet line keeps the sky readable.
- */
-function starSubtitle(data: GraphNodeData) {
-  return (data.title || "").trim() || (data.company || "").trim() || null;
-}
-
 function ContactNodeComponent({
   data,
   selected,
@@ -197,15 +182,19 @@ function ContactNodeComponent({
   // Rounded so a pan/zoom gesture does not re-render every star on every frame — the
   // same trick ClusterLabelNodeComponent uses.
   const zoom = useStore((s) => Math.round(s.transform[2] * 20) / 20);
-  const score = data.score || 2;
-  const size = starSize(score);
-  const glow = Math.max(3, score * 2.2);
+  const {
+    isComet,
+    dimmedScatter,
+    size,
+    disc: starDisc,
+    glow,
+    spotlightBoost,
+    alphaScale,
+    fill,
+    core,
+    subtitle,
+  } = starVisual(data, Boolean(selected));
   const bright = selected || Boolean(data.spotlight);
-  const isComet = Boolean(data.comet);
-  const isScatter = data.figureRole === "scatter";
-  // Scatter stars stay faint until hovered/selected/spotlit, then pop to full.
-  const dimmedScatter = isScatter && !selected && !data.spotlight;
-  const subtitle = starSubtitle(data);
 
   if (isComet) {
     const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
@@ -261,33 +250,13 @@ function ContactNodeComponent({
     );
   }
 
-  // Figure stars carry a pastel wash of their cluster's brand color; scatter
-  // stars stay white and quiet until emphasized. Glow is deliberately soft —
-  // the sky should read as a chart, not a light show.
-  const tint = !isScatter ? data.clusterColor : undefined;
-  const fill = tint ? mixWithWhite(tint, 0.35) : "#ffffff";
-  const core = tint ? mixWithWhite(tint, 0.85) : "#ffffff";
-  const spotlightBoost = data.spotlight ? 1.9 : 1;
-  const alphaScale = dimmedScatter ? 0.55 : 1;
-  const baseDisc = dimmedScatter ? Math.max(4, size * 0.6) : size;
-  const disc = baseDisc * (data.spotlight ? 1.3 : 1);
+  const disc = starDisc;
   /**
-   * Counteract the camera a little as it pulls back.
-   *
-   * A star is 7–16 layout px. At the default framing of a 24-person network that is
-   * 1–3 screen px, so the map opens on what looks like an empty sky — the one view a
-   * first-time visitor is guaranteed to see. Growing the disc as zoom falls keeps the
-   * sky legible, and the cap (+STAR_HIT_PAD, half the 18px minimum star separation the
-   * layout guarantees) means two stars can never grow into each other.
-   *
    * Applied as a transform on the disc only, so the node's measured box, the label
    * positions and the non-overlap proof in `scripts/smoke-graph-layout.ts` are all
-   * untouched.
+   * untouched. See `zoomRelief` in `@/lib/graph/star-style` for the reasoning.
    */
-  const zoomRelief = Math.max(
-    1,
-    Math.min((disc + STAR_HIT_PAD) / disc, 1 / Math.max(zoom, 0.08))
-  );
+  const zoomRelief = starZoomRelief(disc, zoom);
 
   return (
     <div

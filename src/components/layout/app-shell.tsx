@@ -12,6 +12,7 @@ const AppStarfield = dynamic(
   { ssr: false }
 );
 import { MobileNav } from "@/components/layout/mobile-nav";
+import { useSmallSky } from "@/components/graph/use-small-sky";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
@@ -19,6 +20,10 @@ import { DueNotificationsWatcher } from "@/components/notifications/due-notifica
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
+import { CommandPalette } from "@/components/layout/command-palette";
+import { Button } from "@/components/ui/button";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
+import { Search } from "lucide-react";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { ThemeSync } from "@/components/theme-sync";
@@ -72,6 +77,7 @@ export function AppShell({
   const isConstellation =
     pathname === "/graph" || pathname.startsWith("/graph/");
   const isViewportLocked = isChat || isConstellation;
+  const smallSky = useSmallSky();
   // The ask bar is not a link to /chat — it calls `askNetwork` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
   // from every screen, which is the whole thing hiding is supposed to prevent.
@@ -81,6 +87,14 @@ export function AppShell({
     !isSettings &&
     !isConstellation &&
     !hiddenSet.has("page.chat");
+  // Where the palette sends a typed question: the ask bar when it is on screen, /chat when
+  // the page has no bar, and nowhere on /chat itself (its composer is already right there)
+  // or when chat is hidden outright.
+  const paletteAskMode = showAskBar
+    ? "bar"
+    : !isChat && !hiddenSet.has("page.chat")
+      ? "chat"
+      : null;
 
   if (isOnboarding) {
     return (
@@ -109,12 +123,20 @@ export function AppShell({
           className="flex min-h-0 flex-1 overflow-hidden bg-background dark:bg-transparent"
         >
           <ThemeSync theme={theme} />
-          <AppStarfield />
+          {/*
+            Not on the phone-sized constellation. That route already paints a full sky
+            into its own canvas, and a second full-viewport canvas running its own rAF
+            loop — 700 arcs a frame, some with `shadowBlur`, one of the most expensive
+            Canvas2D operations on iOS — is exactly the pressure that was taking the tab
+            down. It costs a flatter background around the stage card on those devices.
+          */}
+          {!(isConstellation && smallSky) && <AppStarfield />}
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />
           <ImportJobWatcher />
           <GlobalJobProgressBar />
+          <CommandPalette hidden={hiddenSet} askMode={paletteAskMode} />
           <div
             className="hidden h-full shrink-0 p-3 md:block lg:p-4"
             style={{ viewTransitionName: "app-sidebar" }}
@@ -160,6 +182,19 @@ export function AppShell({
                   Left of the bell: the bell is the more-used control and keeps the outer
                   corner, matching the desktop rail where feedback sits below it. */}
               <div className="flex items-center gap-2">
+                {/* Phones have no ⌘K, so this is the palette's only door on one — and
+                    jumping straight to a person is most of what it is for. */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="Search"
+                  // The same round glass as the feedback and bell buttons beside it.
+                  className="size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
+                  onClick={() => window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT))}
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
                 {!hiddenSet.has(FEEDBACK_SURFACE_KEY) && <FeedbackTrigger />}
                 <NotificationsPanelButton />
               </div>
@@ -179,11 +214,29 @@ export function AppShell({
             <div
               className={cn(
                 "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
+                // Gutter for a page that floats a fixed rail over the right edge — the
+                // contacts A-Z scrubber is the one that does. It is an opaque card, so
+                // whatever it covers is gone, not dimmed. It publishes the variable only
+                // while mounted, so every other route pays nothing. On the content column
+                // rather than <main>, which also wraps the app header: insetting the logo
+                // and bell on one route would make the header jump between pages.
+                // The base padding is carried inside the calc rather than left to the
+                // horizontal padding above: a right-padding utility set straight from the
+                // variable OVERRIDES that padding, so every route without a rail lost its
+                // right padding entirely and ran flush to the screen edge.
+                //
+                // Note the wording — no utility class is spelled out literally here. The
+                // Tailwind scanner regex-matches candidates across the raw file, comments
+                // included, so an example class written in prose is compiled for real. An
+                // illustrative arbitrary value in this very comment generated an invalid
+                // rule and took the entire stylesheet down with it.
+                "pr-[calc(1rem+var(--content-rail-gutter,0px))]",
+                "md:pr-[calc(2.5rem+var(--content-rail-gutter,0px))]",
                 isViewportLocked
-                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
+                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-8"
                   : isSettings
-                    ? "flex-1 pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
-                    : "flex-1 pb-[calc(10.25rem+env(safe-area-inset-bottom))] md:pb-24",
+                    ? "flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-8"
+                    : "flex-1 pb-[calc(9.25rem+env(safe-area-inset-bottom))] md:pb-24",
                 isConstellation && "py-4 md:py-5",
               )}
             >
