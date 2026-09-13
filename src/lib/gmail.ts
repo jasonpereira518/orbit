@@ -7,6 +7,49 @@ import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
 const GOOGLE_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
 
 /**
+ * Gmail's "Units per minute per user" quota is cost-based, not request-count-based, so a
+ * heavy scan can trip it well before any individual endpoint's own rate limit. A 403 for
+ * that reason (`rateLimitExceeded` / `quotaExceeded` / `userRateLimitExceeded`, distinct
+ * from a genuine permission-denied 403) and any 429 are transient and worth waiting out
+ * rather than failing the whole scan.
+ */
+const GMAIL_MAX_RETRIES = 5;
+
+async function isRetryableGmailResponse(res: Response): Promise<boolean> {
+  if (res.status === 429) return true;
+  if (res.status !== 403) return false;
+  const text = await res.clone().text();
+  return /rateLimitExceeded|quotaExceeded|userRateLimitExceeded/i.test(text);
+}
+
+/**
+ * Wraps `fetch` with exponential backoff (plus jitter) on quota/rate-limit responses,
+ * honoring `Retry-After` when Google sends one. A fresh `AbortSignal.timeout` is created
+ * per attempt — reusing one across retries would leave later attempts pre-aborted.
+ */
+async function gmailFetchWithRetry(
+  url: string | URL,
+  init: { method?: string; headers?: HeadersInit; body?: BodyInit; timeoutMs: number }
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      signal: AbortSignal.timeout(init.timeoutMs),
+    });
+    if (res.ok || attempt >= GMAIL_MAX_RETRIES || !(await isRetryableGmailResponse(res))) {
+      return res;
+    }
+    const retryAfterSeconds = Number(res.headers.get("retry-after"));
+    const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+      ? retryAfterSeconds * 1000
+      : Math.min(30_000, 500 * 2 ** attempt) + Math.random() * 250;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+}
+
+/**
  * Sending as the user, rather than through Orbit's own Resend domain, is what makes a
  * recruiter reply land in their inbox and the message appear in their Sent folder.
  *
@@ -645,9 +688,9 @@ export async function listGmailMessagePage(
   url.searchParams.set("maxResults", String(opts.maxResults ?? 500));
   if (opts.pageToken) url.searchParams.set("pageToken", opts.pageToken);
 
-  const res = await fetch(url, {
+  const res = await gmailFetchWithRetry(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
-    signal: AbortSignal.timeout(30_000),
+    timeoutMs: 30_000,
   });
   if (!res.ok) {
     throw new Error(`Gmail list failed: ${(await res.text()).slice(0, 200)}`);
@@ -728,11 +771,11 @@ export async function fetchGmailHeaders(
 ): Promise<GmailHeaderSummary[]> {
   const results = await mapWithConcurrency(refs, concurrency, async (ref) => {
     try {
-      const res = await fetch(
+      const res = await gmailFetchWithRetry(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
-          signal: AbortSignal.timeout(10_000),
+          timeoutMs: 10_000,
         }
       );
       if (!res.ok) return null;
@@ -793,11 +836,11 @@ export async function fetchGmailMessages(
 ): Promise<GmailMessageContent[]> {
   const results = await mapWithConcurrency(ids, concurrency, async (id) => {
     try {
-      const res = await fetch(
+      const res = await gmailFetchWithRetry(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
-          signal: AbortSignal.timeout(15_000),
+          timeoutMs: 15_000,
         }
       );
       if (!res.ok) return null;
@@ -932,14 +975,14 @@ async function fetchThreadBatch(
       )
       .join("\r\n") + `\r\n--${boundary}--`;
 
-  const res = await fetch("https://gmail.googleapis.com/batch/gmail/v1", {
+  const res = await gmailFetchWithRetry("https://gmail.googleapis.com/batch/gmail/v1", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": `multipart/mixed; boundary=${boundary}`,
     },
     body,
-    signal: AbortSignal.timeout(30_000),
+    timeoutMs: 30_000,
   });
   if (!res.ok) {
     throw new Error(`Gmail batch failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
@@ -968,11 +1011,11 @@ export async function fetchGmailThread(
   threadId: string
 ): Promise<GmailThreadSummary | null> {
   try {
-    const res = await fetch(
+    const res = await gmailFetchWithRetry(
       `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?${THREAD_METADATA_QS}`,
       {
         headers: { Authorization: `Bearer ${accessToken}` },
-        signal: AbortSignal.timeout(15_000),
+        timeoutMs: 15_000,
       }
     );
     if (!res.ok) return null;
