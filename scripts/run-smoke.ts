@@ -92,6 +92,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-outreach-criteria": "pure",
   "smoke-outreach-identity": "pure",
   "smoke-outreach-ranking": "pure",
+  "smoke-outreach-serp": "pure",
   "smoke-parsers": "pure",
   "smoke-public-routes": "pure",
   "smoke-recruiter-scan": "pure",
