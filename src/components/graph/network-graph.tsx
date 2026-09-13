@@ -326,11 +326,22 @@ const GALAXY_DEG_PER_MIN = 3;
  * (an O(contactCount) React state update). Spaced out further as the
  * network grows so the commit cost stays bounded; disabled entirely past
  * ROTATION_DISABLE_ABOVE contacts.
+ *
+ * These used to be 450/900/1500ms, which was ~200x finer than anything anyone can see.
+ * At GALAXY_DEG_PER_MIN = 3 a full revolution takes two hours, so 450ms of drift is
+ * 0.0225 degrees — for a star 500 layout px out at the default zoom of 0.24, about a
+ * twentieth of one screen pixel. Every 450ms the app rebuilt every node object and
+ * re-rendered the whole graph to move each star by 0.05px.
+ *
+ * 5s keeps each committed step near a quarter of a degree — roughly half a screen pixel
+ * at that same radius and zoom, still below the threshold where a step reads as a jump —
+ * and cuts the commits by 11x. Between commits the rings keep drifting smoothly on the
+ * compositor via --galaxy-rot, so the motion the user actually perceives is unchanged.
  */
 function rotationCommitMs(contactCount: number): number {
-  if (contactCount > 900) return 1500;
-  if (contactCount > 400) return 900;
-  return 450;
+  if (contactCount > 900) return 12000;
+  if (contactCount > 400) return 8000;
+  return 5000;
 }
 const ROTATION_DISABLE_ABOVE = 2500;
 
@@ -1083,14 +1094,26 @@ function GraphCanvasInner({
             y: ux * sin + uy * cos,
           };
           if (n.type !== "contact") return { ...n, position };
+
+          // Keep the SAME `data` object for everything but comets.
+          //
+          // This used to rebuild `data` for every star on every commit, which changes its
+          // identity and so re-renders every ContactNode — the dominant cost here, and
+          // all of it wasted: `orbitRadius` is invariant under a rotation about the sun,
+          // and `orbitAngle` is read in exactly one place, the comet branch of
+          // `ContactNodeComponent`, where it orients the tail. Every other star recomputed
+          // an atan2 and a hypot per commit for two fields nothing read.
           const d = n.data as GraphNodeData;
+          if (!d.comet) return { ...n, position };
+
           return {
             ...n,
             position,
             data: {
               ...d,
-              orbitAngle: Math.atan2(position.y, position.x),
-              orbitRadius: Math.hypot(position.x, position.y),
+              // A rigid rotation adds delta to the angle; no atan2 needed. Radius is
+              // unchanged by construction, so it is left alone.
+              orbitAngle: (d.orbitAngle ?? Math.atan2(uy, ux)) + delta,
             },
           };
         })
