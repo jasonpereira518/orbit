@@ -554,8 +554,8 @@ response is retried once, then marked `unknown` across the board.
 fixtures):
 
 ```
-known(v)       = v ∈ { match, partial, conflicting }         // "unknown" is excluded
-value(match)=1, value(partial)=0.5, value(conflicting)=0.5
+known(v)       = v ∈ { match, partial, conflicting, mismatch }  // "unknown" is excluded
+value(match)=1, value(partial)=0.5, value(conflicting)=0.5, value(mismatch)=0
 requiredFit    = mean(value over known required verdicts), or 0.5 if none known
 preferredFit   = priority-weighted mean over known preferred verdicts, or 0.5 if none known
 rank_score     = 0.7·requiredFit + 0.3·preferredFit
@@ -563,10 +563,12 @@ confidence     = |known required| / |required|  → high ≥ 0.8, medium ≥ 0.5
 
 tier = filtered  if any required verdict = mismatch, or any exclusion = match
      = strong    if every required verdict = match and confidence = high
-     = possible  if requiredFit ≥ 0.5
+     = possible  if requiredFit ≥ 0.5 and at least one required verdict is known
      = weak      otherwise
 sort by tier, then rank_score desc, then confidence desc
 ```
+
+With no required criteria, preferences decide: strong at preferredFit ≥ 0.75 with high confidence, possible at ≥ 0.5 with one known preference, else weak.
 
 `unknown` lowers confidence, never the score: missing information is not a mismatch.
 `conflicting` is shown with both sources. `filtered` people appear under "Filtered out"
@@ -579,8 +581,9 @@ until current.
 ### 7.5 Research (`research.person`)
 
 - The run reserves `min(research_budget, available)` credits at start. Research proceeds in
-  rank order over `strong` and `possible` prospects not yet researched, as ranking arrives.
-  Users can research more people later from the People page (1 credit each, same mechanics).
+  rank order over every non-filtered prospect (strong, then possible, then weak) not yet
+  researched, as ranking arrives. Users can research more people later from the People page
+  (1 credit each, same mechanics).
 - One attempt, bounded to 45 s:
   1. `EnrichmentProvider.match` — Apollo `people/match` by LinkedIn URL, else by name +
      organization domain → email, `email_status`, employment history, Apollo id.
