@@ -161,9 +161,9 @@ export function ScanPhoneCapture({ token }: { token: string }) {
 
   if (finished) {
     return (
-      <div className="flex w-full flex-col gap-6">
+      <div className="flex w-full flex-1 flex-col gap-6">
         {header}
-        <div className="flex flex-col items-center gap-3 py-8 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
           <div className="grid size-14 place-items-center rounded-full bg-import-scan/15">
             <Check className="size-7 text-import-scan" />
           </div>
@@ -177,7 +177,7 @@ export function ScanPhoneCapture({ token }: { token: string }) {
   }
 
   return (
-    <div className="flex min-h-full w-full flex-col gap-5">
+    <div className="flex w-full flex-1 flex-col gap-5">
       {header}
 
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={onPick} />
@@ -191,9 +191,7 @@ export function ScanPhoneCapture({ token }: { token: string }) {
 
       {pages.length > 0 ? (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
-            {pages.length} of {MAX_SCAN_PAGES} pages · in the order they&apos;ll be read
-          </p>
+          <p className="text-xs text-muted-foreground">{`${pages.length} of ${MAX_SCAN_PAGES} pages · in the order they’ll be read`}</p>
           <ul className="grid grid-cols-3 gap-2" aria-label="Pages to send">
             <AnimatePresence initial={false}>
               {pages.map((page, i) => (

@@ -10,7 +10,7 @@
  * per-card drafts (what you edited) and the animation state.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useDragControls, useMotionValue, useTransform, type PanInfo } from "motion/react";
+import { AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform, type PanInfo } from "motion/react";
 import { ArrowLeft, Check, Clock, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DecisionStamp } from "@/components/capture/review/decision-stamp";
@@ -61,20 +61,25 @@ export function decisionFromDraft(kind: CaptureDecisionKind, index: number, draf
   };
 }
 
-type Custom = { dir: 1 | -1; leaving: CaptureDecisionKind | "back" };
+type Custom = { dir: 1 | -1; leaving: CaptureDecisionKind | "back"; reduced: boolean };
 type Leaving = { key: string; kind: CaptureDecisionKind } | null;
 
 const cardVariants = {
-  enter: ({ dir }: Custom) => ({ opacity: 0, x: dir >= 0 ? 48 : -48, rotate: dir >= 0 ? 1.5 : -1.5, y: 0, scale: 1 }),
+  enter: ({ dir, reduced }: Custom) =>
+    reduced ? { opacity: 0, x: 0, rotate: 0, y: 0, scale: 1 } : { opacity: 0, x: dir >= 0 ? 48 : -48, rotate: dir >= 0 ? 1.5 : -1.5, y: 0, scale: 1 },
   center: { opacity: 1, x: 0, rotate: 0, y: 0, scale: 1 },
-  exit: ({ leaving }: Custom) =>
-    leaving === "accept"
-      ? { opacity: 0, x: 520, rotate: 14 }
-      : leaving === "reject"
-        ? { opacity: 0, x: -520, rotate: -14 }
-        : leaving === "skip"
-          ? { opacity: 0, y: 56, scale: 0.96 }
-          : { opacity: 0, x: 56, rotate: 2 },
+  // Reduced motion: a crossfade. MotionConfig would otherwise apply the fly-out's transform
+  // instantly (a 520px teleport) while only the opacity eased.
+  exit: ({ leaving, reduced }: Custom) =>
+    reduced
+      ? { opacity: 0 }
+      : leaving === "accept"
+        ? { opacity: 0, x: 520, rotate: 14 }
+        : leaving === "reject"
+          ? { opacity: 0, x: -520, rotate: -14 }
+          : leaving === "skip"
+            ? { opacity: 0, y: 56, scale: 0.96 }
+            : { opacity: 0, x: 56, rotate: 2 },
 };
 
 export function PersonDeck({
@@ -98,7 +103,8 @@ export function PersonDeck({
 }) {
   const people = peopleDecisions(decisions);
   const [drafts, setDrafts] = useState<Record<string, PersonDraft>>({});
-  const [custom, setCustom] = useState<Custom>({ dir: 1, leaving: "back" });
+  const reduced = useReducedMotion() ?? false;
+  const [custom, setCustom] = useState<Custom>({ dir: 1, leaving: "back", reduced });
   /** The card whose stamp is forced on for its fly-out — only that card, never the next. */
   const [leaving, setLeaving] = useState<Leaving>(null);
   const [announce, setAnnounce] = useState("");
@@ -126,7 +132,7 @@ export function PersonDeck({
     (kind: CaptureDecisionKind) => {
       if (!current) return;
       const draft = draftFor(current);
-      setCustom({ dir: 1, leaving: kind });
+      setCustom({ dir: 1, leaving: kind, reduced });
       // Two renders on purpose: first the stamp lands on THIS card, then the card leaves.
       // Done in one render, AnimatePresence would keep the card's previous props (no stamp)
       // for the fly-out.
@@ -142,7 +148,7 @@ export function PersonDeck({
 
   const back = useCallback(() => {
     if (previousDecided < 0) return;
-    setCustom({ dir: -1, leaving: "back" });
+    setCustom({ dir: -1, leaving: "back", reduced });
     const prev = items[previousDecided]!;
     setAnnounce(`Back to ${prev.parsed.name || "the previous person"}, ${previousDecided + 1} of ${items.length}.`);
     onBack(prev.key);
@@ -232,10 +238,14 @@ export function PersonDeck({
         </AnimatePresence>
       </div>
 
-      {/* The three actions. Sticky on phones so a long card never hides them. */}
+      {/*
+        The three actions. Sticky on phones so a long card never hides them — parked just
+        above the fixed bottom nav (the shell's mobile tab bar is ~4rem tall plus the safe
+        area), not at the viewport edge where the nav would cover it.
+      */}
       <div
         ref={actionRowRef}
-        className="sticky bottom-0 z-20 -mx-4 flex items-center justify-center gap-3 border-t border-border/60 bg-card/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:py-1 md:backdrop-blur-none"
+        className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 -mx-4 flex items-center justify-center gap-3 rounded-2xl border border-border/60 bg-card/95 px-4 py-3 shadow-lg backdrop-blur md:static md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:py-1 md:shadow-none md:backdrop-blur-none"
       >
         <Button
           type="button"
