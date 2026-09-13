@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { and, count, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "@/db";
+import { queuePlanUpgradeTransition } from "@/lib/plan-upgrade-events";
 import { userSettings } from "@/db/schema";
 
 /**
@@ -216,11 +217,11 @@ export type SubscriptionMirror = {
 export async function setSubscriptionState(
   userId: string,
   mirror: SubscriptionMirror,
-  opts: { stripeCustomerId?: string | null } = {}
+  opts: { stripeCustomerId?: string | null; eventKey?: string } = {}
 ) {
-  await ensureUserSettings(userId);
+  const existing = await ensureUserSettings(userId);
   const db = await getDb();
-  await db
+  const [updated] = await db
     .update(userSettings)
     .set({
       subscriptionPlan: mirror.plan,
@@ -237,7 +238,24 @@ export async function setSubscriptionState(
         : {}),
       updatedAt: new Date(),
     })
-    .where(eq(userSettings.userId, userId));
+    .where(eq(userSettings.userId, userId))
+    .returning();
+
+  // Queues the one-shot celebration when the RESOLVED plan moves upward. Server-side on
+  // purpose: the client watcher's localStorage key is per-device, so upgrading on a phone
+  // would celebrate again on a laptop, and clearing site data replays it.
+  if (updated) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: updated,
+      eventKey:
+        opts.eventKey ??
+        `subscription:${userId}:${mirror.status ?? "none"}:${mirror.periodEnd ?? "none"}`,
+    });
+  }
+
+  return updated;
 }
 
 /**
@@ -261,20 +279,36 @@ export async function findUserIdByStripeCustomerId(customerId: string) {
  */
 export async function setLifetimePurchase(
   userId: string,
-  opts: { purchasedAt?: Date; stripeCustomerId?: string | null } = {}
+  opts: {
+    purchasedAt?: Date;
+    stripeCustomerId?: string | null;
+    eventKey?: string;
+  } = {}
 ) {
   const existing = await ensureUserSettings(userId);
   if (existing?.lifetimePurchasedAt) return;
 
   const db = await getDb();
-  await db
+  const [updated] = await db
     .update(userSettings)
     .set({
       lifetimePurchasedAt: opts.purchasedAt ?? new Date(),
       stripeCustomerId: opts.stripeCustomerId ?? existing?.stripeCustomerId ?? null,
       updatedAt: new Date(),
     })
-    .where(eq(userSettings.userId, userId));
+    .where(eq(userSettings.userId, userId))
+    .returning();
+
+  if (updated) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: updated,
+      eventKey: opts.eventKey ?? `lifetime:${userId}`,
+    });
+  }
+
+  return updated;
 }
 
 /** How many one-time Lifetime purchases have been made. Reported in /admin. */
@@ -302,9 +336,13 @@ export async function countLifetimePurchases() {
 export async function setCompedPlan(
   userId: string,
   plan: "orbit" | "lifetime" | null,
-  opts: { note?: string | null; adminUserId?: string | null } = {}
+  opts: {
+    note?: string | null;
+    adminUserId?: string | null;
+    eventKey?: string;
+  } = {}
 ) {
-  await ensureUserSettings(userId);
+  const existing = await ensureUserSettings(userId);
   const db = await getDb();
 
   const [row] = await db
@@ -320,6 +358,26 @@ export async function setCompedPlan(
     })
     .where(eq(userSettings.userId, userId))
     .returning();
+
+  // Comps celebrate too, and have to queue here rather than riding on the Stripe
+  // producers: `comped_plan` outranks every billing signal in `resolvePlan`, so a grant
+  // moves the resolved plan upward without any subscription or purchase ever being
+  // written. Without this the watcher would see the upgrade, find nothing queued, and
+  // stay silent — which also silently breaks `triggerDemoCelebration`, since that comps
+  // the demo account.
+  //
+  // The event key is stamped with the grant time so revoking and re-granting the same
+  // plan celebrates again, while a retry of the same grant does not.
+  if (row) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: row,
+      eventKey:
+        opts.eventKey ??
+        `comp:${userId}:${plan ?? "none"}:${row.compedAt?.getTime() ?? 0}`,
+    });
+  }
 
   return row;
 }

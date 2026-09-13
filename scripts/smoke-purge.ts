@@ -470,6 +470,14 @@ async function seed() {
   // else, so it is easy to forget it is personal data at all — which is how it became the
   // fourth user-scoped table to ship unpurged (found the first time this suite ran on a
   // fresh database instead of one that happened to hold a leftover row).
+  // The account's own upgrade-celebration queue — deleted outright on purge.
+  await db.insert(schema.planUpgradeEvents).values({
+    userId: USER,
+    plan: "orbit",
+    source: "subscription",
+    eventKey: `${USER}-upgrade`,
+  });
+
   await db.insert(schema.extensionUsage).values({ userId: USER, requestCount: 3, aiCount: 1 });
 
   // The connector platform. `api_keys` is the one that would matter most if it survived a

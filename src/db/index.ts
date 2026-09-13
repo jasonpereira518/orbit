@@ -620,6 +620,23 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS plan_upgrade_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  plan text NOT NULL,
+  source text NOT NULL,
+  event_key text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS admin_provider_snapshots (
+  provider text PRIMARY KEY,
+  status text NOT NULL,
+  summary jsonb DEFAULT '{}',
+  error_kind text,
+  checked_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_audit_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_user_id text NOT NULL,
@@ -1352,7 +1369,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 52 = the same capture tables, re-stamped: the preview database was stamped 51 by this
 // branch BEFORE main's 50 (desktop_notifications_enabled) was merged in, so a database at
 // 51 must still pick up that column. Nothing is new at 52; the bump only forces the pass.
-export const SCHEMA_VERSION = 52;
+// 53 = provider status + upgrade celebrations: admin_provider_snapshots,
+// plan_upgrade_events and their three indexes. This branch built them on 49, then
+// renumbered to 51 when main took 49 (capture history) and 50 (desktop notifications);
+// main has since taken 51 and 52 for the capture redesign. A database stamped by any of
+// those builds would skip both tables entirely, so the counter moves again. Renumbering
+// on merge is the rule this counter exists for, not an exception to it.
+export const SCHEMA_VERSION = 53;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2156,6 +2179,9 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
   `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
   `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+  `CREATE INDEX IF NOT EXISTS plan_upgrade_events_claim_idx ON plan_upgrade_events(user_id, claimed_at, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS plan_upgrade_events_pending_uidx ON plan_upgrade_events(user_id, plan) WHERE claimed_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS admin_provider_snapshots_expires_idx ON admin_provider_snapshots(expires_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
   `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
   `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,

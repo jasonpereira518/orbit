@@ -3,6 +3,8 @@ import { eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   aiSuggestions,
+  apiIdempotencyKeys,
+  apiKeys,
   billingEvents,
   calendarSubscriptions,
   captureHandoffs,
@@ -12,25 +14,22 @@ import {
   closenessCohorts,
   companies,
   contactEmbeddings,
-  contacts,
-  contactTags,
-  errorEvents,
-  apiIdempotencyKeys,
-  apiKeys,
-  extensionUsage,
-  feedback,
-  feedbackScreenshots,
-  gateEvents,
   contactIdentities,
   contactMerges,
+  contacts,
+  contactTags,
   duplicateSuggestions,
+  errorEvents,
   eventAliases,
   eventAttendees,
   eventCompanies,
   eventProviderConnections,
   events,
+  extensionUsage,
+  feedback,
+  feedbackScreenshots,
+  gateEvents,
   gmailConnections,
-  targetCompanies,
   imports,
   interactions,
   meetingSessions,
@@ -40,16 +39,18 @@ import {
   outlookConnections,
   outreachCampaigns,
   pageViews,
+  planUpgradeEvents,
   recruiterMessages,
   reminderLists,
   reminders,
   suggestedReminders,
   tags,
+  targetCompanies,
   usageEvents,
-  webhookEndpoints,
   userGoals,
   userRecruiterLinks,
   userSettings,
+  webhookEndpoints,
 } from "@/db/schema";
 import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
 import { recomputeRecruiterRating } from "@/lib/recruiters";
@@ -321,6 +322,13 @@ export async function purgeUserData(
     .update(pageViews)
     .set({ userId: null })
     .where(eq(pageViews.userId, userId));
+
+  // The account's own celebration queue. Nothing outside this user reads it and it carries
+  // no operational or financial value, so it is deleted rather than anonymised the way
+  // `billing_events` is.
+  await db
+    .delete(planUpgradeEvents)
+    .where(eq(planUpgradeEvents.userId, userId));
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 

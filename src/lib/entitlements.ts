@@ -86,7 +86,7 @@ export function isPaywallError(err: unknown): err is PaywallError {
   return err instanceof Error && err.name === "PaywallError";
 }
 
-type BillingColumns = {
+export type BillingColumns = {
   compedPlan?: "orbit" | "lifetime" | null;
   lifetimePurchasedAt?: Date | null;
   subscriptionPlan?: "orbit" | null;
