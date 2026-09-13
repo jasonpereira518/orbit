@@ -235,8 +235,7 @@ export function InterestHero({
                   <p className="mb-4 flex items-center gap-2.5 rounded-xl border border-[#f2c14e]/25 bg-[#f2c14e]/[0.06] px-3.5 py-2.5 text-sm text-[#e8f3f1]">
                     <PlanetArt planet={invite} size={22} />
                     <span>
-                      Someone on {planetLabel(invite)} invited you. Join and you&apos;ll orbit right
-                      behind them.
+                      {`Someone on ${planetLabel(invite)} invited you. Join and you'll orbit right behind them.`}
                     </span>
                   </p>
                 ) : null}
