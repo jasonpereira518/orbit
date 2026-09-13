@@ -162,6 +162,12 @@ async function seed() {
     source: "manual",
   });
   await db.insert(schema.recruiterScanState).values({ userId: USER });
+  await db.insert(schema.planUpgradeEvents).values({
+    userId: USER,
+    plan: "orbit",
+    source: "subscription",
+    eventKey: `${USER}-upgrade`,
+  });
   await db.insert(schema.pageViews).values({
     id: crypto.randomUUID(),
     userId: USER,
@@ -338,6 +344,10 @@ async function main() {
     "...and the recruiter scan watermark",
     (await countFor("recruiter_scan_state")) > 0
   );
+  check(
+    "...and the queued upgrade celebration",
+    (await countFor("plan_upgrade_events")) > 0
+  );
 
   await purgeUserData(USER, { only: ["notes"] });
   check(
@@ -369,6 +379,12 @@ async function main() {
     Boolean(pageViewAfter) && pageViewAfter?.userId === null
   );
   await db.delete(schema.pageViews).where(eq(schema.pageViews.sessionId, "sess-selective"));
+  // Unlike `page_views`, this one has no life outside the account it belongs to — deleted
+  // outright, in the same `activity` purge.
+  check(
+    "activity deletes the upgrade celebration outright",
+    (await countFor("plan_upgrade_events")) === 0
+  );
 
   console.log("\nSettings follow the preferences box, not the delete");
   await reset();

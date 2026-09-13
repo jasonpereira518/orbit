@@ -4,6 +4,8 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
 import {
   aiSuggestions,
+  apiIdempotencyKeys,
+  apiKeys,
   billingEvents,
   calendarSubscriptions,
   captureHandoffs,
@@ -13,25 +15,22 @@ import {
   closenessCohorts,
   companies,
   contactEmbeddings,
-  contacts,
-  contactTags,
-  errorEvents,
-  apiIdempotencyKeys,
-  apiKeys,
-  extensionUsage,
-  feedback,
-  feedbackScreenshots,
-  gateEvents,
   contactIdentities,
   contactMerges,
+  contacts,
+  contactTags,
   duplicateSuggestions,
+  errorEvents,
   eventAliases,
   eventAttendees,
   eventCompanies,
   eventProviderConnections,
   events,
+  extensionUsage,
+  feedback,
+  feedbackScreenshots,
+  gateEvents,
   gmailConnections,
-  targetCompanies,
   imports,
   interactions,
   meetingSessions,
@@ -41,17 +40,19 @@ import {
   outlookConnections,
   outreachCampaigns,
   pageViews,
+  planUpgradeEvents,
   recruiterMessages,
   recruiterScanState,
   reminderLists,
   reminders,
   suggestedReminders,
   tags,
+  targetCompanies,
   usageEvents,
-  webhookEndpoints,
   userGoals,
   userRecruiterLinks,
   userSettings,
+  webhookEndpoints,
 } from "@/db/schema";
 import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
 import { recomputeRecruiterRating } from "@/lib/recruiters";
@@ -286,7 +287,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   activity: {
-    counts: [usageEvents, extensionUsage, errorEvents, gateEvents],
+    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents],
     run: async (db, userId) => {
       await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
       // The extension's per-user rate-limit window, keyed on `user_id` as the primary key
@@ -297,6 +298,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
       await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
       await db.delete(gateEvents).where(eq(gateEvents.userId, userId));
+      // The account's own upgrade-celebration queue. Nothing outside this user reads it and
+      // it carries no operational or financial value, so it is deleted outright rather than
+      // anonymised the way `billing_events` is.
+      await db.delete(planUpgradeEvents).where(eq(planUpgradeEvents.userId, userId));
       // ANONYMISED, NOT DELETED — same reasoning as `billing_events` below, with a sharper
       // point behind it. `page_views` is an aggregate traffic record: deleting a departing
       // account's rows would retroactively change how many people visited the site last

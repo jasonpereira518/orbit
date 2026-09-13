@@ -30,6 +30,14 @@ const nextConfig: NextConfig = {
     "drizzle-orm",
     "sharp",
   ],
+  // The ticket-image route reads its fonts and the planet art from disk at request time;
+  // without this the deploy bundle omits them and the route 500s only in production.
+  outputFileTracingIncludes: {
+    "/api/interest-list/ticket-image": [
+      "./src/app/api/interest-list/ticket-image/fonts/*",
+      "./public/landing/planets/*.png",
+    ],
+  },
   experimental: {
     // Route navigations animate via React's <ViewTransition> (route-transition.tsx).
     viewTransition: true,

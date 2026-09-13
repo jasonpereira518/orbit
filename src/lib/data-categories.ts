@@ -108,7 +108,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "activity",
     label: "Usage and diagnostics",
     description:
-      "Feature-usage counters, extension rate-limit windows, the errors and upgrade prompts Orbit recorded against your account, and the identifying link on your page-view history (the visit counts themselves stay, anonymous).",
+      "Feature-usage counters, extension rate-limit windows, the errors and gated-feature prompts Orbit recorded against your account, any queued upgrade celebration, and the identifying link on your page-view history (the visit counts themselves stay, anonymous).",
   },
   {
     id: "feedback",
