@@ -41,7 +41,7 @@ function deps(over: Partial<GmailScanDeps> = {}): GmailScanDeps {
   return {
     record: async (_userId, candidates) => {
       recorded.push(...candidates.map((c) => ({ url: c.url })));
-      return { created: candidates.length, attached: 0, suppressed: 0, enrichQueued: 0 };
+      return { created: candidates.length, attached: 0, suppressed: 0, enrichQueued: 0, notAttending: 0 };
     },
     listPage: async () => ({ messages: [{ id: "m1", threadId: "t1" }], nextPageToken: null }),
     headers: async () => [

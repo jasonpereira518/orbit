@@ -38,4 +38,17 @@ const minimalPerson = { name: "Sarah Chen", source_excerpt: "Coffee with Sarah."
   });
   check("blank or missing mention names are dropped, not thrown", parsed.mentions.length === 1 && parsed.mentions[0].name === "Raj");
 }
+{
+  const parsed = multiPersonNoteParseSchema.parse({ people: [minimalPerson] });
+  check("relevance defaults to null when the model omits it", parsed.people[0].relevance === null);
+  const scored = multiPersonNoteParseSchema.parse({ people: [{ ...minimalPerson, relevance: 4 }] });
+  check("relevance round-trips", scored.people[0].relevance === 4);
+  let threw = false;
+  try {
+    multiPersonNoteParseSchema.parse({ people: [{ ...minimalPerson, relevance: 9 }] });
+  } catch {
+    threw = true;
+  }
+  check("relevance outside 1-5 is rejected like closeness", threw);
+}
 console.log("\nsmoke-note-parse-schema: all checks passed");

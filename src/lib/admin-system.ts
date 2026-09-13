@@ -7,7 +7,6 @@ import {
   outreachMessages,
   outreachProspects,
   suggestedReminders,
-  usageEvents,
   webhookDeliveries,
   opsAlertState,
 } from "@/db/schema";
@@ -79,15 +78,6 @@ export type CronHealth = {
     stats: Record<string, number | boolean>;
     error: string | null;
   }>;
-};
-
-export type AiFailureTaxonomy = {
-  /** Orbit's problem: timeouts, empty responses, unavailable models. */
-  ours: Array<{ kind: string; count: number }>;
-  /** The user's problem: bad keys, their own rate limits. */
-  theirs: Array<{ kind: string; count: number }>;
-  totalCalls: number;
-  slowest: Array<{ operation: string; maxMs: number }>;
 };
 
 export type ErrorEventSummary = {
@@ -202,50 +192,6 @@ export async function getCronHealth(
       : null,
     missed: hasMissedRun(latest?.startedAt ?? null, now),
     recent,
-  };
-}
-
-export async function getAiFailureTaxonomy(days = 7, now = new Date()): Promise<AiFailureTaxonomy> {
-  const db = await getDb();
-  const since = new Date(now.getTime() - days * DAY_MS);
-
-  const [failures, totals, slowest] = await Promise.all([
-    db
-      .select({ kind: usageEvents.errorKind, n: countInt })
-      .from(usageEvents)
-      .where(and(eq(usageEvents.success, 0), gt(usageEvents.createdAt, since)))
-      .groupBy(usageEvents.errorKind),
-    db
-      .select({ n: countInt })
-      .from(usageEvents)
-      .where(gt(usageEvents.createdAt, since)),
-    // max, not avg or p95: there is no percentile helper, and mean latency changes no
-    // decision. Max is what catches "transcription takes 94s and users think it hung".
-    db
-      .select({
-        operation: usageEvents.operation,
-        maxMs: sql<string>`coalesce(max(${usageEvents.durationMs}), 0)`,
-      })
-      .from(usageEvents)
-      .where(gt(usageEvents.createdAt, since))
-      .groupBy(usageEvents.operation)
-      .orderBy(desc(sql`coalesce(max(${usageEvents.durationMs}), 0)`))
-      .limit(5),
-  ]);
-
-  const ours: Array<{ kind: string; count: number }> = [];
-  const theirs: Array<{ kind: string; count: number }> = [];
-  for (const row of failures) {
-    const kind = row.kind ?? "other";
-    (OUR_ERROR_KINDS.has(kind) ? ours : theirs).push({ kind, count: row.n });
-  }
-  const bySize = (a: { count: number }, b: { count: number }) => b.count - a.count;
-
-  return {
-    ours: ours.sort(bySize),
-    theirs: theirs.sort(bySize),
-    totalCalls: totals[0]?.n ?? 0,
-    slowest: slowest.map((r) => ({ operation: r.operation, maxMs: num(r.maxMs) })),
   };
 }
 
@@ -481,13 +427,6 @@ export async function getSystemIssues(now = new Date()): Promise<SystemIssues> {
     // The Overview must render even if this one extra query fails.
     return empty;
   }
-}
-
-export async function getSystemIssueCount(now = new Date()): Promise<number> {
-  const i = await getSystemIssues(now);
-  return (
-    i.wedged + i.overdue + i.calendarErrors + i.needsReauth + i.syncWedged + i.syncFailing
-  );
 }
 
 export type WebhookSource = "clerk" | "stripe" | "resend";

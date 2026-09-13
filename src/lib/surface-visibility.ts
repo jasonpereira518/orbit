@@ -5,7 +5,7 @@ import { getDb } from "@/db";
 import { appSurfaceFlags } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-operations";
-import { getSurface, isAlwaysVisible, type Surface } from "@/lib/surfaces";
+import { getSurface, isAlwaysVisible } from "@/lib/surfaces";
 
 /**
  * The server half of surface visibility: which surfaces are hidden, and for whom.
@@ -172,12 +172,4 @@ export async function setSurfaceHidden(
     resourceId: surfaceKey,
     detail: { label: surface.label, kind: surface.kind },
   });
-}
-
-/** Convenience for the admin console: the hidden surfaces, resolved to registry entries. */
-export async function listHiddenSurfaces(): Promise<Surface[]> {
-  const hidden = await getHiddenSurfaceKeys();
-  return [...hidden]
-    .map((key) => getSurface(key))
-    .filter((s): s is Surface => Boolean(s));
 }

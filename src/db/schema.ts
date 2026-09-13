@@ -75,6 +75,16 @@ export type StoredClosenessBreakdown = {
   tier: ClosenessTier;
 };
 
+import type {
+  CaptureDecisions,
+  CaptureIngestedBlock,
+  CaptureJobResult,
+  CaptureJobSource,
+  CaptureJobStatus,
+  IgnoredPersonReason,
+} from "@/lib/capture/types";
+import type { CaptureParseHints } from "@/lib/ai";
+
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: text("user_id").notNull().unique(),
@@ -2163,6 +2173,8 @@ export const captureHandoffs = pgTable(
     /** The `photos:7/8` label, so the desktop can report partial success too. */
     sources: text("sources"),
     error: text("error"),
+    /** The capture job the phone's pages append to; the desktop polls that job, not this row. */
+    captureJobId: uuid("capture_job_id"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -2172,6 +2184,84 @@ export const captureHandoffs = pgTable(
     uniqueIndex("capture_handoffs_token_uidx").on(t.tokenHash),
     index("capture_handoffs_expiry_idx").on(t.expiresAt),
   ]
+);
+
+/**
+ * A durable capture: one paste, recording, scan or meeting on its way to becoming
+ * contacts. The /capture page is a view over this row, so navigating away, reloading or
+ * closing the tab loses nothing — extraction and saving run server-side, and every card
+ * decision is written here as it is made.
+ *
+ * Text only. Media (audio, photos) is transcribed inside the upload request and dropped,
+ * the same promise `meeting_sessions` and `capture_handoffs` make; `ingested_blocks` holds
+ * what the transcription produced, in arrival order.
+ *
+ * No transactions on neon-http, so every state change is one guarded UPDATE: the runner
+ * claims a row by writing `claim_token` and only the holder may write the outcome.
+ */
+export const captureJobs = pgTable(
+  "capture_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceKind: text("source_kind").$type<CaptureJobSource>().notNull(),
+    status: text("status").$type<CaptureJobStatus>().default("queued").notNull(),
+    entryPoint: text("entry_point").$type<"capture" | "profile">().default("capture").notNull(),
+    seedContactId: uuid("seed_contact_id"),
+    /** Typed or pasted text as the person gave it. Null for media-only jobs. */
+    inputText: text("input_text"),
+    inputHints: jsonb("input_hints").$type<CaptureParseHints>().default({}).notNull(),
+    /** Transcribed media, in arrival order. */
+    ingestedBlocks: jsonb("ingested_blocks").$type<CaptureIngestedBlock[]>().default([]).notNull(),
+    sources: jsonb("sources").$type<string[]>().default([]).notNull(),
+    /** `capture_photos` ids stored at upload, attached to the batch when the job saves. */
+    photoIds: jsonb("photo_ids").$type<string[]>().default([]).notNull(),
+    transcriptionEngine: text("transcription_engine"),
+    /** The assembled corpus the model read, and its dedupe hash. Written by the runner only. */
+    sourceText: text("source_text"),
+    sourceHash: text("source_hash"),
+    meetingSessionId: uuid("meeting_session_id"),
+    result: jsonb("result").$type<CaptureJobResult>(),
+    decisions: jsonb("decisions").$type<CaptureDecisions>().default({}).notNull(),
+    claimToken: text("claim_token"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    noteBatchId: uuid("note_batch_id"),
+    error: text("error"),
+    /** Backstop resumes by the stall sweep; past a small cap the job is failed instead. */
+    stallResumes: integer("stall_resumes").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("capture_jobs_user_status_idx").on(t.userId, t.status, t.updatedAt),
+    index("capture_jobs_stall_idx").on(t.status, t.updatedAt),
+  ]
+);
+
+/**
+ * People a capture set aside: cards swiped away, skipped for later, or names the notes
+ * only mentioned. One row per (user, normalized name) — the latest capture's context wins —
+ * and the row disappears the moment a contact with that name exists, so "Add as contact"
+ * from the list and adding them anywhere else both clear it.
+ */
+export const ignoredPeople = pgTable(
+  "ignored_people",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** `normalizePersonKey(displayName)` — lowercased, trimmed, whitespace collapsed. */
+    nameKey: text("name_key").notNull(),
+    displayName: text("display_name").notNull(),
+    reason: text("reason").$type<IgnoredPersonReason>().notNull(),
+    /** The note's words about them, capped, so the list can say why they came up. */
+    context: text("context"),
+    company: text("company"),
+    captureJobId: uuid("capture_job_id"),
+    noteBatchId: uuid("note_batch_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("ignored_people_user_name_uidx").on(t.userId, t.nameKey)]
 );
 
 /**

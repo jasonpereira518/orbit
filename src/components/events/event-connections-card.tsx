@@ -36,16 +36,35 @@ import type { EventConnectionProvider } from "@/lib/events/types";
 import { friendlyError } from "@/lib/errors";
 
 /** Where each platform hides its personal calendar link, in the fewest words that get there. */
-const FEED_HELP: Record<"luma_ics" | "partiful_ics", { name: string; where: string }> = {
+const FEED_HELP: Record<
+  "luma_ics" | "partiful_ics",
+  { name: string; steps: string[] }
+> = {
   luma_ics: {
     name: "Luma",
-    where: "luma.com → your profile → Calendar → Subscribe, then copy the link",
+    steps: ["Settings", "Account Syncing", "Add iCal Subscription", "Copy Link"],
   },
   partiful_ics: {
     name: "Partiful",
-    where: "Partiful → Settings → Calendar sync, then copy the link",
+    steps: ["Settings", "Calendar Sync", "Copy Link"],
   },
 };
+
+/** The menu path as a breadcrumb, each step in the words the platform itself uses. */
+function Steps({ name, steps }: { name: string; steps: string[] }) {
+  return (
+    <span>
+      In {name}:{" "}
+      {steps.map((step, index) => (
+        <span key={step}>
+          {index > 0 ? <span aria-hidden> → </span> : null}
+          <span className="font-medium text-ink/80">{step}</span>
+          {index < steps.length - 1 ? <span className="sr-only">, then </span> : null}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 export function EventConnectionsCard({
   connections,
@@ -99,7 +118,7 @@ export function EventConnectionsCard({
       toast.success(
         result.found
           ? `${FEED_HELP[provider].name} connected — ${result.found} event${result.found === 1 ? "" : "s"} found`
-          : `${FEED_HELP[provider].name} connected — new events will appear as you RSVP`
+          : `${FEED_HELP[provider].name} connected — new events will appear once you’re confirmed`
       );
       router.refresh();
     });
@@ -152,8 +171,8 @@ export function EventConnectionsCard({
             {connection
               ? connection.status === "needs_reauth"
                 ? "That link stopped working — paste a fresh one."
-                : "Connected — events you RSVP to appear automatically."
-              : help.where}
+                : "Connected — events you’re confirmed for appear automatically."
+              : <Steps name={help.name} steps={help.steps} />}
           </p>
         </div>
         {connection ? (
@@ -166,7 +185,7 @@ export function EventConnectionsCard({
             <Input
               value={feedUrl}
               onChange={(e) => setFeedUrl(e.target.value)}
-              placeholder="https://api.lu.ma/ics/get?…"
+              placeholder={`Paste your ${help.name} link`}
               // `type="password"`: this link shows everything its holder has registered
               // for, so it is a credential, not an address.
               type="password"
@@ -239,8 +258,9 @@ export function EventConnectionsCard({
           Events you go to
         </p>
         <p className="-mt-2 text-sm text-muted-foreground">
-          Paste your personal calendar link once and every event you RSVP to shows up here. A
-          connected Google Calendar already does this for invites that land in it.
+          Paste your personal calendar link once and every event you&rsquo;re confirmed for shows
+          up here — not the ones you&rsquo;re waitlisted, pending or invited to. A connected
+          Google Calendar already does this for invites that land in it.
         </p>
         {feedRow("luma_ics")}
         {feedRow("partiful_ics")}

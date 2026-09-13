@@ -38,7 +38,11 @@ import {
   eventsTogetherForRoster,
   listRepeatCoAttendees,
 } from "../src/lib/events/people-store";
-import { claimDueEnrichments, markEnrichResult } from "../src/lib/events/enrich-queue";
+import {
+  claimDueEnrichments,
+  markEnrichResult,
+  requeueUnreadEvents,
+} from "../src/lib/events/enrich-queue";
 import { IcsFeedGoneError, syncIcsFeed } from "../src/lib/events/discovery/from-ics-feed";
 import { scanGmailForEvents } from "../src/lib/events/discovery/from-gmail";
 import type { DiscoveryCandidate } from "../src/lib/events/discovery/types";
@@ -281,12 +285,15 @@ run(async () => {
   {
     // The most valuable connection in the feature: no API, no paid plan, no scraping — just
     // the "subscribe to my calendar" link every one of these platforms already hands out.
+    // Luma's personal feed holds every registration in ANY state — approved, waitlisted,
+    // pending approval — plus what the user hosts. Only the ones they are going to may land.
     const feed = `BEGIN:VCALENDAR
 BEGIN:VEVENT
 UID:evt-feed1@lu.ma
 SUMMARY:Founders Brunch
 DTSTART:20260801T170000Z
 URL:https://lu.ma/e/evt-feedOne
+DESCRIPTION:Get up-to-date information at: https://lu.ma/e/evt-feedOne\\n\\nA morning for founders.\\n\\nWe have a big waitlist\\, so please cancel if you can't come!
 END:VEVENT
 BEGIN:VEVENT
 UID:evt-feed2@lu.ma
@@ -294,6 +301,27 @@ SUMMARY:Design Systems Night
 DTSTART:20260815T010000Z
 URL:https://lu.ma/e/evt-feedTwo
 STATUS:CANCELLED
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-feed3@lu.ma
+SUMMARY:Candlelit Salon
+DTSTART:20260816T010000Z
+URL:https://lu.ma/e/evt-feedThree
+DESCRIPTION:You're on the waitlist for this event.\\nGet up-to-date information at: https://lu.ma/e/evt-feedThree
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-feed4@lu.ma
+SUMMARY:Invite-Only Dinner
+DTSTART:20260817T010000Z
+URL:https://lu.ma/e/evt-feedFour
+DESCRIPTION:Your registration is pending approval.
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-feed5@lu.ma
+SUMMARY:Unanswered Invite
+DTSTART:20260818T010000Z
+URL:https://lu.ma/e/evt-feedFive
+ATTENDEE;PARTSTAT=NEEDS-ACTION;CN=Me:mailto:me@example.com
 END:VEVENT
 END:VCALENDAR`;
     const served = (body: string, status = 200) =>
@@ -307,21 +335,35 @@ END:VCALENDAR`;
 
     const before = await eventCount();
     const stats = await syncIcsFeed(USER, "https://api.lu.ma/ics/get?u=secret", "luma_ics", served(feed));
-    check("both events are created", stats.created === 2, JSON.stringify(stats));
-    check("and exist", (await eventCount()) === before + 2);
+    check("only the event the user is going to is created", stats.created === 1, JSON.stringify(stats));
+    check("the other four are counted, not written", stats.notAttending === 4, JSON.stringify(stats));
+    check("and exist", (await eventCount()) === before + 1);
 
     const rows = await listEventsForUser(USER);
     const brunch = rows.find((e) => e.title === "Founders Brunch");
     check("badged as coming from the Luma feed", brunch?.discoveredVia === "luma_ics", String(brunch?.discoveredVia));
-    const cancelled = rows.find((e) => e.title === "Design Systems Night");
-    // Still worth keeping: the user may have met people at whatever replaced it, and
-    // "cancelled" is the honest label either way.
-    check("a cancelled event is kept and labelled", cancelled?.rsvpStatus === "cancelled", String(cancelled?.rsvpStatus));
+    // "Waitlist" deep in the host's own blurb says nothing about the user's registration.
+    check("a host's blurb mentioning a waitlist does not hide it", Boolean(brunch) && brunch?.rsvpStatus !== "waitlist", String(brunch?.rsvpStatus));
+    for (const title of ["Design Systems Night", "Candlelit Salon", "Invite-Only Dinner", "Unanswered Invite"]) {
+      check(`"${title}" is not on the page`, !rows.some((e) => e.title === title));
+    }
 
     // The feed is polled every half hour, forever. Re-reading it must be a no-op.
     const again = await syncIcsFeed(USER, "https://api.lu.ma/ics/get?u=secret", "luma_ics", served(feed));
     check("re-reading the feed creates nothing", again.created === 0, JSON.stringify(again));
-    check("and the count holds", (await eventCount()) === before + 2);
+    check("and the count holds", (await eventCount()) === before + 1);
+
+    // Off the waitlist: the same entry now reads as confirmed, and the event arrives.
+    const approved = feed.replace(
+      "You're on the waitlist for this event.\\n",
+      ""
+    );
+    const promoted = await syncIcsFeed(USER, "https://api.lu.ma/ics/get?u=secret", "luma_ics", served(approved));
+    check("coming off the waitlist creates it", promoted.created === 1, JSON.stringify(promoted));
+    check(
+      "and it shows",
+      (await listEventsForUser(USER)).some((e) => e.title === "Candlelit Salon")
+    );
 
     // Regenerating the link is how these platforms revoke one.
     let gone: unknown = null;
@@ -505,6 +547,111 @@ END:VCALENDAR`;
     const rebuilt = await listRepeatCoAttendees(USER, { minEvents: 2 });
     check("and the pattern comes back", rebuilt.some((p) => p.name === "Ada Lovelace"));
     check("running it again finds nothing left", (await backfillPersonKeys(500)) === 0);
+  }
+
+  console.log("\nonly events the user is going to are on the page");
+  {
+    await reset();
+    // Rows as discovery wrote them BEFORE it stopped creating the rest: still in the table,
+    // and every one of them has to stay off the page without being deleted.
+    const insert = async (title: string, cols: { rsvp: string | null; via: string | null; roleSource: string | null; role?: string }) => {
+      const rows = rowsOf<{ id: string }>(
+        await db().execute(sql`
+          INSERT INTO events (user_id, title, starts_at, role, role_source, source, discovered_via, rsvp_status, url)
+          VALUES (${USER}, ${title}, ${new Date("2026-05-01T18:00:00Z")}, ${cols.role ?? "attended"},
+                  ${cols.roleSource}, 'manual', ${cols.via}, ${cols.rsvp}, ${`https://lu.ma/${title.replace(/\W+/g, "-").toLowerCase()}`})
+          RETURNING id
+        `)
+      );
+      return rows[0]!.id;
+    };
+    await insert("Feed going", { rsvp: "going", via: "luma_ics", roleSource: "inferred" });
+    await insert("Feed unknown", { rsvp: null, via: "luma_ics", roleSource: "inferred" });
+    await insert("Feed waitlisted", { rsvp: "waitlist", via: "luma_ics", roleSource: "inferred" });
+    await insert("Feed maybe", { rsvp: "maybe", via: "partiful_ics", roleSource: "inferred" });
+    await insert("Mail newsletter", { rsvp: null, via: "gmail", roleSource: "inferred" });
+    await insert("Hosted but pending", { rsvp: "waitlist", via: "luma_ics", roleSource: "inferred", role: "hosted" });
+    await insert("Typed in by hand", { rsvp: "waitlist", via: "luma_ics", roleSource: null });
+
+    const titles = (await listEventsForUser(USER)).map((e) => e.title).sort();
+    check(
+      "confirmed, unknown-from-a-feed, hosted and hand-added events show; the rest do not",
+      JSON.stringify(titles) ===
+        JSON.stringify(["Feed going", "Feed unknown", "Hosted but pending", "Typed in by hand"]),
+      JSON.stringify(titles)
+    );
+    check("nothing was deleted to get there", (await eventCount()) === 7);
+    const due = await requeueUnreadEvents();
+    check("only visible events are queued for a page read", due === 4, String(due));
+  }
+
+  console.log("\nupcoming and past");
+  {
+    await reset();
+    const now = new Date("2026-09-12T12:00:00Z");
+    const make = (title: string, startsAt: Date | null, endsAt: Date | null = null) =>
+      createEventForUser(USER, { title, startsAt, endsAt });
+    await make("Last week", new Date("2026-09-05T18:00:00Z"));
+    await make("Last month", new Date("2026-08-10T18:00:00Z"));
+    await make("Day two of a conference", new Date("2026-09-11T09:00:00Z"), new Date("2026-09-13T18:00:00Z"));
+    await make("Tomorrow", new Date("2026-09-13T18:00:00Z"));
+    await make("Next month", new Date("2026-10-10T18:00:00Z"));
+    await make("No date", null);
+
+    const upcoming = (await listEventsForUser(USER, 100, { when: "upcoming", now })).map((e) => e.title);
+    const past = (await listEventsForUser(USER, 100, { when: "past", now })).map((e) => e.title);
+    check(
+      "upcoming is soonest-first, and includes an event that has started but not ended",
+      JSON.stringify(upcoming) === JSON.stringify(["Day two of a conference", "Tomorrow", "Next month"]),
+      JSON.stringify(upcoming)
+    );
+    check(
+      "past is newest-first, with the undated at the bottom",
+      JSON.stringify(past) === JSON.stringify(["Last week", "Last month", "No date"]),
+      JSON.stringify(past)
+    );
+  }
+
+  console.log("\ncovers for events that never had a page read");
+  {
+    await reset();
+    // An import larger than the per-pass cap: the overflow used to get no read, and no cover.
+    const many = await recordDiscoveryCandidates(
+      USER,
+      [1, 2, 3].map((n) =>
+        candidate({ sourceRef: `gcal:bulk-${n}`, url: `https://lu.ma/bulk-${n}`, title: `Bulk ${n}` })
+      ),
+      { maxEnrichQueued: 1 }
+    );
+    check("all three are created", many.created === 3, JSON.stringify(many));
+    const waves = rowsOf<{ due: Date | string | null }>(
+      await db().execute(sql`SELECT enrich_due_at AS due FROM events WHERE user_id = ${USER} ORDER BY enrich_due_at`)
+    ).map((r) => (r.due ? new Date(r.due).getTime() : null));
+    check("every one of them is queued", waves.every((t) => t !== null), JSON.stringify(waves));
+    check("the overflow waits its turn", waves[2]! - waves[0]! >= 59 * 60 * 1000, JSON.stringify(waves));
+
+    // Rows from before: never queued, and a Luma share card worn as a cover.
+    await reset();
+    const neverRead = await createEventForUser(USER, { title: "Never read", url: "https://lu.ma/never-read" });
+    const shareCard = await createEventForUser(USER, { title: "Share card", url: "https://lu.ma/share-card" });
+    const freshCard = await createEventForUser(USER, { title: "Read since", url: "https://lu.ma/read-since" });
+    await db().execute(sql`
+      UPDATE events SET cover_image_url = 'https://blob/x.png',
+             cover_source_url = 'https://images.lumacdn.com/cdn-cgi/image/w=800/event-social/41/x.png',
+             enriched_at = ${new Date("2026-09-01T00:00:00Z")}
+       WHERE id = ${shareCard.id}`);
+    await db().execute(sql`
+      UPDATE events SET cover_image_url = 'https://blob/y.png',
+             cover_source_url = 'https://images.lumacdn.com/cdn-cgi/image/w=800/event-social/41/y.png',
+             enriched_at = ${new Date("2026-09-20T00:00:00Z")}
+       WHERE id = ${freshCard.id}`);
+    await requeueUnreadEvents();
+    const queuedIds = rowsOf<{ id: string }>(
+      await db().execute(sql`SELECT id FROM events WHERE user_id = ${USER} AND enrich_due_at IS NOT NULL`)
+    ).map((r) => r.id);
+    check("a never-read event is queued", queuedIds.includes(neverRead.id));
+    check("a Luma share card from before the fix is re-read", queuedIds.includes(shareCard.id));
+    check("but not one already re-read since", !queuedIds.includes(freshCard.id));
   }
 
   console.log("\nand after all of that");

@@ -251,7 +251,7 @@ async function main() {
           parsed: {
             name: "Marcus Lee", company: null, role: null, presence: "participant", location: null, email: null,
             linkedin_url: null, met_at: null, topics: [], action_items: ["Chase legal"], follow_up_recommendation: null,
-            follow_up_days: null, relationship_score_suggestion: 2, tags: [], summary: null, key_facts: [],
+            follow_up_days: null, relationship_score_suggestion: 2, relevance: null, tags: [], summary: null, key_facts: [],
             opportunities: [], shared_interests: [], suggested_next_message: null, confidence: 0.9,
             interaction_date: null, low_confidence_fields: [],
           },

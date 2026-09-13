@@ -49,14 +49,3 @@ export const VIRGO_FIELD_STARS: Array<[number, number]> = [
   [176, 198],
 ];
 
-const byId = Object.fromEntries(VIRGO_STARS.map((s) => [s.id, s]));
-
-/** SVG path ("M … L …") for one chain, for pathLength-based line draws. */
-export function virgoChainPath(chain: string[]): string {
-  return chain
-    .map((id, i) => {
-      const s = byId[id]!;
-      return `${i === 0 ? "M" : "L"} ${s.x} ${s.y}`;
-    })
-    .join(" ");
-}

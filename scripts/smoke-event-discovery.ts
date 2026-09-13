@@ -26,6 +26,7 @@ import {
 import { classifyCalendarEvent } from "../src/lib/calendar-classify";
 import { isWeakKey, personKeyOf } from "../src/lib/events/people";
 import { parseIcsEvents } from "../src/lib/calendar-import";
+import { isAttendingReport } from "../src/lib/events/attendance";
 import type { ParsedCalendarEvent } from "../src/lib/calendar-import";
 import type { DiscoveryCandidate } from "../src/lib/events/discovery/types";
 
@@ -354,6 +355,51 @@ END:VCALENDAR`;
     check("it becomes a candidate", candidates.length === 1);
     check("with the provider id from its URL", candidates[0]?.providerEventId === "evt-6mLuOvNx");
     check("and a tentative RSVP", candidates[0]?.rsvpHint === "maybe", String(candidates[0]?.rsvpHint));
+  }
+
+  console.log("\nwhether the user is actually going");
+  {
+    const entry = (over: Partial<ParsedCalendarEvent>): ParsedCalendarEvent => ({
+      uid: "u1",
+      summary: "Founders Brunch",
+      description: "",
+      location: "",
+      start: new Date("2026-08-01T17:00:00Z"),
+      end: null,
+      attendees: [],
+      organizer: null,
+      url: "https://lu.ma/e/evt-brunch",
+      status: "CONFIRMED",
+      ...over,
+    });
+    const rsvp = (over: Partial<ParsedCalendarEvent>) =>
+      calendarEventsToCandidates([entry(over)], [], "gcal")[0]?.rsvpHint;
+    // CONFIRMED is the EVENT's state; a confirmed event you only got invited to is not yours.
+    check("a Google invite nobody answered is not going", rsvp({ selfResponse: "needsAction" }) === "invited", String(rsvp({ selfResponse: "needsAction" })));
+    check("an accepted one is", rsvp({ selfResponse: "accepted" }) === "going");
+    check("a declined one is not", rsvp({ selfResponse: "declined" }) === "cancelled");
+    check("pending approval, said in the description", rsvp({ description: "Your registration is pending approval." }) === "waitlist");
+    check(
+      "but a waitlist in the host's blurb says nothing",
+      rsvp({ description: "Get up-to-date information at: x\n\nDoors at 7.\nWe have a big waitlist, so cancel if you can't come." }) === "going"
+    );
+    check("an event titled Maybe is still an event", rsvp({ summary: "Maybe Tonight: a jazz night" }) === "going");
+
+    const parsed = parseIcsEvents(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:p1
+SUMMARY:Rooftop
+DTSTART:20260801T170000Z
+URL:https://partiful.com/e/abc123
+ATTENDEE;PARTSTAT=TENTATIVE;CN=Me:mailto:me@example.com
+END:VEVENT
+END:VCALENDAR`);
+    check("a feed's own PARTSTAT is read", parsed[0]?.selfResponse === "TENTATIVE", String(parsed[0]?.selfResponse));
+
+    check("an unknown from a feed counts as going", isAttendingReport({ source: "luma_ics", roleHint: null, rsvpHint: null }));
+    // A platform email that does not say you registered is usually a newsletter.
+    check("an unknown from mail does not", !isAttendingReport({ source: "gmail", roleHint: null, rsvpHint: null }));
+    check("hosting always counts", isAttendingReport({ source: "gmail", roleHint: "hosted", rsvpHint: "waitlist" }));
   }
 
   console.log("\ncross-event identity");

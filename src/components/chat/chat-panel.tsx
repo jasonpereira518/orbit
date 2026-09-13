@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -1013,29 +1014,9 @@ export function ChatPanel() {
 
                   {messages.map((msg) =>
                     msg.role === "user" ? (
-                      <div key={msg.id} className="flex justify-end">
-                        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-                          <MentionText text={msg.content} names={msg.mentionNames} />
-                        </div>
-                      </div>
+                      <UserBubble key={msg.id} msg={msg} />
                     ) : (
-                      <div key={msg.id} className="flex justify-start">
-                        <div className="max-w-[92%] space-y-3">
-                          <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm leading-relaxed text-foreground">
-                            <ChatMarkdown>{msg.answer}</ChatMarkdown>
-                          </div>
-                          {msg.recommendations.length > 0 && (
-                            <div className="space-y-2">
-                              {msg.recommendations.map((r) => (
-                                <RecommendationCard
-                                  key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
-                                  rec={r}
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      <AssistantBubble key={msg.id} msg={msg} />
                     )
                   )}
 
@@ -1276,7 +1257,43 @@ export function ChatPanel() {
   );
 }
 
-function RecommendationCard({
+const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+        <MentionText text={msg.content} names={msg.mentionNames} />
+      </div>
+    </div>
+  );
+});
+
+const AssistantBubble = memo(function AssistantBubble({
+  msg,
+}: {
+  msg: AssistantMessage;
+}) {
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[92%] space-y-3">
+        <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm leading-relaxed text-foreground">
+          <ChatMarkdown>{msg.answer}</ChatMarkdown>
+        </div>
+        {msg.recommendations.length > 0 && (
+          <div className="space-y-2">
+            {msg.recommendations.map((r) => (
+              <RecommendationCard
+                key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
+                rec={r}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+const RecommendationCard = memo(function RecommendationCard({
   rec,
 }: {
   rec: ChatResult["recommendations"][number];
@@ -1345,4 +1362,4 @@ function RecommendationCard({
       )}
     </div>
   );
-}
+});

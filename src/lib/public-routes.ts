@@ -38,6 +38,8 @@ export const PUBLIC_ROUTES = [
   // (`src/lib/internal-auth.ts`), which is fail-closed in production.
   "/api/imports/process-stalled",
   "/api/imports/(.*)/continue",
+  // The capture job runner's internal kick — same gate, same reasons.
+  "/api/capture/jobs/(.*)/run",
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
