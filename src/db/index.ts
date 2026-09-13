@@ -631,6 +631,23 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS plan_upgrade_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  plan text NOT NULL,
+  source text NOT NULL,
+  event_key text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS admin_provider_snapshots (
+  provider text PRIMARY KEY,
+  status text NOT NULL,
+  summary jsonb DEFAULT '{}',
+  error_kind text,
+  checked_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_audit_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_user_id text NOT NULL,
@@ -1366,7 +1383,15 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 53 = recruiter scan v2: recruiter_scan_state (per-user watermark so a bounded, incremental
 // Gmail query replaces the full-mailbox walk that was blowing the Gmail "Total Query Cost"
 // quota). Built as 34 before this branch merged main's DDL through 52.
-export const SCHEMA_VERSION = 53;
+// 54 = provider status + upgrade celebrations: admin_provider_snapshots,
+// plan_upgrade_events and their three indexes. Built on 49, renumbered to 51 when main
+// took 49 (capture history) and 50 (desktop notifications), to 53 when main took 51 and
+// 52 for the capture redesign, and now to 54 because main's recruiter scan v2 landed on
+// 53 first. Note the shape of that last collision: both sides wrote `SCHEMA_VERSION = 53`,
+// so git merged that line without a conflict and only the changelog above it clashed. The
+// number agreeing is exactly what makes reuse silent — a database stamped 53 by a
+// recruiter-scan build would skip this branch's two tables and nothing would fail.
+export const SCHEMA_VERSION = 54;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2170,6 +2195,9 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
   `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
   `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+  `CREATE INDEX IF NOT EXISTS plan_upgrade_events_claim_idx ON plan_upgrade_events(user_id, claimed_at, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS plan_upgrade_events_pending_uidx ON plan_upgrade_events(user_id, plan) WHERE claimed_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS admin_provider_snapshots_expires_idx ON admin_provider_snapshots(expires_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
   `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
   `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
