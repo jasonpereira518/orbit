@@ -3,10 +3,10 @@
 import { useTransition } from "react";
 import Link from "next/link";
 import { toast } from "@/lib/toast";
-import { deleteAllData, exportAllData } from "@/actions/settings";
+import { exportAllData } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
-import { cancelImportJob } from "@/lib/import-job-runner";
+import { DeleteDataDialog } from "@/components/settings/delete-data-dialog";
 
 export function DataSettings() {
   const [pending, start] = useTransition();
@@ -16,8 +16,8 @@ export function DataSettings() {
       <div>
         <h2 className="text-lg font-medium text-ink">Data and privacy</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Export everything as JSON, or permanently delete your Orbit data. Read
-          our{" "}
+          Export everything as JSON, or permanently delete some or all of your
+          Orbit data. Read our{" "}
           <Link
             href="/privacy"
             className="text-primary underline-offset-4 hover:underline"
@@ -49,30 +49,13 @@ export function DataSettings() {
         >
           Export JSON
         </Button>
-        <Button
-          variant="outline"
-          className="text-destructive"
-          disabled={pending}
-          onClick={() => {
-            if (!confirm("Delete ALL your Orbit data? This cannot be undone."))
-              return;
-            start(async () => {
-              // Stop any in-flight background processes immediately.
-              // Import jobs stop after the current chunk.
-              cancelImportJob();
-              window.dispatchEvent(new Event("orbit:stop-operations"));
-              // Cross-tab best-effort: graph listeners can react via storage events.
-              localStorage.setItem(
-                "orbit:stop-operations",
-                String(Date.now())
-              );
-              await deleteAllData();
-              toast.success("All data deleted");
-            });
-          }}
-        >
-          Delete all data
-        </Button>
+        <DeleteDataDialog
+          trigger={
+            <Button variant="outline" className="text-destructive">
+              Delete data…
+            </Button>
+          }
+        />
       </div>
       <AvatarSyncStatus />
     </section>
