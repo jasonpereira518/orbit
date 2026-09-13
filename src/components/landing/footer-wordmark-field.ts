@@ -25,7 +25,7 @@ export function pitchFor(width: number): number {
 export const DOT_SHARE = 0.22;
 
 /** How far from the pointer's path a dot still catches the trail, in CSS px. */
-export const TRAIL_RADIUS = 20;
+export const TRAIL_RADIUS = 13;
 /** A flare's nominal lifetime; each dot's own is scattered around it. */
 export const FLARE_MS = 1200;
 /** Rise time, so a flare swells in rather than popping on. */
