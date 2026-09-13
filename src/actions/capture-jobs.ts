@@ -29,7 +29,7 @@ import type {
   CaptureDecision,
   CaptureDecisions,
   CaptureReminderChoices,
-  CaptureSourceKind,
+  CaptureJobSource,
 } from "@/lib/capture/types";
 
 /**
@@ -98,7 +98,7 @@ export async function queueCaptureJob(input: {
   jobId?: string | null;
   text: string;
   hints?: CaptureParseHints | null;
-  sourceKind: CaptureSourceKind;
+  sourceKind: CaptureJobSource;
   entryPoint?: "capture" | "profile";
   seedContactId?: string | null;
   meetingSessionId?: string | null;

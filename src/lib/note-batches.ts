@@ -3,11 +3,61 @@
  * the results page. No DB, no AI — everything here is unit-checkable.
  */
 import { atLocalNoon } from "@/lib/interaction-date";
-import type { NoteBatchResult, ReminderDateBasis } from "@/db/schema";
+import type { CaptureSourceKind, NoteBatchResult, ReminderDateBasis } from "@/db/schema";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
 import type { CaptureParseHints } from "@/lib/ai";
 
-export type { NoteBatchResult, ReminderDateBasis };
+export type { CaptureSourceKind, NoteBatchResult, ReminderDateBasis };
+
+const SOURCE_KIND_ORDER: CaptureSourceKind[] = ["voice", "photo", "calendar", "email", "file", "text"];
+
+/**
+ * Folds `normalizeCaptureInput`'s `sources` labels (`"voice:rec.wav"`, `"photos:2"`,
+ * `"calendar:invite.ics"`, `"text"`...) into the kinds the capture history shows.
+ *
+ * The labels arrive back from the client with the save, so anything unrecognised is
+ * dropped rather than stored: this is a display label and must never become a place to
+ * write arbitrary strings. A save with no labels at all was typed, so it reads as text.
+ */
+export function captureSourceKinds(labels: readonly unknown[] | null | undefined): CaptureSourceKind[] {
+  const kinds = new Set<CaptureSourceKind>();
+  for (const label of labels ?? []) {
+    if (typeof label !== "string") continue;
+    const prefix = label.split(":")[0]!.trim().toLowerCase();
+    if (prefix === "voice") kinds.add("voice");
+    else if (prefix === "photos" || prefix === "photo") kinds.add("photo");
+    else if (prefix === "calendar") kinds.add("calendar");
+    else if (prefix === "email") kinds.add("email");
+    // A bare "text" is what was typed or pasted; "text:notes.md" is an uploaded file.
+    else if (prefix === "text") kinds.add(label.includes(":") ? "file" : "text");
+    else if (prefix === "file") kinds.add("file");
+  }
+  if (!kinds.size) kinds.add("text");
+  return SOURCE_KIND_ORDER.filter((k) => kinds.has(k));
+}
+
+/**
+ * The line a capture is recognised by in the history: who it was about. Falls back to the
+ * first reminder for a dates-only note ("Board review 15th of October"), then to nothing —
+ * the caller shows the excerpt instead.
+ */
+export function captureHistoryTitle(result: Pick<NoteBatchResult, "participants" | "reminders">): string | null {
+  const names = [...new Set(result.participants.map((p) => p.name.trim()).filter(Boolean))];
+  if (names.length) {
+    const shown = names.slice(0, 2).join(", ");
+    return names.length > 2 ? `${shown} +${names.length - 2} more` : shown;
+  }
+  return result.reminders[0]?.title.trim() || null;
+}
+
+/** The start of the notes, whitespace-collapsed and cut on a word boundary. */
+export function captureExcerpt(sourceText: string, max = 160): string {
+  const flat = sourceText.replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
 
 /** One mention surfaced by `parseBulkCaptureNotes`, echoed through the panel's done step. */
 export type PreviewMention = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | null };

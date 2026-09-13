@@ -237,11 +237,29 @@ CREATE TABLE IF NOT EXISTS note_batches (
   anchor_basis text NOT NULL DEFAULT 'upload',
   status text NOT NULL DEFAULT 'saved',
   result jsonb NOT NULL,
+  input_sources jsonb NOT NULL DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now(),
   undone_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS note_batches_user_created_idx ON note_batches(user_id, created_at);
 CREATE INDEX IF NOT EXISTS note_batches_user_source_idx ON note_batches(user_id, source_hash);
+CREATE TABLE IF NOT EXISTS capture_photos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  note_batch_id uuid REFERENCES note_batches(id) ON DELETE CASCADE,
+  position integer NOT NULL DEFAULT 0,
+  file_name text,
+  storage text NOT NULL,
+  blob_url text,
+  inline_data text,
+  content_type text NOT NULL,
+  byte_size integer NOT NULL,
+  width integer,
+  height integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS capture_photos_batch_idx ON capture_photos(note_batch_id, position);
+CREATE INDEX IF NOT EXISTS capture_photos_user_created_idx ON capture_photos(user_id, created_at);
 CREATE TABLE IF NOT EXISTS interaction_mentions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1118,6 +1136,7 @@ CREATE TABLE IF NOT EXISTS capture_jobs (
   input_hints jsonb NOT NULL DEFAULT '{}'::jsonb,
   ingested_blocks jsonb NOT NULL DEFAULT '[]'::jsonb,
   sources jsonb NOT NULL DEFAULT '[]'::jsonb,
+  photo_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
   transcription_engine text,
   source_text text,
   source_hash text,
@@ -1263,6 +1282,10 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
  * its branch, moving each time main's DDL merged in (meeting capture, then scan notes):
  * this PR's previews stamped each of those numbers without the merged-in tables, so
  * neither can carry them. 44 and 46 are burned for the same reason 40, 41 and 43 are.
+ * v49 = capture history (#164): the capture_photos table and note_batches.input_sources.
+ * Built as 41, then 46 (see v47 — burned by the page_views branch too), then 48 — which
+ * the event-platform branch below also landed on independently. Same DDL-change rule:
+ * two branches on one number means one of them silently never runs its migration.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1316,10 +1339,15 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // carry it twice over: the traffic-analytics branch's previews stamped 46, and so did this
 // PR's own preview (#168) — with the event tables but without page_views. 47 is main's.
 //
-// 50 = capture jobs (#capture-page-redesign): capture_jobs, ignored_people, and
-// capture_handoffs.capture_job_id. 49 is claimed by capture-history-command-palette, so
-// this branch skips it — a database stamped 49 by that branch's DDL must still get these.
-export const SCHEMA_VERSION = 50;
+// 49 = capture history (#164): the capture_photos table and note_batches.input_sources.
+// Landed on 48 independently of the event-platform branch above — two different DDL sets
+// cannot share one number, so this one moves again.
+//
+// 51 = capture jobs (the /capture redesign): capture_jobs (with photo_ids), ignored_people,
+// and capture_handoffs.capture_job_id, on top of #164's 49. Built as 50 before #164 merged;
+// 50 is also claimed by settings-page-improvements, so this skips to 51 — a database stamped
+// 49 or 50 by either of those must still get these tables.
+export const SCHEMA_VERSION = 51;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1569,6 +1597,13 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS duplicate_suggestions_pending_idx
      ON duplicate_suggestions(user_id, confidence DESC)
      WHERE status = 'pending'`,
+
+  // --- Capture history ---------------------------------------------------------------
+  //
+  // How a capture's notes arrived (typed, voice, photos...), for the history list's icons.
+  // Here rather than only in the CREATE TABLE above, which never adds a column to a
+  // note_batches table that already exists.
+  `ALTER TABLE note_batches ADD COLUMN IF NOT EXISTS input_sources jsonb NOT NULL DEFAULT '[]'`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -2085,8 +2120,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "status_changed_at", "timestamptz");
   await ensureColumn(client, "feedback", "status_changed_by", "text");
   await ensureColumn(client, "feedback", "resolution_note", "text");
-  // v50: the phone scan handoff appends to a capture job.
+  // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
   await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
+  await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -2286,8 +2322,9 @@ const alters = [
   `CREATE TABLE IF NOT EXISTS event_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, role text NOT NULL, source text NOT NULL, evidence text, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS target_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, priority integer NOT NULL DEFAULT 2, note text, created_at timestamptz NOT NULL DEFAULT now())`,
   // v48 (event platform) as well: the cached one-line "why" and opener, keyed by a hash of what produced it.
-  // v50: the phone scan handoff appends its pages to a capture job instead of holding a transcript.
+  // v51: the phone scan handoff appends its pages to a capture job instead of holding a transcript.
   `ALTER TABLE capture_handoffs ADD COLUMN IF NOT EXISTS capture_job_id uuid`,
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS photo_ids jsonb NOT NULL DEFAULT '[]'::jsonb`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS ai_note jsonb`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_kind text`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_value text`,

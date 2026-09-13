@@ -8,10 +8,23 @@ import type { RejectedCounts } from "@/lib/date-commitment-extract";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import type { CaptureParseHints } from "@/lib/ai";
 import { runCaptureParse } from "@/lib/capture-parse";
+import { captureSourceKinds } from "@/lib/note-batches";
 import {
+  captureImageFiles,
   normalizeCaptureInput,
   type CaptureMediaFile,
 } from "@/lib/capture-ingest";
+import {
+  attachCapturePhotos,
+  discardCapturePhotos,
+  storeCapturePhotos,
+  type StoredCapturePhoto,
+} from "@/lib/capture-photos";
+import {
+  CAPTURE_HISTORY_PAGE,
+  listCaptureHistoryFor,
+  type CaptureHistoryPage,
+} from "@/lib/capture-history";
 import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
@@ -43,7 +56,11 @@ export type {
 
 /**
  * Ingest voice / photos / calendar / email into normalized capture text.
- * Media is processed ephemerally and not stored.
+ *
+ * Audio, calendar and email files are read and dropped. Photos are also kept — shrunk,
+ * stripped of metadata, and unattached until a save claims them — so the capture history
+ * can show the original next to what was pulled out of it (see `src/lib/capture-photos.ts`).
+ * The ids come back as `photos`; the panel hands them to `confirmBulkCapture`.
  */
 export async function ingestCaptureMedia(input: {
   text?: string;
@@ -73,10 +90,32 @@ export async function ingestCaptureMedia(input: {
       };
     }
 
-    const normalized = await normalizeCaptureInput(userId, {
-      text: input.text,
-      files: input.files,
-    });
+    // Kept alongside the transcription rather than after it: re-encoding and uploading eight
+    // photos is seconds of work that has no reason to queue behind a model call. Settled,
+    // not raced, so a transcription failure can still find and discard what was stored.
+    const images = captureImageFiles(input.files);
+    const [normalizedResult, storedResult] = await Promise.allSettled([
+      normalizeCaptureInput(userId, {
+        text: input.text,
+        files: input.files,
+      }),
+      storeCapturePhotos(
+        userId,
+        images.map((img) => ({ filename: img.filename, base64: img.base64 }))
+      ),
+    ]);
+    const photos: StoredCapturePhoto[] =
+      storedResult.status === "fulfilled" ? storedResult.value : [];
+    if (normalizedResult.status === "rejected") {
+      // No text means nothing can be saved to claim these, so do not leave them for the
+      // prune to find tomorrow.
+      await discardCapturePhotos(
+        userId,
+        photos.map((p) => p.id)
+      ).catch(() => {});
+      throw normalizedResult.reason;
+    }
+    const normalized = normalizedResult.value;
 
     return {
       ok: true as const,
@@ -84,6 +123,9 @@ export async function ingestCaptureMedia(input: {
       hints: normalized.hints,
       sources: normalized.sources,
       transcriptionEngine: normalized.transcriptionEngine ?? null,
+      photos,
+      /** Photos that were read but could not be kept, so the panel can say so. */
+      photosNotKept: Math.max(0, images.length - photos.length),
     };
   } catch (err) {
     // Data, not a throw — so never stripped in production. See `friendlyError`.
@@ -141,6 +183,10 @@ export async function confirmBulkCapture(
     commitments: NoteBatchCommitmentInput[];
     mentions?: NoteBatchMentionInput[];
     skipped: RejectedCounts;
+    /** Ids `ingestCaptureMedia` returned for this capture's photos. */
+    photoIds?: string[];
+    /** `ingestCaptureMedia`'s `sources` labels, for the history's icons. */
+    sources?: string[];
     /** A recorded meeting being saved: which one, and the digest items ticked as reminders. */
     meeting?: { sessionId: string; extraReminders: MeetingExtraReminderInput[] } | null;
   }
@@ -180,11 +226,21 @@ export async function confirmBulkCapture(
     commitments: batch.commitments,
     mentions: batch.mentions ?? [],
     skipped: batch.skipped,
+    inputSources: captureSourceKinds([
+      ...(batch.sources ?? []),
+      ...(batch.photoIds?.length ? ["photos"] : []),
+    ]),
     meeting:
       batch.meeting && meetingSummary
         ? { summary: meetingSummary, extraReminders: batch.meeting.extraReminders.slice(0, 40) }
         : null,
   });
+
+  // After the save, not inside it: a photo is a record of where the notes came from, and a
+  // failure to claim one must not roll back contacts and reminders the person just reviewed.
+  if (batch.photoIds?.length) {
+    await attachCapturePhotos(userId, out.batchId, batch.photoIds).catch(() => 0);
+  }
 
   if (batch.meeting) {
     await markMeetingSessionSaved(userId, batch.meeting.sessionId, out.batchId);
@@ -207,4 +263,16 @@ export async function confirmBulkCapture(
   revalidatePath("/graph");
   for (const id of out.contactIds) revalidatePath(`/contacts/${id}`);
   return out;
+}
+
+/**
+ * One page of the capture history, newest first. `cursor` is the previous page's
+ * `nextCursor`; omit it for the first page.
+ */
+export async function listCaptureHistory(
+  cursor?: string | null,
+  limit: number = CAPTURE_HISTORY_PAGE
+): Promise<CaptureHistoryPage> {
+  const userId = await requireUserId();
+  return listCaptureHistoryFor(userId, { cursor, limit });
 }

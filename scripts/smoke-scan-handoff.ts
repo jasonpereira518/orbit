@@ -165,7 +165,9 @@ async function main() {
 
   console.log("\nNo photograph is ever stored...");
   const columns = [...Object.keys(captureHandoffs), ...Object.keys(captureJobs)];
-  const imageish = columns.filter((c) => /image|photo|blob|bytes|base64|data/i.test(c));
+  // `photoIds` is a list of `capture_photos` ids — references to rows the history route
+  // serves with an owner check — not bytes. Anything else image-shaped is a regression.
+  const imageish = columns.filter((c) => c !== "photoIds" && /image|photo|blob|bytes|base64|data/i.test(c));
   check("neither table has a column that could hold pixels", imageish.length === 0, imageish.join(", "));
 
   await db.delete(captureHandoffs);

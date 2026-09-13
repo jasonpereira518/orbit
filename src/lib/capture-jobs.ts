@@ -21,7 +21,7 @@ import {
   type CaptureJobResult,
   type CaptureJobStatus,
   type CaptureReminderChoices,
-  type CaptureSourceKind,
+  type CaptureJobSource,
 } from "@/lib/capture/types";
 
 export type CaptureJobRow = typeof captureJobs.$inferSelect;
@@ -51,12 +51,13 @@ const CAPTURE_INPUT_MAX_CHARS = 100_000;
 export type CaptureJobView = {
   id: string;
   status: CaptureJobStatus;
-  sourceKind: CaptureSourceKind;
+  sourceKind: CaptureJobSource;
   entryPoint: "capture" | "profile";
   seedContactId: string | null;
   inputText: string | null;
   blocks: CaptureIngestedBlock[];
   sources: string[];
+  photoIds: string[];
   transcriptionEngine: string | null;
   meetingSessionId: string | null;
   result: CaptureJobResult | null;
@@ -77,6 +78,7 @@ export function toCaptureJobView(row: CaptureJobRow): CaptureJobView {
     inputText: row.inputText,
     blocks: row.ingestedBlocks ?? [],
     sources: row.sources ?? [],
+    photoIds: row.photoIds ?? [],
     transcriptionEngine: row.transcriptionEngine,
     meetingSessionId: row.meetingSessionId,
     result: row.result ?? null,
@@ -129,7 +131,7 @@ export async function findActiveCaptureJob(userId: string, now = new Date()): Pr
 // Creating and feeding
 
 export type CreateCaptureJobInput = {
-  sourceKind: CaptureSourceKind;
+  sourceKind: CaptureJobSource;
   status: Extract<CaptureJobStatus, "ingesting" | "transcribed" | "queued">;
   inputText?: string | null;
   inputHints?: CaptureParseHints | null;
@@ -168,15 +170,16 @@ function clipInput(text: string | null | undefined): string | null {
 export async function appendIngestedBlocks(
   id: string,
   blocks: CaptureIngestedBlock[],
-  extra: { sources?: string[]; transcriptionEngine?: string | null } = {}
+  extra: { sources?: string[]; transcriptionEngine?: string | null; photoIds?: string[] } = {}
 ): Promise<void> {
-  if (!blocks.length) return;
+  if (!blocks.length && !extra.photoIds?.length) return;
   const db = await getDb();
   await db
     .update(captureJobs)
     .set({
       ingestedBlocks: sql`coalesce(${captureJobs.ingestedBlocks}, '[]'::jsonb) || ${JSON.stringify(blocks)}::jsonb`,
       sources: sql`coalesce(${captureJobs.sources}, '[]'::jsonb) || ${JSON.stringify(extra.sources ?? [])}::jsonb`,
+      photoIds: sql`coalesce(${captureJobs.photoIds}, '[]'::jsonb) || ${JSON.stringify(extra.photoIds ?? [])}::jsonb`,
       ...(extra.transcriptionEngine ? { transcriptionEngine: extra.transcriptionEngine } : {}),
       updatedAt: new Date(),
     })

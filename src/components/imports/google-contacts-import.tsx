@@ -93,7 +93,7 @@ export function GoogleContactsImport() {
       <IntegrationUnavailable
         id="import-google-contacts"
         title="Google Contacts"
-        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        blurb="Not connected yet. Export your Google contacts as a vCard or Google CSV and upload it on the Contacts file card above — no account connection needed."
         envVars={[
           "GOOGLE_CLIENT_ID",
           "GOOGLE_CLIENT_SECRET",

@@ -181,14 +181,16 @@ export async function markHandoffUploading(id: string): Promise<void> {
  */
 export async function recordHandoffTranscript(
   id: string,
-  result: { transcript: string; pageCount: number; sources: string }
+  result: { transcript: string; pageCount: number; sources: string; photoIds?: string[] }
 ): Promise<void> {
   const db = await getDb();
   const row = await db.query.captureHandoffs.findFirst({ where: eq(captureHandoffs.id, id) });
-  if (row?.captureJobId && result.transcript.trim()) {
-    await appendIngestedBlocks(row.captureJobId, [{ text: result.transcript.trim(), source: result.sources }], {
-      sources: [result.sources],
-    });
+  if (row?.captureJobId && (result.transcript.trim() || result.photoIds?.length)) {
+    await appendIngestedBlocks(
+      row.captureJobId,
+      result.transcript.trim() ? [{ text: result.transcript.trim(), source: result.sources }] : [],
+      { sources: [result.sources], photoIds: result.photoIds ?? [] }
+    );
   }
   await db
     .update(captureHandoffs)

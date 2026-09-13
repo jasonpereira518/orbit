@@ -1,8 +1,10 @@
+import { Suspense } from "react";
 import { getContact } from "@/actions/contacts";
 import { getActiveCaptureJob } from "@/actions/capture-jobs";
 import { countIgnoredPeople } from "@/actions/ignored-people";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
+import { CaptureHistory, CaptureHistorySkeleton } from "@/components/capture/capture-history";
 import type { CaptureMode } from "@/components/capture/capture-tabs";
 import { requireUserId } from "@/lib/auth";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
@@ -24,6 +26,7 @@ export default async function CapturePage({
       ? params.mode
       : null;
 
+  const userIdPromise = requireUserId();
   const settingsPromise = getSettings();
   const planPromise = getPlanOverview();
   const resumablePromise = requireUserId()
@@ -45,6 +48,7 @@ export default async function CapturePage({
   }
 
   const settings = await settingsPromise;
+  const userId = await userIdPromise;
   const { usage } = await planPromise;
   const resumableMeeting = await resumablePromise;
   const job = await jobPromise;
@@ -79,6 +83,16 @@ export default async function CapturePage({
         resumableMeeting={resumableMeeting}
         ignoredCount={ignoredCount}
         quota={{ used: usage.used, limit: usage.limit }}
+        userId={userId}
+        // Hidden when logging with one named person: the page is doing one specific thing,
+        // and a feed of past captures is not it.
+        history={
+          !contactId ? (
+            <Suspense fallback={<CaptureHistorySkeleton />}>
+              <CaptureHistory />
+            </Suspense>
+          ) : null
+        }
       />
     </div>
   );

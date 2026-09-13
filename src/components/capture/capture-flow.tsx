@@ -38,15 +38,16 @@ import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import { clearCaptureJob, refreshCaptureJob, seedCaptureJob, useCaptureJob } from "@/lib/capture/job-store";
 import { acceptedPeople, countDecisions, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
-import type { CaptureDecision, CaptureDecisions, CaptureSourceKind } from "@/lib/capture/types";
+import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
+import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
 import { MISSING_AI_API_KEY_MESSAGE, isMissingAiApiKeyError } from "@/lib/errors";
 import { meetingExtrasFromDigest } from "@/lib/meeting-extras";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { DUR, DUR_MS, EASE_HOUSE } from "@/lib/motion";
 import { toast } from "@/lib/toast";
 
-const SOURCE_LABEL: Record<CaptureSourceKind, string> = {
+const SOURCE_LABEL: Record<CaptureJobSource, string> = {
   messy: "your notes",
   voice: "a voice note",
   meeting: "a meeting",
@@ -64,6 +65,8 @@ export function CaptureFlow({
   resumableMeeting = null,
   ignoredCount = 0,
   quota,
+  userId = null,
+  history = null,
 }: {
   initialJob: CaptureJobView | null;
   initialContactId?: string | null;
@@ -74,6 +77,10 @@ export function CaptureFlow({
   resumableMeeting?: ResumableMeeting | null;
   ignoredCount?: number;
   quota?: { used: number; limit: number | null } | null;
+  /** For the notes box's localStorage draft key. */
+  userId?: string | null;
+  /** The capture history feed, shown under the input UI only. */
+  history?: React.ReactNode;
 }) {
   const router = useRouter();
   const { job: storeJob } = useCaptureJob();
@@ -154,7 +161,7 @@ export function CaptureFlow({
 
   // ── Actions ─────────────────────────────────────────────────────────────────────────
   const startExtraction = useCallback(
-    async (input: { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureSourceKind; meetingSessionId?: string | null }) => {
+    async (input: { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null }) => {
       if (!input.text.trim() && !input.jobId) return;
       setPendingStart(true);
       setReviewOpened(false);
@@ -179,8 +186,10 @@ export function CaptureFlow({
       }
       seedCaptureJob(res.job, { force: true });
       setPendingStart(false);
+      // Extracted means decided: the draft's job is done.
+      if (userId && input.sourceKind === "messy") clearCaptureDraft(window.localStorage, captureDraftKey(userId, initialContactId));
     },
-    [initialContactId, messy, voice]
+    [initialContactId, messy, voice, userId]
   );
 
   const save = useCallback(async (jobId: string) => {
@@ -292,6 +301,8 @@ export function CaptureFlow({
                 preferredContactName={initialContactName}
                 panelId={capturePanelId("messy")}
                 tabId={captureTabId("messy")}
+                draftKey={userId ? captureDraftKey(userId, initialContactId) : null}
+                acceptsHandoff={!initialContactId}
                 onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy" })}
               />
             )}
@@ -383,12 +394,13 @@ export function CaptureFlow({
         )}
       </AnimatePresence>
 
+      {phase === "input" && history}
       {phase !== "review" && <IgnoredPeopleSection initialCount={ignoredCount} />}
     </div>
   );
 }
 
-function tabForSource(kind: CaptureSourceKind): CaptureMode {
+function tabForSource(kind: CaptureJobSource): CaptureMode {
   return kind === "voice" ? "voice" : kind === "meeting" ? "meeting" : "messy";
 }
 

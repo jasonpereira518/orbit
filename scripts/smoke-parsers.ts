@@ -1,4 +1,5 @@
 import { parseLinkedInMessagesCsv, resolveConversations } from "../src/lib/linkedin-messages";
+import { LinkedInExportError, parseLinkedInConnectionsCsv } from "../src/lib/linkedin-connections";
 import { parseIcsEvents, peopleFromEvent } from "../src/lib/calendar-import";
 import type { Contact } from "../src/db/schema";
 import { calendarMeetingExternalId } from "../src/lib/import-adapters/calendar";
@@ -135,6 +136,41 @@ const attendeeA = interactionExternalId(calendarExternalIdBase(FROZEN_UID), "con
 const attendeeB = interactionExternalId(calendarExternalIdBase(FROZEN_UID), "contact-b");
 if (attendeeA === attendeeB) {
   throw new Error("two attendees of one event produced the same external id");
+}
+
+// A LinkedIn export uploaded on the wrong card must say which card it belongs on, and say it
+// as a `LinkedInExportError` — the only kind the preview actions forward to the toast.
+function refusal(fn: () => unknown): LinkedInExportError {
+  try {
+    fn();
+  } catch (err) {
+    if (err instanceof LinkedInExportError) return err;
+    throw new Error(`expected a LinkedInExportError, got ${String(err)}`);
+  }
+  throw new Error("expected the parser to refuse this file");
+}
+const connectionsCsv = `First Name,Last Name,URL,Email Address,Company,Position,Connected On
+Jane,Doe,https://www.linkedin.com/in/jane-doe,,Acme,Engineer,15 Jan 2024`;
+const onMessagesCard = refusal(() => parseLinkedInMessagesCsv(connectionsCsv));
+if (!/Connections export.*Connections tab/.test(onMessagesCard.message)) {
+  throw new Error(`Connections on the Messages card: ${onMessagesCard.message}`);
+}
+const onConnectionsCard = refusal(() => parseLinkedInConnectionsCsv(csv));
+if (!/Messages export.*Messages tab/.test(onConnectionsCard.message)) {
+  throw new Error(`Messages on the Connections card: ${onConnectionsCard.message}`);
+}
+if (refusal(() => parseLinkedInConnectionsCsv("  \n")).message !== "That file is empty") {
+  throw new Error("an empty Connections file should say so");
+}
+// The house voice (see scripts/smoke-toast-copy.ts): these are shown verbatim.
+for (const message of [onMessagesCard.message, onConnectionsCard.message]) {
+  if (message.endsWith(".") || message.includes("'")) {
+    throw new Error(`refusal breaks the toast voice: ${message}`);
+  }
+}
+// A Connections file the parser accepts is still accepted.
+if (parseLinkedInConnectionsCsv(connectionsCsv).rows.length !== 1) {
+  throw new Error("a real Connections export should still parse");
 }
 
 console.log("parser smoke tests passed");

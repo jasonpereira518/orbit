@@ -34,7 +34,8 @@ import { friendlyError } from "@/lib/errors";
 import { upsertIgnoredPeople, type IgnoredPersonInput } from "@/lib/ignored-people";
 import { getMeetingSession, getNoteBatchForUser, markMeetingSessionSaved, toNoteBatchMeeting } from "@/lib/meeting-sessions";
 import { meetingExtrasFromDigest } from "@/lib/meeting-extras";
-import { followUpDaysFor, shouldCreateFollowUp } from "@/lib/note-batches";
+import { captureSourceKinds, followUpDaysFor, shouldCreateFollowUp } from "@/lib/note-batches";
+import { attachCapturePhotos } from "@/lib/capture-photos";
 import {
   saveNoteBatch,
   type MeetingExtraReminderInput,
@@ -135,6 +136,10 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
     const saved = savedSummary(row, out);
     const result: CaptureJobResult = { ...row.result, saved };
     await settleCaptureJob(id, token, { status: "saved", noteBatchId: out.batchId, result, error: null });
+
+    // The photos this capture was read from, claimed for its batch so the history can show
+    // them. Idempotent: an attached photo is not claimable twice.
+    if (row.photoIds.length) await attachCapturePhotos(userId, out.batchId, row.photoIds).catch(() => 0);
 
     if (row.meetingSessionId) {
       await markMeetingSessionSaved(userId, row.meetingSessionId, out.batchId).catch(() => null);
@@ -296,6 +301,8 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
       matchedBy: m.matchedBy,
     })),
     skipped: result.suggestionsSkipped,
+    // For the history's icons: what the notes arrived as. Typed text carries no label.
+    inputSources: captureSourceKinds([...row.sources, ...(row.photoIds.length ? ["photos"] : []), ...(row.sourceKind === "voice" ? ["voice"] : [])]),
     meeting,
   };
 }

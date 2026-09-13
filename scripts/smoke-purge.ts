@@ -149,13 +149,37 @@ async function seed() {
   // The pasted text a note was parsed out of. Nothing cascades this — both
   // `note_batch_id` columns are plain uuids with no foreign key — so it only leaves with
   // the explicit delete in `purgeUserData`.
-  await db.insert(schema.noteBatches).values({
-    userId: USER,
-    sourceHash: "note-batch-hash",
-    sourceText: "the raw notes the user pasted, about named people",
-    anchorDate: now,
-    result: {} as never,
-  });
+  const [noteBatch] = await db
+    .insert(schema.noteBatches)
+    .values({
+      userId: USER,
+      sourceHash: "note-batch-hash",
+      sourceText: "the raw notes the user pasted, about named people",
+      anchorDate: now,
+      result: {} as never,
+    })
+    .returning();
+
+  // A photo of the user's notes, one attached and one from a capture never saved. The
+  // unattached one is the case a cascade from `note_batches` cannot reach.
+  await db.insert(schema.capturePhotos).values([
+    {
+      userId: USER,
+      noteBatchId: noteBatch.id,
+      storage: "inline",
+      inlineData: "aGVsbG8=",
+      contentType: "image/jpeg",
+      byteSize: 5,
+    },
+    {
+      userId: USER,
+      noteBatchId: null,
+      storage: "inline",
+      inlineData: "aGVsbG8=",
+      contentType: "image/jpeg",
+      byteSize: 5,
+    },
+  ]);
 
   // A recorded call and one line of it. The segment carries its own `user_id` and is
   // deleted explicitly, though it would also cascade from the session.

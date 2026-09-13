@@ -110,7 +110,7 @@ export const ACTIVE_CAPTURE_JOB_STATUSES: readonly CaptureJobStatus[] = [
   "saving",
 ];
 
-export type CaptureSourceKind = "messy" | "voice" | "meeting" | "scan" | "phone";
+export type CaptureJobSource = "messy" | "voice" | "meeting" | "scan" | "phone";
 
 /** One transcribed block of media, in the order it arrived. */
 export type CaptureIngestedBlock = { text: string; source: string };

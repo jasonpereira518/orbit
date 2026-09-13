@@ -6,7 +6,7 @@
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
 import type { CaptureParseHints } from "@/lib/ai";
 import type { CaptureJobView } from "@/lib/capture-jobs";
-import type { CaptureSourceKind } from "@/lib/capture/types";
+import type { CaptureJobSource } from "@/lib/capture/types";
 
 export const CAPTURE_FILE_ACCEPT = [
   ".txt",
@@ -73,7 +73,7 @@ export type CaptureUploadResult =
  * `transcribed` job behind. A dropped connection after the bytes land loses nothing.
  */
 export async function uploadCaptureMedia(input: {
-  sourceKind: CaptureSourceKind;
+  sourceKind: CaptureJobSource;
   text?: string;
   files: Array<File | { filename: string; mimeType: string; blob: Blob }>;
 }): Promise<CaptureUploadResult> {

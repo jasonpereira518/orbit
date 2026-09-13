@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
+import { captureImageFiles, normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
+import { discardCapturePhotos, storeCapturePhotos, type StoredCapturePhoto } from "@/lib/capture-photos";
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
 import {
   appendIngestedBlocks,
@@ -9,7 +10,7 @@ import {
   toCaptureJobView,
   getCaptureJobRow,
 } from "@/lib/capture-jobs";
-import type { CaptureSourceKind } from "@/lib/capture/types";
+import type { CaptureJobSource } from "@/lib/capture/types";
 import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
 import { isPaywallError } from "@/lib/entitlements";
 import { requireUserForSurface } from "@/lib/plan-guards";
@@ -20,7 +21,7 @@ export const runtime = "nodejs";
 // Eight pages of OCR or a six-minute voice note, against whichever provider the user set.
 export const maxDuration = 300;
 
-const SOURCE_KINDS: CaptureSourceKind[] = ["messy", "voice", "scan"];
+const SOURCE_KINDS: CaptureJobSource[] = ["messy", "voice", "scan"];
 
 /**
  * Media into a capture job: raw files in, a `transcribed` job out.
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Malformed upload" }, { status: 400 });
   }
   const sourceKindRaw = String(form.get("sourceKind") ?? "messy");
-  const sourceKind = (SOURCE_KINDS as string[]).includes(sourceKindRaw) ? (sourceKindRaw as CaptureSourceKind) : "messy";
+  const sourceKind = (SOURCE_KINDS as string[]).includes(sourceKindRaw) ? (sourceKindRaw as CaptureJobSource) : "messy";
   const text = typeof form.get("text") === "string" ? String(form.get("text")) : "";
   const uploads = form.getAll("files").filter((f): f is File => f instanceof File);
   if (!uploads.length) {
@@ -108,12 +109,26 @@ export async function POST(request: Request) {
 
   const job = await createCaptureJob(userId, { sourceKind, status: "ingesting", inputText: text });
 
+  // Photos are kept (shrunk, stripped of metadata) so the capture history can show the page
+  // next to what was pulled out of it — the same lifecycle `ingestCaptureMedia` gives them:
+  // unattached now, claimed by the save, pruned if never saved. Settled, not raced, so a
+  // transcription failure can still discard what was stored.
+  const images = captureImageFiles(files);
+  const [normalizedResult, storedResult] = await Promise.allSettled([
+    normalizeCaptureInput(userId, { files }),
+    storeCapturePhotos(userId, images.map((img) => ({ filename: img.filename, base64: img.base64 }))),
+  ]);
+  const photos: StoredCapturePhoto[] = storedResult.status === "fulfilled" ? storedResult.value : [];
   try {
-    const normalized = await normalizeCaptureInput(userId, { files });
+    if (normalizedResult.status === "rejected") {
+      await discardCapturePhotos(userId, photos.map((p) => p.id)).catch(() => {});
+      throw normalizedResult.reason;
+    }
+    const normalized = normalizedResult.value;
     await appendIngestedBlocks(
       job.id,
       normalized.text.trim() ? [{ text: normalized.text.trim(), source: normalized.sources.join(", ") || sourceKind }] : [],
-      { sources: normalized.sources, transcriptionEngine: normalized.transcriptionEngine ?? null }
+      { sources: normalized.sources, transcriptionEngine: normalized.transcriptionEngine ?? null, photoIds: photos.map((p) => p.id) }
     );
     await markCaptureJobTranscribed(job.id);
     const fresh = await getCaptureJobRow(userId, job.id);

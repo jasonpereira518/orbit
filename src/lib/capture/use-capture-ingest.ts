@@ -27,7 +27,7 @@ import {
   oversizeMessage,
   uploadCaptureMedia,
 } from "@/lib/capture/ingest-client";
-import type { CaptureSourceKind } from "@/lib/capture/types";
+import type { CaptureJobSource } from "@/lib/capture/types";
 import { MISSING_AI_API_KEY_MESSAGE, friendlyError, isMissingAiApiKeyError } from "@/lib/errors";
 import { releaseScanPage, type ScanPage } from "@/lib/scan-capture";
 import { toast } from "@/lib/toast";
@@ -47,7 +47,7 @@ export function useCaptureIngest({
   initialJobId = null,
   onAutoExtract,
 }: {
-  sourceKind: CaptureSourceKind;
+  sourceKind: CaptureJobSource;
   hasApiKey?: boolean;
   initialNotes?: string;
   initialHints?: CaptureParseHints | null;
