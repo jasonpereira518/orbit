@@ -1,6 +1,10 @@
 import type { JobHandlers } from "@/lib/outreach/jobs/worker";
+import { createRankingBatchHandler, createRerankHandler } from "@/lib/outreach/ranking/apply";
 
-/** Every registered generation-2 job handler. Tasks 13–15 add their kinds here. */
+/** Every registered generation-2 job handler. Tasks 14–15 add their kinds here. */
 export function defaultJobHandlers(): JobHandlers {
-  return {};
+  return {
+    "ranking.batch": createRankingBatchHandler(),
+    "ranking.rerank": createRerankHandler(),
+  };
 }
