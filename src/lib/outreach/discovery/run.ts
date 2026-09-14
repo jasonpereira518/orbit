@@ -16,7 +16,7 @@ import type { JobHandler, JobOutcome } from "@/lib/outreach/jobs/worker";
 import { resolveResearchProviders, type ProviderResolver } from "@/lib/outreach/providers/resolve";
 import { isProviderError } from "@/lib/outreach/providers/types";
 import { compareRank } from "@/lib/outreach/ranking/score";
-import { allocateResearch, cancelQueuedAttempts } from "@/lib/outreach/research/attempt";
+import { allocateResearch, cancelQueuedAttempts, reapStuckAttempts } from "@/lib/outreach/research/attempt";
 import type {
   JsonCompleter,
   OutreachFundingSource,
@@ -268,6 +268,7 @@ export async function cancelDiscoveryRun(userId: string, runId: string): Promise
 
 export async function getLatestRun(userId: string, campaignId: string): Promise<RunSummary | null> {
   await reapStaleRun(userId, campaignId);
+  await reapStuckAttempts(userId, campaignId);
   const db = await getDb();
   const [row] = await db
     .select()

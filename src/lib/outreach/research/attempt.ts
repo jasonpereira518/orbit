@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { outreachProspects, outreachResearchAttempts, outreachResearchRuns } from "@/db/schema";
 import { completeJson } from "@/lib/ai";
@@ -17,6 +17,14 @@ import type { JsonCompleter, OutreachFundingSource } from "@/lib/outreach/types"
 export type ResearchDeps = { resolveProviders?: ProviderResolver; complete?: JsonCompleter; now?: () => Date };
 
 const RESEARCH_UNAVAILABLE = "Research isn’t available right now — try again later";
+const RESEARCH_STOPPED = "Research stopped unexpectedly — try again";
+/**
+ * An attempt still queued/running this long after its last write, with no outstanding
+ * `research.person` job left to run it, is abandoned rather than slow. Generous: a live attempt
+ * is bounded to 45 s, and the only job-less window in the normal path — between the attempt
+ * INSERT and its enqueue in `allocateResearch` — is milliseconds.
+ */
+const STUCK_ATTEMPT_FLOOR_MS = 10 * 60_000;
 
 /** `instanceof` plus `name`, like `asActionResult`: a second module instance fails the prototype check. */
 const isUserFacingError = (err: unknown): err is Error =>
@@ -93,6 +101,93 @@ function employmentSummary(person: EnrichedPerson): string {
     .join("; ");
 }
 
+type AttemptRow = typeof outreachResearchAttempts.$inferSelect;
+type SettledStatus = "succeeded" | "partial" | "failed";
+
+/**
+ * The one way an attempt is settled — by the attempt itself (`finish`), by its job's
+ * final-attempt catch, or by the reaper — so all three move credits, the attempt and the
+ * person identically.
+ *
+ * Credits first, the attempt row second, the person last: a crash between any two steps
+ * leaves the attempt still ACTIVE, so the next settle (a retry, or the reaper) runs every
+ * step again — and the credit steps are exactly-once on their own (`chargeAttempt` only moves
+ * a `held` attempt, `releaseHold` only an `active` hold), so repeating them costs nothing.
+ * The other order could close the attempt and then die before releasing its hold, stranding
+ * the credit in `*_held` with nothing left that would ever look at it again.
+ *
+ * The attempt row moves only from an active status, so two settlers never both settle it;
+ * only the one that did goes on to touch the person, and only while the person is still
+ * queued/running and no OTHER attempt for them is active (a stale attempt reaped late must
+ * not overwrite a newer attempt's state).
+ */
+async function settleAttempt(
+  userId: string,
+  attempt: Pick<AttemptRow, "id" | "prospectId" | "runId" | "holdId" | "creditState">,
+  status: SettledStatus,
+  detail: { providerCalls?: Record<string, unknown>; error: string | null },
+  now: Date
+): Promise<boolean> {
+  const db = await getDb();
+  if (attempt.creditState === "held" && status !== "failed") await chargeAttempt(userId, attempt.id, now);
+  // A single-person hold (no run) is settled here; a run's hold is released when the run ends.
+  if (!attempt.runId && attempt.holdId) await releaseHold(userId, attempt.holdId, now);
+  const closed = await db
+    .update(outreachResearchAttempts)
+    .set({
+      status,
+      ...(detail.providerCalls ? { providerCalls: detail.providerCalls } : {}),
+      error: detail.error,
+      finishedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(outreachResearchAttempts.id, attempt.id),
+        eq(outreachResearchAttempts.userId, userId),
+        inArray(outreachResearchAttempts.status, ["queued", "running"])
+      )
+    )
+    // Bare `.returning()` — see the note in `allocateResearch` above.
+    .returning();
+  if (closed.length === 0) return false;
+  await db
+    .update(outreachProspects)
+    .set({ researchState: status === "succeeded" ? "done" : status, updatedAt: now })
+    .where(
+      and(
+        eq(outreachProspects.id, attempt.prospectId),
+        eq(outreachProspects.userId, userId),
+        inArray(outreachProspects.researchState, ["queued", "running"]),
+        sql`NOT EXISTS (
+          SELECT 1 FROM outreach_research_attempts other
+           WHERE other.user_id = ${userId}
+             AND other.prospect_id = ${attempt.prospectId}::uuid
+             AND other.id <> ${attempt.id}::uuid
+             AND other.status IN ('queued', 'running')
+        )`
+      )
+    );
+  return true;
+}
+
+/** Settle a still-active attempt as failed, in Orbit's words, from outside the attempt itself. */
+async function failActiveAttempt(userId: string, attemptId: string, now: Date): Promise<boolean> {
+  const db = await getDb();
+  const [attempt] = await db
+    .select()
+    .from(outreachResearchAttempts)
+    .where(
+      and(
+        eq(outreachResearchAttempts.id, attemptId),
+        eq(outreachResearchAttempts.userId, userId),
+        inArray(outreachResearchAttempts.status, ["queued", "running"])
+      )
+    );
+  if (!attempt) return false;
+  return settleAttempt(userId, attempt, "failed", { error: RESEARCH_STOPPED }, now);
+}
+
 export async function runResearchAttempt(
   userId: string,
   attemptId: string,
@@ -126,18 +221,8 @@ export async function runResearchAttempt(
   let providerTrouble = false;
   let error: string | null = null;
 
-  const finish = async (status: "succeeded" | "partial" | "failed") => {
-    if (attempt.creditState === "held" && status !== "failed") await chargeAttempt(userId, attemptId, now());
-    // A single-person hold (no run) is settled here; a run's hold is released when the run ends.
-    if (!attempt.runId && attempt.holdId) await releaseHold(userId, attempt.holdId, now());
-    await db
-      .update(outreachResearchAttempts)
-      .set({ status, providerCalls: calls, error, finishedAt: now(), updatedAt: now() })
-      .where(and(eq(outreachResearchAttempts.id, attemptId), eq(outreachResearchAttempts.userId, userId)));
-    await db
-      .update(outreachProspects)
-      .set({ researchState: status === "succeeded" ? "done" : status, updatedAt: now() })
-      .where(and(eq(outreachProspects.id, attempt.prospectId), eq(outreachProspects.userId, userId)));
+  const finish = async (status: SettledStatus) => {
+    await settleAttempt(userId, attempt, status, { providerCalls: calls, error }, now());
     return status;
   };
 
@@ -271,9 +356,65 @@ export function createResearchPersonHandler(deps: ResearchDeps = {}): JobHandler
   return async ({ job }) => {
     const attemptId = String(job.payload.attemptId ?? "");
     if (!attemptId) return { status: "failed", error: "Malformed research job" };
-    const outcome = await runResearchAttempt(job.userId, attemptId, deps);
-    return { status: "succeeded", result: { outcome } };
+    try {
+      const outcome = await runResearchAttempt(job.userId, attemptId, deps);
+      return { status: "succeeded", result: { outcome } };
+    } catch (err) {
+      // Same shape as the discovery run's final-attempt catch. Only `finish()` settles an
+      // attempt from inside, so a throw that escapes it on the job's LAST attempt would leave
+      // the job failed and the attempt active forever — a single-person hold stuck in
+      // `*_held`, the person stuck "researching". Settle it failed through the same path
+      // `finish("failed")` takes; on any earlier attempt, let the worker retry it.
+      if (job.attempts + 1 >= job.maxAttempts) {
+        await failActiveAttempt(job.userId, attemptId, (deps.now ?? (() => new Date()))());
+        return { status: "succeeded", result: { outcome: "failed" } };
+      }
+      throw err;
+    }
   };
+}
+
+/**
+ * The backstop for the attempts no handler is left to settle: a job whose last lease expired
+ * (`failExhaustedJobs`), a worker killed between claiming and finishing, an enqueue that threw
+ * after the attempt row landed. An attempt of this campaign still queued/running past
+ * `STUCK_ATTEMPT_FLOOR_MS` with no outstanding `research.person` job for it (queued, running
+ * or paused — a paused job resumes and runs it) is settled failed exactly as the final-attempt
+ * catch would, releasing a single-person hold.
+ *
+ * Called from `getLatestRun`, beside the run reaper: the People page reads it on load and on
+ * every poll while any row is queued/running — exactly while a stuck attempt is on screen —
+ * and it keeps both reapers on one cadence without adding writes to `listPeople`.
+ */
+export async function reapStuckAttempts(userId: string, campaignId: string, now: Date = new Date()): Promise<number> {
+  const db = await getDb();
+  const floor = new Date(now.getTime() - STUCK_ATTEMPT_FLOOR_MS);
+  const stuck = await db
+    .select()
+    .from(outreachResearchAttempts)
+    .where(
+      and(
+        eq(outreachResearchAttempts.userId, userId),
+        eq(outreachResearchAttempts.campaignId, campaignId),
+        inArray(outreachResearchAttempts.status, ["queued", "running"]),
+        lt(outreachResearchAttempts.updatedAt, floor),
+        // Literal `outreach_research_attempts.id`: a column interpolated into a raw template
+        // can lose its table prefix, and `id` alone would bind to the job row.
+        sql`NOT EXISTS (
+          SELECT 1 FROM outreach_jobs j
+           WHERE j.user_id = ${userId}
+             AND j.kind = 'research.person'
+             AND j.status IN ('queued', 'running', 'paused')
+             AND j.payload->>'attemptId' = outreach_research_attempts.id::text
+        )`
+      )
+    )
+    .limit(50);
+  let reaped = 0;
+  for (const attempt of stuck) {
+    if (await settleAttempt(userId, attempt, "failed", { error: RESEARCH_STOPPED }, now)) reaped++;
+  }
+  return reaped;
 }
 
 /** Attempts still queued for a run are cancelled with it (Task 15). */

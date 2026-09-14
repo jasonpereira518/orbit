@@ -7,7 +7,7 @@
  */
 import "./smoke/_env";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { run } from "./smoke/_env";
 import { getDb } from "../src/db";
 import * as schema from "../src/db/schema";
@@ -15,9 +15,10 @@ import { UserFacingError } from "../src/lib/errors";
 import { createCampaignV2, saveCriteria } from "../src/lib/outreach/campaigns";
 import { getCreditBalance, reserveCredits } from "../src/lib/outreach/credits/ledger";
 import { upsertCandidate } from "../src/lib/outreach/discovery/candidates";
+import { getLatestRun } from "../src/lib/outreach/discovery/run";
 import type { ProviderResolver, ResearchProviders } from "../src/lib/outreach/providers/resolve";
 import { ProviderError, type EnrichedPerson } from "../src/lib/outreach/providers/types";
-import { allocateResearch, runResearchAttempt } from "../src/lib/outreach/research/attempt";
+import { allocateResearch, createResearchPersonHandler, runResearchAttempt } from "../src/lib/outreach/research/attempt";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -162,6 +163,80 @@ async function main() {
   check("…and stores fixed copy, not the raw message", raw.error === "Research isn’t available right now — try again later", String(raw.error));
   const worded = await attemptError("jane-doe-worded", new UserFacingError("Add your Brave Search key in Settings to search with your own keys"));
   check("a UserFacingError keeps its own words", worded.error === "Add your Brave Search key in Settings to search with your own keys", String(worded.error));
+
+  // Only `finish()` used to settle an attempt, so a job that died — thrown through its last
+  // attempt, or its last lease expired — left a single-person hold in monthly_held forever
+  // and the person "queued"/"running" for good.
+  console.log("A research job that dies on its last attempt still settles the attempt...");
+  /** A single-person Orbit-funded attempt, claimed the way researchOnePerson claims one. */
+  const heldAttempt = async (slug: string) => {
+    const p = await make(slug);
+    const hold = await reserveCredits(USER, { want: 1, idempotencyKey: `held:${slug}` });
+    await db.update(schema.outreachProspects).set({ researchState: "queued" }).where(eq(schema.outreachProspects.id, p));
+    const a = (await allocateResearch(USER, { campaignId, prospectId: p, runId: null, funding: "orbit", holdId: hold!.holdId }))!;
+    const [job] = await db
+      .select()
+      .from(schema.outreachJobs)
+      .where(and(eq(schema.outreachJobs.userId, USER), sql`${schema.outreachJobs.payload}->>'attemptId' = ${a}`));
+    return { prospectId: p, attemptId: a, holdId: hold!.holdId, job };
+  };
+  const jobFor = (job: typeof schema.outreachJobs.$inferSelect, attempts: number) => ({
+    id: job.id, userId: USER, campaignId, kind: job.kind, payload: job.payload, attempts, maxAttempts: job.maxAttempts, progress: {},
+  });
+  const ctx = (job: ReturnType<typeof jobFor>) => ({
+    job, workerId: "smoke-research-worker", now: () => new Date(), deadline: Date.now() + 60_000, extendLease: async () => true,
+  });
+  // A resolver that hands back nothing makes `providers.enrichment` throw a TypeError outside
+  // every provider try/catch — an escape as unplanned as the bugs the catch exists for.
+  const crashing = createResearchPersonHandler({ resolveProviders: async () => null as unknown as ResearchProviders, complete: judge });
+
+  const beforeDeath = await getCreditBalance(USER);
+  const dying = await heldAttempt("jane-doe-dying");
+  check("the attempt holds one credit", (await getCreditBalance(USER)).held === beforeDeath.held + 1);
+  let rethrown = false;
+  try {
+    await crashing(ctx(jobFor(dying.job, 0)));
+  } catch {
+    rethrown = true;
+  }
+  check("a throw with attempts left is rethrown for the worker to retry", rethrown);
+  const lastOutcome = await crashing(ctx(jobFor(dying.job, dying.job.maxAttempts - 1)));
+  check("a throw on the last attempt settles the job instead of escaping", lastOutcome.status === "succeeded", JSON.stringify(lastOutcome));
+  const [deadAttempt] = await db.select().from(schema.outreachResearchAttempts).where(eq(schema.outreachResearchAttempts.id, dying.attemptId));
+  check("…the attempt is failed, in Orbit’s words", deadAttempt.status === "failed" && deadAttempt.error === "Research stopped unexpectedly — try again", JSON.stringify(deadAttempt));
+  const afterDeath = await getCreditBalance(USER);
+  check("…its hold is released, so the balance is whole again", afterDeath.held === beforeDeath.held && afterDeath.total === beforeDeath.total, JSON.stringify(afterDeath));
+  const [deadPerson] = await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, dying.prospectId));
+  check("…and the person reads as failed, not stuck", deadPerson.researchState === "failed", deadPerson.researchState);
+
+  console.log("An attempt with no job left to finish it is reaped...");
+  const staleAt = new Date(Date.now() - 15 * 60_000);
+  const beforeReap = await getCreditBalance(USER);
+  // Its job is gone (a lease that expired on its last attempt, a worker killed mid-flight).
+  const orphan = await heldAttempt("jane-doe-orphan");
+  await db.update(schema.outreachJobs).set({ status: "failed", finishedAt: staleAt }).where(eq(schema.outreachJobs.id, orphan.job.id));
+  // Its job is still queued — a worker will get to it, so it is not abandoned.
+  const waiting = await heldAttempt("jane-doe-waiting");
+  // No job either, but too recent to call abandoned.
+  const recent = await heldAttempt("jane-doe-recent");
+  await db.update(schema.outreachJobs).set({ status: "failed" }).where(eq(schema.outreachJobs.id, recent.job.id));
+  for (const a of [orphan, waiting]) {
+    await db
+      .update(schema.outreachResearchAttempts)
+      .set({ status: "running", startedAt: staleAt, updatedAt: staleAt })
+      .where(eq(schema.outreachResearchAttempts.id, a.attemptId));
+    await db.update(schema.outreachProspects).set({ researchState: "running" }).where(eq(schema.outreachProspects.id, a.prospectId));
+  }
+  check("three holds are out", (await getCreditBalance(USER)).held === beforeReap.held + 3);
+  await getLatestRun(USER, campaignId);
+  const attemptRow = async (id: string) => (await db.select().from(schema.outreachResearchAttempts).where(eq(schema.outreachResearchAttempts.id, id)))[0];
+  const personRow = async (id: string) => (await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, id)))[0];
+  const reaped = await attemptRow(orphan.attemptId);
+  check("the orphaned attempt is failed", reaped.status === "failed" && reaped.error === "Research stopped unexpectedly — try again", JSON.stringify(reaped));
+  check("…its person reads as failed", (await personRow(orphan.prospectId)).researchState === "failed");
+  check("…and only its hold came back", (await getCreditBalance(USER)).held === beforeReap.held + 2);
+  check("an attempt whose job is still queued is left alone", (await attemptRow(waiting.attemptId)).status === "running");
+  check("…as is one too recent to call abandoned", (await attemptRow(recent.attemptId)).status === "queued");
 
   console.log("All outreach research checks passed.");
 }
