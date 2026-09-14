@@ -262,10 +262,11 @@ export async function upsertCandidate(
   if (!opts.trustedCampaign) {
     // Callers that already loaded the campaign as this user (the discovery run) skip the probe.
     const db = await getDb();
+    // Generation 2 only — a legacy campaign's people belong to the legacy flow.
     const [owned] = await db
       .select({ id: outreachCampaigns.id })
       .from(outreachCampaigns)
-      .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId)));
+      .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId), eq(outreachCampaigns.generation, 2)));
     if (!owned) throw new Error("Campaign not found for this user");
   }
   const identities = outreachIdentitiesFor(input);

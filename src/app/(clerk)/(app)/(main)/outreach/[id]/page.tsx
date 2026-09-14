@@ -29,6 +29,8 @@ export default async function OutreachCampaignPage({
     if (v2) redirect(v2.criteriaConfirmedAt ? `/outreach/${id}/people` : `/outreach/${id}/audience`);
   }
 
+  // `getCampaign` finds generation-1 campaigns only, so a generation-2 id that reaches the
+  // legacy workspace (a user outside the gate, an admin viewing as a user) is a 404 here.
   let campaign;
   try {
     campaign = await getCampaign(id);

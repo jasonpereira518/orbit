@@ -43,16 +43,49 @@ import {
 import { friendlyError, UserFacingError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
+/**
+ * Legacy Outreach is generation 1 only. A generation-2 campaign reached through any path in
+ * this file — a user outside the release gate, an admin viewing as a user, a flag rollback —
+ * must behave exactly like one that does not exist: legacy draft generation would read its
+ * `status = 'selected'` as ready to draft, and the legacy sender would mail its
+ * Apollo-sourced addresses with none of generation 2's suppression or review. So every
+ * lookup below goes through `legacyCampaign` (a campaign id) or `requireLegacyMessage` (a
+ * message id), and every list filters on `legacyCampaigns`.
+ */
+const legacyCampaigns = (userId: string) =>
+  and(eq(outreachCampaigns.userId, userId), eq(outreachCampaigns.generation, 1));
+
+const legacyCampaign = (userId: string, campaignId: string) =>
+  and(eq(outreachCampaigns.id, campaignId), legacyCampaigns(userId));
+
 async function requireCampaign(userId: string, campaignId: string) {
   const db = await getDb();
   const campaign = await db.query.outreachCampaigns.findFirst({
-    where: and(
-      eq(outreachCampaigns.id, campaignId),
-      eq(outreachCampaigns.userId, userId)
-    ),
+    where: legacyCampaign(userId, campaignId),
   });
   if (!campaign) throw new Error("Campaign not found");
   return campaign;
+}
+
+/** A message, with its prospect and campaign, only if it belongs to this user's legacy campaign. */
+async function requireLegacyMessage(userId: string, messageId: string) {
+  const db = await getDb();
+  const message = await db.query.outreachMessages.findFirst({
+    where: eq(outreachMessages.id, messageId),
+    with: {
+      prospect: {
+        with: { campaign: true },
+      },
+    },
+  });
+  if (
+    !message ||
+    message.prospect.campaign.userId !== userId ||
+    message.prospect.campaign.generation !== 1
+  ) {
+    throw new Error("Message not found");
+  }
+  return message;
 }
 
 function enrichmentSummary(enrichment: unknown): string | null {
@@ -130,7 +163,7 @@ export async function listCampaigns() {
   const userId = await requireUserId();
   const db = await getDb();
   const campaigns = await db.query.outreachCampaigns.findMany({
-    where: eq(outreachCampaigns.userId, userId),
+    where: legacyCampaigns(userId),
     orderBy: [desc(outreachCampaigns.updatedAt)],
     with: {
       prospects: {
@@ -163,10 +196,7 @@ export async function getCampaign(campaignId: string) {
   const userId = await requireUserId();
   const db = await getDb();
   const campaign = await db.query.outreachCampaigns.findFirst({
-    where: and(
-      eq(outreachCampaigns.id, campaignId),
-      eq(outreachCampaigns.userId, userId)
-    ),
+    where: legacyCampaign(userId, campaignId),
     with: {
       prospects: {
         orderBy: [desc(outreachProspects.createdAt)],
@@ -193,9 +223,10 @@ export async function getOutreachPerformanceSummary() {
   const userId = await requireUserId();
   const db = await getDb();
 
-  // Slim projection — metrics only, no full message bodies / prospect trees.
+  // Slim projection — metrics only, no full message bodies / prospect trees. Legacy campaigns
+  // only: generation 2 measures itself from sends and conversations, not `outreach_messages`.
   const campaigns = await db.query.outreachCampaigns.findMany({
-    where: eq(outreachCampaigns.userId, userId),
+    where: legacyCampaigns(userId),
     columns: {
       id: true,
       name: true,
@@ -343,7 +374,7 @@ export async function updateCampaign(
   const [updated] = await db
     .update(outreachCampaigns)
     .set(patch)
-    .where(eq(outreachCampaigns.id, campaignId))
+    .where(legacyCampaign(userId, campaignId))
     .returning();
 
   revalidatePath("/outreach");
@@ -419,7 +450,7 @@ export async function searchProspects(campaignId: string, page = 1) {
       lastSearchSource: source,
       updatedAt: new Date(),
     })
-    .where(eq(outreachCampaigns.id, campaignId));
+    .where(legacyCampaign(userId, campaignId));
 
   revalidatePath(`/outreach/${campaignId}`);
   return {
@@ -617,7 +648,7 @@ export async function generateOutreachDrafts(input: {
   await db
     .update(outreachCampaigns)
     .set({ defaultChannel: channel, updatedAt: new Date() })
-    .where(eq(outreachCampaigns.id, input.campaignId));
+    .where(legacyCampaign(userId, input.campaignId));
 
   revalidatePath(`/outreach/${input.campaignId}`);
   return { generated: messages.length };
@@ -690,19 +721,7 @@ export async function updateOutreachMessage(input: {
 }) {
   const userId = await requireOutreachUser();
   const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
+  const message = await requireLegacyMessage(userId, input.messageId);
 
   const [updated] = await db
     .update(outreachMessages)
@@ -744,19 +763,7 @@ export async function markMessageAction(input: {
 }) {
   const userId = await requireOutreachUser();
   const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
+  const message = await requireLegacyMessage(userId, input.messageId);
 
   const now = new Date();
   const [updated] = await db
@@ -805,19 +812,7 @@ export async function logMessageOutcome(input: {
 }) {
   const userId = await requireOutreachUser();
   const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
+  const message = await requireLegacyMessage(userId, input.messageId);
 
   const now = new Date();
   const [updated] = await db
@@ -1038,19 +1033,7 @@ export async function generateDueFollowUps(campaignId: string) {
 export async function sendOutreachMessageAction(messageId: string) {
   const userId = await requireOutreachUser();
   const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
+  const message = await requireLegacyMessage(userId, messageId);
 
   const quality = assessOutreachQuality([
     {
@@ -1141,13 +1124,17 @@ export async function previewBulkSendQuality(input: {
   await requireCampaign(userId, input.campaignId);
   const db = await getDb();
 
-  const messages = await db.query.outreachMessages.findMany({
-    where: inArray(outreachMessages.id, input.messageIds),
-    with: { prospect: true },
-  });
+  const messages = input.messageIds.length
+    ? await db.query.outreachMessages.findMany({
+        where: inArray(outreachMessages.id, input.messageIds),
+        with: { prospect: true },
+      })
+    : [];
 
   return assessOutreachQuality(
-    messages.map((m) => ({
+    // Only this (legacy, owned) campaign's messages: the ids come from the client, and an id
+    // from any other campaign — someone else's, or a generation-2 one — is not ours to read.
+    messages.filter((m) => m.prospect.campaignId === input.campaignId).map((m) => ({
       messageId: m.id,
       prospectId: m.prospectId,
       prospectName: m.prospect.fullName,

@@ -321,6 +321,36 @@ async function main() {
   check("…gives back the claim on the person the budget refused", (await stateOf(second)) === "none" && (await attemptsFor(second)).length === 0);
   check("…and stops there", (await stateOf(third)) === "none" && (await attemptsFor(third)).length === 0);
 
+  // The mirror image of legacy Outreach being closed to generation 2: these functions take a
+  // campaign or prospect id straight from the client, and a legacy (generation-1) one must be
+  // "not found" — researching one would spend on a person the legacy flow still owns.
+  console.log("Generation-2 people functions never touch a legacy campaign’s people...");
+  const [legacy] = await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Spring intros", status: "active" }).returning();
+  const [legacyPerson, legacyExcluded] = await db
+    .insert(schema.outreachProspects)
+    .values([
+      { userId: USER, campaignId: legacy.id, externalId: "legacy:lee", fullName: "Lee Legacy", status: "suggested" },
+      { userId: USER, campaignId: legacy.id, externalId: "legacy:lou", fullName: "Lou Legacy", status: "excluded" },
+    ])
+    .returning();
+  let legacyResearch = "";
+  try {
+    await researchOnePerson(USER, legacyPerson.id, "personal");
+  } catch (err) {
+    legacyResearch = (err as Error).message;
+  }
+  check("researchOnePerson treats a generation-1 person as not found", legacyResearch.includes("isn’t in your campaign"), legacyResearch);
+  check("…claiming nothing and starting nothing", (await stateOf(legacyPerson.id)) === "none" && (await attemptsFor(legacyPerson.id)).length === 0);
+  check("selecting them by id changes nothing",
+    (await selectPeople(USER, legacy.id, { scope: "ids", ids: [legacyPerson.id], selected: true })).changed === 0);
+  check("…nor does selecting all matching", (await selectPeople(USER, legacy.id, { scope: "filter", filter: {}, exceptIds: [], selected: true })).changed === 0);
+  check("…nor excluding", (await excludePeople(USER, legacy.id, [legacyPerson.id], "not mine to exclude")).changed === 0);
+  check("…nor restoring", (await restorePeople(USER, legacy.id, [legacyExcluded.id])).changed === 0);
+  await resolveDuplicate(USER, legacyPerson.id, "merged");
+  const [legacyAfter] = await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, legacyPerson.id));
+  check("…nor resolving a duplicate", legacyAfter.status === "suggested" && legacyAfter.duplicateReview === null, JSON.stringify(legacyAfter));
+  check("…and listing them shows nobody", (await listPeople(USER, legacy.id, { limit: 100 })).total === 0);
+
   console.log("All outreach selection checks passed.");
 }
 

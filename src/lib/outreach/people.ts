@@ -69,8 +69,20 @@ export type PeopleCounts = {
 const TIER_ORDER = sql`CASE ${outreachProspects.rankTier} WHEN 'strong' THEN 0 WHEN 'possible' THEN 1 WHEN 'weak' THEN 2 WHEN 'filtered' THEN 3 ELSE 4 END`;
 const NOT_IN_CONVERSATION = sql`NOT EXISTS (SELECT 1 FROM outreach_conversations oc WHERE oc.prospect_id = outreach_prospects.id)`;
 
+/**
+ * Only people of this user's generation-2 campaigns. Every id reaching this module comes from
+ * a client, and a legacy (generation-1) campaign's people belong to the legacy flow: selecting
+ * one would hand legacy draft generation a "selected" person, researching one would spend on
+ * them. So a legacy id here is simply not found — the mirror of `src/actions/outreach.ts`
+ * refusing generation-2 campaigns.
+ */
+const inGen2Campaign = (userId: string) => sql`EXISTS (
+  SELECT 1 FROM outreach_campaigns c
+   WHERE c.id = outreach_prospects.campaign_id AND c.user_id = ${userId} AND c.generation = 2
+)`;
+
 function conditions(userId: string, campaignId: string, filter: PeopleFilter): SQL[] {
-  const out: SQL[] = [eq(outreachProspects.userId, userId), eq(outreachProspects.campaignId, campaignId)];
+  const out: SQL[] = [eq(outreachProspects.userId, userId), eq(outreachProspects.campaignId, campaignId), inGen2Campaign(userId)];
   if (!filter.includeExcluded) out.push(ne(outreachProspects.status, "excluded"));
   // Clamp to the known tier set: an empty result after filtering (no tiers, or only bogus ones)
   // falls through to the default branch rather than an `inArray` with nothing in it.
@@ -198,6 +210,7 @@ export async function selectPeople(
   const base: SQL[] = [
     eq(outreachProspects.userId, userId),
     eq(outreachProspects.campaignId, campaignId),
+    inGen2Campaign(userId),
     ne(outreachProspects.status, "excluded"),
     NOT_IN_CONVERSATION,
   ];
@@ -234,6 +247,7 @@ export async function excludePeople(userId: string, campaignId: string, ids: str
       and(
         eq(outreachProspects.userId, userId),
         eq(outreachProspects.campaignId, campaignId),
+        inGen2Campaign(userId),
         inArray(outreachProspects.id, ids.slice(0, 500)),
         NOT_IN_CONVERSATION
       )
@@ -253,6 +267,7 @@ export async function restorePeople(userId: string, campaignId: string, ids: str
       and(
         eq(outreachProspects.userId, userId),
         eq(outreachProspects.campaignId, campaignId),
+        inGen2Campaign(userId),
         inArray(outreachProspects.id, ids.slice(0, 500)),
         eq(outreachProspects.status, "excluded")
       )
@@ -270,7 +285,7 @@ export async function resolveDuplicate(userId: string, prospectId: string, decis
         ? { status: "excluded", excludedReason: "Duplicate of another person in this campaign", duplicateReview: "merged", updatedAt: new Date() }
         : { duplicateReview: "distinct", updatedAt: new Date() }
     )
-    .where(and(eq(outreachProspects.id, prospectId), eq(outreachProspects.userId, userId)));
+    .where(and(eq(outreachProspects.id, prospectId), eq(outreachProspects.userId, userId), inGen2Campaign(userId)));
 }
 
 /**
@@ -293,7 +308,7 @@ export async function researchOnePerson(
   const [prospect] = await db
     .select({ id: outreachProspects.id, campaignId: outreachProspects.campaignId, researchState: outreachProspects.researchState })
     .from(outreachProspects)
-    .where(and(eq(outreachProspects.id, prospectId), eq(outreachProspects.userId, userId)));
+    .where(and(eq(outreachProspects.id, prospectId), eq(outreachProspects.userId, userId), inGen2Campaign(userId)));
   if (!prospect) throw new UserFacingError("That person isn’t in your campaign");
 
   // Resolve providers FIRST — no side effects yet — so a missing key never claims the slot.
