@@ -3,6 +3,10 @@
  * charges nothing; re-running the same attempt never charges again. Emails come only from the
  * enrichment provider, never overwrite one the user typed, and carry their verification status.
  *
+ * And every attempt gets settled: a job that dies on its last attempt, or one with no job left
+ * at all, still releases its hold and stops reading as "researching". Only one worker ever runs
+ * an attempt, and a run's attempt charges the run's hold without releasing it.
+ *
  * Run: npx tsx scripts/smoke-outreach-research.ts
  */
 import "./smoke/_env";
@@ -15,7 +19,7 @@ import { UserFacingError } from "../src/lib/errors";
 import { createCampaignV2, saveCriteria } from "../src/lib/outreach/campaigns";
 import { getCreditBalance, reserveCredits } from "../src/lib/outreach/credits/ledger";
 import { upsertCandidate } from "../src/lib/outreach/discovery/candidates";
-import { getLatestRun } from "../src/lib/outreach/discovery/run";
+import { cancelDiscoveryRun, getLatestRun } from "../src/lib/outreach/discovery/run";
 import type { ProviderResolver, ResearchProviders } from "../src/lib/outreach/providers/resolve";
 import { ProviderError, type EnrichedPerson } from "../src/lib/outreach/providers/types";
 import { allocateResearch, createResearchPersonHandler, runResearchAttempt } from "../src/lib/outreach/research/attempt";
@@ -200,6 +204,10 @@ async function main() {
     rethrown = true;
   }
   check("a throw with attempts left is rethrown for the worker to retry", rethrown);
+  // The 'running' transition is a compare-and-set from 'queued', so a retry can only run the
+  // attempt if the failed try handed it back.
+  const [handedBack] = await db.select().from(schema.outreachResearchAttempts).where(eq(schema.outreachResearchAttempts.id, dying.attemptId));
+  check("…and hands the attempt back so that retry can run it", handedBack.status === "queued", handedBack.status);
   const lastOutcome = await crashing(ctx(jobFor(dying.job, dying.job.maxAttempts - 1)));
   check("a throw on the last attempt settles the job instead of escaping", lastOutcome.status === "succeeded", JSON.stringify(lastOutcome));
   const [deadAttempt] = await db.select().from(schema.outreachResearchAttempts).where(eq(schema.outreachResearchAttempts.id, dying.attemptId));
@@ -237,6 +245,60 @@ async function main() {
   check("…and only its hold came back", (await getCreditBalance(USER)).held === beforeReap.held + 2);
   check("an attempt whose job is still queued is left alone", (await attemptRow(waiting.attemptId)).status === "running");
   check("…as is one too recent to call abandoned", (await attemptRow(recent.attemptId)).status === "queued");
+
+  console.log("Only one worker ever runs an attempt...");
+  const contested = await make("jane-doe-contested");
+  const contestedAttempt = (await allocateResearch(USER, { campaignId, prospectId: contested, runId: null, funding: "personal", holdId: null }))!;
+  // Another worker already moved it to running (a lease that expired under a live worker).
+  await db.update(schema.outreachResearchAttempts).set({ status: "running" }).where(eq(schema.outreachResearchAttempts.id, contestedAttempt));
+  let loserResolved = 0;
+  const loser = await runResearchAttempt(USER, contestedAttempt, {
+    resolveProviders: async (...args) => {
+      loserResolved++;
+      return providers({ enrich: async () => person({ apolloId: "ap_contested" }) })(...args);
+    },
+    complete: judge,
+  });
+  check("the worker that lost the race skips it without a single provider call", loser === "skipped" && loserResolved === 0, `${loser} / ${loserResolved}`);
+
+  console.log("A run’s attempt charges the run’s hold once and leaves releasing it to the run...");
+  const { id: runCampaign } = await createCampaignV2(USER, {
+    brief: { purpose: "Meet partnership leads in payments", desiredOutcome: "Intro calls" }, channel: "email",
+  });
+  await saveCriteria(USER, runCampaign, { required: [{ kind: "role", label: "Partnerships", values: ["Partnerships"] }], preferred: [], exclusions: [] });
+  const [heldRun] = await db
+    .insert(schema.outreachResearchRuns)
+    .values({ userId: USER, campaignId: runCampaign, criteriaVersion: 1, fundingSource: "orbit", status: "running" })
+    .returning();
+  const beforeRun = await getCreditBalance(USER);
+  const runHold = (await reserveCredits(USER, { want: 2, runId: heldRun.id, idempotencyKey: `reserve:run:${heldRun.id}` }))!;
+  await db
+    .update(schema.outreachResearchRuns)
+    .set({ researchBudget: runHold.amount, holdId: runHold.holdId })
+    .where(eq(schema.outreachResearchRuns.id, heldRun.id));
+  const { prospectId: runPerson } = await upsertCandidate(USER, runCampaign, {
+    fullName: "Jane Doe", company: "Ramp", linkedinUrl: "https://www.linkedin.com/in/jane-doe-run", origin: "discovered",
+    evidence: [{ kind: "search_result", provider: "brave", url: "https://www.linkedin.com/in/jane-doe-run", title: "Jane Doe - run", snippet: "x" }],
+  });
+  const runAttempt = (await allocateResearch(USER, { campaignId: runCampaign, prospectId: runPerson, runId: heldRun.id, funding: "orbit", holdId: runHold.holdId }))!;
+  const runOutcome = await runResearchAttempt(USER, runAttempt, { resolveProviders: providers({ enrich: async () => person({ apolloId: "ap_run" }) }), complete: judge });
+  check("the run's attempt succeeds", runOutcome === "succeeded");
+  const charges = async () =>
+    (await db
+      .select()
+      .from(schema.researchCreditLedger)
+      .where(and(eq(schema.researchCreditLedger.userId, USER), eq(schema.researchCreditLedger.attemptId, runAttempt), eq(schema.researchCreditLedger.entryType, "charge")))).length;
+  check("…charging exactly one credit", (await charges()) === 1);
+  const [holdMidRun] = await db.select().from(schema.researchCreditHolds).where(eq(schema.researchCreditHolds.id, runHold.holdId));
+  check("…from the run's hold, which the attempt leaves active for the rest of the run",
+    holdMidRun.status === "active" && holdMidRun.usedMonthly + holdMidRun.usedLifetime === 1, JSON.stringify(holdMidRun));
+  const midRun = await getCreditBalance(USER);
+  check("…so one credit is spent and one still held", midRun.total === beforeRun.total - 2 && midRun.held === beforeRun.held + 1, JSON.stringify(midRun));
+  check("re-running the attempt charges nothing more",
+    (await runResearchAttempt(USER, runAttempt, { resolveProviders: providers({ enrich: async () => person() }), complete: judge })) === "skipped" && (await charges()) === 1);
+  await cancelDiscoveryRun(USER, heldRun.id);
+  const afterRun = await getCreditBalance(USER);
+  check("the run ending releases the rest of its hold", afterRun.total === beforeRun.total - 1 && afterRun.held === beforeRun.held, JSON.stringify(afterRun));
 
   console.log("All outreach research checks passed.");
 }

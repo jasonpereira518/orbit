@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { outreachProspects, outreachResearchAttempts, outreachResearchRuns } from "@/db/schema";
 import { completeJson } from "@/lib/ai";
@@ -12,7 +12,7 @@ import type { JobHandler } from "@/lib/outreach/jobs/worker";
 import { resolveResearchProviders, type ProviderResolver } from "@/lib/outreach/providers/resolve";
 import { isProviderError, type EnrichedPerson } from "@/lib/outreach/providers/types";
 import { rankProspects } from "@/lib/outreach/ranking/apply";
-import type { JsonCompleter, OutreachFundingSource } from "@/lib/outreach/types";
+import type { JsonCompleter, OutreachFundingSource, OutreachResearchState } from "@/lib/outreach/types";
 
 export type ResearchDeps = { resolveProviders?: ProviderResolver; complete?: JsonCompleter; now?: () => Date };
 
@@ -31,9 +31,69 @@ const isUserFacingError = (err: unknown): err is Error =>
   err instanceof UserFacingError || (err instanceof Error && err.name === "UserFacingError");
 
 /**
- * Create one research attempt and queue it. For a run, the slot comes out of the run's
- * `research_budget` with one conditional UPDATE — which is what guarantees a run never
- * allocates more attempts than its credit hold covers (the ledger's invariant).
+ * The one claim on a person's research: `research_state` → 'queued' in a single conditional
+ * UPDATE, so of two callers racing for the same person exactly one wins and the other is
+ * turned away before it takes a run slot or a credit. Both paths that start research take it,
+ * and only they do — `allocateResearch` itself no longer touches `research_state`, so nothing
+ * claims twice.
+ *
+ * The claim lives with the callers, not inside `allocateResearch`, because each must claim
+ * BEFORE spending (a run slot; a one-credit hold) and each unwinds differently when the spend
+ * is refused (a run gives the person back and stops; a click gives them back, releases its
+ * hold and reports why).
+ *
+ *   - "unresearched" — a run: only from 'none'. The run's pool IS the people not yet
+ *     researched (spec §7.5), so this re-checks that exact predicate atomically: someone
+ *     claimed, researched or failed since the pool was read is skipped, never researched twice.
+ *   - "idle" — a click: from anything but queued/running, since re-researching a person whose
+ *     last attempt finished or failed is a deliberate choice.
+ */
+export async function claimProspectForResearch(
+  userId: string,
+  prospectId: string,
+  from: "unresearched" | "idle"
+): Promise<boolean> {
+  const db = await getDb();
+  const claimed = await db
+    .update(outreachProspects)
+    .set({ researchState: "queued", updatedAt: new Date() })
+    .where(
+      and(
+        eq(outreachProspects.id, prospectId),
+        eq(outreachProspects.userId, userId),
+        from === "unresearched"
+          ? eq(outreachProspects.researchState, "none")
+          : notInArray(outreachProspects.researchState, ["queued", "running"])
+      )
+    )
+    // Bare `.returning()` — see the note in `allocateResearch` below.
+    .returning();
+  return claimed.length > 0;
+}
+
+/**
+ * Give back a claim whose spend was refused. Gated on the person still being 'queued' — ours
+ * — so a newer state written by someone else in the meantime is never clobbered.
+ */
+export async function releaseResearchClaim(userId: string, prospectId: string, restoreTo: OutreachResearchState): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(outreachProspects)
+    .set({ researchState: restoreTo, updatedAt: new Date() })
+    .where(
+      and(
+        eq(outreachProspects.id, prospectId),
+        eq(outreachProspects.userId, userId),
+        eq(outreachProspects.researchState, "queued")
+      )
+    );
+}
+
+/**
+ * Create one research attempt and queue it, for a person the caller has ALREADY claimed
+ * (`claimProspectForResearch`). For a run, the slot comes out of the run's `research_budget`
+ * with one conditional UPDATE — which is what guarantees a run never allocates more attempts
+ * than its credit hold covers (the ledger's invariant).
  */
 export async function allocateResearch(
   userId: string,
@@ -71,10 +131,6 @@ export async function allocateResearch(
       holdId: input.holdId,
     })
     .returning();
-  await db
-    .update(outreachProspects)
-    .set({ researchState: "queued", updatedAt: now })
-    .where(and(eq(outreachProspects.id, input.prospectId), eq(outreachProspects.userId, userId)));
   await enqueueJob({
     userId,
     kind: "research.person",
@@ -83,6 +139,44 @@ export async function allocateResearch(
     idempotencyKey: `research:${attempt.id}`,
   });
   return attempt.id;
+}
+
+/**
+ * A run's research allocation over its ranked pool, best first. Each person is claimed before
+ * their slot is taken: a failed claim means a click (or anything else) got them first, so skip
+ * them and try the next; a refused slot means the budget is spent, so give that person back and
+ * stop. Returns how many attempts were allocated.
+ */
+export async function allocateRunResearch(
+  userId: string,
+  run: { id: string; campaignId: string; fundingSource: OutreachFundingSource; holdId: string | null },
+  prospectIds: string[]
+): Promise<number> {
+  let allocated = 0;
+  for (const prospectId of prospectIds) {
+    if (!(await claimProspectForResearch(userId, prospectId, "unresearched"))) continue;
+    let attemptId: string | null;
+    try {
+      attemptId = await allocateResearch(userId, {
+        campaignId: run.campaignId,
+        prospectId,
+        runId: run.id,
+        funding: run.fundingSource,
+        holdId: run.holdId,
+      });
+    } catch (err) {
+      // Don't leave the person claimed with nothing coming: a retried ranking phase reads its
+      // pool from 'none', so a stranded 'queued' would never be looked at again.
+      await releaseResearchClaim(userId, prospectId, "none");
+      throw err;
+    }
+    if (!attemptId) {
+      await releaseResearchClaim(userId, prospectId, "none");
+      break;
+    }
+    allocated++;
+  }
+  return allocated;
 }
 
 function supportQueries(p: { fullName: string; company: string | null; headline: string | null }): string[] {
@@ -199,12 +293,25 @@ export async function runResearchAttempt(
     .select()
     .from(outreachResearchAttempts)
     .where(and(eq(outreachResearchAttempts.id, attemptId), eq(outreachResearchAttempts.userId, userId)));
-  if (!attempt || !["queued", "running"].includes(attempt.status)) return "skipped";
+  if (!attempt || attempt.status !== "queued") return "skipped";
 
-  await db
+  // A compare-and-set from 'queued': when a lease expires under a worker that is still alive,
+  // the second worker to claim the job loses here and skips before a single provider call,
+  // rather than paying Apollo and Brave a second time for the same person. A failed try hands
+  // the attempt back to 'queued' (see the handler) so its retry can win this again.
+  const started = await db
     .update(outreachResearchAttempts)
     .set({ status: "running", startedAt: attempt.startedAt ?? now(), updatedAt: now() })
-    .where(and(eq(outreachResearchAttempts.id, attemptId), eq(outreachResearchAttempts.userId, userId)));
+    .where(
+      and(
+        eq(outreachResearchAttempts.id, attemptId),
+        eq(outreachResearchAttempts.userId, userId),
+        eq(outreachResearchAttempts.status, "queued")
+      )
+    )
+    // Bare `.returning()` — see the note in `allocateResearch` above.
+    .returning();
+  if (started.length === 0) return "skipped";
   await db
     .update(outreachProspects)
     .set({ researchState: "running", updatedAt: now() })
@@ -365,13 +472,36 @@ export function createResearchPersonHandler(deps: ResearchDeps = {}): JobHandler
       // the job failed and the attempt active forever — a single-person hold stuck in
       // `*_held`, the person stuck "researching". Settle it failed through the same path
       // `finish("failed")` takes; on any earlier attempt, let the worker retry it.
+      const now = (deps.now ?? (() => new Date()))();
       if (job.attempts + 1 >= job.maxAttempts) {
-        await failActiveAttempt(job.userId, attemptId, (deps.now ?? (() => new Date()))());
+        await failActiveAttempt(job.userId, attemptId, now);
         return { status: "succeeded", result: { outcome: "failed" } };
+      }
+      // Hand the attempt back for the retry: its 'running' transition is a compare-and-set
+      // from 'queued', so an attempt left 'running' here would make the retry skip it. Best
+      // effort — if even this write fails, the reaper settles the attempt once no job is left.
+      try {
+        await requeueAttempt(job.userId, attemptId, now);
+      } catch {
+        // The original error below is the one worth reporting.
       }
       throw err;
     }
   };
+}
+
+async function requeueAttempt(userId: string, attemptId: string, now: Date): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(outreachResearchAttempts)
+    .set({ status: "queued", updatedAt: now })
+    .where(
+      and(
+        eq(outreachResearchAttempts.id, attemptId),
+        eq(outreachResearchAttempts.userId, userId),
+        eq(outreachResearchAttempts.status, "running")
+      )
+    );
 }
 
 /**

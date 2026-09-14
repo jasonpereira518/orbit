@@ -6,7 +6,8 @@
  *
  * Also covers the controller ruling on `researchOnePerson`: it is check-then-act on
  * `research_state`, so a double-click must not queue two attempts. The claim is one conditional
- * UPDATE — only one of two concurrent calls for the same person can win it.
+ * UPDATE — only one of two concurrent calls for the same person can win it. A run's allocation
+ * takes the same claim, so a click and a run never both research (and charge for) one person.
  *
  * Run: npx tsx scripts/smoke-outreach-selection.ts
  */
@@ -27,6 +28,7 @@ import {
   resolveDuplicate,
   selectPeople,
 } from "../src/lib/outreach/people";
+import { allocateRunResearch } from "../src/lib/outreach/research/attempt";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -249,6 +251,75 @@ async function main() {
     if (priorApolloKey === undefined) delete process.env.APOLLO_API_KEY;
     else process.env.APOLLO_API_KEY = priorApolloKey;
   }
+
+  // A run's ranking phase picks its pool (research_state 'none') and only then allocates, so a
+  // "Research · 1 credit" click in between used to leave the person with two attempts — two
+  // provider bills, and on Orbit funding two credits. Both paths now take the same one-UPDATE
+  // claim on research_state, so exactly one of them gets the person. Personal funding (USER's
+  // keys from above) keeps credits out of it: the attempt count is the whole story, since each
+  // attempt charges at most once.
+  console.log("Run allocation and a manual research click share one claim...");
+  const freshCampaign = async () =>
+    (await createCampaignV2(USER, { brief: { purpose: "Meet partnership leads in fintech", desiredOutcome: "Intro calls" }, channel: "email" })).id;
+  const person = async (campaign: string, slug: string) =>
+    (
+      await db
+        .insert(schema.outreachProspects)
+        .values({ userId: USER, campaignId: campaign, externalId: `li:${slug}`, fullName: slug, rankTier: "strong", rankScore: 1, rankedCriteriaVersion: 0 })
+        // Bare `.returning()` — see the note above.
+        .returning()
+    )[0].id;
+  const runFor = async (campaign: string, budget: number) =>
+    (
+      await db
+        .insert(schema.outreachResearchRuns)
+        .values({ userId: USER, campaignId: campaign, criteriaVersion: 0, fundingSource: "personal", status: "running", researchBudget: budget })
+        .returning()
+    )[0];
+  const attemptsFor = async (prospectId: string) =>
+    db
+      .select()
+      .from(schema.outreachResearchAttempts)
+      .where(and(eq(schema.outreachResearchAttempts.userId, USER), eq(schema.outreachResearchAttempts.prospectId, prospectId)));
+  const stateOf = async (prospectId: string) =>
+    (await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, prospectId)))[0].researchState;
+
+  // The run chose its pool while both were unresearched; the click lands before allocation.
+  const manualFirst = await freshCampaign();
+  const clicked = await person(manualFirst, "clicked-first");
+  const nextInLine = await person(manualFirst, "left-for-the-run");
+  const runA = await runFor(manualFirst, 2);
+  await researchOnePerson(USER, clicked, "personal");
+  const allocatedA = await allocateRunResearch(USER, { id: runA.id, campaignId: manualFirst, fundingSource: "personal", holdId: null }, [clicked, nextInLine]);
+  const clickedAttempts = await attemptsFor(clicked);
+  check("run allocation skips someone already claimed by hand", clickedAttempts.length === 1 && clickedAttempts[0].runId === null, JSON.stringify(clickedAttempts.map((a) => a.runId)));
+  check("…and spends its slot on the next person instead", allocatedA === 1 && (await attemptsFor(nextInLine)).length === 1, String(allocatedA));
+  const [runAAfter] = await db.select().from(schema.outreachResearchRuns).where(eq(schema.outreachResearchRuns.id, runA.id));
+  check("…so the run used exactly one slot", runAAfter.researchUsed === 1, String(runAAfter.researchUsed));
+
+  // The run got there first; the click comes after.
+  const runFirst = await freshCampaign();
+  const allocated = await person(runFirst, "allocated-first");
+  const runB = await runFor(runFirst, 1);
+  await allocateRunResearch(USER, { id: runB.id, campaignId: runFirst, fundingSource: "personal", holdId: null }, [allocated]);
+  let lateClick = "";
+  try {
+    await researchOnePerson(USER, allocated, "personal");
+  } catch (err) {
+    lateClick = (err as Error).message;
+  }
+  check("a click on someone the run already claimed is refused as underway", lateClick.includes("already underway"), lateClick);
+  check("…leaving exactly one attempt", (await attemptsFor(allocated)).length === 1);
+
+  // Budget runs out mid-pool: the person claimed for the refused slot goes back, and the loop
+  // stops without claiming anyone after them.
+  const shortRun = await freshCampaign();
+  const [first, second, third] = [await person(shortRun, "fits"), await person(shortRun, "over-budget"), await person(shortRun, "never-reached")];
+  const runC = await runFor(shortRun, 1);
+  const allocatedC = await allocateRunResearch(USER, { id: runC.id, campaignId: shortRun, fundingSource: "personal", holdId: null }, [first, second, third]);
+  check("a one-slot run allocates one person", allocatedC === 1 && (await stateOf(first)) === "queued");
+  check("…gives back the claim on the person the budget refused", (await stateOf(second)) === "none" && (await attemptsFor(second)).length === 0);
+  check("…and stops there", (await stateOf(third)) === "none" && (await attemptsFor(third)).length === 0);
 
   console.log("All outreach selection checks passed.");
 }

@@ -7,7 +7,7 @@ import { getCampaignV2 } from "@/lib/outreach/campaigns";
 import { getCreditBalance, releaseHold, reserveCredits } from "@/lib/outreach/credits/ledger";
 import { parseFundingSource } from "@/lib/outreach/funding";
 import { resolveResearchProviders } from "@/lib/outreach/providers/resolve";
-import { allocateResearch } from "@/lib/outreach/research/attempt";
+import { allocateResearch, claimProspectForResearch, releaseResearchClaim } from "@/lib/outreach/research/attempt";
 import { RANK_TIERS } from "@/lib/outreach/types";
 import type {
   OutreachConfidence,
@@ -302,20 +302,10 @@ export async function researchOnePerson(
     throw new UserFacingError("Add your Apollo key in Settings to research people with your own keys");
   }
 
+  // The same claim a run's allocation takes (`claimProspectForResearch`), so a click and a
+  // run racing for this person can never both win it.
   const priorState = prospect.researchState;
-  const claimed = await db
-    .update(outreachProspects)
-    .set({ researchState: "queued", updatedAt: new Date() })
-    .where(
-      and(
-        eq(outreachProspects.id, prospectId),
-        eq(outreachProspects.userId, userId),
-        notInArray(outreachProspects.researchState, ["queued", "running"])
-      )
-    )
-    // Bare `.returning()` — see the note in `selectPeople` above.
-    .returning();
-  if (claimed.length === 0) {
+  if (!(await claimProspectForResearch(userId, prospectId, "idle"))) {
     throw new UserFacingError("Research on this person is already underway");
   }
 
@@ -338,16 +328,7 @@ export async function researchOnePerson(
     // Undo only OUR claim: gated on research_state still being 'queued', so a newer state
     // written by someone else in this window (a job that raced ahead, another restore) is
     // never clobbered.
-    await db
-      .update(outreachProspects)
-      .set({ researchState: priorState, updatedAt: new Date() })
-      .where(
-        and(
-          eq(outreachProspects.id, prospectId),
-          eq(outreachProspects.userId, userId),
-          eq(outreachProspects.researchState, "queued")
-        )
-      );
+    await releaseResearchClaim(userId, prospectId, priorState);
     if (holdId) await releaseHold(userId, holdId);
     throw err;
   }

@@ -16,7 +16,7 @@ import type { JobHandler, JobOutcome } from "@/lib/outreach/jobs/worker";
 import { resolveResearchProviders, type ProviderResolver } from "@/lib/outreach/providers/resolve";
 import { isProviderError } from "@/lib/outreach/providers/types";
 import { compareRank } from "@/lib/outreach/ranking/score";
-import { allocateResearch, cancelQueuedAttempts, reapStuckAttempts } from "@/lib/outreach/research/attempt";
+import { allocateRunResearch, cancelQueuedAttempts, reapStuckAttempts } from "@/lib/outreach/research/attempt";
 import type {
   JsonCompleter,
   OutreachFundingSource,
@@ -550,16 +550,11 @@ export function createDiscoveryRunHandler(deps: DiscoveryDeps = {}): JobHandler 
               )
             );
           const ordered = pool.filter((p) => p.rankTier !== null).sort(compareRank).slice(0, remaining);
-          for (const prospect of ordered) {
-            const attemptId = await allocateResearch(userId, {
-              campaignId: campaign.id,
-              prospectId: prospect.id,
-              runId: run.id,
-              funding: run.fundingSource,
-              holdId: run.holdId,
-            });
-            if (!attemptId) break;
-          }
+          await allocateRunResearch(
+            userId,
+            { id: run.id, campaignId: campaign.id, fundingSource: run.fundingSource, holdId: run.holdId },
+            ordered.map((p) => p.id)
+          );
         }
         await db
           .update(outreachResearchRuns)
