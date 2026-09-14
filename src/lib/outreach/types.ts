@@ -32,6 +32,8 @@ export type {
 } from "@/db/schema";
 
 export const CRITERION_KINDS = ["role", "organization", "geography", "experience", "other"] as const;
+/** Who pays for a run or a research attempt (spec §7.2). Nothing else is a funding source. */
+export const FUNDING_SOURCES = ["orbit", "personal"] as const;
 export const SETUP_STEPS = ["describe", "audience", "people", "review", "send", "tracking"] as const;
 export const RANK_TIERS = ["strong", "possible", "weak", "filtered"] as const;
 

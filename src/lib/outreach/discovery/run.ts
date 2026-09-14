@@ -8,6 +8,7 @@ import { OUTREACH_LIMITS } from "@/lib/outreach/config";
 import { releaseHold, reserveCredits } from "@/lib/outreach/credits/ledger";
 import { hasAnyCriteria } from "@/lib/outreach/criteria";
 import { loadOutreachHistory, upsertCandidate } from "@/lib/outreach/discovery/candidates";
+import { parseFundingSource } from "@/lib/outreach/funding";
 import { planQueries } from "@/lib/outreach/discovery/query-plan";
 import { parseLinkedinResult, stripHtml } from "@/lib/outreach/discovery/serp";
 import { cancelJobs, countOutstandingJobs, enqueueJob } from "@/lib/outreach/jobs/queue";
@@ -75,6 +76,9 @@ export async function startDiscoveryRun(
   input: { campaignId: string; funding: OutreachFundingSource; researchBudget: number },
   deps: DiscoveryDeps = {}
 ): Promise<{ runId: string; researchBudget: number; demo: boolean }> {
+  // Before anything else: a funding source that is neither "orbit" nor "personal" must not
+  // insert a run, spend a daily Orbit search or hold a credit — whatever resolver is injected.
+  const funding = parseFundingSource(input.funding);
   const campaign = await getCampaignV2(userId, input.campaignId);
   if (!campaign) throw new UserFacingError("That campaign isn’t available");
   if (!campaign.criteriaConfirmedAt || !hasAnyCriteria(campaign.criteria)) {
@@ -101,18 +105,8 @@ export async function startDiscoveryRun(
     .limit(1);
   if (active) throw new UserFacingError("A search is already running for this campaign");
 
-  // Resolve first: a funding source that cannot work must not cost a daily search.
-  const providers = await (deps.resolveProviders ?? resolveResearchProviders)(userId, input.funding);
-  if (input.funding === "orbit") {
-    try {
-      await consumeBucket("outreach.orbit-search", userId, RATE_LIMITS.outreachOrbitSearch);
-    } catch (err) {
-      if (isRateLimitedError(err)) {
-        throw new UserFacingError("You’ve used today’s Orbit-funded searches — try again tomorrow or use your own keys");
-      }
-      throw err;
-    }
-  }
+  // Resolve first: a funding source that cannot work must not insert a run.
+  const providers = await (deps.resolveProviders ?? resolveResearchProviders)(userId, funding);
 
   const budget = Math.max(0, Math.min(OUTREACH_LIMITS.maxResearchBudget, Math.floor(input.researchBudget || 0)));
   const [runRow] = await db
@@ -121,7 +115,7 @@ export async function startDiscoveryRun(
       userId,
       campaignId: campaign.id,
       criteriaVersion: campaign.criteriaVersion,
-      fundingSource: input.funding,
+      fundingSource: funding,
       queryBudget: OUTREACH_LIMITS.braveQueriesPerRun,
       stats: { demo: providers.demo },
     })
@@ -132,20 +126,33 @@ export async function startDiscoveryRun(
     .returning();
   if (!runRow) throw new UserFacingError("A search is already running for this campaign");
 
-  // Everything past this point can fail (a hiccup in credits, the campaign update, or the
-  // enqueue) with the run row already committed. Left alone that strands it ACTIVE — blocking
-  // the campaign via ruling 1's index — and, once a hold is taken, strands its credits too. On
-  // any throw here, cancel the run and release whatever hold it already took, then rethrow so
-  // the caller still sees the original failure.
+  // Everything past this point can fail (the daily Orbit-search cap, a hiccup in credits, the
+  // campaign update, or the enqueue) with the run row already committed. Left alone that
+  // strands it ACTIVE — blocking the campaign via ruling 1's index — and, once a hold is taken,
+  // strands its credits too. On any throw here, cancel the run and release whatever hold it
+  // already took, then rethrow so the caller still sees the original failure.
   let researchBudget = 0;
   let holdId: string | null = null;
   try {
+    // The daily Orbit-funded search is spent only once this start has its run row: a start
+    // refused before the INSERT (a busy campaign, a failed resolve) or one that lost the
+    // one-active-run race above never costs one. A refusal here is cleaned up by the catch.
+    if (funding === "orbit") {
+      try {
+        await consumeBucket("outreach.orbit-search", userId, RATE_LIMITS.outreachOrbitSearch);
+      } catch (err) {
+        if (isRateLimitedError(err)) {
+          throw new UserFacingError("You’ve used today’s Orbit-funded searches — try again tomorrow or use your own keys");
+        }
+        throw err;
+      }
+    }
     if (budget > 0 && providers.enrichment) {
-      if (input.funding === "orbit") {
+      if (funding === "orbit") {
         const hold = await reserveCredits(userId, { want: budget, min: 1, runId: runRow.id, idempotencyKey: `reserve:run:${runRow.id}` });
         researchBudget = hold?.amount ?? 0;
         holdId = hold?.holdId ?? null;
-      } else {
+      } else if (funding === "personal") {
         researchBudget = budget;
       }
     }

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { asActionResult, type ActionResult } from "@/lib/errors";
 import { getCreditBalance } from "@/lib/outreach/credits/ledger";
 import { cancelDiscoveryRun, getLatestRun, startDiscoveryRun, type RunSummary } from "@/lib/outreach/discovery/run";
+import { parseFundingSource } from "@/lib/outreach/funding";
 import { requireOutreachNextUser } from "@/lib/outreach/gate";
 import { kickOutreachWorker } from "@/lib/outreach/jobs/kick";
 import { setFundingPreference } from "@/lib/outreach/keys";
@@ -27,8 +28,12 @@ export async function startRunAction(input: {
 }): Promise<ActionResult<{ runId: string; researchBudget: number; demo: boolean }>> {
   return asActionResult(async () => {
     const userId = await requireOutreachNextUser();
-    const result = await startDiscoveryRun(userId, input);
-    await setFundingPreference(userId, input.funding);
+    // A Server Action is reachable by direct POST, so the type above is a hope, not a check:
+    // anything but exactly "orbit" or "personal" is refused here (and again inside every
+    // library call below it).
+    const funding = parseFundingSource(input.funding);
+    const result = await startDiscoveryRun(userId, { ...input, funding });
+    await setFundingPreference(userId, funding);
     kickOutreachWorker();
     revalidatePath(`/outreach/${input.campaignId}/people`);
     return result;
@@ -96,7 +101,7 @@ export async function resolveDuplicateAction(prospectId: string, decision: "dist
 export async function researchPersonAction(prospectId: string, funding: OutreachFundingSource): Promise<ActionResult<{ attemptId: string }>> {
   return asActionResult(async () => {
     const userId = await requireOutreachNextUser();
-    const result = await researchOnePerson(userId, prospectId, funding);
+    const result = await researchOnePerson(userId, prospectId, parseFundingSource(funding));
     kickOutreachWorker();
     return result;
   });

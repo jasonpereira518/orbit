@@ -5,6 +5,7 @@ import { outreachEvidence, outreachProspects } from "@/db/schema";
 import { UserFacingError } from "@/lib/errors";
 import { getCampaignV2 } from "@/lib/outreach/campaigns";
 import { getCreditBalance, releaseHold, reserveCredits } from "@/lib/outreach/credits/ledger";
+import { parseFundingSource } from "@/lib/outreach/funding";
 import { resolveResearchProviders } from "@/lib/outreach/providers/resolve";
 import { allocateResearch } from "@/lib/outreach/research/attempt";
 import { RANK_TIERS } from "@/lib/outreach/types";
@@ -284,8 +285,10 @@ export async function resolveDuplicate(userId: string, prospectId: string, decis
 export async function researchOnePerson(
   userId: string,
   prospectId: string,
-  funding: OutreachFundingSource
+  fundingInput: OutreachFundingSource
 ): Promise<{ attemptId: string }> {
+  // First, before any lookup or claim: only "orbit" (a one-credit hold) or "personal" (none).
+  const funding = parseFundingSource(fundingInput);
   const db = await getDb();
   const [prospect] = await db
     .select({ id: outreachProspects.id, campaignId: outreachProspects.campaignId, researchState: outreachProspects.researchState })

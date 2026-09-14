@@ -4,6 +4,7 @@ import { userSettings } from "@/db/schema";
 import { decryptOrNull, encrypt } from "@/lib/crypto";
 import { isDemoAccount } from "@/lib/demo-account";
 import { UserFacingError } from "@/lib/errors";
+import { parseFundingSource } from "@/lib/outreach/funding";
 import { verifyApolloKey } from "@/lib/outreach/providers/apollo";
 import { verifyBraveKey } from "@/lib/outreach/providers/brave";
 import type { FetchLike } from "@/lib/outreach/providers/types";
@@ -86,6 +87,8 @@ export async function getResearchKeyStatus(userId: string): Promise<ResearchKeyS
 }
 
 export async function setFundingPreference(userId: string, pref: OutreachFundingSource): Promise<void> {
+  // Fails closed like every other funding entry point — only "orbit" or "personal" is stored.
+  const source = parseFundingSource(pref);
   const db = await getDb();
-  await db.update(userSettings).set({ outreachFundingPreference: pref }).where(eq(userSettings.userId, userId));
+  await db.update(userSettings).set({ outreachFundingPreference: source }).where(eq(userSettings.userId, userId));
 }

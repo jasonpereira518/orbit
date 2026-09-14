@@ -6,6 +6,7 @@ import { isDemoAccount } from "@/lib/demo-account";
 import { getEntitlements } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { PROVIDER_COST_MICROS } from "@/lib/outreach/config";
+import { parseFundingSource } from "@/lib/outreach/funding";
 import { createApolloEnrichment } from "@/lib/outreach/providers/apollo";
 import { createBraveSearch } from "@/lib/outreach/providers/brave";
 import { createDemoEnrichment, createDemoSearch } from "@/lib/outreach/providers/demo";
@@ -81,12 +82,16 @@ function meteredEnrichment(provider: EnrichmentProvider, userId: string, keyOwne
  * The providers a run uses, fixed by its funding source (spec §7.2). A personal run with a
  * failing key fails; it NEVER falls back to Orbit's keys. Demo adapters only for demo
  * accounts with no Orbit key configured (spec §7.5).
+ *
+ * Fails closed on the funding source itself: exactly "personal" or exactly "orbit", each
+ * branch named, and anything else refused — never "not personal, so Orbit".
  */
 export async function resolveResearchProviders(
   userId: string,
-  funding: OutreachFundingSource,
+  fundingInput: OutreachFundingSource,
   deps: { fetch?: FetchLike } = {}
 ): Promise<ResearchProviders> {
+  const funding = parseFundingSource(fundingInput);
   if (funding === "personal") {
     const db = await getDb();
     const [settings] = await db
@@ -107,23 +112,29 @@ export async function resolveResearchProviders(
     };
   }
 
-  const entitlements = await getEntitlements(userId);
-  if (!entitlements.canUseOutreach) {
-    throw new UserFacingError("Research on Orbit’s allowance is part of Orbit Pro and Orbit Lifetime");
-  }
-  const braveKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
-  if (!braveKey) {
-    if (isDemoAccount(userId)) {
-      return { funding, keyOwner: "orbit", demo: true, search: createDemoSearch(), enrichment: createDemoEnrichment() };
+  if (funding === "orbit") {
+    const entitlements = await getEntitlements(userId);
+    if (!entitlements.canUseOutreach) {
+      throw new UserFacingError("Research on Orbit’s allowance is part of Orbit Pro and Orbit Lifetime");
     }
-    throw new UserFacingError("People search isn’t available right now — try again later or use your own keys");
+    const braveKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
+    if (!braveKey) {
+      if (isDemoAccount(userId)) {
+        return { funding, keyOwner: "orbit", demo: true, search: createDemoSearch(), enrichment: createDemoEnrichment() };
+      }
+      throw new UserFacingError("People search isn’t available right now — try again later or use your own keys");
+    }
+    const apolloKey = process.env.APOLLO_API_KEY?.trim();
+    return {
+      funding,
+      keyOwner: "orbit",
+      demo: false,
+      search: meteredSearch(createBraveSearch(braveKey, { fetch: deps.fetch }), userId, "orbit"),
+      enrichment: apolloKey ? meteredEnrichment(createApolloEnrichment(apolloKey, { fetch: deps.fetch }), userId, "orbit") : null,
+    };
   }
-  const apolloKey = process.env.APOLLO_API_KEY?.trim();
-  return {
-    funding,
-    keyOwner: "orbit",
-    demo: false,
-    search: meteredSearch(createBraveSearch(braveKey, { fetch: deps.fetch }), userId, "orbit"),
-    enrichment: apolloKey ? meteredEnrichment(createApolloEnrichment(apolloKey, { fetch: deps.fetch }), userId, "orbit") : null,
-  };
+
+  // Unreachable while `parseFundingSource` is the gate above — kept so a future third source
+  // added to FUNDING_SOURCES is refused here until it gets a branch of its own.
+  throw new UserFacingError("Choose Orbit’s allowance or your own keys to pay for this");
 }
