@@ -25,34 +25,28 @@
  *    connection up the backoff ladder and eventually disarm it.
  */
 import type { ParsedCalendarEvent } from "@/lib/calendar-import";
-import { classifyCalendarEvent, counterpartsOf } from "@/lib/calendar-classify";
-import { calendarExternalIdBase } from "@/lib/ingest/external-id";
-import type { NetworkEvent } from "@/lib/ingest/events";
 import type { CalendarSyncCursor } from "@/db/schema";
+import {
+  CALENDAR_WINDOW_FUTURE_MS,
+  CALENDAR_WINDOW_PAST_MS,
+  CalendarSyncTokenExpiredError,
+  type CalendarFetchResult,
+} from "@/lib/connectors/calendar-shared";
+
+export {
+  CALENDAR_WINDOW_FUTURE_MS,
+  CALENDAR_WINDOW_PAST_MS,
+  CalendarSyncTokenExpiredError,
+  advanceCursor,
+  toGroupEventCandidates,
+  toNetworkEvents,
+} from "@/lib/connectors/calendar-shared";
+export type { CalendarFetchResult, GroupEventCandidate } from "@/lib/connectors/calendar-shared";
 
 const CALENDAR_API = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 
-/**
- * How far back the FIRST sync reaches, and how far forward.
- *
- * Deliberately the ongoing-sync window (90 days back), not `CALENDAR_BACKFILL_DAYS` (730).
- * `windowCalendarEvents`' own comment warns that a consumer which does not pass its own
- * lookback silently inherits the two-year one — which on a first sync of a busy calendar is
- * thousands of events fetched to discover a handful of new contacts.
- */
-export const CALENDAR_WINDOW_PAST_MS = 90 * 86400000;
-export const CALENDAR_WINDOW_FUTURE_MS = 60 * 86400000;
-
 /** One page is the API's maximum, so a quiet calendar finishes in a single request. */
 const PAGE_SIZE = 250;
-
-/** Raised for an expired `syncToken`. Callers must reset the cursor, NOT count a failure. */
-export class CalendarSyncTokenExpiredError extends Error {
-  constructor() {
-    super("Google Calendar syncToken expired (410) — full resync required");
-    this.name = "CalendarSyncTokenExpiredError";
-  }
-}
 
 type GoogleAttendee = {
   email?: string;
@@ -79,17 +73,6 @@ type GoogleEventsPage = {
   items?: GoogleEvent[];
   nextPageToken?: string;
   nextSyncToken?: string;
-};
-
-export type CalendarFetchResult = {
-  events: ParsedCalendarEvent[];
-  /** Present only on the last page of a run. */
-  nextSyncToken: string | null;
-  nextPageToken: string | null;
-  /** Cancelled events, counted and skipped — see `toNetworkEvents`. */
-  tombstones: number;
-  /** Emails Google itself marked `self`, used to filter the calendar owner out. */
-  selfEmails: string[];
 };
 
 function parseWhen(when: GoogleEvent["start"]): Date | null {
@@ -186,7 +169,7 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
-  if (res.status === 410) throw new CalendarSyncTokenExpiredError();
+  if (res.status === 410) throw new CalendarSyncTokenExpiredError("google");
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Google Calendar ${res.status}: ${body.slice(0, 200)}`);
@@ -218,67 +201,5 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
     nextPageToken: page.nextPageToken ?? null,
     tombstones,
     selfEmails: [...selfEmails],
-  };
-}
-
-/**
- * Keep the events that represent a real relationship touch, and shape them for ingest.
- *
- * The judgement of what counts is `classifyCalendarEvent`'s, unchanged — a standup, a
- * dentist appointment and a focus block are not networking, and that logic already exists and
- * is already tested. This function's only opinions are which identifier to key on and how to
- * phrase the note.
- */
-export function toNetworkEvents(
-  events: ParsedCalendarEvent[],
-  selfEmails: string[]
-): NetworkEvent[] {
-  const out: NetworkEvent[] = [];
-  for (const event of events) {
-    if (!event.start) continue;
-    const classification = classifyCalendarEvent(event, selfEmails);
-    if (!classification.keep) continue;
-
-    const people = counterpartsOf(event, selfEmails);
-    if (people.length === 0) continue;
-
-    out.push({
-      externalIdBase: calendarExternalIdBase(event.uid),
-      type: "meeting",
-      timestamp: event.start,
-      participants: people.map((p) => ({
-        name: p.name || null,
-        email: p.email || null,
-      })),
-      summary: event.summary || null,
-      notes: [
-        event.summary ? `Meeting: ${event.summary}` : "Calendar meeting",
-        event.location ? `Location: ${event.location}` : "",
-        event.description ? event.description.slice(0, 500) : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    });
-  }
-  return out;
-}
-
-/**
- * Fold one page's outcome into the cursor to persist.
- *
- * The `nextSyncToken` is only ever adopted once `nextPageToken` is absent — that is the
- * mechanical expression of failure mode 1. While paging continues, the previous `syncToken`
- * is retained so an interrupted run resumes rather than restarting.
- */
-export function advanceCursor(
-  previous: CalendarSyncCursor | null,
-  page: CalendarFetchResult
-): CalendarSyncCursor {
-  if (page.nextPageToken) {
-    return { ...(previous ?? {}), pageToken: page.nextPageToken };
-  }
-  return {
-    syncToken: page.nextSyncToken ?? previous?.syncToken ?? null,
-    pageToken: null,
   };
 }

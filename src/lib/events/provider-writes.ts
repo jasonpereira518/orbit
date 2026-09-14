@@ -14,7 +14,13 @@ import { events } from "@/db/schema";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { upsertEventAttendees } from "@/lib/events/store";
 import type { ParsedAttendee } from "@/lib/events/parse-roster";
-import type { EventProviderId, ProviderAttendee, ProviderEvent } from "@/lib/events/types";
+import type {
+  CalendarEventProviderId,
+  EventProviderId,
+  ProviderAttendee,
+  ProviderEvent,
+} from "@/lib/events/types";
+import type { GroupEventCandidate } from "@/lib/connectors/calendar-shared";
 
 /**
  * Create or update the event row, returning its id.
@@ -30,8 +36,11 @@ import type { EventProviderId, ProviderAttendee, ProviderEvent } from "@/lib/eve
  */
 export async function upsertProviderEvent(
   userId: string,
-  provider: EventProviderId,
-  event: ProviderEvent
+  provider: EventProviderId | CalendarEventProviderId,
+  event: ProviderEvent,
+  /** Luma/Eventbrite connections are always host-scoped; calendar sync is the first caller
+   *  that can genuinely be either. */
+  role: "attended" | "hosted" = "hosted"
 ): Promise<string> {
   const db = await getDb();
   const rows = rowsOf<{ id: string }>(
@@ -41,7 +50,7 @@ export async function upsertProviderEvent(
          provider, provider_event_id, description, cover_source_url, attendee_count)
       VALUES
         (${userId}, ${event.title}, ${event.startsAt}, ${event.endsAt}, ${event.timezone},
-         ${event.venue}, ${event.city}, ${event.url}, 'hosted', ${provider},
+         ${event.venue}, ${event.city}, ${event.url}, ${role}, ${provider},
          ${provider}, ${event.providerEventId}, ${event.description},
          ${event.coverImageUrl}, ${event.attendeeCount})
       ON CONFLICT (user_id, provider, provider_event_id) DO UPDATE SET
@@ -52,6 +61,7 @@ export async function upsertProviderEvent(
         venue            = COALESCE(excluded.venue, events.venue),
         city             = COALESCE(excluded.city, events.city),
         url              = COALESCE(excluded.url, events.url),
+        role             = excluded.role,
         description      = COALESCE(excluded.description, events.description),
         cover_source_url = COALESCE(excluded.cover_source_url, events.cover_source_url),
         attendee_count   = COALESCE(excluded.attendee_count, events.attendee_count),
@@ -107,4 +117,68 @@ export async function upsertProviderAttendees(
     });
   }
   return upsertEventAttendees(userId, eventId, parsed, provider);
+}
+
+/**
+ * Store one calendar-detected panel/webinar and its roster.
+ *
+ * Unlike Luma/Eventbrite, a calendar invite's attendee list is available REGARDLESS of
+ * `role` — Google/Graph both hand back every guest whether the calendar owner organized the
+ * event or merely accepted an invite to it. So `hostedBySelf` decides `events.role`, and the
+ * roster is built accordingly: everyone else on the invite when the owner is the host, or the
+ * organizer (tagged `attendeeRole: "host"`) plus any co-attendees when the owner is a guest.
+ *
+ * Contacts are never created here. `upsertEventAttendees` never writes `contact_id` — that is
+ * only ever set by a human clicking "connect" in the roster UI, the same policy every other
+ * event source already follows.
+ */
+export async function upsertCalendarGroupEvent(
+  userId: string,
+  provider: CalendarEventProviderId,
+  candidate: GroupEventCandidate
+): Promise<{ eventId: string; attendeesUpserted: number }> {
+  const { event, hostedBySelf, organizer, attendees } = candidate;
+
+  const eventId = await upsertProviderEvent(
+    userId,
+    provider,
+    {
+      providerEventId: event.uid,
+      title: event.summary || "Untitled event",
+      startsAt: event.start,
+      endsAt: event.end,
+      timezone: null,
+      venue: event.location || null,
+      city: null,
+      url: null,
+      description: event.description ? event.description.slice(0, 2000) : null,
+      coverImageUrl: null,
+      attendeeCount: hostedBySelf ? attendees.length : attendees.length + (organizer ? 1 : 0),
+    },
+    hostedBySelf ? "hosted" : "attended"
+  );
+
+  const roster: ParsedAttendee[] = [];
+  const seen = new Set<string>();
+  const addToRoster = (person: { name: string; email: string }, attendeeRole: ParsedAttendee["attendeeRole"]) => {
+    const identityKey = attendeeIdentityKey({ email: person.email, fullName: person.name });
+    if (!identityKey || seen.has(identityKey)) return;
+    seen.add(identityKey);
+    roster.push({
+      fullName: person.name || null,
+      email: person.email || null,
+      company: null,
+      title: null,
+      linkedinUrl: null,
+      xHandle: null,
+      attendeeRole,
+      identityKey,
+    });
+  };
+
+  if (!hostedBySelf && organizer) addToRoster(organizer, "host");
+  for (const attendee of attendees) addToRoster(attendee, hostedBySelf ? "attendee" : null);
+
+  const attendeesUpserted = await upsertEventAttendees(userId, eventId, roster, provider);
+  return { eventId, attendeesUpserted };
 }

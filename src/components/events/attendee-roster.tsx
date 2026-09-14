@@ -37,6 +37,8 @@ const SOURCE_LABEL: Record<RosterRow["source"], string> = {
   screenshot: "Screenshot",
   luma: "Luma",
   eventbrite: "Eventbrite",
+  google_calendar: "Google Calendar",
+  outlook_calendar: "Outlook Calendar",
 };
 
 export function AttendeeRoster({

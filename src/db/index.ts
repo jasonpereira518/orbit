@@ -1013,6 +1013,23 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  external_id text NOT NULL,
+  title text NOT NULL,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  organizer_email text,
+  organizer_name text,
+  attendees jsonb NOT NULL DEFAULT '[]'::jsonb,
+  location text,
+  description_excerpt text,
+  classification text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1070,12 +1087,14 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * duplicates being created), contact_merges (a merged contact archived whole, so the
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
+ * v34 = calendar_events (every fetched calendar event, independent of what — if anything —
+ * it does to a contact; feeds `chat-context.ts`'s "what's on my calendar" block).
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 34;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2224,6 +2243,12 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
   `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v34: raw calendar context for chat. The CREATE TABLE above repairs a fresh
+  // database; this repairs an existing one, same rule as every version before it. The unique
+  // index is what makes a re-sync idempotent — see `upsertCalendarEvent` in
+  // `src/lib/calendar-events-store.ts`.
+  `CREATE UNIQUE INDEX IF NOT EXISTS calendar_events_provider_uidx ON calendar_events(user_id, provider, external_id)`,
+  `CREATE INDEX IF NOT EXISTS calendar_events_user_starts_idx ON calendar_events(user_id, starts_at)`,
 ];
 
 /**

@@ -19,13 +19,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { eventAttendees, events, type EventRecord } from "@/db/schema";
-import type {
-  AttendeeSource,
-  EventProviderId,
-  EventRole,
-  EventSource,
-  RosterRow,
-} from "@/lib/events/types";
+import type { AttendeeSource, EventRole, EventSource, RosterRow } from "@/lib/events/types";
 import type { ParsedAttendee } from "@/lib/events/parse-roster";
 
 export type EventListRow = Pick<
@@ -152,7 +146,7 @@ export type CreateEventInput = {
   url?: string | null;
   role?: EventRole;
   source?: EventSource;
-  provider?: EventProviderId | null;
+  provider?: EventRecord["provider"];
   providerEventId?: string | null;
   description?: string | null;
   coverImageUrl?: string | null;
@@ -244,21 +238,23 @@ export async function upsertEventAttendees(
   const values = attendees.map(
     (a) =>
       sql`(${eventId}::uuid, ${userId}, ${a.fullName}, ${a.email}, ${a.company}, ${a.title},
-           ${a.linkedinUrl}, ${a.xHandle}, ${source}, ${a.identityKey})`
+           ${a.linkedinUrl}, ${a.xHandle}, ${source}, ${a.attendeeRole ?? null}, ${a.identityKey})`
   );
 
   await db.execute(sql`
     INSERT INTO event_attendees
-      (event_id, user_id, full_name, email, company, title, linkedin_url, x_handle, source, identity_key)
+      (event_id, user_id, full_name, email, company, title, linkedin_url, x_handle, source,
+       attendee_role, identity_key)
     VALUES ${sql.join(values, sql`, `)}
     ON CONFLICT (event_id, identity_key) DO UPDATE SET
-      full_name    = COALESCE(event_attendees.full_name, excluded.full_name),
-      email        = COALESCE(event_attendees.email, excluded.email),
-      company      = COALESCE(event_attendees.company, excluded.company),
-      title        = COALESCE(event_attendees.title, excluded.title),
-      linkedin_url = COALESCE(event_attendees.linkedin_url, excluded.linkedin_url),
-      x_handle     = COALESCE(event_attendees.x_handle, excluded.x_handle),
-      updated_at   = now()
+      full_name     = COALESCE(event_attendees.full_name, excluded.full_name),
+      email         = COALESCE(event_attendees.email, excluded.email),
+      company       = COALESCE(event_attendees.company, excluded.company),
+      title         = COALESCE(event_attendees.title, excluded.title),
+      linkedin_url  = COALESCE(event_attendees.linkedin_url, excluded.linkedin_url),
+      x_handle      = COALESCE(event_attendees.x_handle, excluded.x_handle),
+      attendee_role = COALESCE(event_attendees.attendee_role, excluded.attendee_role),
+      updated_at    = now()
   `);
 
   return attendees.length;

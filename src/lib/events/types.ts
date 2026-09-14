@@ -21,10 +21,30 @@
  * error naming neither file.
  */
 
+/**
+ * The event-provider *connections* Orbit claims and syncs on a schedule — an API key or OAuth
+ * grant scoped to fetching a roster. Deliberately excludes the calendar connectors: those ride
+ * on the Gmail/Outlook connections `src/lib/provider-connections.ts` already claims, and
+ * `src/lib/events/connections.ts`'s `ClaimedEventConnection` must never be asked to claim one.
+ */
 export type EventProviderId = "luma" | "eventbrite";
+
+/**
+ * Where a calendar-sourced group event (a panel/webinar detected in a sync) came from. Not a
+ * "provider" in the API-key sense above — it names where an event row and its roster came
+ * from, not a connection this feature schedules itself. See
+ * `src/lib/connectors/calendar-shared.ts`'s `toGroupEventCandidates`.
+ */
+export type CalendarEventProviderId = "google_calendar" | "outlook_calendar";
+
 export type EventRole = "attended" | "hosted";
-export type EventSource = "manual" | "page" | EventProviderId;
-export type AttendeeSource = "paste" | "csv" | "screenshot" | EventProviderId;
+export type EventSource = "manual" | "page" | EventProviderId | CalendarEventProviderId;
+export type AttendeeSource =
+  | "paste"
+  | "csv"
+  | "screenshot"
+  | EventProviderId
+  | CalendarEventProviderId;
 export type AttendeeRole = "attendee" | "host" | "speaker";
 
 /** One event as a provider reports it. Producers map to this; nothing else touches their JSON. */

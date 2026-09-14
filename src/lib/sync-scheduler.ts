@@ -23,17 +23,32 @@
 import {
   CalendarSyncTokenExpiredError,
   advanceCursor,
-  fetchCalendarPage,
+  toGroupEventCandidates,
   toNetworkEvents,
-} from "@/lib/connectors/google-calendar";
-import { hasCalendarScope, getValidAccessToken } from "@/lib/gmail";
+  type CalendarFetchResult,
+} from "@/lib/connectors/calendar-shared";
+import { fetchCalendarPage } from "@/lib/connectors/google-calendar";
+import { fetchOutlookCalendarPage } from "@/lib/connectors/outlook-calendar";
+import { hasCalendarScope, getValidAccessToken as getValidGoogleAccessToken } from "@/lib/gmail";
+import {
+  hasOutlookCalendarScope,
+  getValidAccessToken as getValidOutlookAccessToken,
+} from "@/lib/outlook";
 import {
   claimDueConnections,
   disarmSync,
   markSyncResult,
   type ClaimedConnection,
+  type SyncProvider,
 } from "@/lib/provider-connections";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
+import { upsertCalendarGroupEvent } from "@/lib/events/provider-writes";
+import {
+  pruneOldCalendarEvents,
+  toStorageRow,
+  upsertCalendarEvents,
+} from "@/lib/calendar-events-store";
+import { classifyCalendarEvent } from "@/lib/calendar-classify";
 import {
   claimDueCalendarSubscriptions,
   syncCalendarSubscription,
@@ -64,20 +79,30 @@ export const ICS_SUBSCRIPTIONS_PER_RUN = 10;
 /** Cadence for a healthy connection. A floor, never a promise — GitHub cron lags 5-30 minutes. */
 export const SYNC_INTERVAL_MS = 30 * 60 * 1000;
 
+/** How long a `calendar_events` row survives before the sweep at the end of a pass drops it. */
+export const CALENDAR_EVENTS_RETENTION_MS = 365 * 86400000;
+
 /**
- * The two effects a sync run has on the outside world: minting a token and calling the
- * provider. Injectable so the scheduler's own behaviour — budgets, isolation between
- * connections, how each class of failure is recorded — can be tested without a network or a
- * real Google grant. Production passes nothing and gets the real implementations.
+ * The two effects a sync run has on the outside world, per provider: minting a token and
+ * calling the calendar API. Injectable so the scheduler's own behaviour — budgets, isolation
+ * between connections, how each class of failure is recorded — can be tested without a
+ * network or a real Google/Microsoft grant. Production passes nothing and gets the real
+ * implementations.
  */
 export type SyncDeps = {
-  getAccessToken: typeof getValidAccessToken;
-  fetchPage: typeof fetchCalendarPage;
+  google: {
+    getAccessToken: typeof getValidGoogleAccessToken;
+    fetchPage: typeof fetchCalendarPage;
+  };
+  microsoft: {
+    getAccessToken: typeof getValidOutlookAccessToken;
+    fetchPage: typeof fetchOutlookCalendarPage;
+  };
 };
 
 const DEFAULT_DEPS: SyncDeps = {
-  getAccessToken: getValidAccessToken,
-  fetchPage: fetchCalendarPage,
+  google: { getAccessToken: getValidGoogleAccessToken, fetchPage: fetchCalendarPage },
+  microsoft: { getAccessToken: getValidOutlookAccessToken, fetchPage: fetchOutlookCalendarPage },
 };
 
 export type SyncRunStats = {
@@ -91,6 +116,10 @@ export type SyncRunStats = {
   eventsIngested: number;
   contactsCreated: number;
   interactionsLogged: number;
+  /** Panels/webinars staged as a roster — never auto-created as contacts. */
+  groupEventsFound: number;
+  /** `calendar_events` rows dropped past their retention window this pass. */
+  calendarEventsPruned: number;
   /** Luma/Eventbrite. Named apart from the calendar counters so one pass reports both. */
   eventConnectionsClaimed: number;
   eventConnectionsSynced: number;
@@ -111,12 +140,55 @@ function emptyRunStats(): SyncRunStats {
     eventsIngested: 0,
     contactsCreated: 0,
     interactionsLogged: 0,
+    groupEventsFound: 0,
+    calendarEventsPruned: 0,
     eventConnectionsClaimed: 0,
     eventConnectionsSynced: 0,
     eventConnectionsFailed: 0,
     eventRostersFetched: 0,
     budgetExhausted: false,
   };
+}
+
+/**
+ * Fold one fetched page into the ingest context and the group-event roster writer.
+ *
+ * Shared between Google and Outlook because neither provider matters past this point — both
+ * hand back the same `CalendarFetchResult` shape, and everything from here on is
+ * `calendar-shared.ts`'s classification, not provider mechanics.
+ */
+async function processCalendarPage(
+  ctx: Awaited<ReturnType<typeof openIngestContext>>,
+  page: CalendarFetchResult,
+  userId: string,
+  groupEventProvider: "google_calendar" | "outlook_calendar",
+  stats: SyncRunStats
+): Promise<void> {
+  const events = toNetworkEvents(page.events, page.selfEmails);
+  if (events.length > 0) {
+    const ingested = await ingestEvents(ctx, events);
+    stats.eventsIngested += ingested.eventsSeen;
+    stats.contactsCreated += ingested.contactsCreated;
+    stats.interactionsLogged += ingested.interactionsLogged;
+  }
+
+  // Panels/webinars: staged as a reviewable roster, never handed to `ingestEvents` — nobody
+  // becomes a contact from a group event without a human clicking "connect", the same policy
+  // the existing Luma/Eventbrite roster sync already follows.
+  const groupCandidates = toGroupEventCandidates(page.events, page.selfEmails);
+  for (const candidate of groupCandidates) {
+    await upsertCalendarGroupEvent(userId, groupEventProvider, candidate);
+    stats.groupEventsFound++;
+  }
+
+  // Every non-cancelled event, classified or not — the raw material for "what's on my
+  // calendar" chat context. Independent of the two paths above: an ordinary internal meeting
+  // touches neither a contact nor a roster, but still belongs here.
+  const storageProvider = groupEventProvider === "google_calendar" ? "google" : "microsoft";
+  const rows = page.events
+    .filter((e) => e.start)
+    .map((e) => toStorageRow(e, classifyCalendarEvent(e, page.selfEmails).kind));
+  if (rows.length > 0) await upsertCalendarEvents(userId, storageProvider, rows);
 }
 
 /**
@@ -127,7 +199,7 @@ async function syncGoogleCalendar(
   conn: ClaimedConnection,
   stats: SyncRunStats,
   now: Date,
-  deps: SyncDeps
+  deps: SyncDeps["google"]
 ): Promise<void> {
   const accessToken = await deps.getAccessToken(conn.userId);
   const ctx = await openIngestContext(conn.userId, {
@@ -162,14 +234,7 @@ async function syncGoogleCalendar(
       throw err;
     }
 
-    const events = toNetworkEvents(page.events, page.selfEmails);
-    if (events.length > 0) {
-      const ingested = await ingestEvents(ctx, events);
-      stats.eventsIngested += ingested.eventsSeen;
-      stats.contactsCreated += ingested.contactsCreated;
-      stats.interactionsLogged += ingested.interactionsLogged;
-    }
-
+    await processCalendarPage(ctx, page, conn.userId, "google_calendar", stats);
     cursor = advanceCursor(cursor, page);
 
     // No more pages: the run is complete and `cursor` now holds the fresh syncToken.
@@ -198,6 +263,129 @@ async function syncGoogleCalendar(
 }
 
 /**
+ * Sync one Outlook connection's calendar. Structurally identical to `syncGoogleCalendar` —
+ * the only differences are which token/fetcher get called and that the owner's address is
+ * passed in explicitly (Graph has no per-attendee "self" flag; Outlook already knows its own
+ * address statically from `outlook_connections.email_address`).
+ */
+async function syncOutlookCalendar(
+  conn: ClaimedConnection,
+  stats: SyncRunStats,
+  now: Date,
+  deps: SyncDeps["microsoft"]
+): Promise<void> {
+  const accessToken = await deps.getAccessToken(conn.userId);
+  const ctx = await openIngestContext(conn.userId, {
+    source: "outlook_calendar",
+    createsContacts: true,
+  });
+
+  let cursor = conn.syncCursor?.calendar ?? null;
+  const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS);
+
+  for (;;) {
+    let page;
+    try {
+      page = await deps.fetchPage({
+        accessToken,
+        cursor,
+        selfEmail: conn.emailAddress,
+        now,
+      });
+    } catch (err) {
+      if (err instanceof CalendarSyncTokenExpiredError) {
+        cursor = null;
+        continue;
+      }
+      throw err;
+    }
+
+    await processCalendarPage(ctx, page, conn.userId, "outlook_calendar", stats);
+    cursor = advanceCursor(cursor, page);
+
+    if (!page.nextPageToken) break;
+
+    if (deadlineReached(deadline)) {
+      await finalizeIngest(ctx);
+      await markSyncResult(conn.provider, conn.id, {
+        ok: true,
+        cursor: { calendar: cursor },
+        nextSyncAt: now,
+      });
+      return;
+    }
+  }
+
+  await finalizeIngest(ctx);
+  await markSyncResult(conn.provider, conn.id, {
+    ok: true,
+    cursor: { calendar: cursor },
+    nextSyncAt: new Date(now.getTime() + SYNC_INTERVAL_MS),
+  });
+}
+
+type ProviderPlan = {
+  id: SyncProvider;
+  hasScope: (scopes: string | null) => boolean;
+  reconnectMessage: string;
+  sync: (conn: ClaimedConnection, stats: SyncRunStats, now: Date) => Promise<void>;
+};
+
+/**
+ * One connection's worth of work: budget check, scope gate, sync, and outcome recording.
+ * Shared across providers so Google and Microsoft cannot drift on the properties that make
+ * continuous sync safe to leave unattended — a swallowed error must always become a number in
+ * `stats`, never an unhandled rejection that stops the loop.
+ */
+async function processConnection(
+  conn: ClaimedConnection,
+  plan: ProviderPlan,
+  stats: SyncRunStats,
+  now: Date,
+  deadline: ReturnType<typeof deadlineAfter>
+): Promise<void> {
+  // Checked BEFORE each item, never after — a budget tested after the work has already run
+  // bounds nothing.
+  if (deadlineReached(deadline)) {
+    stats.budgetExhausted = true;
+    // Release the claim so the next run picks it up immediately rather than waiting out
+    // the lease.
+    await markSyncResult(conn.provider, conn.id, {
+      ok: true,
+      cursor: conn.syncCursor,
+      nextSyncAt: now,
+    }).catch(() => null);
+    return;
+  }
+
+  // A token minted before the calendar scope shipped is still valid for the rest of that
+  // connection's grant and will keep working — but every Calendar call it makes returns 403.
+  // Disarm rather than retry: only the user reconnecting can fix it, and retrying forever
+  // would bury the signal under backoff noise.
+  if (!plan.hasScope(conn.scopes)) {
+    stats.skippedNoScope++;
+    await disarmSync(conn.provider, conn.id, plan.reconnectMessage, now).catch(() => null);
+    return;
+  }
+
+  try {
+    await plan.sync(conn, stats, now);
+    stats.synced++;
+  } catch (err) {
+    stats.failed++;
+    // A dead grant is permanent until the user reconnects; anything else is worth retrying.
+    // `getValidAccessToken` has already written `needs_reauth` (and nulled `next_sync_at`)
+    // in the ReauthRequiredError case, so this only records the reason.
+    const retryable = !(err instanceof ReauthRequiredError);
+    await markSyncResult(conn.provider, conn.id, {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      retryable,
+    }).catch(() => null);
+  }
+}
+
+/**
  * One scheduler pass.
  *
  * Returns stats rather than throwing, so a caller can always record a ledger row. The only
@@ -212,55 +400,26 @@ export async function runSyncPass(
   const stats = emptyRunStats();
   const deadline = deadlineAfter(options.budgetMs ?? SYNC_TIME_BUDGET_MS);
 
-  // Google only, for now. Microsoft joins by adding its provider here once Outlook's
-  // calendar/mail scopes ship — the claim and result bookkeeping are already provider-agnostic.
-  const claimed = await claimDueConnections("google", CONNECTIONS_PER_RUN, now);
-  stats.claimed = claimed.length;
+  const providerPlans: ProviderPlan[] = [
+    {
+      id: "google",
+      hasScope: hasCalendarScope,
+      reconnectMessage: "Calendar access not granted — reconnect Google to enable calendar sync",
+      sync: (conn, s, n) => syncGoogleCalendar(conn, s, n, deps.google),
+    },
+    {
+      id: "microsoft",
+      hasScope: hasOutlookCalendarScope,
+      reconnectMessage: "Calendar access not granted — reconnect Outlook to enable calendar sync",
+      sync: (conn, s, n) => syncOutlookCalendar(conn, s, n, deps.microsoft),
+    },
+  ];
 
-  for (const conn of claimed) {
-    // Checked BEFORE each item, never after — a budget tested after the work has already run
-    // bounds nothing.
-    if (deadlineReached(deadline)) {
-      stats.budgetExhausted = true;
-      // Release the claim so the next run picks it up immediately rather than waiting out
-      // the lease.
-      await markSyncResult(conn.provider, conn.id, {
-        ok: true,
-        cursor: conn.syncCursor,
-        nextSyncAt: now,
-      }).catch(() => null);
-      continue;
-    }
-
-    // A token minted before the calendar scope shipped is still valid for Gmail and Contacts
-    // and will keep working — but every Calendar call it makes returns 403. Disarm rather
-    // than retry: only the user reconnecting can fix it, and retrying forever would bury the
-    // signal under backoff noise.
-    if (!hasCalendarScope(conn.scopes)) {
-      stats.skippedNoScope++;
-      await disarmSync(
-        conn.provider,
-        conn.id,
-        "Calendar access not granted — reconnect Google to enable calendar sync",
-        now
-      ).catch(() => null);
-      continue;
-    }
-
-    try {
-      await syncGoogleCalendar(conn, stats, now, deps);
-      stats.synced++;
-    } catch (err) {
-      stats.failed++;
-      // A dead grant is permanent until the user reconnects; anything else is worth retrying.
-      // `getValidAccessToken` has already written `needs_reauth` (and nulled `next_sync_at`)
-      // in the ReauthRequiredError case, so this only records the reason.
-      const retryable = !(err instanceof ReauthRequiredError);
-      await markSyncResult(conn.provider, conn.id, {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        retryable,
-      }).catch(() => null);
+  for (const plan of providerPlans) {
+    const claimed = await claimDueConnections(plan.id, CONNECTIONS_PER_RUN, now);
+    stats.claimed += claimed.length;
+    for (const conn of claimed) {
+      await processConnection(conn, plan, stats, now, deadline);
     }
   }
 
@@ -310,6 +469,12 @@ export async function runSyncPass(
   } else {
     stats.budgetExhausted = true;
   }
+
+  // A single DELETE, cheap enough to run every pass unconditionally rather than gated on the
+  // budget like everything above it.
+  stats.calendarEventsPruned = await pruneOldCalendarEvents(
+    new Date(now.getTime() - CALENDAR_EVENTS_RETENTION_MS)
+  ).catch(() => 0);
 
   return stats;
 }

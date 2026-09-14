@@ -249,6 +249,13 @@ async function seed() {
     icsUrl: "https://example.test/feed.ics",
   });
 
+  await db.insert(schema.calendarEvents).values({
+    userId: USER,
+    provider: "google",
+    externalId: "purge-fixture",
+    title: "Purge fixture meeting",
+  });
+
   await db.insert(schema.aiSuggestions).values({
     userId: USER,
     suggestionType: "reconnect",

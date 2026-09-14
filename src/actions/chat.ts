@@ -122,7 +122,8 @@ async function askNetworkInner(
       ctx.orgRosters,
       ctx.attention,
       ctx.modelRecruiters,
-      ctx.focusProfile
+      ctx.focusProfile,
+      ctx.calendarContext
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]

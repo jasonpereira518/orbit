@@ -49,6 +49,7 @@ function baseChatPromptArgs() {
     orgRosters: [] as never[],
     attention: null,
     recruitersContext: [] as never[],
+    calendarContext: null,
   };
 }
 

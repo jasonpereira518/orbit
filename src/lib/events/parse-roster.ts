@@ -12,6 +12,7 @@
  */
 import Papa from "papaparse";
 import { attendeeIdentityKey } from "@/lib/events/identity";
+import type { AttendeeRole } from "@/lib/events/types";
 
 export type ParsedAttendee = {
   fullName: string | null;
@@ -21,6 +22,8 @@ export type ParsedAttendee = {
   linkedinUrl: string | null;
   xHandle: string | null;
   identityKey: string;
+  /** Unknown for paste/CSV/screenshot; a calendar sync is the first source that can say. */
+  attendeeRole?: AttendeeRole | null;
 };
 
 export type RosterParseResult = {
@@ -166,8 +169,14 @@ export function parseRosterText(text: string): RosterParseResult {
   return finalize(rows);
 }
 
-/** Header aliases, lowercased. Covers Luma, Eventbrite and Partiful exports plus the obvious. */
-const HEADERS: Record<keyof Omit<ParsedAttendee, "identityKey">, string[]> = {
+/**
+ * Header aliases, lowercased. Covers Luma, Eventbrite and Partiful exports plus the obvious.
+ *
+ * `attendeeRole` is deliberately excluded: no CSV/paste export carries a structured
+ * host/attendee/speaker distinction, unlike a calendar invite's organizer field. Rows parsed
+ * here always leave it undefined.
+ */
+const HEADERS: Record<keyof Omit<ParsedAttendee, "identityKey" | "attendeeRole">, string[]> = {
   fullName: ["name", "full name", "attendee name", "guest name", "first name"],
   email: ["email", "email address", "e-mail", "attendee email"],
   company: ["company", "organization", "organisation", "employer", "company name"],

@@ -6,13 +6,22 @@ const NETWORKING_TITLE =
 const EXCLUDE_TITLE =
   /\b(all[\s-]?hands|stand[\s-]?up|standup|sprint|retro(spective)?|planning|all team|team meeting|staff meeting|interview panel|focus time|ooo|out of office|pto|vacation|holiday|birthday|block|hold|busy|doctor|dentist|flight|travel|commute|gym|workout|haircut)\b/i;
 
+/**
+ * A panel, webinar, or talk — hosted by someone, attended by many. Distinct from
+ * `NETWORKING_TITLE`: these events are worth a contact touch for the HOST (if you attended)
+ * or the ATTENDEES (if you hosted it), not for every name on a large invite list. Checked
+ * after `EXCLUDE_TITLE`, so an internal "town hall" or "all-hands" is never reclassified here.
+ */
+const GROUP_EVENT_TITLE =
+  /\b(webinar|panel(?:\s+discussion)?|fireside(?:\s+chat)?|\bama\b|keynote|workshop|meetup|summit|conference|masterclass|roundtable|demo\s*day|pitch\s*(?:night|event|day))\b/i;
+
 const PERSON_NAME =
   /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}$/;
 
 export type EventClassification = {
   keep: boolean;
   reason: string;
-  kind: "one_on_one" | "networking" | "skip";
+  kind: "one_on_one" | "networking" | "group_event" | "skip";
   counterpartCount: number;
 };
 
@@ -61,6 +70,53 @@ export function counterpartsOf(
   }
 
   return counterparts;
+}
+
+export type GroupEventParticipants = {
+  /** Whether the calendar owner organized this event (role: "hosted") vs. merely attended it. */
+  hostedBySelf: boolean;
+  /** The organizer, when it is someone other than the calendar owner. Null if self-organized. */
+  organizer: { name: string; email: string } | null;
+  /** Everyone else on the invite, self and the organizer (when already counted) excluded. */
+  attendees: Array<{ name: string; email: string }>;
+};
+
+/**
+ * Who matters for a `group_event` classification, split by role rather than collapsed into one
+ * "counterparts" list — unlike a 1:1, a panel/webinar needs to tell its host apart from its
+ * attendees, because which one becomes a roster entry depends on who's on Orbit's side of it.
+ */
+export function groupEventParticipants(
+  event: ParsedCalendarEvent,
+  selfEmails: string[] = []
+): GroupEventParticipants {
+  const self = new Set(
+    selfEmails.map((e) => e.trim().toLowerCase()).filter(Boolean)
+  );
+  const organizerEmail = (event.organizer?.email || "").toLowerCase();
+  const hostedBySelf = Boolean(organizerEmail && self.has(organizerEmail));
+  const organizer =
+    event.organizer && !hostedBySelf && (event.organizer.email || event.organizer.name)
+      ? event.organizer
+      : null;
+
+  const seen = new Set<string>();
+  if (organizerEmail) seen.add(organizerEmail);
+  const attendees: Array<{ name: string; email: string }> = [];
+  for (const person of event.attendees) {
+    const email = (person.email || "").toLowerCase();
+    const key = email || person.name.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    if (email && self.has(email)) continue;
+    seen.add(key);
+    if (!person.email && !person.name) continue;
+    attendees.push({
+      name: person.name || email.split("@")[0] || "Guest",
+      email,
+    });
+  }
+
+  return { hostedBySelf, organizer, attendees };
 }
 
 /** Pull guest names/emails from DESCRIPTION when ATTENDEE is missing (Google ICS). */
@@ -135,6 +191,19 @@ export function classifyCalendarEvent(
       keep: false,
       reason: "Looks like a team/admin or personal block",
       kind: "skip",
+      counterpartCount: count,
+    };
+  }
+
+  // Panel/webinar/talk language, checked before the 1:1 heuristics below so a
+  // "Fireside chat" with a handful of named attendees isn't mistaken for small-group
+  // networking. Kept regardless of attendee count — the roster review, not this
+  // classifier, is what protects the contact allowance from a huge invite list.
+  if (GROUP_EVENT_TITLE.test(title)) {
+    return {
+      keep: true,
+      reason: "Title suggests a panel, webinar, or hosted talk",
+      kind: "group_event",
       counterpartCount: count,
     };
   }

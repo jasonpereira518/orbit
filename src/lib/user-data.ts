@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import {
   aiSuggestions,
   billingEvents,
+  calendarEvents,
   calendarSubscriptions,
   chatThreads,
   closenessCohorts,
@@ -151,6 +152,9 @@ export async function purgeUserData(
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
   await db.delete(imports).where(eq(imports.userId, userId));
   await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
+  // Every event a calendar sync fetched, not just the ones that touched a contact — content
+  // (titles, attendee names/emails), and the rule above admits no exceptions.
+  await db.delete(calendarEvents).where(eq(calendarEvents.userId, userId));
   // Before `contacts`: `event_attendees.contact_id` is `ON DELETE SET NULL`, so deleting
   // contacts first would rewrite every one of these rows on the way to deleting them anyway.
   // Attendees are deleted explicitly rather than left to the cascade from `events` — they
