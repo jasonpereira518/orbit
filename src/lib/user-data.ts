@@ -128,9 +128,10 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * A Clerk id is inert once the account is gone. `error_events`, by contrast, is data about
  * the user rather than about the operator, so it IS purged (by `activity`).
  *
- * And four user-scoped tables that NO step here deletes — they go only in the entire-account
- * case (`keepSettings: false`, the same path that deletes `user_settings` outright), in
- * `purgeAccountLedgers` below:
+ * And four user-scoped tables that NO step here deletes while the account is live — they go
+ * only once the account itself is gone, in `purgeAccountLedgers` below: the entire-account
+ * case (`keepSettings: false`, the admin hard-delete, which also deletes `user_settings`
+ * outright) and account deletion (`accountDeleted: true`, the Clerk `user.deleted` webhook):
  *   - `research_credit_accounts`, `research_credit_holds`, `research_credit_ledger`: Orbit's
  *     accounting of research-credit allowances rather than the user's content — the same
  *     footing as `billing_events`. The lifetime grant is recorded by
@@ -140,6 +141,9 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *   - `outreach_suppressions`: opt-outs and bounces. It protects the people who were
  *     contacted, not the user — deleting it would let the next campaign reach someone who
  *     already asked not to be.
+ * Once the account is deleted neither reason holds: there is no account left to re-grant to
+ * (a new signup gets a new Clerk id, so a fresh ledger either way), and no campaign left to
+ * send from — keeping them would only retain other people's addresses with no one to protect.
  */
 type CategoryStep = {
   /**
@@ -576,10 +580,12 @@ async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) 
 
 /**
  * The four tables no category step deletes (see the survivors listed above `STEPS`): the
- * research-credit accounting and the suppression list. Entire-account only — while the
- * account is live, deleting the credit account would re-grant its allowance and deleting the
- * suppressions would un-opt-out the people who asked. Ledger before holds before the account
- * row, the order the rows were written in; none has a foreign key to another.
+ * research-credit accounting and the suppression list. Only once the account is gone — while
+ * it is live, deleting the credit account would re-grant its allowance and deleting the
+ * suppressions would un-opt-out the people who asked. Runs after every category step, so the
+ * `outreach` step has already released the user's active holds (no credits strand in
+ * `*_held` on the way out). Ledger before holds before the account row, the order the rows
+ * were written in; none has a foreign key to another.
  */
 async function purgeAccountLedgers(db: Db, userId: string) {
   await db.delete(researchCreditLedger).where(eq(researchCreditLedger.userId, userId));
@@ -614,16 +620,20 @@ async function purgeAccountLedgers(db: Db, userId: string) {
  *
  * `keepSettings: false` (used only by the admin console's hard-delete, which also removes the
  * Clerk login) lets `user_settings` be deleted outright — the "entire account" case, where
- * none of the preserved columns is meant to survive. On a full purge it also deletes the
- * research-credit accounting and the outreach suppression list (`purgeAccountLedgers`), which
- * every other path leaves in place — including the Clerk `user.deleted` webhook, which is the
- * default `keepSettings: true` full purge.
+ * none of the preserved columns is meant to survive.
+ *
+ * `accountDeleted: true` (the Clerk `user.deleted` webhook) says the account itself is gone.
+ * Independent of `keepSettings` — it decides nothing about `user_settings` — it lets a full
+ * purge delete the research-credit accounting and the outreach suppression list
+ * (`purgeAccountLedgers`), which "delete all data" on a live account deliberately keeps.
+ * `keepSettings: false` implies the same on a full purge.
  */
 export async function purgeUserData(
   userId: string,
-  opts: { keepSettings?: boolean; only?: readonly DataCategory[] } = {}
+  opts: { keepSettings?: boolean; accountDeleted?: boolean; only?: readonly DataCategory[] } = {}
 ) {
   const keepSettings = opts.keepSettings ?? true;
+  const accountGone = opts.accountDeleted === true || !keepSettings;
   const selected = opts.only
     ? expandCategories(opts.only)
     : new Set<DataCategory>(DATA_CATEGORY_IDS);
@@ -642,10 +652,11 @@ export async function purgeUserData(
       .where(eq(billingEvents.userId, userId));
   }
 
-  // Full purge AND `keepSettings: false`, never either alone: a partial delete that happened
-  // to include `preferences` with `keepSettings: false` would still leave a live account whose
-  // next research run re-grants the credits this would erase.
-  if (isFullPurge && !keepSettings) {
+  // Full purge AND the account gone (deleted, or hard-deleted with `keepSettings: false`),
+  // never either alone: a partial delete that happened to include `preferences` with
+  // `keepSettings: false` would still leave a live account whose next research run re-grants
+  // the credits this would erase.
+  if (isFullPurge && accountGone) {
     await purgeAccountLedgers(db, userId);
   }
 

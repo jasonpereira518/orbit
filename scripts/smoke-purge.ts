@@ -13,7 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-purge.ts
  */
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import "./smoke/_env";
 
 import { eq, getTableColumns, getTableName, sql } from "drizzle-orm";
@@ -21,13 +21,17 @@ import { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "../src/db";
 import * as schema from "../src/db/schema";
 import { purgeUserData } from "../src/lib/user-data";
+import { POST as clerkWebhook } from "../src/app/api/webhooks/clerk/route";
 
 const USER = "smoke-purge-user";
 
 /**
  * User-scoped tables that "delete all data" deliberately leaves in place. Each is asserted
  * to SURVIVE below — that is as much the contract as the rest being emptied — and all of them
- * are asserted gone after the entire-account delete (`keepSettings: false`) at the end.
+ * are asserted gone after the entire-account delete (`keepSettings: false`) at the end. The
+ * credit ledgers and suppressions are also asserted gone after an account deletion
+ * (`accountDeleted: true`), both called directly and through a signed Clerk `user.deleted`
+ * delivery.
  *   - `user_settings`: the BYO provider keys and account metadata (see `purgeUserData`).
  *   - `research_credit_accounts` / `_holds` / `_ledger`: Orbit's accounting of research-credit
  *     allowances, on the same footing as `billing_events`. The lifetime grant is tracked by
@@ -44,6 +48,34 @@ const SURVIVES_DELETE_ALL = new Set([
   "research_credit_ledger",
   "outreach_suppressions",
 ]);
+
+/**
+ * The four survivors that outlive "delete all data" only while the account is live: gone with
+ * the entire-account delete (`keepSettings: false`) and with an account deletion
+ * (`accountDeleted: true`, the Clerk `user.deleted` webhook).
+ */
+const SURVIVOR_LEDGERS = [
+  "research_credit_accounts",
+  "research_credit_holds",
+  "research_credit_ledger",
+  "outreach_suppressions",
+] as const;
+
+/** One row in each of `SURVIVOR_LEDGERS`, for a purge to prove it takes. */
+async function seedSurvivorLedgers(tag: string) {
+  const db = await getDb();
+  const now = new Date();
+  await db.insert(schema.researchCreditAccounts).values({
+    userId: USER, periodStart: now, periodEnd: new Date(now.getTime() + 30 * 86_400_000),
+  });
+  const [hold] = await db.insert(schema.researchCreditHolds).values({ userId: USER }).returning();
+  await db
+    .insert(schema.researchCreditLedger)
+    .values({ userId: USER, entryType: "reserve", holdId: hold.id, idempotencyKey: `smoke-purge-${tag}` });
+  await db
+    .insert(schema.outreachSuppressions)
+    .values({ userId: USER, kind: "email", value: `${tag}@analytical.io`, reason: "opted_out" });
+}
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -718,12 +750,7 @@ async function main() {
   // The outreach survivors — see `SURVIVES_DELETE_ALL`. As with `billing_events`, the no-leak
   // sweep above would still pass if a later edit "tidied" any of these into a delete, so the
   // survival itself is what gets asserted.
-  for (const name of [
-    "research_credit_accounts",
-    "research_credit_holds",
-    "research_credit_ledger",
-    "outreach_suppressions",
-  ]) {
+  for (const name of SURVIVOR_LEDGERS) {
     check(`${name} survives "delete all data"`, (await countFor(name)) > 0);
   }
   // The seeded hold was active and its research run is now gone. The `outreach` step must
@@ -736,6 +763,50 @@ async function main() {
     "...with the active credit hold released rather than stranded",
     holdsAfterPurge.length === 1 && holdsAfterPurge[0].status === "released"
   );
+
+  // Account DELETION is not "delete all data": no live account is left to re-grant credits
+  // to (a new signup gets a new Clerk id), and the suppression list then only retains other
+  // people's addresses. `accountDeleted` takes the survivors too, independently of
+  // `keepSettings`.
+  await purgeUserData(USER, { accountDeleted: true });
+  for (const name of SURVIVOR_LEDGERS) {
+    check(`${name} is gone after an account-deleted purge`, (await countFor(name)) === 0);
+  }
+  check(
+    "...which leaves keepSettings to decide user_settings on its own",
+    Boolean(await ledgerDb.query.userSettings.findFirst({ where: eq(schema.userSettings.userId, USER) }))
+  );
+
+  // ...and the Clerk `user.deleted` webhook is that path. A correctly signed delivery, end to
+  // end through the route, so a regression to the plain purge fails here.
+  await seedSurvivorLedgers("webhook");
+  const priorSigningSecret = process.env.CLERK_WEBHOOK_SIGNING_SECRET;
+  const signingKey = randomBytes(24);
+  process.env.CLERK_WEBHOOK_SIGNING_SECRET = `whsec_${signingKey.toString("base64")}`;
+  const deliveryId = `msg_smoke_purge_${randomUUID()}`;
+  try {
+    const body = JSON.stringify({ object: "event", type: "user.deleted", data: { id: USER, object: "user", deleted: true } });
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac("sha256", signingKey).update(`${deliveryId}.${timestamp}.${body}`).digest("base64");
+    const response = await clerkWebhook(
+      new Request("http://localhost/api/webhooks/clerk", {
+        method: "POST",
+        headers: { "content-type": "application/json", "svix-id": deliveryId, "svix-timestamp": timestamp, "svix-signature": `v1,${signature}` },
+        body,
+      }) as never
+    );
+    check("a signed user.deleted delivery is handled", response.status === 200, String(response.status));
+    for (const name of SURVIVOR_LEDGERS) {
+      check(`...and takes ${name} with the account`, (await countFor(name)) === 0);
+    }
+  } finally {
+    if (priorSigningSecret === undefined) delete process.env.CLERK_WEBHOOK_SIGNING_SECRET;
+    else process.env.CLERK_WEBHOOK_SIGNING_SECRET = priorSigningSecret;
+    await ledgerDb.delete(schema.webhookDeliveries).where(eq(schema.webhookDeliveries.eventId, deliveryId));
+  }
+
+  // The admin hard-delete below still has to take them on its own, so give it some to take.
+  await seedSurvivorLedgers("hard-delete");
 
   await ledgerDb
     .delete(schema.userSettings)

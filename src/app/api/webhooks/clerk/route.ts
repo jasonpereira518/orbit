@@ -99,7 +99,9 @@ export async function POST(req: NextRequest) {
     } else if (evt.type === "user.deleted") {
       const userId = evt.data.id;
       if (userId) {
-        await purgeUserData(userId);
+        // The account itself is gone, so the credit ledgers and suppression list that "delete
+        // all data" keeps on a live account go too (see `purgeUserData`).
+        await purgeUserData(userId, { accountDeleted: true });
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {
         result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };
