@@ -1,3 +1,6 @@
+import { enabled } from "@/lib/outreach-v2/store";
+import { getOutreachSetup } from "@/actions/outreach-v2";
+import { OutreachSetup } from "@/components/outreach/outreach-v2-setup";
 import { OutreachWizard } from "@/components/outreach/outreach-wizard";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
@@ -7,6 +10,20 @@ export default async function NewOutreachPage() {
   const { canUseOutreach } = await getEntitlements(await requireUserId());
   if (!canUseOutreach) return <OutreachLocked />;
 
+  if (enabled())
+    return (
+      <div className="space-y-8">
+        <div className="max-w-3xl">
+          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+            Start a conversation
+          </h1>
+          <p className="mt-2 text-muted-foreground">
+            Find people who fit your goals. Make every introduction personal.
+          </p>
+        </div>
+        <OutreachSetup settings={await getOutreachSetup()} />
+      </div>
+    );
   return (
     <div className="space-y-6">
       <div>
@@ -14,7 +31,8 @@ export default async function NewOutreachPage() {
           New outreach campaign
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Define a tight audience, a desired reply, and personalized drafts optimized for response rate
+          Define a tight audience, a desired reply, and personalized drafts
+          optimized for response rate
         </p>
       </div>
       <OutreachWizard />

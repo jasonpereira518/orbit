@@ -39,6 +39,9 @@ import {
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
+  outreachCreditAccounts,
+  outreachCreditLedger,
+  outreachSendDays,
   pageViews,
   planUpgradeEvents,
   recruiterMessages,
@@ -346,8 +349,22 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   outreach: {
-    counts: [outreachCampaigns],
+    counts: [
+      outreachCampaigns,
+      outreachCreditAccounts,
+      outreachCreditLedger,
+      outreachSendDays,
+    ],
     run: async (db, userId) => {
+      await db
+        .delete(outreachCreditLedger)
+        .where(eq(outreachCreditLedger.userId, userId));
+      await db
+        .delete(outreachCreditAccounts)
+        .where(eq(outreachCreditAccounts.userId, userId));
+      await db
+        .delete(outreachSendDays)
+        .where(eq(outreachSendDays.userId, userId));
       await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
     },
   },

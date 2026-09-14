@@ -81,17 +81,17 @@ export default defineManifest(({ mode }) => {
     side_panel: { default_path: "src/panel/index.html" },
     background: { service_worker: "src/background/index.ts", type: "module" },
 
-    // activeTab grants access to the current tab only, and only after the user
-    // clicks the toolbar icon — so installing shows no "read your data on
-    // linkedin.com" warning, and the extension structurally cannot read or fetch
-    // any site in the background.
+    // The existing capture surface uses activeTab. Optional Outreach execution
+    // additionally uses debugger input/screenshots in a dedicated, visible tab,
+    // only while its explicitly enabled session is active. Chrome displays the
+    // debugger permission warning; the session panel explains its purpose.
     // "cookies" is required by @clerk/chrome-extension's syncHost mode: sharing
     // the web app's session means reading its session cookie from the Orbit
     // origin. It is scoped by host_permissions below, so it grants nothing on
     // LinkedIn or anywhere else.
     // "storage" is likewise Clerk's, not ours: @clerk/chrome-extension caches
     // its session state in browser.storage. No first-party code touches it.
-    permissions: ["activeTab", "scripting", "storage", "cookies", "sidePanel"],
+    permissions: ["activeTab", "scripting", "storage", "cookies", "sidePanel", "debugger"],
     host_permissions: [`${appOrigin}/*`, ...clerkHosts],
 
     // Only requested via the explicit per-site grant UI (GrantAccessView).
@@ -104,6 +104,9 @@ export default defineManifest(({ mode }) => {
       "https://*.linkedin.com/*",
       "https://x.com/*",
       "https://mail.google.com/*",
+      "https://outlook.live.com/*",
+      "https://outlook.office.com/*",
+      "https://outlook.office365.com/*",
     ],
 
     commands: {

@@ -31,6 +31,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-friendly-error": "pure",
   "smoke-toast-actions": "pure",
   "smoke-toast-copy": "pure",
+  "smoke-outreach-browser": "pure",
   "smoke-admin-gate": "pure",
   "smoke-admin-yc-calculations": "pure",
   "smoke-avatar-storage": "pure",
@@ -118,6 +119,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-wispr": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
+  "smoke-outreach-v2": "pglite",
+  "smoke-outreach-ui": "pglite",
+  "smoke-outreach-providers": "pglite",
   "smoke-account-alerts": "pglite",
   "smoke-api-keys": "pglite",
   "smoke-api-routes": "pglite",
