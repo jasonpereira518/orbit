@@ -39,3 +39,4 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 - Real plans: enable Drizzle's `logger: true` locally, paste the SQL into Neon's SQL editor with `EXPLAIN (ANALYZE, BUFFERS)`, and read `shared read` — that is the cold-storage cost.
 - Bundles: `npm run analyze` (`next experimental-analyze`, Turbopack-native).
 - Lighthouse on `/`, `/pricing`, `/dashboard` in the in-app browser before and after a change to the marketing tree or the shell.
+- Real-user Core Web Vitals: weekly, or after any change touching `/graph`, `/`, or `/capture` — the three heaviest client trees (the sky-atlas graph, the landing page's three.js globe, capture's lazy-loaded form) — check Speed Insights in the Vercel dashboard, filtered to Production, for LCP/INP/CLS regressions on those routes specifically. Complements the Lighthouse check above with real traffic instead of a synthetic run.
