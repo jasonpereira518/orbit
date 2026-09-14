@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { apolloSearchError } from "@/lib/apollo-errors";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -431,8 +432,7 @@ export async function searchPeople(
   );
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Apollo search failed (${response.status}): ${text.slice(0, 200)}`);
+    throw apolloSearchError(response.status, await response.text());
   }
 
   const data = (await response.json()) as {

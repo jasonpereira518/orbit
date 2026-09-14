@@ -40,7 +40,7 @@ import {
   type OutreachMessageStatus,
   type SequenceStep,
 } from "@/lib/outreach-types";
-import { friendlyError, UserFacingError } from "@/lib/errors";
+import { asActionResult, friendlyError, UserFacingError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 /**
@@ -382,7 +382,16 @@ export async function updateCampaign(
   return updated;
 }
 
+/**
+ * Returns a result rather than throwing: an Apollo failure the person can act on (a plan
+ * without people search, a rejected key) is a `UserFacingError`, and a thrown one reaches
+ * the browser as a digest in production.
+ */
 export async function searchProspects(campaignId: string, page = 1) {
+  return asActionResult(() => runProspectSearch(campaignId, page));
+}
+
+async function runProspectSearch(campaignId: string, page: number) {
   const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
