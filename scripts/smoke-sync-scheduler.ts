@@ -14,10 +14,11 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import { runSyncPass, type SyncDeps } from "../src/lib/sync-scheduler";
 import { ReauthRequiredError } from "../src/lib/errors";
-import type { CalendarFetchResult } from "../src/lib/connectors/google-calendar";
-import { CalendarSyncTokenExpiredError } from "../src/lib/connectors/google-calendar";
+import type { CalendarFetchResult } from "../src/lib/connectors/calendar-shared";
+import { CalendarSyncTokenExpiredError } from "../src/lib/connectors/calendar-shared";
 
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+const OUTLOOK_CALENDAR_SCOPE = "https://graph.microsoft.com/Calendars.Read";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -44,30 +45,55 @@ function emptyPage(over: Partial<CalendarFetchResult> = {}): CalendarFetchResult
  * id in it is the only way the stub can know which connection it is answering for. Keying on
  * call order instead would silently mis-attribute results the moment the loop's ordering
  * changed — which is exactly what a test of per-connection isolation must not do.
+ *
+ * Builds both `deps.google` and `deps.microsoft` from the same behaviour map: a test that only
+ * seeds `gmail_connections` never has its `microsoft` side claimed, so those stubs simply go
+ * unused rather than needing a second map.
  */
-function depsFor(behaviour: Map<string, "ok" | "reauth" | "transient" | "expired">): {
+function depsFor(
+  behaviour: Map<string, "ok" | "reauth" | "transient" | "expired">,
+  provider: "google" | "microsoft" = "google"
+): {
   deps: SyncDeps;
   fetchedFor: string[];
 } {
   const fetchedFor: string[] = [];
   const expiredOnce = new Set<string>();
-  const deps: SyncDeps = {
-    getAccessToken: async (userId: string) => {
-      if (behaviour.get(userId) === "reauth") throw new ReauthRequiredError("dead grant");
-      return `stub-token:${userId}`;
-    },
-    fetchPage: async ({ accessToken }) => {
-      const userId = String(accessToken).replace(/^stub-token:/, "");
-      fetchedFor.push(userId);
-      const mode = behaviour.get(userId);
-      if (mode === "transient") throw new Error("Google Calendar 503: upstream unavailable");
-      if (mode === "expired" && !expiredOnce.has(userId)) {
-        expiredOnce.add(userId);
-        throw new CalendarSyncTokenExpiredError();
-      }
-      return emptyPage();
-    },
+  const getAccessToken = async (userId: string) => {
+    if (behaviour.get(userId) === "reauth") throw new ReauthRequiredError("dead grant");
+    return `stub-token:${userId}`;
   };
+  const errorPrefix = provider === "google" ? "Google Calendar" : "Outlook Calendar";
+  const fetchPage = async (opts: { accessToken: string }): Promise<CalendarFetchResult> => {
+    const userId = String(opts.accessToken).replace(/^stub-token:/, "");
+    fetchedFor.push(userId);
+    const mode = behaviour.get(userId);
+    if (mode === "transient") throw new Error(`${errorPrefix} 503: upstream unavailable`);
+    if (mode === "expired" && !expiredOnce.has(userId)) {
+      expiredOnce.add(userId);
+      throw new CalendarSyncTokenExpiredError(provider === "google" ? "google" : "microsoft");
+    }
+    return emptyPage();
+  };
+  const unusedGetAccessToken = async () => {
+    throw new Error("unexpected call: this test did not seed this provider");
+  };
+  const unusedFetchPage = async (): Promise<CalendarFetchResult> => {
+    throw new Error("unexpected call: this test did not seed this provider");
+  };
+  const deps: SyncDeps =
+    provider === "google"
+      ? {
+          google: { getAccessToken, fetchPage },
+          microsoft: { getAccessToken: unusedGetAccessToken, fetchPage: unusedFetchPage },
+        }
+      : {
+          google: { getAccessToken: unusedGetAccessToken, fetchPage: unusedFetchPage },
+          microsoft: {
+            getAccessToken,
+            fetchPage: async (opts: { accessToken: string }) => fetchPage(opts),
+          },
+        };
   return { deps, fetchedFor };
 }
 
@@ -83,6 +109,27 @@ async function seed(
     VALUES (
       ${userId}, ${userId + "@example.com"}, 'enc', 'active',
       ${opts.scopes === undefined ? CALENDAR_SCOPE : opts.scopes},
+      ${opts.armed === false ? null : new Date(Date.now() - 60_000)}, 0
+    )
+    RETURNING id
+  `);
+  return rowsOf<{ id: string }>(inserted)[0].id;
+}
+
+/** Same shape as `seed`, but for `outlook_connections` — see `providerPlans` in the module
+ *  under test: Google and Microsoft are claimed and disarmed by the same code path. */
+async function seedOutlook(
+  userId: string,
+  opts: { scopes?: string | null; armed?: boolean } = {}
+): Promise<string> {
+  const db = await getDb();
+  await db.execute(sql`DELETE FROM outlook_connections WHERE user_id = ${userId}`);
+  const inserted = await db.execute(sql`
+    INSERT INTO outlook_connections
+      (user_id, email_address, access_token_encrypted, status, scopes, next_sync_at, sync_failures)
+    VALUES (
+      ${userId}, ${userId + "@example.com"}, 'enc', 'active',
+      ${opts.scopes === undefined ? OUTLOOK_CALENDAR_SCOPE : opts.scopes},
       ${opts.armed === false ? null : new Date(Date.now() - 60_000)}, 0
     )
     RETURNING id
@@ -108,6 +155,16 @@ async function readConn(id: string): Promise<ConnRow> {
   )[0];
 }
 
+async function readOutlookConn(id: string): Promise<ConnRow> {
+  const db = await getDb();
+  return rowsOf<ConnRow>(
+    await db.execute(sql`
+      SELECT status, sync_status, next_sync_at, sync_failures, sync_error
+      FROM outlook_connections WHERE id = ${id}
+    `)
+  )[0];
+}
+
 /**
  * Reset to a state where this script is the scheduler's only tenant.
  *
@@ -125,6 +182,10 @@ async function clearAll() {
   await db.execute(sql`DELETE FROM gmail_connections WHERE user_id LIKE 'sched-%'`);
   await db.execute(sql`
     UPDATE gmail_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-%'
+  `);
+  await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-%'`);
+  await db.execute(sql`
+    UPDATE outlook_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-%'
   `);
 }
 
@@ -282,25 +343,28 @@ run(async () => {
           status: 200,
           headers: { "content-type": "text/html" },
         })) as unknown as typeof fetch,
-      fetchPage: async () =>
-        emptyPage({
-          selfEmails: [`${USER}@example.com`],
-          events: [
-            {
-              uid: "gcal-luma-party",
-              summary: "AI Tinkerers SF",
-              description: "RSVP: https://lu.ma/ai-tinkerers-sched",
-              location: "Shack15",
-              start: new Date("2026-06-01T18:00:00.000Z"),
-              end: new Date("2026-06-01T21:00:00.000Z"),
-              organizer: { name: "Luma", email: "invites@lu.ma" },
-              attendees: [
-                { name: "You", email: `${USER}@example.com` },
-                { name: "Ada Lovelace", email: "ada@analytical.io" },
-              ],
-            },
-          ],
-        }),
+      google: {
+        ...deps.google,
+        fetchPage: async () =>
+          emptyPage({
+            selfEmails: [`${USER}@example.com`],
+            events: [
+              {
+                uid: "gcal-luma-party",
+                summary: "AI Tinkerers SF",
+                description: "RSVP: https://lu.ma/ai-tinkerers-sched",
+                location: "Shack15",
+                start: new Date("2026-06-01T18:00:00.000Z"),
+                end: new Date("2026-06-01T21:00:00.000Z"),
+                organizer: { name: "Luma", email: "invites@lu.ma" },
+                attendees: [
+                  { name: "You", email: `${USER}@example.com` },
+                  { name: "Ada Lovelace", email: "ada@analytical.io" },
+                ],
+              },
+            ],
+          }),
+      },
     };
 
     const stats = await runSyncPass({ deps: withInvite });
@@ -346,6 +410,37 @@ run(async () => {
     const { deps } = depsFor(new Map([["sched-unarmed", "ok" as const]]));
     const stats = await runSyncPass({ deps });
     check("an unarmed connection is not claimed", stats.claimed === 0, JSON.stringify(stats));
+  }
+
+  // --- Outlook is claimed and synced by the same code path as Google -------------------------
+  await clearAll();
+  {
+    const id = await seedOutlook("sched-ms-happy");
+    const { deps } = depsFor(new Map([["sched-ms-happy", "ok" as const]]), "microsoft");
+    const stats = await runSyncPass({ deps });
+    check("an Outlook connection is claimed and synced", stats.synced === 1, JSON.stringify(stats));
+    const row = await readOutlookConn(id);
+    check("it returns to idle", row.sync_status === "idle", String(row.sync_status));
+    check("it is rescheduled", row.next_sync_at !== null);
+  }
+
+  // --- An Outlook connection without the calendar scope is disarmed, not retried -------------
+  await clearAll();
+  {
+    const id = await seedOutlook("sched-ms-noscope", {
+      scopes: "openid profile email offline_access https://graph.microsoft.com/Contacts.Read",
+    });
+    const { deps, fetchedFor } = depsFor(new Map([["sched-ms-noscope", "ok" as const]]), "microsoft");
+    const stats = await runSyncPass({ deps });
+    check("a connection lacking the calendar scope is skipped", stats.skippedNoScope === 1);
+    check("no provider call is made for it", fetchedFor.length === 0, JSON.stringify(fetchedFor));
+    const row = await readOutlookConn(id);
+    check("it is disarmed rather than retried forever", row.next_sync_at === null);
+    check(
+      "the reason names Outlook specifically",
+      (row.sync_error ?? "").toLowerCase().includes("outlook"),
+      String(row.sync_error)
+    );
   }
 
   await clearAll();

@@ -7,6 +7,7 @@ import {
   apiIdempotencyKeys,
   apiKeys,
   billingEvents,
+  calendarEvents,
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
@@ -188,10 +189,15 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       gmailConnections,
       outlookConnections,
       calendarSubscriptions,
+      calendarEvents,
       eventProviderConnections,
     ],
     run: async (db, userId) => {
       await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
+      // Every event a calendar sync fetched, not just the ones that became a meeting or a
+      // roster — content (titles, attendee names/emails), same sensitivity class as the
+      // subscription row above.
+      await db.delete(calendarEvents).where(eq(calendarEvents.userId, userId));
       await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
       await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
       // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as

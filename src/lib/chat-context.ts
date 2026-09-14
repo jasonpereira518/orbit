@@ -14,6 +14,7 @@ import {
   type AttachedPerson,
 } from "@/lib/chat-attached";
 import { getAttentionBrief, isAttentionQuestion, type AttentionBrief } from "@/lib/chat-attention";
+import { loadCalendarContextWindow } from "@/lib/calendar-events-store";
 import {
   budgetContactsContext,
   CANDIDATE_POOL,
@@ -106,6 +107,9 @@ export type ChatContext = {
    * retrieved people. Rationing the subject of the question is the wrong trade.
    */
   focusProfile: string | null;
+  /** A compact window of the user's own synced calendar, already rendered as text. Null when
+   *  no calendar connector has synced anything yet. See `renderCalendarContext`. */
+  calendarContext: string | null;
 };
 
 /** Per contact, before the rank tiers trim it further. */
@@ -182,6 +186,43 @@ async function loadRecentInteractions(
     result.set(id, { timeline: byContact.get(id) || [] });
   }
   return result;
+}
+
+/**
+ * A compact, model-ready rendering of the user's own calendar — upcoming and recent events.
+ * Loaded unconditionally, the same way active goals are, rather than gated on the question
+ * looking calendar-shaped: a fixed, bounded window (≤20 rows a side) is cheap enough that
+ * gating it would trade a real simplification for a query-intent classifier this doesn't need.
+ *
+ * Returns null (not "") when nothing has synced, so the prompt can omit the section entirely
+ * instead of showing an empty calendar as if it were the truth.
+ */
+async function renderCalendarContext(userId: string): Promise<string | null> {
+  const { upcoming, recent } = await loadCalendarContextWindow(userId).catch(() => ({
+    upcoming: [],
+    recent: [],
+  }));
+  if (upcoming.length === 0 && recent.length === 0) return null;
+
+  const renderRow = (e: (typeof upcoming)[number]) => {
+    const when = e.startsAt ? new Date(e.startsAt).toISOString() : "unknown time";
+    const who = e.attendees
+      .map((a) => a.name || a.email)
+      .filter(Boolean)
+      .slice(0, 6)
+      .join(", ");
+    const organizer = e.organizerName || e.organizerEmail;
+    return `- ${when} — ${e.title}${organizer ? ` (organized by ${organizer})` : ""}${who ? ` — with ${who}` : ""}`;
+  };
+
+  const sections: string[] = [];
+  if (upcoming.length > 0) {
+    sections.push(`Upcoming:\n${upcoming.map(renderRow).join("\n")}`);
+  }
+  if (recent.length > 0) {
+    sections.push(`Recent:\n${recent.map(renderRow).join("\n")}`);
+  }
+  return sections.join("\n\n");
 }
 
 async function loadActiveGoalTexts(userId: string): Promise<string[]> {
@@ -344,7 +385,16 @@ export async function prepareChatContext(
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
-  const [thread, priorRows, retrieved, orgRosters, attention, recruitersForChat, attachedPeople] =
+  const [
+    thread,
+    priorRows,
+    retrieved,
+    orgRosters,
+    attention,
+    recruitersForChat,
+    attachedPeople,
+    calendarContext,
+  ] =
     await Promise.all([
       threadId
         ? db.query.chatThreads.findFirst({
@@ -377,6 +427,7 @@ export async function prepareChatContext(
       attachedIds.length
         ? loadAttachedPeople(userId, attachedIds).catch(() => [] as AttachedPerson[])
         : Promise.resolve([] as AttachedPerson[]),
+      renderCalendarContext(userId).catch(() => null),
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
@@ -500,6 +551,7 @@ export async function prepareChatContext(
     allowedRecruiters,
     modelContacts,
     focusProfile,
+    calendarContext,
     modelRecruiters: recruitersForChat.map((r) => ({
       id: r.id,
       fullName: r.fullName,

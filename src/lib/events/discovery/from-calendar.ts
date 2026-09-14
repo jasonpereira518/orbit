@@ -161,7 +161,11 @@ export function calendarEventsToCandidates(
     // holds, and it is the one that declines to CREATE from it (see `attendance.ts`).
     out.push({
       source,
-      sourceRef: `${source === "gcal" ? "gcal" : "ics"}:${event.uid}`,
+      // `outlook` gets its own prefix rather than falling into the `ics` bucket, for the same
+      // reason `gcal` already does: a user who has both an ICS subscription and Outlook
+      // connected for the same underlying calendar must not have the two sources collide on
+      // one sourceRef for a shared UID.
+      sourceRef: `${source === "gcal" || source === "outlook" ? source : "ics"}:${event.uid}`,
       url: link,
       platform: match?.platform ?? null,
       providerEventId: match?.providerEventId ?? null,

@@ -18,8 +18,10 @@ import type { ProviderAttendee } from "@/lib/events/types";
  * `ics` is a user-added calendar subscription (Apple Calendar and anything else with a feed);
  * `luma_ics` and `partiful_ics` are the platforms' own personal feeds, which are worth
  * distinguishing because they are the only free way to see events the user merely attended.
+ * `outlook` is the Microsoft Graph calendar connector — `gcal`'s sibling, kept as a distinct
+ * value rather than folded into it so the badge can still say which calendar found it.
  */
-export type DiscoverySource = "gcal" | "ics" | "luma_ics" | "partiful_ics" | "gmail";
+export type DiscoverySource = "gcal" | "outlook" | "ics" | "luma_ics" | "partiful_ics" | "gmail";
 
 export type RsvpStatus = "going" | "maybe" | "waitlist" | "invited" | "cancelled";
 
