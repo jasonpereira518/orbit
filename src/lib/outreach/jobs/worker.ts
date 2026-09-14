@@ -10,8 +10,10 @@ import {
   extendLease,
   failExhaustedJobs,
   failJob,
+  listUsersWithPausedJobs,
   msUntilNextDue,
   pauseJob,
+  resumePausedJobs,
   retryJob,
   type JobRow,
 } from "@/lib/outreach/jobs/queue";
@@ -41,11 +43,15 @@ export type WorkerStats = {
   retried: number;
   failed: number;
   paused: number;
+  /** Jobs re-queued at the start of the pass because their user is back inside the gate. */
+  resumed: number;
   moreDue: boolean;
 };
 
 /** Short waits (a discovery run polling its ranking jobs) are slept through in one pass. */
 const MAX_IDLE_WAIT_MS = 15_000;
+/** How many users with paused jobs one pass re-checks against the gate. */
+const RESUME_USERS_PER_PASS = 50;
 
 export function backoffFor(attempts: number) {
   return Math.min(30_000 * 2 ** attempts, 15 * 60_000);
@@ -68,7 +74,47 @@ export async function runWorkerPass(
   const gate = opts.gate ?? isOutreachNextEnabled;
   const workerId = opts.workerId ?? `worker:${randomUUID()}`;
   const passDeadline = Date.now() + (opts.budgetMs ?? WORKER.passBudgetMs);
-  const stats: WorkerStats = { claimed: 0, succeeded: 0, continued: 0, retried: 0, failed: 0, paused: 0, moreDue: false };
+  const stats: WorkerStats = { claimed: 0, succeeded: 0, continued: 0, retried: 0, failed: 0, paused: 0, resumed: 0, moreDue: false };
+
+  /**
+   * The other half of pausing (spec §4.1): a paused job resumes on the first pass after its
+   * user is back inside the gate — turning OUTREACH_NEXT off and on again, or an admin who
+   * stops viewing as a user. Nothing else ever resumes one.
+   *
+   * A paused discovery run keeps its credit hold for the whole pause, deliberately: it resumes
+   * exactly where it left off, and its research still needs those credits. That is also why
+   * `countOutstandingJobs` counts 'paused' and the run reaper leaves such a run alone.
+   *
+   * Per user, and never fatal to the pass: one gate lookup that throws skips that user until
+   * the next pass rather than stopping everyone else's work.
+   */
+  async function resumeUsersBackInsideGate() {
+    let users: string[];
+    try {
+      users = await listUsersWithPausedJobs(RESUME_USERS_PER_PASS);
+    } catch (err) {
+      await recordErrorEvent({
+        source: ERROR_SOURCES.outreachWorker,
+        kind: "resume",
+        message: err instanceof Error ? err.message : String(err),
+        context: { stage: "list-paused" },
+      });
+      return;
+    }
+    for (const userId of users) {
+      try {
+        if (await gate(userId)) stats.resumed += await resumePausedJobs(userId, now());
+      } catch (err) {
+        await recordErrorEvent({
+          source: ERROR_SOURCES.outreachWorker,
+          kind: "resume",
+          userId,
+          message: err instanceof Error ? err.message : String(err),
+          context: { stage: "resume" },
+        });
+      }
+    }
+  }
 
   /**
    * One job, never throwing. A handler's own throw is already an outcome (retry, below); what
@@ -144,6 +190,8 @@ export async function runWorkerPass(
         break;
     }
   }
+
+  await resumeUsersBackInsideGate();
 
   while (Date.now() < passDeadline - 5_000) {
     await failExhaustedJobs(now());

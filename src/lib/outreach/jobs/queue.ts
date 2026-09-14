@@ -206,6 +206,21 @@ export async function failExhaustedJobs(now: Date): Promise<number> {
   return rowsOf(result).length;
 }
 
+/**
+ * Up to `limit` distinct users who have paused jobs, for the worker to re-check against the
+ * gate. Random order, not oldest-first: with the flag off, a crowd of users still outside the
+ * gate would otherwise fill every pass's quota forever and starve the one who is back inside.
+ */
+export async function listUsersWithPausedJobs(limit: number): Promise<string[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT user_id FROM (SELECT DISTINCT user_id FROM outreach_jobs WHERE status = 'paused') paused
+     ORDER BY random()
+     LIMIT ${limit}
+  `);
+  return rowsOf<{ user_id: string }>(result).map((r) => r.user_id);
+}
+
 export async function resumePausedJobs(userId: string, now: Date): Promise<number> {
   const db = await getDb();
   const rows = await db

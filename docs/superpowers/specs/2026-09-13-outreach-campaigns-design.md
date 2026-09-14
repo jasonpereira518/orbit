@@ -97,8 +97,9 @@ email from real mailboxes.
 
 Enforced in every layer, as surfaces are: nav, route (page renders new vs. legacy UI),
 server action, Runner endpoints, and the job worker. A queued job belonging to a user
-outside the gate is **paused**, never run and never failed. Local development sets
-`OUTREACH_NEXT=on` in `.env.local`; smoke scripts set it explicitly.
+outside the gate is **paused**, never run and never failed. Paused jobs resume on the first
+worker pass after the user is back inside the gate; a paused run keeps its hold. Local
+development sets `OUTREACH_NEXT=on` in `.env.local`; smoke scripts set it explicitly.
 
 Everyone outside the gate keeps legacy Outreach, unchanged. At cutover `OUTREACH_NEXT=on`
 is set, the legacy migration runs, and `page.outreach` resumes its role as the kill switch.
