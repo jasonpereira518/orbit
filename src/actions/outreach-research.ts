@@ -3,68 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { requireUserId } from "@/lib/auth";
 import { asActionResult, type ActionResult } from "@/lib/errors";
-import { getCreditBalance, listCreditLedger } from "@/lib/outreach/credits/ledger";
-import { isOutreachNextEnabled, requireOutreachNextUser } from "@/lib/outreach/gate";
-import {
-  clearBraveKey,
-  getResearchKeyStatus,
-  saveBraveKey,
-  verifySavedApolloKey,
-  type ResearchKeyStatus,
-} from "@/lib/outreach/keys";
+import { requireOutreachNextUser } from "@/lib/outreach/gate";
+import { clearBraveKey, saveBraveKey, verifySavedApolloKey } from "@/lib/outreach/keys";
+import { loadResearchSettings, type ResearchSettings } from "@/lib/outreach/settings";
 
-export type ResearchSettings =
-  | { enabled: false }
-  | {
-      enabled: true;
-      keys: ResearchKeyStatus;
-      credits: {
-        monthlyAllowance: number;
-        monthlyAvailable: number;
-        lifetimeAvailable: number;
-        total: number;
-        held: number;
-        periodEnd: string;
-      };
-      ledger: Array<{
-        id: string;
-        entryType: string;
-        amountMonthly: number;
-        amountLifetime: number;
-        note: string | null;
-        createdAt: string;
-      }>;
-    };
+export type { ResearchSettings } from "@/lib/outreach/settings";
 
-/** Read-only; returns `{ enabled: false }` outside the gate so Settings simply omits the section. */
+/** Read-only; `{ enabled: false }` for anyone who couldn't use the section, so Settings omits it. */
 export async function getResearchSettings(): Promise<ResearchSettings> {
   const userId = await requireUserId();
-  if (!(await isOutreachNextEnabled(userId))) return { enabled: false };
-  const [keys, balance, ledger] = await Promise.all([
-    getResearchKeyStatus(userId),
-    getCreditBalance(userId),
-    listCreditLedger(userId, 15),
-  ]);
-  return {
-    enabled: true,
-    keys,
-    credits: {
-      monthlyAllowance: balance.monthlyAllowance,
-      monthlyAvailable: balance.monthlyAvailable,
-      lifetimeAvailable: balance.lifetimeAvailable,
-      total: balance.total,
-      held: balance.held,
-      periodEnd: balance.periodEnd.toISOString(),
-    },
-    ledger: ledger.map((row) => ({
-      id: row.id,
-      entryType: row.entryType,
-      amountMonthly: row.amountMonthly,
-      amountLifetime: row.amountLifetime,
-      note: row.note,
-      createdAt: row.createdAt.toISOString(),
-    })),
-  };
+  return loadResearchSettings(userId);
 }
 
 export async function saveBraveKeyAction(key: string): Promise<ActionResult<{ status: "valid" | "unverified" }>> {

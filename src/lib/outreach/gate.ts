@@ -1,7 +1,8 @@
 import { isAdminUser } from "@/lib/admin";
+import { getEntitlements } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { requireOutreachUser } from "@/lib/plan-guards";
-import { isViewingAsUser } from "@/lib/surface-visibility";
+import { isSurfaceVisible, isViewingAsUser } from "@/lib/surface-visibility";
 
 /**
  * The generation-2 Outreach release gate (spec §4.1). FAILS CLOSED: unlike `app_surface_flags`,
@@ -29,4 +30,19 @@ export async function requireOutreachNextUser(): Promise<string> {
     throw new UserFacingError("This part of Outreach isn’t available yet");
   }
   return userId;
+}
+
+/**
+ * `requireOutreachNextUser`'s three checks — plan, the Outreach page surface, this gate — as
+ * a boolean, for read paths that should show nothing rather than throw (Settings' research
+ * section). Keep the two in step: a read that checks less than the mutations behind it shows
+ * people controls they can't use, and can create state (a credit account) just by rendering.
+ */
+export async function canUseOutreachNext(userId: string): Promise<boolean> {
+  const [entitlements, surfaceVisible, gateOpen] = await Promise.all([
+    getEntitlements(userId),
+    isSurfaceVisible(userId, "page.outreach"),
+    isOutreachNextEnabled(userId),
+  ]);
+  return entitlements.canUseOutreach && surfaceVisible && gateOpen;
 }
