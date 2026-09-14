@@ -515,6 +515,149 @@ export function formatRate(count: number, of: number | null): string {
 }
 
 /* ------------------------------------------------------------------------------------
+ * Product activity — what signed-in accounts actually did
+ * --------------------------------------------------------------------------------- */
+
+/**
+ * None of this is new tracking. It is the same rows every feature already writes for
+ * its own reasons — an import row, a saved capture job, a sent outreach message, a chat
+ * message, a hand-confirmed merge — read as a second, aggregate report. `page_views`
+ * covers the two that leave no other trace: opening `/graph` and reaching `/upgrade`.
+ */
+
+export type ImportsByProviderRow = {
+  provider: string;
+  count: number;
+  created: number;
+  updated: number;
+};
+
+/** Import jobs that finished, grouped by provider. `updated_at` is the completion time. */
+export async function importsByProvider(
+  range: Range = "30d",
+  now: Date = new Date()
+): Promise<ImportsByProviderRow[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT import_type AS provider,
+           count(*)::int AS count,
+           coalesce(sum(contacts_created), 0)::int AS created,
+           coalesce(sum(contacts_updated), 0)::int AS updated
+    FROM imports
+    WHERE status = 'completed' AND updated_at >= ${since(range, now)}
+    GROUP BY import_type
+    ORDER BY count DESC
+  `);
+  return rowsOf<{ provider: string; count: number; created: number; updated: number }>(
+    result
+  ).map((r) => ({
+    provider: r.provider,
+    count: num(r.count),
+    created: num(r.created),
+    updated: num(r.updated),
+  }));
+}
+
+export type CapturesBySourceRow = {
+  source: string;
+  count: number;
+  created: number;
+  updated: number;
+};
+
+/** Saved capture jobs, grouped by how the notes arrived. Counts come out of `result.saved`. */
+export async function capturesBySource(
+  range: Range = "30d",
+  now: Date = new Date()
+): Promise<CapturesBySourceRow[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT source_kind AS source,
+           count(*)::int AS count,
+           coalesce(sum((result -> 'saved' ->> 'created')::int), 0)::int AS created,
+           coalesce(sum((result -> 'saved' ->> 'updated')::int), 0)::int AS updated
+    FROM capture_jobs
+    WHERE status = 'saved' AND updated_at >= ${since(range, now)}
+    GROUP BY source_kind
+    ORDER BY count DESC
+  `);
+  return rowsOf<{ source: string; count: number; created: number; updated: number }>(
+    result
+  ).map((r) => ({
+    source: r.source,
+    count: num(r.count),
+    created: num(r.created),
+    updated: num(r.updated),
+  }));
+}
+
+export type OutreachByChannelRow = { channel: string; count: number };
+
+/** Outreach messages actually sent (not drafted, not scheduled), grouped by channel. */
+export async function outreachByChannel(
+  range: Range = "30d",
+  now: Date = new Date()
+): Promise<OutreachByChannelRow[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT channel, count(*)::int AS count
+    FROM outreach_messages
+    WHERE sent_at IS NOT NULL AND sent_at >= ${since(range, now)}
+    GROUP BY channel
+    ORDER BY count DESC
+  `);
+  return rowsOf<{ channel: string; count: number }>(result).map((r) => ({
+    channel: r.channel,
+    count: num(r.count),
+  }));
+}
+
+export type EngagementDepth = {
+  chatQueries: number;
+  /** `reason = 'Merged by hand'` only — the one string that's specifically the "Merge
+   *  into…" button, as opposed to a matcher-generated reason shared by both the
+   *  duplicate-review queue and the fully automatic sweep. */
+  manualMerges: number;
+  /** Signed-in views of `/graph` — the chart has no other record of being opened. */
+  graphViews: number;
+  /** Signed-in views of `/upgrade` — every checkout CTA lands here regardless of which
+   *  one was clicked, so this is upgrade INTENT, not a completed purchase (see `paid`
+   *  in `acquisitionFunnel` for that). */
+  upgradePageViews: number;
+};
+
+export async function engagementDepth(
+  range: Range = "30d",
+  now: Date = new Date()
+): Promise<EngagementDepth> {
+  const db = await getDb();
+  const from = since(range, now);
+  const result = await db.execute(sql`
+    SELECT
+      (SELECT count(*)::int FROM chat_messages
+        WHERE role = 'user' AND created_at >= ${from}) AS chat_queries,
+      (SELECT count(*)::int FROM contact_merges
+        WHERE reason = 'Merged by hand' AND merged_at >= ${from}) AS manual_merges,
+      (SELECT count(*)::int FROM ${PV}
+        AND pv.route = '/graph' AND pv.user_id IS NOT NULL AND pv.created_at >= ${from}) AS graph_views,
+      (SELECT count(*)::int FROM ${PV}
+        AND pv.route = '/upgrade' AND pv.user_id IS NOT NULL AND pv.created_at >= ${from}) AS upgrade_page_views
+  `);
+  const row = rowsOf<{
+    chat_queries: number;
+    manual_merges: number;
+    graph_views: number;
+    upgrade_page_views: number;
+  }>(result)[0];
+  return {
+    chatQueries: num(row?.chat_queries),
+    manualMerges: num(row?.manual_merges),
+    graphViews: num(row?.graph_views),
+    upgradePageViews: num(row?.upgrade_page_views),
+  };
+}
+
+/* ------------------------------------------------------------------------------------
  * Per-account traffic
  * --------------------------------------------------------------------------------- */
 

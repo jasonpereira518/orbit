@@ -16,7 +16,20 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
-import { billingEvents, contacts, pageViews, userSettings } from "../src/db/schema";
+import {
+  billingEvents,
+  captureJobs,
+  chatMessages,
+  chatThreads,
+  contactMerges,
+  contacts,
+  imports,
+  outreachCampaigns,
+  outreachMessages,
+  outreachProspects,
+  pageViews,
+  userSettings,
+} from "../src/db/schema";
 import {
   ROUTE_PATTERNS,
   UNKNOWN_ROUTE,
@@ -42,8 +55,13 @@ import {
   formatRate,
   accountTraffic,
   topAccountsByTraffic,
+  importsByProvider,
+  capturesBySource,
+  outreachByChannel,
+  engagementDepth,
 } from "../src/lib/admin-analytics";
 import { startQueryCount, stopQueryCount, capturedQueries } from "../src/lib/query-counter";
+import type { CaptureJobResult } from "../src/lib/capture/types";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -635,6 +653,145 @@ async function main() {
     `ranked ${ranked.reduce((a, r) => a + r.views, 0)} vs ${attributed} signed-in rows: ${JSON.stringify(ranked.map((r) => [r.userId, r.views]))}`
   );
 
+  // --- 7bc. Product activity (engagement) -----------------------------------------------
+  //
+  // None of these four are new tracking — they read tables other features already write.
+  // The point of testing them here is the same as everywhere else in this file: a wrong
+  // status filter, a wrong jsonb path, or a wrong FK join fails SILENTLY (an empty table
+  // that looks identical to "nobody did this"), so each assertion pins an exact count.
+
+  console.log("\nproduct activity");
+
+  // `page_views` is shared with the per-account traffic fixtures above (acct_user's two
+  // /graph views are still sitting in it), so graphViews/upgradePageViews are asserted as
+  // deltas rather than exact counts — the same reason the acquisition funnel above does.
+  const depthBefore = await engagementDepth("30d");
+
+  await db.insert(imports).values([
+    { userId: "eng_user", importType: "linkedin_connections", status: "completed", contactsCreated: 3, contactsUpdated: 1 },
+    { userId: "eng_user", importType: "google_contacts", status: "completed", contactsCreated: 2, contactsUpdated: 0 },
+    // Still running — must not be counted as completed.
+    { userId: "eng_user", importType: "outlook_contacts", status: "processing", contactsCreated: 0, contactsUpdated: 0 },
+  ]);
+  const importsOut = await importsByProvider("30d");
+  check(
+    "counts only completed imports, by provider",
+    importsOut.find((r) => r.provider === "linkedin_connections")?.count === 1 &&
+      importsOut.find((r) => r.provider === "google_contacts")?.count === 1 &&
+      !importsOut.some((r) => r.provider === "outlook_contacts"),
+    JSON.stringify(importsOut)
+  );
+  check(
+    "sums created/updated per provider",
+    importsOut.find((r) => r.provider === "linkedin_connections")?.created === 3 &&
+      importsOut.find((r) => r.provider === "linkedin_connections")?.updated === 1,
+    JSON.stringify(importsOut)
+  );
+
+  // Only `result.saved.{created,updated}` matters to the query under test, so the rest
+  // of `CaptureJobResult`'s shape is elided rather than filled in field by field.
+  const fixtureResult = (saved: { created: number; updated: number }) =>
+    ({
+      items: [],
+      saved: { batchId: randomUUID(), remindersCreated: 0, contactIds: [], contactIdByKey: {}, ...saved },
+    }) as unknown as CaptureJobResult;
+  await db.insert(captureJobs).values([
+    { userId: "eng_user", sourceKind: "messy", status: "saved", result: fixtureResult({ created: 2, updated: 1 }) },
+    { userId: "eng_user", sourceKind: "voice", status: "saved", result: fixtureResult({ created: 1, updated: 0 }) },
+    // Never saved — must not be counted.
+    { userId: "eng_user", sourceKind: "messy", status: "ready", result: { items: [] } as unknown as CaptureJobResult },
+  ]);
+  const capturesOut = await capturesBySource("30d");
+  check(
+    "counts only saved captures, by source",
+    capturesOut.find((r) => r.source === "messy")?.count === 1 &&
+      capturesOut.find((r) => r.source === "voice")?.count === 1,
+    JSON.stringify(capturesOut)
+  );
+  check(
+    "reads created/updated out of result.saved",
+    capturesOut.find((r) => r.source === "messy")?.created === 2 &&
+      capturesOut.find((r) => r.source === "messy")?.updated === 1,
+    JSON.stringify(capturesOut)
+  );
+
+  const [campaign] = await db
+    .insert(outreachCampaigns)
+    .values({ userId: "eng_user", name: "Smoke campaign" })
+    .returning();
+  const prospects = await db
+    .insert(outreachProspects)
+    .values([
+      { campaignId: campaign.id, externalId: "p1", fullName: "Prospect One" },
+      { campaignId: campaign.id, externalId: "p2", fullName: "Prospect Two" },
+    ])
+    .returning();
+  await db.insert(outreachMessages).values([
+    { prospectId: prospects[0].id, channel: "email", status: "sent", sentAt: nowIso },
+    { prospectId: prospects[1].id, channel: "linkedin", status: "sent", sentAt: nowIso },
+    // Drafted, never sent — must not be counted.
+    { prospectId: prospects[0].id, channel: "sms", status: "draft" },
+  ]);
+  const outreachOut = await outreachByChannel("30d");
+  check(
+    "counts only sent messages, by channel",
+    outreachOut.find((r) => r.channel === "email")?.count === 1 &&
+      outreachOut.find((r) => r.channel === "linkedin")?.count === 1 &&
+      !outreachOut.some((r) => r.channel === "sms"),
+    JSON.stringify(outreachOut)
+  );
+
+  const [thread] = await db
+    .insert(chatThreads)
+    .values({ userId: "eng_user" })
+    .returning();
+  await db.insert(chatMessages).values([
+    { threadId: thread.id, userId: "eng_user", role: "user", content: "who works at Acme?" },
+    { threadId: thread.id, userId: "eng_user", role: "user", content: "and their title?" },
+    // The model's own reply — not a question asked, must not be counted.
+    { threadId: thread.id, userId: "eng_user", role: "assistant", content: "…" },
+  ]);
+  await db.insert(contactMerges).values([
+    {
+      userId: "eng_user",
+      winnerContactId: randomUUID(),
+      loserContactId: randomUUID(),
+      loserSnapshot: {},
+      status: "done",
+      reason: "Merged by hand",
+    },
+    // Matcher-generated, not the "Merge into…" button — must not be counted.
+    {
+      userId: "eng_user",
+      winnerContactId: randomUUID(),
+      loserContactId: randomUUID(),
+      loserSnapshot: {},
+      status: "done",
+      reason: "Same full name",
+    },
+  ]);
+  await db.insert(pageViews).values([
+    { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.8", "UA-ENG", now), sessionId: randomUUID(), userId: "eng_user", route: "/graph", createdAt: ago(1) },
+    { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.8", "UA-ENG", now), sessionId: randomUUID(), userId: "eng_user", route: "/upgrade", createdAt: ago(1) },
+  ]);
+  const depth = await engagementDepth("30d");
+  check("counts only user-asked chat messages", depth.chatQueries === 2, `got ${depth.chatQueries}`);
+  check(
+    "counts only the hand-merge reason, not the matcher's",
+    depth.manualMerges === 1,
+    `got ${depth.manualMerges}`
+  );
+  check(
+    "counts a signed-in /graph view",
+    depth.graphViews - depthBefore.graphViews === 1,
+    `delta ${depth.graphViews - depthBefore.graphViews}`
+  );
+  check(
+    "counts a signed-in /upgrade view",
+    depth.upgradePageViews - depthBefore.upgradePageViews === 1,
+    `delta ${depth.upgradePageViews - depthBefore.upgradePageViews}`
+  );
+
   // --- 7c. The pages actually render ----------------------------------------------------
   //
   // The console is unreachable in a browser without Clerk keys and an ADMIN_USER_IDS entry
@@ -682,6 +839,9 @@ async function main() {
   const { default: FunnelPage } = await import(
     "../src/app/(clerk)/(admin)/admin/analytics/funnel/page"
   );
+  const { default: EngagementPage } = await import(
+    "../src/app/(clerk)/(admin)/admin/analytics/engagement/page"
+  );
 
   // Some traffic to render, since the fixtures above were cleaned up by the funnel block.
   await db.insert(pageViews).values([
@@ -725,6 +885,25 @@ async function main() {
     funnelText.slice(0, 400)
   );
   check("it explains the Lifetime caveat", funnelText.includes("Paid includes Lifetime."));
+
+  const engagementPage = await EngagementPage({ searchParams: Promise.resolve({}) });
+  const engagementText = textOf(engagementPage).join(" | ");
+  check("the engagement page renders without throwing", engagementPage != null);
+  check(
+    "it labels imports by their friendly provider name",
+    engagementText.includes("LinkedIn connections") && engagementText.includes("Google contacts"),
+    engagementText.slice(0, 600)
+  );
+  check(
+    "it labels captures by their friendly source name",
+    engagementText.includes("Notes") && engagementText.includes("Voice"),
+    engagementText.slice(0, 600)
+  );
+  check(
+    "it says reaching /upgrade is intent, not revenue",
+    engagementText.includes("Reached /upgrade") && engagementText.includes("intent"),
+    engagementText.slice(-400)
+  );
 
   // With the salt removed the page must say so, rather than showing an empty table that
   // looks identical to "nobody visited".
@@ -822,6 +1001,13 @@ async function main() {
   await db.delete(contacts).where(inArray(contacts.userId, fixtureUsers));
   await db.delete(billingEvents).where(inArray(billingEvents.userId, fixtureUsers));
   await db.delete(userSettings).where(inArray(userSettings.userId, fixtureUsers));
+  await db.delete(imports).where(eq(imports.userId, "eng_user"));
+  await db.delete(captureJobs).where(eq(captureJobs.userId, "eng_user"));
+  // Cascades to outreach_prospects, then to outreach_messages.
+  await db.delete(outreachCampaigns).where(eq(outreachCampaigns.id, campaign.id));
+  // Cascades to chat_messages.
+  await db.delete(chatThreads).where(eq(chatThreads.id, thread.id));
+  await db.delete(contactMerges).where(eq(contactMerges.userId, "eng_user"));
 
   if (savedSalt === undefined) delete process.env.ANALYTICS_SALT;
   else process.env.ANALYTICS_SALT = savedSalt;
