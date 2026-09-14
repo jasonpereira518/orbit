@@ -19,6 +19,7 @@ import {
   stripeEventSubject,
   type DecideContext,
 } from "@/lib/billing-stripe";
+import { trackServerEvent } from "@/lib/analytics-events-server";
 import { shouldRecordThrottled } from "@/lib/error-events";
 import {
   WEBHOOK_REASONS,
@@ -164,6 +165,26 @@ export async function POST(req: NextRequest) {
 
     for (const booking of decision.bookings) {
       await recordBillingEvent({ source: "stripe", ...booking });
+    }
+
+    // "Subscription Started" fires only off the checkout-session mirror, never off
+    // `customer.subscription.created/.updated` too — both can in principle see the same
+    // "new" movement, and wiring both risks double-counting one conversion.
+    if (decision.mirror?.type === "lifetime") {
+      await trackServerEvent(
+        "Subscription Started",
+        { plan: "lifetime", billingInterval: "lifetime" },
+        { headers: req.headers }
+      );
+    } else if (
+      decision.mirror?.type === "subscription" &&
+      decision.bookings.some((b) => b.kind === "new")
+    ) {
+      await trackServerEvent(
+        "Subscription Started",
+        { plan: "orbit", billingInterval: decision.mirror.interval ?? "month" },
+        { headers: req.headers }
+      );
     }
 
     if (decision.outcome === "ignored" && decision.reason === "missing_user_id") {

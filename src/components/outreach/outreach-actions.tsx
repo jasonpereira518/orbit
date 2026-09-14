@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import { Copy, ExternalLink, Send } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { trackEvent } from "@/lib/analytics-events";
 import {
   markMessageAction,
   sendOutreachMessageAction,
@@ -98,6 +99,7 @@ export function OutreachActions({
     start(async () => {
       try {
         await sendOutreachMessageAction(messageId);
+        trackEvent("Outreach Message Sent", { channel });
         toast.success(`${channelLabel(channel)} sent`);
         setDangerOpen(false);
         refresh();

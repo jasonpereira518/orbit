@@ -7,6 +7,7 @@ import {
   setUserIdentity,
 } from "@/lib/user-settings";
 import { recordBillingEvent } from "@/lib/billing-events";
+import { trackServerEvent } from "@/lib/analytics-events-server";
 import { shouldRecordThrottled } from "@/lib/error-events";
 import {
   WEBHOOK_REASONS,
@@ -92,6 +93,9 @@ export async function POST(req: NextRequest) {
           lastName: evt.data.last_name,
           imageUrl: evt.data.image_url,
         });
+        if (evt.type === "user.created") {
+          await trackServerEvent("Signup Completed", {}, { headers: req.headers });
+        }
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {
         result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };

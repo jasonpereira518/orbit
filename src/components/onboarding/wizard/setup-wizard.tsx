@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, Sparkles, Upload, UserPlus } from "lucide-react";
 import { completeWizard, saveWizardStep } from "@/actions/onboarding-wizard";
+import { trackEvent } from "@/lib/analytics-events";
 import { WizardAiKey } from "@/components/onboarding/wizard/wizard-ai-key";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -109,11 +110,19 @@ export function SetupWizard({
 
   const finish = useCallback(() => {
     start(async () => {
+      const kinds = new Set(results.map((r) => r.kind));
+      const path =
+        kinds.size === 0
+          ? "skipped"
+          : kinds.size > 1
+            ? "mixed"
+            : (results[0].kind as "manual" | "capture" | "import");
+      trackEvent("Onboarding Completed", { path });
       const res = await completeWizard();
       router.push(res.redirectTo);
       router.refresh();
     });
-  }, [router]);
+  }, [router, results]);
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-2xl flex-col justify-center gap-6 py-6">

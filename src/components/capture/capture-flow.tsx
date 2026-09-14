@@ -46,6 +46,7 @@ import { meetingExtrasFromDigest } from "@/lib/meeting-extras";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { DUR, DUR_MS, EASE_HOUSE } from "@/lib/motion";
 import { toast } from "@/lib/toast";
+import { trackEvent } from "@/lib/analytics-events";
 
 const SOURCE_LABEL: Record<CaptureJobSource, string> = {
   messy: "your notes",
@@ -144,6 +145,20 @@ export function CaptureFlow({
     }
     if (job?.status !== "ready") setReviewOpened(false);
   }, [job?.status]);
+
+  // The save landed: fired once per job, off the specific fields it needs rather than the
+  // whole `job` object, so an unrelated store update (e.g. a decision edit) can't re-fire it.
+  const trackedSavedJobId = useRef<string | null>(null);
+  const savedSummary = job?.status === "saved" ? job.result?.saved : undefined;
+  useEffect(() => {
+    if (!job || !savedSummary || trackedSavedJobId.current === job.id) return;
+    trackedSavedJobId.current = job.id;
+    trackEvent("Contact Captured", {
+      source: job.sourceKind,
+      createdCount: savedSummary.created,
+      updatedCount: savedSummary.updated,
+    });
+  }, [job, savedSummary]);
 
   // A meeting job that was reloaded: recover the digest for the header card (cheap — the
   // digest is stored; no model call without `force`).
