@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { outreachProspects, outreachResearchAttempts, outreachResearchRuns } from "@/db/schema";
 import { completeJson } from "@/lib/ai";
+import { UserFacingError } from "@/lib/errors";
 import { OUTREACH_LIMITS } from "@/lib/outreach/config";
 import { chargeAttempt, releaseHold } from "@/lib/outreach/credits/ledger";
 import { addEvidence, attachIdentities, type EvidenceInput } from "@/lib/outreach/discovery/candidates";
@@ -14,6 +15,12 @@ import { rankProspects } from "@/lib/outreach/ranking/apply";
 import type { JsonCompleter, OutreachFundingSource } from "@/lib/outreach/types";
 
 export type ResearchDeps = { resolveProviders?: ProviderResolver; complete?: JsonCompleter; now?: () => Date };
+
+const RESEARCH_UNAVAILABLE = "Research isn’t available right now — try again later";
+
+/** `instanceof` plus `name`, like `asActionResult`: a second module instance fails the prototype check. */
+const isUserFacingError = (err: unknown): err is Error =>
+  err instanceof UserFacingError || (err instanceof Error && err.name === "UserFacingError");
 
 /**
  * Create one research attempt and queue it. For a run, the slot comes out of the run's
@@ -143,7 +150,10 @@ export async function runResearchAttempt(
   try {
     providers = await (deps.resolveProviders ?? resolveResearchProviders)(userId, attempt.fundingSource);
   } catch (err) {
-    error = err instanceof Error ? err.message.slice(0, 300) : "Providers unavailable";
+    // `attempt.error` is shown to the person, so it holds Orbit's words only: a
+    // UserFacingError was written to be read ("Add your Brave Search key…"); anything else is
+    // a raw driver or provider message that could carry hosts, bodies or keys.
+    error = isUserFacingError(err) ? err.message.slice(0, 300) : RESEARCH_UNAVAILABLE;
     return finish("failed");
   }
   const signal = AbortSignal.timeout(OUTREACH_LIMITS.researchAttemptTimeoutMs);

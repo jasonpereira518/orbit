@@ -11,6 +11,7 @@ import { and, eq } from "drizzle-orm";
 import { run } from "./smoke/_env";
 import { getDb } from "../src/db";
 import * as schema from "../src/db/schema";
+import { UserFacingError } from "../src/lib/errors";
 import { createCampaignV2, saveCriteria } from "../src/lib/outreach/campaigns";
 import { getCreditBalance, reserveCredits } from "../src/lib/outreach/credits/ledger";
 import { upsertCandidate } from "../src/lib/outreach/discovery/candidates";
@@ -146,6 +147,21 @@ async function main() {
   check("the second exceeds it and is refused", (await allocateResearch(USER, { campaignId, prospectId: p8, runId: runRow.id, funding: "personal", holdId: null })) === null);
   const jobs = await db.select().from(schema.outreachJobs).where(and(eq(schema.outreachJobs.userId, USER), eq(schema.outreachJobs.kind, "research.person")));
   check("each allocation queued exactly one job", jobs.length === 7, String(jobs.length));
+
+  // After the job count above, so the attempts these checks allocate don't disturb it.
+  console.log("An attempt stores Orbit’s words, never a raw error...");
+  const attemptError = async (slug: string, err: Error) => {
+    const p = await make(slug);
+    const a = (await allocateResearch(USER, { campaignId, prospectId: p, runId: null, funding: "personal", holdId: null }))!;
+    const outcome = await runResearchAttempt(USER, a, { resolveProviders: async () => { throw err; }, complete: judge });
+    const [row] = await db.select().from(schema.outreachResearchAttempts).where(eq(schema.outreachResearchAttempts.id, a));
+    return { outcome, error: row.error };
+  };
+  const raw = await attemptError("jane-doe-raw", new Error("connect ECONNREFUSED 10.0.0.7:5432 — upstream said {\"key\":\"ap_live_123\"}"));
+  check("an unexpected resolver error fails the attempt", raw.outcome === "failed");
+  check("…and stores fixed copy, not the raw message", raw.error === "Research isn’t available right now — try again later", String(raw.error));
+  const worded = await attemptError("jane-doe-worded", new UserFacingError("Add your Brave Search key in Settings to search with your own keys"));
+  check("a UserFacingError keeps its own words", worded.error === "Add your Brave Search key in Settings to search with your own keys", String(worded.error));
 
   console.log("All outreach research checks passed.");
 }
