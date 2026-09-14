@@ -25,6 +25,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
+import { OutreachResearchSettings } from "@/components/settings/outreach-research-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { ApiSettings } from "@/components/settings/api-settings";
 import { WebhookSettings } from "@/components/settings/webhook-settings";
@@ -424,7 +425,12 @@ function Panel({
     case "ai":
       return <AiSettings initialSettings={initialSettings} />;
     case "outreach":
-      return <OutreachSettings initial={initialSettings.outreach} />;
+      return (
+        <div className="space-y-6">
+          <OutreachSettings initial={initialSettings.outreach} />
+          <OutreachResearchSettings />
+        </div>
+      );
     case "calendar":
       return <CalendarFeedSettings />;
     case "api":

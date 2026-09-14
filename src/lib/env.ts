@@ -42,6 +42,9 @@ export const EXPECTED_IN_PRODUCTION = [
   // Not read by the app at all — it exists so `checkMigrationTarget` below can tell a
   // preview build pointed at its own Neon branch from one pointed at production.
   "PRODUCTION_DB_HOST",
+  // Orbit-funded Outreach discovery. Absent, only users with their own Brave key can search —
+  // a warning, not a failed build.
+  "BRAVE_SEARCH_API_KEY",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [

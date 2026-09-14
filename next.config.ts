@@ -38,6 +38,12 @@ const nextConfig: NextConfig = {
       "./public/landing/planets/*.png",
     ],
   },
+  // Dev logs every Server Function call with its arguments by default, which prints the
+  // API keys a person saves in Settings (saveAiSettings, saveOutreachSettings) into the
+  // terminal verbatim.
+  logging: {
+    serverFunctions: false,
+  },
   experimental: {
     // Route navigations animate via React's <ViewTransition> (route-transition.tsx).
     viewTransition: true,

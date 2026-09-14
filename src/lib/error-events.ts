@@ -78,6 +78,8 @@ export const ERROR_SOURCES = {
    * a four-provider poll sitting behind a sixty-second cache.
    */
   providerHealthCheck: "provider.health_check",
+  /** A generation-2 Outreach job handler threw (`src/lib/outreach/jobs/worker.ts`). */
+  outreachWorker: "outreach.worker",
 } as const;
 
 export type ErrorEventInput = {

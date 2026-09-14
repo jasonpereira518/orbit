@@ -52,6 +52,11 @@ export const KNOWN_OPERATIONS = [
   "followup.draft",
   "outreach.draft",
   "outreach.apollo",
+  "outreach.criteria",
+  "outreach.plan",
+  "outreach.rank",
+  "outreach.search",
+  "outreach.enrich",
   "import.linkedin.timeline",
   "import.enrich",
 ] as const;

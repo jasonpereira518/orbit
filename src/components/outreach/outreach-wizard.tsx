@@ -16,15 +16,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  DEFAULT_SEQUENCE_STEPS,
   OUTREACH_CHANNELS,
   OUTREACH_REPLY_CTAS,
   OUTREACH_TONES,
   REPLY_CTA_LABELS,
+  smartSequenceFor,
   type AudienceFilters,
   type OutreachChannel,
   type OutreachReplyCta,
-  type SequenceStep,
 } from "@/lib/outreach-types";
 import { friendlyError } from "@/lib/errors";
 
@@ -43,10 +42,6 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
   const [tone, setTone] = useState("professional");
   const [channel, setChannel] = useState<OutreachChannel>("email");
   const [templateSeed, setTemplateSeed] = useState("");
-  const [enableSequence, setEnableSequence] = useState(true);
-  const [sequenceSteps, setSequenceSteps] = useState<SequenceStep[]>(
-    DEFAULT_SEQUENCE_STEPS
-  );
   const [searchTotal, setSearchTotal] = useState<number | null>(null);
   const [lastSearchSource, setLastSearchSource] = useState<"demo" | "apollo" | null>(
     null
@@ -72,7 +67,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             name,
             audienceQuery,
             replyCta,
-            sequenceSteps: enableSequence ? sequenceSteps : [],
+            sequenceSteps: smartSequenceFor(channel),
           });
           setCampaignId(campaign.id);
           setFilters((campaign.audienceFilters as AudienceFilters) || {});
@@ -83,7 +78,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             name,
             audienceQuery,
             replyCta,
-            sequenceSteps: enableSequence ? sequenceSteps : [],
+            sequenceSteps: smartSequenceFor(channel),
           });
           setFilters((updated.audienceFilters as AudienceFilters) || {});
           setStep(1);
@@ -102,7 +97,12 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           audienceFilters: filters,
           reparseAudience: false,
         });
-        const result = await searchProspects(campaignId);
+        const outcome = await searchProspects(campaignId);
+        if (!outcome.ok) {
+          toast.error(outcome.error);
+          return;
+        }
+        const result = outcome.value;
         setSearchTotal(result.total);
         setLastSearchSource(result.source);
         if (result.source === "demo") {
@@ -132,7 +132,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           replyCta,
           tone,
           defaultChannel: channel,
-          sequenceSteps: enableSequence ? sequenceSteps : [],
+          sequenceSteps: smartSequenceFor(channel),
         });
         await generateOutreachDrafts({
           campaignId,
@@ -264,38 +264,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
               ))}
             </select>
           </div>
-          <div className="space-y-3 rounded-xl border border-border/60 p-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={enableSequence}
-                onChange={(e) => setEnableSequence(e.target.checked)}
-              />
-              Enable follow-up sequence (improves reply rate)
-            </label>
-            {enableSequence && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {sequenceSteps.map((s, index) => (
-                  <div key={index} className="space-y-1.5">
-                    <Label>Follow-up {index + 1} delay (days)</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={s.delayDays}
-                      onChange={(e) => {
-                        const next = [...sequenceSteps];
-                        next[index] = {
-                          ...next[index],
-                          delayDays: Math.max(1, Number(e.target.value) || 1),
-                        };
-                        setSequenceSteps(next);
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Follow-ups are set for the channel you pick — two for email, one for LinkedIn, none
+            for texts — and stop as soon as someone replies.
+          </p>
           <Button
             onClick={handleAudienceNext}
             disabled={pending || !audienceQuery.trim()}

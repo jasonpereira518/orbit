@@ -9,7 +9,9 @@ export type UsageKind =
   | "completion"
   | "multimodal"
   | "embedding"
-  | "transcription";
+  | "transcription"
+  | "search"
+  | "enrichment";
 
 /**
  * Token counts as reported by the provider.
@@ -32,7 +34,7 @@ export type TokenCounts = {
  * so it never takes part in provider/model selection and must not be assignable where an
  * `AiProvider` is expected — but its calls still cost money and still belong in the ledger.
  */
-export type UsageProvider = AiProvider | "wispr";
+export type UsageProvider = AiProvider | "wispr" | "brave" | "apollo";
 
 export type UsageMeta = {
   userId: string;
@@ -49,6 +51,11 @@ type UsageRecord = UsageMeta &
     success: boolean;
     errorKind?: string | null;
     durationMs?: number | null;
+    /**
+     * Overrides the token-price estimate. For providers billed per call rather than per token
+     * (Brave, Apollo), whose model names are not in `ai-pricing.ts`.
+     */
+    estimatedCostMicros?: number | null;
   };
 
 /**
@@ -71,12 +78,15 @@ export function recordUsage(rec: UsageRecord): void {
         inputTokens: rec.inputTokens ?? null,
         outputTokens: rec.outputTokens ?? null,
         cachedInputTokens: rec.cachedInputTokens ?? null,
-        estimatedCostMicros: estimateCostMicros({
-          model: rec.model,
-          inputTokens: rec.inputTokens,
-          outputTokens: rec.outputTokens,
-          cachedInputTokens: rec.cachedInputTokens,
-        }),
+        estimatedCostMicros:
+          rec.estimatedCostMicros !== undefined
+            ? rec.estimatedCostMicros
+            : estimateCostMicros({
+                model: rec.model,
+                inputTokens: rec.inputTokens,
+                outputTokens: rec.outputTokens,
+                cachedInputTokens: rec.cachedInputTokens,
+              }),
         success: rec.success ? 1 : 0,
         errorKind: rec.errorKind ?? null,
         durationMs: rec.durationMs ?? null,

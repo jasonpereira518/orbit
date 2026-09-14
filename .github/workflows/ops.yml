@@ -121,3 +121,15 @@ jobs:
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Outreach jobs (discovery, ranking, research). Kicked by the app when work is enqueued;
+      # this is the backstop for a lost kick or an abandoned lease.
+      - name: Drain Outreach jobs (every 15 minutes)
+        if: github.event.schedule == '*/15 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/outreach/worker"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

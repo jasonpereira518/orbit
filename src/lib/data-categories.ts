@@ -120,7 +120,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "outreach",
     label: "Outreach campaigns",
     description:
-      "Campaigns, their prospect lists, and the emails and texts sent from them.",
+      "Campaigns, their prospect lists, research, drafts and conversations, the emails and texts sent from them, and your sender addresses. Your research-credit balance and the list of people who opted out stay.",
   },
   {
     id: "contacts",

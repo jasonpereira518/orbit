@@ -592,6 +592,9 @@ async function seedOutreach(
       const prospectId = randomUUID();
       await db.insert(outreachProspects).values({
         id: prospectId,
+        // Every prospect row carries its owner (spec §4.5); the migration's backfill only
+        // reaches rows that already exist when it runs.
+        userId,
         campaignId: campaign.id,
         externalId: `demo:${i}:${normalizePersonName(p.name)}`,
         contactId: p.contact ? contactIdByName.get(p.name) ?? null : null,
