@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, lte, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import type { OutreachCriterionVerdict } from "@/db/schema";
 import { outreachEvidence, outreachProspects } from "@/db/schema";
@@ -79,6 +79,21 @@ export async function rankProspects(
     }
   }
 
+  // The version this batch judged against was read BEFORE the judge call. If new criteria
+  // were confirmed and a rerank ranked someone for them while the judge was out, this write
+  // must not drag them back to the older version — and the rerank job for the newer version
+  // has already been spent, so nothing would ever bring them forward again. Never write over
+  // a ranking from a newer version.
+  const notNewer = (prospectId: string) =>
+    and(
+      eq(outreachProspects.id, prospectId),
+      eq(outreachProspects.userId, userId),
+      or(
+        isNull(outreachProspects.rankedCriteriaVersion),
+        lte(outreachProspects.rankedCriteriaVersion, campaign.criteriaVersion)
+      )
+    );
+
   const unknownVerdicts: OutreachCriterionVerdict[] = unreadable
     ? listCriteria(campaign.criteria).map(({ criterion }) => ({
         criterionId: criterion.id,
@@ -106,7 +121,7 @@ export async function rankProspects(
           rankedAt: now,
           updatedAt: now,
         })
-        .where(and(eq(outreachProspects.id, prospect.id), eq(outreachProspects.userId, userId)));
+        .where(notNewer(prospect.id));
       continue;
     }
     const judgement = judged!.get(prospect.id);
@@ -123,7 +138,7 @@ export async function rankProspects(
         rankedAt: now,
         updatedAt: now,
       })
-      .where(and(eq(outreachProspects.id, prospect.id), eq(outreachProspects.userId, userId)));
+      .where(notNewer(prospect.id));
   }
   return { ranked: prospects.length, criteriaVersion: campaign.criteriaVersion };
 }

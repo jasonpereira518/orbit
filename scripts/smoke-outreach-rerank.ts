@@ -164,6 +164,48 @@ async function main() {
   });
   check("a non-parse error retries regardless of attempt count", boomOutcome.status === "retry", JSON.stringify(boomOutcome));
 
+  // A batch reads the criteria version, spends seconds in the judge, then writes. If new
+  // criteria were confirmed and a rerank ranked the person for them in between, the late batch
+  // used to write its older version back over the newer ranking — and the rerank's job for
+  // the newer version had already been spent, so nothing would ever fix it.
+  console.log("A late batch never drags a person back to an older criteria version...");
+  const { id: lateCampaign } = await createCampaignV2(USER, {
+    brief: { purpose: "Meet partnership leads in payments", desiredOutcome: "Intro calls" }, channel: "email",
+  });
+  await saveCriteria(USER, lateCampaign, {
+    required: [{ kind: "role", label: "Partnerships", values: ["Head of Partnerships"] }], preferred: [], exclusions: [],
+  });
+  const latePerson = async (slug: string) =>
+    (
+      await upsertCandidate(USER, lateCampaign, {
+        fullName: "Lee Late", linkedinUrl: `https://www.linkedin.com/in/${slug}`, origin: "discovered",
+        evidence: [{ kind: "search_result", provider: "brave", url: `https://www.linkedin.com/in/${slug}`, title: "Lee Late - Head of Partnerships - Ramp", snippet: "Head of Partnerships" }],
+      })
+    ).prospectId;
+  /** While the judge is out, the criteria move to version 2 and a rerank ranks the person for it. */
+  const overtakenBy = (inner: JsonCompleter, prospectId: string): JsonCompleter => async (userId, input) => {
+    await db.update(schema.outreachCampaigns).set({ criteriaVersion: 2 }).where(eq(schema.outreachCampaigns.id, lateCampaign));
+    await db
+      .update(schema.outreachProspects)
+      .set({ rankedCriteriaVersion: 2, rankTier: "weak", rankScore: 0.1 })
+      .where(eq(schema.outreachProspects.id, prospectId));
+    return inner(userId, input);
+  };
+  const lateRow = async (id: string) => (await db.select().from(schema.outreachProspects).where(eq(schema.outreachProspects.id, id)))[0];
+
+  const overtaken = await latePerson("lee-late");
+  await rankProspects(USER, lateCampaign, [overtaken], overtakenBy(fakeJudge(calls), overtaken));
+  const afterLate = await lateRow(overtaken);
+  check("a version-1 batch leaves a version-2 ranking alone",
+    afterLate.rankedCriteriaVersion === 2 && afterLate.rankTier === "weak", JSON.stringify([afterLate.rankedCriteriaVersion, afterLate.rankTier]));
+
+  await db.update(schema.outreachCampaigns).set({ criteriaVersion: 1 }).where(eq(schema.outreachCampaigns.id, lateCampaign));
+  const overtakenUnread = await latePerson("lee-late-unread");
+  await rankProspects(USER, lateCampaign, [overtakenUnread], overtakenBy(async () => "garbage", overtakenUnread), new Date(), { onUnreadable: "unknown" });
+  const afterUnread = await lateRow(overtakenUnread);
+  check("…and so does its all-unknown fallback",
+    afterUnread.rankedCriteriaVersion === 2 && afterUnread.rankTier === "weak", JSON.stringify([afterUnread.rankedCriteriaVersion, afterUnread.rankTier]));
+
   console.log("All outreach rerank checks passed.");
 }
 
