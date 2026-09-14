@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { startProCheckout } from "@/actions/billing";
-import { trackEvent } from "@/lib/analytics-events";
 import { planCopy, type BillingPeriod } from "@/lib/plan-copy";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +35,6 @@ export function ProCheckoutButton({
         disabled={pending}
         onClick={() => {
           setError(null);
-          trackEvent("Upgrade CTA Clicked", { surface: "pricing_cards" });
           start(async () => {
             const result = await startProCheckout(period);
             if ("url" in result) {

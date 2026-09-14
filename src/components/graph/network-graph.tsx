@@ -15,7 +15,6 @@ import {
   refreshConstellationBatch,
 } from "@/actions/graph";
 import { toast } from "sonner";
-import { trackEvent } from "@/lib/analytics-events";
 import { useCornerClearance } from "@/lib/corner-clearance";
 import { searchDashboardContacts } from "@/actions/search";
 import {
@@ -253,11 +252,6 @@ export function NetworkGraph({
   useEffect(() => {
     if (initialData) lastFetchAt.current = Date.now();
   }, [initialData]);
-  // Mount-only: this component is only ever reached via next/dynamic({ ssr: false }), so
-  // one mount is one genuine open of the graph.
-  useEffect(() => {
-    trackEvent("Graph Opened", {});
-  }, []);
   const positionsHydrated = useRef(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);

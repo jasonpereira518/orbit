@@ -1,7 +1,4 @@
-"use client";
-
 import { cn } from "@/lib/utils";
-import { trackEvent } from "@/lib/analytics-events";
 import { WarpLink } from "@/components/warp/warp-link";
 
 /**
@@ -64,7 +61,6 @@ export function ContactQuotaNotice({
       </p>
       <WarpLink
         href="/pricing"
-        onClick={() => trackEvent("Upgrade CTA Clicked", { surface: "quota_notice" })}
         className="shrink-0 text-sm font-medium text-primary underline underline-offset-4 hover:opacity-80"
       >
         See plans

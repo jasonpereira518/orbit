@@ -1,9 +1,6 @@
-"use client";
-
 import { Check, Sparkles } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { trackEvent } from "@/lib/analytics-events";
 import { WarpLink } from "@/components/warp/warp-link";
 import { planCopy } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
@@ -232,7 +229,6 @@ export function PlanSettings({
             <WarpLink
               href="/upgrade"
               journey="chrono"
-              onClick={() => trackEvent("Upgrade CTA Clicked", { surface: "plan_settings" })}
               className={cn(buttonVariants({ size: "sm" }))}
             >
               Upgrade

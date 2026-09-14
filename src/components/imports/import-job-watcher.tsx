@@ -9,7 +9,6 @@ import {
 } from "@/lib/import-job-runner";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { friendlyError } from "@/lib/errors";
-import { trackEvent } from "@/lib/analytics-events";
 
 /**
  * Lives in the app shell so background imports keep notifying after you leave
@@ -27,7 +26,6 @@ export function ImportJobWatcher() {
     handledId.current = job.id;
 
     if (job.status === "completed") {
-      trackEvent("Import Completed", { provider: job.kind });
       if (job.resultMessage) toast.success(job.resultMessage);
       if (job.enrichmentMessage) toast.message(job.enrichmentMessage);
       router.refresh();

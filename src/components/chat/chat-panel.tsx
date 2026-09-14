@@ -24,7 +24,6 @@ import {
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
-import { trackEvent } from "@/lib/analytics-events";
 import {
   askNetwork,
   createChatThread,
@@ -526,7 +525,6 @@ export function ChatPanel() {
       // Resolved from the text, not from `attached` directly: a token the user deleted
       // must not still ship that person's history to the model.
       const sending = activeMentions(q, attached);
-      trackEvent("Chat Query Sent", { hasContactMentions: sending.length > 0 });
       // A suggestion card names a person without an `@` token, so its id arrives here
       // rather than being re-derived from the text. Without it the card's question is
       // answered from a notes blob: `loadKnowledgeSnippets` keeps only LinkedIn messages,

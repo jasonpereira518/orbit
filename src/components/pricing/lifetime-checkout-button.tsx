@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { startLifetimeCheckout } from "@/actions/billing";
-import { trackEvent } from "@/lib/analytics-events";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,7 +32,6 @@ export function LifetimeCheckoutButton({
         disabled={pending}
         onClick={() => {
           setError(null);
-          trackEvent("Upgrade CTA Clicked", { surface: "pricing_cards" });
           start(async () => {
             const result = await startLifetimeCheckout();
             if ("url" in result) {

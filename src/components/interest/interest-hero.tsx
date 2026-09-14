@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
 import { joinInterestList } from "@/actions/interest-list";
-import { trackEvent } from "@/lib/analytics-events";
 import { BoardingPass } from "@/components/interest/boarding-pass";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { ProofLine } from "@/components/interest/proof-line";
@@ -144,7 +143,6 @@ export function InterestHero({
           fail(result.message);
           return;
         }
-        trackEvent("Waitlist Joined", { source: "interest_page" });
         // Measure while the button is still on screen: the state change below unmounts
         // it. The canvas is viewport-fixed, so these coordinates land where it was.
         const rect = buttonRef.current?.getBoundingClientRect();

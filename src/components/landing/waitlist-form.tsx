@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { joinInterestList } from "@/actions/interest-list";
-import { trackEvent } from "@/lib/analytics-events";
 
 const inputClass =
   "w-full rounded-xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/50 px-4.5 py-3.5 text-[#e8f3f1] placeholder:text-[#6d807c] focus:border-[#f2c14e]/50 focus:outline-none";
@@ -39,7 +38,6 @@ export function WaitlistForm() {
         website: String(data.get("website") ?? ""),
         elapsedMs: readyAt.current ? Date.now() - readyAt.current : 0,
       });
-      if (result.ok) trackEvent("Waitlist Joined", { source: "landing" });
       setStatus(result.ok ? "success" : "error");
     } catch {
       setStatus("error");

@@ -16,7 +16,6 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Merge, Search } from "lucide-react";
 import { toast } from "sonner";
-import { trackEvent } from "@/lib/analytics-events";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -61,7 +60,6 @@ export function MergeContactButton({ id, name }: { id: string; name: string }) {
       try {
         await mergeDuplicatePair(target.id, id, "Merged by hand");
         setOpen(false);
-        trackEvent("Contacts Merged", {});
         toast.success(`Merged into ${target.fullName}`, {
           description: "Undo it any time from Contacts → Duplicates",
         });
