@@ -135,6 +135,14 @@ async function main() {
     const campaignIds = (
       await db.select({ id: outreachCampaigns.id }).from(outreachCampaigns).where(eq(outreachCampaigns.userId, FRESH))
     ).map((c) => c.id);
+    // Tenancy (spec §4.5): every prospect row carries user_id. The migration's backfill only
+    // fills rows that exist when it runs, so a seed that omits it leaves them null for good.
+    const seededProspects = await db
+      .select({ userId: outreachProspects.userId })
+      .from(outreachProspects)
+      .where(inArray(outreachProspects.campaignId, campaignIds));
+    check("every seeded outreach prospect carries its owner's user_id",
+      seededProspects.length > 0 && seededProspects.every((p) => p.userId === FRESH), JSON.stringify(seededProspects));
     const sendable = await db
       .select({ id: outreachMessages.id })
       .from(outreachMessages)
