@@ -22,29 +22,77 @@
  */
 
 /**
- * The event-provider *connections* Orbit claims and syncs on a schedule — an API key or OAuth
- * grant scoped to fetching a roster. Deliberately excludes the calendar connectors: those ride
- * on the Gmail/Outlook connections `src/lib/provider-connections.ts` already claims, and
- * `src/lib/events/connections.ts`'s `ClaimedEventConnection` must never be asked to claim one.
+ * The stand-in title used when someone adds an event by link alone.
+ *
+ * It is a real stored value (`events.title` is NOT NULL), but it is NOT a choice the user
+ * made, and enrichment has to be able to tell those apart — otherwise the placeholder wins
+ * over the title fetched from the page and the event stays "Untitled event" forever.
  */
+export const UNTITLED_EVENT = "Untitled event";
+
+/**
+ * Which title an enriched event should end up with.
+ *
+ * The rule is "the user's own typing beats anything scraped" — they were there, the page is a
+ * marketing asset. The subtlety is that `UNTITLED_EVENT` is not typing: it is what
+ * `createEvent` stores when someone adds an event by pasting a link and nothing else. Counting
+ * it as a real choice made the page's title lose to a placeholder, so every added-by-link
+ * event stayed "Untitled event" — which defeats the reason for pasting a link at all.
+ */
+export function resolveEventTitle(
+  existingTitle: string | null | undefined,
+  fetchedTitle: string | null | undefined
+): string {
+  const existing = existingTitle?.trim();
+  if (existing && existing !== UNTITLED_EVENT) return existing;
+  return fetchedTitle?.trim() || UNTITLED_EVENT;
+}
+
+/** A platform whose API we can sync from, and the only values `events.provider` may hold. */
 export type EventProviderId = "luma" | "eventbrite";
 
 /**
- * Where a calendar-sourced group event (a panel/webinar detected in a sync) came from. Not a
- * "provider" in the API-key sense above — it names where an event row and its roster came
- * from, not a connection this feature schedules itself. See
- * `src/lib/connectors/calendar-shared.ts`'s `toGroupEventCandidates`.
+ * What a row in `event_provider_connections` connects to.
+ *
+ * A superset of `EventProviderId`, and deliberately a different type. The connections table
+ * is unique on `(user_id, provider)`, so its `provider` column doubles as the KIND of
+ * connection — and a personal iCal feed is not the same thing as a host API key even when it
+ * points at the same platform. A Luma feed lists everything the user registered for; a Luma
+ * API key lists the calendars they run, and nothing else.
+ *
+ * Conflating the two would mean a user could have one or the other, never both — which is
+ * exactly backwards, because the people who host Luma events are the people most likely to
+ * attend them too.
  */
-export type CalendarEventProviderId = "google_calendar" | "outlook_calendar";
+export type EventConnectionProvider =
+  | EventProviderId
+  | "luma_ics"
+  | "partiful_ics"
+  /** Not a platform: the user's existing Google grant, opted in to a mailbox scan. */
+  | "gmail";
+
+export type EventConnectionAuthKind =
+  | "api_key"
+  | "oauth"
+  /** A secret URL. No account, no token, no refresh — anyone holding it sees the feed. */
+  | "ics"
+  /** Nothing stored here: the token comes from the Gmail connection the user already has. */
+  | "google_grant";
 
 export type EventRole = "attended" | "hosted";
-export type EventSource = "manual" | "page" | EventProviderId | CalendarEventProviderId;
+export type EventSource = "manual" | "page" | EventProviderId;
+/**
+ * `page` is a speaker or published host read from the event page — never a guest list.
+ * `calendar` is a fellow guest on an invite the user was on, which is a different claim
+ * again: the host did not announce them, they were just in the same room.
+ */
 export type AttendeeSource =
   | "paste"
   | "csv"
   | "screenshot"
-  | EventProviderId
-  | CalendarEventProviderId;
+  | "page"
+  | "calendar"
+  | EventProviderId;
 export type AttendeeRole = "attendee" | "host" | "speaker";
 
 /** One event as a provider reports it. Producers map to this; nothing else touches their JSON. */
@@ -71,6 +119,7 @@ export type ProviderAttendee = {
   title: string | null;
   linkedinUrl: string | null;
   xHandle: string | null;
+  phone: string | null;
   attendeeRole: AttendeeRole | null;
 };
 

@@ -1,7 +1,13 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import {
+  MIN_ORG_NAME_LEN,
+  normalizeQuestionForOrgs,
+  questionMentionsOrg,
+} from "@/lib/chat-roster-match";
 import { canonicalCompanyClusterName } from "@/lib/company-family";
+import { foldSchoolNames } from "@/lib/school-name";
 import { normalizeCompanyName } from "@/lib/company-name";
 
 /**
@@ -30,30 +36,9 @@ export type OrgRoster = {
 const ROSTER_PEOPLE_CAP = 50;
 /** At most this many organisations per question, so a rambling question can't blow the prompt. */
 const MAX_ROSTERS = 2;
-/**
- * Names shorter than this are not matched: a two-letter company would fire on almost any
- * question, and the false positives are worse than the miss.
- */
-const MIN_ORG_NAME_LEN = 3;
-
-/** Everyday words that also happen to be company names; matching them is nearly always wrong. */
-const STOPLIST = new Set([
-  "the", "and", "for", "you", "who", "how", "new", "one", "next", "now", "all",
-  "get", "app", "inc", "llc", "self", "self employed", "freelance", "student",
-  "none", "n/a", "unknown", "independent",
-]);
-
-function normalizeQuestion(question: string) {
-  // Punctuation to spaces so "at Google?" and "Google's" both match "google", and pad the
-  // ends so a whole-word test can be a plain substring test.
-  return ` ${question.toLowerCase().replace(/[^a-z0-9+&. ]+/g, " ").replace(/\s+/g, " ").trim()} `;
-}
-
-function mentions(haystack: string, name: string) {
-  const needle = normalizeCompanyName(name).replace(/[^a-z0-9+&. ]+/g, " ").replace(/\s+/g, " ").trim();
-  if (needle.length < MIN_ORG_NAME_LEN || STOPLIST.has(needle)) return false;
-  return haystack.includes(` ${needle} `);
-}
+// The name test and its stoplist live in `@/lib/chat-roster-match`: the composer's
+// suggestion cards have to ask the same question before offering "Who else do I know at
+// {company}?", and a second copy of the list would drift.
 
 type OrgRow = { name: string; kind: "company" | "school"; total: number };
 
@@ -61,29 +46,44 @@ export async function findOrgRosters(
   userId: string,
   question: string
 ): Promise<OrgRoster[]> {
-  const haystack = normalizeQuestion(question);
+  const haystack = normalizeQuestionForOrgs(question);
   if (haystack.trim().length < MIN_ORG_NAME_LEN) return [];
 
   const db = await getDb();
 
-  // Cheap: one grouped scan over two indexed-ish columns, no joins, no row bodies.
-  const orgRows = await db
-    .select({
-      name: sql<string>`coalesce(${contacts.company}, ${contacts.school})`,
-      kind: sql<"company" | "school">`case when ${contacts.company} is not null then 'company' else 'school' end`,
-      total: sql<number>`count(*)::int`,
-    })
-    .from(contacts)
-    .where(
-      and(
-        eq(contacts.userId, userId),
-        sql`(${contacts.company} is not null or ${contacts.school} is not null)`
-      )
-    )
-    .groupBy(
-      sql`coalesce(${contacts.company}, ${contacts.school})`,
-      sql`case when ${contacts.company} is not null then 'company' else 'school' end`
-    );
+  // Two grouped scans rather than one, because a contact belongs to their employer AND
+  // their school. This was `coalesce(company, school)` with a `case` for the kind, which
+  // counts anyone holding a job as a company row only — so a school's `total` excluded
+  // every employed alum while the roster fetch below, keyed on `school` alone, listed them.
+  // The block still printed "(complete)", over a number the system prompt calls
+  // "authoritative and exhaustive". Two scans is the price of the count being true.
+  const groupedBy = (
+    column: typeof contacts.company | typeof contacts.school,
+    kind: "company" | "school"
+  ) =>
+    db
+      .select({
+        name: sql<string>`${column}`,
+        kind: sql<"company" | "school">`${kind}`,
+        total: sql<number>`count(*)::int`,
+      })
+      .from(contacts)
+      .where(and(eq(contacts.userId, userId), isNotNull(column)))
+      .groupBy(column);
+
+  const [companyRows, schoolRows] = await Promise.all([
+    groupedBy(contacts.company, "company"),
+    groupedBy(contacts.school, "school"),
+  ]);
+  const orgRows = [...companyRows, ...schoolRows];
+
+  // Schools fold by acronym, derived from this user's own values — "MIT" and
+  // "Massachusetts Institute of Technology" were two organisations with two counts, so a
+  // question naming either saw half the alumni. Built before the loop because folding a
+  // name needs to know every other name.
+  const schoolFold = foldSchoolNames(
+    orgRows.filter((r) => r.kind === "school").map((r) => (r.name || "").trim())
+  );
 
   // Fold aliases together the same way the constellation does, so "AWS" and "Amazon Web
   // Services" are one organisation here too and the count matches what the map shows.
@@ -91,7 +91,10 @@ export async function findOrgRosters(
   for (const row of orgRows as OrgRow[]) {
     const raw = (row.name || "").trim();
     if (!raw) continue;
-    const canonical = row.kind === "company" ? canonicalCompanyClusterName(raw) || raw : raw;
+    const canonical =
+      row.kind === "company"
+        ? canonicalCompanyClusterName(raw) || raw
+        : schoolFold.get(raw) || raw;
     const key = `${row.kind}:${normalizeCompanyName(canonical)}`;
     const entry = byCanonical.get(key) ?? {
       kind: row.kind,
@@ -107,8 +110,8 @@ export async function findOrgRosters(
   const matched = [...byCanonical.values()]
     .filter(
       (entry) =>
-        mentions(haystack, entry.display) ||
-        [...entry.variants].some((v) => mentions(haystack, v))
+        questionMentionsOrg(haystack, entry.display) ||
+        [...entry.variants].some((v) => questionMentionsOrg(haystack, v))
     )
     // Longest name first: "Google DeepMind" should win over "Google" when both match.
     .sort((a, b) => b.display.length - a.display.length)

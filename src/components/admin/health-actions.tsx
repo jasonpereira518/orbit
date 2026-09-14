@@ -13,6 +13,7 @@ import {
   setCalendarFeedEnabledAction,
 } from "@/actions/admin";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 /**
  * The per-row repair buttons on `/admin/health`.
@@ -163,7 +164,7 @@ export function OpsButtons({ slackConfigured }: { slackConfigured: boolean }) {
                 parts.length ? `Sweep done: ${parts.join("; ")}` : `Sweep done: ${r.active.length} condition(s) active, nothing new`
               );
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Sweep failed");
+              toast.error(friendlyError(err, "The sweep didn’t run — try again?"));
             }
           })
         }
@@ -182,7 +183,7 @@ export function OpsButtons({ slackConfigured }: { slackConfigured: boolean }) {
               await sendTestAlertAction();
               toast.success("Test alert sent to Slack");
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Could not reach Slack");
+              toast.error(friendlyError(err, "Couldn’t reach Slack — try again?"));
             }
           })
         }

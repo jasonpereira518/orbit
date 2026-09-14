@@ -26,7 +26,10 @@ import {
   backoffMs,
 } from "@/lib/provider-connections";
 import type { EventProviderSyncCursor } from "@/db/schema";
-import type { EventProviderId } from "@/lib/events/types";
+import type {
+  EventConnectionAuthKind,
+  EventConnectionProvider,
+} from "@/lib/events/types";
 
 /** Matches the Gmail/Outlook cadence. The GitHub Actions cron runs every 15 minutes anyway. */
 export const EVENT_SYNC_INTERVAL_MS = 30 * 60 * 1000;
@@ -34,8 +37,8 @@ export const EVENT_SYNC_INTERVAL_MS = 30 * 60 * 1000;
 export type ClaimedEventConnection = {
   id: string;
   userId: string;
-  provider: EventProviderId;
-  authKind: "api_key" | "oauth";
+  provider: EventConnectionProvider;
+  authKind: EventConnectionAuthKind;
   accountRef: string | null;
   /** Already decrypted. Null means the row is unusable and the caller must flag reauth. */
   secret: string | null;
@@ -46,8 +49,8 @@ export type ClaimedEventConnection = {
 type ClaimRow = {
   id: string;
   user_id: string;
-  provider: EventProviderId;
-  auth_kind: "api_key" | "oauth";
+  provider: EventConnectionProvider;
+  auth_kind: EventConnectionAuthKind;
   account_ref: string | null;
   api_key_encrypted: string | null;
   access_token_encrypted: string | null;
@@ -112,7 +115,18 @@ export async function claimDueEventConnections(
 }
 
 export type EventSyncOutcome =
-  | { ok: true; cursor: EventProviderSyncCursor | null }
+  | {
+      ok: true;
+      cursor: EventProviderSyncCursor | null;
+      /**
+       * When to run again, for a source that knows it is mid-listing.
+       *
+       * The mailbox scan walks a year of mail 100 messages at a time; at the standard
+       * half-hour cadence that backlog would take days. Passing `now` means "immediately",
+       * the same lever `syncGoogleCalendar` pulls when it stops mid-chain.
+       */
+      nextSyncAt?: Date;
+    }
   | { ok: false; error: string; retryable: boolean };
 
 /** Record one run's result and schedule (or disarm) the next. Mirrors `markSyncResult`. */
@@ -131,7 +145,7 @@ export async function markEventSyncResult(
              sync_error = NULL,
              sync_failures = 0,
              sync_cursor = ${outcome.cursor === null ? null : JSON.stringify(outcome.cursor)}::jsonb,
-             next_sync_at = ${new Date(now.getTime() + EVENT_SYNC_INTERVAL_MS)},
+             next_sync_at = ${outcome.nextSyncAt ?? new Date(now.getTime() + EVENT_SYNC_INTERVAL_MS)},
              last_synced_at = ${now},
              updated_at = ${now}
        WHERE id = ${id}
@@ -207,7 +221,7 @@ export async function markNeedsReauth(id: string, error: string): Promise<void> 
 
 export type EventConnectionSummary = {
   id: string;
-  provider: EventProviderId;
+  provider: EventConnectionProvider;
   label: string | null;
   status: "active" | "needs_reauth";
   lastSyncedAt: Date | null;
@@ -218,7 +232,7 @@ export async function listEventConnections(userId: string): Promise<EventConnect
   const db = await getDb();
   const rows = rowsOf<{
     id: string;
-    provider: EventProviderId;
+    provider: EventConnectionProvider;
     label: string | null;
     status: "active" | "needs_reauth";
     last_synced_at: string | Date | null;
@@ -251,8 +265,8 @@ export async function listEventConnections(userId: string): Promise<EventConnect
 export async function upsertEventConnection(
   userId: string,
   input: {
-    provider: EventProviderId;
-    authKind: "api_key" | "oauth";
+    provider: EventConnectionProvider;
+    authKind: EventConnectionAuthKind;
     secret: string;
     refreshToken?: string | null;
     tokenExpiresAt?: Date | null;
@@ -295,10 +309,31 @@ export async function upsertEventConnection(
   `);
 }
 
+/**
+ * Does this user have a Google grant the mailbox scan could ride on?
+ *
+ * The scan never asks for a new scope. It reuses the `gmail.readonly` grant already made for
+ * calendar and contact history, which is why the opt-in switch needs to know whether that
+ * grant exists before it offers itself at all.
+ */
+export async function findGmailGrant(
+  userId: string
+): Promise<{ emailAddress: string | null } | null> {
+  const db = await getDb();
+  const rows = rowsOf<{ email_address: string | null }>(
+    await db.execute(sql`
+      SELECT email_address FROM gmail_connections
+       WHERE user_id = ${userId} AND status = 'active'
+       LIMIT 1
+    `)
+  );
+  return rows[0] ? { emailAddress: rows[0].email_address } : null;
+}
+
 /** Disconnecting deletes the row — the same rule the Gmail/Outlook tables follow. */
 export async function deleteEventConnection(
   userId: string,
-  provider: EventProviderId
+  provider: EventConnectionProvider
 ): Promise<void> {
   const db = await getDb();
   await db.execute(sql`

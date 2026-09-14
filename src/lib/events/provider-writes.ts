@@ -14,13 +14,7 @@ import { events } from "@/db/schema";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { upsertEventAttendees } from "@/lib/events/store";
 import type { ParsedAttendee } from "@/lib/events/parse-roster";
-import type {
-  CalendarEventProviderId,
-  EventProviderId,
-  ProviderAttendee,
-  ProviderEvent,
-} from "@/lib/events/types";
-import type { GroupEventCandidate } from "@/lib/connectors/calendar-shared";
+import type { EventProviderId, ProviderAttendee, ProviderEvent } from "@/lib/events/types";
 
 /**
  * Create or update the event row, returning its id.
@@ -28,19 +22,33 @@ import type { GroupEventCandidate } from "@/lib/connectors/calendar-shared";
  * Keyed on `events_provider_uidx` — `(user_id, provider, provider_event_id)` — so re-syncing
  * updates rather than accumulating a copy of every event on every run.
  *
+ * ## The `WHERE` on the conflict target is not decoration
+ *
+ * `events_provider_uidx` is a PARTIAL index (`WHERE provider_event_id IS NOT NULL`). Postgres
+ * will only infer a partial index as an arbiter when the statement repeats its predicate, and
+ * without it the server does not fall back to a full-table check — it raises "there is no
+ * unique or exclusion constraint matching the ON CONFLICT specification" and the whole sync
+ * fails. That is what it did: every Luma and Eventbrite sync threw on its first event, which
+ * `runEventSyncPass` then recorded as a retryable connection failure, so the pass backed off
+ * and tried again forever instead of saying anything. `smoke-event-roster.ts` now runs this
+ * statement against the real DDL, which is what turns that into a test failure.
+ *
  * The COALESCE direction is deliberate and opposite for two groups. Provider-owned facts
  * (title, dates, venue, cover) take the provider's newer value: the host renamed the event or
  * moved the venue and we should follow. `theme_color` takes the EXISTING value first, because
  * it may have been derived from the cover client-side or picked by the user, and a sync must
  * not silently repaint an event the user has already looked at.
+ *
+ * `role` is set to `hosted` on conflict as well as on insert. Only a host-scoped credential
+ * can list an event here at all — that is what the Luma API key and the Eventbrite organiser
+ * token mean — so the API listing it IS the evidence that the user hosts it. Without this, an
+ * event that reached the table by some other route first kept `attended` forever and the UI
+ * went on telling the user to paste a guest list it was already syncing.
  */
 export async function upsertProviderEvent(
   userId: string,
-  provider: EventProviderId | CalendarEventProviderId,
-  event: ProviderEvent,
-  /** Luma/Eventbrite connections are always host-scoped; calendar sync is the first caller
-   *  that can genuinely be either. */
-  role: "attended" | "hosted" = "hosted"
+  provider: EventProviderId,
+  event: ProviderEvent
 ): Promise<string> {
   const db = await getDb();
   const rows = rowsOf<{ id: string }>(
@@ -50,18 +58,20 @@ export async function upsertProviderEvent(
          provider, provider_event_id, description, cover_source_url, attendee_count)
       VALUES
         (${userId}, ${event.title}, ${event.startsAt}, ${event.endsAt}, ${event.timezone},
-         ${event.venue}, ${event.city}, ${event.url}, ${role}, ${provider},
+         ${event.venue}, ${event.city}, ${event.url}, 'hosted', ${provider},
          ${provider}, ${event.providerEventId}, ${event.description},
          ${event.coverImageUrl}, ${event.attendeeCount})
-      ON CONFLICT (user_id, provider, provider_event_id) DO UPDATE SET
+      ON CONFLICT (user_id, provider, provider_event_id)
+        WHERE provider_event_id IS NOT NULL
+      DO UPDATE SET
         title            = excluded.title,
+        role             = 'hosted',
         starts_at        = COALESCE(excluded.starts_at, events.starts_at),
         ends_at          = COALESCE(excluded.ends_at, events.ends_at),
         timezone         = COALESCE(excluded.timezone, events.timezone),
         venue            = COALESCE(excluded.venue, events.venue),
         city             = COALESCE(excluded.city, events.city),
         url              = COALESCE(excluded.url, events.url),
-        role             = excluded.role,
         description      = COALESCE(excluded.description, events.description),
         cover_source_url = COALESCE(excluded.cover_source_url, events.cover_source_url),
         attendee_count   = COALESCE(excluded.attendee_count, events.attendee_count),
@@ -113,72 +123,13 @@ export async function upsertProviderAttendees(
       title: a.title,
       linkedinUrl: a.linkedinUrl,
       xHandle: a.xHandle,
+      // Both connectors compute this (luma.ts, eventbrite.ts) and it used to be dropped
+      // right here, so every row landed with a NULL role.
+      attendeeRole: a.attendeeRole ?? null,
+      externalRef: a.externalRef,
+      phone: a.phone,
       identityKey,
     });
   }
   return upsertEventAttendees(userId, eventId, parsed, provider);
-}
-
-/**
- * Store one calendar-detected panel/webinar and its roster.
- *
- * Unlike Luma/Eventbrite, a calendar invite's attendee list is available REGARDLESS of
- * `role` — Google/Graph both hand back every guest whether the calendar owner organized the
- * event or merely accepted an invite to it. So `hostedBySelf` decides `events.role`, and the
- * roster is built accordingly: everyone else on the invite when the owner is the host, or the
- * organizer (tagged `attendeeRole: "host"`) plus any co-attendees when the owner is a guest.
- *
- * Contacts are never created here. `upsertEventAttendees` never writes `contact_id` — that is
- * only ever set by a human clicking "connect" in the roster UI, the same policy every other
- * event source already follows.
- */
-export async function upsertCalendarGroupEvent(
-  userId: string,
-  provider: CalendarEventProviderId,
-  candidate: GroupEventCandidate
-): Promise<{ eventId: string; attendeesUpserted: number }> {
-  const { event, hostedBySelf, organizer, attendees } = candidate;
-
-  const eventId = await upsertProviderEvent(
-    userId,
-    provider,
-    {
-      providerEventId: event.uid,
-      title: event.summary || "Untitled event",
-      startsAt: event.start,
-      endsAt: event.end,
-      timezone: null,
-      venue: event.location || null,
-      city: null,
-      url: null,
-      description: event.description ? event.description.slice(0, 2000) : null,
-      coverImageUrl: null,
-      attendeeCount: hostedBySelf ? attendees.length : attendees.length + (organizer ? 1 : 0),
-    },
-    hostedBySelf ? "hosted" : "attended"
-  );
-
-  const roster: ParsedAttendee[] = [];
-  const seen = new Set<string>();
-  const addToRoster = (person: { name: string; email: string }, attendeeRole: ParsedAttendee["attendeeRole"]) => {
-    const identityKey = attendeeIdentityKey({ email: person.email, fullName: person.name });
-    if (!identityKey || seen.has(identityKey)) return;
-    seen.add(identityKey);
-    roster.push({
-      fullName: person.name || null,
-      email: person.email || null,
-      company: null,
-      title: null,
-      linkedinUrl: null,
-      xHandle: null,
-      attendeeRole,
-      identityKey,
-    });
-  };
-
-  if (!hostedBySelf && organizer) addToRoster(organizer, "host");
-  for (const attendee of attendees) addToRoster(attendee, hostedBySelf ? "attendee" : null);
-
-  const attendeesUpserted = await upsertEventAttendees(userId, eventId, roster, provider);
-  return { eventId, attendeesUpserted };
 }

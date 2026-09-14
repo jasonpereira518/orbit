@@ -8,12 +8,7 @@
  * `outlook-calendar.ts` import from a file named after its sibling provider.
  */
 import type { ParsedCalendarEvent } from "@/lib/calendar-import";
-import {
-  classifyCalendarEvent,
-  counterpartsOf,
-  groupEventParticipants,
-  type EventClassification,
-} from "@/lib/calendar-classify";
+import { classifyCalendarEvent, counterpartsOf } from "@/lib/calendar-classify";
 import { calendarExternalIdBase } from "@/lib/ingest/external-id";
 import type { NetworkEvent } from "@/lib/ingest/events";
 import type { CalendarSyncCursor } from "@/db/schema";
@@ -69,7 +64,7 @@ export function toNetworkEvents(
   for (const event of events) {
     if (!event.start) continue;
     const classification = classifyCalendarEvent(event, selfEmails);
-    if (!classification.keep || classification.kind === "group_event") continue;
+    if (!classification.keep) continue;
 
     const people = counterpartsOf(event, selfEmails);
     if (people.length === 0) continue;
@@ -91,42 +86,6 @@ export function toNetworkEvents(
         .filter(Boolean)
         .join("\n"),
     });
-  }
-  return out;
-}
-
-/** One panel/webinar/talk worth staging as a reviewable roster, not an auto-created contact. */
-export type GroupEventCandidate = {
-  event: ParsedCalendarEvent;
-  classification: EventClassification;
-  hostedBySelf: boolean;
-  organizer: { name: string; email: string } | null;
-  attendees: Array<{ name: string; email: string }>;
-};
-
-/**
- * Pick out `group_event`-classified events for the roster-review write path.
- *
- * Kept separate from `toNetworkEvents` because these never reach `ingestEvents` — per the
- * existing Events feature's policy, nobody becomes a contact from a panel/webinar roster
- * without a human clicking "connect" (`event_attendees.contact_id`).
- */
-export function toGroupEventCandidates(
-  events: ParsedCalendarEvent[],
-  selfEmails: string[]
-): GroupEventCandidate[] {
-  const out: GroupEventCandidate[] = [];
-  for (const event of events) {
-    if (!event.start) continue;
-    const classification = classifyCalendarEvent(event, selfEmails);
-    if (classification.kind !== "group_event") continue;
-
-    const { hostedBySelf, organizer, attendees } = groupEventParticipants(event, selfEmails);
-    // Nothing to show a human either way — no organizer to attribute the event to and no
-    // attendees to roster.
-    if (!hostedBySelf && !organizer && attendees.length === 0) continue;
-
-    out.push({ event, classification, hostedBySelf, organizer, attendees });
   }
   return out;
 }

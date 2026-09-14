@@ -122,7 +122,15 @@ export default configured
 
 export const config = {
   matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    // The extension list is an allowlist of things middleware must NOT touch. A static
+    // asset type missing from it is matched, fails `isPublicRoute`, and gets a 307 to
+    // /sign-in instead of its bytes — so the file silently becomes an HTML sign-in page.
+    // It fails in production only (locally `configured` is false and this branch is
+    // skipped entirely), and for `<picture>` it is unrecoverable: once a <source> matches
+    // by type the browser commits to that URL and never falls back to the <img>. That is
+    // exactly how `avif` broke every planet on the marketing hero. Add new static
+    // extensions here when you add them to public/.
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|avif|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     "/(api|trpc)(.*)",
     "/__clerk/:path*",
   ],

@@ -85,8 +85,10 @@ export function buildSecurityHeaders(options: {
     { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
     { key: "X-Frame-Options", value: "DENY" },
     {
+      // `display-capture` is already `self` by default; stated so that tightening this list
+      // later cannot silently break meeting capture and the feedback screenshot.
       key: "Permissions-Policy",
-      value: "camera=(self), microphone=(self), geolocation=(), payment=()",
+      value: "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=()",
     },
     {
       key: options.enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only",

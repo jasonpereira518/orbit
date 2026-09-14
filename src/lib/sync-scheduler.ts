@@ -23,7 +23,6 @@
 import {
   CalendarSyncTokenExpiredError,
   advanceCursor,
-  toGroupEventCandidates,
   toNetworkEvents,
   type CalendarFetchResult,
 } from "@/lib/connectors/calendar-shared";
@@ -42,13 +41,12 @@ import {
   type SyncProvider,
 } from "@/lib/provider-connections";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
-import { upsertCalendarGroupEvent } from "@/lib/events/provider-writes";
+import { classifyCalendarEvent } from "@/lib/calendar-classify";
 import {
   pruneOldCalendarEvents,
   toStorageRow,
   upsertCalendarEvents,
 } from "@/lib/calendar-events-store";
-import { classifyCalendarEvent } from "@/lib/calendar-classify";
 import {
   claimDueCalendarSubscriptions,
   syncCalendarSubscription,
@@ -56,6 +54,10 @@ import {
 import { ReauthRequiredError } from "@/lib/errors";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { runEventSyncPass } from "@/lib/events/sync";
+import { runEnrichmentPass } from "@/lib/events/enrich-queue";
+import { backfillPersonKeys } from "@/lib/events/people-store";
+import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
+import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
 
 /** Matches the import engine's budget, and leaves headroom under the 300s function ceiling. */
 export const SYNC_TIME_BUDGET_MS = 4.5 * 60 * 1000;
@@ -98,6 +100,14 @@ export type SyncDeps = {
     getAccessToken: typeof getValidOutlookAccessToken;
     fetchPage: typeof fetchOutlookCalendarPage;
   };
+  /**
+   * How the enrichment pass reads an event's public page.
+   *
+   * Injectable for the same reason the two above are, and with a sharper edge: without it a
+   * smoke test that seeds an event with a URL makes a real outbound request to whatever host
+   * the fixture named. A test suite that quietly fetches lu.ma is both slow and rude.
+   */
+  eventPageFetch?: typeof fetch;
 };
 
 const DEFAULT_DEPS: SyncDeps = {
@@ -116,8 +126,6 @@ export type SyncRunStats = {
   eventsIngested: number;
   contactsCreated: number;
   interactionsLogged: number;
-  /** Panels/webinars staged as a roster — never auto-created as contacts. */
-  groupEventsFound: number;
   /** `calendar_events` rows dropped past their retention window this pass. */
   calendarEventsPruned: number;
   /** Luma/Eventbrite. Named apart from the calendar counters so one pass reports both. */
@@ -125,6 +133,14 @@ export type SyncRunStats = {
   eventConnectionsSynced: number;
   eventConnectionsFailed: number;
   eventRostersFetched: number;
+  /** Events found in a calendar or feed rather than added by hand. */
+  discoveryCreated: number;
+  discoveryAttached: number;
+  /** Reports refused because the user had already dismissed or deleted that event. */
+  discoverySuppressed: number;
+  /** Background reads of discovered events' public pages. */
+  enrichFetched: number;
+  enrichFailed: number;
   budgetExhausted: boolean;
 };
 
@@ -140,28 +156,33 @@ function emptyRunStats(): SyncRunStats {
     eventsIngested: 0,
     contactsCreated: 0,
     interactionsLogged: 0,
-    groupEventsFound: 0,
     calendarEventsPruned: 0,
     eventConnectionsClaimed: 0,
     eventConnectionsSynced: 0,
     eventConnectionsFailed: 0,
     eventRostersFetched: 0,
+    discoveryCreated: 0,
+    discoveryAttached: 0,
+    discoverySuppressed: 0,
+    enrichFetched: 0,
+    enrichFailed: 0,
     budgetExhausted: false,
   };
 }
 
 /**
- * Fold one fetched page into the ingest context and the group-event roster writer.
+ * Fold one fetched page into ingest, discovery, and the raw calendar-context store.
  *
  * Shared between Google and Outlook because neither provider matters past this point — both
  * hand back the same `CalendarFetchResult` shape, and everything from here on is
- * `calendar-shared.ts`'s classification, not provider mechanics.
+ * `calendar-shared.ts`'s classification or the discovery pipeline's, not provider mechanics.
  */
 async function processCalendarPage(
   ctx: Awaited<ReturnType<typeof openIngestContext>>,
   page: CalendarFetchResult,
   userId: string,
-  groupEventProvider: "google_calendar" | "outlook_calendar",
+  discoverySource: "gcal" | "outlook",
+  storageProvider: "google" | "microsoft",
   stats: SyncRunStats
 ): Promise<void> {
   const events = toNetworkEvents(page.events, page.selfEmails);
@@ -172,19 +193,27 @@ async function processCalendarPage(
     stats.interactionsLogged += ingested.interactionsLogged;
   }
 
-  // Panels/webinars: staged as a reviewable roster, never handed to `ingestEvents` — nobody
-  // becomes a contact from a group event without a human clicking "connect", the same policy
-  // the existing Luma/Eventbrite roster sync already follows.
-  const groupCandidates = toGroupEventCandidates(page.events, page.selfEmails);
-  for (const candidate of groupCandidates) {
-    await upsertCalendarGroupEvent(userId, groupEventProvider, candidate);
-    stats.groupEventsFound++;
+  // The same page, read for a different question: which of these are Luma/Partiful/
+  // Eventbrite invites rather than meetings? `classifyCalendarEvent` has already refused
+  // those above, so the two readings cannot double-count one entry.
+  //
+  // Never allowed to fail the calendar sync: a discovery error must not cost the user their
+  // meeting history, and the cursor has not advanced yet.
+  try {
+    const discovered = await recordDiscoveryCandidates(
+      userId,
+      calendarEventsToCandidates(page.events, page.selfEmails, discoverySource)
+    );
+    stats.discoveryCreated += discovered.created;
+    stats.discoveryAttached += discovered.attached;
+    stats.discoverySuppressed += discovered.suppressed;
+  } catch {
+    // Swallowed deliberately — see above.
   }
 
   // Every non-cancelled event, classified or not — the raw material for "what's on my
   // calendar" chat context. Independent of the two paths above: an ordinary internal meeting
-  // touches neither a contact nor a roster, but still belongs here.
-  const storageProvider = groupEventProvider === "google_calendar" ? "google" : "microsoft";
+  // touches neither a contact nor a discovered-event row, but still belongs here.
   const rows = page.events
     .filter((e) => e.start)
     .map((e) => toStorageRow(e, classifyCalendarEvent(e, page.selfEmails).kind));
@@ -234,7 +263,7 @@ async function syncGoogleCalendar(
       throw err;
     }
 
-    await processCalendarPage(ctx, page, conn.userId, "google_calendar", stats);
+    await processCalendarPage(ctx, page, conn.userId, "gcal", "google", stats);
     cursor = advanceCursor(cursor, page);
 
     // No more pages: the run is complete and `cursor` now holds the fresh syncToken.
@@ -300,7 +329,7 @@ async function syncOutlookCalendar(
       throw err;
     }
 
-    await processCalendarPage(ctx, page, conn.userId, "outlook_calendar", stats);
+    await processCalendarPage(ctx, page, conn.userId, "outlook", "microsoft", stats);
     cursor = advanceCursor(cursor, page);
 
     if (!page.nextPageToken) break;
@@ -456,7 +485,10 @@ export async function runSyncPass(
   // contact without a human saying so — and is safe to cut short and resume next run.
   if (!deadlineReached(deadline)) {
     try {
-      const eventStats = await runEventSyncPass(now);
+      const eventStats = await runEventSyncPass(now, {
+        deadline,
+        feedDeps: deps.eventPageFetch ? { fetch: deps.eventPageFetch } : undefined,
+      });
       stats.eventConnectionsClaimed = eventStats.claimed;
       stats.eventConnectionsSynced = eventStats.synced;
       stats.eventConnectionsFailed = eventStats.failed;
@@ -465,6 +497,30 @@ export async function runSyncPass(
       // Never rethrown, for the same reason as everything else in this function: a failure in
       // one provider must not lose the run's ledger row for the others.
       stats.eventConnectionsFailed++;
+    }
+  } else {
+    stats.budgetExhausted = true;
+  }
+
+  // Person keys for rows written before the column existed. A bounded slice per pass: it is
+  // pure catch-up work, and the panel it feeds is simply thinner until it finishes.
+  await backfillPersonKeys(2000).catch(() => 0);
+
+  // Reading discovered events' public pages comes LAST of all, and deliberately so: every
+  // pass above creates or updates data the user is waiting on, while this one makes rows that
+  // already exist better. It takes whatever budget is left and stops mid-queue without
+  // consequence — the claims it did not use are simply still due next time.
+  if (!deadlineReached(deadline)) {
+    try {
+      const enrichStats = await runEnrichmentPass({
+        now,
+        deadline,
+        deps: deps.eventPageFetch ? { fetch: deps.eventPageFetch } : undefined,
+      });
+      stats.enrichFetched = enrichStats.enriched;
+      stats.enrichFailed = enrichStats.failed;
+    } catch {
+      stats.enrichFailed++;
     }
   } else {
     stats.budgetExhausted = true;

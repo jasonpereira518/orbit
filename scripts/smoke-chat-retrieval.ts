@@ -90,6 +90,31 @@ async function main() {
   check("rerank drops hallucinated ids", !reranked.some((c) => c.id === "hallucinated"));
   check("rerank caps at FINAL_CONTACT_COUNT", reranked.length <= FINAL_CONTACT_COUNT);
 
+  // The semanticQuery must actually reach the rerank prompt. It used to be computed on
+  // every question and read by nothing at all; this is the assertion that keeps it wired.
+  let capturedUser = "";
+  const capture = (async (_u: string, input: { user: string }) => {
+    capturedUser = input.user;
+    return JSON.stringify({ scores: pool.map((c) => ({ id: c.id, relevance: 5 })) });
+  }) as never;
+
+  await rerankCandidates("u1", "who do I know in payments?", pool, capture, "a contact who works on payments infrastructure");
+  check(
+    "the semantic rewrite reaches the rerank prompt",
+    capturedUser.includes("Looking for: a contact who works on payments infrastructure"),
+    capturedUser.slice(0, 160)
+  );
+  check("alongside the user's own question", capturedUser.includes("Question: who do I know in payments?"));
+
+  await rerankCandidates("u1", "q", pool, capture, "q");
+  check(
+    "a rewrite identical to the question is not repeated back",
+    !capturedUser.includes("Looking for:"),
+    capturedUser.slice(0, 120)
+  );
+  await rerankCandidates("u1", "q", pool, capture, null);
+  check("and neither is a missing one", !capturedUser.includes("Looking for:"));
+
   const rerankFail = (async () => { throw new Error("down"); }) as never;
   const fallbackOrder = await rerankCandidates("u1", "q", pool, rerankFail);
   check("rerank failure falls back to RRF order", fallbackOrder.length === FINAL_CONTACT_COUNT && fallbackOrder[0].id === "c0");
@@ -130,17 +155,17 @@ async function main() {
   const snippets = new Map(
     budgetPool.map((c) => [
       c.id,
-      { recentMessages: Array.from({ length: 10 }, (_, j) => "m".repeat(400) + j) },
+      { timeline: Array.from({ length: 10 }, (_, j) => "m".repeat(400) + j) },
     ])
   );
   const budgeted = budgetContactsContext(budgetPool, snippets);
   check("budget keeps order", budgeted[0].id === "b0");
   check("top tier gets more notes than tail", budgeted[0].notes!.length > budgeted[11].notes!.length);
-  check("messages trimmed per tier", budgeted[0].recentMessages.length <= 8 && budgeted[11].recentMessages.length <= 2);
+  check("messages trimmed per tier", budgeted[0].timeline.length <= 6 && budgeted[11].timeline.length <= 2);
   const totalChars = budgeted.reduce(
     (n, c) =>
       n + (c.notes?.length ?? 0) + (c.aiSummary?.length ?? 0) +
-      c.recentMessages.join("").length + c.keyFacts.join("").length,
+      c.timeline.join("").length + c.keyFacts.join("").length,
     0
   );
   check("total context under budget", totalChars <= 48000);
@@ -154,7 +179,7 @@ async function main() {
     mkCandidate("s3", "Person 3"),
     mkCandidate("s4", "Person 4"),
   ];
-  const stopSnippets = new Map(stopPool.map((c) => [c.id, { recentMessages: [] }]));
+  const stopSnippets = new Map(stopPool.map((c) => [c.id, { timeline: [] }]));
   const stopped = budgetContactsContext(stopPool, stopSnippets);
   check(
     "budget stops at first oversized contact instead of skip-and-continue",

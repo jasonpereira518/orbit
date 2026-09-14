@@ -3,8 +3,10 @@
  *
  * Fetch and map only — mirrors `google-calendar.ts` exactly: no database statement here, the
  * write path stays in `src/lib/ingest/events.ts`, and the provider-agnostic shaping
- * (`toNetworkEvents`, `toGroupEventCandidates`, `advanceCursor`) lives in
- * `calendar-shared.ts` rather than being reimplemented for a second source.
+ * (`toNetworkEvents`, `advanceCursor`) lives in `calendar-shared.ts` rather than being
+ * reimplemented for a second source. Event-platform invites (Luma/Eventbrite/Partiful) are
+ * handled the same way as Google's — `isEventPlatformInvite`/`calendarEventsToCandidates` in
+ * `src/lib/events/discovery/from-calendar.ts` — by the caller in `sync-scheduler.ts`.
  *
  * It is a *scope extension*, not a new provider: the tokens come from the Outlook connection
  * Orbit already holds for Contacts (`outlook_connections`), so there is no second OAuth flow,
@@ -41,10 +43,9 @@ import {
 export {
   CalendarSyncTokenExpiredError,
   advanceCursor,
-  toGroupEventCandidates,
   toNetworkEvents,
 } from "@/lib/connectors/calendar-shared";
-export type { CalendarFetchResult, GroupEventCandidate } from "@/lib/connectors/calendar-shared";
+export type { CalendarFetchResult } from "@/lib/connectors/calendar-shared";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -60,6 +61,16 @@ type GraphAttendee = {
 
 type GraphDateTime = { dateTime?: string; timeZone?: string };
 
+type GraphResponseStatus = {
+  response?:
+    | "none"
+    | "organizer"
+    | "tentativelyAccepted"
+    | "accepted"
+    | "declined"
+    | "notResponded";
+};
+
 type GraphEvent = {
   id?: string;
   iCalUId?: string;
@@ -71,9 +82,33 @@ type GraphEvent = {
   end?: GraphDateTime;
   attendees?: GraphAttendee[];
   organizer?: { emailAddress?: GraphEmailAddress };
+  /** The signed-in user's OWN RSVP on this event — Graph reports it on the event itself,
+   *  unlike Google, which reports it as a flag on the self attendee entry. */
+  responseStatus?: GraphResponseStatus;
   /** Present only on a delta response's removed entries; the rest of the event body is absent. */
   "@removed"?: { reason?: string };
 };
+
+/**
+ * Graph's own RSVP vocabulary, translated to the PARTSTAT-style vocabulary
+ * `rsvpFromParticipation` (`src/lib/events/attendance.ts`) already understands from Google/ICS
+ * — one vocabulary for "what did the user say" regardless of source.
+ */
+function selfResponseOf(status: GraphResponseStatus | undefined): string | null {
+  switch (status?.response) {
+    case "accepted":
+    case "organizer":
+      return "ACCEPTED";
+    case "tentativelyAccepted":
+      return "TENTATIVE";
+    case "declined":
+      return "DECLINED";
+    case "notResponded":
+      return "NEEDS-ACTION";
+    default:
+      return null;
+  }
+}
 
 type GraphEventsPage = {
   value?: GraphEvent[];
@@ -92,7 +127,7 @@ function parseWhen(when: GraphDateTime | undefined): Date | null {
 
 /**
  * Map one Graph event onto the shape the shared calendar pipeline already understands, so
- * `classifyCalendarEvent`/`counterpartsOf`/`groupEventParticipants` are reused verbatim rather
+ * `classifyCalendarEvent`/`counterpartsOf`/`isEventPlatformInvite` are reused verbatim rather
  * than reimplemented for a second source.
  *
  * `iCalUId` — never `id` — is the identity, for the same cross-source reason Google's
@@ -123,6 +158,11 @@ export function toParsedEvent(raw: GraphEvent): ParsedCalendarEvent | null {
           email: raw.organizer.emailAddress.address || "",
         }
       : null,
+    status: raw.isCancelled ? "CANCELLED" : "CONFIRMED",
+    selfResponse: selfResponseOf(raw.responseStatus),
+    // Left unset, unlike Google's `source.url`: Graph has no equivalent field carrying a
+    // platform's own event link. `isEventPlatformInvite`'s fallback — scanning the location,
+    // subject and body for a Luma/Eventbrite/Partiful URL — still applies via those fields.
   };
 }
 
@@ -160,7 +200,8 @@ export async function fetchOutlookCalendarPage(
       startDateTime: new Date(now.getTime() - CALENDAR_WINDOW_PAST_MS).toISOString(),
       endDateTime: new Date(now.getTime() + CALENDAR_WINDOW_FUTURE_MS).toISOString(),
       $top: String(PAGE_SIZE),
-      $select: "id,iCalUId,isCancelled,subject,bodyPreview,location,start,end,attendees,organizer",
+      $select:
+        "id,iCalUId,isCancelled,subject,bodyPreview,location,start,end,attendees,organizer,responseStatus",
     });
     url = `${GRAPH_BASE}/me/calendarView/delta?${params}`;
   }
