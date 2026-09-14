@@ -37,6 +37,8 @@ let schemaReconciled: Promise<void> | undefined;
 
 export const DDL = `
 CREATE TABLE IF NOT EXISTS user_settings (
+  outreach_sender_defaults jsonb,
+  brave_api_key_encrypted text,
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
   ai_provider text DEFAULT 'gemini',
@@ -418,6 +420,10 @@ CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, st
 CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id);
 CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id);
 CREATE TABLE IF NOT EXISTS outreach_campaigns (
+  paused boolean NOT NULL DEFAULT false,
+  sender jsonb,
+  brief jsonb,
+  version integer NOT NULL DEFAULT 1,
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   name text NOT NULL,
@@ -435,6 +441,7 @@ CREATE TABLE IF NOT EXISTS outreach_campaigns (
 );
 CREATE INDEX IF NOT EXISTS outreach_campaigns_user_idx ON outreach_campaigns(user_id, status);
 CREATE TABLE IF NOT EXISTS outreach_prospects (
+  research jsonb,
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
   external_id text NOT NULL,
@@ -454,6 +461,14 @@ CREATE TABLE IF NOT EXISTS outreach_prospects (
 CREATE INDEX IF NOT EXISTS outreach_prospects_campaign_idx ON outreach_prospects(campaign_id);
 CREATE UNIQUE INDEX IF NOT EXISTS outreach_prospects_campaign_external_uidx ON outreach_prospects(campaign_id, external_id);
 CREATE TABLE IF NOT EXISTS outreach_messages (
+  provider_thread_id text,
+  message_kind text NOT NULL DEFAULT 'initial',
+  execution_status text NOT NULL DEFAULT 'idle',
+  sender_snapshot jsonb,
+  to_address text,
+  signature text NOT NULL DEFAULT '',
+  approved_revision integer,
+  revision integer NOT NULL DEFAULT 1,
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   prospect_id uuid NOT NULL REFERENCES outreach_prospects(id) ON DELETE CASCADE,
   channel text NOT NULL,
@@ -1223,6 +1238,99 @@ CREATE INDEX IF NOT EXISTS page_views_route_created_idx ON page_views(route, cre
 CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, created_at);
 CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
 CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_prospects_v2_linkedin_uidx ON outreach_prospects(campaign_id,linkedin_url) WHERE research IS NOT NULL AND linkedin_url IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_prospects_v2_email_uidx ON outreach_prospects(campaign_id,email) WHERE research IS NOT NULL AND email IS NOT NULL;
+CREATE TABLE IF NOT EXISTS outreach_jobs (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  key text NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}',
+  status text NOT NULL DEFAULT 'queued',
+  lease_token uuid,
+  lease_until timestamptz,
+  available_at timestamptz NOT NULL DEFAULT now(),
+  attempts integer NOT NULL DEFAULT 0,
+  error text,
+  result jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_jobs_key_uidx ON outreach_jobs(user_id,key);
+CREATE INDEX IF NOT EXISTS outreach_jobs_due_idx ON outreach_jobs(status,available_at);
+CREATE TABLE IF NOT EXISTS outreach_conversations (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  prospect_id uuid NOT NULL REFERENCES outreach_prospects(id) ON DELETE CASCADE,
+  provider_thread_id text,
+  url text,
+  last_human_reply_at timestamptz,
+  accepted_at timestamptz,
+  last_checked_at timestamptz,
+  unread boolean NOT NULL DEFAULT false,
+  closed boolean NOT NULL DEFAULT false,
+  opted_out boolean NOT NULL DEFAULT false,
+  outcome text,
+  cursor jsonb,
+  error text,
+  next_sync_at timestamptz NOT NULL DEFAULT now(),
+  lease_until timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_conversations_prospect_uidx ON outreach_conversations(prospect_id);
+CREATE INDEX IF NOT EXISTS outreach_conversations_due_idx ON outreach_conversations(next_sync_at);
+CREATE TABLE IF NOT EXISTS outreach_conversation_messages (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id uuid NOT NULL REFERENCES outreach_conversations(id) ON DELETE CASCADE,
+  external_id text NOT NULL,
+  direction text NOT NULL,
+  kind text NOT NULL,
+  subject text,
+  body text NOT NULL,
+  sent_at timestamptz NOT NULL,
+  internet_message_id text,
+  interaction_id uuid
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_conversation_messages_external_uidx ON outreach_conversation_messages(conversation_id,external_id);
+CREATE TABLE IF NOT EXISTS outreach_browser_sessions (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  campaign_id uuid NOT NULL REFERENCES outreach_campaigns(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'active',
+  account text NOT NULL,
+  heartbeat_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS outreach_browser_sessions_user_idx ON outreach_browser_sessions(user_id,status);
+CREATE TABLE IF NOT EXISTS outreach_credit_ledger (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  period text NOT NULL,
+  key text NOT NULL,
+  status text NOT NULL DEFAULT 'reserved',
+  funding text NOT NULL,
+  provider_calls integer NOT NULL DEFAULT 0,
+  provider_cost_micros integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_credit_ledger_key_uidx ON outreach_credit_ledger(user_id,key);
+CREATE INDEX IF NOT EXISTS outreach_credit_ledger_window_idx ON outreach_credit_ledger(user_id,period);
+CREATE TABLE IF NOT EXISTS outreach_credit_accounts (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  period text NOT NULL,
+  used integer NOT NULL DEFAULT 0,
+  searches integer NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_credit_accounts_window_uidx ON outreach_credit_accounts(user_id,period);
+CREATE TABLE IF NOT EXISTS outreach_send_days (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  day text NOT NULL,
+  used integer NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outreach_send_days_day_uidx ON outreach_send_days(user_id,day);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1319,6 +1427,8 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
  * Built as 41, then 46 (see v47 — burned by the page_views branch too), then 48 — which
  * the event-platform branch below also landed on independently. Same DDL-change rule:
  * two branches on one number means one of them silently never runs its migration.
+ * v56 = reviewed Outreach campaigns, durable execution jobs, research allowances,
+ * conversations, and local browser sessions. Existing campaign data is preserved.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1403,7 +1513,7 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // `SCHEMA_VERSION = 54`, so only this changelog conflicted; a database already at 54 from
 // either branch still needs this table's two columns, hence one more bump rather than
 // reusing the number either side shipped it under.
-export const SCHEMA_VERSION = 55;
+export const SCHEMA_VERSION = 56;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2350,6 +2460,23 @@ async function migratePgvector(run: StatementRunner) {
  * BEFORE its indexes — see `applySchema`.
  */
 const alters = [
+
+ `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS brave_api_key_encrypted text`,
+ `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS outreach_sender_defaults jsonb`,
+ `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
+ `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS brief jsonb`,
+ `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sender jsonb`,
+ `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS paused boolean NOT NULL DEFAULT false`,
+ `ALTER TABLE outreach_prospects ADD COLUMN IF NOT EXISTS research jsonb`,
+ `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 1`,
+ `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS approved_revision integer`,
+ `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS signature text NOT NULL DEFAULT ''`,
+ `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS to_address text`,
+ `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS sender_snapshot jsonb`,
+ `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS execution_status text NOT NULL DEFAULT 'idle'`,
+ `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS message_kind text NOT NULL DEFAULT 'initial'`,
+ `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS provider_thread_id text`,
+
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
   // The events feature landed whole at v32, so these are its first incremental columns.

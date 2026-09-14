@@ -52,6 +52,8 @@ async function requireCampaign(userId: string, campaignId: string) {
     ),
   });
   if (!campaign) throw new Error("Campaign not found");
+  if (process.env.OUTREACH_V2_ENABLED === "1") throw new Error("Historical campaigns are read-only. Choose a sender and upgrade this campaign first.");
+  if (campaign.version === 2) throw new Error("Use the revised campaign workspace for this action.");
   return campaign;
 }
 
@@ -1050,6 +1052,8 @@ export async function sendOutreachMessageAction(messageId: string) {
   if (!message || message.prospect.campaign.userId !== userId) {
     throw new Error("Message not found");
   }
+
+  if (message.prospect.campaign.version === 2) throw new Error("Use the approved sending queue for this campaign.");
 
   const quality = assessOutreachQuality([
     {

@@ -80,6 +80,7 @@ export function createApi(getToken: TokenGetter) {
     request<T>(path, { method: "POST", body: JSON.stringify(body) }, getToken, signal);
 
   return {
+    outreach: <T = unknown>(body: unknown) => post<T>("/outreach", body),
     me: (signal?: AbortSignal) =>
       request<MeResponse>("/me", { method: "GET" }, getToken, signal),
 

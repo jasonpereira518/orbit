@@ -24,6 +24,8 @@ export type GmailSendInput = {
   threadId?: string | null;
   /** Message-ID of the message being replied to, for correct client-side threading. */
   inReplyToMessageId?: string | null;
+  /** Stable client identifier used to reconcile an interrupted send. */
+  messageId?: string;
 };
 
 export type GmailSendResult = {
@@ -81,6 +83,7 @@ export function buildMimeMessage(input: GmailSendInput): string {
     ...(input.from ? [`From: ${formatAddress(input.from.name, input.from.email)}`] : []),
     `To: ${sanitizeHeader(input.to)}`,
     `Subject: ${encodeHeader(sanitizeHeader(input.subject))}`,
+    ...(input.messageId ? [`Message-ID: ${sanitizeHeader(input.messageId)}`] : []),
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit",
@@ -124,7 +127,7 @@ export async function sendGmailMessage(
         "Gmail refused the send. Reconnect Gmail to grant permission to send mail."
       );
     }
-    throw new Error(`Gmail send failed: ${text.slice(0, 200)}`);
+    throw new Error(`Gmail send failed (${res.status}): ${text.slice(0, 200)}`);
   }
 
   const data = (await res.json()) as { id?: string; threadId?: string };

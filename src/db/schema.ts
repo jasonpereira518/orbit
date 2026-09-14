@@ -11,6 +11,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
+import type { Brief, Sender, Research, JobPayload, MailCursor } from "@/lib/outreach-v2/types";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -114,6 +115,8 @@ export const userSettings = pgTable("user_settings", {
    */
   estimatedMonthlyChurnPct: real("estimated_monthly_churn_pct"),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
+  braveApiKeyEncrypted: text("brave_api_key_encrypted"),
+  outreachSenderDefaults: jsonb("outreach_sender_defaults").$type<Sender[]>(),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
   twilioAuthTokenEncrypted: text("twilio_auth_token_encrypted"),
@@ -1534,6 +1537,10 @@ export const outreachCampaigns = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
     name: text("name").notNull(),
+    version: integer("version").notNull().default(1),
+    brief: jsonb("brief").$type<Brief>(),
+    sender: jsonb("sender").$type<Sender>(),
+    paused: boolean("paused").notNull().default(false),
     status: text("status").default("draft").notNull(),
     audienceQuery: text("audience_query"),
     audienceFilters: jsonb("audience_filters").$type<AudienceFilters>().default({}),
@@ -1559,6 +1566,7 @@ export const outreachProspects = pgTable(
       .notNull()
       .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
     externalId: text("external_id").notNull(),
+    research: jsonb("research").$type<Research>(),
     contactId: uuid("contact_id").references(() => contacts.id, {
       onDelete: "set null",
     }),
@@ -1576,6 +1584,8 @@ export const outreachProspects = pgTable(
   },
   (t) => [
     index("outreach_prospects_campaign_idx").on(t.campaignId),
+    uniqueIndex("outreach_prospects_v2_linkedin_uidx").on(t.campaignId, t.linkedinUrl).where(sql`${t.research} IS NOT NULL AND ${t.linkedinUrl} IS NOT NULL`),
+    uniqueIndex("outreach_prospects_v2_email_uidx").on(t.campaignId, t.email).where(sql`${t.research} IS NOT NULL AND ${t.email} IS NOT NULL`),
     uniqueIndex("outreach_prospects_campaign_external_uidx").on(
       t.campaignId,
       t.externalId
@@ -1592,6 +1602,14 @@ export const outreachMessages = pgTable(
       .references(() => outreachProspects.id, { onDelete: "cascade" }),
     channel: text("channel").notNull(),
     subject: text("subject"),
+    revision: integer("revision").notNull().default(1),
+    approvedRevision: integer("approved_revision"),
+    signature: text("signature").notNull().default(""),
+    toAddress: text("to_address"),
+    senderSnapshot: jsonb("sender_snapshot").$type<Sender>(),
+    executionStatus: text("execution_status").notNull().default("idle"),
+    messageKind: text("message_kind").notNull().default("initial"),
+    providerThreadId: text("provider_thread_id"),
     body: text("body").notNull().default(""),
     status: text("status").default("draft").notNull(),
     stepIndex: integer("step_index").default(0).notNull(),
@@ -3881,3 +3899,93 @@ export const adminProviderSnapshots = pgTable(
 
 export type PlanUpgradeEventRow = typeof planUpgradeEvents.$inferSelect;
 export type AdminProviderSnapshotRow = typeof adminProviderSnapshots.$inferSelect;
+
+
+/** Durable Outreach v2 execution records. Legacy campaigns retain their existing tables. */
+export const outreachJobs = pgTable("outreach_jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  campaignId: uuid("campaign_id").notNull().references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  key: text("key").notNull(),
+  payload: jsonb("payload").$type<JobPayload>().notNull().default({}),
+  status: text("status").notNull().default("queued"),
+  leaseToken: uuid("lease_token"),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+  attempts: integer("attempts").notNull().default(0),
+  error: text("error"),
+  result: jsonb("result").$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [uniqueIndex("outreach_jobs_key_uidx").on(t.userId, t.key), index("outreach_jobs_due_idx").on(t.status, t.availableAt)]);
+
+export const outreachConversations = pgTable("outreach_conversations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  campaignId: uuid("campaign_id").notNull().references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+  prospectId: uuid("prospect_id").notNull().references(() => outreachProspects.id, { onDelete: "cascade" }),
+  providerThreadId: text("provider_thread_id"),
+  url: text("url"),
+  lastHumanReplyAt: timestamp("last_human_reply_at", { withTimezone: true }),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+  unread: boolean("unread").notNull().default(false),
+  closed: boolean("closed").notNull().default(false),
+  optedOut: boolean("opted_out").notNull().default(false),
+  outcome: text("outcome"),
+  cursor: jsonb("cursor").$type<MailCursor>(),
+  error: text("error"),
+  nextSyncAt: timestamp("next_sync_at", { withTimezone: true }).notNull().defaultNow(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+}, t => [uniqueIndex("outreach_conversations_prospect_uidx").on(t.prospectId), index("outreach_conversations_due_idx").on(t.nextSyncAt)]);
+
+export const outreachConversationMessages = pgTable("outreach_conversation_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  conversationId: uuid("conversation_id").notNull().references(() => outreachConversations.id, { onDelete: "cascade" }),
+  externalId: text("external_id").notNull(),
+  direction: text("direction").notNull(),
+  kind: text("kind").notNull(),
+  subject: text("subject"),
+  body: text("body").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
+  internetMessageId: text("internet_message_id"),
+  interactionId: uuid("interaction_id"),
+}, t => [uniqueIndex("outreach_conversation_messages_external_uidx").on(t.conversationId, t.externalId)]);
+
+export const outreachBrowserSessions = pgTable("outreach_browser_sessions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  campaignId: uuid("campaign_id").notNull().references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("active"),
+  account: text("account").notNull(),
+  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [index("outreach_browser_sessions_user_idx").on(t.userId, t.status)]);
+
+export const outreachCreditLedger = pgTable("outreach_credit_ledger", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  period: text("period").notNull(),
+  key: text("key").notNull(),
+  status: text("status").notNull().default("reserved"),
+  funding: text("funding").notNull(),
+  providerCalls: integer("provider_calls").notNull().default(0),
+  providerCostMicros: integer("provider_cost_micros"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [uniqueIndex("outreach_credit_ledger_key_uidx").on(t.userId, t.key), index("outreach_credit_ledger_window_idx").on(t.userId, t.period)]);
+
+export const outreachCreditAccounts = pgTable("outreach_credit_accounts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  period: text("period").notNull(),
+  used: integer("used").notNull().default(0),
+  searches: integer("searches").notNull().default(0),
+}, t => [uniqueIndex("outreach_credit_accounts_window_uidx").on(t.userId, t.period)]);
+
+export const outreachSendDays = pgTable("outreach_send_days", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  day: text("day").notNull(),
+  used: integer("used").notNull().default(0),
+}, t => [uniqueIndex("outreach_send_days_day_uidx").on(t.userId, t.day)]);

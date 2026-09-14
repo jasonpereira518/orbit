@@ -22,6 +22,7 @@ on:
     - cron: "*/10 * * * *"
     - cron: "7 * * * *"
     - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -70,7 +71,7 @@ jobs:
       # every six — more alert evaluations and more ledger rows than anyone chose. An empty
       # `github.event.schedule` (workflow_dispatch) still passes, so a manual run sweeps.
       - name: Run the ops sweep
-        if: github.event.schedule != '*/15 * * * *' && steps.health.outcome == 'success'
+        if: github.event.schedule != '*/15 * * * *' && github.event.schedule != '*/5 * * * *' && steps.health.outcome == 'success'
         run: |
           main_sha=$(git rev-parse HEAD)
           main_at=$(git log -1 --format=%cI)
@@ -96,7 +97,7 @@ jobs:
       # fourth: a delivery that failed can wait ten minutes, and the drain has its own route so
       # its latency never delays the sweep above.
       - name: Drain outbound webhooks
-        if: github.event.schedule != '*/15 * * * *' && steps.health.outcome == 'success'
+        if: github.event.schedule != '*/15 * * * *' && github.event.schedule != '*/5 * * * *' && steps.health.outcome == 'success'
         run: |
           curl -sS --fail-with-body --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -118,6 +119,15 @@ jobs:
           curl -sS --fail-with-body --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/sync/run"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      - name: Process Outreach queue and replies
+        if: (github.event_name == 'workflow_dispatch' || github.event.schedule == '*/5 * * * *') && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 280 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/outreach/run"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

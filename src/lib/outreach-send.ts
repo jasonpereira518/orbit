@@ -88,6 +88,7 @@ export async function sendOutreachMessage(input: {
   subject?: string | null;
   body: string;
 }) {
+  if (process.env.OUTREACH_V2_ENABLED === "1") throw new Error("Use the revised Outreach queue to review and send messages.");
   if (input.channel === "linkedin") {
     throw new Error("LinkedIn automated send is not supported.");
   }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { OutreachPanel } from "../outreach/OutreachPanel";
 import { CircleAlert, MousePointerClick, UserX, WifiOff } from "lucide-react";
 import type { MatchCandidate } from "@contract";
 import { APP_URL } from "@/lib/env";
@@ -27,6 +28,7 @@ const TIER_WORD = {
 
 export function App() {
   const { state, api, reload, refresh, setDirty, followPending } = usePanel();
+  const [outreachOpen, setOutreachOpen] = useState(false);
   const [forceCreate, setForceCreate] = useState(false);
   const [sealed, setSealed] = useState(false);
   const [signInClicked, setSignInClicked] = useState(false);
@@ -266,8 +268,11 @@ export function App() {
     );
   };
 
+  if (outreachOpen) return <><button className="m-3 text-sm underline" onClick={() => setOutreachOpen(false)}>Back to contacts</button><OutreachPanel api={api} /></>;
+
   return (
     <>
+      <button className="mx-4 mt-3 text-sm underline" onClick={() => setOutreachOpen(true)}>Open Outreach session</button>
       <PanelHeader />
       <IdentityZone page={state.page} sealed={sealed} stale={staleOffline} />
       {verdict()}
