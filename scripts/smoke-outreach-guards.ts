@@ -21,7 +21,7 @@ import {
   isPlaceholderAddress,
   prospectSearchStatus,
 } from "../src/lib/outreach-quality";
-import { sendOutreachMessage } from "../src/lib/outreach-send";
+import { sendOutreachMessage, getOutreachSendConfig } from "../src/lib/outreach-send";
 import { bulkSendOutreach, previewBulkSendQuality, searchProspects, sendOutreachMessageAction } from "../src/actions/outreach";
 import type { AudienceFilters } from "../src/db/schema";
 
@@ -208,6 +208,11 @@ run(async () => {
   );
   const sendableAfter = await db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, sendable.message.id) });
   check("…and bulk send under this campaign never touches it", sendableAfter?.status === "generated", String(sendableAfter?.status));
+
+  console.log("\nReplies go to the sender");
+  await db.update(userSettings).set({ email: "demo.sender@orbit.example.com" }).where(eq(userSettings.userId, USER));
+  const config = await getOutreachSendConfig(USER);
+  check("the send config carries the sender's email as replyTo", config.replyTo === "demo.sender@orbit.example.com", String(config.replyTo));
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);

@@ -13,6 +13,7 @@ import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
 import { getEntitlements } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { isPlaceholderAddress, PLACEHOLDER_ADDRESS_SEND_MESSAGE } from "@/lib/outreach-quality";
+import { outreachEmailPayload } from "@/lib/outreach-email";
 
 export async function getOutreachSendConfig(userId: string) {
   const db = await getDb();
@@ -42,6 +43,9 @@ export async function getOutreachSendConfig(userId: string) {
       settings?.twilioFromNumber?.trim() ||
       envKey(process.env.TWILIO_FROM_NUMBER),
     fromEmail: process.env.RESEND_FROM_EMAIL || "outreach@orbit.local",
+    // The sender's own address (mirrored from Clerk), so replies — including the footer's
+    // "reply and I'll remove you" opt-out — reach them, not Orbit.
+    replyTo: settings?.email?.trim() || null,
   };
 }
 
@@ -115,12 +119,15 @@ export async function sendOutreachMessage(input: {
     }
 
     const resend = new Resend(config.resendApiKey);
-    const result = await resend.emails.send({
-      from: config.fromEmail,
-      to: input.toEmail,
-      subject: input.subject?.trim() || "Hello",
-      text: body,
-    });
+    const result = await resend.emails.send(
+      outreachEmailPayload({
+        from: config.fromEmail,
+        to: input.toEmail,
+        subject: input.subject,
+        text: body,
+        replyTo: config.replyTo,
+      })
+    );
 
     if (result.error) {
       throw new Error(result.error.message);

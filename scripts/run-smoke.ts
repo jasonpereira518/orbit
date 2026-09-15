@@ -119,6 +119,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-meeting-chunking": "pure",
   "smoke-meeting-digest": "pure",
   "smoke-meeting-upload-queue": "pure",
+  "smoke-outreach-email": "pure",
   "smoke-wispr": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
