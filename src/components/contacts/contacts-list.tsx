@@ -271,8 +271,17 @@ export function ContactsList({
   // Grouping only, no sorting: the rows arrive in the order Postgres produced, and re-sorting
   // them here would both waste a pass of `localeCompare` and risk disagreeing with the
   // cursor — which would silently drop contacts at page boundaries.
+  //
+  // Contiguous-run grouping assumes the rows already arrive in alphabetical order, which
+  // only holds for `sort === "name"`. Under any other order (closeness, recent, relevance)
+  // the same letter can recur non-contiguously — grouping it anyway would scatter several
+  // same-lettered sticky headers through the list and give two of them the same React key.
+  // So outside "name" order every row sits in one ungrouped section instead.
   const sections = useMemo(() => {
-    const groups: Array<{ letter: string; contacts: ContactListItem[] }> = [];
+    if (filters.sort && filters.sort !== "name") {
+      return contacts.length ? [{ letter: null, contacts }] : [];
+    }
+    const groups: Array<{ letter: string | null; contacts: ContactListItem[] }> = [];
     for (const c of contacts) {
       const letter = letterOf(lastNameOf(c));
       const last = groups[groups.length - 1];
@@ -280,7 +289,7 @@ export function ContactsList({
       else groups.push({ letter, contacts: [c] });
     }
     return groups;
-  }, [contacts]);
+  }, [contacts, filters.sort]);
 
   // Which letters exist across the *whole* network, not just the pages loaded so far. The
   // client can no longer answer that from the rows it holds.
@@ -301,7 +310,10 @@ export function ContactsList({
     setActiveLetter(letter);
     const target =
       document.getElementById(`contact-letter-${letter}`) ??
-      nearestSectionEl(letter, new Set(sections.map((s) => s.letter)));
+      nearestSectionEl(
+        letter,
+        new Set(sections.flatMap((s) => (s.letter !== null ? [s.letter] : [])))
+      );
     target?.scrollIntoView({ behavior: "auto", block: "start" });
   }
 
@@ -383,15 +395,17 @@ export function ContactsList({
       <>
         <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl">
           {sections.map((section) => (
-            <li key={section.letter} className="list-none">
-              <div
-                id={`contact-letter-${section.letter}`}
-                className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
-              >
-                <p className="text-xs font-semibold tracking-wide text-muted-foreground">
-                  {section.letter}
-                </p>
-              </div>
+            <li key={section.letter ?? "all"} className="list-none">
+              {section.letter !== null && (
+                <div
+                  id={`contact-letter-${section.letter}`}
+                  className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
+                >
+                  <p className="text-xs font-semibold tracking-wide text-muted-foreground">
+                    {section.letter}
+                  </p>
+                </div>
+              )}
               <ul className="divide-y divide-border/60">
                 {section.contacts.map((c) => {
                   const exiting = exitingId === c.id;

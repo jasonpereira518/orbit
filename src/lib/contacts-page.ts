@@ -9,8 +9,12 @@
 /**
  * How a contacts page is ordered. The cursor's shape follows from this, so a page fetched
  * under one sort cannot be continued under another.
+ *
+ * `"relevance"` is the odd one out: it only means something alongside a search query, has
+ * no stable keyset (a hybrid-search rank isn't a column), and so never paginates past its
+ * first page. See `orderFor` in `src/actions/contacts.ts`.
  */
-export type ContactSort = "name" | "closeness" | "recent";
+export type ContactSort = "name" | "closeness" | "recent" | "relevance";
 
 export const CONTACTS_PAGE_SIZE = 50;
 
