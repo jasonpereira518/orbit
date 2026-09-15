@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -13,6 +13,7 @@ import {
   tags,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { getRankedContactIds } from "@/actions/search";
 import {
   CONTACTS_PAGE_SIZE,
   type ContactPickerOption,
@@ -133,7 +134,19 @@ export async function listContactsPage(
   const conditions = [eq(contacts.userId, userId)];
 
   const q = filters?.q?.trim();
-  if (q) conditions.push(searchCondition(q));
+  if (q) {
+    // Short queries are prefix lookups ("mar" -> Marcus) that `searchCondition` alone
+    // already serves well; below this length a semantic round trip only adds latency.
+    // At 3+ chars, OR in contacts whose title/company/experience is a semantic match
+    // even when no literal keyword overlaps ("Full-time SWE at Google" finding someone
+    // whose stored role is "Software Engineer" at Google, full time).
+    const semanticIds = q.length >= 3 ? await getRankedContactIds(userId, q) : [];
+    conditions.push(
+      semanticIds.length
+        ? or(searchCondition(q), inArray(contacts.id, semanticIds))!
+        : searchCondition(q)
+    );
+  }
 
   const company = filters?.company?.trim();
   if (company) {

@@ -2,7 +2,7 @@
 
 import { requireUserId } from "@/lib/auth";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
-import { hybridSearchContacts } from "@/lib/hybrid-search";
+import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import { shouldUseSemanticArm, toKeywordHits } from "@/actions/search-adapter";
 import type { KeywordSearchHit } from "@/lib/keyword-search";
 
@@ -29,6 +29,22 @@ async function embeddingWithSoftTimeout(
   }
 }
 
+async function rankContacts(
+  userId: string,
+  query: string,
+  limit: number
+): Promise<RankedContact[]> {
+  const q = query.trim();
+  if (!q) return [];
+
+  const embedding =
+    q.length >= 3 && shouldUseSemanticArm(q)
+      ? await embeddingWithSoftTimeout(userId, q)
+      : null;
+
+  return hybridSearchContacts(userId, { query: q, embedding, limit });
+}
+
 export async function searchDashboardContacts(
   query: string,
   options?: { limit?: number }
@@ -38,12 +54,20 @@ export async function searchDashboardContacts(
 
   const limit = Math.min(Math.max(options?.limit ?? 12, 1), 80);
   const userId = await requireUserId();
-
-  const embedding =
-    q.length >= 3 && shouldUseSemanticArm(q)
-      ? await embeddingWithSoftTimeout(userId, q)
-      : null;
-
-  const ranked = await hybridSearchContacts(userId, { query: q, embedding, limit });
+  const ranked = await rankContacts(userId, q, limit);
   return toKeywordHits(ranked, q);
+}
+
+/**
+ * Ranked contact IDs for a query, no `requireUserId()` of its own — callers that
+ * already have a `userId` (e.g. `listContactsPage`) pass it straight through
+ * rather than paying for a second auth lookup.
+ */
+export async function getRankedContactIds(
+  userId: string,
+  query: string,
+  limit = 60
+): Promise<string[]> {
+  const ranked = await rankContacts(userId, query, limit);
+  return ranked.map((r) => r.id);
 }
