@@ -36,6 +36,7 @@ import {
 } from "@/lib/chat-stream-protocol";
 import {
   AI_PROVIDERS,
+  anthropicAcceptsTemperature,
   resolveAiModel,
   resolveAiProvider,
   type AiProvider,
@@ -655,7 +656,8 @@ export async function completeJson(
         const response = await client.messages.create({
           model,
           max_tokens: maxOutputTokens,
-          temperature,
+          // Claude 4.7 and later reject sampling parameters with a 400.
+          ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
           system,
           messages: [{ role: "user", content: input.user }],
         }, { signal: aiSignal() });
@@ -837,7 +839,8 @@ async function completeMultimodalJsonInner(
     const response = await client.messages.create({
       model,
       max_tokens: maxOutputTokens,
-      temperature,
+      // Claude 4.7 and later reject sampling parameters with a 400.
+      ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
       system,
       messages: [{ role: "user", content }],
     }, { signal: aiSignal() });
@@ -1931,7 +1934,8 @@ async function streamText(
           {
             model,
             max_tokens: maxOutputTokens,
-            temperature,
+            // Claude 4.7 and later reject sampling parameters with a 400.
+            ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
             system: input.system,
             messages: [{ role: "user", content: input.user }],
           },

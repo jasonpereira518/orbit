@@ -35,6 +35,10 @@ const PRICES: Record<string, ModelPrice> = {
   // Anthropic
   "claude-sonnet-4-5": { input: 3, output: 15, cachedInput: 0.3 },
   "claude-haiku-4-5": { input: 1, output: 5, cachedInput: 0.1 },
+  "claude-opus-4-5": { input: 5, output: 25, cachedInput: 0.5 },
+  // Opus 4.0 / 4.1 (both retired), reachable only as a stored or typed custom id; keeps
+  // historical usage rows priced. Longest-prefix matching keeps claude-opus-4-5 on its own
+  // row above.
   "claude-opus-4": { input: 15, output: 75, cachedInput: 1.5 },
 };
 
