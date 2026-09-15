@@ -34,6 +34,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-toast-copy": "pure",
   "smoke-admin-gate": "pure",
   "smoke-admin-yc-calculations": "pure",
+  "smoke-ai-key-check": "pure",
   "smoke-avatar-storage": "pure",
   "smoke-avatar-tiers": "pure",
   "smoke-backdrop-filter": "pure",

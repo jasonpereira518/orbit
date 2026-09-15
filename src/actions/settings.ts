@@ -36,6 +36,7 @@ import {
   usingEnvKey,
   type AiProvider,
 } from "@/lib/ai";
+import { checkAiKey, keyCheckOutcome } from "@/lib/ai-key-check";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -201,9 +202,17 @@ export async function saveAiSettings(input: {
 
   const provider = resolveAiProvider(input.provider);
   const aiModel = resolveAiModel(provider, input.model);
-  const encrypted = input.apiKey?.trim()
-    ? encrypt(input.apiKey.trim())
-    : null;
+  // Only a NEWLY entered key is checked; saving a model change with the key left blank
+  // costs no provider call.
+  const newKey = input.apiKey?.trim() || null;
+  let keyNote: string | null = null;
+  if (newKey) {
+    const outcome = keyCheckOutcome(await checkAiKey(provider, newKey), provider);
+    // Returned, not thrown: a thrown message is a digest in production.
+    if (!outcome.save) return { ok: false as const, error: outcome.error };
+    keyNote = outcome.note;
+  }
+  const encrypted = newKey ? encrypt(newKey) : null;
 
   const previousBackend = existing
     ? await embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing)
@@ -257,7 +266,11 @@ export async function saveAiSettings(input: {
 
   revalidatePath("/settings");
   revalidatePath("/chat");
-  return { ok: true, embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend) };
+  return {
+    ok: true as const,
+    embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend),
+    keyNote,
+  };
 }
 
 export async function clearApiKey(provider?: AiProvider) {

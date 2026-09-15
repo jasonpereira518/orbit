@@ -38,6 +38,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const [settings, setSettings] = useState<Settings>(initialSettings);
   const [provider, setProvider] = useState<AiProvider>(initialSettings.aiProvider);
   const [apiKey, setApiKey] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
   const [wisprKey, setWisprKey] = useState("");
   const [model, setModel] = useState(initialSettings.aiModel);
   const [customModel, setCustomModel] = useState(
@@ -70,6 +71,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             const next = value as AiProvider;
             setProvider(next);
             setApiKey("");
+            setKeyError(null);
             setModel(DEFAULT_MODELS[next]);
             setCustomModel(false);
           }}
@@ -117,8 +119,18 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
               : providerMeta.keyPlaceholder
           }
           value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
+          aria-invalid={keyError ? true : undefined}
+          aria-describedby={keyError ? "key-error" : undefined}
+          onChange={(e) => {
+            setApiKey(e.target.value);
+            setKeyError(null);
+          }}
         />
+        {keyError && (
+          <p id="key-error" role="alert" className="text-sm text-destructive">
+            {keyError}
+          </p>
+        )}
       </div>
 
       <div className="space-y-1.5">
@@ -188,12 +200,18 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                   model,
                   apiKey: apiKey.trim() || undefined,
                 });
+                if (!res.ok) {
+                  setKeyError(res.error);
+                  return;
+                }
+                setKeyError(null);
                 setApiKey("");
                 setSettings(await getSettings());
                 toast.success(
-                  res.embeddingReset
-                    ? "Saved — search will re-index for the new provider"
-                    : "AI settings saved"
+                  res.keyNote ??
+                    (res.embeddingReset
+                      ? "Saved — search will re-index for the new provider"
+                      : "AI settings saved")
                 );
               } catch (err) {
                 toast.error(

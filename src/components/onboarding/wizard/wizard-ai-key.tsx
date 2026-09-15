@@ -38,8 +38,12 @@ export function WizardAiKey({
     if (!key) return;
     start(async () => {
       try {
-        await saveAiSettings({ provider, apiKey: key });
-        toast.success(`${meta?.label ?? "AI"} key saved`);
+        const res = await saveAiSettings({ provider, apiKey: key });
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        toast.success(res.keyNote ?? `${meta?.label ?? "AI"} key saved`);
         onSaved();
       } catch (err) {
         toast.error(friendlyError(err, "That key didn’t save — try again?"));
