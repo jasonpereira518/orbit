@@ -59,15 +59,15 @@ export async function searchDashboardContacts(
 }
 
 /**
- * Ranked contact IDs for a query, no `requireUserId()` of its own — callers that
- * already have a `userId` (e.g. `listContactsPage`) pass it straight through
- * rather than paying for a second auth lookup.
+ * Ranked contacts for a query, no `requireUserId()` of its own — callers that already
+ * have a `userId` (e.g. `listContactsPage`) pass it straight through rather than paying
+ * for a second auth lookup. Returns the full `RankedContact`, not just an id, so a caller
+ * that needs `matchedArms` (to explain *why* something matched) doesn't have to ask twice.
  */
-export async function getRankedContactIds(
+export async function getRankedContacts(
   userId: string,
   query: string,
   limit = 60
-): Promise<string[]> {
-  const ranked = await rankContacts(userId, query, limit);
-  return ranked.map((r) => r.id);
+): Promise<RankedContact[]> {
+  return rankContacts(userId, query, limit);
 }

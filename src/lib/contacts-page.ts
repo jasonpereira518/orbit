@@ -50,6 +50,10 @@ export type ContactListRow = {
   nextFollowUpAt: Date | null;
   lastInteractionAt: Date | null;
   tags: string[];
+  /** Why this contact matched an active search, only when that isn't obvious from the row
+   *  itself (e.g. a past role, not their current company field). Null outside a search, and
+   *  for the common case where the match is already visible in the row's own text. */
+  matchReason: string | null;
 };
 
 export type ContactsPage = {

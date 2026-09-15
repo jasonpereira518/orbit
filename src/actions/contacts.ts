@@ -13,7 +13,8 @@ import {
   tags,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { getRankedContactIds } from "@/actions/search";
+import { getRankedContacts } from "@/actions/search";
+import type { RankedContact } from "@/lib/hybrid-search";
 import {
   CONTACTS_PAGE_SIZE,
   type ContactPickerOption,
@@ -136,9 +137,10 @@ export async function listContactsPage(
   const conditions = [eq(contacts.userId, userId)];
 
   const q = filters?.q?.trim();
-  // Reused below by `orderFor` when `sort === "relevance"` — one hybrid-search call serves
-  // both widening the candidate set and ranking it, instead of asking twice.
+  // Reused below by `orderFor` (relevance ranking) and by the match-reason map — one
+  // hybrid-search call serves widening, ranking, and explaining, instead of asking thrice.
   let semanticIds: string[] = [];
+  let matchReasons = new Map<string, string>();
   if (q) {
     // Short queries are prefix lookups ("mar" -> Marcus) that `searchCondition` alone
     // already serves well; below this length a semantic round trip only adds latency.
@@ -147,7 +149,9 @@ export async function listContactsPage(
     // whose stored role is "Software Engineer" at Google, full time). Request the max
     // hybridSearchContacts will give (80) rather than its default 12, since this list
     // also drives relevance ordering, not just widening the match.
-    semanticIds = q.length >= 3 ? await getRankedContactIds(userId, q, 80) : [];
+    const ranked = q.length >= 3 ? await getRankedContacts(userId, q, 80) : [];
+    semanticIds = ranked.map((r) => r.id);
+    matchReasons = matchReasonsFor(ranked);
     conditions.push(
       semanticIds.length
         ? or(searchCondition(q), inArray(contacts.id, semanticIds))!
@@ -246,10 +250,30 @@ export async function listContactsPage(
       nextFollowUpAt: row.nextFollowUpAt,
       lastInteractionAt: row.lastInteractionAt,
       tags: tagsByContact.get(row.id) ?? [],
+      matchReason: matchReasons.get(row.id) ?? null,
     })),
     nextCursor: hasMore ? encodeCursor(cursorFor(sort, page[page.length - 1])) : null,
     total,
   };
+}
+
+/**
+ * Why a contact showed up, for the ones where that isn't obvious from the row itself.
+ *
+ * A contact only gets a reason when it matched via the `experience` or `semantic` arm and
+ * *neither* `fts` nor `trigram` — i.e. only when nothing already visible on the row (name,
+ * company, title) would explain the match. A contact whose company field literally says
+ * "Google" doesn't need a label telling the user it matched "Google"; one who matches only
+ * because a past role or an unrelated-looking bio was semantically similar does.
+ */
+function matchReasonsFor(ranked: RankedContact[]): Map<string, string> {
+  const reasons = new Map<string, string>();
+  for (const r of ranked) {
+    if (r.matchedArms.includes("fts") || r.matchedArms.includes("trigram")) continue;
+    if (r.matchedArms.includes("experience")) reasons.set(r.id, "Matched via work history");
+    else if (r.matchedArms.includes("semantic")) reasons.set(r.id, "Matched by meaning");
+  }
+  return reasons;
 }
 
 /**

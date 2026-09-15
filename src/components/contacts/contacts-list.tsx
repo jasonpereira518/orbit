@@ -74,6 +74,7 @@ export type ContactListItem = {
   nextFollowUpAt?: string | Date | null;
   lastInteractionAt?: string | Date | null;
   tags: string[];
+  matchReason?: string | null;
 };
 
 const ALPHABET = [
@@ -523,6 +524,14 @@ export function ContactsList({
                                 ) : (
                                   details
                                 )}
+                              </p>
+                            )}
+                            {c.matchReason && (
+                              // Only set for the "non-obvious" hits — a past role, or a
+                              // semantic match with no literal keyword overlap — so this
+                              // line is rare, not a fixture of every search result.
+                              <p className="mt-0.5 truncate text-[11px] font-medium text-primary/70">
+                                {c.matchReason}
                               </p>
                             )}
                           </div>
