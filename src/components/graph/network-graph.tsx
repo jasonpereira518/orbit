@@ -910,6 +910,8 @@ function GraphCanvasInner({
   getNodesRef.current = getNodes;
   /** Total ambient rotation shown by the CSS var (rings + arm glow). */
   const galaxyThetaRef = useRef(0);
+  /** The one element that reads `--galaxy-rot`; see the write in the ambient-motion loop. */
+  const ringsElRef = useRef<HTMLElement | null>(null);
   const prefersReducedMotion = usePrefersReducedMotion();
 
   const [orbitNodes, setOrbitNodes] = useState<Node[]>(() =>
@@ -1186,12 +1188,33 @@ function GraphCanvasInner({
       const delta = (((GALAXY_DEG_PER_MIN / 60) * Math.PI) / 180) * dt;
       pendingDelta += delta;
       galaxyThetaRef.current += delta;
-      storeApi
-        .getState()
-        .domNode?.style.setProperty(
-          "--galaxy-rot",
-          `${galaxyThetaRef.current.toFixed(6)}rad`
+
+      // Written on the rings node itself, NOT on the flow root.
+      //
+      // This is a per-frame write of a CSS custom property, and a custom property
+      // invalidates style for the entire subtree beneath the element it is set on. Set on
+      // the flow root it invalidated every node in the network sixty times a second. At
+      // demo scale that is 24 elements and invisible; at 1000 contacts it is 628, and the
+      // graph sat at 91% of wall clock blocked and 5.9fps while nobody was touching it.
+      // Hiding the stars took the same idle page to 4.7% and 41fps, which is what pointed
+      // here: it was never the stars' own animations (turning those off changed nothing) —
+      // it was that they were all being invalidated by this line.
+      //
+      // Exactly one element reads the variable: the dashed rings in
+      // `OrbitRingsNodeComponent`. Scoping the write to that node's own element keeps the
+      // same smooth compositor-driven drift for the one thing that uses it.
+      //
+      // Cached because querying every frame is its own cost, and re-queried while null so a
+      // write that lands before the node mounts is not permanently lost.
+      if (!ringsElRef.current) {
+        ringsElRef.current = document.querySelector<HTMLElement>(
+          ".react-flow__node-orbitRings"
         );
+      }
+      ringsElRef.current?.style.setProperty(
+        "--galaxy-rot",
+        `${galaxyThetaRef.current.toFixed(6)}rad`
+      );
 
       if (now - lastCommit >= commitMs) {
         lastCommit = now;
