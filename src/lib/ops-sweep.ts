@@ -85,6 +85,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
   const perfSlow = bySource.get(ERROR_SOURCES.perfSlow) ?? 0;
   const stripeCheckout = bySource.get(ERROR_SOURCES.stripeCheckout) ?? 0;
+  const resendRejected = bySource.get(ERROR_SOURCES.resendRejected) ?? 0;
   const otherErrors = [...bySource.entries()]
     .filter(([source]) => source !== ERROR_SOURCES.perfSlow)
     .reduce((sum, [, n]) => sum + n, 0);
@@ -114,6 +115,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     },
     webhooks,
     stripeCheckoutErrorsLastHour: stripeCheckout,
+    resendRejectedLastHour: resendRejected,
     wedgedImports: issues.wedged,
     failedImportsLast24h: failedImports[0]?.n ?? 0,
     outreach: { overdue: outreach.overdue, oldestOverdueDays: outreach.oldestOverdueDays },

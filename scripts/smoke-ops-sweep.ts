@@ -14,9 +14,10 @@ delete process.env.VERCEL_ENV;
 
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { cronRuns, opsAlertState, webhookDeliveries } from "../src/db/schema";
+import { cronRuns, errorEvents, opsAlertState, webhookDeliveries } from "../src/db/schema";
+import { ERROR_SOURCES } from "../src/lib/error-events";
 import { finishCronRun, startCronRun } from "../src/lib/cron-runs";
-import { runOpsSweep, type OpsDelivery } from "../src/lib/ops-sweep";
+import { loadOpsSnapshot, runOpsSweep, type OpsDelivery } from "../src/lib/ops-sweep";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -103,6 +104,14 @@ async function main() {
 
   await db.delete(opsAlertState).where(eq(opsAlertState.id, "stripe.checkout_error"));
   await reset();
+  console.log("\nA Resend rejection reaches the snapshot...");
+  const [rejection] = await db
+    .insert(errorEvents)
+    .values({ source: ERROR_SOURCES.resendRejected, kind: "interest.welcome", message: "The gmail.com domain is not verified" })
+    .returning();
+  const snapshot = await loadOpsSnapshot(new Date(), null);
+  check("resendRejectedLastHour counts it", snapshot.resendRejectedLastHour >= 1, String(snapshot.resendRejectedLastHour));
+  await db.delete(errorEvents).where(eq(errorEvents.id, rejection.id));
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

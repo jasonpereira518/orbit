@@ -78,6 +78,16 @@ export const ERROR_SOURCES = {
    * a four-provider poll sitting behind a sixty-second cache.
    */
   providerHealthCheck: "provider.health_check",
+  /**
+   * Resend refused an email Orbit tried to send ON ORBIT'S KEY: an interest-list welcome or
+   * follow-up, or a hosted outreach message. Invisible before — a console line Vercel keeps
+   * for an hour (every waitlist welcome of Sep 7–9 2026 died this way) or a per-message error
+   * only the sender saw. Bounded by signups and `DAILY_SEND_LIMIT`. A `RESEND_FROM_EMAIL` on
+   * an unverified domain rejects every send at once, so the ops sweep opens `resend.rejected`
+   * on one row. A user's own Resend key being refused is theirs to fix and is not recorded
+   * here — it would page Orbit about someone else's configuration.
+   */
+  resendRejected: "resend.rejected",
 } as const;
 
 export type ErrorEventInput = {

@@ -50,6 +50,7 @@ BEHIND the code — a build whose migration did not run — and is worth waking 
 |---|---|
 | `webhook.invalid_streak:clerk` / `:stripe` | The signing secret rolled or a second endpoint points here. Dashboard → Webhooks → copy the endpoint's secret into Vercel → redeploy. |
 | `stripe.checkout_error` | `/admin/health` → error events → the `kind` is Stripe's code. `resource_missing` = a price id from the wrong mode. |
+| `resend.rejected` | `/admin/health` → error events → `resend.rejected` shows Resend's message. "domain is not verified" = `RESEND_FROM_EMAIL` must be on a domain verified under Resend → Domains; fix it in Vercel and redeploy. Only Orbit's own key is counted — a user's own Resend key failing shows on their message, not here. |
 | `import.wedged` / `import.failed_burst` | `/admin/health` → Failed and stalled imports → Retry. After 3 stalled resumes the job is marked failed with a message; the user re-uploads. |
 | `deploy.drift` | A build is failing. Vercel → Deployments → open the red one → fix → push. |
 | `config.missing` | Vercel → Environment Variables. The alert names the variable. |

@@ -43,6 +43,8 @@ export type OpsSnapshot = {
   /** Most recent delivery outcomes per source, newest first. */
   webhooks: { clerk: WebhookOutcome[]; stripe: WebhookOutcome[]; resend: WebhookOutcome[] };
   stripeCheckoutErrorsLastHour: number;
+  /** `error_events` rows from `resend.rejected` in the last hour. */
+  resendRejectedLastHour: number;
   wedgedImports: number;
   failedImportsLast24h: number;
   outreach: { overdue: number; oldestOverdueDays: number | null };
@@ -131,6 +133,16 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "critical",
       title: "Stripe checkout is failing",
       detail: `${s.stripeCheckoutErrorsLastHour} checkout attempt(s) errored in the last hour — nobody can pay.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (s.resendRejectedLastHour > 0) {
+    out.push({
+      id: "resend.rejected",
+      severity: "warning",
+      title: "Resend is refusing Orbit's email",
+      detail: `${s.resendRejectedLastHour} email(s) refused in the last hour — usually RESEND_FROM_EMAIL is on a domain Resend has not verified, which refuses every send.`,
       href: "/admin/health",
     });
   }

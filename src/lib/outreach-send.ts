@@ -14,6 +14,7 @@ import { getEntitlements } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { isPlaceholderAddress, PLACEHOLDER_ADDRESS_SEND_MESSAGE } from "@/lib/outreach-quality";
 import { outreachEmailPayload } from "@/lib/outreach-email";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
 export async function getOutreachSendConfig(userId: string) {
   const db = await getDb();
@@ -29,10 +30,13 @@ export async function getOutreachSendConfig(userId: string) {
   const { canUseHostedSending: hosted } = await getEntitlements(userId);
   const envKey = (value: string | undefined) => (hosted ? value || null : null);
 
+  const ownResendKey = decryptOrNull(settings?.resendApiKeyEncrypted);
+  const hostedResendKey = envKey(process.env.RESEND_API_KEY);
+
   return {
-    resendApiKey:
-      decryptOrNull(settings?.resendApiKeyEncrypted) ||
-      envKey(process.env.RESEND_API_KEY),
+    resendApiKey: ownResendKey || hostedResendKey,
+    /** Whose Resend account a send goes through — only Orbit's refusals are Orbit's alarm. */
+    resendKeyOwner: ownResendKey ? ("user" as const) : hostedResendKey ? ("orbit" as const) : null,
     twilioAccountSid:
       decryptOrNull(settings?.twilioAccountSidEncrypted) ||
       envKey(process.env.TWILIO_ACCOUNT_SID),
@@ -130,6 +134,15 @@ export async function sendOutreachMessage(input: {
     );
 
     if (result.error) {
+      if (config.resendKeyOwner === "orbit") {
+        await recordErrorEvent({
+          source: ERROR_SOURCES.resendRejected,
+          kind: "outreach",
+          userId: input.userId,
+          message: result.error,
+          context: { name: result.error.name },
+        });
+      }
       throw new Error(result.error.message);
     }
 

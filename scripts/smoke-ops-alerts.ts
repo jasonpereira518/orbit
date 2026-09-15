@@ -37,6 +37,7 @@ const HEALTHY: OpsSnapshot = {
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
+  resendRejectedLastHour: 0,
   wedgedImports: 0,
   failedImportsLast24h: 0,
   outreach: { overdue: 0, oldestOverdueDays: null },
@@ -96,6 +97,10 @@ function main() {
 
   check("a Stripe checkout error in the last hour → critical",
     find({ ...HEALTHY, stripeCheckoutErrorsLastHour: 1 }, "stripe.checkout_error")?.severity === "critical");
+  check("a Resend rejection in the last hour → resend.rejected (warning)",
+    find({ ...HEALTHY, resendRejectedLastHour: 1 }, "resend.rejected")?.severity === "warning");
+  check("…whose detail names the usual cause",
+    Boolean(find({ ...HEALTHY, resendRejectedLastHour: 3 }, "resend.rejected")?.detail.includes("RESEND_FROM_EMAIL")));
   check("a wedged import → warning", find({ ...HEALTHY, wedgedImports: 1 }, "import.wedged")?.severity === "warning");
   check("three failed imports in 24h → import.failed_burst", Boolean(find({ ...HEALTHY, failedImportsLast24h: 3 }, "import.failed_burst")));
   check("two failed imports is not a burst", !find({ ...HEALTHY, failedImportsLast24h: 2 }, "import.failed_burst"));
