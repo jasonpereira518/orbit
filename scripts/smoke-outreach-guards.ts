@@ -22,7 +22,7 @@ import {
   prospectSearchStatus,
 } from "../src/lib/outreach-quality";
 import { sendOutreachMessage } from "../src/lib/outreach-send";
-import { bulkSendOutreach, searchProspects, sendOutreachMessageAction } from "../src/actions/outreach";
+import { bulkSendOutreach, previewBulkSendQuality, searchProspects, sendOutreachMessageAction } from "../src/actions/outreach";
 import type { AudienceFilters } from "../src/db/schema";
 
 // FIRST, so no run of this script — including the failing one — can reach a real inbox:
@@ -164,6 +164,50 @@ run(async () => {
     (err: unknown) => (err instanceof Error ? err.message : String(err))
   );
   check("sendOutreachMessage refuses an example.com address", direct === PLACEHOLDER_ADDRESS_SEND_MESSAGE, direct);
+
+  console.log("\nThe bulk-send preview only reads this campaign's messages");
+  await ensureUserSettings(OTHER);
+  const victimCampaign = await seedCampaign(OTHER, "Someone else's campaign", {});
+  // Empty subject and body: had the preview read this row, it would come back blocking.
+  const victim = await seedProspectWithMessage(victimCampaign.id, {
+    externalId: "victim-1",
+    fullName: "Victoria Private",
+    email: "victoria@private.example.com",
+    status: "selected",
+    enrichment: {},
+    subject: "",
+    body: "",
+  });
+  const leaked = await previewBulkSendQuality({ campaignId: campaign.id, messageIds: [victim.message.id] });
+  check("another tenant's message id yields nothing", leaked.issues.length === 0, JSON.stringify(leaked));
+  check("…and never names their prospect", !JSON.stringify(leaked).includes("Victoria"));
+
+  const sibling = await seedCampaign(USER, "Sibling campaign", {});
+  const siblingMsg = await seedProspectWithMessage(sibling.id, {
+    externalId: "sibling-1",
+    fullName: "Sam Sibling",
+    email: "sam@sibling.example.com",
+    status: "selected",
+    enrichment: {},
+    subject: "",
+    body: "",
+  });
+  const scoped = await previewBulkSendQuality({ campaignId: campaign.id, messageIds: [siblingMsg.message.id] });
+  check("a message from another of your own campaigns is out of scope too", scoped.issues.length === 0, JSON.stringify(scoped));
+  // A sendable draft (passes quality) in the sibling campaign: if the bulk loop reached it,
+  // its send would be refused (placeholder address) and mark it "failed".
+  const sendable = await seedProspectWithMessage(sibling.id, {
+    externalId: "sibling-2",
+    fullName: "Sasha Sibling",
+    email: "sasha@sibling.example.org",
+    status: "selected",
+    enrichment: {},
+  });
+  await outsideRequest(
+    bulkSendOutreach({ campaignId: campaign.id, messageIds: [sendable.message.id], ignoreWarnings: true })
+  );
+  const sendableAfter = await db.query.outreachMessages.findFirst({ where: eq(outreachMessages.id, sendable.message.id) });
+  check("…and bulk send under this campaign never touches it", sendableAfter?.status === "generated", String(sendableAfter?.status));
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);

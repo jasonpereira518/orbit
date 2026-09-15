@@ -1155,18 +1155,37 @@ async function sendOutreachMessageNow(messageId: string) {
   }
 }
 
+/**
+ * The requested messages that belong to this campaign — and so, because the campaign was
+ * already checked against the caller, to this user. An id from anywhere else is dropped
+ * silently rather than refused, so the answer cannot confirm that a guessed id exists.
+ */
+async function campaignMessages(campaignId: string, messageIds: string[]) {
+  if (messageIds.length === 0) return [];
+  const db = await getDb();
+  return db.query.outreachMessages.findMany({
+    where: and(
+      inArray(outreachMessages.id, messageIds),
+      inArray(
+        outreachMessages.prospectId,
+        db
+          .select({ id: outreachProspects.id })
+          .from(outreachProspects)
+          .where(eq(outreachProspects.campaignId, campaignId))
+      )
+    ),
+    with: { prospect: true },
+  });
+}
+
 export async function previewBulkSendQuality(input: {
   campaignId: string;
   messageIds: string[];
 }) {
   const userId = await requireOutreachUser();
   await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
 
-  const messages = await db.query.outreachMessages.findMany({
-    where: inArray(outreachMessages.id, input.messageIds),
-    with: { prospect: true },
-  });
+  const messages = await campaignMessages(input.campaignId, input.messageIds);
 
   return assessOutreachQuality(
     messages.map((m) => ({
@@ -1213,7 +1232,11 @@ export async function bulkSendOutreach(input: {
     };
   }
 
-  const ids = input.messageIds.slice(0, BULK_SEND_LIMIT);
+  // Same scope as the preview above: only this campaign's messages are ever sent from here.
+  const inCampaign = new Set(
+    (await campaignMessages(input.campaignId, input.messageIds)).map((m) => m.id)
+  );
+  const ids = input.messageIds.filter((id) => inCampaign.has(id)).slice(0, BULK_SEND_LIMIT);
   const results: Array<{ messageId: string; ok: boolean; error?: string }> = [];
 
   for (const messageId of ids) {
