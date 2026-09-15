@@ -2,13 +2,14 @@
 
 import { useTransition } from "react";
 import Link from "next/link";
-import { Download, Trash2 } from "lucide-react";
+import { Download, Trash2, UserX } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { exportAllData } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
 import { GooglePhotoMatch } from "@/components/settings/google-photo-match";
 import { DeleteDataDialog } from "@/components/settings/delete-data-dialog";
+import { DeleteAccountDialog } from "@/components/settings/delete-account-dialog";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
 
 export function DataSettings() {
@@ -77,6 +78,24 @@ export function DataSettings() {
             >
               <Trash2 className="size-3.5" />
               Delete data…
+            </Button>
+          }
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        title="Delete account"
+        description="Erase everything and remove your sign-in. Cancels an active Orbit Pro subscription."
+      >
+        <DeleteAccountDialog
+          trigger={
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-fit text-destructive hover:border-destructive/40 hover:bg-destructive/10"
+            >
+              <UserX className="size-3.5" />
+              Delete account…
             </Button>
           }
         />
