@@ -10,6 +10,7 @@ import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { requireUserForSurface } from "@/lib/plan-guards";
+import { reportError } from "@/lib/report-error";
 
 export type { GraphCluster, UserSocialLinks } from "@/lib/graph-data";
 
@@ -77,7 +78,6 @@ export async function refreshConstellationBatch(input?: {
     try {
       await rebuildContactEmbedding(userId, row.id);
     } catch (err) {
-      console.error("Embedding rebuild failed", row.id, err);
       failed += 1;
       if (!firstError) {
         firstError = err;
@@ -90,6 +90,11 @@ export async function refreshConstellationBatch(input?: {
   // One row per batch, never per contact — per-item error rows are how a diagnostic
   // table becomes a log firehose.
   if (failed > 0) {
+    reportError(firstError, {
+      where: "action.graph.rebuild-embeddings",
+      userId,
+      extra: { failed, batchSize: slice.length, sampleContactId: firstFailedId },
+    });
     await recordErrorEvent({
       source: ERROR_SOURCES.graphRebuildEmbeddings,
       kind: "batch_partial_failure",

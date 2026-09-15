@@ -18,7 +18,14 @@ type Args = Parameters<Instrumentation.onRequestError>;
  */
 export async function reportRequestError(err: Args[0], request: Args[1], context: Args[2]) {
   if (process.env.SENTRY_DSN) {
-    Sentry.captureRequestError(err, request, context);
+    // Tag the digest: it is the reference `friendlyError` shows the person in production,
+    // so a quoted "(ref 1234567890)" finds this event directly.
+    const digest = (err as { digest?: unknown } | null)?.digest;
+    Sentry.withScope((scope) => {
+      if (typeof digest === "string") scope.setTag("digest", digest);
+      scope.setTag("where", `${context.routeType}:${context.routePath}`);
+      Sentry.captureRequestError(err, request, context);
+    });
     return;
   }
   if (!process.env.SLACK_OPS_WEBHOOK_URL) return;

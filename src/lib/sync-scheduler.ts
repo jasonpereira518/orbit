@@ -45,6 +45,7 @@ import { runEnrichmentPass } from "@/lib/events/enrich-queue";
 import { backfillPersonKeys } from "@/lib/events/people-store";
 import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
 import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
+import { reportAndContinue, reportError } from "@/lib/report-error";
 
 /** Matches the import engine's budget, and leaves headroom under the 300s function ceiling. */
 export const SYNC_TIME_BUDGET_MS = 4.5 * 60 * 1000;
@@ -209,8 +210,9 @@ async function syncGoogleCalendar(
       stats.discoveryCreated += discovered.created;
       stats.discoveryAttached += discovered.attached;
       stats.discoverySuppressed += discovered.suppressed;
-    } catch {
-      // Swallowed deliberately — see above.
+    } catch (err) {
+      // Swallowed deliberately — see above — but reported (throttled), not silent.
+      reportError(err, { where: "job.sync.gcal-discovery", userId: conn.userId, level: "warning" });
     }
 
     cursor = advanceCursor(cursor, page);
@@ -299,11 +301,16 @@ export async function runSyncPass(
       // `getValidAccessToken` has already written `needs_reauth` (and nulled `next_sync_at`)
       // in the ReauthRequiredError case, so this only records the reason.
       const retryable = !(err instanceof ReauthRequiredError);
+      // A dead grant is the person's to fix and the bell already tells them; anything else is
+      // a fault worth seeing across users, which a per-row `sync_error` never is.
+      if (retryable) {
+        reportError(err, { where: "job.sync.gcal", userId: conn.userId, level: "warning", extra: { connectionId: conn.id } });
+      }
       await markSyncResult(conn.provider, conn.id, {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
         retryable,
-      }).catch(() => null);
+      }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
     }
   }
 
@@ -315,7 +322,7 @@ export async function runSyncPass(
   // subscribed and then stopped opening `/imports` silently stopped syncing.
   if (!deadlineReached(deadline)) {
     const subs = await claimDueCalendarSubscriptions(ICS_SUBSCRIPTIONS_PER_RUN, now).catch(
-      () => []
+      reportAndContinue({ where: "job.sync.ics-claim" }, [] as Awaited<ReturnType<typeof claimDueCalendarSubscriptions>>)
     );
     stats.icsClaimed = subs.length;
     for (const sub of subs) {
@@ -326,11 +333,12 @@ export async function runSyncPass(
       try {
         await syncCalendarSubscription(sub.userId, sub.id);
         stats.icsSynced++;
-      } catch {
+      } catch (err) {
         // The claim already moved `last_synced_at`, so a failing feed waits out the stale
         // window rather than being re-fetched every run. Counted, never rethrown — one dead
-        // ICS URL must not stop the rest.
+        // ICS URL must not stop the rest — and reported (throttled).
         stats.icsFailed++;
+        reportError(err, { where: "job.sync.ics", userId: sub.userId, level: "warning", extra: { subscriptionId: sub.id } });
       }
     }
   }
@@ -348,10 +356,11 @@ export async function runSyncPass(
       stats.eventConnectionsSynced = eventStats.synced;
       stats.eventConnectionsFailed = eventStats.failed;
       stats.eventRostersFetched = eventStats.attendeesUpserted;
-    } catch {
+    } catch (err) {
       // Never rethrown, for the same reason as everything else in this function: a failure in
       // one provider must not lose the run's ledger row for the others.
       stats.eventConnectionsFailed++;
+      reportError(err, { where: "job.sync.event-connections" });
     }
   } else {
     stats.budgetExhausted = true;
@@ -359,7 +368,7 @@ export async function runSyncPass(
 
   // Person keys for rows written before the column existed. A bounded slice per pass: it is
   // pure catch-up work, and the panel it feeds is simply thinner until it finishes.
-  await backfillPersonKeys(2000).catch(() => 0);
+  await backfillPersonKeys(2000).catch(reportAndContinue({ where: "job.sync.person-keys" }, 0));
 
   // Reading discovered events' public pages comes LAST of all, and deliberately so: every
   // pass above creates or updates data the user is waiting on, while this one makes rows that
@@ -374,8 +383,9 @@ export async function runSyncPass(
       });
       stats.enrichFetched = enrichStats.enriched;
       stats.enrichFailed = enrichStats.failed;
-    } catch {
+    } catch (err) {
       stats.enrichFailed++;
+      reportError(err, { where: "job.sync.event-enrich" });
     }
   } else {
     stats.budgetExhausted = true;

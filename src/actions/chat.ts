@@ -26,6 +26,7 @@ import { traced } from "@/lib/perf-trace";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { actionFailure } from "@/lib/action-failure";
 
 
 
@@ -176,7 +177,7 @@ async function askNetworkInner(
     // missing key; the key message is no longer the fallback for every other failure.
     return {
       ok: false as const,
-      error: friendlyError(err, TOAST_COPY.chatFailed),
+      error: await actionFailure(err, TOAST_COPY.chatFailed, "chat.ask-network"),
     };
   }
 }

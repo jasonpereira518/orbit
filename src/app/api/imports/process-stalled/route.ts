@@ -21,6 +21,7 @@ import {
 } from "@/lib/linkedin-timeline-backfill";
 import { backfillEmbeddingVectors, neonClient } from "@/db";
 import { isInternalRequest } from "@/lib/internal-auth";
+import { reportAndContinue, reportError } from "@/lib/report-error";
 
 export const maxDuration = 300;
 
@@ -153,8 +154,9 @@ export async function GET(request: Request) {
       stats.captureResumed = captures.resumed;
       stats.captureGaveUp = captures.gaveUp;
       stats.captureSwept = captures.swept;
-    } catch {
+    } catch (err) {
       status = "partial";
+      reportError(err, { where: "job.process-stalled.captures" });
     }
 
     try {
@@ -170,11 +172,12 @@ export async function GET(request: Request) {
       // history only lists saved captures — so keeping them would be holding pictures of
       // someone's notes for no one.
       stats.capturePhotosPruned = await pruneUnattachedCapturePhotos();
-    } catch {
+    } catch (err) {
       // Housekeeping must never fail the job-resumption backstop this route exists for,
       // but a silent failure here is how a table grows unbounded — so it downgrades the
-      // run instead of vanishing.
+      // run instead of vanishing, and says why.
       status = "partial";
+      reportError(err, { where: "job.process-stalled.housekeeping" });
     }
 
     try {
@@ -188,8 +191,9 @@ export async function GET(request: Request) {
       // that could not deliver anything it tried is worth surfacing rather than burying
       // in a count nobody reads.
       if (followUps.failed > 0 && followUps.sent === 0) status = "partial";
-    } catch {
+    } catch (err) {
       status = "partial";
+      reportError(err, { where: "job.process-stalled.interest-follow-ups" });
     }
 
     try {
@@ -201,11 +205,14 @@ export async function GET(request: Request) {
       // eventually settles it. Bounded per run so one enormous orbit cannot use up the
       // whole invocation.
       for (const staleUserId of await findStaleCohorts(RECALIBRATE_BATCH)) {
-        await recalibrateCloseness(staleUserId).catch(() => null);
+        await recalibrateCloseness(staleUserId).catch(
+          reportAndContinue({ where: "job.process-stalled.recalibrate-user", userId: staleUserId }, null)
+        );
         stats.cohortsRecalibrated += 1;
       }
-    } catch {
+    } catch (err) {
       status = "partial";
+      reportError(err, { where: "job.process-stalled.recalibrate" });
     }
 
     try {
@@ -215,8 +222,9 @@ export async function GET(request: Request) {
       // vector search until it is picked up here.
       const neonSql = neonClient();
       if (neonSql) stats.embeddingsBackfilled = await backfillEmbeddingVectors(neonSql);
-    } catch {
+    } catch (err) {
       status = "partial";
+      reportError(err, { where: "job.process-stalled.pgvector-copy" });
     }
 
     try {
@@ -241,15 +249,18 @@ export async function GET(request: Request) {
         }
         // The per-user slice is whatever is left of the sweep, so the sum across users
         // cannot exceed the budget no matter how the backlog is distributed.
-        const res = await runEmbeddingBackfill(staleUser, undefined, left).catch(() => null);
+        const res = await runEmbeddingBackfill(staleUser, undefined, left).catch(
+          reportAndContinue({ where: "job.process-stalled.embedding-user", userId: staleUser }, null)
+        );
         stats.embeddingsGenerated += res?.embedded ?? 0;
         if ((res?.remaining ?? 0) > 0) {
           stats.embeddingBackfillsKicked += 1;
           await kickEmbeddingBackfill(staleUser);
         }
       }
-    } catch {
+    } catch (err) {
       status = "partial";
+      reportError(err, { where: "job.process-stalled.embedding-sweep" });
     }
 
     try {
@@ -262,14 +273,16 @@ export async function GET(request: Request) {
         await kickLinkedInTimelineBackfill(pendingUser);
         stats.timelineBackfillsKicked += 1;
       }
-    } catch {
+    } catch (err) {
       status = "partial";
+      reportError(err, { where: "job.process-stalled.timeline-kicks" });
     }
 
     if (stats.resumeFailed > 0) status = "partial";
   } catch (err) {
     status = "failed";
     error = err;
+    reportError(err, { where: "job.process-stalled" });
   } finally {
     // In `finally` so it survives an early return and cannot be forgotten in a new branch.
     await finishCronRun(run, { status, stats, error });

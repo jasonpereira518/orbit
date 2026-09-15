@@ -77,7 +77,7 @@ import {
   type EventConnectionSummary,
 } from "@/lib/events/connections";
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
-import { listCalendarEvents } from "@/lib/events/connectors/luma";
+import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma";
 import type {
   AttendeeRole,
   ConnectSummary,
@@ -86,6 +86,7 @@ import type {
 } from "@/lib/events/types";
 import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { actionFailure } from "@/lib/action-failure";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
 const SURFACE = "page.events";
@@ -339,7 +340,10 @@ export async function previewResync(
   } catch (error) {
     return {
       ok: false,
-      error: error instanceof EventPageError ? error.message : "Couldn’t read that page — try again?",
+      error:
+        error instanceof EventPageError
+          ? error.message
+          : await actionFailure(error, "Couldn’t read that page — try again?", "events.preview-resync"),
     };
   }
 }
@@ -728,7 +732,12 @@ export async function connectLuma(apiKey: string): Promise<{ ok: boolean; error?
 
   try {
     await listCalendarEvents(key, null);
-  } catch {
+  } catch (error) {
+    // Only a 401/403 means the key is wrong. A Luma outage or a network error used to get
+    // the same "didn't accept that key" line, sending people to fix a key that was fine.
+    if (!(error instanceof LumaAuthError)) {
+      return { ok: false, error: await actionFailure(error, "Couldn’t reach Luma just now — try again", "events.connect-luma") };
+    }
     return {
       ok: false,
       error: "Luma didn’t accept that key — it needs to be a calendar key from a Luma Plus account",
@@ -792,7 +801,10 @@ export async function connectEventFeed(
       // `net-guard` and the fetcher both produce user-facing messages already.
       return { ok: false, error: error.message };
     }
-    return { ok: false, error: "That calendar link couldn’t be read — check it and try again?" };
+    return {
+      ok: false,
+      error: await actionFailure(error, "That calendar link couldn’t be read — check it and try again?", "events.connect-feed", { provider }),
+    };
   }
 }
 

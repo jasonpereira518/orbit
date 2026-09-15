@@ -24,6 +24,9 @@ import {
   UserFacingError,
   asActionResult,
   describeOAuthReason,
+  AI_KEY_REJECTED_MESSAGE,
+  isAiKeyRejectedError,
+  isMissingAiApiKeyError,
 } from "../src/lib/errors";
 
 let failures = 0;
@@ -62,6 +65,44 @@ check("junk object → fallback", friendlyError({ message: "SELECT * FROM users"
 
 console.log("a missing AI key is worth saying out loud");
 check("no-key error → the key message", friendlyError(new Error("No API key configured for gemini"), FB) === MISSING_AI_API_KEY_MESSAGE, friendlyError(new Error("No API key configured for gemini"), FB));
+
+console.log("a key the provider refused is not a missing key");
+const refused: [string, string][] = [
+  ["Gemini", 'got status: 400 Bad Request. {"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}'],
+  ["OpenAI", "401 Incorrect API key provided: sk-abc***wxyz. You can find your API key at https://platform.openai.com/account/api-keys."],
+  ["Anthropic", '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'],
+];
+for (const [label, raw] of refused) {
+  check(`${label}: not classified as a missing key`, !isMissingAiApiKeyError(raw));
+  check(`${label}: recognised as a refused key`, isAiKeyRejectedError(raw));
+  check(`${label}: provider copy is the auth template`,
+    aiProviderErrorMessage(new Error(raw), label) === `${label} didn’t accept your API key — check it in Settings`,
+    aiProviderErrorMessage(new Error(raw), label));
+  check(`${label}: friendlyError says refused, not missing`, friendlyError(new Error(raw), FB) === AI_KEY_REJECTED_MESSAGE, friendlyError(new Error(raw), FB));
+  check(`${label}: telemetry still files it as auth`, classifyAiError(new Error(raw)) === "auth");
+}
+console.log("Orbit's own no-key errors are still missing keys");
+for (const own of [
+  "No Google Gemini API key configured. Add your own key in Settings.",
+  "No OpenAI API key configured for embeddings. Add your own key in Settings.",
+  "No Gemini API key configured for embeddings. Add your own key in Settings.",
+  "Voice capture needs an OpenAI, Gemini, or Wispr API key in Settings for transcription.",
+  MISSING_AI_API_KEY_MESSAGE,
+]) {
+  check(`missing: ${own.slice(0, 48)}`, isMissingAiApiKeyError(own));
+}
+check("the auth template is not a missing key", !isMissingAiApiKeyError("Gemini didn’t accept your API key — check it in Settings"));
+console.log("a payment, enrichment or email key is never mistaken for the AI key");
+for (const [who, raw] of [
+  ["Stripe", "Invalid API Key provided: sk_test_****1234"],
+  ["Apollo", "Apollo search failed (401): Invalid API key"],
+  ["Apollo, none", "No Apollo API key configured"],
+  ["Resend", "API key is invalid"],
+] as const) {
+  check(`${who}: not a missing AI key`, !isMissingAiApiKeyError(raw));
+  check(`${who}: not a refused AI key`, !isAiKeyRejectedError(raw));
+  check(`${who}: friendlyError keeps the caller's fallback`, friendlyError(new Error(raw), FB) === FB, friendlyError(new Error(raw), FB));
+}
 
 console.log("the connection is worth saying out loud, because the fallback would blame the wrong thing");
 check("Chrome", friendlyError(new TypeError("Failed to fetch"), FB) === OFFLINE_MESSAGE);

@@ -29,7 +29,6 @@ import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
 } from "@/lib/capture-limits";
-import { friendlyError } from "@/lib/errors";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import {
   saveNoteBatch,
@@ -47,6 +46,7 @@ import {
   toNoteBatchMeeting,
 } from "@/lib/meeting-sessions";
 import type { NoteBatchMeeting } from "@/db/schema";
+import { actionFailure } from "@/lib/action-failure";
 
 export type {
   BulkNoteDuplicate,
@@ -131,7 +131,7 @@ export async function ingestCaptureMedia(input: {
     // Data, not a throw — so never stripped in production. See `friendlyError`.
     return {
       ok: false as const,
-      error: friendlyError(err, TOAST_COPY.fileReadFailed),
+      error: await actionFailure(err, TOAST_COPY.fileReadFailed, "capture.ingest-capture-media"),
     };
   }
 }
@@ -166,7 +166,7 @@ export async function parseBulkCaptureNotes(
     // raw text such as "Failed to parse AI JSON: {…" in front of the person verbatim.
     return {
       ok: false as const,
-      error: friendlyError(err, TOAST_COPY.notesReadFailed),
+      error: await actionFailure(err, TOAST_COPY.notesReadFailed, "capture.parse-bulk-capture-notes"),
     };
   }
 }

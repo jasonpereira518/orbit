@@ -40,8 +40,9 @@ import {
   type OutreachMessageStatus,
   type SequenceStep,
 } from "@/lib/outreach-types";
-import { friendlyError, UserFacingError } from "@/lib/errors";
+import { UserFacingError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { actionFailure } from "@/lib/action-failure";
 
 async function requireCampaign(userId: string, campaignId: string) {
   const db = await getDb();
@@ -1200,7 +1201,7 @@ export async function bulkSendOutreach(input: {
       results.push({
         messageId,
         ok: false,
-        error: friendlyError(err, TOAST_COPY.sendFailed),
+        error: await actionFailure(err, TOAST_COPY.sendFailed, "outreach.bulk-send", { messageId }),
       });
     }
   }

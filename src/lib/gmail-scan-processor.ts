@@ -27,6 +27,7 @@ import {
 } from "@/lib/recruiter-scan";
 import { markScanCompleted, resolveScanWindow } from "@/lib/recruiter-scan-state";
 import { ensureUserLink, upsertCanonicalRecruiter } from "@/lib/recruiters";
+import { reportError } from "@/lib/report-error";
 
 export const GMAIL_SCAN_IMPORT_TYPE = "gmail_recruiter_scan";
 
@@ -61,8 +62,9 @@ async function patchStats(importId: string, patch: Partial<ImportStats>) {
 async function scheduleContinuation(importId: string) {
   try {
     await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
-  } catch {
+  } catch (err) {
     // Best-effort — the process-stalled cron picks the job back up either way.
+    reportError(err, { where: "job.gmail-scan.continuation-kick", level: "warning", extra: { importId } });
   }
 }
 
@@ -367,8 +369,11 @@ export async function runGmailRecruiterScanJob(importId: string): Promise<void> 
             })
             .where(eq(importJobRows.id, row.id));
         } catch (err) {
-          // A dead sender must not kill the scan — record why and move on.
+          // A dead sender must not kill the scan — record why and move on. Reported
+          // (throttled): a scan where every sender fails is a key or provider problem, and
+          // the row's `errorMessage` is not something anyone is paged about.
           const message = err instanceof Error ? err.message : "Classification failed";
+          reportError(err, { where: "job.gmail-scan.sender", level: "warning", extra: { rowId: row.id } });
           rejected += 1;
           await db
             .update(importJobRows)

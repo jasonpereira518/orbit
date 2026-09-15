@@ -30,7 +30,7 @@ import type { CaptureJobResult, CaptureSavedSummary } from "@/lib/capture/types"
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
-import { friendlyError } from "@/lib/errors";
+import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 import { upsertIgnoredPeople, type IgnoredPersonInput } from "@/lib/ignored-people";
 import { getMeetingSession, getNoteBatchForUser, markMeetingSessionSaved, toNoteBatchMeeting } from "@/lib/meeting-sessions";
 import { meetingExtrasFromDigest } from "@/lib/meeting-extras";
@@ -98,9 +98,15 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     const result: CaptureJobResult = rest;
     await settleCaptureJob(id, token, { status: "ready", result, sourceText, sourceHash, error: null });
   } catch (err) {
+    // The job row keeps the person's copy; the real error is reported with its reference
+    // so "Couldn’t read those notes" is never the only trace of what went wrong.
     await settleCaptureJob(id, token, {
       status: "failed",
-      error: friendlyError(err, TOAST_COPY.notesReadFailed),
+      error: reportedFailure(err, TOAST_COPY.notesReadFailed, {
+        where: "job.capture.parse",
+        userId: row.userId,
+        extra: { jobId: id, sourceKind: row.sourceKind },
+      }).error,
     });
   }
   return getCaptureJobById(id);
@@ -139,24 +145,35 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
 
     // The photos this capture was read from, claimed for its batch so the history can show
     // them. Idempotent: an attached photo is not claimable twice.
-    if (row.photoIds.length) await attachCapturePhotos(userId, out.batchId, row.photoIds).catch(() => 0);
-
-    if (row.meetingSessionId) {
-      await markMeetingSessionSaved(userId, row.meetingSessionId, out.batchId).catch(() => null);
+    // Everything below is follow-on work the save does not depend on, so a failure never
+    // fails the save — but each is reported (throttled) instead of vanishing.
+    const followOn = (step: string) => ({ where: `job.capture.save.${step}`, userId, extra: { jobId: id } });
+    if (row.photoIds.length) {
+      await attachCapturePhotos(userId, out.batchId, row.photoIds).catch(reportAndContinue(followOn("photos"), 0));
     }
 
-    await upsertIgnoredPeople(userId, ignoredRowsFor(row, out)).catch(() => null);
+    if (row.meetingSessionId) {
+      await markMeetingSessionSaved(userId, row.meetingSessionId, out.batchId).catch(
+        reportAndContinue(followOn("meeting"), null)
+      );
+    }
+
+    await upsertIgnoredPeople(userId, ignoredRowsFor(row, out)).catch(reportAndContinue(followOn("ignored"), null));
 
     if (deps.enrich !== false) {
-      await kickEmbeddingBackfill(userId).catch(() => null);
+      await kickEmbeddingBackfill(userId).catch(reportAndContinue(followOn("embeddings"), null));
       for (const contactId of out.contactIds) {
-        await generateAndStoreContactBrief(userId, contactId).catch(() => null);
+        await generateAndStoreContactBrief(userId, contactId).catch(reportAndContinue(followOn("brief"), null));
       }
     }
   } catch (err) {
     await settleCaptureJob(id, token, {
       status: "failed",
-      error: friendlyError(err, "Couldn’t save those people — try again?"),
+      error: reportedFailure(err, "Couldn’t save those people — try again?", {
+        where: "job.capture.save",
+        userId: row.userId,
+        extra: { jobId: id },
+      }).error,
     });
   }
   return getCaptureJobById(id);

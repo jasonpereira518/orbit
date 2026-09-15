@@ -9,6 +9,8 @@ import {
   type ContactInput,
   type ContactResult,
 } from "@/lib/contact-message";
+import { reportError } from "@/lib/report-error";
+import { withReference } from "@/lib/errors";
 
 /**
  * Per-instance throttle. Fluid Compute reuses instances, so this catches the
@@ -145,19 +147,28 @@ export async function submitContactMessage(
     });
 
     if (error) {
-      console.error("[contact] Resend rejected the message", error);
+      // Resend answers a rejection as data, not a throw. Wrap it so the report reads as
+      // "Resend rejected: validation_error: domain not verified", not "[object Object]".
+      const ref = reportError(new Error(`Resend rejected the contact message: ${error.name}: ${error.message}`), {
+        where: "action.contact.send",
+        extra: { topic, statusCode: (error as { statusCode?: number }).statusCode ?? null },
+      });
       return {
         ok: false,
-        message:
-          "The message couldn't be delivered. Please try again, or reach out via jasonpereira.live.",
+        message: withReference(
+          "The message couldn't be delivered. Please try again, or reach out via jasonpereira.live",
+          ref
+        ),
       };
     }
   } catch (err) {
-    console.error("[contact] Failed to send", err);
+    const ref = reportError(err, { where: "action.contact.send", extra: { topic } });
     return {
       ok: false,
-      message:
-        "Something went wrong sending that. Please try again, or reach out via jasonpereira.live.",
+      message: withReference(
+        "Something went wrong sending that. Please try again, or reach out via jasonpereira.live",
+        ref
+      ),
     };
   }
 

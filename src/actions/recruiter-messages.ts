@@ -25,7 +25,8 @@ import {
   type RecruiterDraft,
   type SendDraftsResult,
 } from "@/lib/recruiter-message-types";
-import { ActionResult, asActionResult, friendlyError, UserFacingError } from "@/lib/errors";
+import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { actionFailure } from "@/lib/action-failure";
 
 /** Spacing between sends in a batch, so an approved batch trickles rather than bursts. */
 const SEND_SPACING_MS = 1200;
@@ -325,7 +326,9 @@ export async function sendRecruiterDrafts(
           recruiterName: row.recruiter.fullName,
           // Returned as data, so never stripped — and `message` can be a raw Gmail API
           // body. The raw text stays in `errorMessage` above, which no screen renders.
-          error: friendlyError(err, `Couldn’t send to ${row.recruiter.fullName} — try again?`),
+          error: await actionFailure(err, `Couldn’t send to ${row.recruiter.fullName} — try again?`, "recruiter-messages.send", {
+            messageId: row.message.id,
+          }),
         });
       }
 

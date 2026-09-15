@@ -20,6 +20,7 @@ import {
 } from "@/lib/ops-alerts";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
 import { prunePageViews } from "@/lib/page-views";
+import { reportError } from "@/lib/report-error";
 
 export type { OpsDelivery } from "@/lib/ops-notify";
 
@@ -146,8 +147,10 @@ async function pingHeartbeat(): Promise<void> {
   if (!url) return;
   try {
     await fetch(url, { method: "GET", signal: AbortSignal.timeout(5_000) });
-  } catch {
-    // The monitor will notice the gap if this keeps failing; nothing to do here.
+  } catch (err) {
+    // The monitor will notice the gap if this keeps failing. Reported (throttled) so the
+    // cause is on record when it does.
+    reportError(err, { where: "job.ops-sweep.heartbeat", level: "warning" });
   }
 }
 
@@ -228,8 +231,11 @@ export async function runOpsSweep(options: {
     for (const c of plan.open) {
       try {
         await deliver({ kind: "open", condition: c });
-      } catch {
-        // Left un-persisted on purpose: it opens again next sweep.
+      } catch (err) {
+        // Left un-persisted on purpose: it opens again next sweep. Reported, because a
+        // delivery that fails is the alerting path itself failing — the one alert Slack
+        // can never carry.
+        reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "open", condition: c.id } });
         result.deliveryFailures += 1;
         continue;
       }
@@ -265,7 +271,8 @@ export async function runOpsSweep(options: {
     for (const c of plan.remind) {
       try {
         await deliver({ kind: "remind", condition: c });
-      } catch {
+      } catch (err) {
+        reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "remind", condition: c.id } });
         result.deliveryFailures += 1;
         continue;
       }
@@ -292,7 +299,8 @@ export async function runOpsSweep(options: {
     for (const row of plan.recover) {
       try {
         await deliver({ kind: "recover", condition: conditionFromRow(row) });
-      } catch {
+      } catch (err) {
+        reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "recover", condition: row.id } });
         result.deliveryFailures += 1;
         continue;
       }

@@ -6,6 +6,7 @@ import { completeJson, getAiConfig } from "@/lib/ai";
 import { formatHowMetSummary, metContextLabel } from "@/lib/met-context";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { isoDay } from "@/lib/suggested-reminder-utils";
+import { reportUnlessQuiet } from "@/lib/report-error";
 
 /** Never reject a good summary over an overlong standing paragraph — truncate instead. */
 export function clampStanding(s: string) {
@@ -266,7 +267,10 @@ Rules:
     summary = parsed.summary.trim();
     standing = parsed.standing;
     model = config.model;
-  } catch {
+  } catch (err) {
+    // The deterministic summary is a fine fallback, but a brief that silently never uses
+    // the model is a fault worth seeing — unless the cause is the person's own key setup.
+    reportUnlessQuiet(err, { where: "job.contact-brief", userId, extra: { contactId } });
     summary = buildDeterministicSummary({
       fullName: contact.fullName,
       preferredName: contact.preferredName,
@@ -326,7 +330,10 @@ Rules:
       },
     });
 
-  await rebuildContactEmbedding(userId, contactId).catch(() => null);
+  await rebuildContactEmbedding(userId, contactId).catch((err) => {
+    reportUnlessQuiet(err, { where: "job.contact-brief.embedding", userId, extra: { contactId } });
+    return null;
+  });
 
   return { summary: summary.trim(), standing };
 }

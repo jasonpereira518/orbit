@@ -13,6 +13,7 @@ import { NextResponse, after } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { internalFetch, isInternalRequest } from "@/lib/internal-auth";
 import { runSyncPass } from "@/lib/sync-scheduler";
+import { reportAndContinue, reportError } from "@/lib/report-error";
 
 export const maxDuration = 300;
 
@@ -32,7 +33,9 @@ export async function POST(request: Request) {
     // connections up anyway, because they were left immediately due.
     if (stats.budgetExhausted) {
       after(async () => {
-        await internalFetch("/api/sync/run", { method: "POST" }).catch(() => null);
+        await internalFetch("/api/sync/run", { method: "POST" }).catch(
+          reportAndContinue({ where: "job.sync.continue" }, null)
+        );
       });
     }
 
@@ -54,7 +57,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, ...stats });
   } catch (err) {
+    const ref = reportError(err, { where: "job.sync" });
     await finishCronRun(handle, { status: "failed", error: err });
-    return NextResponse.json({ error: "sync run failed" }, { status: 500 });
+    return NextResponse.json({ error: "sync run failed", ref }, { status: 500 });
   }
 }

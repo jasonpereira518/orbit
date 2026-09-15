@@ -22,6 +22,8 @@ import { lifetimeOffer } from "@/lib/lifetime-offer";
 import type { BillingPeriod } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
 import { setCompedPlan } from "@/lib/user-settings";
+import { reportError } from "@/lib/report-error";
+import { withReference } from "@/lib/errors";
 
 export type CheckoutResult = { url: string } | { error: string };
 
@@ -72,15 +74,19 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
     return { url: session.url };
   } catch (err) {
-    console.error("Stripe checkout session failed:", err);
+    // Reported with the Stripe error code, and the person gets a reference to quote. This
+    // used to return a generic line as a 200, and the real cause lived only in a
+    // console.error on whichever server happened to run it.
+    const kind = stripeErrorKind(err);
+    const ref = reportError(err, { where: "action.billing.checkout", userId, extra: { plan: "lifetime", stripeCode: kind } });
     await recordErrorEvent({
       source: ERROR_SOURCES.stripeCheckout,
-      kind: stripeErrorKind(err),
+      kind,
       userId,
       message: err,
-      context: { plan: "lifetime" },
+      context: { plan: "lifetime", ref },
     });
-    return { error: "Could not start checkout. Please try again." };
+    return { error: withReference("Couldn’t start checkout — try again", ref) };
   }
 }
 
@@ -147,15 +153,19 @@ export async function startProCheckout(
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
     return { url: session.url };
   } catch (err) {
-    console.error("Stripe subscription checkout failed:", err);
+    // Reported with the Stripe error code, and the person gets a reference to quote. This
+    // used to return a generic line as a 200, and the real cause lived only in a
+    // console.error on whichever server happened to run it.
+    const kind = stripeErrorKind(err);
+    const ref = reportError(err, { where: "action.billing.checkout", userId, extra: { plan: "pro", stripeCode: kind } });
     await recordErrorEvent({
       source: ERROR_SOURCES.stripeCheckout,
-      kind: stripeErrorKind(err),
+      kind,
       userId,
       message: err,
-      context: { plan: "pro" },
+      context: { plan: "pro", ref },
     });
-    return { error: "Could not start checkout. Please try again." };
+    return { error: withReference("Couldn’t start checkout — try again", ref) };
   }
 }
 

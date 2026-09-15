@@ -23,6 +23,7 @@ import { contacts } from "@/db/schema";
 import { createEmbeddingsBatch } from "@/lib/ai";
 import { internalFetch } from "@/lib/internal-auth";
 import { buildContactEmbeddingContent, persistEmbeddingVectors } from "@/lib/search";
+import { reportError } from "@/lib/report-error";
 
 /** Contacts claimed per pass. */
 const CLAIM_SIZE = 500;
@@ -50,8 +51,10 @@ export async function kickEmbeddingBackfill(userId: string) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ userId }),
     });
-  } catch {
-    // Best-effort — the cron backstop picks up anything still pending.
+  } catch (err) {
+    // Best-effort — the cron backstop picks up anything still pending. Reported (throttled)
+    // so a kick that always fails — a wrong APP_BASE_URL, a rotated CRON_SECRET — is visible.
+    reportError(err, { where: "job.embedding-backfill.kick", userId, level: "warning" });
   }
 }
 

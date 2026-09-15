@@ -1,8 +1,9 @@
 /**
- * Shown whenever AI features fail because the user has no provider key.
+ * Shown whenever AI features fail because the user has NO provider key.
  *
- * Must keep matching `isMissingAiApiKeyError` (`/api key/i`): several call sites run
- * that test on text a server action handed back, and that text can be this constant.
+ * `isMissingAiApiKeyError` recognises this exact string (call sites run it on text a
+ * server action handed back) alongside Orbit's own "No … API key configured" errors — and
+ * nothing a provider says. A key that exists and was refused is `AI_KEY_REJECTED_MESSAGE`.
  */
 export const MISSING_AI_API_KEY_MESSAGE =
   "Add your AI API key in Settings to use this";
@@ -32,9 +33,46 @@ export function aiProviderLabel(
       : "Anthropic";
 }
 
+/** Orbit's own no-key errors, thrown from `lib/ai.ts` before any provider is called. */
+const MISSING_KEY_PATTERNS = [
+  /\bno (?:(?:google )?gemini |openai |anthropic )?api key configured\b/i,
+  /\bneeds an? (?:openai|gemini|wispr)\b[^.]*\bapi key\b/i,
+];
+
+/**
+ * Whether `message` means "this account has no AI key". It used to be `/api key/i`, which
+ * also matched every provider that REFUSED a key — and Stripe's "Invalid API Key provided",
+ * Apollo's and Resend's — so a checkout failure could tell a buyer to add an AI key.
+ */
 export function isMissingAiApiKeyError(message: string | null | undefined) {
   if (!message) return false;
-  return /api key/i.test(message);
+  const text = message.trim();
+  return (
+    text === MISSING_AI_API_KEY_MESSAGE || MISSING_KEY_PATTERNS.some((re) => re.test(text))
+  );
+}
+
+/**
+ * A key IS saved and the AI provider refused it. Distinct from the missing-key message on
+ * purpose: "add your key" sends someone who already has one to the wrong fix. Keeps the
+ * words "API key" so `classifyAiError` still files it as `auth`.
+ */
+export const AI_KEY_REJECTED_MESSAGE =
+  "Your AI provider didn’t accept your API key — check it in Settings";
+
+/**
+ * Raw bodies from Gemini ("API key not valid", `API_KEY_INVALID`), OpenAI ("Incorrect API
+ * key provided") and Anthropic ("invalid x-api-key", `authentication_error`). Deliberately
+ * NOT the generic "invalid api key": that is Stripe's wording, and Apollo's, and a payment
+ * or enrichment key is not the AI key.
+ */
+const PROVIDER_KEY_REJECTED =
+  /api key not valid|api_key_invalid|incorrect api key|invalid x-api-key|authentication_error/i;
+
+/** A refused AI key: a raw provider body, or Orbit's own rewrite of one. */
+export function isAiKeyRejectedError(message: string | null | undefined) {
+  if (!message) return false;
+  return PROVIDER_KEY_REJECTED.test(message) || /didn’t accept your api key/i.test(message);
 }
 
 /** Next.js's production stand-in for a thrown Server Action message. */
@@ -119,6 +157,35 @@ const AI_FAILURE_COPY = {
   other: (p: string) => `${p} couldn’t answer that — try again in a moment`,
 } as const;
 
+/**
+ * The reference appended to a message whose real cause was reported (`reportError`) or
+ * digested (a Server Action throw in production). A person can quote it; the same string
+ * is the Sentry event id prefix or the Next.js digest in the server logs.
+ */
+export function withReference(message: string, ref: string | null | undefined): string {
+  const clean = ref?.trim();
+  return clean ? `${message} (ref ${clean})` : message;
+}
+
+/**
+ * Copy for a failure the person can fix themselves and Orbit cannot: no AI key, a
+ * provider that refused their key, a provider rate limit, no connection. Reporting these
+ * to Sentry would bury real faults under user configuration, so `reportedFailure` passes
+ * them through quietly. Everything else that reaches a fallback is unexpected.
+ */
+export function isQuietFailureMessage(message: string): boolean {
+  if (
+    message === MISSING_AI_API_KEY_MESSAGE ||
+    message === AI_KEY_REJECTED_MESSAGE ||
+    message === OFFLINE_MESSAGE
+  ) {
+    return true;
+  }
+  return AI_PROVIDER_LABELS.some(
+    (label) => message === AI_FAILURE_COPY.auth(label) || message === AI_FAILURE_COPY.rate_limit(label)
+  );
+}
+
 export function aiProviderErrorMessage(err: unknown, provider: string): string {
   const base = toUserFacingError(err, `${provider} request failed`).message;
 
@@ -147,6 +214,7 @@ export function aiProviderErrorMessage(err: unknown, provider: string): string {
  */
 const OWN_WORDS = new Set<string>([
   MISSING_AI_API_KEY_MESSAGE,
+  AI_KEY_REJECTED_MESSAGE,
   OFFLINE_MESSAGE,
   TIMEOUT_MESSAGE,
   AI_INCOMPLETE_MESSAGE,
@@ -171,7 +239,7 @@ export class UserFacingError extends Error {
   }
 }
 
-function isUserFacingError(err: unknown): err is Error {
+export function isUserFacingError(err: unknown): err is Error {
   // `name` as well as `instanceof`: a second module instance (a test runner, a
   // separately bundled chunk) would otherwise fail the prototype check.
   return err instanceof UserFacingError || (err instanceof Error && err.name === "UserFacingError");
@@ -231,11 +299,17 @@ export function friendlyError(err: unknown, fallback: string): string {
   // filter rather than trusting it.
   if (raw && isNextDigest(raw)) {
     const cause = (err as { cause?: unknown } | null)?.cause;
-    return cause ? friendlyError(cause, fallback) : fallback;
+    if (cause) return friendlyError(cause, fallback);
+    // The digest is the one handle on the real error: Next logs it beside the stack, and
+    // `reportRequestError` tags the Sentry event with it. Showing it lets a person quote
+    // something support can find, instead of a generic line that leads nowhere.
+    const digest = (err as { digest?: unknown } | null)?.digest;
+    return typeof digest === "string" ? withReference(fallback, digest) : fallback;
   }
 
   if (raw && OWN_WORDS.has(raw)) return raw;
   if (raw && isMissingAiApiKeyError(raw)) return MISSING_AI_API_KEY_MESSAGE;
+  if (raw && PROVIDER_KEY_REJECTED.test(raw)) return AI_KEY_REJECTED_MESSAGE;
 
   // Only a TypeError counts: that is what fetch throws for a network failure, and a
   // server message that happens to say "Load failed" must not be mistaken for one.

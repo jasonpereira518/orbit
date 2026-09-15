@@ -27,6 +27,7 @@ import {
   type PublicRecruiter,
 } from "@/lib/recruiters";
 import { asActionResult, UserFacingError } from "@/lib/errors";
+import { reportError } from "@/lib/report-error";
 
 function revalidateRecruiterPaths(id?: string) {
   revalidatePath("/recruiters");
@@ -112,7 +113,7 @@ export async function setRecruiterSharing(enabled: boolean) {
       await resweepUserRatings(userId);
       revalidatePath("/recruiters");
     } catch (err) {
-      console.error("[recruiters] rating resweep failed", err);
+      reportError(err, { where: "action.recruiters.rating-resweep", userId, level: "warning" });
     }
   });
 

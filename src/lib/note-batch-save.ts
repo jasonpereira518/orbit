@@ -30,6 +30,7 @@ import {
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
+import { reportAndContinue } from "@/lib/report-error";
 
 export type NoteBatchParticipantInput = {
   notes: string;
@@ -398,7 +399,11 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     }
   } catch (err) {
     // Persist what was written so the results page and undo can still see it.
-    await db.update(noteBatches).set({ result }).where(eq(noteBatches.id, batchId)).catch(() => null);
+    await db
+      .update(noteBatches)
+      .set({ result })
+      .where(eq(noteBatches.id, batchId))
+      .catch(reportAndContinue({ where: "job.note-batch.persist-partial", userId, extra: { batchId } }, null));
     throw err;
   }
 

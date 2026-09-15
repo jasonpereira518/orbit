@@ -15,6 +15,7 @@ import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } fro
 import { isPaywallError } from "@/lib/entitlements";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -142,10 +143,19 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "";
-    const friendly = isMissingAiApiKeyError(message)
-      ? MISSING_AI_API_KEY_MESSAGE
-      : friendlyError(err, "Couldn’t read that file — try again?");
-    await failCaptureJob(job.id, friendly).catch(() => {});
-    return NextResponse.json({ error: friendly, jobId: job.id }, { status: isMissingAiApiKeyError(message) ? 422 : 502 });
+    const failure = isMissingAiApiKeyError(message)
+      ? { error: MISSING_AI_API_KEY_MESSAGE, ref: null }
+      : reportedFailure(err, "Couldn’t read that file — try again?", {
+          where: "route.capture-jobs.ingest",
+          userId,
+          extra: { jobId: job.id, sourceKind },
+        });
+    await failCaptureJob(job.id, failure.error).catch(
+      reportAndContinue({ where: "route.capture-jobs.fail-job", userId, extra: { jobId: job.id } }, undefined)
+    );
+    return NextResponse.json(
+      { error: failure.error, jobId: job.id, ref: failure.ref },
+      { status: isMissingAiApiKeyError(message) ? 422 : 502 }
+    );
   }
 }

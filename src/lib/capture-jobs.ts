@@ -23,6 +23,7 @@ import {
   type CaptureReminderChoices,
   type CaptureJobSource,
 } from "@/lib/capture/types";
+import { reportError } from "@/lib/report-error";
 
 export type CaptureJobRow = typeof captureJobs.$inferSelect;
 
@@ -441,8 +442,9 @@ export async function resumeStalledCaptureJobs(options: {
     try {
       await options.runner(job.id);
       result.resumed += 1;
-    } catch {
+    } catch (err) {
       result.resumeFailed += 1;
+      reportError(err, { where: "job.capture.resume-stalled", extra: { jobId: job.id } });
     }
   }
 

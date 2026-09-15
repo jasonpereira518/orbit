@@ -11,6 +11,7 @@ import { isPaywallError } from "@/lib/entitlements";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { reportedFailure } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -84,10 +85,8 @@ export async function POST(request: Request) {
       });
     }
   } catch (err) {
-    return NextResponse.json(
-      { error: friendlyError(err, TOAST_COPY.chatFailed) },
-      { status: 400 }
-    );
+    const failure = reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.prepare", userId });
+    return NextResponse.json({ error: failure.error, ref: failure.ref }, { status: 400 });
   }
 
   const encoder = new TextEncoder();
@@ -135,7 +134,9 @@ export async function POST(request: Request) {
           })),
         });
       } catch (err) {
-        send({ type: "error", message: friendlyError(err, TOAST_COPY.chatFailed) });
+        // The status line is already sent, so this reaches the client as an event. Report it:
+        // a mid-stream failure used to leave no trace outside the person's screen.
+        send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });
       } finally {
         controller.close();
       }
