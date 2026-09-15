@@ -37,11 +37,14 @@ import {
 import { ensureLocalDemoData } from "../src/lib/demo-data/ensure";
 import { DEMO_PEOPLE } from "../src/lib/demo-data/network";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { unlockedRecruiterIds } from "../src/lib/recruiters";
 import { needsOnboarding } from "../src/lib/onboarding";
 
 const FRESH = "smoke-demo-fresh";
 const REMOTE_USER = "smoke-demo-remote";
 const EXISTING = "smoke-demo-existing";
+/** A second local account, seeded later onto the recruiter rows FRESH created. */
+const SECOND = "smoke-demo-second";
 const DEMO_RECRUITER_EMAILS = ["alex@riveratalent.example", "morgan.blake@insightglobal.example", "marcus.lee@example.com"];
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -69,7 +72,7 @@ const contactCount = (userId: string) => rowsFor(contacts, contacts.userId, user
  */
 async function cleanup() {
   const db = await getDb();
-  const users = [FRESH, REMOTE_USER, EXISTING];
+  const users = [FRESH, REMOTE_USER, EXISTING, SECOND];
   for (const table of [
     suggestedReminders, reminders, reminderLists, outreachCampaigns, events, chatThreads,
     recruiterMessages, userRecruiterLinks, imports, userGoals, contacts, companies, tags,
@@ -86,7 +89,7 @@ async function main() {
   const priorFlag = env.ORBIT_DEMO_DATA;
   delete env.ORBIT_DEMO_DATA;
   const db = await getDb();
-  for (const u of [FRESH, REMOTE_USER, EXISTING]) await ensureUserSettings(u);
+  for (const u of [FRESH, REMOTE_USER, EXISTING, SECOND]) await ensureUserSettings(u);
 
   try {
     console.log("\noff localhost");
@@ -150,6 +153,20 @@ async function main() {
     const settings = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, FRESH) });
     check("onboarding is complete", Boolean(settings?.onboardingCompletedAt));
     check("the onboarding gate lets them through", !(await needsOnboarding(FRESH)));
+
+    console.log("\nrecruiter contact details, first and later accounts");
+    // Contact details unlock only for a row's creator (`isCreatorLink`). The seed reuses the
+    // global recruiter rows, so a later account's links must still count as the creator's —
+    // otherwise every demo recruiter reads "Contact locked" and has no email to draft to.
+    const demoRows = await db.select().from(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
+    check("the seed made the three demo recruiters", demoRows.length === 3, String(demoRows.length));
+    check("the first account sees their details", (await unlockedRecruiterIds(FRESH, demoRows)).size === 3);
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    await db.update(recruiters).set({ createdAt: dayAgo }).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
+    await ensureLocalDemoData(SECOND);
+    const reused = await db.select().from(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
+    check("a later account reuses the rows rather than duplicating them", reused.length === 3, String(reused.length));
+    check("…and still sees their details", (await unlockedRecruiterIds(SECOND, reused)).size === 3);
   } finally {
     setNodeEnv(priorNodeEnv);
     await cleanup();

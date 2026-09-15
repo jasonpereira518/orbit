@@ -25,6 +25,7 @@ import {
   type RecruiterDraft,
   type SendDraftsResult,
 } from "@/lib/recruiter-message-types";
+import { unlockedRecruiterIds } from "@/lib/recruiters";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { actionFailure } from "@/lib/action-failure";
 
@@ -33,14 +34,16 @@ const SEND_SPACING_MS = 1200;
 
 function toDraft(
   row: RecruiterMessage,
-  recruiter: { fullName: string; firm: string | null; email: string | null }
+  recruiter: { fullName: string; firm: string | null; email: string | null },
+  /** From `unlockedRecruiterIds`: a draft never reveals an address its sender cannot see. */
+  emailVisible: boolean
 ): RecruiterDraft {
   return {
     id: row.id,
     recruiterId: row.recruiterId,
     recruiterName: recruiter.fullName,
     recruiterFirm: recruiter.firm,
-    recruiterEmail: recruiter.email,
+    recruiterEmail: emailVisible ? recruiter.email : null,
     intent: row.intent as RecruiterIntent,
     subject: row.subject,
     body: row.body,
@@ -138,6 +141,7 @@ export async function generateRecruiterDrafts(
       }))
     );
 
+    const unlocked = await unlockedRecruiterIds(userId, links.map((l) => l.recruiter));
     const created: RecruiterDraft[] = [];
     for (let i = 0; i < links.length; i += 1) {
       const draft = drafts[i];
@@ -154,7 +158,7 @@ export async function generateRecruiterDrafts(
           gmailThreadId: links[i].gmailThreadId,
         })
         .returning();
-      created.push(toDraft(row, links[i].recruiter));
+      created.push(toDraft(row, links[i].recruiter, unlocked.has(links[i].recruiterId)));
     }
 
     if (created.length === 0) {
@@ -180,7 +184,8 @@ export async function listRecruiterDrafts(): Promise<RecruiterDraft[]> {
       )
     )
     .orderBy(asc(recruiterMessages.createdAt));
-  return rows.map((r) => toDraft(r.message, r.recruiter));
+  const unlocked = await unlockedRecruiterIds(userId, rows.map((r) => r.recruiter));
+  return rows.map((r) => toDraft(r.message, r.recruiter, unlocked.has(r.recruiter.id)));
 }
 
 export async function updateRecruiterDraft(
@@ -276,12 +281,14 @@ export async function sendRecruiterDrafts(
         )
       )
       .orderBy(asc(recruiterMessages.createdAt));
+    // The shared row's email is only ever an address this user may read.
+    const unlocked = await unlockedRecruiterIds(userId, rows.map((r) => r.recruiter));
 
     const failed: SendDraftsResult["failed"] = [];
     let sent = 0;
 
     for (const [index, row] of rows.entries()) {
-      const to = row.recruiter.email;
+      const to = unlocked.has(row.recruiter.id) ? row.recruiter.email : null;
       if (!to) {
         failed.push({
           id: row.message.id,

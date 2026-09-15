@@ -14,7 +14,9 @@ import { run } from "./smoke/_env";
 
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { recruiters, userRecruiterLinks, userSettings } from "../src/db/schema";
+import { gmailConnections, recruiterMessages, recruiters, userRecruiterLinks, userSettings } from "../src/db/schema";
+import { ensureUserSettings } from "../src/lib/user-settings";
+import { listRecruiterDrafts, sendRecruiterDrafts } from "../src/actions/recruiter-messages";
 import {
   ensureUserLink,
   isCreatorLink,
@@ -25,6 +27,7 @@ import {
 
 const A = "smoke-pii-a";
 const B = "smoke-pii-b";
+const VIEWER = "demo-user";
 const FIRM = "ZZSmokePii";
 const NAME = `${FIRM} Recruiter`;
 const A_EMAIL = "alex@zzsmokepii.test";
@@ -40,9 +43,11 @@ function check(label: string, ok: boolean, detail?: string) {
 
 async function cleanup() {
   const db = await getDb();
-  await db.delete(userRecruiterLinks).where(inArray(userRecruiterLinks.userId, [A, B]));
+  await db.delete(recruiterMessages).where(eq(recruiterMessages.userId, VIEWER));
+  await db.delete(gmailConnections).where(eq(gmailConnections.userId, VIEWER));
+  await db.delete(userRecruiterLinks).where(inArray(userRecruiterLinks.userId, [A, B, VIEWER]));
   await db.delete(recruiters).where(eq(recruiters.firm, FIRM));
-  await db.delete(userSettings).where(inArray(userSettings.userId, [A, B]));
+  await db.delete(userSettings).where(inArray(userSettings.userId, [A, B, VIEWER]));
 }
 
 async function setSharing(userId: string, on: boolean) {
@@ -114,6 +119,42 @@ run(async () => {
   check("three minutes later does not", !isCreatorLink({ createdAt: t }, { createdAt: new Date(t.getTime() + 180_000) }));
   check("a link older than the row does not", !isCreatorLink({ createdAt: t }, { createdAt: new Date(t.getTime() - 1000) }));
   check("no link does not", !isCreatorLink({ createdAt: t }, null));
+
+  console.log("\nDrafts and sends honour the same rule (as demo mode's demo-user)");
+  delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  delete process.env.CLERK_SECRET_KEY;
+  process.env.ORBIT_DEMO_DATA = "off";
+  (process.env as Record<string, string>).NODE_ENV = "development";
+  await setSharing(A, false);
+  await ensureUserSettings(VIEWER);
+  await ensureUserLink({ userId: VIEWER, recruiterId: created.id });
+  const [draft] = await db
+    .insert(recruiterMessages)
+    .values({
+      userId: VIEWER,
+      recruiterId: created.id,
+      intent: "set_up_chat",
+      subject: "Coffee next week?",
+      body: "Hi — would you have twenty minutes next week?",
+      status: "draft",
+    })
+    .returning();
+  // A connection row so the send gets past "Connect Gmail first". Its token is junk: a send
+  // that got as far as Gmail would fail and mark the draft "failed".
+  await db.insert(gmailConnections).values({
+    userId: VIEWER,
+    emailAddress: "demo@orbit.local",
+    accessTokenEncrypted: "not-a-real-token",
+    status: "active",
+  });
+
+  const listed = (await listRecruiterDrafts()).find((d) => d.id === draft.id);
+  check("the draft list hides A's email from the viewer", listed?.recruiterEmail === null, JSON.stringify(listed));
+  await sendRecruiterDrafts([draft.id]).catch((err: unknown) => {
+    if (!(err instanceof Error && err.message.includes("static generation store"))) throw err;
+  });
+  const afterSend = await db.query.recruiterMessages.findFirst({ where: eq(recruiterMessages.id, draft.id) });
+  check("sending to a locked recruiter attempts nothing — the draft stays a draft", afterSend?.status === "draft", String(afterSend?.status));
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
