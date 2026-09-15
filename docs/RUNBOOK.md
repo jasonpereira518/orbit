@@ -22,7 +22,18 @@ variable or a failing DDL statement fails the build and the previous deployment 
 ## Roll back
 
 Vercel → Deployments → the last good one → **Promote to Production**. Schema changes are
-additive and idempotent, so old code runs fine on a newer schema. Then fix forward.
+additive and idempotent, so old code runs fine on a newer schema. What happens next:
+
+- `/api/health` answers **200 with `status: "degraded"`** and `schema.ahead: true` (the
+  database was migrated by the newer build). The uptime monitor stays green and the `ops`
+  workflow keeps running the sweep, the stalled-import job, the webhook drain and sync.
+- The older code sees a recorded version at or above its own, so it does **not** re-run its
+  schema sweep, and it never writes its lower number back.
+- Nothing is undone: columns the newer build added stay, and old code ignores them.
+
+Then fix forward. The next deploy from `main` carries a version at or above the recorded
+one and health returns to `ok`. A **503 `schema_mismatch`** still means the database is
+BEHIND the code — a build whose migration did not run — and is worth waking up for.
 
 ## The nightly job or the sweep stopped
 

@@ -49,6 +49,18 @@ async function main() {
   const behind = await checkHealth({ deep: false, probeDb: async () => ({ recorded: SCHEMA_VERSION - 1 }) });
   check("a schema behind the code → 503 with schema_mismatch", behind.status === "down" && behind.db.reason === "schema_mismatch", JSON.stringify(behind));
 
+  const unrecorded = await checkHealth({ deep: false, probeDb: async () => ({ recorded: null }) });
+  check("no recorded version → 503 with schema_mismatch", unrecorded.httpStatus === 503 && unrecorded.db.reason === "schema_mismatch", JSON.stringify(unrecorded));
+
+  // A rollback: a newer deployment migrated the database, older code is serving. The monitor
+  // and the ops scheduler both key on HTTP 200, so this must not read as "down".
+  const ahead = await checkHealth({ deep: false, probeDb: async () => ({ recorded: SCHEMA_VERSION + 1 }) });
+  check("a schema AHEAD of the code (a rollback) → HTTP 200, status degraded",
+    ahead.httpStatus === 200 && ahead.status === "degraded" && ahead.db.reason === null && ahead.schema.ahead === true, JSON.stringify(ahead));
+  const aheadDeep = await checkHealth({ deep: true, probeDb: async () => ({ recorded: SCHEMA_VERSION + 1 }) });
+  check("…and the deep view stays degraded, not ok", aheadDeep.httpStatus === 200 && aheadDeep.status === "degraded");
+  check("a current schema is not marked ahead", shallow.schema.ahead === false);
+
   console.log("\nDeep probe...");
   const deep = await checkHealth({ deep: true });
   check("deep view includes cron, webhooks, config and alerts sections",

@@ -1755,11 +1755,14 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
 }
 
 /**
- * Whether the recorded schema version already matches this build.
+ * Whether the recorded schema version already covers this build.
  *
- * One SELECT standing in for the whole DDL sweep. Anything unexpected (no table yet, a
- * fresh database, a permissions problem) answers "no" and the caller does the full pass —
- * being wrong here costs a slow boot, never a wrong schema.
+ * One SELECT standing in for the whole DDL sweep. AT OR ABOVE counts as current: above is a
+ * rollback — a newer deployment migrated the database and this older one is serving — and
+ * re-running the older sweep inside a user request would only cost time and then (before
+ * `recordSchemaVersion` learned GREATEST) write the lower number back. Anything unexpected
+ * (no table yet, a fresh database, a permissions problem) answers "no" and the caller does
+ * the full pass — being wrong here costs a slow boot, never a wrong schema.
  */
 export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
   try {
@@ -1775,7 +1778,7 @@ export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
       `SELECT version FROM schema_migrations WHERE id = 1`
     );
     const rows = rowsOf<{ version: number | string }>(result);
-    return Number(rows[0]?.version) === SCHEMA_VERSION;
+    return Number(rows[0]?.version) >= SCHEMA_VERSION;
   } catch {
     return false;
   }
@@ -1806,11 +1809,17 @@ async function detectExtensions(run: StatementRunner) {
 
 export async function recordSchemaVersion(run: StatementRunner) {
   try {
+    // GREATEST: an older deployment (a rollback) must never lower the recorded version, or
+    // the next boot of the newer code would re-sweep and health would flap.
     await run(
       `INSERT INTO schema_migrations (id, version, applied_at)
        VALUES (1, ${SCHEMA_VERSION}, now())
        ON CONFLICT (id) DO UPDATE
-         SET version = EXCLUDED.version, applied_at = EXCLUDED.applied_at`
+         SET version = GREATEST(schema_migrations.version, EXCLUDED.version),
+             applied_at = CASE
+               WHEN EXCLUDED.version > schema_migrations.version THEN EXCLUDED.applied_at
+               ELSE schema_migrations.applied_at
+             END`
     );
   } catch (err) {
     // A boot that cannot record its version just re-runs the idempotent sweep next time.
@@ -2929,7 +2938,7 @@ export type SchemaReconcileResult = {
  * The whole sweep is idempotent, but "idempotent" is not "free": on `neon-http` every
  * statement is a separate HTTPS request, so replaying ~165 of them is the single largest
  * cost in a cold start. Confirm the recorded version first and skip the lot when it
- * already matches. A version mismatch — or any error reading it — takes the full pass.
+ * already matches. A version behind this build — or any error reading it — takes the full pass; a version ahead of it (a rollback) is left alone.
  *
  * The version is recorded ONLY when nothing failed. A sweep that logged a failure and
  * recorded the version anyway is how an index went missing from production for a month
