@@ -79,6 +79,11 @@ the delivery detail when it happened.
 Daily encrypted dumps: GitHub → Actions → `backup` → artifacts (90 days). Take a fresh one
 first with **Run workflow** if the database is still readable.
 
+You need `age` and a `pg_restore` at least as new as the `pg_dump` that wrote the file
+(`PG_MAJOR` in `backup.yml`, 18 today — an older one stops with "unsupported version in file
+header"). On a Mac: `brew install age postgresql@18`, then use
+`$(brew --prefix postgresql@18)/bin/pg_restore`.
+
 ```bash
 age -d -i backup-key.txt orbit-YYYY-MM-DD.pgc.age > orbit.pgc
 # into a NEW Neon branch, never straight onto main:
@@ -87,6 +92,30 @@ pg_restore --clean --if-exists --no-owner --no-privileges -d "$BRANCH_URL" orbit
 
 Check `select count(*) from contacts;`, point a preview at the branch, then promote the
 branch in Neon (or set `DATABASE_URL` to it) once it looks right.
+
+When Neon upgrades the project's Postgres major, raise `PG_MAJOR` in `backup.yml` the same
+day: pg_dump refuses a server newer than itself, and the backup fails (and pages) until then.
+
+### Restore drill log
+
+A backup you have never restored is a hope. Run the restore above into a throwaway Neon
+branch after any change to `backup.yml` and at least once a quarter, then delete the branch.
+Check the same three counts against production each time:
+
+```sql
+SELECT (SELECT count(*) FROM contacts)      AS contacts,
+       (SELECT count(*) FROM interactions)  AS interactions,
+       (SELECT count(*) FROM user_settings) AS accounts;
+```
+
+| Date | Artifact | Download → restore finished | Row counts (contacts / interactions / accounts), restored vs prod | Who | Notes |
+|---|---|---|---|---|---|
+| _not yet run_ | | | | | |
+
+The workflow's own steps were exercised on Sep 15 2026 in an `ubuntu:24.04` container
+against a disposable Postgres 18 (guard, pinned install, pipefail, dump → encrypt → decrypt →
+restore of 250 rows, Slack page). That is not a drill: it never touched production or GitHub's
+runner. The first real drill needs the secrets set.
 
 ## Neon one-time settings
 

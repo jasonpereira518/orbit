@@ -37,6 +37,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-storage": "pure",
   "smoke-avatar-tiers": "pure",
   "smoke-backdrop-filter": "pure",
+  "smoke-backup-workflow": "pure",
   "smoke-capture-body-limits": "pure",
   "smoke-capture-planets": "pure",
   "smoke-capture-review-reducer": "pure",
