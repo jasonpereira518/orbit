@@ -43,6 +43,13 @@ import {
  *
  * Stripe event ids always begin `evt_`, so these namespaces cannot collide with each other
  * or with any row already written.
+ *
+ * ONE EXCEPTION AT THE EVENT LEVEL, NONE AT THE ROW LEVEL. A full refund or a lost dispute
+ * that ends a SUBSCRIPTION books its cash rows (keyed by the refund / dispute object) and
+ * one churn row (keyed by the event). Each row still carries exactly one of the two
+ * columns, which is the property every sum relies on. A later
+ * `customer.subscription.deleted` reads a zero "before" from the already-canceled mirror,
+ * so it books nothing and the churn is never counted twice.
  */
 
 /** How often a subscription bills. Display only; the money is carried by cents. */
@@ -65,6 +72,16 @@ export type Booking = {
   detail: Record<string, unknown>;
 };
 
+/**
+ * What a refunded or disputed charge originally paid for. Resolved by the DRIVER
+ * (`src/lib/stripe-charge-purpose.ts`), because it needs the ledger and the Stripe API and
+ * this module may touch neither. "unknown" revokes nothing.
+ */
+export type ChargePurpose = "lifetime" | "subscription" | "unknown";
+
+/** Why access was withdrawn. Carried on the mirror and the churn row. */
+export type RevocationReason = "refund" | "dispute_lost";
+
 export type MirrorInstruction =
   | {
       type: "subscription";
@@ -77,6 +94,13 @@ export type MirrorInstruction =
       stripeCustomerId: string | null;
     }
   | { type: "lifetime"; userId: string; stripeCustomerId: string | null }
+  /** A full refund or lost dispute of the Lifetime charge: clear `lifetime_purchased_at`. */
+  | { type: "lifetime_revoked"; userId: string; reason: RevocationReason }
+  /**
+   * A full refund or lost dispute of a subscription charge: status `canceled`, paid through
+   * `periodEnd` (epoch seconds, = now), so `resolvePlan` drops to free immediately.
+   */
+  | { type: "subscription_revoked"; userId: string; periodEnd: number; reason: RevocationReason }
   | null;
 
 export type StripeDecision = {
@@ -96,6 +120,12 @@ export type DecideContext = {
   /** Whether this account has ever produced revenue — the reactivation gate. */
   hadPriorRevenue: boolean;
   now: Date;
+  /**
+   * What the charge behind a full refund or a lost dispute paid for. Only read for
+   * `charge.refunded` and `charge.dispute.closed`. Absent means "unknown" — which is what
+   * the billing backfill passes, so a replay of history never revokes anything.
+   */
+  chargePurpose?: ChargePurpose;
 };
 
 /** Reasons this module can give for ignoring an event, added to `WEBHOOK_REASONS`. */
@@ -117,6 +147,49 @@ export function customerIdOf(obj: {
   const customer = obj.customer;
   if (!customer) return null;
   return typeof customer === "string" ? customer : customer.id;
+}
+
+/** `payment_intent` arrives as an id, an expanded object, or null. */
+export function paymentIntentIdOf(obj: {
+  payment_intent?: string | { id: string } | null;
+}): string | null {
+  const intent = obj.payment_intent;
+  if (!intent) return null;
+  return typeof intent === "string" ? intent : intent.id;
+}
+
+/**
+ * Whether a charge has been refunded in full. `refunded` is Stripe's own flag; the amount
+ * comparison covers a payload that omits it. A charge that captured nothing is never
+ * "fully refunded" — there was nothing to give back.
+ */
+export function isFullRefund(charge: {
+  refunded?: boolean | null;
+  amount_refunded?: number | null;
+  amount_captured?: number | null;
+}): boolean {
+  if (charge.refunded === true) return true;
+  const captured = charge.amount_captured ?? 0;
+  return captured > 0 && (charge.amount_refunded ?? 0) >= captured;
+}
+
+/**
+ * The payment intent whose purpose the driver must resolve before deciding this event, or
+ * null when the event cannot revoke anything (a partial refund, a won dispute, any other
+ * type). Lets the driver skip the lookup on every common path.
+ */
+export function revocationPaymentIntent(
+  event: Pick<Stripe.Event, "type" | "data">
+): string | null {
+  if (event.type === "charge.refunded") {
+    const charge = event.data.object as Stripe.Charge;
+    return isFullRefund(charge) ? paymentIntentIdOf(charge) : null;
+  }
+  if (event.type === "charge.dispute.closed") {
+    const dispute = event.data.object as Stripe.Dispute;
+    return dispute.status === "lost" ? paymentIntentIdOf(dispute) : null;
+  }
+  return null;
 }
 
 /**
@@ -298,6 +371,57 @@ function ignored(
 const secondsToDate = (seconds: number | null | undefined, fallback: Date): Date =>
   typeof seconds === "number" ? new Date(seconds * 1000) : fallback;
 
+type Revocation = { mirror: MirrorInstruction; bookings: Booking[] };
+
+const NO_REVOCATION: Revocation = { mirror: null, bookings: [] };
+
+/**
+ * What withdrawing access means for a charge whose purpose the driver resolved. Books no
+ * cash — the caller already books that on the refund / dispute object.
+ */
+function revocationFor(
+  reason: RevocationReason,
+  event: Pick<Stripe.Event, "id">,
+  ctx: DecideContext,
+  userId: string,
+  eventAt: Date,
+  detail: Record<string, unknown>
+): Revocation {
+  if (ctx.chargePurpose === "lifetime") {
+    // No MRR row: Lifetime never contributed recurring revenue.
+    return { mirror: { type: "lifetime_revoked", userId, reason }, bookings: [] };
+  }
+  if (ctx.chargePurpose === "subscription") {
+    const movement = classifyMovement(ctx.beforeCents, 0, {
+      hadPriorRevenue: ctx.hadPriorRevenue,
+    });
+    return {
+      mirror: {
+        type: "subscription_revoked",
+        userId,
+        reason,
+        periodEnd: Math.floor(ctx.now.getTime() / 1000),
+      },
+      // Keyed by the EVENT and carrying only MRR; the cash rows beside it are keyed by
+      // their own objects and carry only cash.
+      bookings: movement
+        ? [
+            {
+              eventId: event.id,
+              kind: "churn",
+              userId,
+              amountCents: 0,
+              mrrDeltaCents: movement.deltaCents,
+              effectiveAt: eventAt,
+              detail: { ...detail, revoked: reason, beforeCents: ctx.beforeCents, afterCents: 0 },
+            },
+          ]
+        : [],
+    };
+  }
+  return NO_REVOCATION;
+}
+
 export function decideStripeEvent(
   event: Pick<Stripe.Event, "id" | "type" | "created" | "data">,
   ctx: DecideContext
@@ -341,6 +465,9 @@ export function decideStripeEvent(
                 checkoutSessionId: session.id,
                 customerId,
                 currency: session.currency ?? null,
+                // How a later refund or dispute is tied back to THIS purchase: charges carry
+                // a payment intent, never a session id. See `src/lib/stripe-charge-purpose.ts`.
+                paymentIntentId: paymentIntentIdOf(session),
               },
             },
           ],
@@ -621,16 +748,24 @@ export function decideStripeEvent(
           },
         }));
 
-      if (bookings.length === 0) {
+      const revoke = isFullRefund(charge)
+        ? revocationFor("refund", event, ctx, userId, eventAt, {
+            chargeId: charge.id,
+            paymentIntentId: paymentIntentIdOf(charge),
+          })
+        : NO_REVOCATION;
+
+      if (bookings.length === 0 && !revoke.mirror) {
         // A charge whose refunds were not expanded. Falling back to `amount_refunded`
         // keyed on the charge would double-count the moment a second partial arrives, so
-        // record nothing and say why rather than book a number that can grow wrong.
+        // record nothing and say why rather than book a number that can grow wrong. A full
+        // refund still revokes above — that needs no amount.
         return ignored(STRIPE_IGNORE_REASONS.zeroAmount, userId, resourceId);
       }
 
       return {
-        mirror: null,
-        bookings,
+        mirror: revoke.mirror,
+        bookings: [...bookings, ...revoke.bookings],
         outcome: "handled",
         targetUserId: userId,
         resourceId,
@@ -677,8 +812,12 @@ export function decideStripeEvent(
       if (dispute.status !== "lost") {
         return ignored(STRIPE_IGNORE_REASONS.disputeWon, userId, resourceId);
       }
+      const revoke = revocationFor("dispute_lost", event, ctx, userId, eventAt, {
+        disputeId: dispute.id,
+        paymentIntentId: paymentIntentIdOf(dispute),
+      });
       return {
-        mirror: null,
+        mirror: revoke.mirror,
         bookings: [
           {
             eventId: `dp:${dispute.id}`,
@@ -696,6 +835,7 @@ export function decideStripeEvent(
               outcome: "lost",
             },
           },
+          ...revoke.bookings,
         ],
         outcome: "handled",
         targetUserId: userId,
