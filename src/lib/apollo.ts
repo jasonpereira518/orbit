@@ -306,11 +306,21 @@ function mockCompanyName(filters: AudienceFilters, index: number) {
   return `Demo Company ${index}`;
 }
 
+/**
+ * A sample prospect's email domain — ALWAYS under example.com, which is reserved so mail to
+ * it can never be delivered. This used to return the real organisation domain from the
+ * audience filters (capitalone.com), turning every sample into a plausible stranger.
+ */
+/**
+ * A sample prospect's email domain — ALWAYS under example.com, which is reserved so mail to
+ * it can never be delivered. This used to return the real organisation domain from the
+ * audience filters (capitalone.com), turning every sample into a plausible stranger.
+ */
 function mockDomain(filters: AudienceFilters, company: string) {
-  if (filters.organizationDomains?.[0]?.trim()) {
-    return filters.organizationDomains[0].trim().replace(/^www\./, "");
-  }
-  return `${company.toLowerCase().replace(/[^a-z0-9]+/g, "")}.example.com`;
+  const base =
+    filters.organizationDomains?.[0]?.trim().replace(/^www\./, "").split(".")[0] || company;
+  const label = base.toLowerCase().replace(/[^a-z0-9]+/g, "") || "demo";
+  return `${label}.example.com`;
 }
 
 function mockProspects(filters: AudienceFilters, page: number): NormalizedProspect[] {

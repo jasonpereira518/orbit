@@ -31,7 +31,12 @@ import {
   generateOutreachDraft,
   generateOutreachDraftsBatch,
 } from "@/lib/outreach-drafts";
-import { assessOutreachQuality } from "@/lib/outreach-quality";
+import {
+  assessOutreachQuality,
+  DEMO_PROSPECT_SEND_MESSAGE,
+  isDemoProspect,
+  prospectSearchStatus,
+} from "@/lib/outreach-quality";
 import { sendOutreachMessage } from "@/lib/outreach-send";
 import {
   BULK_SEND_LIMIT,
@@ -40,7 +45,7 @@ import {
   type OutreachMessageStatus,
   type SequenceStep,
 } from "@/lib/outreach-types";
-import { UserFacingError } from "@/lib/errors";
+import { asActionResult, UserFacingError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { actionFailure } from "@/lib/action-failure";
 
@@ -368,7 +373,8 @@ export async function searchProspects(campaignId: string, page = 1) {
       prospect.company,
       filters.organizationNames
     );
-    const status = matchesOrg ? "selected" : "excluded";
+    const isDemo = source === "demo" || Boolean(prospect.enrichment?.demo);
+    const status = prospectSearchStatus({ matchesOrg, isDemo });
     if (matchesOrg) matched += 1;
     else mismatched += 1;
 
@@ -386,7 +392,7 @@ export async function searchProspects(campaignId: string, page = 1) {
         location: prospect.location,
         enrichment: {
           ...prospect.enrichment,
-          demo: source === "demo" || Boolean(prospect.enrichment?.demo),
+          demo: isDemo,
           companyMismatch: !matchesOrg,
         },
         status,
@@ -403,7 +409,7 @@ export async function searchProspects(campaignId: string, page = 1) {
           location: prospect.location,
           enrichment: {
             ...prospect.enrichment,
-            demo: source === "demo" || Boolean(prospect.enrichment?.demo),
+            demo: isDemo,
             companyMismatch: !matchesOrg,
           },
           status,
@@ -1035,7 +1041,16 @@ export async function generateDueFollowUps(campaignId: string) {
   return { generated };
 }
 
+/**
+ * Returns the refusal as data: a thrown message is a digest in production, and "this is a
+ * sample prospect" is exactly the sentence the person needs to read.
+ */
 export async function sendOutreachMessageAction(messageId: string) {
+  return asActionResult(() => sendOutreachMessageNow(messageId));
+}
+
+/** The send itself. Throws; `bulkSendOutreach` catches per message. */
+async function sendOutreachMessageNow(messageId: string) {
   const userId = await requireOutreachUser();
   const db = await getDb();
 
@@ -1052,6 +1067,12 @@ export async function sendOutreachMessageAction(messageId: string) {
     throw new Error("Message not found");
   }
 
+  // Before anything else, and outside the try below: a refusal is not a failed send, so
+  // the draft must not be marked "failed".
+  if (isDemoProspect(message.prospect.enrichment)) {
+    throw new UserFacingError(DEMO_PROSPECT_SEND_MESSAGE);
+  }
+
   const quality = assessOutreachQuality([
     {
       messageId: message.id,
@@ -1060,6 +1081,7 @@ export async function sendOutreachMessageAction(messageId: string) {
       channel: message.channel as OutreachChannel,
       subject: message.subject,
       body: message.body,
+      isDemo: false,
     },
   ]);
   if (quality.blocking.length) {
@@ -1154,6 +1176,7 @@ export async function previewBulkSendQuality(input: {
       channel: m.channel as OutreachChannel,
       subject: m.subject,
       body: m.body,
+      isDemo: isDemoProspect(m.prospect.enrichment),
     }))
   );
 }
@@ -1195,7 +1218,7 @@ export async function bulkSendOutreach(input: {
 
   for (const messageId of ids) {
     try {
-      await sendOutreachMessageAction(messageId);
+      await sendOutreachMessageNow(messageId);
       results.push({ messageId, ok: true });
     } catch (err) {
       results.push({
@@ -1234,10 +1257,12 @@ export async function saveProspectAsContact(input: {
   if (!prospect) throw new Error("Prospect not found");
   if (prospect.contactId) return { contactId: prospect.contactId, created: false };
 
-  let email = prospect.email;
-  let phone = prospect.phone;
+  // A sample's email, phone and profile URL were made up: never copy them into the network.
+  const demo = isDemoProspect(prospect.enrichment);
+  let email = demo ? null : prospect.email;
+  let phone = demo ? null : prospect.phone;
 
-  if (!email || !phone) {
+  if (!demo && (!email || !phone)) {
     const enriched = await enrichPerson(userId, prospect.externalId, {
       email: prospect.email ?? undefined,
       linkedinUrl: prospect.linkedinUrl ?? undefined,
@@ -1257,7 +1282,7 @@ export async function saveProspectAsContact(input: {
       location: prospect.location ?? undefined,
       email: email ?? undefined,
       phone: phone ?? undefined,
-      linkedinUrl: prospect.linkedinUrl ?? undefined,
+      linkedinUrl: demo ? undefined : (prospect.linkedinUrl ?? undefined),
       source: "outreach",
       notes: `Added from outreach campaign ${input.campaignId}`,
     },

@@ -11,6 +11,8 @@ import {
 import { decryptOrNull } from "@/lib/crypto";
 import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
 import { getEntitlements } from "@/lib/entitlements";
+import { UserFacingError } from "@/lib/errors";
+import { isPlaceholderAddress, PLACEHOLDER_ADDRESS_SEND_MESSAGE } from "@/lib/outreach-quality";
 
 export async function getOutreachSendConfig(userId: string) {
   const db = await getDb();
@@ -90,6 +92,12 @@ export async function sendOutreachMessage(input: {
 }) {
   if (input.channel === "linkedin") {
     throw new Error("LinkedIn automated send is not supported.");
+  }
+
+  // Every caller (campaign sends, contact follow-ups) passes through here, so a sample's
+  // example.com address is refused even after it was copied onto a contact.
+  if (input.channel === "email" && isPlaceholderAddress(input.toEmail)) {
+    throw new UserFacingError(PLACEHOLDER_ADDRESS_SEND_MESSAGE);
   }
 
   const sentToday = await countSendsToday(input.userId);
