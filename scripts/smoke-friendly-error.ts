@@ -178,6 +178,9 @@ check("a cancel is not an error", describeOAuthReason("access_denied", "Gmail").
 check("…and reads as one", /cancelled/.test(describeOAuthReason("access_denied", "Gmail").message));
 check("a raw token-endpoint body never shows", describeOAuthReason('Token exchange failed: {"error":"invalid_client"}', "Gmail").message === "Couldn’t connect Gmail — try again?");
 check("no reason at all", describeOAuthReason(null, "Outlook").message === "Couldn’t connect Outlook — try again?");
+check("a missing Google scope is an error, not a cancel", describeOAuthReason("missing_scope", "Gmail", "recruiter_scan").cancelled === false);
+check("…and names the access Google withheld", describeOAuthReason("missing_scope", "Google", "contacts").message === "Google didn’t grant contacts access — reconnect and allow it");
+check("…with the mail copy when the purpose is unknown", describeOAuthReason("missing_scope", "Gmail", "bogus").message === "Google didn’t grant mail access — reconnect and allow it");
 
 (async () => {
   console.log("asActionResult");

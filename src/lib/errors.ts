@@ -1,3 +1,5 @@
+import { isGooglePurpose, missingScopeMessage } from "@/lib/google-scopes";
+
 /**
  * Shown whenever AI features fail because the user has NO provider key.
  *
@@ -430,12 +432,19 @@ export function isRefreshRejection(status: number, body: string): boolean {
  */
 export function describeOAuthReason(
   reason: string | null | undefined,
-  provider: string
+  provider: string,
+  purpose?: string | null
 ): { cancelled: boolean; message: string } {
   if (reason === "access_denied") {
     return {
       cancelled: true,
       message: `${provider} connection cancelled — connect again whenever you’re ready`,
+    };
+  }
+  if (reason === "missing_scope") {
+    return {
+      cancelled: false,
+      message: missingScopeMessage(isGooglePurpose(purpose) ? purpose : null),
     };
   }
   return {
