@@ -94,12 +94,12 @@ async function main() {
       fullName: `${MARK} Alpha`,
       firm: MARK,
       email: "alpha@zzsmokeshare.test",
-    });
+    }, { callerIsSharing: false });
     const recB = await upsertCanonicalRecruiter({
       fullName: `${MARK} Beta`,
       firm: MARK,
       email: "beta@zzsmokeshare.test",
-    });
+    }, { callerIsSharing: false });
     created.push(recA.id, recB.id);
 
     await db.insert(userRecruiterLinks).values({

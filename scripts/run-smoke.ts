@@ -198,6 +198,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-purge-selective": "pglite",
   "smoke-rate-limit": "pglite",
   "smoke-recruiter-sharing": "pglite",
+  "smoke-recruiter-pii": "pglite",
   "smoke-schema-upgrade": "pglite",
   "smoke-stripe-webhook": "pglite",
   "smoke-surface-visibility": "pglite",

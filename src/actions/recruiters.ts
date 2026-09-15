@@ -23,6 +23,7 @@ import {
   resweepUserRatings,
   searchCanonicalRecruiters,
   toPublicRecruiter,
+  unlockedRecruiterIds,
   upsertCanonicalRecruiter,
   type PublicRecruiter,
 } from "@/lib/recruiters";
@@ -48,8 +49,10 @@ export async function listDiscoverRecruiters(
     q,
     limit: 40,
   });
-  // Every row here is pooled by construction, and none is linked by this viewer.
-  return rows.map((r) => toPublicRecruiter(r, null, true));
+  // Every row here is pooled by construction, and none is linked by this viewer — but a row
+  // is pooled by ANY sharing link, so its details show only where its creator shares.
+  const unlocked = await unlockedRecruiterIds(userId, rows);
+  return rows.map((r) => toPublicRecruiter(r, null, unlocked.has(r.id)));
 }
 
 export async function listMyRecruiters(): Promise<PublicRecruiter[]> {
@@ -60,7 +63,8 @@ export async function listMyRecruiters(): Promise<PublicRecruiter[]> {
     with: { recruiter: true },
     orderBy: [desc(userRecruiterLinks.updatedAt)],
   });
-  return links.map((l) => toPublicRecruiter(l.recruiter, l));
+  const unlocked = await unlockedRecruiterIds(userId, links.map((l) => l.recruiter));
+  return links.map((l) => toPublicRecruiter(l.recruiter, l, unlocked.has(l.recruiter.id)));
 }
 
 export async function getRecruiter(id: string): Promise<PublicRecruiter | null> {
@@ -84,10 +88,10 @@ export async function getRecruiter(id: string): Promise<PublicRecruiter | null> 
     if (!sharing) return null;
     const pooled = await pooledRecruiterIds([id]);
     if (!pooled.has(id)) return null;
-    return toPublicRecruiter(row, null, true);
   }
 
-  return toPublicRecruiter(row, link);
+  const unlocked = await unlockedRecruiterIds(userId, [row]);
+  return toPublicRecruiter(row, link ?? null, unlocked.has(id));
 }
 
 /** Current sharing state, for the toggle card. */
@@ -161,6 +165,8 @@ export type LogRecruiterInput = {
 export async function logRecruiter(input: LogRecruiterInput) {
   return asActionResult(async () => {
     const userId = await requireRecruitersUser();
+    // A private caller's contact details never land on a row someone else created.
+    const callerIsSharing = await isViewerSharing(userId);
     const fullName = input.fullName?.trim();
     if (!fullName && !input.recruiterId) {
       throw new UserFacingError("Add the recruiter’s name first");
@@ -182,7 +188,7 @@ export async function logRecruiter(input: LogRecruiterInput) {
           email: input.email ?? existing.email,
           linkedinUrl: input.linkedinUrl ?? existing.linkedinUrl,
           phone: input.phone ?? existing.phone,
-        });
+        }, { callerIsSharing });
       }
     } else {
       const created = await upsertCanonicalRecruiter({
@@ -192,7 +198,7 @@ export async function logRecruiter(input: LogRecruiterInput) {
         email: input.email,
         linkedinUrl: input.linkedinUrl,
         phone: input.phone,
-      });
+      }, { callerIsSharing });
       recruiterId = created.id;
     }
 
@@ -279,6 +285,8 @@ export async function loadRecruitersForChat(
     orderBy: [desc(userRecruiterLinks.updatedAt)],
     limit: 20,
   });
+  // Chat recites what it is given, so it gets only the details this viewer may read.
+  const unlocked = await unlockedRecruiterIds(userId, personal.map((l) => l.recruiter));
 
   const q = question.toLowerCase();
   const tokens = q
@@ -302,9 +310,9 @@ export async function loadRecruitersForChat(
         status: l.status,
         notes: l.notes,
         contactId: l.contactId,
-        piiUnlocked: true,
-        email: r.email,
-        linkedinUrl: r.linkedinUrl,
+        piiUnlocked: unlocked.has(r.id),
+        email: unlocked.has(r.id) ? r.email : null,
+        linkedinUrl: unlocked.has(r.id) ? r.linkedinUrl : null,
         score: 100 + personalBoost + tokenHits * 10 + communityScore(r),
       };
     })

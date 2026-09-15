@@ -174,7 +174,8 @@ async function main() {
     console.log("created recruiter", created.id, created.fullName);
   }
 
-  // Link demo user to Alex so PII is unlocked for them
+  // Link demo user to Alex so PII is unlocked for them. Details unlock only for a row's
+  // creator (`isCreatorLink`), so the link is dated with the row it created.
   const alex = await db.query.recruiters.findFirst({
     where: eq(recruiters.emailNormalized, "alex@riveratalent.example"),
   });
@@ -190,6 +191,7 @@ async function main() {
         personalRating: 5,
         notes: "Great for senior eng roles",
         source: "manual",
+        createdAt: alex.createdAt,
       });
       await recomputeRecruiterRating(alex.id);
       console.log("linked demo-user to", alex.fullName);

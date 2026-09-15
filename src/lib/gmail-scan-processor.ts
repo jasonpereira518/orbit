@@ -26,7 +26,7 @@ import {
   classifyRecruiterSender,
 } from "@/lib/recruiter-scan";
 import { markScanCompleted, resolveScanWindow } from "@/lib/recruiter-scan-state";
-import { ensureUserLink, upsertCanonicalRecruiter } from "@/lib/recruiters";
+import { ensureUserLink, isViewerSharing, upsertCanonicalRecruiter } from "@/lib/recruiters";
 import { reportError } from "@/lib/report-error";
 
 export const GMAIL_SCAN_IMPORT_TYPE = "gmail_recruiter_scan";
@@ -216,12 +216,17 @@ async function processSender(
     return "rejected";
   }
 
-  const recruiter = await upsertCanonicalRecruiter({
-    fullName: result.fullName || payload.name,
-    firm: result.firm || payload.firm,
-    email: payload.email,
-    specialty: result.rolesDiscussed,
-  });
+  // The sender's address came from THIS user's inbox; it lands on a shared row only when
+  // the row is new (this user is its creator) or this user shares.
+  const recruiter = await upsertCanonicalRecruiter(
+    {
+      fullName: result.fullName || payload.name,
+      firm: result.firm || payload.firm,
+      email: payload.email,
+      specialty: result.rolesDiscussed,
+    },
+    { callerIsSharing: await isViewerSharing(userId) }
+  );
 
   await ensureUserLink({
     userId,

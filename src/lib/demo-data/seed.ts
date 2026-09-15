@@ -742,6 +742,10 @@ async function seedRecruiters(
         source: "manual",
         contactId: "contact" in r && r.contact ? contactIdByName.get(r.contact) ?? null : null,
         ...r.link,
+        // Contact details unlock only for a row's creator (`isCreatorLink`), and a reused row
+        // was created by the first account seeded. The seed supplied these `.example` details
+        // for every account, so every seeded link is dated as the creator's.
+        createdAt: recruiter.createdAt,
       })
       .onConflictDoNothing();
     if (r.message) {

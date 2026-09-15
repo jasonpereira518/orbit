@@ -18,7 +18,8 @@ import { friendlyError } from "@/lib/errors";
  *
  * The copy states what leaves the account and what never does. That list is load-bearing,
  * not decoration: it is the only place a user is told that notes and AI summaries stay
- * private. Keep it in sync with `toPublicRecruiter`.
+ * private. Keep it in sync with `toPublicRecruiter` and `unlockedRecruiterIds` (a row's
+ * contact details reach other sharing users only when its creator shares).
  */
 export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
   const router = useRouter();
@@ -90,15 +91,16 @@ export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
         <div>
           <dt className="font-medium text-foreground">Shared when on</dt>
           <dd className="mt-1 text-muted-foreground">
-            Recruiter name, firm, specialty, their work email and LinkedIn, and
-            your star rating as part of the community average.
+            Recruiter name, firm, specialty, the work email, phone and LinkedIn
+            you added for them, and your star rating as part of the community
+            average.
           </dd>
         </div>
         <div>
           <dt className="font-medium text-foreground">Never shared</dt>
           <dd className="mt-1 text-muted-foreground">
-            Your notes, your AI interaction summaries, your status, and anything
-            Orbit read from your inbox.
+            Your notes, your AI interaction summaries, your status, and the text
+            of your emails.
           </dd>
         </div>
       </dl>

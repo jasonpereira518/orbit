@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   recruiters,
@@ -18,7 +18,7 @@ export type PublicRecruiter = {
   avgRating: number;
   ratingCount: number;
   logCount: number;
-  /** Present only when the viewer has a personal link. */
+  /** Present only when unlockedRecruiterIds unlocked this row for the viewer. */
   email: string | null;
   linkedinUrl: string | null;
   phone: string | null;
@@ -69,9 +69,10 @@ export function normalizeLinkedinUrl(
 /**
  * Shape a canonical row for a specific viewer.
  *
- * `pooledForViewer` must mean "the viewer is sharing AND this row is in the pool" —
- * callers compute it with `pooledRecruiterIds`. Passing a bare "is in the pool" would
- * hand contact details to private viewers, who are entitled to see nothing but their own.
+ * `piiUnlocked` must come from `unlockedRecruiterIds` — never from "the viewer has a link".
+ * A link used to unlock the row's email, phone and LinkedIn for anyone who logged it, which
+ * handed one user's private contact details to any other user who typed the same name and
+ * firm (audit A8).
  *
  * Note what is absent: `notes` and `aiSummary` reach the caller only inside `myLink`,
  * which is null for anyone but the owner. They are never derived from `row`.
@@ -79,9 +80,8 @@ export function normalizeLinkedinUrl(
 export function toPublicRecruiter(
   row: Recruiter,
   link: UserRecruiterLink | null,
-  pooledForViewer = false
+  piiUnlocked = false
 ): PublicRecruiter {
-  const unlocked = Boolean(link) || pooledForViewer;
   return {
     id: row.id,
     fullName: row.fullName,
@@ -90,15 +90,21 @@ export function toPublicRecruiter(
     avgRating: row.avgRating,
     ratingCount: row.ratingCount,
     logCount: row.logCount,
-    email: unlocked ? row.email : null,
-    linkedinUrl: unlocked ? row.linkedinUrl : null,
-    phone: unlocked ? row.phone : null,
-    piiUnlocked: unlocked,
+    email: piiUnlocked ? row.email : null,
+    linkedinUrl: piiUnlocked ? row.linkedinUrl : null,
+    phone: piiUnlocked ? row.phone : null,
+    piiUnlocked,
     myLink: link,
   };
 }
 
-/** Fill empty fields only — never overwrite existing non-empty values. */
+/**
+ * Fill empty fields only — never overwrite existing non-empty values.
+ *
+ * `includePii: false` (a caller who is not sharing) merges firm and specialty but never
+ * email, phone or LinkedIn: the row is shared, and a private caller's contact details
+ * would otherwise become visible to whoever the row is unlocked for.
+ */
 export function mergeRecruiterFields(
   existing: Recruiter,
   incoming: {
@@ -108,7 +114,8 @@ export function mergeRecruiterFields(
     email?: string | null;
     linkedinUrl?: string | null;
     phone?: string | null;
-  }
+  },
+  opts: { includePii: boolean }
 ): Partial<typeof recruiters.$inferInsert> {
   const patch: Partial<typeof recruiters.$inferInsert> = {
     updatedAt: new Date(),
@@ -118,15 +125,17 @@ export function mergeRecruiterFields(
     patch.firm = incoming.firm.trim();
     patch.firmNormalized = normalizeFirm(incoming.firm);
   }
-  if (!existing.email && incoming.email?.trim()) {
-    patch.email = incoming.email.trim();
-    patch.emailNormalized = normalizeEmail(incoming.email);
-  }
-  if (!existing.linkedinUrl && incoming.linkedinUrl?.trim()) {
-    patch.linkedinUrl = normalizeLinkedinUrl(incoming.linkedinUrl);
-  }
-  if (!existing.phone && incoming.phone?.trim()) {
-    patch.phone = incoming.phone.trim();
+  if (opts.includePii) {
+    if (!existing.email && incoming.email?.trim()) {
+      patch.email = incoming.email.trim();
+      patch.emailNormalized = normalizeEmail(incoming.email);
+    }
+    if (!existing.linkedinUrl && incoming.linkedinUrl?.trim()) {
+      patch.linkedinUrl = normalizeLinkedinUrl(incoming.linkedinUrl);
+    }
+    if (!existing.phone && incoming.phone?.trim()) {
+      patch.phone = incoming.phone.trim();
+    }
   }
   if (incoming.specialty?.length) {
     const current = new Set(existing.specialty || []);
@@ -135,12 +144,6 @@ export function mergeRecruiterFields(
       if (t) current.add(t);
     }
     patch.specialty = Array.from(current);
-  }
-  if (
-    incoming.fullName?.trim() &&
-    normalizePersonName(incoming.fullName) === existing.nameNormalized
-  ) {
-    // Keep existing display name; no-op
   }
 
   return patch;
@@ -205,6 +208,81 @@ export async function pooledRecruiterIds(ids: string[]): Promise<Set<string>> {
   return new Set(rows.map((r) => r.recruiterId));
 }
 
+/**
+ * How long after a row's creation its creator's link can be made. `logRecruiter` and the
+ * Gmail scan both create the row and then the link back to back, so a link inside this
+ * window is the creator's — the person who supplied the row's contact details.
+ */
+export const CREATOR_LINK_WINDOW_SECONDS = 120;
+
+export function isCreatorLink(
+  row: Pick<Recruiter, "createdAt">,
+  link: Pick<UserRecruiterLink, "createdAt"> | null
+): boolean {
+  if (!link) return false;
+  const gapMs = link.createdAt.getTime() - row.createdAt.getTime();
+  return gapMs >= 0 && gapMs <= CREATOR_LINK_WINDOW_SECONDS * 1000;
+}
+
+/**
+ * Rows whose contact details their CREATOR has put in the pool: the creator is sharing and
+ * their link is not excluded. Pooling a row by linking it yourself does not count — the
+ * details were not yours to share.
+ */
+export async function piiPooledRecruiterIds(ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const db = await getDb();
+  const rows = await db
+    .selectDistinct({ recruiterId: userRecruiterLinks.recruiterId })
+    .from(userRecruiterLinks)
+    .innerJoin(recruiters, eq(recruiters.id, userRecruiterLinks.recruiterId))
+    .innerJoin(userSettings, eq(userSettings.userId, userRecruiterLinks.userId))
+    .where(
+      and(
+        inArray(userRecruiterLinks.recruiterId, ids),
+        eq(userRecruiterLinks.sharedToPool, 1),
+        eq(userSettings.recruiterSharing, 1),
+        gte(userRecruiterLinks.createdAt, recruiters.createdAt),
+        lte(
+          userRecruiterLinks.createdAt,
+          sql`${recruiters.createdAt} + make_interval(secs => ${CREATOR_LINK_WINDOW_SECONDS})`
+        )
+      )
+    );
+  return new Set(rows.map((r) => r.recruiterId));
+}
+
+/**
+ * Which of these rows' contact details this viewer may read: the ones they created, plus —
+ * when they are sharing — the ones whose creator shares. The one function every read
+ * surface asks; nothing else may decide it.
+ */
+export async function unlockedRecruiterIds(
+  viewerUserId: string,
+  rows: Array<Pick<Recruiter, "id" | "createdAt">>
+): Promise<Set<string>> {
+  if (rows.length === 0) return new Set();
+  const db = await getDb();
+  const ids = rows.map((r) => r.id);
+  const links = await db
+    .select({ recruiterId: userRecruiterLinks.recruiterId, createdAt: userRecruiterLinks.createdAt })
+    .from(userRecruiterLinks)
+    .where(
+      and(eq(userRecruiterLinks.userId, viewerUserId), inArray(userRecruiterLinks.recruiterId, ids))
+    );
+  const linkByRecruiter = new Map(links.map((l) => [l.recruiterId, l]));
+
+  const unlocked = new Set<string>();
+  for (const row of rows) {
+    if (isCreatorLink(row, linkByRecruiter.get(row.id) ?? null)) unlocked.add(row.id);
+  }
+  const rest = ids.filter((id) => !unlocked.has(id));
+  if (rest.length > 0 && (await isViewerSharing(viewerUserId))) {
+    for (const id of await piiPooledRecruiterIds(rest)) unlocked.add(id);
+  }
+  return unlocked;
+}
+
 export async function findMatchingRecruiter(input: {
   email?: string | null;
   linkedinUrl?: string | null;
@@ -244,14 +322,18 @@ export async function findMatchingRecruiter(input: {
   return null;
 }
 
-export async function upsertCanonicalRecruiter(input: {
-  fullName: string;
-  firm?: string | null;
-  specialty?: string[];
-  email?: string | null;
-  linkedinUrl?: string | null;
-  phone?: string | null;
-}): Promise<Recruiter> {
+export async function upsertCanonicalRecruiter(
+  input: {
+    fullName: string;
+    firm?: string | null;
+    specialty?: string[];
+    email?: string | null;
+    linkedinUrl?: string | null;
+    phone?: string | null;
+  },
+  /** Required: a private caller never writes contact details onto an existing row. */
+  opts: { callerIsSharing: boolean }
+): Promise<Recruiter> {
   const db = await getDb();
   const fullName = input.fullName.trim();
   if (!fullName) throw new Error("Recruiter name is required");
@@ -264,7 +346,7 @@ export async function upsertCanonicalRecruiter(input: {
   });
 
   if (existing) {
-    const patch = mergeRecruiterFields(existing, input);
+    const patch = mergeRecruiterFields(existing, input, { includePii: opts.callerIsSharing });
     if (Object.keys(patch).length > 1) {
       const [updated] = await db
         .update(recruiters)
