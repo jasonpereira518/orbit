@@ -37,6 +37,8 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
     job?.kind === "google_contacts" && job.status === "running" ? job : null;
   const importProgress = googleJob?.progress ?? null;
   const busy = pending || job?.status === "running";
+  // The status knows the stored grant; the preview result can narrow it further.
+  const contactsGranted = contactsScopeGranted && (status?.canImportContacts ?? true);
 
   // Clear local review UI once this job finishes (toast handled globally by
   // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
@@ -71,6 +73,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
       params.delete("google");
       params.delete("gmail");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
       // The current path, not a hardcoded one: this card also lives in Settings.
       window.history.replaceState(
@@ -82,13 +85,14 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
       getGmailConnectionStatus().then(setStatus).catch(() => {});
     } else if (google === "error") {
       {
-        const oauth = describeOAuthReason(params.get("reason"), "Google");
+        const oauth = describeOAuthReason(params.get("reason"), "Google", params.get("purpose"));
         if (oauth.cancelled) toast.message(oauth.message);
         else toast.error(oauth.message);
       }
       params.delete("google");
       params.delete("gmail");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
       // The current path, not a hardcoded one: this card also lives in Settings.
       window.history.replaceState(
@@ -129,18 +133,18 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
           <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {status.connected
-              ? `Connected as ${status.emailAddress}${!contactsScopeGranted ? " — reconnect to grant contacts access" : ""}`
+              ? `Connected as ${status.emailAddress}${!contactsGranted ? " — reconnect to grant contacts access" : ""}`
               : "Connect your Google account to import contacts directly."}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {!status.connected || !contactsScopeGranted ? (
+          {!status.connected || !contactsGranted ? (
             <Button
               disabled={busy}
               onClick={() =>
                 start(async () => {
                   try {
-                    const { url } = await startGmailOAuth(returnTo);
+                    const { url } = await startGmailOAuth({ purpose: "contacts", returnTo });
                     window.location.href = url;
                   } catch (err) {
                     toast.error(friendlyError(err, TOAST_COPY.connectFailed));

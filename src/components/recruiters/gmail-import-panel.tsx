@@ -108,7 +108,7 @@ export function GmailImportPanel({
       router.refresh();
     } else if (gmail === "error") {
       {
-        const oauth = describeOAuthReason(params.get("reason"), "Gmail");
+        const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
         if (oauth.cancelled) toast.message(oauth.message);
         else toast.error(oauth.message);
       }
@@ -118,6 +118,7 @@ export function GmailImportPanel({
     // connect again the next time it mounts (it shares this page in Settings).
     params.delete("google");
     params.delete("reason");
+    params.delete("purpose");
     const next = params.toString();
     // The current path, not a hardcoded one: this panel also lives in Settings.
     window.history.replaceState(
@@ -195,19 +196,21 @@ export function GmailImportPanel({
             Gmail
           </h2>
           <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
-            {connection.connected
+            {connection.connected && connection.canRead
               ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
-              : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
+              : connection.connected
+                ? `Connected as ${connection.emailAddress}, without permission to read mail. Allow mail access to scan for recruiters.`
+                : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {!connection.connected ? (
+          {!connection.connected || !connection.canRead ? (
             <Button
               disabled={pending}
               onClick={() =>
                 start(async () => {
                   try {
-                    const { url } = await startGmailOAuth(returnTo);
+                    const { url } = await startGmailOAuth({ purpose: "recruiter_scan", returnTo });
                     window.location.href = url;
                   } catch (err) {
                     toast.error(
@@ -217,7 +220,7 @@ export function GmailImportPanel({
                 })
               }
             >
-              Connect Gmail
+              {connection.connected ? "Allow mail access" : "Connect Gmail"}
             </Button>
           ) : (
             <>

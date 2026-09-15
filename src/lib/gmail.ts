@@ -3,8 +3,16 @@ import { getDb } from "@/db";
 import { gmailConnections } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
+import {
+  GOOGLE_SCOPES,
+  googleScopesFor,
+  hasScope,
+  unionScopes,
+  type GooglePurpose,
+} from "@/lib/google-scopes";
 
-const GOOGLE_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
+export { hasGmailReadScope } from "@/lib/google-scopes";
+
 
 /**
  * Gmail's "Units per minute per user" quota is cost-based, not request-count-based, so a
@@ -58,7 +66,7 @@ async function gmailFetchWithRetry(
  * security assessment. Adding it here also invalidates existing consents — every
  * already-connected user must reconnect, which is why `hasSendScope` exists.
  */
-const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+const GMAIL_SEND_SCOPE = GOOGLE_SCOPES.gmailSend;
 
 /**
  * Read-only access to the user's calendar, for continuous meeting sync.
@@ -69,39 +77,28 @@ const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
  * scopes would — but, exactly like the send scope, it does not retroactively apply to consents
  * already granted, which is why `hasCalendarScope` exists.
  */
-const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+const GOOGLE_CALENDAR_SCOPE = GOOGLE_SCOPES.calendar;
 
-const GMAIL_SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  GMAIL_SEND_SCOPE,
-  "https://www.googleapis.com/auth/userinfo.email",
-  GOOGLE_CONTACTS_SCOPE,
-  GOOGLE_CALENDAR_SCOPE,
-  "openid",
-].join(" ");
+// No module-wide scope list any more: each entry point asks for its own scope through
+// `googleScopesFor(purpose)` in src/lib/google-scopes.ts (audit B5).
 
-/** True once a connection has re-consented to the People API scope. */
+/** True once a connection has consented to the People API scope. */
 export function hasContactsScope(scopes: string | null | undefined) {
-  return Boolean(scopes?.includes(GOOGLE_CONTACTS_SCOPE));
+  return hasScope(scopes, GOOGLE_SCOPES.contacts);
 }
 
-/** True once a connection has re-consented to sending. Connections made before the
- *  send scope shipped return false and must reconnect before they can send. */
+/** True once a connection has consented to sending. */
 export function hasSendScope(scopes: string | null | undefined) {
-  return Boolean(scopes?.includes(GMAIL_SEND_SCOPE));
+  return hasScope(scopes, GMAIL_SEND_SCOPE);
 }
 
 /**
- * True once a connection has re-consented to calendar access.
- *
- * The scheduler must check this before claiming a Google connection for calendar sync: a
- * token minted before this scope shipped is still perfectly valid for Gmail and Contacts, and
- * will keep working — but every Calendar API call it makes returns 403. Without the probe
- * that surfaces as a stream of failures on healthy connections, walking them up the backoff
- * ladder for a problem only the user can fix by reconnecting.
+ * True once a connection has consented to calendar access. The scheduler must check this
+ * before claiming a Google connection for calendar sync: a token without the scope works
+ * for Gmail and Contacts but every Calendar API call returns 403.
  */
 export function hasCalendarScope(scopes: string | null | undefined) {
-  return Boolean(scopes?.includes(GOOGLE_CALENDAR_SCOPE));
+  return hasScope(scopes, GOOGLE_CALENDAR_SCOPE);
 }
 
 /** Canonical Gmail OAuth callback path — must match Google Cloud authorized redirect URIs. */
@@ -173,7 +170,7 @@ export function getGmailOAuthConfigSummary(): {
   };
 }
 
-export function buildGmailAuthUrl(state: string) {
+export function buildGmailAuthUrl(state: string, purpose: GooglePurpose) {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   if (!clientId) throw new Error("GOOGLE_CLIENT_ID is not configured");
   const redirectUri = getGoogleRedirectUri();
@@ -182,9 +179,12 @@ export function buildGmailAuthUrl(state: string) {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: GMAIL_SCOPES,
+    scope: googleScopesFor(purpose).join(" "),
     access_type: "offline",
     prompt: "consent",
+    // Incremental authorization: the new token also covers what this person granted
+    // earlier, so asking for calendar later does not drop contacts.
+    include_granted_scopes: "true",
     state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
@@ -282,7 +282,7 @@ export async function upsertGmailConnection(
         accessTokenEncrypted: accessEnc,
         refreshTokenEncrypted: refreshEnc,
         tokenExpiresAt: expiresAt,
-        scopes: tokens.scope || GMAIL_SCOPES,
+        scopes: unionScopes(existing.scopes, tokens.scope),
         status: "active",
         // Re-arm: this is the only path from needs_reauth back to active, so it is also
         // the only place a disarmed connection can rejoin the sync schedule.
@@ -304,7 +304,7 @@ export async function upsertGmailConnection(
       accessTokenEncrypted: accessEnc,
       refreshTokenEncrypted: refreshEnc,
       tokenExpiresAt: expiresAt,
-      scopes: tokens.scope || GMAIL_SCOPES,
+      scopes: unionScopes(null, tokens.scope),
       status: "active",
       nextSyncAt: new Date(),
     })
