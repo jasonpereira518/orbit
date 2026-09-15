@@ -188,10 +188,31 @@ const STAR_HIT_PAD = 16;
  */
 const STAR_HIT_SCREEN_PX = 18;
 
-function StarHitTarget({ disc, zoom }: { disc: number; zoom: number }) {
+/**
+ * The camera scale, published as a CSS variable by `GraphZoomVariable` in
+ * `network-graph.tsx`.
+ *
+ * Everything a star does with zoom is a pure function of it that ends up as a CSS length
+ * or a scale factor — which means the browser can do the arithmetic, and React never has
+ * to hear about a zoom step at all. The fallback of 1 keeps a node sane if it somehow
+ * renders before the variable is written.
+ */
+const ZOOM_VAR = "var(--graph-zoom, 1)";
+
+/**
+ * `Math.max(zoom, floor)` in CSS. The floor is what stops a division by a camera scale
+ * approaching zero from producing an enormous element.
+ */
+const clampedZoom = (floor: number) => `max(${ZOOM_VAR}, ${floor})`;
+
+function StarHitTarget({ disc }: { disc: number }) {
   // Whichever is larger: the node-space pad (which already wins when zoomed in) or the
   // node-space size that renders as STAR_HIT_SCREEN_PX at the current camera scale.
-  const hit = Math.max(disc + STAR_HIT_PAD, STAR_HIT_SCREEN_PX / Math.max(zoom, 0.02));
+  //
+  // Written as CSS rather than computed here — see `ZOOM_VAR`. Identical arithmetic to the
+  // `Math.max(disc + STAR_HIT_PAD, STAR_HIT_SCREEN_PX / Math.max(zoom, 0.02))` it replaces;
+  // the only thing that changed is who evaluates it.
+  const hit = `max(${disc + STAR_HIT_PAD}px, calc(${STAR_HIT_SCREEN_PX}px / ${clampedZoom(0.02)}))`;
   return (
     <span
       aria-hidden
@@ -213,9 +234,13 @@ function ContactNodeComponent({
   data,
   selected,
 }: NodeProps & { data: GraphNodeData }) {
-  // Rounded so a pan/zoom gesture does not re-render every star on every frame — the
-  // same trick ClusterLabelNodeComponent uses.
-  const zoom = useStore((s) => Math.round(s.transform[2] * 20) / 20);
+  // No zoom subscription here, deliberately — see `ZOOM_VAR`.
+  //
+  // This used to be `useStore((s) => Math.round(s.transform[2] * 20) / 20)`, rounded so
+  // that a pan would not re-render on every frame. Rounding bounded the damage without
+  // removing it: every *step* of a zoom still re-rendered every star in the network,
+  // because each one was subscribed. Measured over five zoom steps in and five out on a
+  // 24-star sky: 548-576ms of long tasks, the worst single task 180-210ms.
   const score = data.score || 2;
   const size = starSize(score);
   const glow = Math.max(3, score * 2.2);
@@ -238,7 +263,7 @@ function ContactNodeComponent({
         style={{ width: disc, height: disc }}
       >
         <StarHandles />
-        <StarHitTarget disc={disc} zoom={zoom} />
+        <StarHitTarget disc={disc} />
         <div
           className={cn(
             "constellation-comet relative",
@@ -303,10 +328,10 @@ function ContactNodeComponent({
    * positions and the non-overlap proof in `scripts/smoke-graph-layout.ts` are all
    * untouched.
    */
-  const zoomRelief = Math.max(
-    1,
-    Math.min((disc + STAR_HIT_PAD) / disc, 1 / Math.max(zoom, 0.08))
-  );
+  // Same arithmetic as the `Math.max(1, Math.min((disc + STAR_HIT_PAD) / disc, 1 / Math.max(zoom, 0.08)))`
+  // it replaces, expressed so the browser evaluates it: CSS `clamp(MIN, VALUE, MAX)` is the
+  // max-of-min this needs, with the per-star cap as the upper bound.
+  const zoomRelief = `clamp(1, calc(1 / ${clampedZoom(0.08)}), ${((disc + STAR_HIT_PAD) / disc).toFixed(4)})`;
 
   return (
     <div
@@ -318,18 +343,17 @@ function ContactNodeComponent({
       style={{ width: disc, height: disc }}
     >
       <StarHandles />
-      <StarHitTarget disc={disc} zoom={zoom} />
+      <StarHitTarget disc={disc} />
       {/* Bob wrapper: the sole search hit hovers gently up and down. */}
       <div
         className={cn(
           "relative h-full w-full",
           data.spotlightSolo && "constellation-bob"
         )}
-        style={
-          zoomRelief > 1
-            ? { transform: `scale(${zoomRelief.toFixed(3)})` }
-            : undefined
-        }
+        // Always applied now rather than only when it would exceed 1: the value is no longer
+        // known here, and `scale(1)` is what the expression evaluates to in exactly the
+        // cases the old conditional skipped.
+        style={{ transform: `scale(${zoomRelief})` }}
       >
         <div
           className={cn(

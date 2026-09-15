@@ -1164,6 +1164,33 @@
 .constellation-nebula {
   animation: constellation-nebula-breathe 7s ease-in-out infinite;
   filter: blur(1px);
+  /*
+   * Paint containment, and it is the single thing that makes zooming the constellation
+   * affordable.
+   *
+   * A nebula is four nested `filter: blur()` layers over large radial gradients, and a blur
+   * has to be re-rasterized whenever the element's effective scale changes — which is every
+   * step of a zoom. Measured by disabling layers at runtime on a 24-star sky, five zoom
+   * steps in and five out: with the nebulae hidden the gesture costs 0ms of long tasks;
+   * with them shown, 527-599ms. Hiding the starfield instead changed nothing, and so did
+   * removing the stars' own shadows and gradients. The nebulae were the whole cost.
+   *
+   * `contain: paint` isolates each nebula's raster so the compositor can reuse it instead of
+   * re-blurring the whole subtree. Measured: 527ms -> 295ms of long tasks, and the worst
+   * single task 179ms -> 81ms, which is the number a person actually feels.
+   *
+   * Two things that were tried and are deliberately NOT here, because they measured worse:
+   * `will-change: transform` (one 1240ms task — an order of magnitude worse than doing
+   * nothing) and `transform: translateZ(0)` (621ms). Layer-promotion hints are not
+   * interchangeable, and guessing between them is how you make this slower.
+   *
+   * Cost: paint containment clips to the element's box, so the outermost fringe of the blur
+   * can be cut. Measured against a pixel-identical baseline (two unmodified runs differ by
+   * exactly 0 pixels): 125 pixels of 1,152,000 differ, 0.011%, and the figure does not grow
+   * with zoom — 119 pixels four steps in, 126 eight steps in. A bounded, invariant fringe on
+   * a decorative cloud, in exchange for halving the cost of the gesture.
+   */
+  contain: paint;
 }
 
 .constellation-comet {
