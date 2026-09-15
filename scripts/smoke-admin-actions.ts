@@ -34,7 +34,8 @@ const PREFIX = "smoke-actions-";
 const ADMIN = `${PREFIX}operator`;
 const TARGET = `${PREFIX}target`;
 const OTHER_OP = `${PREFIX}second-operator`;
-const IDS = [ADMIN, TARGET, OTHER_OP];
+const NO_EMAIL = `${PREFIX}no-email`;
+const IDS = [ADMIN, TARGET, OTHER_OP, NO_EMAIL];
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -518,6 +519,29 @@ async function main() {
     "the whole audit trail survives the deletion",
     trail.length >= 10,
     `${trail.length} rows`
+  );
+
+  /* ------------------------------------------------------- an account with no email */
+
+  await db.insert(contacts).values({ userId: NO_EMAIL, fullName: "Emailless Contact" });
+  await refuses(
+    "an email-less account refuses a confirmation that is not its user id",
+    () =>
+      actions.deleteAccount(ADMIN, {
+        targetUserId: NO_EMAIL,
+        confirmEmail: "someone-else",
+        reason: "testing the email-less confirmation",
+      }),
+    /does not match/i
+  );
+  await actions.deleteAccount(ADMIN, {
+    targetUserId: NO_EMAIL,
+    confirmEmail: NO_EMAIL.toUpperCase(), // case-insensitive, like the dialog
+    reason: "an account with no email on file must still be deletable",
+  });
+  check(
+    "an email-less account is deleted when the user id is typed",
+    (await db.query.contacts.findMany({ where: eq(contacts.userId, NO_EMAIL) })).length === 0
   );
 
   /* --------------------------------------------------------------- the gate itself */

@@ -465,7 +465,8 @@ export async function setAccountSuspended(adminUserId: string, input: {
 /**
  * Delete every trace of an account's Orbit data.
  *
- * `confirmEmail` must match the account's own email verbatim. That is not ceremony: the
+ * `confirmEmail` must match the account's own email — or its user id when it has none
+ * (case-insensitive). That is not ceremony: the
  * roster is a list of near-identical rows, and the failure mode this guards against is
  * deleting the account next to the one you meant.
  *
@@ -483,7 +484,7 @@ export async function deleteAccount(adminUserId: string, input: {
 }): Promise<void> {
   const reason = requireReason(input.reason, 8);
   assertNotOperator(adminUserId, input.targetUserId);
-  const account = await confirmAccountEmail(input.targetUserId, input.confirmEmail);
+  const account = await confirmAccountIdentity(input.targetUserId, input.confirmEmail);
 
   await recordAdminAction({
     adminUserId,
@@ -496,20 +497,26 @@ export async function deleteAccount(adminUserId: string, input: {
   await purgeUserData(input.targetUserId);
 }
 
-/** Shared by `deleteAccount` and `hardDeleteAccount`: resolves the account and checks the
- * typed email against it, so the operator cannot fire either action against the row next to
- * the one they meant. */
-async function confirmAccountEmail(targetUserId: string, confirmEmail: string) {
+/**
+ * Shared by `deleteAccount` and `hardDeleteAccount`: resolves the account and checks the
+ * typed confirmation against it, so the operator cannot fire either action against the row
+ * next to the one they meant.
+ *
+ * The confirmation is the account's email or, for an account with no email on file (its
+ * `user.created` webhook never landed, or it signed up by phone), its user id. Both compare
+ * case-insensitively, exactly like the dialog, so the dialog can never enable a button the
+ * server then refuses.
+ */
+async function confirmAccountIdentity(targetUserId: string, confirmation: string) {
   const account = await requireAccount(targetUserId);
-  const expected = (account.email ?? "").trim().toLowerCase();
-  const provided = confirmEmail.trim().toLowerCase();
-  if (!expected) {
+  const email = (account.email ?? "").trim().toLowerCase();
+  const expected = email || targetUserId.trim().toLowerCase();
+  if (confirmation.trim().toLowerCase() !== expected) {
     throw new Error(
-      "This account has no email on file, so the confirmation cannot be checked. Delete it with scripts/ instead."
+      email
+        ? "That email does not match this account."
+        : "That user id does not match this account."
     );
-  }
-  if (expected !== provided) {
-    throw new Error("That email does not match this account.");
   }
   return account;
 }
@@ -536,7 +543,7 @@ export async function hardDeleteAccount(adminUserId: string, input: {
 }): Promise<void> {
   const reason = requireReason(input.reason, 20);
   assertNotOperator(adminUserId, input.targetUserId);
-  const account = await confirmAccountEmail(input.targetUserId, input.confirmEmail);
+  const account = await confirmAccountIdentity(input.targetUserId, input.confirmEmail);
 
   await recordAdminAction({
     adminUserId,
