@@ -168,6 +168,17 @@ export function withReference(message: string, ref: string | null | undefined): 
 }
 
 /**
+ * The message plus the error's name, for classification only. `aiSignal` aborts a hung call,
+ * and SDKs surface that as an `AbortError` whose message ("The operation was aborted.")
+ * says nothing about time — keyed on the message alone it read as "couldn’t answer that"
+ * and was counted as `other` instead of `timeout`.
+ */
+function withErrorName(err: unknown, message: string): string {
+  const name = err instanceof Error || err instanceof DOMException ? err.name : "";
+  return name && name !== "Error" ? `${message} (${name})` : message;
+}
+
+/**
  * Copy for a failure the person can fix themselves and Orbit cannot: no AI key, a
  * provider that refused their key, a provider rate limit, no connection. Reporting these
  * to Sentry would bury real faults under user configuration, so `reportedFailure` passes
@@ -187,7 +198,7 @@ export function isQuietFailureMessage(message: string): boolean {
 }
 
 export function aiProviderErrorMessage(err: unknown, provider: string): string {
-  const base = toUserFacingError(err, `${provider} request failed`).message;
+  const base = withErrorName(err, toUserFacingError(err, `${provider} request failed`).message);
 
   if (/api key|unauthorized|401|invalid.*key/i.test(base)) {
     return AI_FAILURE_COPY.auth(provider);
@@ -205,6 +216,28 @@ export function aiProviderErrorMessage(err: unknown, provider: string): string {
   // This used to return up to 237 characters of whatever the provider said, which put
   // raw JSON error bodies — and on a bad day request ids — in front of the person.
   return AI_FAILURE_COPY.other(provider);
+}
+
+/** Orbit's own failures inside `lib/ai.ts`: already worded, never rewritten as a provider fault. */
+const AI_SENTINEL_MESSAGES = new Set<string>([
+  "Empty AI response",
+  "Empty transcription",
+  "Empty embedding response",
+  "Incomplete embedding batch response",
+  AI_INCOMPLETE_MESSAGE,
+]);
+
+/**
+ * The error a provider call rethrows, so every AI path reads like `completeJson`: the
+ * person sees `AI_FAILURE_COPY`, telemetry classifies it, and no raw provider body or key
+ * fragment travels any further.
+ */
+export function asAiProviderError(err: unknown, provider: string): Error {
+  if (err instanceof Error && AI_SENTINEL_MESSAGES.has(err.message)) return err;
+  if (err instanceof Error && err.message.startsWith("Failed to parse AI JSON")) {
+    return new Error(AI_INCOMPLETE_MESSAGE);
+  }
+  return new Error(aiProviderErrorMessage(err, provider));
 }
 
 /**
@@ -349,9 +382,10 @@ export type AiErrorKind =
   | "other";
 
 export function classifyAiError(err: unknown): AiErrorKind {
-  const base = toUserFacingError(err, "request failed").message;
+  const message = toUserFacingError(err, "request failed").message;
 
-  if (/^Empty AI response$/i.test(base)) return "empty_response";
+  if (/^Empty AI response$/i.test(message)) return "empty_response";
+  const base = withErrorName(err, message);
   if (/api key|unauthorized|401|invalid.*key/i.test(base)) return "auth";
   if (/rate limit|429|quota|resource.?exhausted/i.test(base)) return "rate_limit";
   if (/timeout|timed out|ETIMEDOUT|AbortError/i.test(base)) return "timeout";

@@ -13,7 +13,10 @@
  *
  * Run: npx tsx scripts/smoke-friendly-error.ts
  */
+import { readFileSync } from "node:fs";
 import {
+  asAiProviderError,
+  AI_INCOMPLETE_MESSAGE,
   friendlyError,
   aiProviderErrorMessage,
   classifyAiError,
@@ -138,6 +141,25 @@ const leaky = aiProviderErrorMessage(new Error('{"secret":"sk-live-123","trace":
 check("no secret", !leaky.includes("sk-live"), leaky);
 check("no stack/path", !leaky.includes("/srv/") && !leaky.includes("trace"), leaky);
 check("no 'server env' jargon anywhere", !kinds.some(([, raw]) => aiProviderErrorMessage(raw, "Gemini").toLowerCase().includes("env")));
+
+console.log("the streaming, transcription and embedding paths speak the same language");
+const refusedStream = asAiProviderError(new Error("401 Incorrect API key provided: sk-abc"), "OpenAI");
+check("a refused key on a stream → the auth template", refusedStream.message === "OpenAI didn’t accept your API key — check it in Settings", refusedStream.message);
+check("…which friendlyError passes through", friendlyError(refusedStream, FB) === refusedStream.message);
+const hung = new Error("The operation was aborted."); hung.name = "AbortError";
+check("a timeout → the timeout template", asAiProviderError(hung, "Gemini").message === "Gemini timed out — try again, or ask something shorter");
+// The abort `aiSignal` causes says nothing about time in its message; its name does.
+check("…and telemetry counts it as a timeout, not other", classifyAiError(hung) === "timeout", classifyAiError(hung));
+for (const sentinel of ["Empty AI response", "Empty transcription", "Empty embedding response", "Incomplete embedding batch response", AI_INCOMPLETE_MESSAGE]) {
+  const e = new Error(sentinel);
+  check(`sentinel untouched: ${sentinel}`, asAiProviderError(e, "Gemini") === e);
+}
+check("a truncated JSON transcript → the incomplete-answer copy",
+  asAiProviderError(new Error('Failed to parse AI JSON: {"te'), "Gemini").message === AI_INCOMPLETE_MESSAGE);
+const aiSource = readFileSync("src/lib/ai.ts", "utf8");
+const wrapped = aiSource.match(/translatingProviderErrors\(/g)?.length ?? 0;
+// The definition is `translatingProviderErrors<T>(`, which this pattern does not match.
+check("all five bypassing paths are wrapped (streamText, 2× transcription, 2× embeddings)", wrapped === 5, `${wrapped} call sites`);
 
 console.log("house voice");
 const all = [MISSING_AI_API_KEY_MESSAGE, OFFLINE_MESSAGE, TIMEOUT_MESSAGE, ...kinds.map(([, raw]) => aiProviderErrorMessage(raw, "Gemini"))];

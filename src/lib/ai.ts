@@ -26,6 +26,7 @@ import {
   AI_INCOMPLETE_MESSAGE,
   aiProviderErrorMessage,
   aiProviderLabel,
+  asAiProviderError,
   friendlyError,
 } from "@/lib/errors";
 import {
@@ -62,6 +63,19 @@ export const AI_CALL_TIMEOUT_MS = 45_000;
 /** A fresh signal per call; a shared one would abort every later call once it fired. */
 export function aiSignal(ms = AI_CALL_TIMEOUT_MS): AbortSignal {
   return AbortSignal.timeout(ms);
+}
+
+/**
+ * Runs the body of a `withUsage` callback so any provider failure is rethrown as Orbit's
+ * copy. Inside the callback on purpose: `withUsage` then classifies the rewritten error for
+ * `usage_events.error_kind`, exactly as it does for `completeJson`.
+ */
+async function translatingProviderErrors<T>(provider: string, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (err) {
+    throw asAiProviderError(err, provider);
+  }
 }
 
 const nullStr = z
@@ -953,7 +967,7 @@ export async function transcribeAudioWithAI(
         kind: "transcription",
         keyOwner: usingEnvKey("openai", settings) ? "orbit" : "user",
       },
-      async () => {
+      () => translatingProviderErrors("OpenAI", async () => {
         // Whisper reads its prompt as the transcript that came before, so the previous
         // chunk's tail goes LAST — the end of the prompt is what it conditions on most — and
         // the names share what is left of the budget.
@@ -980,7 +994,7 @@ export async function transcribeAudioWithAI(
         const text = result.text?.trim();
         if (!text) return empty("whisper");
         return { text, engine: "whisper" as const };
-      },
+      }),
     );
   }
 
@@ -997,7 +1011,7 @@ export async function transcribeAudioWithAI(
         kind: "transcription",
         keyOwner: usingEnvKey("gemini", settings) ? "orbit" : "user",
       },
-      async (report) => {
+      (report) => translatingProviderErrors("Gemini", async () => {
         const response = await client.models.generateContent({
           model,
           contents: [
@@ -1037,7 +1051,7 @@ export async function transcribeAudioWithAI(
         const text = parsed.text?.trim();
         if (!text) return empty("gemini");
         return { text, engine: "gemini" as const };
-      },
+      }),
     );
   }
 
@@ -1546,7 +1560,7 @@ export async function createEmbedding(userId: string, text: string) {
       kind: "embedding",
       keyOwner,
     },
-    async (report) => {
+    (report) => translatingProviderErrors(aiProviderLabel(backend), async () => {
       if (backend === "openai") {
         const client = new OpenAI({ apiKey });
         const res = await client.embeddings.create({
@@ -1570,7 +1584,7 @@ export async function createEmbedding(userId: string, text: string) {
       const values = res.embeddings?.[0]?.values;
       if (!values?.length) throw new Error("Empty embedding response");
       return values;
-    },
+    }),
   );
 }
 
@@ -1594,7 +1608,7 @@ export async function createEmbeddingsBatch(
       kind: "embedding",
       keyOwner,
     },
-    async (report) => {
+    (report) => translatingProviderErrors(aiProviderLabel(backend), async () => {
       if (backend === "openai") {
         const client = new OpenAI({ apiKey });
         const res = await client.embeddings.create({
@@ -1624,7 +1638,7 @@ export async function createEmbeddingsBatch(
         throw new Error("Incomplete embedding batch response");
       }
       return values;
-    },
+    }),
   );
 }
 
@@ -1863,7 +1877,7 @@ async function streamText(
 
   return withUsage(
     { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
-    async (report) => {
+    (report) => translatingProviderErrors(aiProviderLabel(provider), async () => {
       let full = "";
       const emit = (t: string | undefined | null) => {
         if (!t) return;
@@ -1933,7 +1947,7 @@ async function streamText(
 
       if (!full.trim()) throw new Error("Empty AI response");
       return full;
-    }
+    })
   );
 }
 
