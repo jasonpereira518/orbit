@@ -179,6 +179,33 @@ export async function setUserIdentity(
 }
 
 /**
+ * Stores a Terms acceptance. `onlyIfUnset` is for the Clerk webhook: user.created can be
+ * retried, and a retry must never re-stamp an old acceptance with a newer version. The
+ * guided-setup checkbox writes unconditionally — it IS an acceptance of the current text.
+ * Returns whether a row was written.
+ */
+export async function recordTermsAcceptance(
+  userId: string,
+  acceptance: { acceptedAt: Date; version: string },
+  opts: { onlyIfUnset?: boolean } = {}
+): Promise<boolean> {
+  const db = await getDb();
+  const where = opts.onlyIfUnset
+    ? and(eq(userSettings.userId, userId), isNull(userSettings.termsAcceptedAt))
+    : eq(userSettings.userId, userId);
+  const rows = await db
+    .update(userSettings)
+    .set({
+      termsAcceptedAt: acceptance.acceptedAt,
+      termsVersion: acceptance.version,
+      updatedAt: new Date(),
+    })
+    .where(where)
+    .returning();
+  return rows.length > 0;
+}
+
+/**
  * Clerk timestamps are unix epochs, but the units vary by field across the API surface.
  * Anything below ~2001-09 in milliseconds is far more likely to be seconds.
  */
