@@ -472,6 +472,9 @@ const PRESERVED_SETTINGS_COLUMNS = {
   suspendedBy: true,
   createdAt: true,
   lastActiveAt: true,
+  termsAcceptedAt: true,
+  termsVersion: true,
+  timelineBackfillEnabled: true,
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {

@@ -284,6 +284,27 @@ export const userSettings = pgTable("user_settings", {
    */
   recruiterSharing: integer("recruiter_sharing").default(0).notNull(),
   /**
+   * When this account accepted the Terms of Service, and which version.
+   *
+   * Written once from Clerk's `user.created` webhook when Clerk's express-consent checkbox
+   * recorded `legal_accepted_at`, otherwise by the guided-setup checkbox (`acceptTerms` in
+   * src/actions/onboarding-wizard.ts). `termsVersion` is `TERMS_VERSION` from
+   * src/lib/legal.ts at the moment of acceptance, so a later rewrite can tell who accepted
+   * an older text.
+   *
+   * Preserved by every Settings data wipe (PRESERVED_SETTINGS_COLUMNS in user-data.ts):
+   * deleting your contacts does not un-accept the terms you still use the product under.
+   */
+  termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+  termsVersion: text("terms_version"),
+  /**
+   * Opt-in to deriving LinkedIn timeline events with the user's own AI key. Integer, not
+   * boolean, per house convention. Defaults to 0: the backfill costs one model call per
+   * qualifying conversation and used to run unasked (audit A6). The runner, the cron sweep
+   * and the import card all read it — see src/lib/linkedin-timeline-backfill.ts.
+   */
+  timelineBackfillEnabled: integer("timeline_backfill_enabled").default(0).notNull(),
+  /**
    * Operator suspension. Enforced in `requireUserId()` (`src/lib/auth.ts`) rather than in a
    * layout: actions are reachable by direct POST, so the gate has to sit at the one function
    * every page *and* every server action already calls.

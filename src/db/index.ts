@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   comped_by text,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
+  terms_accepted_at timestamptz,
+  terms_version text,
+  timeline_backfill_enabled integer NOT NULL DEFAULT 0,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
@@ -1403,7 +1406,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // `SCHEMA_VERSION = 54`, so only this changelog conflicted; a database already at 54 from
 // either branch still needs this table's two columns, hence one more bump rather than
 // reusing the number either side shipped it under.
-export const SCHEMA_VERSION = 55;
+//
+// 57 = user_settings.terms_accepted_at, terms_version and timeline_backfill_enabled (launch
+// Phase 1: recorded Terms consent and the opt-in LinkedIn timeline backfill). 56 is claimed
+// by three open branches (calendar enrichment, both outreach redesigns), so this skips it.
+export const SCHEMA_VERSION = 57;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1989,6 +1996,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "recruiter_sharing",
     "integer NOT NULL DEFAULT 0"
   );
+  await ensureColumn(client, "user_settings", "terms_accepted_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "terms_version", "text");
+  await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
     "user_recruiter_links",
@@ -2530,6 +2540,9 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_version text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS timeline_backfill_enabled integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS shared_to_pool integer NOT NULL DEFAULT 1`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
