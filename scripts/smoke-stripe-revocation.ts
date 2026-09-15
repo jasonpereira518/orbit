@@ -22,6 +22,10 @@ import {
   type StripeDecision,
 } from "../src/lib/billing-stripe";
 import { LIFETIME_METADATA_KEY, LIFETIME_METADATA_VALUE } from "../src/lib/stripe";
+import {
+  resolveChargePurpose,
+  type ChargePurposeLookups,
+} from "../src/lib/stripe-charge-purpose";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -179,6 +183,38 @@ async function main() {
   check("the cs: booking carries paymentIntentId",
     purchase.bookings[0]?.detail.paymentIntentId === "pi_life",
     JSON.stringify(purchase.bookings[0]?.detail));
+
+  console.log("\nResolving what a charge paid for (fake lookups)");
+  function fakes(answers: { ledger?: boolean; plan?: string | null; invoice?: boolean }) {
+    const calls: string[] = [];
+    const lookups: ChargePurposeLookups = {
+      async lifetimeOnLedger() { calls.push("ledger"); return answers.ledger ?? false; },
+      async checkoutSessionPlan() { calls.push("session"); return answers.plan ?? null; },
+      async hasInvoicePayment() { calls.push("invoice"); return answers.invoice ?? false; },
+    };
+    return { lookups, calls };
+  }
+  const none = fakes({});
+  check("no payment intent → unknown, and nothing is asked",
+    (await resolveChargePurpose(null, none.lookups)) === "unknown" && none.calls.length === 0);
+  const onLedger = fakes({ ledger: true });
+  check("a purchase on our own ledger is Lifetime without asking Stripe",
+    (await resolveChargePurpose("pi_1", onLedger.lookups)) === "lifetime" && onLedger.calls.join() === "ledger",
+    onLedger.calls.join());
+  const oldPurchase = fakes({ plan: LIFETIME_METADATA_VALUE });
+  check("an older purchase is found through its Checkout Session",
+    (await resolveChargePurpose("pi_1", oldPurchase.lookups)) === "lifetime" && oldPurchase.calls.join() === "ledger,session");
+  const subscription = fakes({ plan: null, invoice: true });
+  check("a payment intent that paid an invoice is a subscription",
+    (await resolveChargePurpose("pi_1", subscription.lookups)) === "subscription");
+  check("nothing matches → unknown",
+    (await resolveChargePurpose("pi_1", fakes({ plan: "something-else" }).lookups)) === "unknown");
+  let propagated = false;
+  await resolveChargePurpose("pi_1", {
+    ...fakes({}).lookups,
+    async checkoutSessionPlan() { throw new Error("stripe is down"); },
+  }).catch(() => { propagated = true; });
+  check("a lookup failure propagates (so the webhook 500s and Stripe retries)", propagated);
 
   console.log("\nThe ledger invariant");
   const all = [life, sub, already, unexpanded, lostLife, lostSub, won, purchase];

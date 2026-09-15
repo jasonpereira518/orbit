@@ -6,6 +6,7 @@ import { userSettings } from "@/db/schema";
 import { getStripe } from "@/lib/stripe";
 import {
   findUserIdByStripeCustomerId,
+  revokeLifetimePurchase,
   setLifetimePurchase,
   setSubscriptionState,
 } from "@/lib/user-settings";
@@ -16,14 +17,17 @@ import {
 } from "@/lib/billing-events";
 import {
   decideStripeEvent,
+  revocationPaymentIntent,
   stripeEventSubject,
   type DecideContext,
 } from "@/lib/billing-stripe";
+import { resolveChargePurpose } from "@/lib/stripe-charge-purpose";
 import { shouldRecordThrottled } from "@/lib/error-events";
 import {
   WEBHOOK_REASONS,
   recordWebhookDelivery,
 } from "@/lib/webhook-deliveries";
+import { reportError } from "@/lib/report-error";
 
 /**
  * Fulfils Stripe purchases: the one-time Orbit Lifetime tier and the recurring Orbit Pro
@@ -130,6 +134,13 @@ export async function POST(req: NextRequest) {
     const now = new Date();
     const userId = await attribute(event);
     const beforeCents = userId ? await readBeforeCents(userId, now) : 0;
+    // Only a full refund or a lost dispute can withdraw access, and only those need to know
+    // what the charge paid for — so the lookup (ledger first, then Stripe) runs for nothing
+    // else. A lookup that throws lands in the catch below: 500, and Stripe retries.
+    const revocationPi = userId ? revocationPaymentIntent(event) : null;
+    const chargePurpose = revocationPi
+      ? await resolveChargePurpose(revocationPi)
+      : undefined;
     const ctx: DecideContext = {
       userId,
       beforeCents,
@@ -138,6 +149,7 @@ export async function POST(req: NextRequest) {
       hadPriorRevenue:
         userId && beforeCents === 0 ? await hasPriorRevenue(userId) : false,
       now,
+      chargePurpose,
     };
 
     const decision = decideStripeEvent(event, ctx);
@@ -160,6 +172,16 @@ export async function POST(req: NextRequest) {
         },
         { stripeCustomerId: decision.mirror.stripeCustomerId }
       );
+    } else if (decision.mirror?.type === "lifetime_revoked") {
+      await revokeLifetimePurchase(decision.mirror.userId);
+    } else if (decision.mirror?.type === "subscription_revoked") {
+      // monthlyCents and interval are omitted, so the stored price stays for display;
+      // status canceled + a period end of now is what drops `resolvePlan` to free.
+      await setSubscriptionState(decision.mirror.userId, {
+        plan: "orbit",
+        status: "canceled",
+        periodEnd: decision.mirror.periodEnd,
+      });
     }
 
     for (const booking of decision.bookings) {
@@ -172,6 +194,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const revoked =
+      decision.mirror?.type === "lifetime_revoked" ||
+      decision.mirror?.type === "subscription_revoked"
+        ? decision.mirror.reason
+        : null;
     await recordWebhookDelivery({
       source: "stripe",
       eventId: event.id,
@@ -180,11 +207,17 @@ export async function POST(req: NextRequest) {
       reason: decision.reason ?? null,
       targetUserId: decision.targetUserId,
       resourceId: decision.resourceId,
-      detail: { bookings: decision.bookings.length },
+      detail: {
+        bookings: decision.bookings.length,
+        ...(chargePurpose ? { chargePurpose } : {}),
+        ...(revoked ? { revoked } : {}),
+      },
       durationMs: Date.now() - startedAt,
     });
   } catch (err) {
-    console.error(`Stripe webhook handler failed for ${event.id}:`, err);
+    // Answered 500 so Stripe retries; reported so a handler that keeps failing — a payment
+    // nobody's plan reflects — is seen before the three-day retry window runs out.
+    reportError(err, { where: "webhook.stripe", extra: { eventId: event.id, eventType: event.type } });
     await recordWebhookDelivery({
       source: "stripe",
       eventId: event.id,

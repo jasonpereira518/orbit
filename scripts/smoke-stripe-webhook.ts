@@ -63,6 +63,7 @@ function sessionEvent(over: Record<string, unknown> = {}) {
         client_reference_id: USER,
         payment_status: "paid",
         customer: "cus_smoke_1",
+        payment_intent: "pi_smoke_lifetime_1",
         metadata: { [LIFETIME_METADATA_KEY]: LIFETIME_METADATA_VALUE },
         ...over,
       },
@@ -167,6 +168,32 @@ function disputeEvent(
         amount: 500,
         reason: "fraudulent",
         status: "warning_needs_response",
+        ...over,
+      },
+    },
+  };
+}
+
+/** A charge on the Lifetime purchase's own payment intent. */
+function lifetimeChargeEvent(over: Record<string, unknown>, eventId: string) {
+  return {
+    id: eventId,
+    object: "event",
+    type: "charge.refunded",
+    created: 1_700_000_500,
+    data: {
+      object: {
+        id: "ch_smoke_lt_1",
+        object: "charge",
+        customer: "cus_smoke_1",
+        currency: "usd",
+        payment_intent: "pi_smoke_lifetime_1",
+        amount: 2500,
+        amount_captured: 2500,
+        amount_refunded: 0,
+        refunded: false,
+        // Unexpanded, as current API versions send it: revocation must not depend on it.
+        refunds: { object: "list", data: [] },
         ...over,
       },
     },
@@ -706,6 +733,50 @@ async function main() {
     "the async fulfil event does not double-book the purchase",
     (await ledgerFor(USER)).filter((r) => r.kind === "lifetime").length === 1
   );
+
+  /* ------------------------------------------------- refunds revoke ------------- */
+  console.log("\nwithdraws Lifetime on a full refund, not a partial one");
+  const lifetimeRow = (await ledgerFor(USER)).find((r) => r.kind === "lifetime");
+  check(
+    "the Lifetime booking remembers its payment intent",
+    lifetimeRow?.detail?.paymentIntentId === "pi_smoke_lifetime_1",
+    JSON.stringify(lifetimeRow?.detail)
+  );
+  await post(signedRequest(lifetimeChargeEvent({ amount_refunded: 1000 }, "evt_smoke_lt_partial")));
+  check("a partial refund keeps Lifetime", (await lifetimeAt()) !== null);
+
+  const fullRefund = lifetimeChargeEvent({ refunded: true, amount_refunded: 2500 }, "evt_smoke_lt_full");
+  const refundRes = await post(signedRequest(fullRefund));
+  check("full refund -> 200", refundRes.status === 200, String(refundRes.status));
+  check("a full refund of the Lifetime charge withdraws Lifetime", (await lifetimeAt()) === null);
+  const afterRefund = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, USER) });
+  check("…so the account resolves to free", resolvePlan(afterRefund).plan === "free", resolvePlan(afterRefund).plan);
+  const refundRetry = await post(signedRequest(fullRefund));
+  check("a redelivered refund is harmless", refundRetry.status === 200 && (await lifetimeAt()) === null);
+
+  console.log("\nwithdraws Lifetime on a lost dispute");
+  const regrant = sessionEvent({ id: "cs_test_smoke_2", payment_intent: "pi_smoke_lifetime_2" }) as Record<string, unknown>;
+  regrant.id = "evt_smoke_lt_regrant";
+  await post(signedRequest(regrant));
+  check("a second purchase grants Lifetime again", (await lifetimeAt()) !== null);
+  const lost = await post(
+    signedRequest(
+      disputeEvent(
+        "charge.dispute.closed",
+        {
+          id: "dp_smoke_lt",
+          charge: "ch_smoke_lt_2",
+          customer: "cus_smoke_1",
+          payment_intent: "pi_smoke_lifetime_2",
+          amount: 2500,
+          status: "lost",
+        },
+        "evt_smoke_lt_dispute"
+      )
+    )
+  );
+  check("lost dispute -> 200", lost.status === 200, String(lost.status));
+  check("a lost dispute on the Lifetime charge withdraws Lifetime", (await lifetimeAt()) === null);
 
   /* ------------------------------------------------- delivery telemetry ---------- */
   console.log("\nrecords its own deliveries");

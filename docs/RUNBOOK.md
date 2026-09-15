@@ -45,6 +45,16 @@ additive and idempotent, so old code runs fine on a newer schema. Then fix forwa
 | `ai.provider_outage:*` | Not ours; it clears when the provider recovers. |
 | `perf.slow_burst` | `/admin/health` → error events → `perf.slow` rows name the call and account. |
 
+## Refund or chargeback
+
+A **full** refund in Stripe, or a dispute that closes **lost**, withdraws access by itself:
+Lifetime is cleared, a Pro subscription is marked canceled as of that moment (the webhook
+resolves which one through the charge's payment intent). A partial refund changes nothing.
+When refunding a Pro charge, **also cancel the subscription in Stripe** — otherwise its
+next renewal re-grants Pro, correctly, because the customer is being charged again.
+`/admin/health` → webhook deliveries shows `revoked: refund` / `revoked: dispute_lost` in
+the delivery detail when it happened.
+
 ## Rotate a secret
 
 | Secret | Then |

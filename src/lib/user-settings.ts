@@ -311,6 +311,28 @@ export async function setLifetimePurchase(
   return updated;
 }
 
+/**
+ * Withdraws a Lifetime purchase after a full refund or a lost dispute.
+ *
+ * Idempotent: Stripe retries, and a second revocation of an already-withdrawn grant is a
+ * no-op. Comps are untouched — `comped_plan` outranks this column in `resolvePlan`, and an
+ * operator's grant is not something a refund can take back. Queues no plan transition:
+ * the celebration watcher only ever looks upward.
+ *
+ * Returns whether a grant was actually removed.
+ */
+export async function revokeLifetimePurchase(userId: string): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db
+    .update(userSettings)
+    .set({ lifetimePurchasedAt: null, updatedAt: new Date() })
+    .where(
+      and(eq(userSettings.userId, userId), isNotNull(userSettings.lifetimePurchasedAt))
+    )
+    .returning();
+  return rows.length > 0;
+}
+
 /** How many one-time Lifetime purchases have been made. Reported in /admin. */
 export async function countLifetimePurchases() {
   const db = await getDb();
