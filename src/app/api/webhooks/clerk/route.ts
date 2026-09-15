@@ -99,7 +99,11 @@ export async function POST(req: NextRequest) {
     } else if (evt.type === "user.deleted") {
       const userId = evt.data.id;
       if (userId) {
-        await purgeUserData(userId);
+        // The account no longer exists in Clerk, so nothing of it may outlive it here:
+        // `keepSettings: false` deletes the settings row too — email, name, avatar, every
+        // encrypted provider key and the Stripe customer id. The Settings "Delete data" path
+        // keeps that row on purpose (its person is still signed in); this one must not.
+        await purgeUserData(userId, { keepSettings: false });
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {
         result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };
