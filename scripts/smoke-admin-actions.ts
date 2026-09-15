@@ -449,6 +449,23 @@ async function main() {
     "a view outside the window writes a fresh row",
     (await auditRows("account.view")).length === 2
   );
+  /* ------------------------------------------------------------------ sign-in link */
+
+  // The reason gate runs before any Clerk call, so this needs no Clerk test user.
+  await refuses(
+    "a sign-in link with no reason is refused",
+    () => actions.mintSignInLink(ADMIN, { targetUserId: TARGET, reason: "" }),
+    /at least 8 characters/
+  );
+  await refuses(
+    "a sign-in link with a token reason is refused",
+    () => actions.mintSignInLink(ADMIN, { targetUserId: TARGET, reason: "demo" }),
+    /at least 8 characters/
+  );
+  check(
+    "a refused sign-in link writes no audit row",
+    (await auditRows("auth.sign_in_link")).length === 0
+  );
 
   /* -------------------------------------------------------------------------- deletion */
 

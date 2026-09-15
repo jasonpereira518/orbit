@@ -97,6 +97,7 @@ export async function setCompAction(input: {
  */
 export async function mintSignInLinkAction(input: {
   targetUserId: string;
+  reason: string;
 }): Promise<{ url: string; expiresInSeconds: number }> {
   const adminUserId = await requireAdminUserId();
   return ops.mintSignInLink(adminUserId, input);

@@ -2130,6 +2130,7 @@ export const usageEvents = pgTable(
  *   onboarding.reset · integration.disconnect · calendar.enable · calendar.disable
  *   account.suspend · account.unsuspend · account.delete
  *   export.download
+ *   account.view · contact.view · auth.sign_in_link
  */
 export const adminAuditLog = pgTable(
   "admin_audit_log",

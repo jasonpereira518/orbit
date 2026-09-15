@@ -155,6 +155,32 @@ export async function recordAccountView(
   }
 }
 
+/**
+ * Records that the operator opened one contact record, naming it.
+ *
+ * `account.view` says which accounts were looked at; this says which PEOPLE inside them.
+ * The privacy policy promises that every contact record the operator opens is on the
+ * record with its id, so unlike `recordAccountView` this is not throttled. It never throws,
+ * for the same reason: the audit trail is not worth failing a render over.
+ */
+export async function recordContactView(
+  adminUserId: string,
+  targetUserId: string,
+  contactId: string
+): Promise<void> {
+  try {
+    await recordAdminAction({
+      adminUserId,
+      action: "contact.view",
+      targetUserId,
+      resourceType: "contact",
+      resourceId: contactId,
+    });
+  } catch {
+    // Never fail a render over the audit trail.
+  }
+}
+
 /* ---------------------------------------------------------------------- sign-in link */
 
 /** How long a minted link stays valid before its first (only) use. */
@@ -176,21 +202,26 @@ const SIGN_IN_LINK_EXPIRES_SECONDS = 30 * 24 * 60 * 60;
  */
 export async function mintSignInLink(
   adminUserId: string,
-  input: { targetUserId: string }
+  input: { targetUserId: string; reason: string }
 ): Promise<{ url: string; expiresInSeconds: number }> {
+  // A sign-in link is "act as this user". It needs a reason like every other operator
+  // write, and the row is written BEFORE the token exists: a link with no log line must be
+  // impossible, while a log line for a mint that then errored is merely noisy.
+  const reason = requireReason(input.reason, 8);
   await requireAccount(input.targetUserId);
-
-  const clerk = await clerkClient();
-  const token = await clerk.signInTokens.createSignInToken({
-    userId: input.targetUserId,
-    expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS,
-  });
 
   await recordAdminAction({
     adminUserId,
     action: "auth.sign_in_link",
     targetUserId: input.targetUserId,
     detail: { expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS },
+    reason,
+  });
+
+  const clerk = await clerkClient();
+  const token = await clerk.signInTokens.createSignInToken({
+    userId: input.targetUserId,
+    expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS,
   });
 
   const url = `${getAppBaseUrl()}/sign-in?__clerk_ticket=${encodeURIComponent(token.token)}`;
