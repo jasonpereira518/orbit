@@ -318,16 +318,16 @@ export async function upsertEventConnection(
  */
 export async function findGmailGrant(
   userId: string
-): Promise<{ emailAddress: string | null } | null> {
+): Promise<{ emailAddress: string | null; scopes: string | null } | null> {
   const db = await getDb();
-  const rows = rowsOf<{ email_address: string | null }>(
+  const rows = rowsOf<{ email_address: string | null; scopes: string | null }>(
     await db.execute(sql`
-      SELECT email_address FROM gmail_connections
+      SELECT email_address, scopes FROM gmail_connections
        WHERE user_id = ${userId} AND status = 'active'
        LIMIT 1
     `)
   );
-  return rows[0] ? { emailAddress: rows[0].email_address } : null;
+  return rows[0] ? { emailAddress: rows[0].email_address, scopes: rows[0].scopes } : null;
 }
 
 /** Disconnecting deletes the row — the same rule the Gmail/Outlook tables follow. */

@@ -86,6 +86,7 @@ import type {
 } from "@/lib/events/types";
 import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { GOOGLE_SCOPES, hasGmailReadScope, hasScope } from "@/lib/google-scopes";
 import { actionFailure } from "@/lib/action-failure";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
@@ -703,8 +704,12 @@ export async function addTargetCompanyFromEvent(
 export async function getEventConnections(): Promise<{
   connections: EventConnectionSummary[];
   eventbriteConfigured: boolean;
-  /** Whether the mailbox scan can be offered at all — it rides on an existing Google grant. */
+  /** Any active Google connection exists. */
   googleConnected: boolean;
+  /** That connection may read mail — the confirmation-email scan can run. */
+  googleMailGranted: boolean;
+  /** That connection may read the calendar — meetings sync. */
+  googleCalendarGranted: boolean;
 }> {
   const userId = await requireUserForSurface(SURFACE);
   const [connections, grant] = await Promise.all([
@@ -715,6 +720,8 @@ export async function getEventConnections(): Promise<{
     connections,
     eventbriteConfigured: eventbriteOAuthConfig().configured,
     googleConnected: grant !== null,
+    googleMailGranted: hasGmailReadScope(grant?.scopes),
+    googleCalendarGranted: hasScope(grant?.scopes, GOOGLE_SCOPES.calendar),
   };
 }
 
@@ -821,7 +828,7 @@ export async function connectEventFeed(
  */
 export async function setGmailEventScan(
   enabled: boolean
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; needsMailScope?: boolean }> {
   const userId = await requireSyncUser();
 
   if (!enabled) {
@@ -830,13 +837,14 @@ export async function setGmailEventScan(
     return { ok: true };
   }
 
-  // Requires the Gmail grant to exist already. This switch never asks for a new scope — if
-  // the user has not connected Google at all, the honest answer is to send them there.
   const connection = await findGmailGrant(userId);
-  if (!connection) {
+  // This switch never widens a grant silently: without gmail.readonly it tells the card to
+  // send the person through Google's consent screen for exactly that scope.
+  if (!connection || !hasGmailReadScope(connection.scopes)) {
     return {
       ok: false,
-      error: "Connect Google first — Orbit scans the mailbox you have already connected.",
+      needsMailScope: true,
+      error: "Allow mail access first — Orbit asks Google for it next",
     };
   }
 

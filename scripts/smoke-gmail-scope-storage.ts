@@ -17,6 +17,7 @@ import { gmailConnections, userSettings } from "../src/db/schema";
 import { buildGmailAuthUrl, hasGmailReadScope, upsertGmailConnection } from "../src/lib/gmail";
 import { GOOGLE_SCOPES, hasScope } from "../src/lib/google-scopes";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { findGmailGrant } from "../src/lib/events/connections";
 
 const USER = "smoke-gmail-scope-user";
 let failures = 0;
@@ -59,6 +60,10 @@ run(async () => {
 
   const refreshed = await upsertGmailConnection(USER, { access_token: "at4", expires_in: 3600 }, "scope@example.test");
   check("a refresh that omits scope keeps what was granted", refreshed?.scopes === widened?.scopes);
+
+  console.log("Event connections read the grant");
+  const grant = await findGmailGrant(USER);
+  check("findGmailGrant returns the stored scopes", grant !== null && hasGmailReadScope(grant.scopes), JSON.stringify(grant));
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
