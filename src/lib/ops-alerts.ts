@@ -1,4 +1,5 @@
 import type { CronRunState } from "@/lib/cron-runs";
+import { PURGE_MAX_ATTEMPTS } from "@/lib/data-categories";
 import { hasMissedRun } from "@/lib/cron-runs";
 
 /**
@@ -59,6 +60,8 @@ export type OpsSnapshot = {
   wedgedSyncs: number;
   /** Connections the scheduler gave up on and disarmed. */
   failingSyncs: number;
+  /** `data_purge_runs` marked failed: deletions a user asked for that did not finish. */
+  stuckPurges: number;
 };
 
 /** How often a persisting condition is repeated. Info is said once. */
@@ -284,6 +287,17 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "info",
       title: "Accounts need to reconnect a mailbox",
       detail: `${s.reauthNeeded} Gmail/Outlook connection(s) need the user to re-authorize.`,
+      href: "/admin/health",
+    });
+  }
+
+  // Critical, not warning: a user was told their data was deleted, and it is still here.
+  if (s.stuckPurges > 0) {
+    out.push({
+      id: "purge.stuck",
+      severity: "critical",
+      title: "An account deletion is stuck",
+      detail: `${s.stuckPurges} deletion run(s) stopped after ${PURGE_MAX_ATTEMPTS} attempts — rows the user asked to delete are still in the database. See data_purge_runs.last_error.`,
       href: "/admin/health",
     });
   }

@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { cronRuns, errorEvents, imports, opsAlertState } from "@/db/schema";
+import { cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns } from "@/db/schema";
 import { aiErrorBreakdown } from "@/lib/admin-health";
 import {
   OUR_ERROR_KINDS,
@@ -82,6 +82,11 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .where(and(eq(imports.status, "failed"), gt(imports.updatedAt, dayAgo))),
     ]);
 
+  const [stuckPurgeRow] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(dataPurgeRuns)
+    .where(eq(dataPurgeRuns.status, "failed"));
+
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
   const perfSlow = bySource.get(ERROR_SOURCES.perfSlow) ?? 0;
   const stripeCheckout = bySource.get(ERROR_SOURCES.stripeCheckout) ?? 0;
@@ -129,6 +134,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     reauthNeeded: issues.needsReauth,
     wedgedSyncs: issues.syncWedged,
     failingSyncs: issues.syncFailing,
+    stuckPurges: stuckPurgeRow?.n ?? 0,
   };
 }
 

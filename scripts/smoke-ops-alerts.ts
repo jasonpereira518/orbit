@@ -49,6 +49,7 @@ const HEALTHY: OpsSnapshot = {
   reauthNeeded: 0,
   wedgedSyncs: 0,
   failingSyncs: 0,
+  stuckPurges: 0,
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -123,6 +124,9 @@ function main() {
     !find({ ...HEALTHY, deploy: { prodSha: "abc", mainSha: "def", mainCommittedAt: hoursAgo(1) } }, "deploy.drift"));
   check("no deploy payload → no drift condition", !find({ ...HEALTHY, deploy: null }, "deploy.drift"));
   check("accounts needing re-auth → info", find({ ...HEALTHY, reauthNeeded: 3 }, "reauth.needed")?.severity === "info");
+  check("a failed deletion run → purge.stuck (critical)",
+    find({ ...HEALTHY, stuckPurges: 1 }, "purge.stuck")?.severity === "critical");
+  check("no failed deletion runs → no purge.stuck", !find(HEALTHY, "purge.stuck"));
   check("every condition carries a title and a detail",
     evaluateOpsConditions({ ...HEALTHY, wedgedImports: 1, reauthNeeded: 1, errorEventsLastHour: 9 }, NOW).every((c) => c.title && c.detail));
 
