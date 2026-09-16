@@ -5,6 +5,8 @@ import { after } from "next/server";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { AppShell } from "@/components/layout/app-shell";
+import { LifetimeAiOfferProvider } from "@/components/lifetime-ai-offer";
+import { managedKeysConfigured } from "@/lib/ai-access";
 import { SectionFlash } from "@/components/layout/section-flash";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
 import { captureAttribution } from "@/lib/attribution-capture";
@@ -108,8 +110,11 @@ export default async function AppLayout({
     resolveSurfaceVisibility(userId),
   ]);
 
+  // Whether "Lifetime includes AI" is true on this deployment — see LifetimeAiOfferProvider.
+  const lifetimeIncludesAi = Object.values(managedKeysConfigured()).some(Boolean);
+
   return (
-    <>
+    <LifetimeAiOfferProvider value={lifetimeIncludesAi}>
       <AppShell
       clerkOn={clerkOn}
       demoMode={demoMode}
@@ -143,6 +148,6 @@ export default async function AppLayout({
       {!visibility.hidden.has(FEEDBACK_SURFACE_KEY) && (
         <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
       )}
-    </>
+    </LifetimeAiOfferProvider>
   );
 }

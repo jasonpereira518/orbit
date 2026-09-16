@@ -1,5 +1,6 @@
 import type { CronRunState } from "@/lib/cron-runs";
 import { hasMissedRun } from "@/lib/cron-runs";
+import { MANAGED_AI_ALERTS } from "@/lib/managed-ai-policy";
 
 /**
  * Known-condition alerting: the catalogue, and the state machine that keeps it quiet.
@@ -57,6 +58,24 @@ export type OpsSnapshot = {
   wedgedSyncs: number;
   /** Connections the scheduler gave up on and disarmed. */
   failingSyncs: number;
+  /** Orbit's managed AI keys — the Lifetime cost exposure. See `managed-ai-ops.ts`. */
+  managedAi: ManagedAiOpsFacts;
+};
+
+export type ManagedAiOpsFacts = {
+  /** At least one managed key is set and `ORBIT_MANAGED_AI` is not "off". */
+  configured: boolean;
+  switchedOff: boolean;
+  /** Accounts that resolve to Lifetime (purchase or comp). */
+  lifetimeAccounts: number;
+  spentLast24hMicros: number;
+  spentLast30dMicros: number;
+  /** Every Lifetime dollar ever booked (`billing_events.kind = 'lifetime'`), gross. */
+  lifetimeCashCents: number;
+  /** Accounts that have used their whole allowance this month. */
+  accountsAtCap: number;
+  /** Providers whose managed key was refused or throttled in the last hour. */
+  failingProviders: string[];
 };
 
 /** How often a persisting condition is repeated. Info is said once. */
@@ -266,6 +285,8 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
     });
   }
 
+  out.push(...managedAiConditions(s.managedAi));
+
   if (s.reauthNeeded > 0) {
     out.push({
       id: "reauth.needed",
@@ -273,6 +294,78 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       title: "Accounts need to reconnect a mailbox",
       detail: `${s.reauthNeeded} Gmail/Outlook connection(s) need the user to re-authorize.`,
       href: "/admin/health",
+    });
+  }
+
+  return out;
+}
+
+const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
+
+/**
+ * Orbit's own AI keys, which Lifetime accounts run on when they bring none. A one-time
+ * payment funding ongoing inference is the one open-ended cost in the product, so it gets
+ * its own catalogue entries: the key breaking, the key missing, a spike, a pace that
+ * outruns the revenue behind it, and accounts hitting the cap.
+ */
+function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
+  const out: OpsCondition[] = [];
+
+  for (const provider of m.failingProviders) {
+    out.push({
+      id: `ai.managed_failing:${provider}`,
+      severity: "critical",
+      title: `Orbit's managed ${provider} key is being refused`,
+      detail: `The provider rejected or throttled Orbit's own ${provider} key in the last hour — every Lifetime account without a key of its own has lost AI. Check the key and its quota.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (m.lifetimeAccounts > 0 && !m.configured) {
+    out.push({
+      id: "ai.managed_unconfigured",
+      severity: "warning",
+      title: m.switchedOff ? "Managed AI is switched off" : "No managed AI key is configured",
+      detail: m.switchedOff
+        ? `ORBIT_MANAGED_AI=off, so ${m.lifetimeAccounts} Lifetime account(s) can only use AI with a key of their own.`
+        : `${m.lifetimeAccounts} Lifetime account(s) were promised AI on Orbit's keys, but no ORBIT_MANAGED_*_API_KEY is set.`,
+    });
+  }
+
+  if (m.spentLast24hMicros >= MANAGED_AI_ALERTS.dailySpikeMicros) {
+    out.push({
+      id: "ai.managed_spend_spike",
+      severity: "warning",
+      title: "Managed AI spend is spiking",
+      detail: `${usd(m.spentLast24hMicros)} on Orbit's AI keys in the last 24 hours (threshold ${usd(MANAGED_AI_ALERTS.dailySpikeMicros)}).`,
+      href: "/admin/billing/costs",
+    });
+  }
+
+  if (m.spentLast30dMicros >= MANAGED_AI_ALERTS.runwayMinSpendMicros) {
+    const annualMicros = (m.spentLast30dMicros * 365) / 30;
+    const years = (m.lifetimeCashCents * 10_000) / annualMicros;
+    if (years < MANAGED_AI_ALERTS.runwayYears) {
+      out.push({
+        id: "ai.managed_runway",
+        severity: "warning",
+        title: "Managed AI is outpacing Lifetime revenue",
+        detail:
+          m.lifetimeCashCents > 0
+            ? `At the last 30 days' pace (${usd(m.spentLast30dMicros)}), managed AI costs ${usd(annualMicros)} a year — every Lifetime dollar booked so far covers ${years.toFixed(1)} year(s) of it. Revisit the cap or the price.`
+            : `${usd(m.spentLast30dMicros)} of managed AI in the last 30 days with no Lifetime revenue booked behind it (comps or demo accounts).`,
+        href: "/admin/billing/costs",
+      });
+    }
+  }
+
+  if (m.accountsAtCap > 0) {
+    out.push({
+      id: "ai.managed_cap_hit",
+      severity: "info",
+      title: "Lifetime accounts are hitting the AI cap",
+      detail: `${m.accountsAtCap} account(s) have used this month's whole managed-AI allowance and are back to bring-your-own-key until the 1st. A rising count says the cap is too tight for real use.`,
+      href: "/admin/billing/costs",
     });
   }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 const LogInteractionSheet = dynamic(
   () =>
@@ -14,12 +15,14 @@ export function LogInteractionSheetLazy({
   contactId,
   contactName,
   hasApiKey,
+  aiReason = null,
   open,
   onOpenChange,
 }: {
   contactId: string;
   contactName: string;
   hasApiKey: boolean;
+  aiReason?: AiAccessDenial | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -28,6 +31,7 @@ export function LogInteractionSheetLazy({
       contactId={contactId}
       contactName={contactName}
       hasApiKey={hasApiKey}
+      aiReason={aiReason}
       open={open}
       onOpenChange={onOpenChange}
     />

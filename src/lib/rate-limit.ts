@@ -118,6 +118,12 @@ export const RATE_LIMITS = {
    * name on a normal roster, tight enough that a retry storm cannot run up their bill.
    */
   eventWhy: { limit: 30, windowSec: 3600 },
+  /**
+   * The AI gate asking Stripe whether a just-opened Lifetime checkout has been paid
+   * (`src/lib/lifetime-checkout.ts`). One Stripe round trip each, and only ever on a refusal
+   * path, so this is a ceiling on an abandoned checkout costing a lookup per AI click.
+   */
+  lifetimeConfirm: { limit: 6, windowSec: 60 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

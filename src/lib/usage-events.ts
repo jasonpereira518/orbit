@@ -40,7 +40,10 @@ export type UsageMeta = {
   provider: UsageProvider;
   model: string;
   kind: UsageKind;
-  /** Whose API key paid. "orbit" only ever happens off-Vercel — prod is strictly BYOK. */
+  /**
+   * Whose API key paid. "orbit" = a managed key the AI gate issued (Lifetime or demo
+   * accounts only) — and the meter the managed allowance reads. Always `grant.keyOwner`.
+   */
   keyOwner: "user" | "orbit";
 };
 

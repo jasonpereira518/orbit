@@ -18,6 +18,7 @@ import {
   type OpsCondition,
   type OpsSnapshot,
 } from "@/lib/ops-alerts";
+import { loadManagedAiOpsFacts } from "@/lib/managed-ai-ops";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
 import { prunePageViews } from "@/lib/page-views";
 
@@ -53,6 +54,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     aiGroups,
     errorsLastHour,
     failedImports,
+    managedAi,
   ] = await Promise.all([
       db
         .select()
@@ -79,6 +81,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select({ n: sql<number>`count(*)::int` })
         .from(imports)
         .where(and(eq(imports.status, "failed"), gt(imports.updatedAt, dayAgo))),
+      loadManagedAiOpsFacts(now),
     ]);
 
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
@@ -126,6 +129,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     reauthNeeded: issues.needsReauth,
     wedgedSyncs: issues.syncWedged,
     failingSyncs: issues.syncFailing,
+    managedAi,
   };
 }
 

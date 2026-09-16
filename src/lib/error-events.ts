@@ -78,6 +78,13 @@ export const ERROR_SOURCES = {
    * a four-provider poll sitting behind a sixty-second cache.
    */
   providerHealthCheck: "provider.health_check",
+  /**
+   * A provider refused or throttled one of ORBIT'S managed AI keys (`src/lib/ai-access.ts`).
+   * `kind` is the failure kind, the provider lives in context. Throttled to one row per
+   * (provider, kind) per process per hour, and the ops sweep pages on any row at all: a
+   * revoked or exhausted managed key takes AI away from every Lifetime account at once.
+   */
+  managedAi: "ai.managed",
 } as const;
 
 export type ErrorEventInput = {

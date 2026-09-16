@@ -1,3 +1,5 @@
+import { AI_ACCESS_MESSAGES } from "@/lib/ai-access-copy";
+
 /**
  * Shown whenever AI features fail because the user has no provider key.
  *
@@ -153,6 +155,9 @@ const OWN_WORDS = new Set<string>([
   ...AI_PROVIDER_LABELS.flatMap((label) =>
     Object.values(AI_FAILURE_COPY).map((template) => template(label))
   ),
+  // The AI gate's refusals (`src/lib/ai-access.ts`). Listed here so a Lifetime user who has
+  // run out of allowance reads that, rather than the generic "add your key".
+  ...AI_ACCESS_MESSAGES,
 ]);
 
 /**
