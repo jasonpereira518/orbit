@@ -224,6 +224,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-resend-rejection": "pglite",
   "smoke-schema-upgrade": "pglite",
   "smoke-stripe-webhook": "pglite",
+  "smoke-billing-portal": "pglite",
   "smoke-checkout-confirm": "pglite",
   "smoke-stripe-dedupe": "pglite",
   "smoke-surface-visibility": "pglite",

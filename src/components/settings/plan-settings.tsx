@@ -1,5 +1,6 @@
 import { Check, Sparkles } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { ManageBillingButton } from "@/components/settings/manage-billing-button";
 import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
 import { planCopy } from "@/lib/plan-copy";
@@ -219,6 +220,7 @@ export function PlanSettings({
         )}
 
         <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-4">
+          {entitlements.source === "subscription" && <ManageBillingButton />}
           {isFree && (
             /* Points at the transaction page, not back at /pricing — that round
                trip was a loop with no way to actually pay at either end.

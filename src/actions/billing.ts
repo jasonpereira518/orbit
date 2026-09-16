@@ -18,6 +18,7 @@ import {
   isStripeConfigured,
 } from "@/lib/stripe";
 import { confirmCheckoutForUser } from "@/lib/stripe-fulfilment";
+import { createBillingPortalUrl, type BillingPortalResult } from "@/lib/billing-portal";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import type { BillingPeriod } from "@/lib/plan-copy";
@@ -191,6 +192,12 @@ export async function getCurrentPlan(): Promise<Plan> {
   const userId = await requireUserId();
   const { plan } = await getEntitlements(userId);
   return plan;
+}
+
+/** Stripe's customer portal for the caller's own subscription. Returns the URL, like checkout. */
+export async function openBillingPortal(): Promise<BillingPortalResult> {
+  const userId = await requireUserId();
+  return createBillingPortalUrl(userId);
 }
 
 /**
