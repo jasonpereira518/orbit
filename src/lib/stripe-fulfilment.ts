@@ -8,7 +8,9 @@ import {
   recordBillingEventStrict,
 } from "@/lib/billing-events";
 import { resolveChargePurpose } from "@/lib/stripe-charge-purpose";
+import { checkoutSessionVerdict, syntheticCheckoutEvent } from "@/lib/checkout-confirm";
 import {
+  decideStripeEvent,
   revocationPaymentIntent,
   stripeEventSubject,
   type Booking,
@@ -183,4 +185,30 @@ export async function markStripeEventProcessed(
 ): Promise<void> {
   const db = await getDb();
   await db.insert(stripeProcessedEvents).values({ eventId, eventType }).onConflictDoNothing();
+}
+
+/**
+ * Verify-on-return: apply a Checkout Session the caller just paid for, without waiting for
+ * the webhook. Same decision, same apply, so the later webhook finds nothing left to do.
+ */
+export async function confirmCheckoutForUser(
+  userId: string,
+  sessionId: string,
+  deps: { retrieve: (sessionId: string) => Promise<Stripe.Checkout.Session>; now?: Date }
+): Promise<{ status: "applied" | "skipped"; reason?: string }> {
+  const session = await deps.retrieve(sessionId);
+  const now = deps.now ?? new Date();
+  const verdict = checkoutSessionVerdict(session, {
+    userId,
+    nowSeconds: Math.floor(now.getTime() / 1000),
+  });
+  if (!verdict.ok) return { status: "skipped", reason: verdict.reason };
+
+  const event = syntheticCheckoutEvent(session);
+  const decision = decideStripeEvent(event, await readDecideContext(event, now));
+  if (decision.outcome !== "handled") {
+    return { status: "skipped", reason: decision.reason ?? "ignored" };
+  }
+  await applyStripeDecision(decision);
+  return { status: "applied" };
 }

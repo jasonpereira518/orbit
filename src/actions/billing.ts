@@ -17,6 +17,7 @@ import {
   isProCheckoutConfigured,
   isStripeConfigured,
 } from "@/lib/stripe";
+import { confirmCheckoutForUser } from "@/lib/stripe-fulfilment";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import type { BillingPeriod } from "@/lib/plan-copy";
@@ -67,7 +68,7 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
       // The plan card here already reads "Orbit Lifetime" once the webhook lands, so this
       // page confirms the purchase without needing a bespoke success screen. `upgraded`
       // arms the celebration watcher's fast poll — the webhook may not have landed yet.
-      success_url: `${baseUrl}/settings?upgraded=lifetime#settings-plan`,
+      success_url: `${baseUrl}/settings?upgraded=lifetime&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
@@ -146,7 +147,7 @@ export async function startProCheckout(
       },
       customer_email: profile?.email || undefined,
       // `upgraded` arms the celebration watcher's fast poll; see the Lifetime session.
-      success_url: `${baseUrl}/settings?upgraded=pro#settings-plan`,
+      success_url: `${baseUrl}/settings?upgraded=pro&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
@@ -190,6 +191,33 @@ export async function getCurrentPlan(): Promise<Plan> {
   const userId = await requireUserId();
   const { plan } = await getEntitlements(userId);
   return plan;
+}
+
+/**
+ * Verify-on-return. The webhook stays the guarantee; this only shortens the wait, so every
+ * failure is swallowed into a status and the caller carries on polling.
+ */
+export async function confirmCheckoutSession(
+  sessionId: string
+): Promise<{ status: "applied" | "skipped" | "unavailable" }> {
+  const userId = await requireUserId();
+  if (!isStripeConfigured()) return { status: "unavailable" };
+  if (typeof sessionId !== "string" || !/^cs_[A-Za-z0-9_]{8,250}$/.test(sessionId)) {
+    return { status: "skipped" };
+  }
+  try {
+    const result = await confirmCheckoutForUser(userId, sessionId, {
+      retrieve: (id) =>
+        getStripe().checkout.sessions.retrieve(id, {
+          expand: ["payment_intent.latest_charge", "subscription"],
+        }),
+    });
+    return { status: result.status };
+  } catch (err) {
+    // Not recorded as a stripeCheckout error event: that source pages "nobody can pay".
+    console.error("Checkout confirmation on return did not complete:", err);
+    return { status: "unavailable" };
+  }
 }
 
 /**

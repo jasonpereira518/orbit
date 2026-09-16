@@ -544,7 +544,10 @@ export function decideStripeEvent(
           bookings: movement
             ? [
                 {
-                  eventId: event.id,
+                  // Keyed on the SESSION: the return path (`confirmCheckoutForUser`) and this
+                  // webhook can both read before = 0 in the same second. A session yields at
+                  // most one checkout movement, so one key per session drops the second.
+                  eventId: `csm:${session.id}`,
                   kind: movement.kind,
                   userId,
                   amountCents: 0,
