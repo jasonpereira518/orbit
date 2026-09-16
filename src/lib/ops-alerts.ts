@@ -65,6 +65,8 @@ export type OpsSnapshot = {
   statementTimeout: string | null;
   /** stripe.unattributed rows in the last day: checkout fulfilments vs everything else. */
   stripeUnattributed24h: { fulfilments: number; other: number };
+  /** Accounts with an embedding flag older than EMBEDDING_BACKLOG_STALE_HOURS, and the oldest flag. */
+  embeddingBacklog: { accounts: number; oldestAt: Date | null };
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
@@ -91,6 +93,12 @@ const PERF_SLOW_BURST = 3;
 const OUTAGE_ACCOUNTS = 2;
 const BACKFILL_FAILING_ACCOUNTS = 2;
 const DRIFT_AFTER_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Several hourly backfill passes. Must stay in step with the `'6 hours'` interval in
+ * `loadOpsSnapshot`'s backlog query — the SQL cannot interpolate this constant safely.
+ */
+export const EMBEDDING_BACKLOG_STALE_HOURS = 6;
 
 const isRejected = (o: WebhookOutcome) => o === "invalid" || o === "error";
 
@@ -295,6 +303,19 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: "Background backfills are failing",
       detail: `${s.backfillFailures24h.kinds.join(" and ")} backfill failed for ${s.backfillFailures24h.accounts} accounts in the last day — the provider or Orbit, not one user's key.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (s.embeddingBacklog.accounts >= 1) {
+    const oldestHours = s.embeddingBacklog.oldestAt
+      ? (now.getTime() - s.embeddingBacklog.oldestAt.getTime()) / 3_600_000
+      : EMBEDDING_BACKLOG_STALE_HOURS;
+    out.push({
+      id: "embedding.backlog",
+      severity: "warning",
+      title: "Semantic search is falling behind",
+      detail: `${s.embeddingBacklog.accounts} account(s) have contacts waiting over ${EMBEDDING_BACKLOG_STALE_HOURS} h for search embeddings (oldest ${oldestHours.toFixed(1)} h), so search and chat fall back to keywords for them.`,
       href: "/admin/health",
     });
   }

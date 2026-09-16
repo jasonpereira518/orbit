@@ -12,7 +12,7 @@ import "./smoke/_env";
 // Off Vercel nothing is required, so `config.missing` cannot fire and muddy the scenario.
 delete process.env.VERCEL_ENV;
 
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { cronRuns, errorEvents, opsAlertState, webhookDeliveries } from "../src/db/schema";
 import { ERROR_SOURCES } from "../src/lib/error-events";
@@ -34,6 +34,7 @@ async function reset() {
     .delete(cronRuns)
     .where(inArray(cronRuns.job, ["imports.process-stalled", "ops.sweep", "sync.run", "webhooks.drain"]));
   await db.delete(errorEvents).where(inArray(errorEvents.source, [ERROR_SOURCES.backfillFailed, ERROR_SOURCES.stripeUnattributed]));
+  await db.execute(sql`UPDATE contacts SET embedding_stale_at = NULL WHERE embedding_stale_at < now() - interval '6 hours'`);
   // A healthy connector-sync run, so `sync.schedule_missed` stays quiet.
   //
   // This scenario is about the alert STATE MACHINE — open, remind, recover — and asserts an

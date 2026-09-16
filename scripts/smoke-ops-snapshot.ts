@@ -12,7 +12,7 @@ delete process.env.VERCEL_ENV;
 
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { cronRuns, errorEvents } from "../src/db/schema";
+import { contacts, cronRuns, errorEvents } from "../src/db/schema";
 import { recordBackfillFailure } from "../src/lib/backfill-failures";
 import { ERROR_SOURCES } from "../src/lib/error-events";
 import { evaluateOpsConditions } from "../src/lib/ops-alerts";
@@ -102,6 +102,19 @@ run(async () => {
   const su = (await loadOpsSnapshot(new Date(), null)).stripeUnattributed24h;
   check("fulfilments and other events are counted apart", su.fulfilments === 1 && su.other === 1, JSON.stringify(su));
   await db.delete(errorEvents).where(eq(errorEvents.source, ERROR_SOURCES.stripeUnattributed));
+
+  console.log("\nEmbedding backlog...");
+  await db.delete(contacts).where(inArray(contacts.userId, ["snap-backlog", "snap-backlog-fresh"]));
+  const base = (await loadOpsSnapshot(new Date(), null)).embeddingBacklog.accounts;
+  await db.insert(contacts).values({ userId: "snap-backlog-fresh", fullName: "Fresh Flag", embeddingStaleAt: new Date(Date.now() - 3_600_000) });
+  check("a flag an hour old is not counted", (await loadOpsSnapshot(new Date(), null)).embeddingBacklog.accounts === base);
+  const staleSince = new Date(Date.now() - 30 * 3_600_000);
+  await db.insert(contacts).values({ userId: "snap-backlog", fullName: "Backlog Person", embeddingStaleAt: staleSince });
+  const eb = (await loadOpsSnapshot(new Date(), null)).embeddingBacklog;
+  check("a flag 30h old counts its account", eb.accounts === base + 1, JSON.stringify(eb));
+  check("and the oldest flag is read", eb.oldestAt !== null && eb.oldestAt.getTime() <= staleSince.getTime() + 1000, String(eb.oldestAt));
+  check("which opens embedding.backlog", (await idsNow()).includes("embedding.backlog"));
+  await db.delete(contacts).where(inArray(contacts.userId, ["snap-backlog", "snap-backlog-fresh"]));
 
   // (new sections go above this line)
 

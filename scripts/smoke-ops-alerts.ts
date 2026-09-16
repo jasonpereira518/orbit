@@ -56,6 +56,7 @@ const HEALTHY: OpsSnapshot = {
   backfillFailures24h: { accounts: 0, kinds: [] },
   statementTimeout: "20s",
   stripeUnattributed24h: { fulfilments: 0, other: 0 },
+  embeddingBacklog: { accounts: 0, oldestAt: null },
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -141,6 +142,11 @@ function main() {
     find({ ...HEALTHY, backfillFailures24h: { accounts: 2, kinds: ["embeddings"] } }, "backfill.failed")?.severity === "warning");
   check("one account's failing backfill is that user's key, not an ops alert",
     !find({ ...HEALTHY, backfillFailures24h: { accounts: 1, kinds: ["embeddings"] } }, "backfill.failed"));
+
+  check("an account with a flag older than 6h → embedding.backlog (warning)",
+    find({ ...HEALTHY, embeddingBacklog: { accounts: 1, oldestAt: hoursAgo(30) } }, "embedding.backlog")?.severity === "warning");
+  check("fresh flags only (the backfill is working) → quiet",
+    !find({ ...HEALTHY, embeddingBacklog: { accounts: 0, oldestAt: hoursAgo(2) } }, "embedding.backlog"));
 
   check("an unattributed checkout → stripe.unattributed (critical)",
     find({ ...HEALTHY, stripeUnattributed24h: { fulfilments: 1, other: 0 } }, "stripe.unattributed")?.severity === "critical");

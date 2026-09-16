@@ -1,7 +1,7 @@
 import { probeStatementTimeout } from "@/lib/health";
-import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns } from "@/db/schema";
+import { contacts, cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns } from "@/db/schema";
 import { aiErrorBreakdown } from "@/lib/admin-health";
 import {
   OUR_ERROR_KINDS,
@@ -59,6 +59,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     lastDrain,
     backfillAgg,
     unattributedAgg,
+    backlogAgg,
   ] = await Promise.all([
       db
         .select()
@@ -103,6 +104,14 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .from(errorEvents)
         .where(and(eq(errorEvents.source, ERROR_SOURCES.stripeUnattributed), gt(errorEvents.createdAt, dayAgo)))
         .groupBy(errorEvents.kind),
+      db
+        .select({
+          // Single-table select, so the unprefixed column in the template is unambiguous.
+          accounts: sql<number>`(count(distinct ${contacts.userId}) filter (where ${contacts.embeddingStaleAt} < now() - interval '6 hours'))::int`,
+          oldest: sql<string | Date | null>`min(${contacts.embeddingStaleAt})`,
+        })
+        .from(contacts)
+        .where(isNotNull(contacts.embeddingStaleAt)),
     ]);
 
   const [stuckPurgeRow] = await db
@@ -155,6 +164,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     backfillFailures24h: {
       accounts: backfillAgg[0]?.accounts ?? 0,
       kinds: backfillAgg[0]?.kinds ? backfillAgg[0].kinds.split(",") : [],
+    },
+    embeddingBacklog: {
+      accounts: backlogAgg[0]?.accounts ?? 0,
+      oldestAt: backlogAgg[0]?.oldest ? new Date(backlogAgg[0].oldest) : null,
     },
     stripeUnattributed24h: {
       fulfilments: unattributedAgg.filter((r) => r.kind.startsWith("checkout.session.")).reduce((sum, r) => sum + r.n, 0),
