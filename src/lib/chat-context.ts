@@ -28,6 +28,7 @@ import {
   sanitizeProfileLine,
   sanitizeProfileText,
 } from "@/lib/contact-profile-format";
+import { embeddingFailureNotice } from "@/lib/chat-search-notice";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { isoDay } from "@/lib/suggested-reminder-utils";
@@ -64,6 +65,8 @@ export type ChatContext = {
   /** Recent interactions per retrieved contact, as dated lines. */
   snippets: Map<string, { timeline: string[] }>;
   scopedQuestion: string;
+  /** One line to show under the answer when the semantic arm was unavailable. */
+  searchNotice: string | null;
   orgRosters: OrgRoster[];
   attention: AttentionBrief | null;
   recruitersForChat: Recruiters;
@@ -201,10 +204,16 @@ async function loadActiveGoalTexts(userId: string): Promise<string[]> {
 async function retrieveRankedContacts(
   userId: string,
   q: string
-): Promise<RankedContact[]> {
+): Promise<{ ranked: RankedContact[]; searchNotice: string | null }> {
   const activeGoals = await loadActiveGoalTexts(userId);
+  let searchNotice: string | null = null;
   const [queryEmbedding, parsedQuery] = await Promise.all([
-    getQueryEmbedding(userId, q).catch(() => null),
+    // Still degrades to keywords — but now says so, instead of letting the model conclude
+    // the user knows nobody like that.
+    getQueryEmbedding(userId, q).catch((err) => {
+      searchNotice = embeddingFailureNotice(err);
+      return null;
+    }),
     understandQuery(userId, q, activeGoals),
   ]);
   const candidates = await hybridSearchContacts(userId, {
@@ -214,7 +223,8 @@ async function retrieveRankedContacts(
     expansionTerms: parsedQuery.expansionTerms,
     limit: CANDIDATE_POOL,
   });
-  return rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery);
+  const ranked = await rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery);
+  return { ranked, searchNotice };
 }
 
 // Every field below is written by the profile's owner, so it is exactly as
@@ -344,7 +354,7 @@ export async function prepareChatContext(
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
-  const [thread, priorRows, retrieved, orgRosters, attention, recruitersForChat, attachedPeople] =
+  const [thread, priorRows, retrieval, orgRosters, attention, recruitersForChat, attachedPeople] =
     await Promise.all([
       threadId
         ? db.query.chatThreads.findFirst({
@@ -380,6 +390,7 @@ export async function prepareChatContext(
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
+  const retrieved = retrieval.ranked;
 
   const priorTurns: ChatTurn[] = priorRows
     .slice()
@@ -491,6 +502,7 @@ export async function prepareChatContext(
     retrieved,
     snippets,
     scopedQuestion,
+    searchNotice: retrieval.searchNotice,
     orgRosters,
     attention,
     recruitersForChat,

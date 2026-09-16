@@ -126,6 +126,7 @@ export async function POST(request: Request) {
           messageId: saved.messageId,
           threadId,
           title: saved.title,
+          notice: ctx.searchNotice,
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,
             fullName: c.fullName,
