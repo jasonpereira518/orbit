@@ -61,6 +61,8 @@ export type OpsSnapshot = {
   missingRequiredEnv: string[];
   /** EXPECTED_IN_PRODUCTION names that are unset (production only). */
   missingExpectedEnv: string[];
+  /** The app role's statement_timeout ("20s", "0" = none). Production only. */
+  statementTimeout: string | null;
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
@@ -320,6 +322,16 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: "Alerts are not reaching Slack",
       detail: "SLACK_OPS_WEBHOOK_URL is unset in production, so every alert stays on /admin/health until someone looks.",
+      href: "/admin/health",
+    });
+  }
+
+  if (s.statementTimeout === "0") {
+    out.push({
+      id: "config.statement_timeout_unbounded",
+      severity: "warning",
+      title: "Database queries have no time limit",
+      detail: "The app role's statement_timeout is 0, so one runaway query can hold the shared compute for every user. Run the ALTER ROLE in docs/RUNBOOK.md → Neon one-time settings.",
       href: "/admin/health",
     });
   }

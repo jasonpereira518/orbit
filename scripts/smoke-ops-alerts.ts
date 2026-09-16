@@ -54,6 +54,7 @@ const HEALTHY: OpsSnapshot = {
   stuckPurges: 0,
   processStalledRecent: ["ok"],
   backfillFailures24h: { accounts: 0, kinds: [] },
+  statementTimeout: "20s",
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -139,6 +140,11 @@ function main() {
     find({ ...HEALTHY, backfillFailures24h: { accounts: 2, kinds: ["embeddings"] } }, "backfill.failed")?.severity === "warning");
   check("one account's failing backfill is that user's key, not an ops alert",
     !find({ ...HEALTHY, backfillFailures24h: { accounts: 1, kinds: ["embeddings"] } }, "backfill.failed"));
+
+  check("statement_timeout 0 → config.statement_timeout_unbounded (warning)",
+    find({ ...HEALTHY, statementTimeout: "0" }, "config.statement_timeout_unbounded")?.severity === "warning");
+  check("a bounded or unknown timeout is quiet",
+    !find(HEALTHY, "config.statement_timeout_unbounded") && !find({ ...HEALTHY, statementTimeout: null }, "config.statement_timeout_unbounded"));
 
   check("Slack unset in production → config.alerts_undeliverable (warning)",
     find({ ...HEALTHY, missingExpectedEnv: ["SLACK_OPS_WEBHOOK_URL"] }, "config.alerts_undeliverable")?.severity === "warning");

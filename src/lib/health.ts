@@ -89,7 +89,7 @@ async function probeSchemaVersion(): Promise<{ recorded: number | null }> {
  * a shared compute. A setting nobody checks is a setting nobody has, so it is reported here
  * where the ops sweep and /admin/health can both see it.
  */
-async function probeStatementTimeout(): Promise<string | null> {
+export async function probeStatementTimeout(): Promise<string | null> {
   const db = await getDb();
   const res = await db.execute(sql`SHOW statement_timeout`);
   const row = rowsOf<{ statement_timeout: string }>(res)[0];

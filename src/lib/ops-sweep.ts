@@ -1,3 +1,4 @@
+import { probeStatementTimeout } from "@/lib/health";
 import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns } from "@/db/schema";
@@ -121,6 +122,11 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     }
   }
 
+  // Production only: PGlite and preview branches report Postgres's default of 0, which would
+  // open this condition in every local sweep and smoke run.
+  const statementTimeout =
+    process.env.VERCEL_ENV === "production" ? await probeStatementTimeout().catch(() => null) : null;
+
   const nightly = lastNightly[0];
   const syncRun = lastSyncRun[0];
   const drainRun = lastDrain[0];
@@ -155,6 +161,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     perfSlowLastHour: perfSlow,
     missingRequiredEnv: getEnvReport().missingRequired,
     missingExpectedEnv: getEnvReport().missingExpected,
+    statementTimeout,
     deploy: deploy
       ? { prodSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null, ...deploy }
       : null,

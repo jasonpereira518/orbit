@@ -81,6 +81,18 @@ run(async () => {
   check("two accounts open backfill.failed", (await idsNow()).includes("backfill.failed"));
   await db.delete(errorEvents).where(eq(errorEvents.source, ERROR_SOURCES.backfillFailed));
 
+  console.log("\nstatement_timeout...");
+  check("not probed off production", (await loadOpsSnapshot(new Date(), null)).statementTimeout === null);
+  process.env.VERCEL_ENV = "production";
+  try {
+    const prodSnap = await loadOpsSnapshot(new Date(), null);
+    check("probed in production (PGlite reports 0)", prodSnap.statementTimeout === "0", String(prodSnap.statementTimeout));
+    check("which opens config.statement_timeout_unbounded",
+      evaluateOpsConditions(prodSnap, new Date()).some((c) => c.id === "config.statement_timeout_unbounded"));
+  } finally {
+    delete process.env.VERCEL_ENV;
+  }
+
   // (new sections go above this line)
 
   if (failures > 0) {
