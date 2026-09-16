@@ -95,3 +95,26 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
     askedWhen: "Connect Google Calendar on Events",
   },
 ];
+
+/**
+ * Whether the app shell should ask this account to accept the current Terms.
+ *
+ * Only for a real signed-in account (Clerk on, not the shared local demo user), and only
+ * while the recorded version is not the current one — which covers both "never recorded"
+ * (accounts that predate Clerk's consent checkbox) and "accepted an older version".
+ */
+export function shouldShowTermsNotice(input: {
+  clerkOn: boolean;
+  demoMode: boolean;
+  termsVersion: string | null | undefined;
+}): boolean {
+  if (!input.clerkOn || input.demoMode) return false;
+  return needsTermsAcceptance(input.termsVersion);
+}
+
+export const TERMS_NOTICE_COPY = {
+  title: "We’ve updated our Terms and Privacy Policy",
+  body: "Please read them. Accepting records that you agree to the version dated " + LEGAL_LAST_UPDATED,
+  accept: "Accept",
+  retry: "Couldn’t record that — try again",
+} as const;

@@ -51,6 +51,22 @@ run(async () => {
   check("an explicit acceptance of a new version overwrites", row?.termsVersion === "2027-01-01" && row?.termsAcceptedAt?.getTime() === later.getTime());
 
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
+  console.log("\nThe in-app notice for accounts that never accepted the current Terms");
+  const { shouldShowTermsNotice, TERMS_NOTICE_COPY } = await import("../src/lib/legal");
+  check("an account with no recorded acceptance sees it",
+    shouldShowTermsNotice({ clerkOn: true, demoMode: false, termsVersion: null }));
+  check("an account on an older version sees it",
+    shouldShowTermsNotice({ clerkOn: true, demoMode: false, termsVersion: "2020-01-01" }));
+  check("an account on the current version does not",
+    !shouldShowTermsNotice({ clerkOn: true, demoMode: false, termsVersion: TERMS_VERSION }));
+  check("demo mode never shows it (demo-user is not a person)",
+    !shouldShowTermsNotice({ clerkOn: false, demoMode: true, termsVersion: null }));
+  check("without Clerk nobody is signed in to accept",
+    !shouldShowTermsNotice({ clerkOn: false, demoMode: false, termsVersion: null }));
+  check("the copy follows the house voice",
+    !/failed|Could not|\.$/.test(Object.values(TERMS_NOTICE_COPY).join(" ")) &&
+      TERMS_NOTICE_COPY.title.includes("’"));
+
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
   console.log("\nAll terms-acceptance checks passed.");
 });
