@@ -26,7 +26,7 @@ process.env.STRIPE_SECRET_KEY ||= "sk_test_smoke_only_not_a_real_key";
 import Stripe from "stripe";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { userSettings, billingEvents, webhookDeliveries } from "../src/db/schema";
+import { userSettings, billingEvents, webhookDeliveries, stripeProcessedEvents } from "../src/db/schema";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { getEntitlements } from "../src/lib/entitlements";
 import {
@@ -296,6 +296,8 @@ async function reset() {
   await db.delete(billingEvents).where(eq(billingEvents.userId, CASH_USER));
   await db.delete(billingEvents).where(eq(billingEvents.userId, ANNUAL_USER));
   await db.delete(webhookDeliveries).where(eq(webhookDeliveries.source, "stripe"));
+  await db.delete(stripeProcessedEvents);
+  await db.delete(stripeProcessedEvents);
   await ensureUserSettings(USER);
 }
 
@@ -380,13 +382,17 @@ async function main() {
       where: eq(userSettings.userId, PRO_USER),
     }))!;
 
-  const proSession = sessionEvent({
-    id: "cs_test_smoke_pro",
-    client_reference_id: PRO_USER,
-    customer: "cus_smoke_pro",
-    mode: "subscription",
-    metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE },
-  });
+  // Its own event id: real Stripe ids are unique, and the webhook now dedupes on them.
+  const proSession = {
+    ...sessionEvent({
+      id: "cs_test_smoke_pro",
+      client_reference_id: PRO_USER,
+      customer: "cus_smoke_pro",
+      mode: "subscription",
+      metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE },
+    }),
+    id: "evt_smoke_pro_checkout",
+  };
   const proOk = await post(signedRequest(proSession));
   check("pro session -> 200", proOk.status === 200, String(proOk.status));
 
@@ -828,6 +834,7 @@ async function main() {
     await db.delete(userSettings).where(eq(userSettings.userId, u));
   }
   await db.delete(webhookDeliveries).where(eq(webhookDeliveries.source, "stripe"));
+  await db.delete(stripeProcessedEvents);
   console.log("\nAll Stripe webhook checks passed.");
 }
 

@@ -15,6 +15,8 @@ import { toUserFacingError } from "@/lib/errors";
 
 /** Closed, greppable set so these group cleanly in a GROUP BY. */
 export const WEBHOOK_REASONS = {
+  /** A Stripe event id already in `stripe_processed_events`; answered 200, nothing touched. */
+  duplicateEvent: "duplicate_event",
   signatureInvalid: "signature_invalid",
   unhandledType: "unhandled_type",
   otherPlanSlug: "other_plan_slug",
