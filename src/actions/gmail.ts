@@ -21,6 +21,7 @@ import {
   hasSendScope,
 } from "@/lib/gmail";
 import { isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
+import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
@@ -119,7 +120,13 @@ export async function startGmailOAuth(input: {
 export async function disconnectGmail() {
   const userId = await requireUserId();
   const db = await getDb();
+  const grant = await db.query.gmailConnections.findFirst({
+    where: eq(gmailConnections.userId, userId),
+    columns: { refreshTokenEncrypted: true, accessTokenEncrypted: true },
+  });
+  // Row first: the disconnect is done even if Google never answers.
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
+  if (grant) await revokeGoogleGrant(grant);
   revalidatePath("/recruiters");
 }
 

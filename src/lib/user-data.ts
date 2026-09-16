@@ -1,4 +1,5 @@
 import { del } from "@vercel/blob";
+import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
@@ -197,8 +198,20 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       eventProviderConnections,
     ],
     run: async (db, userId) => {
+      // Read before the delete: once the row is gone there is nothing to revoke with.
+      const googleGrants = await db
+        .select({
+          refreshTokenEncrypted: gmailConnections.refreshTokenEncrypted,
+          accessTokenEncrypted: gmailConnections.accessTokenEncrypted,
+        })
+        .from(gmailConnections)
+        .where(eq(gmailConnections.userId, userId));
       await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
       await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
+      // Best-effort and time-boxed (see oauth-revoke.ts): a Google outage must never
+      // block an erasure. Outlook has no per-app revoke endpoint; Luma keys and Eventbrite
+      // tokens have none Orbit can call.
+      for (const grant of googleGrants) await revokeGoogleGrant(grant);
       await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
       // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as
       // the Gmail/Outlook rows above, and it must not outlive the account.
