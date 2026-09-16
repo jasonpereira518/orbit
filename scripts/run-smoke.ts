@@ -190,6 +190,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-entitlements": "pglite",
   "smoke-gmail-scan-abort": "pglite",
   "smoke-gmail-scope-storage": "pglite",
+  "smoke-health-token": "pglite",
   "smoke-health": "pglite",
   "smoke-hybrid-search": "pglite",
   "smoke-import-engine": "pglite",

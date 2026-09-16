@@ -10,7 +10,7 @@ What to do when something is wrong, and how the routine things are done. Short o
 | A known condition opened / recovered | ops sweep → `#orbit-ops` (critical also → `#orbit-ops-critical`) |
 | An exception nobody anticipated | Sentry (linked from `/admin/health`) |
 | What is open right now | `/admin/health` → System status strip and Open alerts |
-| Deep probe | `GET /api/health?token=$HEALTH_TOKEN` |
+| Deep probe | `GET /api/health?token=$HEALTH_TOKEN` — a wrong token answers 401 |
 | Which code is live | `/api/health` → `sha` (compare with `main`) |
 
 ## Deploy

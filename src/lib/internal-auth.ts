@@ -80,3 +80,17 @@ export function isHealthTokenValid(request: Request): boolean {
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
 }
+
+export type HealthTokenState = "absent" | "valid" | "invalid";
+
+/**
+ * What the caller of /api/health presented. A `?token=` that does not match is `invalid`
+ * — a 401, so a mistyped monitor token goes red instead of reading as a healthy shallow 200.
+ * That includes a token presented while HEALTH_TOKEN is unset: a monitor configured with a
+ * token against a deployment that lost it must go red too. With no parameter a valid bearer
+ * still opens the deep view; anything else is `absent`.
+ */
+export function healthTokenState(request: Request): HealthTokenState {
+  if (isHealthTokenValid(request)) return "valid";
+  return new URL(request.url).searchParams.has("token") ? "invalid" : "absent";
+}
