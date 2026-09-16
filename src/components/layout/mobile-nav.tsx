@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { MessageSquarePlus, Sparkles } from "lucide-react";
@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
-import { SPRING_PILL, SPRING_TAP } from "@/lib/motion";
+import { SPRING_TAP } from "@/lib/motion";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 
@@ -47,8 +47,19 @@ export function MobileNav({
   const pathname = usePathname();
   const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false);
+  /**
+   * Where focus lands when the More panel opens.
+   *
+   * Base UI focuses the popup itself on a touch open and the first row on a keyboard
+   * open — but only when it opens the dialog through its own trigger. This one opens
+   * from controlled state, so it never learns the interaction and always took the first
+   * row, lighting "Ask your network" with a focus ring on every tap. The panel is asked
+   * to be quiet; that ring was the loudest thing in it. Keyboard opens keep the
+   * first-row default, because that is where a keyboard user wants to be.
+   */
+  const morePanelRef = useRef<HTMLDivElement | null>(null);
+  const moreOpenedByKeyboard = useRef(false);
   const reducedMotion = useReducedMotion();
-  const pillTransition = reducedMotion ? { duration: 0 } : SPRING_PILL;
 
   /**
    * Both lists, filtered, BEFORE anything derives an index from them.
@@ -90,9 +101,58 @@ export function MobileNav({
     return entries;
   }, [bottomNav]);
 
-  const activeEntryIndex = draggableEntries.findIndex((entry) =>
-    entry.type === "more" ? moreActive : isNavActive(pathname, entry.href)
+  /**
+   * For each item in `bottomNav`, its index in `draggableEntries` — or -1 for Capture.
+   *
+   * The two lists are different lengths: Capture renders in the bar but is not a
+   * draggable entry. Rendering used to compare the raw `bottomNav` index against
+   * `highlightIndex`, which is an index into `draggableEntries`, so everything after
+   * Capture was off by one. Every More route (Events, Reminders, Constellation, Outreach)
+   * lit up Chat, and Chat's own page put the highlight on Capture. Drags inherited it
+   * too, since item refs were stored by the same raw index: dropping on Chat opened the
+   * More sheet, and dropping on More read past the end of the array and threw. Anything
+   * that indexes the bar goes through this map.
+   */
+  const navEntryIndex = useMemo(() => {
+    let next = 0;
+    return bottomNav.map((item) =>
+      !("id" in item) && item.href === "/capture" ? -1 : next++
+    );
+  }, [bottomNav]);
+
+  /**
+   * The tab the user just tapped, until the route actually changes.
+   *
+   * The pill used to follow `pathname`, so it only set off once the next page had
+   * committed, and then travelled in the same frames that page was rendering in. Measured
+   * in dev: 0.66s from tap to first movement, which then landed inside a 267ms frame, so
+   * the pill lurched most of the way at once. Moving it on the tap puts the travel in the
+   * quiet moment while the router fetches, where it reads as the answer to the touch.
+   *
+   * Keyed to the path it was tapped from, so the real active item takes over the moment
+   * the route changes; a navigation that never lands lets go after a few seconds.
+   */
+  const [pendingNav, setPendingNav] = useState<{ href: string; from: string } | null>(
+    null
   );
+  function markPending(href: string) {
+    const next = { href, from: pathname };
+    setPendingNav(next);
+    window.setTimeout(() => setPendingNav((p) => (p === next ? null : p)), 4000);
+  }
+  const pendingEntryIndex =
+    pendingNav && pendingNav.from === pathname
+      ? draggableEntries.findIndex(
+          (entry) => entry.type === "link" && entry.href === pendingNav.href
+        )
+      : -1;
+
+  const activeEntryIndex =
+    pendingEntryIndex >= 0
+      ? pendingEntryIndex
+      : draggableEntries.findIndex((entry) =>
+          entry.type === "more" ? moreActive : isNavActive(pathname, entry.href)
+        );
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -118,6 +178,56 @@ export function MobileNav({
 
   const highlightIndex =
     isDragging && dragIndex !== null ? dragIndex : activeEntryIndex;
+
+  /**
+   * One pill for the whole bar, moved with a CSS transform transition.
+   *
+   * It used to be a Motion `layoutId` span re-mounted inside whichever item was active: a
+   * JavaScript-driven layout animation, so every long frame on the main thread was a
+   * visible stall in its travel, and a route change is exactly when those frames happen.
+   * A transform transition, once started, is run by the compositor and keeps gliding
+   * while the page renders. The pill's box is measured from each item's oval, so it
+   * lands exactly where the old per-item pill sat.
+   */
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const ovalRefs = useRef<Array<HTMLElement | null>>([]);
+  const [ovals, setOvals] = useState<
+    Array<{ x: number; y: number; w: number; h: number }>
+  >([]);
+  // Transitions switch on only after the first placement, so the pill appears in place
+  // rather than sliding in from the corner of the bar.
+  const [pillReady, setPillReady] = useState(false);
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    let raf = 0;
+    // A ResizeObserver reports once on observe, so this also takes the first measurement.
+    const observer = new ResizeObserver(() => {
+      const base = list.getBoundingClientRect();
+      setOvals(
+        ovalRefs.current.slice(0, draggableEntries.length).map((el) => {
+          const r = el?.getBoundingClientRect();
+          return r
+            ? { x: r.left - base.left, y: r.top - base.top, w: r.width, h: r.height }
+            : { x: 0, y: 0, w: 0, h: 0 };
+        })
+      );
+      raf = requestAnimationFrame(() => setPillReady(true));
+    });
+    observer.observe(list);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [draggableEntries.length]);
+
+  // With no active item (a page that isn't in the bar) the pill fades where it last sat
+  // instead of snapping to the first slot.
+  const [lastPillIndex, setLastPillIndex] = useState(-1);
+  if (highlightIndex >= 0 && highlightIndex !== lastPillIndex) {
+    setLastPillIndex(highlightIndex);
+  }
+  const pillBox = ovals[highlightIndex >= 0 ? highlightIndex : lastPillIndex];
 
   function closestEntryIndexForX(clientX: number) {
     let bestIndex = 0;
@@ -179,9 +289,11 @@ export function MobileNav({
         suppressNextClickRef.current = false;
       }, 500);
       const entry = draggableEntries[idx];
-      if (entry.type === "more") {
+      if (entry?.type === "more") {
+        moreOpenedByKeyboard.current = false;
         setMoreOpen(true);
-      } else {
+      } else if (entry) {
+        markPending(entry.href);
         router.push(entry.href);
       }
     }
@@ -212,23 +324,43 @@ export function MobileNav({
   return (
     <>
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] md:hidden"
-        style={{ viewTransitionName: "app-mobile-nav" }}
+        className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] md:hidden"
         aria-label="Main navigation"
       >
         {/* Scrim behind the now-transparent pill — grounds it against
          * whatever's scrolling underneath so it stays readable without
-         * giving the pill itself an opaque fill. */}
+         * giving the pill itself an opaque fill.
+         *
+         * It fades to the page background, not to black. The pill is glass: it is
+         * painted over whatever sits behind it, and this scrim IS what sits behind it.
+         * A black wash therefore did not ground the pill against the page — it became
+         * the pill's backdrop, and a translucent white pill over 25% black renders as a
+         * grey slab rather than as frosted glass. Fading to `--background` gives the
+         * glass the page colour to frost, which is what it was designed to sit on.
+         *
+         * Dark mode keeps its black wash: there the pill is meant to read dark, and the
+         * scrim is also what keeps the portalled starfield from showing through the nav. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-black/25 via-black/8 to-transparent dark:from-black/55 dark:via-black/20"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-background/80 via-background/30 to-transparent dark:from-black/45 dark:via-black/15"
         />
 
         <div className="relative w-full max-w-lg">
           <div className="liquid-glass liquid-glass-pill" aria-hidden="true" />
 
+          {/*
+            The view-transition name sits on the list, not on the <nav>.
+            An element with `view-transition-name` becomes a backdrop root, so while it
+            was on the <nav> the glass pill inside had nothing behind it to sample and
+            `backdrop-filter` silently did nothing — which is why the nav depended on a
+            black scrim to stay readable in the first place. On the list it still names
+            the one part that must persist across a route change, and the pill beneath it
+            can actually frost the page. Moving it back up re-breaks the blur.
+          */}
           <ul
-            className="relative z-10 flex touch-none items-stretch justify-around gap-0.5 px-1.5 pt-1 pb-1.5"
+            ref={listRef}
+            style={{ viewTransitionName: "app-mobile-nav" }}
+            className="relative z-10 flex touch-none items-stretch justify-around gap-0.5 px-1.5 pt-0.5 pb-1"
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -236,8 +368,31 @@ export function MobileNav({
             onClickCapture={handleClickCapture}
             onDragStart={(e) => e.preventDefault()}
           >
-            {/* Every item renders exactly one entry, so the map index is the entry index. */}
-            {bottomNav.map((item, myIndex) => {
+            <span
+              data-nav-pill
+              aria-hidden
+              className={cn(
+                "pointer-events-none absolute top-0 left-0 rounded-full bg-white/70 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/10 dark:ring-white/10",
+                pillReady &&
+                  "transition-[transform,opacity] duration-[280ms] ease-[var(--ease-glide)]"
+              )}
+              style={
+                pillBox
+                  ? {
+                      width: pillBox.w,
+                      height: pillBox.h,
+                      transform: `translate3d(${pillBox.x}px, ${pillBox.y}px, 0)`,
+                      opacity: highlightIndex >= 0 ? 1 : 0,
+                    }
+                  : { opacity: 0 }
+              }
+            />
+            {/*
+              `myIndex` is the entry index (see `navEntryIndex`), not the map index — the
+              two differ by one after Capture.
+            */}
+            {bottomNav.map((item, navIndex) => {
+              const myIndex = navEntryIndex[navIndex];
               if ("id" in item && item.id === "more") {
                 const displayActive = myIndex === highlightIndex;
                 const Icon = item.icon;
@@ -248,22 +403,25 @@ export function MobileNav({
                       ref={(el) => {
                         itemRefs.current[myIndex] = el;
                       }}
-                      onClick={() => setMoreOpen(true)}
+                      onClick={(e) => {
+                        // A keyboard activation synthesises a click with no pointer
+                        // behind it, and reports `detail` 0.
+                        moreOpenedByKeyboard.current = e.detail === 0;
+                        setMoreOpen(true);
+                      }}
                       className={cn(
-                        "flex w-full items-center justify-center py-1 text-[10px] font-medium transition-colors",
+                        "flex w-full items-center justify-center py-0.5 text-[10.5px] font-medium transition-colors",
                         displayActive
                           ? "text-primary dark:text-white"
                           : "text-muted-foreground hover:text-foreground dark:text-white/75"
                       )}
                     >
-                      <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5">
-                        {displayActive && (
-                          <motion.span
-                            layoutId="mobile-nav-pill"
-                            className="absolute inset-0 rounded-full bg-white/70 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/10 dark:ring-white/10"
-                            transition={pillTransition}
-                          />
-                        )}
+                      <span
+                        ref={(el) => {
+                          ovalRefs.current[myIndex] = el;
+                        }}
+                        className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5"
+                      >
                         <span
                           className="relative z-10 flex flex-col items-center gap-0.5 transition-transform duration-150 ease-out"
                           style={{
@@ -273,7 +431,7 @@ export function MobileNav({
                                 : undefined,
                           }}
                         >
-                          <Icon className="h-5 w-5" aria-hidden />
+                          <Icon className="size-[18px]" aria-hidden />
                           <span>{item.label}</span>
                         </span>
                       </span>
@@ -290,18 +448,21 @@ export function MobileNav({
                 return (
                   <li key={navItem.href} className="flex-1">
                     <Link
-                      href={navItem.href}
+                      // Voice, not the paste box. On a phone the capture moment is
+                      // "walking out of the building", where typing is the one thing you
+                      // cannot do; the Messy Notes tab is still one tap away on arrival.
+                      href={`${navItem.href}?mode=voice`}
                       draggable={false}
-                      className="relative flex w-full translate-y-1.5 flex-col items-center gap-0.5 px-1 py-1.5 text-[10px] font-medium text-primary"
+                      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1.5 text-[10.5px] font-medium text-primary"
                     >
-                      <span className="h-5 w-5" aria-hidden />
+                      <span className="size-[18px]" aria-hidden />
                       <motion.span
                         aria-hidden
-                        className="absolute -top-6 left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
+                        className="absolute -top-5 left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
                         whileTap={reducedMotion ? undefined : { scale: 0.88 }}
                         transition={reducedMotion ? { duration: 0 } : SPRING_TAP}
                       >
-                        <Icon className="h-5 w-5" aria-hidden />
+                        <Icon className="size-[18px]" aria-hidden />
                       </motion.span>
                       <span>{navItem.label}</span>
                     </Link>
@@ -318,22 +479,33 @@ export function MobileNav({
                     ref={(el) => {
                       itemRefs.current[myIndex] = el;
                     }}
+                    onClick={(e) => {
+                      if (
+                        e.defaultPrevented ||
+                        e.button !== 0 ||
+                        e.metaKey ||
+                        e.ctrlKey ||
+                        e.shiftKey ||
+                        e.altKey
+                      ) {
+                        return;
+                      }
+                      markPending(navItem.href);
+                    }}
                     draggable={false}
                     className={cn(
-                      "flex w-full items-center justify-center py-1 text-[10px] font-medium transition-colors",
+                      "flex w-full items-center justify-center py-0.5 text-[10.5px] font-medium transition-colors",
                       displayActive
                         ? "text-primary dark:text-white"
                         : "text-muted-foreground hover:text-foreground dark:text-white/75"
                     )}
                   >
-                    <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5">
-                      {displayActive && (
-                        <motion.span
-                          layoutId="mobile-nav-pill"
-                          className="absolute inset-0 rounded-full bg-white/70 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/10 dark:ring-white/10"
-                          transition={pillTransition}
-                        />
-                      )}
+                    <span
+                      ref={(el) => {
+                        ovalRefs.current[myIndex] = el;
+                      }}
+                      className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5"
+                    >
                       <NavPendingDot className="top-0.5 right-1.5" />
                       <span
                         className="relative z-10 flex flex-col items-center gap-0.5 transition-transform duration-150 ease-out"
@@ -344,7 +516,7 @@ export function MobileNav({
                               : undefined,
                         }}
                       >
-                        <Icon className="h-5 w-5" aria-hidden />
+                        <Icon className="size-[18px]" aria-hidden />
                         <span>{navItem.label}</span>
                       </span>
                     </span>
@@ -358,10 +530,30 @@ export function MobileNav({
 
       <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
         <SheetContent
+          ref={morePanelRef}
           side="bottom"
-          className="rounded-t-2xl pb-[env(safe-area-inset-bottom)]"
+          initialFocus={() =>
+            moreOpenedByKeyboard.current ? true : morePanelRef.current
+          }
+          // The container takes focus on touch opens (see `initialFocus`); an outline
+          // around a non-interactive dialog frame conveys nothing, so it has none. The
+          // rows inside keep their own focus styles.
+          className="gap-0 pb-[max(0.5rem,env(safe-area-inset-bottom))] outline-none"
         >
-          <SheetHeader>
+          {/* A grabber, not a title bar.
+           *
+           * The sheet is opened by tapping a control labelled "More", so a heading
+           * repeating the word is weight without information. The handle says the same
+           * thing the heading was there to say — this is a panel that came up — in a
+           * quarter of the height and none of the voice. The accessible name stays; a
+           * dialog still has to announce itself. */}
+          {/* The band is as tall as the sheet's close button (pinned `top-3`, 32px): with
+           * only the grabber's own height here, the first row rose into that corner and
+           * the close button sat on top of "Ask your network". */}
+          <div className="flex h-11 shrink-0 justify-center pt-3" aria-hidden="true">
+            <div className="h-1 w-9 rounded-full bg-foreground/15" />
+          </div>
+          <SheetHeader className="sr-only">
             <SheetTitle>More</SheetTitle>
           </SheetHeader>
 

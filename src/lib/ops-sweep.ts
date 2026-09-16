@@ -19,6 +19,7 @@ import {
   type OpsSnapshot,
 } from "@/lib/ops-alerts";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
+import { prunePageViews } from "@/lib/page-views";
 
 export type { OpsDelivery } from "@/lib/ops-notify";
 
@@ -303,6 +304,13 @@ export async function runOpsSweep(options: {
     }
 
     if (result.deliveryFailures > 0) result.status = "partial";
+
+    // Retention for `page_views`, the one table that grows with traffic rather than with
+    // the customer base. It rides along here because this is the only thing that already
+    // runs on a schedule; a failed prune must not turn an alert sweep into a failed run,
+    // so it is caught and reported as a count of zero.
+    const prunedViews = await prunePageViews(now).catch(() => 0);
+
     await finishCronRun(run, {
       status: result.status,
       stats: {
@@ -312,6 +320,7 @@ export async function runOpsSweep(options: {
         reminded: result.reminded.length,
         recovered: result.recovered.length,
         deliveryFailures: result.deliveryFailures,
+        prunedPageViews: prunedViews,
       },
     });
     await heartbeat();

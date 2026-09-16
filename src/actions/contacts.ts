@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -13,6 +13,8 @@ import {
   tags,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { getRankedContacts } from "@/actions/search";
+import type { RankedContact } from "@/lib/hybrid-search";
 import {
   CONTACTS_PAGE_SIZE,
   type ContactPickerOption,
@@ -20,7 +22,6 @@ import {
   type ContactsPage,
   type ContactsPageFilters,
 } from "@/lib/contacts-page";
-import { isPaywallError } from "@/lib/entitlements";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { type CompanyResolver } from "@/lib/companies";
@@ -52,10 +53,11 @@ import {
   AVATAR_BACKFILL_BATCH_SIZE,
   AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
+  fetchGravatarPhotoUrl,
   fetchLinkedInPhotoUrl,
-  MicrolinkRateLimitError,
+  AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
-import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
+import { clientAvatarUrlSql, contactsListSelection } from "@/lib/contact-avatar-sql";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   countAvatarBackfillCandidates,
@@ -128,12 +130,34 @@ export async function listContactsPage(
 
   const sort: ContactSort = filters?.sort ?? "name";
   const limit = Math.min(Math.max(filters?.limit ?? CONTACTS_PAGE_SIZE, 1), 200);
-  const cursor = decodeCursor(filters?.cursor, sort);
+  // "relevance" has no stable keyset — see `orderFor` — so it never accepts a cursor and
+  // always returns its first (only) page.
+  const cursor = sort === "relevance" ? null : decodeCursor(filters?.cursor, sort);
 
   const conditions = [eq(contacts.userId, userId)];
 
   const q = filters?.q?.trim();
-  if (q) conditions.push(searchCondition(q));
+  // Reused below by `orderFor` (relevance ranking) and by the match-reason map — one
+  // hybrid-search call serves widening, ranking, and explaining, instead of asking thrice.
+  let semanticIds: string[] = [];
+  let matchReasons = new Map<string, string>();
+  if (q) {
+    // Short queries are prefix lookups ("mar" -> Marcus) that `searchCondition` alone
+    // already serves well; below this length a semantic round trip only adds latency.
+    // At 3+ chars, OR in contacts whose title/company/experience is a semantic match
+    // even when no literal keyword overlaps ("Full-time SWE at Google" finding someone
+    // whose stored role is "Software Engineer" at Google, full time). Request the max
+    // hybridSearchContacts will give (80) rather than its default 12, since this list
+    // also drives relevance ordering, not just widening the match.
+    const ranked = q.length >= 3 ? await getRankedContacts(userId, q, 80) : [];
+    semanticIds = ranked.map((r) => r.id);
+    matchReasons = matchReasonsFor(ranked);
+    conditions.push(
+      semanticIds.length
+        ? or(searchCondition(q), inArray(contacts.id, semanticIds))!
+        : searchCondition(q)
+    );
+  }
 
   const company = filters?.company?.trim();
   if (company) {
@@ -167,35 +191,18 @@ export async function listContactsPage(
   if (cursor) conditions.push(cursorCondition(cursor));
 
   const rows = await db
-    .select({
-      id: contacts.id,
-      fullName: contacts.fullName,
-      firstName: contacts.firstName,
-      lastName: contacts.lastName,
-      preferredName: contacts.preferredName,
-      title: contacts.title,
-      company: contacts.company,
-      school: contacts.school,
-      location: contacts.location,
-      linkedinUrl: contacts.linkedinUrl,
-      profileImageUrl: contacts.profileImageUrl,
-      relationshipScore: contacts.relationshipScore,
-      closeness: contacts.closeness,
-      closenessTier: contacts.closenessTier,
-      priorityLevel: contacts.priorityLevel,
-      nextFollowUpAt: contacts.nextFollowUpAt,
-      lastInteractionAt: contacts.lastInteractionAt,
-      sortKey: contacts.sortKey,
-      updatedAt: contacts.updatedAt,
-    })
+    .select(contactsListSelection)
     .from(contacts)
     .where(and(...conditions))
-    .orderBy(...orderFor(sort))
+    .orderBy(...orderFor(sort, semanticIds))
     // One extra row answers "is there more" without a second count.
     .limit(limit + 1);
 
-  const hasMore = rows.length > limit;
-  const page = hasMore ? rows.slice(0, limit) : rows;
+  const fetchedExtra = rows.length > limit;
+  const page = fetchedExtra ? rows.slice(0, limit) : rows;
+  // Relevance has no keyset to resume from, so it never claims there's more — the caller
+  // gets one ranked page and the "Showing X of Y" footer if that page is short of `total`.
+  const hasMore = sort !== "relevance" && fetchedExtra;
 
   const [tagsByContact, total] = await Promise.all([
     tagsForContacts(page.map((r) => r.id)),
@@ -214,8 +221,9 @@ export async function listContactsPage(
       school: row.school,
       location: row.location,
       linkedinUrl: row.linkedinUrl,
-      // Never ship base64 data URLs in list payloads.
-      profileImageUrl: clientContactAvatarUrl(row.id, row.profileImageUrl),
+      // Already browser-safe: `clientAvatarUrlSql` resolved this in Postgres.
+      profileImageUrl: row.profileImageUrl,
+      canResolveAvatar: Boolean(row.canResolveAvatar),
       relationshipScore: row.relationshipScore,
       closeness: (row.closeness ?? 0) / 100,
       closenessTier: row.closenessTier ?? "outer",
@@ -223,10 +231,30 @@ export async function listContactsPage(
       nextFollowUpAt: row.nextFollowUpAt,
       lastInteractionAt: row.lastInteractionAt,
       tags: tagsByContact.get(row.id) ?? [],
+      matchReason: matchReasons.get(row.id) ?? null,
     })),
     nextCursor: hasMore ? encodeCursor(cursorFor(sort, page[page.length - 1])) : null,
     total,
   };
+}
+
+/**
+ * Why a contact showed up, for the ones where that isn't obvious from the row itself.
+ *
+ * A contact only gets a reason when it matched via the `experience` or `semantic` arm and
+ * *neither* `fts` nor `trigram` — i.e. only when nothing already visible on the row (name,
+ * company, title) would explain the match. A contact whose company field literally says
+ * "Google" doesn't need a label telling the user it matched "Google"; one who matches only
+ * because a past role or an unrelated-looking bio was semantically similar does.
+ */
+function matchReasonsFor(ranked: RankedContact[]): Map<string, string> {
+  const reasons = new Map<string, string>();
+  for (const r of ranked) {
+    if (r.matchedArms.includes("fts") || r.matchedArms.includes("trigram")) continue;
+    if (r.matchedArms.includes("experience")) reasons.set(r.id, "Matched via work history");
+    else if (r.matchedArms.includes("semantic")) reasons.set(r.id, "Matched by meaning");
+  }
+  return reasons;
 }
 
 /**
@@ -240,14 +268,34 @@ export async function listContactsPage(
  * same way. Pairing a descending sort with an ascending id silently produces a condition
  * that skips rows on one side of each tie and repeats them on the other.
  */
-function orderFor(sort: ContactSort) {
+function orderFor(sort: ContactSort, rankedIds: string[] = []) {
   if (sort === "closeness") {
     return [desc(contacts.closeness), desc(contacts.id)];
   }
   if (sort === "recent") {
     return [desc(contacts.updatedAt), desc(contacts.id)];
   }
+  if (sort === "relevance") {
+    // Rank first, name as the tiebreak — both for genuine ties and for rows `array_position`
+    // can't place at all: a contact that matched only the literal `searchCondition`, never
+    // the hybrid-search arms, falls through to name order after every ranked hit.
+    return [relevanceRank(rankedIds), asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
+  }
   return [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
+}
+
+/**
+ * Position within `rankedIds`, ascending so the best hybrid-search match (index 0) sorts
+ * first; `array_position` returns null for a contact the ranking never produced, and null
+ * sorts last under ascending order by default — hence the explicit `nulls last` rather than
+ * relying on that default holding.
+ */
+function relevanceRank(rankedIds: string[]) {
+  if (rankedIds.length === 0) return sql`0`;
+  return sql`array_position(array[${sql.join(
+    rankedIds.map((id) => sql`${id}::uuid`),
+    sql`, `
+  )}]::uuid[], ${contacts.id}) nulls last`;
 }
 
 function cursorCondition(cursor: Cursor) {
@@ -326,7 +374,17 @@ function searchCondition(q: string) {
  */
 export async function searchContactsForPicker(
   q?: string,
-  limit = 50
+  limit = 50,
+  /**
+   * `alphabetical` is right for browsing a long list in a `<select>`, which is what the
+   * capture form, the reminder dialog and the onboarding wizard do with this.
+   *
+   * `recent` is right for a type-ahead that has just been opened with nothing typed: the
+   * composer's `@` menu offered whoever came first in the address book, which reads as
+   * broken rather than as waiting. Defaulted to the old behaviour so those three callers
+   * are untouched.
+   */
+  order: "alphabetical" | "recent" = "alphabetical"
 ): Promise<ContactPickerOption[]> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -341,10 +399,24 @@ export async function searchContactsForPicker(
       fullName: contacts.fullName,
       preferredName: contacts.preferredName,
       company: contacts.company,
+      firstName: contacts.firstName,
+      // Never `profileImageUrl` itself: that column carries base64 up to 120 KB a row when
+      // Blob storage is unconfigured, and a 200-row picker would drag all of it across the
+      // wire only to rewrite it to `/api/avatars/{id}` anyway.
+      avatarUrl: clientAvatarUrlSql.as("avatar_url"),
     })
     .from(contacts)
     .where(and(...conditions))
-    .orderBy(asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id))
+    .orderBy(
+      ...(order === "recent"
+        ? [
+            // Never-spoken-to contacts fall to the back and sort alphabetically among
+            // themselves, so the tail is still browsable rather than arbitrary.
+            sql`${contacts.lastInteractionAt} desc nulls last`,
+            asc(contacts.sortKey),
+          ]
+        : [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)])
+    )
     .limit(Math.min(Math.max(limit, 1), 200));
 
   return rows;
@@ -673,26 +745,6 @@ export async function createContact(
     .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
     .limit(1);
   return contact;
-}
-
-/**
- * Like `createContact`, but returns `null` instead of throwing when the plan's contact
- * limit is full.
- *
- * Import loops use this: a free user importing 300 rows should keep everything that fits
- * and get a count of what did not, rather than having the whole import abort partway with
- * a paywall error.
- */
-export async function createContactIfRoom(
-  input: ContactInput,
-  options?: ContactWriteOptions
-) {
-  try {
-    return await createContact(input, options);
-  } catch (err) {
-    if (isPaywallError(err)) return null;
-    throw err;
-  }
 }
 
 /**
@@ -1074,10 +1126,19 @@ export async function backfillContactAvatars(
         deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
         persistRemote: downloadAndPersistAvatar,
         resolveLinkedIn: fetchLinkedInPhotoUrl,
+        resolveGravatar: fetchGravatarPhotoUrl,
         save: async (contactId, photoUrl) => {
           await db
             .update(contacts)
             .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+            .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        },
+        markChecked: async (contactId) => {
+          // Deliberately does NOT touch updatedAt: a failed photo lookup is not a
+          // change to the contact, and bumping it would reorder the "recent" sort.
+          await db
+            .update(contacts)
+            .set({ profileImageCheckedAt: new Date() })
             .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
         },
       }),
@@ -1238,7 +1299,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
             contact.linkedinUrl
           );
         } catch (err) {
-          if (err instanceof MicrolinkRateLimitError) {
+          if (err instanceof AvatarSourceRateLimitError) {
             rateLimited = true;
             unmatched += 1;
             continue;

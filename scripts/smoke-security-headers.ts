@@ -38,6 +38,8 @@ function main() {
   check("Referrer-Policy strict-origin-when-cross-origin", header(prod, "Referrer-Policy") === "strict-origin-when-cross-origin");
   check("X-Frame-Options DENY", header(prod, "X-Frame-Options") === "DENY");
   check("Permissions-Policy allows camera/mic to self only", /camera=\(self\)/.test(header(prod, "Permissions-Policy") ?? "") && /geolocation=\(\)/.test(header(prod, "Permissions-Policy") ?? ""));
+  // Meeting capture and the feedback screenshot both need getDisplayMedia on our own origin.
+  check("Permissions-Policy allows display-capture to self", /display-capture=\(self\)/.test(header(prod, "Permissions-Policy") ?? ""));
   const csp = header(prod, "Content-Security-Policy-Report-Only");
   check("CSP is report-only by default", Boolean(csp) && header(prod, "Content-Security-Policy") === null);
   check("script-src allows self, inline, Clerk and Turnstile",
