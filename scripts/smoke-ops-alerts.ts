@@ -57,6 +57,7 @@ const HEALTHY: OpsSnapshot = {
   statementTimeout: "20s",
   stripeUnattributed24h: { fulfilments: 0, other: 0 },
   embeddingBacklog: { accounts: 0, oldestAt: null },
+  syncOldestDueAgeMs: null,
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -142,6 +143,12 @@ function main() {
     find({ ...HEALTHY, backfillFailures24h: { accounts: 2, kinds: ["embeddings"] } }, "backfill.failed")?.severity === "warning");
   check("one account's failing backfill is that user's key, not an ops alert",
     !find({ ...HEALTHY, backfillFailures24h: { accounts: 1, kinds: ["embeddings"] } }, "backfill.failed"));
+
+  check("a connection overdue by 3h while sync runs → sync.lagging (warning)",
+    find({ ...HEALTHY, syncOldestDueAgeMs: 3 * 3_600_000 }, "sync.lagging")?.severity === "warning");
+  check("an hour overdue is just the schedule's lag", !find({ ...HEALTHY, syncOldestDueAgeMs: 3_600_000 }, "sync.lagging"));
+  check("a dead schedule says sync.schedule_missed, not also sync.lagging",
+    !find({ ...HEALTHY, syncOldestDueAgeMs: 5 * 3_600_000, cron: { ...HEALTHY.cron, syncRun: { lastStartedAt: hoursAgo(4), lastState: "ok" } } }, "sync.lagging"));
 
   check("an account with a flag older than 6h → embedding.backlog (warning)",
     find({ ...HEALTHY, embeddingBacklog: { accounts: 1, oldestAt: hoursAgo(30) } }, "embedding.backlog")?.severity === "warning");

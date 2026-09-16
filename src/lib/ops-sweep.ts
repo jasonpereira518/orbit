@@ -1,3 +1,4 @@
+import { oldestDueAgeMs } from "@/lib/provider-connections";
 import { probeStatementTimeout } from "@/lib/health";
 import { and, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -141,6 +142,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   // open this condition in every local sweep and smoke run.
   const statementTimeout =
     process.env.VERCEL_ENV === "production" ? await probeStatementTimeout().catch(() => null) : null;
+  const syncOldestDueAgeMs = await oldestDueAgeMs("google", now).catch(() => null);
 
   const nightly = lastNightly[0];
   const syncRun = lastSyncRun[0];
@@ -185,6 +187,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     missingRequiredEnv: getEnvReport().missingRequired,
     missingExpectedEnv: getEnvReport().missingExpected,
     statementTimeout,
+    syncOldestDueAgeMs,
     deploy: deploy
       ? { prodSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null, ...deploy }
       : null,

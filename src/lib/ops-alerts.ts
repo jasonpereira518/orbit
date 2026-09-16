@@ -67,6 +67,8 @@ export type OpsSnapshot = {
   stripeUnattributed24h: { fulfilments: number; other: number };
   /** Accounts with an embedding flag older than EMBEDDING_BACKLOG_STALE_HOURS, and the oldest flag. */
   embeddingBacklog: { accounts: number; oldestAt: Date | null };
+  /** How long the most overdue armed connection has waited; null when none is due. */
+  syncOldestDueAgeMs: number | null;
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
@@ -110,6 +112,9 @@ const isRejected = (o: WebhookOutcome) => o === "invalid" || o === "error";
  * without a commit on a public repo, and it is the second failure this needs to catch.
  */
 const SYNC_SCHEDULE_SILENT_MS = 3 * 60 * 60 * 1000;
+
+/** A connection this overdue while runs are happening means demand outgrew a run. */
+export const SYNC_LAG_ALERT_MS = 2 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -249,6 +254,22 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Connector sync ${sync.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${sync.lastStartedAt?.toISOString() ?? "unknown"} ended ${sync.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // More connections due than one run can take. Only while the schedule itself is alive —
+  // a dead schedule makes every connection overdue and is already sync.schedule_missed.
+  if (
+    syncSilentFor !== null &&
+    syncSilentFor <= SYNC_SCHEDULE_SILENT_MS &&
+    (s.syncOldestDueAgeMs ?? 0) > SYNC_LAG_ALERT_MS
+  ) {
+    out.push({
+      id: "sync.lagging",
+      severity: "warning",
+      title: "Connector sync is falling behind",
+      detail: `The most overdue connection has waited ${((s.syncOldestDueAgeMs ?? 0) / 3_600_000).toFixed(1)} h — more accounts are due than a run can sync.`,
       href: "/admin/health",
     });
   }

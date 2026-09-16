@@ -10,7 +10,7 @@ import { run } from "./smoke/_env";
 // Off production, so the production-only fields stay quiet unless a section sets it.
 delete process.env.VERCEL_ENV;
 
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, cronRuns, errorEvents } from "../src/db/schema";
 import { recordBackfillFailure } from "../src/lib/backfill-failures";
@@ -115,6 +115,19 @@ run(async () => {
   check("and the oldest flag is read", eb.oldestAt !== null && eb.oldestAt.getTime() <= staleSince.getTime() + 1000, String(eb.oldestAt));
   check("which opens embedding.backlog", (await idsNow()).includes("embedding.backlog"));
   await db.delete(contacts).where(inArray(contacts.userId, ["snap-backlog", "snap-backlog-fresh"]));
+
+  console.log("\nSync lag...");
+  await db.execute(sql`DELETE FROM gmail_connections WHERE user_id = 'snap-lag'`);
+  await db.execute(sql`INSERT INTO gmail_connections
+    (user_id, email_address, access_token_encrypted, status, scopes, next_sync_at, sync_failures)
+    VALUES ('snap-lag', 'snap-lag@example.com', 'enc', 'active', 'https://www.googleapis.com/auth/calendar.readonly',
+            ${new Date(Date.now() - 3 * 3_600_000)}, 0)`);
+  await cronRun("sync.run", "ok", 5);
+  const lag = (await loadOpsSnapshot(new Date(), null)).syncOldestDueAgeMs;
+  check("the snapshot reads the oldest due connection", (lag ?? 0) >= 3 * 3_600_000 - 60_000, String(lag));
+  check("which opens sync.lagging", (await idsNow()).includes("sync.lagging"));
+  await db.execute(sql`DELETE FROM gmail_connections WHERE user_id = 'snap-lag'`);
+  await db.delete(cronRuns).where(inArray(cronRuns.job, [...JOBS]));
 
   // (new sections go above this line)
 
