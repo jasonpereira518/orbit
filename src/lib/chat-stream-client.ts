@@ -18,6 +18,24 @@ export type ChatStreamHandlers = {
   onError: (message: string) => void;
 };
 
+/**
+ * Whether this failure is the caller's own Stop button rather than something going wrong.
+ *
+ * Aborting a fetch rejects, and the rejection reached `onError` like any other — so pressing
+ * Stop showed a red toast reading "BodyStreamBuffer was aborted" and, because the panel's
+ * error path clears the turn, deleted the question and the partial answer along with it.
+ * Stopping a reply you asked for is not an error, and it certainly is not a reason to throw
+ * away what the person typed.
+ *
+ * Both the DOMException name and the signal are checked: the name is what the platform
+ * throws for `fetch`, and the signal covers a reader rejecting with something else after the
+ * abort has already landed.
+ */
+function isAbort(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
 export async function streamChat(
   body: { question: string; threadId?: string | null; contactId?: string | null },
   handlers: ChatStreamHandlers,
@@ -32,6 +50,7 @@ export async function streamChat(
       signal,
     });
   } catch (err) {
+    if (isAbort(err, signal)) return;
     handlers.onError(err instanceof Error ? err.message : "Could not reach Orbit");
     return;
   }
@@ -67,6 +86,8 @@ export async function streamChat(
       for (const event of parsed.events) dispatch(event, handlers);
     }
   } catch (err) {
+    // Whatever streamed before the stop stays on screen; the caller asked for it to end.
+    if (isAbort(err, signal)) return;
     handlers.onError(err instanceof Error ? err.message : "The connection dropped");
   }
 }

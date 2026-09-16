@@ -166,6 +166,39 @@ async function main() {
     !twice.ok ? `got ${twice.reason}` : ""
   );
 
+  // ================================ 1b. a background write is not mistaken for a user edit
+  section("An avatar downloaded in the background does not block the undo");
+
+  await reset();
+  const jobAv = await seedJob([connection(70), connection(71)]);
+  await runJob(jobAv);
+  const importedAv = await db.query.contacts.findMany({ where: eq(contacts.userId, USER) });
+  check("two contacts created", importedAv.length === 2, `got ${importedAv.length}`);
+
+  // Exactly what `backfillContactAvatars` does on any page load: set the photo and nothing
+  // else. It used to stamp `updatedAt` too, which made every freshly-imported contact look
+  // edited and left the undo deleting nothing at all — the suite missed it because a script
+  // never runs that backfill.
+  for (const c of importedAv) {
+    await db
+      .update(contacts)
+      .set({ profileImageUrl: "https://example.com/photo.jpg" })
+      .where(eq(contacts.id, c.id));
+  }
+
+  const revertAv = await revertImport(USER, jobAv);
+  check("the revert succeeded", revertAv.ok);
+  check(
+    "both contacts are still deleted",
+    revertAv.ok && revertAv.stats.contactsDeleted === 2,
+    revertAv.ok ? JSON.stringify(revertAv.stats) : ""
+  );
+  check(
+    "and none are reported as edited",
+    revertAv.ok && (revertAv.stats.contactsKept ?? 0) === 0
+  );
+  check("the contacts are really gone", (await countContacts()) === 0);
+
   // =========================================== 2. an edit made after the import is not lost
   section("A contact edited since the import is kept, not deleted");
 

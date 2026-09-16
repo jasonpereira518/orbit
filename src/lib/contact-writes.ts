@@ -508,15 +508,33 @@ export async function createContactsBulkForUser(
   // Take what fits rather than failing the whole batch: a free user importing 847
   // LinkedIn connections should still get their first 500, and the caller reports the
   // shortfall by comparing `created.length` against what it passed in.
-  // Salvage what each row allows, and drop only rows with no usable name. This matches
-  // the plan-cap behaviour directly below: the caller reports the shortfall by comparing
-  // `created.length` against what it passed in, so a dropped row is already accounted for.
-  const valid = inputs.reduce<ContactInput[]>((acc, input) => {
+  //
+  // A row with no usable name THROWS rather than being quietly dropped, and that is the
+  // load-bearing part.
+  //
+  // This used to `filter` such rows out before the insert, which silently broke the one
+  // thing both bulk callers rely on: they map `created[i]` back to `inputs[i]` by position
+  // (`import-engine.ts` and `ingest/events.ts` both do). Drop one row from the middle and
+  // every later row's interactions, reminders and revert metadata attach to the WRONG
+  // contact — someone else's meeting notes on someone else's profile, with nothing
+  // reporting it. A LinkedIn export with an email but no first or last name reaches here,
+  // so this was not hypothetical.
+  //
+  // Throwing keeps the invariant `valid.length === inputs.length`, which is what makes the
+  // positional mapping sound and what makes the plan-cap shortfall below unambiguous —
+  // any deficit is now the cap, never a dropped row. The import engine's
+  // `writeWithNarrowing` catches this, halves the batch, and isolates the offending row as
+  // `failed` with this message, which is the visible failure the user can act on. Phase 0
+  // made lenient validation name-only for exactly this reason: a row the write layer
+  // refuses belongs in `failedRows` where someone can see it, not silently discarded.
+  const valid = inputs.map((input) => {
     const result = normalizeContactInput(input, "lenient");
-    if (result.ok) acc.push(result.value);
-    return acc;
-  }, []);
-  if (valid.length === 0) return [];
+    if (!result.ok) {
+      const why = result.issues.map((i) => `${i.field}: ${i.message}`).join("; ");
+      throw new Error(`Contact row has no usable name (${why || "name is required"})`);
+    }
+    return result.value;
+  });
 
   const headroom =
     options?.headroom !== undefined

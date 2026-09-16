@@ -344,8 +344,15 @@ export function ChatPanel() {
           controller.signal
         );
         window.clearTimeout(timeoutId);
-        abortRef.current = null;
-        setStreaming(false);
+        // Only stand down if this is still the live request. Pressing Stop and immediately
+        // asking again starts a second turn while this one is still unwinding, and clearing
+        // unconditionally tore down the NEW request's controller and streaming flag — so the
+        // reply that was on its way could never be stopped, and the composer stayed enabled
+        // through it.
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+          setStreaming(false);
+        }
       })();
     },
     [busy, loadingThread, ensureThread, scrollToBottom]

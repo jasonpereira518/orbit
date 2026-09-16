@@ -1113,9 +1113,21 @@ export async function backfillContactAvatars(
         persistRemote: downloadAndPersistAvatar,
         resolveLinkedIn: fetchLinkedInPhotoUrl,
         save: async (contactId, photoUrl) => {
+          // `updatedAt` deliberately left alone, for the reason spelled out on
+          // `setConstellationPin` below: the dashboard and /knowledge both order by
+          // `desc(updated_at)`, and a background photo fetch is an invisible operation. A
+          // fresh LinkedIn import would otherwise shove every contact it created to the top
+          // of "recently updated" purely because their avatars downloaded.
+          //
+          // It is also load-bearing for revertible imports. `revertImport` asks "has the
+          // user edited this contact since the import" by comparing `created_at` against
+          // `updated_at`, and this ran on every page load against exactly the contacts an
+          // import had just created — so an undo found them all "edited", deleted nothing,
+          // and said so. The revert commit claimed this had been verified; the embedding
+          // backfill had been, this had not.
           await db
             .update(contacts)
-            .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+            .set({ profileImageUrl: photoUrl })
             .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
         },
       }),

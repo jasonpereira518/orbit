@@ -192,9 +192,19 @@ export function parseContactPatch(
   }
   // An explicitly-cleared field arrives as "" and normalizes to undefined, which in a
   // patch must still mean "clear it" rather than "leave it alone".
+  //
+  // The test is "present AND not undefined", not merely "present". A caller that spells out
+  // every field and passes `undefined` for the ones it has nothing to say about — which is
+  // ordinary TypeScript, and what `{ fullName: parsed.name || undefined }` produces — means
+  // "leave alone", not "clear". Keying on `k in input` alone turned those into explicit
+  // nulls: `note-batch-save.ts` writes a NULL into the NOT NULL `full_name` column whenever
+  // a pasted note merges into an existing contact without a name in it, and the extension's
+  // merge save (which also spells out every field) blanked company, title and email for any
+  // field the scraped page happened not to carry.
   const out: Partial<ContactInput> = { ...input };
+  const raw = input as Record<string, unknown>;
   for (const [k, v] of Object.entries(parsed.data)) {
-    if (k in input) {
+    if (k in input && raw[k] !== undefined) {
       (out as Record<string, unknown>)[k] = v ?? null;
     }
   }

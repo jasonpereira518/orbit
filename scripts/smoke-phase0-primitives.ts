@@ -300,6 +300,26 @@ function main() {
     "a patch clearing a field keeps the clear",
     parseContactPatch({ company: "" }).company === null
   );
+  // The distinction the two checks below draw is the whole contract, and getting it wrong
+  // wrote a NULL into the NOT NULL `full_name` column: a caller that spells out every field
+  // and passes `undefined` for the ones it has nothing to say about means "leave alone".
+  // `note-batch-save` does exactly that (`fullName: parsed.name || undefined`) whenever a
+  // pasted note merges into a contact and the model found no name, and the extension's
+  // merge save does it for every field the scraped page did not carry.
+  check(
+    "an explicit undefined means leave alone, not clear",
+    parseContactPatch({ fullName: undefined, company: "Stripe" }).fullName === undefined,
+    `got ${JSON.stringify(parseContactPatch({ fullName: undefined, company: "Stripe" }).fullName)}`
+  );
+  check(
+    "and the field beside it still applies",
+    parseContactPatch({ fullName: undefined, company: "Stripe" }).company === "Stripe"
+  );
+  check(
+    "undefined and empty string are not the same instruction",
+    parseContactPatch({ company: undefined }).company === undefined &&
+      parseContactPatch({ company: "" }).company === null
+  );
   check(
     "a patch with a bad name is rejected",
     (() => {
