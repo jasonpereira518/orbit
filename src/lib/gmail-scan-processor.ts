@@ -12,7 +12,7 @@ import {
 import { internalFetch } from "@/lib/internal-auth";
 import { failImport } from "@/lib/import-job-processor";
 import {
-  RECRUITER_QUERY_TERMS,
+  buildRecruiterQuery,
   fetchGmailHeaders,
   fetchGmailMessages,
   firmFromEmail,
@@ -25,6 +25,7 @@ import {
   RECRUITER_CONFIDENCE_FLOOR,
   classifyRecruiterSender,
 } from "@/lib/recruiter-scan";
+import { markScanCompleted, resolveScanWindow } from "@/lib/recruiter-scan-state";
 import { ensureUserLink, upsertCanonicalRecruiter } from "@/lib/recruiters";
 
 export const GMAIL_SCAN_IMPORT_TYPE = "gmail_recruiter_scan";
@@ -78,7 +79,8 @@ async function runDiscovery(
   importId: string,
   userId: string,
   accessToken: string,
-  jobStart: number
+  jobStart: number,
+  scanAfter: Date
 ): Promise<boolean> {
   const db = await getDb();
 
@@ -108,8 +110,10 @@ async function runDiscovery(
     }
 
     const page = await listGmailMessagePage(accessToken, {
-      // No `after:` clause — this is the whole mailbox, narrowed only by keywords.
-      query: RECRUITER_QUERY_TERMS,
+      // Bounded by the resolved window and stripped of ATS/job-board mail server-side.
+      // Both are free at Gmail and remove work that would otherwise cost a metadata fetch
+      // and, past the prefilter, an LLM call on the user's own key.
+      query: buildRecruiterQuery({ after: scanAfter }),
       pageToken,
       maxResults: DISCOVERY_PAGE_SIZE,
     });
@@ -277,9 +281,41 @@ export async function runGmailRecruiterScanJob(importId: string): Promise<void> 
     return;
   }
 
+  // Resolve the window once, on the first invocation, and freeze it into the job. Later
+  // invocations read it back rather than re-deriving it, so every page of a multi-invocation
+  // scan is drawn from the same slice of the mailbox.
+  let scanAfter: Date;
+  let scanIsFull: boolean;
+  let scanStartedAt: Date;
+  if (importRow.stats?.scanAfter) {
+    scanAfter = new Date(importRow.stats.scanAfter);
+    scanIsFull = importRow.stats.scanIsFull === true;
+    scanStartedAt = importRow.stats.scanStartedAt
+      ? new Date(importRow.stats.scanStartedAt)
+      : new Date();
+  } else {
+    const window = await resolveScanWindow(userId, {
+      full: importRow.stats?.scanIsFull === true,
+    });
+    scanAfter = window.after;
+    scanIsFull = window.isFull;
+    scanStartedAt = new Date();
+    await patchStats(importId, {
+      scanAfter: scanAfter.toISOString(),
+      scanIsFull,
+      scanStartedAt: scanStartedAt.toISOString(),
+    });
+  }
+
   try {
     if (!importRow.stats?.discoveryComplete) {
-      const finished = await runDiscovery(importId, userId, accessToken, jobStart);
+      const finished = await runDiscovery(
+        importId,
+        userId,
+        accessToken,
+        jobStart,
+        scanAfter
+      );
       if (!finished) return;
     }
 
@@ -365,6 +401,11 @@ export async function runGmailRecruiterScanJob(importId: string): Promise<void> 
       .update(imports)
       .set({ status: "completed", rowsProcessed: processed, updatedAt: new Date() })
       .where(eq(imports.id, importId));
+
+    // Only a job that reached `completed` may advance the watermark. A failed or cancelled
+    // scan leaves it where it was, so the next run re-reads the window it never finished
+    // rather than stepping over the messages it never got to.
+    await markScanCompleted(userId, { startedAt: scanStartedAt, wasFull: scanIsFull });
 
     // Feeds the "last synced" line in the connection status.
     await db

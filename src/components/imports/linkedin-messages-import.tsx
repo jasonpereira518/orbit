@@ -13,10 +13,11 @@ import {
   readCsvOrZipMessages,
 } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
-import { friendlyError } from "@/lib/errors";
+import { UserFacingError, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-type MessagesPreview = Awaited<ReturnType<typeof previewLinkedInMessagesCsv>>;
+type PreviewResult = Awaited<ReturnType<typeof previewLinkedInMessagesCsv>>;
+type MessagesPreview = Exclude<PreviewResult, { error: string }>;
 type MessagePerson = MessagesPreview["people"][number];
 
 export function LinkedInMessagesImport() {
@@ -94,6 +95,9 @@ export function LinkedInMessagesImport() {
               setFileName(name);
               setMessagesText(text);
               const res = await previewLinkedInMessagesCsv(text);
+              // Refusals arrive as data — see `previewLinkedInMessagesCsv`. Rethrown as
+              // `UserFacingError` so `friendlyError` shows them instead of the fallback.
+              if ("error" in res) throw new UserFacingError(res.error);
               applyPreview(res);
               toast.success(
                 `Loaded ${res.totalConversations} people from ${res.totalMessages} messages`,
@@ -120,6 +124,7 @@ export function LinkedInMessagesImport() {
             start(async () => {
               try {
                 const res = await previewLinkedInMessagesCsv(messagesText);
+                if ("error" in res) throw new UserFacingError(res.error);
                 applyPreview(res);
                 toast.success(`Loaded ${res.totalConversations} people`);
               } catch (err) {

@@ -127,6 +127,20 @@ function introInFlight() {
 
 const GRAPH_REFETCH_MIN_MS = 60_000;
 
+/** At most this long between refresh batches, even on a completely idle app. */
+const REFRESH_YIELD_TIMEOUT_MS = 300;
+
+/** Resolve once the browser has a free moment, or after REFRESH_YIELD_TIMEOUT_MS regardless. */
+function yieldToApp(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(() => resolve(), { timeout: REFRESH_YIELD_TIMEOUT_MS });
+      return;
+    }
+    setTimeout(resolve, REFRESH_YIELD_TIMEOUT_MS);
+  });
+}
+
 /**
  * No write-back here, deliberately.
  *
@@ -257,6 +271,11 @@ export function NetworkGraph({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const operationsStoppedRef = useRef(false);
+  /**
+   * Stops the Refresh loop alone, without stopping this mount's ordinary refetching the way
+   * `operationsStoppedRef` does. Set when the viewer clicks a link, and on unmount.
+   */
+  const refreshStoppedRef = useRef(false);
   const refreshJobIdRef = useRef<string | null>(null);
 
   const fullscreenActive = isFullscreen || cssFullscreen;
@@ -327,6 +346,37 @@ export function NetworkGraph({
       window.removeEventListener("storage", onStorage);
     };
   }, [compact]);
+
+  /**
+   * Unmounting stops everything this mount started — the backstop, not the cure.
+   *
+   * The Refresh loop used to outlive the component entirely: navigate away mid-refresh and it
+   * kept issuing batch after batch, each a server action with a 20s budget, for every contact
+   * in the network. Next runs a client's server actions one at a time, so every OTHER page's
+   * actions (and the app pulse) queued behind it, and each batch re-rendered the app shell's
+   * job widgets. The whole app felt slower after a visit here, for as long as the refresh had
+   * left to run.
+   *
+   * Stopping on unmount does NOT fix that on its own, and it is worth knowing why: Next keeps
+   * this page mounted until the next route can commit, and the loop's own traffic is what
+   * prevents it committing, so the unmount never arrives. What breaks the cycle is the click
+   * listener in `runRefresh` plus the yield between batches. This effect is what catches
+   * every other way of leaving.
+   *
+   * Reset on mount, stop on unmount — the reset is what keeps StrictMode's development
+   * mount/unmount/mount from leaving a freshly mounted chart permanently "stopped".
+   */
+  useEffect(() => {
+    operationsStoppedRef.current = false;
+    return () => {
+      operationsStoppedRef.current = true;
+      refreshStoppedRef.current = true;
+      if (refreshJobIdRef.current) {
+        dismissBackgroundJob(refreshJobIdRef.current);
+        refreshJobIdRef.current = null;
+      }
+    };
+  }, []);
 
   const loadData = useCallback((force = false) => {
     if (operationsStoppedRef.current) return;
@@ -681,6 +731,7 @@ export function NetworkGraph({
   const runRefresh = useCallback(async () => {
     if (refreshing) return;
     if (operationsStoppedRef.current) return;
+    refreshStoppedRef.current = false;
     setRefreshing(true);
     setRefreshProgress({ processed: 0, total: 0 });
     const jobId = `graph-refresh-${Date.now()}`;
@@ -693,11 +744,34 @@ export function NetworkGraph({
       total: 0,
       startedAt: Date.now(),
     });
+    /**
+     * A click on any link stops the refresh.
+     *
+     * Unmounting is too late to be the only signal. Next keeps the current page mounted until
+     * the next route is ready to commit, and this loop's own traffic is what stops it becoming
+     * ready — so "stop on unmount" waits for an unmount that the loop itself is preventing.
+     * Measured: pressing Refresh and leaving fired 261 server-action batches and left
+     * /contacts unreachable for over two minutes. Listening for the intent to leave, rather
+     * than for the leaving, is what breaks that cycle.
+     */
+    const leaving = new AbortController();
+    document.addEventListener(
+      "click",
+      (e) => {
+        const link = (e.target as Element | null)?.closest?.("a[href]");
+        if (!link) return;
+        const href = link.getAttribute("href") ?? "";
+        if (href.startsWith("#") || link.getAttribute("target") === "_blank") return;
+        refreshStoppedRef.current = true;
+      },
+      { capture: true, signal: leaving.signal }
+    );
+
     try {
       let offset = 0;
       let done = false;
       while (!done) {
-        if (operationsStoppedRef.current) return;
+        if (operationsStoppedRef.current || refreshStoppedRef.current) return;
         const result = await refreshConstellationBatch({ offset, limit: 8 });
         setRefreshProgress({
           processed: result.processed,
@@ -709,6 +783,13 @@ export function NetworkGraph({
         });
         offset = result.processed;
         done = result.done;
+        // Hand the app back to whatever else it was doing before asking for the next batch.
+        // Server actions are issued one at a time, and each batch holds a 20s budget, so a
+        // back-to-back loop starves every other request this client makes — including the
+        // navigation away from here. `requestIdleCallback` returns immediately on an idle
+        // app and defers while one is busy, so a refresh costs nothing when nothing else
+        // wants the thread.
+        if (!done) await yieldToApp();
         if (result.graph) {
           lastFetchAt.current = Date.now();
           applyGraphPayload(result.graph, setData, setPositionOverrides);
@@ -727,6 +808,7 @@ export function NetworkGraph({
         error: "Constellation refresh failed",
       });
     } finally {
+      leaving.abort();
       refreshJobIdRef.current = null;
       setRefreshing(false);
     }
@@ -759,7 +841,7 @@ export function NetworkGraph({
           "flex items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50",
           compact
             ? "h-[300px]"
-            : "h-[calc(100dvh-18.5rem)] md:h-[calc(100dvh-10.5rem)]"
+            : "h-[calc(100dvh-14.75rem)] md:h-[calc(100dvh-10.5rem)]"
         )}
       >
         Loading constellation…
@@ -786,11 +868,13 @@ export function NetworkGraph({
           showIntroBehind ? `bg-transparent ${STAGE_CHART_LAYER}` : STAGE_GROUND,
           compact
             ? "h-[300px] rounded-2xl"
-            : // 18.5rem, not 15rem: below md the app's floating bottom nav is a fixed pill
-            // ~4rem tall, and the old height ran the canvas (and its Key / full-screen /
-            // home buttons) underneath it, where they could not be tapped at all. Keep
-            // this in step with the nav's height (layout/mobile-nav.tsx).
-            "h-[calc(100dvh-18.5rem)] max-h-[calc(100dvh-18.5rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
+            : // Below md the app's floating bottom nav is a fixed pill ~4rem tall; a taller
+            // box ran the canvas (and its Key / full-screen / home buttons) underneath it,
+            // where they could not be tapped at all. 14.75rem, down from 18.5rem, because
+            // the page's description is hidden on phones and the chart takes its height.
+            // Keep in step with CONSTELLATION_STAGE_HEIGHT and the nav's height
+            // (layout/mobile-nav.tsx).
+            "h-[calc(100dvh-14.75rem)] max-h-[calc(100dvh-14.75rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
           fullscreenActive &&
             "rounded-none border-0 !h-dvh !max-h-none",
           cssFullscreen && "!fixed inset-0 z-[100] w-screen"

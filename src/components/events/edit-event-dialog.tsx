@@ -93,7 +93,9 @@ export function EditEventDialog({
   const set = (key: keyof typeof form) => (value: string) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
-  const zone = zoneLabel(event.timezone);
+  // At the event's own instant: an IANA zone name resolves to a different offset in summer
+  // than in winter, and the label has to name the one the fields are actually being read in.
+  const zone = zoneLabel(event.timezone, event.startsAt);
   const blank = (value: string) => (value.trim() ? value.trim() : null);
 
   function save() {

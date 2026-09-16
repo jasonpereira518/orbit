@@ -28,6 +28,14 @@ export type ParsedAttendee = {
    * the database — `event_attendees.attendee_role` was NULL for every row ever written.
    */
   attendeeRole?: AttendeeRole | null;
+  /**
+   * The provider's own id for this guest (`evt-guest-…`, a Luma `usr-…`, an Eventbrite
+   * attendee id). Only a connector knows it. It is the most stable handle on a person a
+   * platform gives us — stable across a name change, a second registration, and a typo'd
+   * email — so it is stored even though nothing reads it yet.
+   */
+  externalRef?: string | null;
+  phone?: string | null;
   identityKey: string;
 };
 
@@ -179,14 +187,21 @@ export function parseRosterText(text: string): RosterParseResult {
  *
  * `attendeeRole` is omitted deliberately: a CSV's "role" column is a job title far more often
  * than it is host/speaker/attendee, and `title` already claims that header.
+ *
+ * `externalRef` is omitted for a different reason: a provider's guest id is only meaningful
+ * alongside the provider that issued it, and a CSV does not say which one that is.
  */
-const HEADERS: Record<keyof Omit<ParsedAttendee, "identityKey" | "attendeeRole">, string[]> = {
+const HEADERS: Record<
+  keyof Omit<ParsedAttendee, "identityKey" | "attendeeRole" | "externalRef">,
+  string[]
+> = {
   fullName: ["name", "full name", "attendee name", "guest name", "first name"],
   email: ["email", "email address", "e-mail", "attendee email"],
   company: ["company", "organization", "organisation", "employer", "company name"],
   title: ["title", "job title", "role", "position", "headline"],
   linkedinUrl: ["linkedin", "linkedin url", "linkedin profile", "profile url"],
   xHandle: ["x", "twitter", "x handle", "twitter handle"],
+  phone: ["phone", "phone number", "mobile", "cell phone", "telephone"],
 };
 
 function pick(row: Record<string, string>, keys: string[]): string | null {
@@ -227,6 +242,9 @@ export function parseRosterCsv(csvText: string): RosterParseResult {
       title: pick(row, HEADERS.title),
       linkedinUrl: pick(row, HEADERS.linkedinUrl),
       xHandle: pick(row, HEADERS.xHandle)?.replace(/^@/, "") ?? null,
+      // Never an identity key — a phone number is stored as a detail only, so a column of
+      // blank-ish values cannot silently key rows together.
+      phone: pick(row, HEADERS.phone),
     };
   });
 
@@ -322,6 +340,57 @@ export function speakersToAttendees(speakers: EventSpeaker[]): ParsedAttendee[] 
       linkedinUrl,
       xHandle,
       attendeeRole: "speaker",
+      identityKey,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * The people a platform's own page names — hosts, and the guests a host featured.
+ *
+ * Richer than a JSON-LD speaker: these carry the platform's user id and, on Luma, a LinkedIn
+ * handle. That matters more than it sounds. A name-only row keys as `nm:<name>`, the weakest
+ * identity there is, so it cannot be matched to a contact with any confidence and cannot be
+ * recognised as the same person at a second event. A LinkedIn URL keys at the top tier, which
+ * is what makes "you keep running into this person" possible at all.
+ *
+ * `externalRef` carries the platform id (`luma:usr-…`) rather than the bare value, because a
+ * Luma user id and a Partiful user id are only unique within their own platform.
+ */
+export function peopleToAttendees(
+  people: Array<{
+    name: string;
+    externalRef: string | null;
+    linkedinUrl: string | null;
+    xHandle: string | null;
+  }>,
+  role: AttendeeRole,
+  platform?: string | null
+): ParsedAttendee[] {
+  const out: ParsedAttendee[] = [];
+  const seen = new Set<string>();
+
+  for (const item of people) {
+    const identityKey = attendeeIdentityKey({
+      linkedinUrl: item.linkedinUrl,
+      xHandle: item.xHandle,
+      fullName: item.name,
+    });
+    if (!identityKey || seen.has(identityKey)) continue;
+    seen.add(identityKey);
+
+    out.push({
+      fullName: item.name,
+      email: null,
+      company: null,
+      title: null,
+      linkedinUrl: item.linkedinUrl,
+      xHandle: item.xHandle,
+      attendeeRole: role,
+      externalRef:
+        item.externalRef && platform ? `${platform}:${item.externalRef}` : item.externalRef,
       identityKey,
     });
   }

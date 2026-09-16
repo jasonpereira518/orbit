@@ -17,10 +17,22 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
+
+const CUSTOM_MODEL = "__custom__";
+
+const PROVIDER_ITEMS = AI_PROVIDERS.map((p) => ({ value: p.id, label: p.label }));
 
 export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const [settings, setSettings] = useState<Settings>(initialSettings);
@@ -37,38 +49,43 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
 
   const providerMeta = AI_PROVIDERS.find((p) => p.id === provider)!;
   const models = PROVIDER_MODELS[provider];
+  // `items` so each trigger shows the label ("Gemini 3.5 Flash"), not the stored id.
+  const modelItems = [
+    ...models.map((m) => ({ value: m.value, label: m.label })),
+    { value: CUSTOM_MODEL, label: "Custom model ID…" },
+  ];
   const activeProviderStatus = settings.providers.find((p) => p.id === provider);
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">AI provider</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys
-          are encrypted at rest and only used for your account.
-        </p>
-      </div>
-
+    <SettingsSection
+      title="AI provider"
+      description="Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys are encrypted at rest and only used for your account."
+    >
       <div className="space-y-1.5">
-        <Label htmlFor="provider">Provider</Label>
-        <select
-          id="provider"
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        <Label id="provider-label">Provider</Label>
+        <Select
           value={provider}
-          onChange={(e) => {
-            const next = e.target.value as AiProvider;
+          onValueChange={(value) => {
+            if (!value) return;
+            const next = value as AiProvider;
             setProvider(next);
             setApiKey("");
             setModel(DEFAULT_MODELS[next]);
             setCustomModel(false);
           }}
+          items={PROVIDER_ITEMS}
         >
-          {AI_PROVIDERS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger aria-labelledby="provider-label" className="h-9 w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false} className="p-1">
+            {PROVIDER_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value} className="py-1.5 pl-2">
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {activeProviderStatus && (
@@ -105,27 +122,33 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="model">Model</Label>
+        <Label id="model-label" htmlFor={customModel ? "model" : undefined}>
+          Model
+        </Label>
         {!customModel ? (
-          <select
-            id="model"
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          <Select
             value={model}
-            onChange={(e) => {
-              if (e.target.value === "__custom__") {
+            onValueChange={(value) => {
+              if (!value) return;
+              if (value === CUSTOM_MODEL) {
                 setCustomModel(true);
                 return;
               }
-              setModel(e.target.value);
+              setModel(value);
             }}
+            items={modelItems}
           >
-            {models.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-            <option value="__custom__">Custom model ID…</option>
-          </select>
+            <SelectTrigger aria-labelledby="model-label" className="h-9 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false} className="p-1">
+              {modelItems.map((item) => (
+                <SelectItem key={item.value} value={item.value} className="py-1.5 pl-2">
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : (
           <div className="flex gap-2">
             <Input
@@ -187,9 +210,13 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           disabled={pending || !activeProviderStatus?.hasPersonalKey}
           onClick={() =>
             start(async () => {
-              await clearApiKey(provider);
-              setSettings(await getSettings());
-              toast.success(`${providerMeta.label} key cleared`);
+              try {
+                await clearApiKey(provider);
+                setSettings(await getSettings());
+                toast.success(`${providerMeta.label} key cleared`);
+              } catch (err) {
+                toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+              }
             })
           }
         >
@@ -197,27 +224,30 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         </Button>
       </div>
 
-      <div className="space-y-2 border-t border-border/60 pt-4">
-        <div>
-          <h3 className="text-sm font-medium text-ink">Voice transcription</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
+      <SettingsRow
+        title="Voice transcription"
+        description={
+          <>
             Voice notes are transcribed with{" "}
-            <span className="font-medium text-foreground">Wispr Flow</span> when a key is
-            saved here, because it accepts your contacts&apos; names as a vocabulary and
+            <span className="font-medium text-foreground">Wispr Flow</span>{" "}
+            when a key is saved here, because it accepts your contacts&apos; names as a vocabulary and
             gets their spelling right. Without one, Orbit falls back to your AI provider
             above — which still receives the same list of names, just less reliably.
-          </p>
+          </>
+        }
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="wispr-key">Wispr Flow API key</Label>
+          <Input
+            id="wispr-key"
+            type="password"
+            autoComplete="off"
+            placeholder={settings.hasWisprKey ? "Saved — enter a new key to replace" : "Optional"}
+            value={wisprKey}
+            onChange={(e) => setWisprKey(e.target.value)}
+          />
         </div>
-        <Label htmlFor="wispr-key">Wispr Flow API key</Label>
-        <Input
-          id="wispr-key"
-          type="password"
-          autoComplete="off"
-          placeholder={settings.hasWisprKey ? "Saved — enter a new key to replace" : "Optional"}
-          value={wisprKey}
-          onChange={(e) => setWisprKey(e.target.value)}
-        />
-        <div className="flex flex-wrap gap-2 pt-1">
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant="outline"
@@ -249,10 +279,9 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             Clear
           </Button>
         </div>
-      </div>
+      </SettingsRow>
 
-      <div className="border-t border-border/60 pt-4">
-        <p className="mb-2 text-sm font-medium text-ink">Saved keys</p>
+      <SettingsRow title="Saved keys">
         <ul className="space-y-1 text-sm text-muted-foreground">
           {settings.providers.map((p) => (
             <li key={p.id}>
@@ -261,7 +290,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             </li>
           ))}
         </ul>
-      </div>
-    </section>
+      </SettingsRow>
+    </SettingsSection>
   );
 }

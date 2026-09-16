@@ -20,6 +20,7 @@ import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { eventAttendees, events, type EventRecord } from "@/db/schema";
 import { attendeeIdentityKey } from "@/lib/events/identity";
+import { personKeyOf } from "@/lib/events/people";
 import type {
   AttendeeRole,
   AttendeeSource,
@@ -35,6 +36,7 @@ export type EventListRow = Pick<
   | "id"
   | "title"
   | "startsAt"
+  | "endsAt"
   | "venue"
   | "city"
   | "url"
@@ -42,7 +44,41 @@ export type EventListRow = Pick<
   | "source"
   | "coverImageUrl"
   | "themeColor"
+  | "discoveredVia"
+  | "rsvpStatus"
 > & { attendeeCount: number; connectedCount: number };
+
+/**
+ * The one definition of "an event the user should see".
+ *
+ * Every list, count and aggregate goes through this. A hidden event that leaks into one of
+ * them is worse than not hiding it at all: the user pressed "not mine", and then it turns up
+ * in a total, or in a suggestion about who to talk to at an event they said they were not at.
+ */
+function visibleEvents() {
+  return attendedEventFilter();
+}
+
+/**
+ * Not hidden, and — for an event Orbit added on its own — one the user is actually going to.
+ *
+ * The SQL twin of `isAttendingReport` (`attendance.ts`), for rows written before discovery
+ * stopped creating the others: a Luma feed lists every waitlisted and pending registration, and
+ * those rows are still in the table. Filtered rather than deleted, because the next sync that
+ * says "going" makes the same row appear with its roster and aliases intact.
+ *
+ * `role_source = 'inferred'` is what marks a row discovery CREATED. An event the user typed in,
+ * or one a host API synced, is theirs whatever a feed later says about it. Expects the events
+ * table aliased `e`.
+ */
+export function attendedEventFilter() {
+  return sql`(e.dismissed_at IS NULL AND (
+    e.role_source IS DISTINCT FROM 'inferred'
+    OR e.role = 'hosted'
+    OR e.rsvp_status = 'going'
+    OR (e.rsvp_status IS NULL AND e.discovered_via IS DISTINCT FROM 'gmail')
+  ))`;
+}
 
 /**
  * The list page.
@@ -54,12 +90,34 @@ export type EventListRow = Pick<
  * Ordered newest-first with nulls last: an event whose date nobody recorded belongs at the
  * bottom, not pinned above everything by a NULL sort. `id` trails the sort key to keep the
  * ordering total.
+ *
+ * `when` splits the list the way the page's tabs do. An event is upcoming until it ENDS, so a
+ * conference on its second day is still on the Upcoming tab; one with no date at all is past,
+ * because an event nobody can place in the future is not something to plan around. Upcoming
+ * runs soonest-first — the next thing on the calendar belongs at the top — and past runs
+ * newest-first.
  */
-export async function listEventsForUser(userId: string, limit = 100): Promise<EventListRow[]> {
+export async function listEventsForUser(
+  userId: string,
+  limit = 100,
+  options: { hidden?: boolean; when?: "upcoming" | "past"; now?: Date } = {}
+): Promise<EventListRow[]> {
   const db = await getDb();
+  const now = options.now ?? new Date();
+  const endsAt = sql`COALESCE(e.ends_at, e.starts_at)`;
+  const whenFilter =
+    options.when === "upcoming"
+      ? sql`AND ${endsAt} >= ${now}`
+      : options.when === "past"
+        ? sql`AND (${endsAt} < ${now} OR ${endsAt} IS NULL)`
+        : sql``;
+  const order =
+    options.when === "upcoming"
+      ? sql`e.starts_at ASC NULLS LAST, e.id ASC`
+      : sql`e.starts_at DESC NULLS LAST, e.id DESC`;
   const rows = await db.execute(sql`
-    SELECT e.id, e.title, e.starts_at, e.venue, e.city, e.url, e.role, e.source,
-           e.cover_image_url, e.theme_color,
+    SELECT e.id, e.title, e.starts_at, e.ends_at, e.venue, e.city, e.url, e.role, e.source,
+           e.cover_image_url, e.theme_color, e.discovered_via, e.rsvp_status,
            COALESCE(a.total, 0)     AS attendee_count,
            COALESCE(a.connected, 0) AS connected_count
       FROM events e
@@ -72,13 +130,16 @@ export async function listEventsForUser(userId: string, limit = 100): Promise<Ev
          GROUP BY event_id
       ) a ON a.event_id = e.id
      WHERE e.user_id = ${userId}
-     ORDER BY e.starts_at DESC NULLS LAST, e.id DESC
+       AND ${options.hidden ? sql`e.dismissed_at IS NOT NULL` : visibleEvents()}
+       ${whenFilter}
+     ORDER BY ${order}
      LIMIT ${limit}
   `);
   type Raw = {
     id: string;
     title: string;
     starts_at: string | Date | null;
+    ends_at: string | Date | null;
     venue: string | null;
     city: string | null;
     url: string | null;
@@ -86,6 +147,8 @@ export async function listEventsForUser(userId: string, limit = 100): Promise<Ev
     source: EventSource;
     cover_image_url: string | null;
     theme_color: string | null;
+    discovered_via: EventRecord["discoveredVia"];
+    rsvp_status: EventRecord["rsvpStatus"];
     attendee_count: string | number;
     connected_count: string | number;
   };
@@ -95,6 +158,7 @@ export async function listEventsForUser(userId: string, limit = 100): Promise<Ev
     id: r.id,
     title: r.title,
     startsAt: r.starts_at ? new Date(r.starts_at) : null,
+    endsAt: r.ends_at ? new Date(r.ends_at) : null,
     venue: r.venue,
     city: r.city,
     url: r.url,
@@ -102,6 +166,8 @@ export async function listEventsForUser(userId: string, limit = 100): Promise<Ev
     source: r.source,
     coverImageUrl: r.cover_image_url,
     themeColor: r.theme_color,
+    discoveredVia: r.discovered_via,
+    rsvpStatus: r.rsvp_status,
     // Postgres COUNT comes back as a string over the wire on one driver and a number on the
     // other; normalising here keeps every caller from having to know which.
     attendeeCount: Number(r.attendee_count),
@@ -249,16 +315,20 @@ export async function upsertEventAttendees(
   if (attendees.length === 0) return 0;
   const db = await getDb();
 
-  const values = attendees.map(
-    (a) =>
-      sql`(${eventId}::uuid, ${userId}, ${a.fullName}, ${a.email}, ${a.company}, ${a.title},
-           ${a.linkedinUrl}, ${a.xHandle}, ${a.attendeeRole ?? null}, ${source}, ${a.identityKey})`
-  );
+  const values = attendees.map((a) => {
+    // Computed here rather than in each parser, so every acquisition path — paste, CSV,
+    // page, calendar, provider — produces the same cross-event identity for one person.
+    const personKey = personKeyOf(a);
+    return sql`(${eventId}::uuid, ${userId}, ${a.fullName}, ${a.email}, ${a.company}, ${a.title},
+           ${a.linkedinUrl}, ${a.xHandle}, ${a.phone ?? null}, ${a.attendeeRole ?? null},
+           ${source}, ${a.externalRef ?? null}, ${personKey?.kind ?? null},
+           ${personKey?.value ?? null}, ${a.identityKey})`;
+  });
 
   await db.execute(sql`
     INSERT INTO event_attendees
-      (event_id, user_id, full_name, email, company, title, linkedin_url, x_handle,
-       attendee_role, source, identity_key)
+      (event_id, user_id, full_name, email, company, title, linkedin_url, x_handle, phone,
+       attendee_role, source, external_ref, person_key_kind, person_key_value, identity_key)
     VALUES ${sql.join(values, sql`, `)}
     ON CONFLICT (event_id, identity_key) DO UPDATE SET
       full_name     = COALESCE(event_attendees.full_name, excluded.full_name),
@@ -267,7 +337,25 @@ export async function upsertEventAttendees(
       title         = COALESCE(event_attendees.title, excluded.title),
       linkedin_url  = COALESCE(event_attendees.linkedin_url, excluded.linkedin_url),
       x_handle      = COALESCE(event_attendees.x_handle, excluded.x_handle),
+      phone         = COALESCE(event_attendees.phone, excluded.phone),
       attendee_role = COALESCE(event_attendees.attendee_role, excluded.attendee_role),
+      -- Two columns the schema has always had and nothing ever wrote: the connectors compute
+      -- an external ref and drop it, and a phone number only ever arrives from a provider.
+      -- Both follow the fill-blanks rule, so a paste can never blank a provider's id.
+      external_ref  = COALESCE(event_attendees.external_ref, excluded.external_ref),
+      -- The one field that UPGRADES rather than filling a blank. A row that arrived as a
+      -- name and later gains a LinkedIn URL should be recognised at the strong tier from
+      -- then on — that is the whole point of the second read filling in the first.
+      person_key_kind  = CASE WHEN excluded.person_key_kind IS NOT NULL
+                               AND (event_attendees.person_key_kind IS NULL
+                                    OR event_attendees.person_key_kind = 'name')
+                              THEN excluded.person_key_kind
+                              ELSE event_attendees.person_key_kind END,
+      person_key_value = CASE WHEN excluded.person_key_kind IS NOT NULL
+                               AND (event_attendees.person_key_kind IS NULL
+                                    OR event_attendees.person_key_kind = 'name')
+                              THEN excluded.person_key_value
+                              ELSE event_attendees.person_key_value END,
       updated_at    = now()
   `);
 
@@ -411,9 +499,19 @@ export async function updateAttendeeForUser(
     return { ok: false, reason: "collision", otherId: clash.id, otherName: clash.fullName };
   }
 
+  // Recomputed for the same reason `identityKey` is: a correction that adds an email or a
+  // LinkedIn URL changes who this row IS, and a stale cross-event key would keep the
+  // corrected person filed under the old one.
+  const personKey = personKeyOf(patch);
   await db
     .update(eventAttendees)
-    .set({ ...patch, identityKey, updatedAt: new Date() })
+    .set({
+      ...patch,
+      identityKey,
+      personKeyKind: personKey?.kind ?? null,
+      personKeyValue: personKey?.value ?? null,
+      updatedAt: new Date(),
+    })
     .where(and(eq(eventAttendees.userId, userId), eq(eventAttendees.id, attendeeId)));
   return { ok: true };
 }

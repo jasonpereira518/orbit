@@ -41,3 +41,19 @@ export async function markDesktopNotificationsSent(ids: string[]) {
   if (ids.length === 0) return;
   await mergeDesktopNotifiedIds(ids);
 }
+
+/**
+ * Record whether this account wants desktop notifications. Every signed-in tab picks the
+ * value up on its next app pulse, so turning them off on a laptop quiets the desktop too.
+ */
+export async function setDesktopNotificationsEnabled(enabled: boolean) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  await db
+    .insert(userSettings)
+    .values({ userId, desktopNotificationsEnabled: enabled })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { desktopNotificationsEnabled: enabled, updatedAt: new Date() },
+    });
+}

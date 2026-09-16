@@ -9,8 +9,12 @@
 /**
  * How a contacts page is ordered. The cursor's shape follows from this, so a page fetched
  * under one sort cannot be continued under another.
+ *
+ * `"relevance"` is the odd one out: it only means something alongside a search query, has
+ * no stable keyset (a hybrid-search rank isn't a column), and so never paginates past its
+ * first page. See `orderFor` in `src/actions/contacts.ts`.
  */
-export type ContactSort = "name" | "closeness" | "recent";
+export type ContactSort = "name" | "closeness" | "recent" | "relevance";
 
 export const CONTACTS_PAGE_SIZE = 50;
 
@@ -38,6 +42,8 @@ export type ContactListRow = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar: boolean;
   relationshipScore: number;
   /** 0–1, matching what the UI renders. Stored as a 0–100 integer so it can be indexed. */
   closeness: number;
@@ -46,6 +52,10 @@ export type ContactListRow = {
   nextFollowUpAt: Date | null;
   lastInteractionAt: Date | null;
   tags: string[];
+  /** Why this contact matched an active search, only when that isn't obvious from the row
+   *  itself (e.g. a past role, not their current company field). Null outside a search, and
+   *  for the common case where the match is already visible in the row's own text. */
+  matchReason: string | null;
 };
 
 export type ContactsPage = {

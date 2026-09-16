@@ -93,6 +93,39 @@ async function priorNotesForContact(contactId: string | null) {
     .slice(0, 500);
 }
 
+/**
+ * Batched form of `priorNotesForContact` for draft generation over a whole prospect
+ * list — one `interactions` query instead of one per prospect. Returns a map whose
+ * values match `priorNotesForContact`'s per-contact string shape exactly (a contact
+ * with no interaction rows simply has no entry, so callers fall back with `?? null`).
+ */
+async function priorNotesForContacts(contactIds: string[]) {
+  const byContact = new Map<string, string>();
+  if (!contactIds.length) return byContact;
+  const db = await getDb();
+  const rows = await db.query.interactions.findMany({
+    where: inArray(interactions.contactId, contactIds),
+    orderBy: [desc(interactions.interactionDate)],
+  });
+  const grouped = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = grouped.get(row.contactId) ?? [];
+    if (list.length < 3) list.push(row);
+    grouped.set(row.contactId, list);
+  }
+  for (const [contactId, list] of grouped) {
+    byContact.set(
+      contactId,
+      list
+        .map((row) => row.aiSummary || row.rawNotes)
+        .filter(Boolean)
+        .join(" | ")
+        .slice(0, 500)
+    );
+  }
+  return byContact;
+}
+
 export async function listCampaigns() {
   const userId = await requireUserId();
   const db = await getDb();
@@ -541,6 +574,12 @@ export async function generateOutreachDrafts(input: {
     throw new Error("No prospects selected for draft generation.");
   }
 
+  const priorNotesByContact = await priorNotesForContacts(
+    targetProspects
+      .map((p) => p.contactId)
+      .filter((id): id is string => Boolean(id))
+  );
+
   const draftInputs = await Promise.all(
     targetProspects.map(async (prospect, index) => ({
       channel,
@@ -556,7 +595,9 @@ export async function generateOutreachDrafts(input: {
         company: prospect.company,
         location: prospect.location,
         enrichmentSummary: enrichmentSummary(prospect.enrichment),
-        priorNotes: await priorNotesForContact(prospect.contactId),
+        priorNotes: prospect.contactId
+          ? (priorNotesByContact.get(prospect.contactId) ?? null)
+          : null,
       },
       templateSeed: input.templateSeed,
       variationHint: `Variant ${index + 1} of ${targetProspects.length}`,
@@ -895,16 +936,29 @@ export async function generateDueFollowUps(campaignId: string) {
   const goals = await listActiveGoalTexts();
   const now = new Date();
 
-  const due = await db.query.outreachMessages.findMany({
-    where: and(
-      eq(outreachMessages.status, "scheduled"),
-      lte(outreachMessages.scheduledFor, now)
-    ),
-    with: {
-      prospect: true,
-    },
+  const campaignProspectIds = await db.query.outreachProspects.findMany({
+    where: eq(outreachProspects.campaignId, campaignId),
+    columns: { id: true },
   });
 
+  const due = campaignProspectIds.length
+    ? await db.query.outreachMessages.findMany({
+        where: and(
+          eq(outreachMessages.status, "scheduled"),
+          lte(outreachMessages.scheduledFor, now),
+          inArray(
+            outreachMessages.prospectId,
+            campaignProspectIds.map((p) => p.id)
+          )
+        ),
+        with: {
+          prospect: true,
+        },
+      })
+    : [];
+
+  // Kept as a defensive no-op check, cheap insurance against the `with: { prospect }`
+  // join ever returning a row outside the campaign-scoped prospect id set above.
   const dueForCampaign = due.filter((m) => m.prospect.campaignId === campaignId);
   let generated = 0;
 

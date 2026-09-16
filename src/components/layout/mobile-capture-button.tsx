@@ -192,7 +192,7 @@ export function MobileCaptureButton({
           e.preventDefault();
         }
       }}
-      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1 text-[10px] font-medium text-primary select-none [-webkit-touch-callout:none]"
+      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1.5 text-[10.5px] font-medium text-primary select-none [-webkit-touch-callout:none]"
     >
       <AnimatePresence>
         {live && (
@@ -219,7 +219,7 @@ export function MobileCaptureButton({
         )}
       </AnimatePresence>
 
-      <span className="h-5 w-5" aria-hidden />
+      <span className="size-[18px]" aria-hidden />
 
       {/* The level ring, straight off the MotionValue like the capture page's mic. */}
       <AnimatePresence initial={false}>
@@ -249,9 +249,9 @@ export function MobileCaptureButton({
         transition={reducedMotion ? { duration: 0 } : SPRING_TAP}
       >
         {holding ? (
-          <Mic className="h-5 w-5" aria-hidden />
+          <Mic className="size-[18px]" aria-hidden />
         ) : (
-          <Icon className="h-5 w-5" aria-hidden />
+          <Icon className="size-[18px]" aria-hidden />
         )}
       </motion.span>
       <span>{holding ? "Listening" : label}</span>

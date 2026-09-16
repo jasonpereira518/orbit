@@ -4,6 +4,7 @@ import {
   getDesktopNotifiedIds,
   markDesktopNotificationsSent,
   mergeDesktopNotifiedIds,
+  setDesktopNotificationsEnabled,
 } from "@/actions/notifications";
 
 const PREF_KEY = "orbit:desktop-notifications";
@@ -24,19 +25,63 @@ export function getNotificationSupport(): NotificationPermissionState {
   return Notification.permission as "default" | "granted" | "denied";
 }
 
+export const DESKTOP_PREFERENCE_EVENT = "orbit:desktop-notifications-change";
+
+/**
+ * This device's copy of the account preference.
+ *
+ * The account row (`user_settings.desktop_notifications_enabled`) is the source of truth;
+ * this mirror exists because `showDesktopNotification` has to answer synchronously, and it
+ * is kept in step by `syncDesktopNotificationsPreference` on every app pulse.
+ */
 export function isDesktopNotificationsPreferred() {
   if (typeof window === "undefined") return false;
   return localStorage.getItem(PREF_KEY) === "1";
 }
 
+function writeLocalPreference(enabled: boolean) {
+  try {
+    localStorage.setItem(PREF_KEY, enabled ? "1" : "0");
+  } catch {
+    // Private mode / quota: the account value still applies on the next pulse.
+  }
+  window.dispatchEvent(
+    new CustomEvent(DESKTOP_PREFERENCE_EVENT, { detail: { enabled } })
+  );
+}
+
+/** Turn desktop notifications on or off for the account, not just this browser. */
 export function setDesktopNotificationsPreferred(enabled: boolean) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(PREF_KEY, enabled ? "1" : "0");
-  window.dispatchEvent(
-    new CustomEvent("orbit:desktop-notifications-change", {
-      detail: { enabled },
-    })
-  );
+  writeLocalPreference(enabled);
+  // The mirror answers immediately; the account write settles behind it. If it fails, the
+  // mirror still holds the choice and the next pulse will tell us the account disagrees.
+  void setDesktopNotificationsEnabled(enabled).catch(() => {});
+}
+
+let adoptedLocalPreference = false;
+
+/**
+ * Reconcile this device's mirror with the account value.
+ *
+ * `null` means the account has never recorded a choice — every account from before the
+ * preference synced. The first device to see that adopts whatever it had stored locally and
+ * writes it up, so nobody who had notifications on finds them silently switched off.
+ */
+export function syncDesktopNotificationsPreference(accountValue: boolean | null) {
+  if (typeof window === "undefined") return;
+  const raw = localStorage.getItem(PREF_KEY);
+
+  if (accountValue === null) {
+    if (raw === null || adoptedLocalPreference) return;
+    adoptedLocalPreference = true;
+    void setDesktopNotificationsEnabled(raw === "1").catch(() => {
+      adoptedLocalPreference = false;
+    });
+    return;
+  }
+
+  if (raw !== (accountValue ? "1" : "0")) writeLocalPreference(accountValue);
 }
 
 let sentIds = new Set<string>();

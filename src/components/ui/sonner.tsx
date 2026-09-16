@@ -181,13 +181,14 @@ function useWheelSwipeDismiss() {
 }
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme();
+  // `forcedTheme` first: /admin forces light, and `theme` is still the stored preference.
+  const { theme = "system", forcedTheme } = useTheme();
   useDismissOnBodyClick();
   useWheelSwipeDismiss();
 
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={(forcedTheme ?? theme) as ToasterProps["theme"]}
       className="toaster group"
       position="bottom-right"
       closeButton

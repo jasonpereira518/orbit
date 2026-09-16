@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { integrationHref } from "@/components/settings/sections";
 
 /**
  * The one message for "you cannot use this yet": production is strictly bring-your-own-key,
@@ -33,10 +34,10 @@ export function AiKeyNotice({
         </span>
         Add one under{" "}
         <Link
-          href="/settings#settings-ai"
+          href={integrationHref("ai")}
           className="font-medium text-primary underline-offset-2 hover:underline"
         >
-          Settings → AI provider
+          Settings → Integrations → AI provider
         </Link>
         <span className={extra}> and everything else here works without it</span>.
       </p>

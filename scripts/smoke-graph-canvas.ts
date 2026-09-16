@@ -20,6 +20,7 @@ import {
   clampZoom,
   easeOutCubic,
   computeSunExtents,
+  fitStarsToPane,
   fitWorldRect,
   lerpCamera,
   panBy,
@@ -314,15 +315,67 @@ console.log("\nframing\n");
       zoomToFitSunCentered(1e9, 1e9, 400, 800) === SKY_MIN_ZOOM
   );
 
-  // Both renderers must open on the same picture: same extents in, same camera out.
+  // The phone opens on the stars' own bounds, clear of the chart's overlays — not
+  // sun-centred like the DOM chart, which left a lopsided sky in the middle third of it.
   const pane = { width: 393, height: 700 };
-  const extents = computeSunExtents(layout.nodes, {}, []);
-  const k = zoomToFitSunCentered(extents.maxAbsX, extents.maxAbsY, pane.width, pane.height);
-  const mobileCamera: Camera = { x: pane.width / 2, y: pane.height / 2, k };
-  const sunOnScreen = worldToScreen({ x: 0, y: 0 }, mobileCamera);
+  const inset = { x: 28, top: 112, bottom: 60 };
+  const lopsided = { east: { x: 1400, y: 60 }, west: { x: -300, y: -220 }, south: { x: 200, y: 420 } };
+  const phone = fitStarsToPane(layout.nodes, lopsided, pane, inset);
+  const stars = [{ x: 0, y: 0 }, ...Object.values(lopsided)].map((p) => worldToScreen(p, phone));
   check(
-    "the default mobile camera lands the sun dead centre, as the DOM chart does",
-    close(sunOnScreen.x, pane.width / 2) && close(sunOnScreen.y, pane.height / 2)
+    "fitStarsToPane keeps every star inside the pane's clear band",
+    stars.every(
+      (p) =>
+        p.x >= inset.x - 1e-6 &&
+        p.x <= pane.width - inset.x + 1e-6 &&
+        p.y >= inset.top - 1e-6 &&
+        p.y <= pane.height - inset.bottom + 1e-6
+    ),
+    stars.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")
+  );
+  const sunExtents = computeSunExtents(layout.nodes, lopsided, []);
+  const sunK = zoomToFitSunCentered(sunExtents.maxAbsX, sunExtents.maxAbsY, pane.width, pane.height);
+  check(
+    "fitStarsToPane frames a lopsided sky larger than the sun-centred fit does",
+    phone.k > sunK * 1.2,
+    `phone k ${phone.k.toFixed(3)} vs sun-centred ${sunK.toFixed(3)}`
+  );
+  const lonely = fitStarsToPane(layout.nodes, {}, pane, inset);
+  check(
+    "fitStarsToPane caps a sun-only sky at the default-framing ceiling",
+    lonely.k === SKY_FIT_MAX_ZOOM && Number.isFinite(lonely.x) && Number.isFinite(lonely.y),
+    `got ${lonely.k}`
+  );
+  // A few far-flung loose contacts must not shrink every constellation to a knot.
+  const crowd: Record<string, Vec2> = {};
+  const rng = makeRng(7);
+  for (let i = 0; i < 60; i++) crowd[`c${i}`] = { x: (rng() - 0.5) * 800, y: (rng() - 0.5) * 800 };
+  crowd.farEast = { x: 5000, y: 0 };
+  crowd.farWest = { x: -4200, y: 30 };
+  const crowded = fitStarsToPane(layout.nodes, crowd, pane, inset);
+  const untrimmed = fitStarsToPane(layout.nodes, { farEast: crowd.farEast, farWest: crowd.farWest, core: { x: 400, y: 400 } }, pane, inset);
+  const inBand = Object.values(crowd)
+    .map((p) => worldToScreen(p, crowded))
+    .filter((p) => p.x >= inset.x - 1e-6 && p.x <= pane.width - inset.x + 1e-6).length;
+  check(
+    "fitStarsToPane frames the crowd, not its two loners (and keeps 90% of stars in frame)",
+    crowded.k > untrimmed.k * 4 && inBand >= Math.ceil(0.9 * 62),
+    `k ${crowded.k.toFixed(3)} vs ${untrimmed.k.toFixed(3)}, ${inBand}/62 stars in the band`
+  );
+  const sunAt = worldToScreen({ x: 0, y: 0 }, crowded);
+  check(
+    "the trim never frames the sun out",
+    sunAt.x >= 0 && sunAt.x <= pane.width && sunAt.y >= 0 && sunAt.y <= pane.height
+  );
+  // A small network (a few hundred world units across) must open larger than the
+  // sun-centred fit, whose 240-unit floor pinned every such sky at one zoom.
+  const small = { a: { x: 180, y: 40 }, b: { x: -120, y: -90 }, c: { x: 60, y: 150 } };
+  const smallPhone = fitStarsToPane(layout.nodes, small, pane, inset);
+  const smallSun = computeSunExtents(layout.nodes, small, []);
+  check(
+    "fitStarsToPane opens a small network closer than the sun-centred floor allows",
+    smallPhone.k > zoomToFitSunCentered(smallSun.maxAbsX, smallSun.maxAbsY, pane.width, pane.height),
+    `got ${smallPhone.k}`
   );
 
   const single = rectOf([{ x: 500, y: -300 }]);

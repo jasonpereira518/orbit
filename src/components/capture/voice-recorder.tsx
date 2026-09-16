@@ -14,8 +14,8 @@
  * long the first press lasted, so there is no mode to pick.
  *
  * Owns `useVoiceRecorder` and nothing else. It hands the finished WAV up and takes no view
- * on what happens to it, which is what lets `BulkNotesPanel` route it through the same
- * ingest path a hand-picked audio file already takes.
+ * on what happens to it, which is what lets each caller — the Voice tab, the phone nav's
+ * long-press button — route it through its own ingest path.
  */
 
 import { useRef, useState } from "react";
@@ -28,10 +28,7 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { useDelayedLoading } from "@/lib/use-delayed-loading";
 import { cn } from "@/lib/utils";
-import {
-  MAX_RECORDING_MS,
-  formatElapsed,
-} from "@/lib/voice-recording";
+import { MAX_RECORDING_MS, formatElapsed } from "@/lib/voice-recording";
 import {
   useVoiceRecorder,
   type VoiceRecorderErrorCode,
@@ -93,7 +90,8 @@ export function VoiceRecorder({
   busy = false,
   busyLabel,
   onCapReached,
-  size = "hero",
+  size = "default",
+  idleHint,
 }: {
   /** A finished WAV, ready to hand to capture's ingest path. */
   onRecording: (recording: VoiceRecording) => void;
@@ -102,11 +100,10 @@ export function VoiceRecorder({
   /** What the parent is doing, shown under the button while `busy`. */
   busyLabel?: string;
   onCapReached?: () => void;
-  /**
-   * `hero` is the whole Voice tab before anything is said. `compact` is the small "add
-   * more" control that sits beside a transcript once there is one.
-   */
-  size?: "hero" | "compact";
+  /** `hero` is the Voice tab's centrepiece; `default` is the smaller "add more" size. */
+  size?: "default" | "hero";
+  /** Replaces the idle sentence under the button. */
+  idleHint?: string;
 }) {
   const reduced = usePrefersReducedMotion();
   const recorder = useVoiceRecorder({ onRecording, onCapReached });
@@ -119,13 +116,12 @@ export function VoiceRecorder({
   // An already-granted mic resolves in ~20ms; without the delay that is a spinner flash.
   const showSpinner = useDelayedLoading(state === "requesting", 150);
 
-  const ringScale = useTransform(level, [0, 1], [1.04, 1.45]);
+  const ringScale = useTransform(level, [0, 1], size === "hero" ? [1.04, 1.6] : [1.04, 1.45]);
   const ringOpacity = useTransform(level, [0, 1], [0.12, 0.4]);
 
   const recording = state === "recording";
   const remainingMs = Math.max(0, MAX_RECORDING_MS - elapsedMs);
   const nearCap = recording && remainingMs <= WARN_REMAINING_MS;
-  const compact = size === "compact";
 
   if (state === "unsupported") {
     return (
@@ -173,141 +169,116 @@ export function VoiceRecorder({
     recorder.stop();
   }
 
-  const micButton = (
-    <div className="relative flex shrink-0 items-center justify-center">
-      {/* The breathing ring, driven straight off the MotionValue so a 125 Hz meter never
-          re-renders the panel around it. */}
-      <AnimatePresence initial={false}>
-        {recording && !reduced && (
-          <motion.span
-            aria-hidden
-            className="absolute inset-0 rounded-full bg-primary"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: DUR.fast, ease: EASE_HOUSE }}
-            style={{ scale: ringScale, opacity: ringOpacity }}
-          />
-        )}
-      </AnimatePresence>
+  return (
+    <div className="flex flex-col items-center gap-3 py-2">
+      <div className="relative flex items-center justify-center">
+        {/* The breathing ring, driven straight off the MotionValue so a 125 Hz meter never
+            re-renders the panel around it. */}
+        <AnimatePresence initial={false}>
+          {recording && !reduced && (
+            <motion.span
+              aria-hidden
+              className="absolute inset-0 rounded-full bg-primary"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: DUR.fast, ease: EASE_HOUSE }}
+              style={{ scale: ringScale, opacity: ringOpacity }}
+            />
+          )}
+        </AnimatePresence>
 
-      <Button
-        type="button"
-        size="icon"
-        variant={recording ? "default" : "outline"}
-        disabled={disabled}
-        aria-busy={state === "requesting" || state === "encoding" || undefined}
-        aria-pressed={recording}
-        aria-label={recording ? "Stop recording" : "Start recording"}
-        onPointerDown={handlePointerDown}
-        onPointerUp={handleRelease}
-        onPointerCancel={handleRelease}
-        // A long press is the whole point of this button; the OS menu it would open is not.
-        onContextMenu={(e) => e.preventDefault()}
-        onClick={(e) => {
-          // Pointer presses are fully handled above. A keyboard activation arrives as a
-          // click with `detail` 0 and no pointer behind it, and has nothing to hold, so it
-          // always toggles.
-          if (e.detail !== 0) return;
-          if (recording) {
-            recorder.stop();
-            return;
-          }
-          if (state === "error") recorder.reset();
-          setPressMode("toggle");
-          recorder.start();
-        }}
+        <Button
+          type="button"
+          size="icon"
+          variant={recording ? "default" : "outline"}
+          disabled={disabled}
+          aria-busy={state === "requesting" || state === "encoding" || undefined}
+          aria-pressed={recording}
+          aria-label={recording ? "Stop recording" : "Start recording"}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handleRelease}
+          onPointerCancel={handleRelease}
+          // A long press is the whole point of this button; the OS menu it would open is not.
+          onContextMenu={(e) => e.preventDefault()}
+          onClick={(e) => {
+            // Pointer presses are fully handled above. A keyboard activation arrives as a
+            // click with `detail` 0 and no pointer behind it, and has nothing to hold, so it
+            // always toggles.
+            if (e.detail !== 0) return;
+            if (recording) {
+              recorder.stop();
+              return;
+            }
+            if (state === "error") recorder.reset();
+            setPressMode("toggle");
+            recorder.start();
+          }}
+          className={cn(
+            "relative shrink-0 touch-none overflow-visible rounded-full shadow-sm transition-colors select-none [-webkit-touch-callout:none]",
+            size === "hero" ? "size-32 sm:size-28" : "size-24 sm:size-20",
+            recording &&
+              "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+            state === "error" && "border-destructive/50 text-destructive",
+          )}
+        >
+          {showSpinner || state === "encoding" ? (
+            <Loader2 className={cn("animate-spin", size === "hero" ? "size-9" : "size-7")} />
+          ) : recording ? (
+            // A square, not a second mic: the control's job changes when it is on, and the
+            // glyph should say so without reading the label.
+            <Square className={cn("fill-current", size === "hero" ? "size-9" : "size-7")} />
+          ) : (
+            <Mic className={size === "hero" ? "size-11" : "size-8"} />
+          )}
+        </Button>
+      </div>
+
+      {/* One live region for the whole control. The button's aria-label covers the toggle;
+          this carries the running state a sighted user reads off the clock. */}
+      <p
+        aria-live="polite"
         className={cn(
-          "relative shrink-0 touch-none overflow-visible rounded-full shadow-sm transition-colors select-none [-webkit-touch-callout:none]",
-          compact ? "size-12" : "size-32 sm:size-24",
-          recording &&
-            "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
-          state === "error" && "border-destructive/50 text-destructive",
+          "min-h-5 text-center text-sm tabular-nums",
+          nearCap ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
         )}
       >
-        {showSpinner || state === "encoding" ? (
-          <Loader2 className={cn("animate-spin", compact ? "size-5" : "size-10 sm:size-8")} />
-        ) : recording ? (
-          // A square, not a second mic: the control's job changes when it is on, and the
-          // glyph should say so without reading the label.
-          <Square className={cn("fill-current", compact ? "size-4" : "size-9 sm:size-7")} />
-        ) : (
-          <Mic className={compact ? "size-5" : "size-12 sm:size-9"} />
-        )}
-      </Button>
-    </div>
-  );
+        {state === "requesting" && "Waiting for microphone…"}
+        {state === "encoding" && "Finishing up…"}
+        {recording &&
+          (nearCap
+            ? `${formatElapsed(elapsedMs)} — stopping in ${Math.ceil(remainingMs / 1000)}s`
+            : `${pressMode === "hold" ? "Release to finish" : "Tap to stop"} · ${formatElapsed(elapsedMs)}`)}
+        {(state === "idle" || state === "error") &&
+          !busy &&
+          (idleHint ?? "Hold to talk, or tap to start")}
+        {busy && (busyLabel ?? "Working…")}
+      </p>
 
-  // One live region for the whole control. The button's aria-label covers the toggle;
-  // this carries the running state a sighted user reads off the clock.
-  const status = (
-    <p
-      aria-live="polite"
-      className={cn(
-        "min-h-5 text-sm tabular-nums",
-        !compact && "text-center",
-        nearCap ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+      {recording && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
+          onClick={() => recorder.cancel()}
+        >
+          Discard
+        </Button>
       )}
-    >
-      {state === "requesting" && "Waiting for microphone…"}
-      {state === "encoding" && "Finishing up…"}
-      {recording &&
-        (nearCap
-          ? `${formatElapsed(elapsedMs)} — stopping in ${Math.ceil(remainingMs / 1000)}s`
-          : `${pressMode === "hold" ? "Release to finish" : "Tap to stop"} · ${formatElapsed(elapsedMs)}`)}
-      {(state === "idle" || state === "error") &&
-        !busy &&
-        (compact ? "Hold or tap to add more" : "Hold to talk, or tap to start")}
-      {busy && (busyLabel ?? "Working…")}
-    </p>
-  );
 
-  const discard = recording && (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      className="text-muted-foreground"
-      onClick={() => recorder.cancel()}
-    >
-      Discard
-    </Button>
-  );
-
-  const errorAlert = state === "error" && error && (
-    <div
-      role="alert"
-      className="flex w-full items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/[0.04] p-3 text-left"
-    >
-      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
-      <div className="min-w-0 space-y-1">
-        <p className="text-sm font-medium text-foreground">{VOICE_ERROR_COPY[error].title}</p>
-        <p className="text-xs text-muted-foreground">{VOICE_ERROR_COPY[error].detail}</p>
-      </div>
-    </div>
-  );
-
-  if (compact) {
-    return (
-      <div className="space-y-2">
-        <div className="flex items-center gap-3">
-          {micButton}
-          {status}
-          {discard}
+      {state === "error" && error && (
+        <div
+          role="alert"
+          className="flex w-full items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/[0.04] p-3 text-left"
+        >
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+          <div className="min-w-0 space-y-1">
+            <p className="text-sm font-medium text-foreground">{VOICE_ERROR_COPY[error].title}</p>
+            <p className="text-xs text-muted-foreground">{VOICE_ERROR_COPY[error].detail}</p>
+          </div>
         </div>
-        {errorAlert}
-      </div>
-    );
-  }
-
-  return (
-    // On a phone the mic IS the tab: it takes the upper half of the screen, centred, so
-    // the thumb finds it without looking. From `sm` up it is a generous button in a card.
-    <div className="flex min-h-[45svh] flex-col items-center justify-center gap-4 py-2 sm:min-h-0 sm:gap-3 sm:py-6">
-      {micButton}
-      {status}
-      {discard}
-      {errorAlert}
+      )}
     </div>
   );
 }

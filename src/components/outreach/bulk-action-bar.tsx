@@ -63,12 +63,16 @@ export function BulkActionBar({
 
   function handleSelectAll() {
     start(async () => {
-      await updateProspectSelection({
-        campaignId,
-        prospectIds: rows.map((r) => r.prospectId),
-        status: "selected",
-      });
-      refresh();
+      try {
+        await updateProspectSelection({
+          campaignId,
+          prospectIds: rows.map((r) => r.prospectId),
+          status: "selected",
+        });
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+      }
     });
   }
 
@@ -84,11 +88,15 @@ export function BulkActionBar({
       .join("\n\n");
     navigator.clipboard.writeText(text);
     start(async () => {
-      for (const row of activeRows) {
-        await markMessageAction({ messageId: row.messageId, status: "copied" });
+      try {
+        for (const row of activeRows) {
+          await markMessageAction({ messageId: row.messageId, status: "copied" });
+        }
+        toast.success(`Copied ${activeRows.length} drafts`);
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
-      toast.success(`Copied ${activeRows.length} drafts`);
-      refresh();
     });
   }
 
@@ -107,13 +115,17 @@ export function BulkActionBar({
       }
     }
     start(async () => {
-      for (const row of activeRows) {
-        if (canOpenInApp(row.channel, row)) {
-          await markMessageAction({ messageId: row.messageId, status: "opened" });
+      try {
+        for (const row of activeRows) {
+          if (canOpenInApp(row.channel, row)) {
+            await markMessageAction({ messageId: row.messageId, status: "opened" });
+          }
         }
+        toast.success(`Opened ${activeRows.length} apps`);
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
-      toast.success(`Opened ${activeRows.length} apps`);
-      refresh();
     });
   }
 

@@ -36,6 +36,15 @@ export async function GET(request: Request) {
       kind: "provider_denied",
       message: error,
     });
+    // A cancelled consent still carries the state, so honour its returnTo too — otherwise
+    // "Cancel" on Microsoft's screen ignored where the user started from. Best-effort: a
+    // bad or missing state just keeps the default.
+    try {
+      const { returnTo } = await consumeOutlookOAuthState(state);
+      if (returnTo) redirectBase = new URL(returnTo, url.origin);
+    } catch {
+      // keep the default destination
+    }
     redirectBase.searchParams.set("outlook", "error");
     redirectBase.searchParams.set("reason", error);
     return NextResponse.redirect(redirectBase);

@@ -68,12 +68,16 @@ export function ProspectTable({
 
   function toggleSelection(prospectId: string, checked: boolean) {
     start(async () => {
-      await updateProspectSelection({
-        campaignId,
-        prospectIds: [prospectId],
-        status: checked ? "selected" : "suggested",
-      });
-      onUpdated?.();
+      try {
+        await updateProspectSelection({
+          campaignId,
+          prospectIds: [prospectId],
+          status: checked ? "selected" : "suggested",
+        });
+        onUpdated?.();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+      }
     });
   }
 

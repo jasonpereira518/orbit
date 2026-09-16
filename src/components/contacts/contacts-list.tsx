@@ -25,7 +25,7 @@ import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
-import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
+import { FollowUpDraftSheetLazy } from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import {
   Dialog,
   DialogContent,
@@ -67,6 +67,8 @@ export type ContactListItem = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl?: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar?: boolean;
   relationshipScore: number;
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
@@ -74,6 +76,7 @@ export type ContactListItem = {
   nextFollowUpAt?: string | Date | null;
   lastInteractionAt?: string | Date | null;
   tags: string[];
+  matchReason?: string | null;
 };
 
 const ALPHABET = [
@@ -271,8 +274,17 @@ export function ContactsList({
   // Grouping only, no sorting: the rows arrive in the order Postgres produced, and re-sorting
   // them here would both waste a pass of `localeCompare` and risk disagreeing with the
   // cursor — which would silently drop contacts at page boundaries.
+  //
+  // Contiguous-run grouping assumes the rows already arrive in alphabetical order, which
+  // only holds for `sort === "name"`. Under any other order (closeness, recent, relevance)
+  // the same letter can recur non-contiguously — grouping it anyway would scatter several
+  // same-lettered sticky headers through the list and give two of them the same React key.
+  // So outside "name" order every row sits in one ungrouped section instead.
   const sections = useMemo(() => {
-    const groups: Array<{ letter: string; contacts: ContactListItem[] }> = [];
+    if (filters.sort && filters.sort !== "name") {
+      return contacts.length ? [{ letter: null, contacts }] : [];
+    }
+    const groups: Array<{ letter: string | null; contacts: ContactListItem[] }> = [];
     for (const c of contacts) {
       const letter = letterOf(lastNameOf(c));
       const last = groups[groups.length - 1];
@@ -280,7 +292,7 @@ export function ContactsList({
       else groups.push({ letter, contacts: [c] });
     }
     return groups;
-  }, [contacts]);
+  }, [contacts, filters.sort]);
 
   // Which letters exist across the *whole* network, not just the pages loaded so far. The
   // client can no longer answer that from the rows it holds.
@@ -288,6 +300,37 @@ export function ContactsList({
     () => new Set(serverLetters),
     [serverLetters]
   );
+
+  // Per-row derived labels, computed once for every currently-loaded contact rather than
+  // inline inside the render `.map()` below — that recomputed all of them (four date-math
+  // calls + a join per row) on every render, including ones triggered by unrelated
+  // sibling state (a dialog opening, a popover, the alphabet scrubber dragging).
+  const rowMeta = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        overdue: boolean;
+        scheduledLabel: string | null;
+        overdueText: string | null;
+        lastTouch: string | null;
+        details: string;
+      }
+    >();
+    for (const c of contacts) {
+      const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
+      const lastTouch = lastTouchLabel(c.lastInteractionAt);
+      map.set(c.id, {
+        overdue: isOverdue(c.nextFollowUpAt),
+        scheduledLabel: dueLabel(c.nextFollowUpAt),
+        overdueText,
+        lastTouch,
+        details: [detailLine(c.school, c.location), overdueText, lastTouch]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    }
+    return map;
+  }, [contacts]);
 
   /**
    * Jump the list to a letter.
@@ -301,7 +344,10 @@ export function ContactsList({
     setActiveLetter(letter);
     const target =
       document.getElementById(`contact-letter-${letter}`) ??
-      nearestSectionEl(letter, new Set(sections.map((s) => s.letter)));
+      nearestSectionEl(
+        letter,
+        new Set(sections.flatMap((s) => (s.letter !== null ? [s.letter] : [])))
+      );
     target?.scrollIntoView({ behavior: "auto", block: "start" });
   }
 
@@ -383,29 +429,22 @@ export function ContactsList({
       <>
         <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl">
           {sections.map((section) => (
-            <li key={section.letter} className="list-none">
-              <div
-                id={`contact-letter-${section.letter}`}
-                className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
-              >
-                <p className="text-xs font-semibold tracking-wide text-muted-foreground">
-                  {section.letter}
-                </p>
-              </div>
+            <li key={section.letter ?? "all"} className="list-none">
+              {section.letter !== null && (
+                <div
+                  id={`contact-letter-${section.letter}`}
+                  className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
+                >
+                  <p className="text-xs font-semibold tracking-wide text-muted-foreground">
+                    {section.letter}
+                  </p>
+                </div>
+              )}
               <ul className="divide-y divide-border/60">
                 {section.contacts.map((c) => {
                   const exiting = exitingId === c.id;
-                  const overdue = isOverdue(c.nextFollowUpAt);
-                  const scheduledLabel = dueLabel(c.nextFollowUpAt);
-                  const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
-                  const lastTouch = lastTouchLabel(c.lastInteractionAt);
-                  const details = [
-                    detailLine(c.school, c.location),
-                    overdueText,
-                    lastTouch,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ");
+                  const { overdue, scheduledLabel, overdueText, lastTouch, details } =
+                    rowMeta.get(c.id)!;
 
                   function openContact() {
                     if (exiting) return;
@@ -450,9 +489,14 @@ export function ContactsList({
                               contactId={c.id}
                               firstName={c.firstName}
                               fullName={c.fullName}
-                              linkedinUrl={c.linkedinUrl}
                               profileImageUrl={c.profileImageUrl}
                               size="lg"
+                              // Rows you are actually looking at fill in first, instead of
+                              // waiting for the background backfill to reach them in id
+                              // order. `loading="lazy"` on the underlying <img> means only
+                              // near-viewport rows ever issue a request, and the route
+                              // caches its misses so scrolling back does not re-ask.
+                              resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
                             />
                           </ContactAvatarPreview>
 
@@ -509,6 +553,14 @@ export function ContactsList({
                                 ) : (
                                   details
                                 )}
+                              </p>
+                            )}
+                            {c.matchReason && (
+                              // Only set for the "non-obvious" hits — a past role, or a
+                              // semantic match with no literal keyword overlap — so this
+                              // line is rare, not a fixture of every search result.
+                              <p className="mt-0.5 truncate text-[11px] font-medium text-primary/70">
+                                {c.matchReason}
                               </p>
                             )}
                           </div>
@@ -600,7 +652,7 @@ export function ContactsList({
         )}
 
         {/* One draft sheet for the whole list — see FollowUpRowButton. */}
-        <FollowUpDraftSheet
+        <FollowUpDraftSheetLazy
           open={draftContact !== null}
           onOpenChange={(open) => {
             if (!open) setDraftContact(null);
@@ -713,14 +765,20 @@ function AlphabetScrubber({
   useEffect(() => {
     const root = document.documentElement;
     /**
-     * The rail occupies 2.75rem of the right edge — `right-2` (0.5rem) plus its own
-     * `w-9` (2.25rem). The content column already carries 1rem of base padding, so the
-     * gutter only has to make up the difference plus a little air: 1 + 2.25 = 3.25rem
-     * total, which stops the content 0.5rem clear of the rail. Publishing the full
-     * 3.25rem here instead would double-count the padding and squeeze the header hard
-     * enough to change how its buttons wrap.
+     * The gutter only makes up what the content column's own padding doesn't cover,
+     * plus a little air — publishing the rail's full footprint would double-count the
+     * padding and squeeze the header hard enough to change how its buttons wrap.
+     *
+     *  - Below `md` the rail is thinner: `right-1.5` (0.375rem) + `w-7` (1.75rem) =
+     *    2.125rem. The column carries 1rem of padding, so 1.625rem stops the content
+     *    0.5rem clear.
+     *  - From `md` it is the desktop rail: `right-4` (1rem) + `w-9` (2.25rem) = 3.25rem,
+     *    against 2.5rem of padding, so 2.25rem leaves 1.5rem of air.
+     *
+     * An inline style can't vary by breakpoint, so this publishes a reference and
+     * globals.css (`--content-rail-gutter-size`) holds the per-breakpoint values.
      */
-    root.style.setProperty("--content-rail-gutter", "2.25rem");
+    root.style.setProperty("--content-rail-gutter", "var(--content-rail-gutter-size)");
     return () => {
       root.style.removeProperty("--content-rail-gutter");
     };
@@ -768,7 +826,7 @@ function AlphabetScrubber({
   return createPortal(
     <div
       className={cn(
-        "pointer-events-none fixed top-1/2 right-2 z-40 -translate-y-1/2 sm:right-4",
+        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-4",
         // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
         // viewport it rose into the header and covered the notification bell, and its
         // 27 letters had about 6pt each between the header and the nav. The gutter it
@@ -782,7 +840,10 @@ function AlphabetScrubber({
         role="navigation"
         aria-label="Jump to letter"
         className={cn(
-          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-9 cursor-ns-resize select-none flex-col items-center justify-between rounded-2xl border border-border/70 bg-card/95 py-2.5 shadow-md backdrop-blur",
+          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-7 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
+          // Thinner on phones, where every pixel of width is the list's; the desktop rail
+          // keeps its original size and card shape.
+          "md:w-9 md:rounded-2xl md:py-2.5 md:shadow-md",
           "touch-none ring-1 ring-foreground/5"
         )}
         onPointerDown={onPointerDown}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import {
+  memo,
   useCallback,
   useEffect,
   useId,
@@ -17,7 +18,7 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
-import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
+import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events";
 import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
@@ -191,7 +192,9 @@ export function FloatingAskBar() {
 
   useEffect(() => {
     function onKey(e: globalThis.KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // ⌘J, not ⌘K: ⌘K opens the command palette, which can also hand a typed question
+      // straight to this bar — so the old shortcut still gets here, one Enter later.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
         focusBar();
       }
@@ -205,9 +208,15 @@ export function FloatingAskBar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [focusBar, open]);
 
+  // Read through a ref so the listener below is registered once, not re-bound every time
+  // `sendQuestion`'s identity changes with a pending reply.
+  const sendQuestionRef = useRef<(q: string) => void>(() => {});
+
   useEffect(() => {
-    function onOpenRequest() {
+    function onOpenRequest(e: Event) {
       focusBar();
+      const question = (e as CustomEvent<OpenAskBarDetail | null>).detail?.question?.trim();
+      if (question) sendQuestionRef.current(question);
     }
     window.addEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
     return () => window.removeEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
@@ -418,6 +427,9 @@ export function FloatingAskBar() {
     },
     [activeContactId, chatPending, ensureChatThread]
   );
+  useEffect(() => {
+    sendQuestionRef.current = (q) => sendQuestion(q);
+  }, [sendQuestion]);
 
   function clearThread() {
     setMessages([]);
@@ -627,38 +639,13 @@ export function FloatingAskBar() {
                   <div className="space-y-2.5 px-2.5 py-2.5">
                     {messages.map((msg) =>
                       msg.role === "user" ? (
-                        <div key={msg.id} className="flex justify-end">
-                          <div className="max-w-[90%] rounded-2xl rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
-                            {msg.content}
-                          </div>
-                        </div>
+                        <UserBubble key={msg.id} msg={msg} />
                       ) : (
-                        <div key={msg.id} className="space-y-2">
-                          <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
-                            <ChatMarkdown>{msg.answer}</ChatMarkdown>
-                          </div>
-                          {msg.recommendations.map((r) => (
-                            <MiniRecommendation
-                              key={r.recruiter_id || r.contact_id || r.name}
-                              rec={r}
-                            />
-                          ))}
-                          {msg.retrieved.length > 0 &&
-                            msg.recommendations.length === 0 && (
-                              <div className="flex flex-wrap gap-1.5 px-1">
-                                {msg.retrieved.slice(0, 6).map((c) => (
-                                  <Link
-                                    key={c.id}
-                                    href={`/contacts/${c.id}`}
-                                    className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                    onClick={() => setOpen(false)}
-                                  >
-                                    {c.fullName}
-                                  </Link>
-                                ))}
-                              </div>
-                            )}
-                        </div>
+                        <AssistantBubble
+                          key={msg.id}
+                          msg={msg}
+                          onNavigate={setOpen}
+                        />
                       )
                     )}
                     {awaitingFirstToken && (
@@ -696,7 +683,6 @@ export function FloatingAskBar() {
                 contactId={profileContact.id}
                 firstName={profileContact.firstName}
                 fullName={profileContact.fullName}
-                linkedinUrl={profileContact.linkedinUrl}
                 profileImageUrl={profileContact.profileImageUrl}
                 size="sm"
                 className="size-6"
@@ -768,7 +754,7 @@ export function FloatingAskBar() {
           />
           {!open && !query && (
             <kbd className="hidden shrink-0 rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground sm:inline">
-              ⌘K
+              ⌘J
             </kbd>
           )}
           {(query || open) && !chatPending && query && (
@@ -813,7 +799,54 @@ export function FloatingAskBar() {
   );
 }
 
-function MiniRecommendation({
+const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[90%] rounded-2xl rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
+        {msg.content}
+      </div>
+    </div>
+  );
+});
+
+const AssistantBubble = memo(function AssistantBubble({
+  msg,
+  onNavigate,
+}: {
+  msg: AssistantMessage;
+  onNavigate: (open: boolean) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
+        <ChatMarkdown>{msg.answer}</ChatMarkdown>
+      </div>
+      {msg.recommendations.map((r) => (
+        <MiniRecommendation
+          key={r.recruiter_id || r.contact_id || r.name}
+          rec={r}
+        />
+      ))}
+      {msg.retrieved.length > 0 &&
+        msg.recommendations.length === 0 && (
+          <div className="flex flex-wrap gap-1.5 px-1">
+            {msg.retrieved.slice(0, 6).map((c) => (
+              <Link
+                key={c.id}
+                href={`/contacts/${c.id}`}
+                className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={() => onNavigate(false)}
+              >
+                {c.fullName}
+              </Link>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+});
+
+const MiniRecommendation = memo(function MiniRecommendation({
   rec,
 }: {
   rec: ChatResult["recommendations"][number];
@@ -878,4 +911,4 @@ function MiniRecommendation({
       )}
     </div>
   );
-}
+});

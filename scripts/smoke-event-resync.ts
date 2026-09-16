@@ -49,6 +49,7 @@ function page(over: Partial<EventPageDetails> = {}): EventPageDetails {
     venue: "Shack15", city: "San Francisco",
     organizerName: "AI Tinkerers", organizerUrl: "https://lu.ma/org",
     attendanceMode: "offline", speakers: [],
+    platform: null, providerEventId: null, hosts: [], featuredGuests: [], guestCount: null,
     imageUrl: "https://images.lu.ma/cover.png", themeColor: "#7C3AED", warnings: [],
     ...over,
   };

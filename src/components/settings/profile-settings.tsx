@@ -7,6 +7,7 @@ import { saveSocialLinks } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -53,13 +54,10 @@ export function ProfileSettings({
   const [pending, start] = useTransition();
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Profile and account</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Your identity and sign-in for Orbit.
-        </p>
-      </div>
+    <SettingsSection
+      title="Profile and account"
+      description="Your identity and sign-in for Orbit."
+    >
 
       {profile ? (
         <div className="flex flex-wrap items-center gap-4">
@@ -111,12 +109,11 @@ export function ProfileSettings({
         </div>
       )}
 
-      <div className="border-t border-border/60 pt-4">
-        <h3 className="text-sm font-medium text-ink">Your socials</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Shown when you click the sun in Constellation.
-        </p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <SettingsRow
+        title="Your socials"
+        description="Shown when you click the sun in Constellation."
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
           {(
             [
               ["linkedin", "LinkedIn URL"],
@@ -142,7 +139,6 @@ export function ProfileSettings({
         <Button
           type="button"
           size="sm"
-          className="mt-3"
           disabled={pending}
           onClick={() =>
             start(async () => {
@@ -159,7 +155,7 @@ export function ProfileSettings({
         >
           {pending ? "Saving…" : "Save socials"}
         </Button>
-      </div>
-    </section>
+      </SettingsRow>
+    </SettingsSection>
   );
 }

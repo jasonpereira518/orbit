@@ -12,6 +12,9 @@ import {
 } from "@/actions/calendar-feed";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SettingsSection } from "@/components/settings/settings-section";
+import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
 
@@ -59,6 +62,7 @@ export function CalendarFeedSettings() {
   const [revealed, setRevealed] = useState(false);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
   const [pending, start] = useTransition();
+  const regenFocus = useConfirmFocus(confirmingRegen ? "regen" : null);
 
   // A failed load must be visible and recoverable. Without this the section sits on
   // "Loading…" forever — a dead panel with no way to retry. The two failure modes are
@@ -104,14 +108,10 @@ export function CalendarFeedSettings() {
   }
 
   return (
-    <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Calendar feed</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Subscribe to your reminders in Google Calendar, Apple Calendar, or
-          Outlook so they show up alongside everything else.
-        </p>
-      </div>
+    <SettingsSection
+      title="Calendar feed"
+      description="Subscribe to your reminders in Google Calendar, Apple Calendar, or Outlook so they show up alongside everything else."
+    >
 
       {loadFailure && !status ? (
         <div className="space-y-2">
@@ -129,7 +129,10 @@ export function CalendarFeedSettings() {
           </Button>
         </div>
       ) : !status ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="space-y-2" aria-busy="true" aria-label="Loading calendar feed">
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-9 w-44 rounded-lg" />
+        </div>
       ) : !status.enabled ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
@@ -224,6 +227,7 @@ export function CalendarFeedSettings() {
             {confirmingRegen ? (
               <>
                 <Button
+                  ref={regenFocus.confirmRef("regen")}
                   size="sm"
                   variant="outline"
                   disabled={pending}
@@ -240,13 +244,14 @@ export function CalendarFeedSettings() {
                 >
                   Cancel
                 </Button>
-                <p className="w-full text-xs text-muted-foreground">
+                <p role="status" className="w-full text-xs text-muted-foreground">
                   Your old link stops working immediately. You&apos;ll need to
                   re-subscribe on every device.
                 </p>
               </>
             ) : (
               <Button
+                ref={regenFocus.triggerRef("regen")}
                 size="sm"
                 variant="outline"
                 disabled={pending}
@@ -266,6 +271,6 @@ export function CalendarFeedSettings() {
           </div>
         </div>
       )}
-    </section>
+    </SettingsSection>
   );
 }

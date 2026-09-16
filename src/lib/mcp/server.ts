@@ -39,12 +39,8 @@ import { findOrgRosters } from "@/lib/chat-roster";
 import { getDashboardData } from "@/lib/reminders";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import { createContactForUser } from "@/lib/contact-writes";
-import {
-  DUPLICATE_MERGE_CONFIDENCE,
-  buildDuplicateIndex,
-  findDuplicateCandidatesIndexed,
-  type DuplicateSubject,
-} from "@/lib/duplicates";
+import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
+import { findConfidentDuplicate } from "@/lib/contact-resolve";
 import type { ApiKeyScope } from "@/lib/api/keys";
 import { sanitizeAgentText } from "@/lib/mcp/sanitize";
 
@@ -298,26 +294,16 @@ export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[
         annotations: { destructiveHint: false },
       },
       async (args) => {
-        const db = await getDb();
         if (!args.force) {
-          const existing = (await db.query.contacts.findMany({
-            where: eq(contacts.userId, userId),
-            columns: {
-              id: true,
-              fullName: true,
-              email: true,
-              linkedinUrl: true,
-              xHandle: true,
-              company: true,
-              title: true,
-            },
-          })) as DuplicateSubject[];
-          const [best] = findDuplicateCandidatesIndexed(buildDuplicateIndex(existing), {
+          // Bounded the same way /api/v1/contacts is: an indexed `contact_identities`
+          // lookup for the identifier tiers, then a narrow by-name scan — never a
+          // `findMany` of every contact on the account on every single tool call.
+          const best = await findConfidentDuplicate(userId, {
             fullName: args.fullName,
-            email: args.email ?? null,
-            linkedinUrl: args.linkedinUrl ?? null,
-            company: args.company ?? null,
-            title: args.title ?? null,
+            email: args.email,
+            linkedinUrl: args.linkedinUrl,
+            company: args.company,
+            title: args.title,
           });
           // Same line as /api/v1/contacts: confident tiers match, a bare full name does not.
           if (best && best.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
@@ -333,16 +319,22 @@ export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[
         }
 
         try {
-          const created = await createContactForUser(userId, {
-            fullName: args.fullName,
-            email: args.email,
-            company: args.company,
-            title: args.title,
-            linkedinUrl: args.linkedinUrl,
-            notes: args.notes ? sanitizeAgentText(args.notes) : undefined,
-            howMet: args.howMet ? sanitizeAgentText(args.howMet) : undefined,
-            source: "mcp",
-          });
+          const created = await createContactForUser(
+            userId,
+            {
+              fullName: args.fullName,
+              email: args.email,
+              company: args.company,
+              title: args.title,
+              linkedinUrl: args.linkedinUrl,
+              notes: args.notes ? sanitizeAgentText(args.notes) : undefined,
+              howMet: args.howMet ? sanitizeAgentText(args.howMet) : undefined,
+              source: "mcp",
+            },
+            // A tool call has no page to revalidate, and the `(app)` group is already
+            // force-dynamic — see the identical fix on /api/v1/contacts.
+            { skipRevalidate: true }
+          );
           return textResult({ created: true, contactId: created.id, name: created.fullName });
         } catch (err) {
           // A paywall refusal is information the agent can act on, not a crash.
