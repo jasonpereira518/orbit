@@ -83,6 +83,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-duplicate-index": "pure",
   "smoke-earth-camera": "pure",
   "smoke-embedding-cache": "pure",
+  "smoke-embedding-batches": "pure",
   "smoke-env": "pure",
   "smoke-fast-model": "pure",
   "smoke-feedback-image": "pure",
