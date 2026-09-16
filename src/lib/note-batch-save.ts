@@ -21,11 +21,11 @@ import {
 } from "@/lib/contact-writes";
 import {
   DEFAULT_FOLLOW_UP_WINDOW_DAYS,
+  dropSupersededWindowDrafts,
   emptyNoteBatchResult,
   noteInteractionExternalId,
   titlesCollide,
   windowDueDate,
-  withinCollisionWindow,
 } from "@/lib/note-batches";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
@@ -342,16 +342,11 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       });
     }
 
-    // 4. Collision rule. Action-item drafts push their own `window` reminders (step 1a
-    //    above); this drops one when it collides with a dated commitment for the same
-    //    contact so the two don't produce duplicate-looking reminders.
-    const kept = drafts.filter((d) => {
-      if (d.dateBasis !== "window") return true;
-      return !drafts.some(
-        (other) => other !== d && other.dateBasis !== "window" && other.contactId === d.contactId &&
-          titlesCollide(other.title, d.title) && withinCollisionWindow(other.dueDate, d.dueDate)
-      );
-    });
+    // 4. Collision rule. Action-item and fallback drafts carry a `window` date Orbit chose;
+    //    one yields to a dated commitment for the same contact that says the same thing
+    //    (see `dropSupersededWindowDrafts`), so one follow-up never becomes two reminders.
+    //    The review's Save button counts with the same function (`planReminders`).
+    const kept = dropSupersededWindowDrafts(drafts, (d) => d.contactId);
 
     // 5. Insert reminders, idempotent through itemHash. An action-item draft hashes its
     //    own item id rather than its title: two participants in one batch can share the

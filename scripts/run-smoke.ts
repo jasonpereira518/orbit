@@ -49,6 +49,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-planets": "pure",
   "smoke-capture-review-reducer": "pure",
   "smoke-capture-skipped-phrases": "pure",
+  "smoke-reminder-dedupe": "pure",
   "smoke-capture-draft": "pure",
   "smoke-chat-mentions": "pure",
   "smoke-chat-pipeline": "pure",
