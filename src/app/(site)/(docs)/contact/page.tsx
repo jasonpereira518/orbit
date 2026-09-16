@@ -112,9 +112,10 @@ const FAQ: readonly FaqItem[] = [
     a: (
       <>
         Whichever one you choose in Settings — Google Gemini, OpenAI, or
-        Anthropic — running on an API key you supply, so the request lands on
-        your own account with that vendor and is billed to you at cost. Nothing
-        is sent until you enable an AI feature.
+        Anthropic. With an API key you supply, the request lands on your own
+        account with that vendor and is billed to you at cost. On Orbit
+        Lifetime without a key of your own, it runs on Orbit&apos;s account
+        with that vendor instead. Nothing is sent until you use an AI feature.
       </>
     ),
   },
@@ -124,8 +125,9 @@ const FAQ: readonly FaqItem[] = [
       <>
         Free for your first {FREE_CONTACT_LIMIT} contacts, with a monthly plan
         and a one-time early-adopter tier above that — current prices are on the{" "}
-        <Link href="/pricing">pricing page</Link>. AI always runs on your own
-        provider key, billed to you directly with no markup.
+        <Link href="/pricing">pricing page</Link>. AI runs on your own
+        provider key, billed to you directly with no markup — except on
+        Lifetime, which includes it.
       </>
     ),
   },
