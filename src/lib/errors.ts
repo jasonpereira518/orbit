@@ -142,7 +142,7 @@ export function toUserFacingError(
 /**
  * What a person reads when an AI provider fails — one template per failure kind.
  *
- * Every template KEEPS the word `classifyAiError` keys on ("API key", "rate limit",
+ * Every template KEEPS the word `classifyAiError` keys on ("API key", "rate limit", "out of credit",
  * "timed out", "model"). That is load-bearing, not incidental: `lib/ai.ts` throws the
  * output of `aiProviderErrorMessage`, and `withUsage` in `lib/usage-events.ts`
  * classifies that already-rewritten error for `usage_events.error_kind`. Reword a
@@ -153,6 +153,8 @@ const AI_FAILURE_COPY = {
   auth: (p: string) => `${p} didn’t accept your API key — check it in Settings`,
   rate_limit: (p: string) =>
     `${p} hit its rate limit — give it a moment and try again`,
+  quota: (p: string) =>
+    `${p} says your account is out of credit — top up with them, then try again`,
   timeout: (p: string) => `${p} timed out — try again, or ask something shorter`,
   model_unavailable: (p: string) =>
     `That ${p} model isn’t available — pick another in Settings`,
@@ -199,11 +201,37 @@ export function isQuietFailureMessage(message: string): boolean {
   );
 }
 
+/**
+ * An account that has run out of money with its provider, as opposed to one going too fast.
+ *
+ * The distinction is the next action: a rate limit clears if you wait, an empty balance
+ * never does. Gemini words its per-MINUTE limit exactly like OpenAI words an empty balance
+ * ("You exceeded your current quota…"), so a short-term hint — "retry in 31s", a
+ * `PerMinute` quota id, `retryDelay` — keeps those as rate limits, and a daily or billing
+ * hint makes a `RESOURCE_EXHAUSTED` a quota.
+ */
+const QUOTA_DAILY = /per.?day|daily/i;
+const QUOTA_SHORT_TERM = /per.?minute|retry in \d|retrydelay/i;
+const QUOTA_EXHAUSTED =
+  /insufficient_quota|exceeded your current quota|credit balance is too low|out of credit/i;
+
+export function isQuotaExhaustion(text: string): boolean {
+  if (QUOTA_DAILY.test(text) && /quota|resource.?exhausted|429/i.test(text)) return true;
+  if (QUOTA_SHORT_TERM.test(text)) return false;
+  if (QUOTA_EXHAUSTED.test(text)) return true;
+  return /resource.?exhausted/i.test(text) && /billing/i.test(text);
+}
+
 export function aiProviderErrorMessage(err: unknown, provider: string): string {
   const base = withErrorName(err, toUserFacingError(err, `${provider} request failed`).message);
 
   if (/api key|unauthorized|401|invalid.*key/i.test(base)) {
     return AI_FAILURE_COPY.auth(provider);
+  }
+  // Before auth and rate limit: an empty balance can arrive as a 429 (OpenAI) or a 400
+  // (Anthropic), and either earlier branch would send the person to the wrong fix.
+  if (isQuotaExhaustion(base)) {
+    return AI_FAILURE_COPY.quota(provider);
   }
   if (/rate limit|429|quota|resource.?exhausted/i.test(base)) {
     return AI_FAILURE_COPY.rate_limit(provider);
@@ -377,6 +405,7 @@ export function friendlyError(err: unknown, fallback: string): string {
  */
 export type AiErrorKind =
   | "auth"
+  | "quota"
   | "rate_limit"
   | "timeout"
   | "model_unavailable"
@@ -389,6 +418,7 @@ export function classifyAiError(err: unknown): AiErrorKind {
   if (/^Empty AI response$/i.test(message)) return "empty_response";
   const base = withErrorName(err, message);
   if (/api key|unauthorized|401|invalid.*key/i.test(base)) return "auth";
+  if (isQuotaExhaustion(base)) return "quota";
   if (/rate limit|429|quota|resource.?exhausted/i.test(base)) return "rate_limit";
   if (/timeout|timed out|ETIMEDOUT|AbortError/i.test(base)) return "timeout";
   if (/model|not found|404/i.test(base)) return "model_unavailable";

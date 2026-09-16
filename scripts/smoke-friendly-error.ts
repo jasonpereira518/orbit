@@ -15,6 +15,7 @@
  */
 import { readFileSync } from "node:fs";
 import {
+  isQuotaExhaustion,
   asAiProviderError,
   AI_INCOMPLETE_MESSAGE,
   friendlyError,
@@ -123,6 +124,7 @@ console.log("our own AI wording passes through, for every provider, every kind")
 const kinds: [string, unknown, string][] = [
   ["auth", new Error("401 Unauthorized: invalid x-api-key"), "auth"],
   ["rate_limit", new Error("429 RESOURCE_EXHAUSTED quota"), "rate_limit"],
+  ["quota", new Error("429 You exceeded your current quota, please check your plan and billing details."), "quota"],
   ["timeout", new Error("Request timed out"), "timeout"],
   ["model_unavailable", new Error("404 model not found"), "model_unavailable"],
   ["other", new Error('{"secret":"sk-live-123","trace":"at foo"}'), "other"],
@@ -160,6 +162,27 @@ const aiSource = readFileSync("src/lib/ai.ts", "utf8");
 const wrapped = aiSource.match(/translatingProviderErrors\(/g)?.length ?? 0;
 // The definition is `translatingProviderErrors<T>(`, which this pattern does not match.
 check("all five bypassing paths are wrapped (streamText, 2× transcription, 2× embeddings)", wrapped === 5, `${wrapped} call sites`);
+
+console.log("out of credit is not 'give it a moment'");
+const quotaCases: [string, string, "quota" | "rate_limit"][] = [
+  ["OpenAI billing", "429 You exceeded your current quota, please check your plan and billing details.", "quota"],
+  ["OpenAI code", '{"error":{"code":"insufficient_quota","type":"insufficient_quota"}}', "quota"],
+  ["Anthropic credit", '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}', "quota"],
+  ["Gemini daily", '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Quota exceeded for metric: generate_content_free_tier_requests, quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier"}}', "quota"],
+  ["Gemini billing", '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"Billing account has no credit"}}', "quota"],
+  ["Gemini per-minute", '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"You exceeded your current quota, please check your plan and billing details. Please retry in 31.2s. quotaId: GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}}', "rate_limit"],
+  ["plain 429", "429 Too Many Requests: rate limit exceeded", "rate_limit"],
+  ["bare RESOURCE_EXHAUSTED", "429 RESOURCE_EXHAUSTED quota", "rate_limit"],
+];
+for (const [label, raw, expected] of quotaCases) {
+  check(`${label} → ${expected}`, classifyAiError(new Error(raw)) === expected, classifyAiError(new Error(raw)));
+  check(`${label}: isQuotaExhaustion agrees`, isQuotaExhaustion(raw) === (expected === "quota"));
+}
+check(
+  "quota copy tells you where to go",
+  aiProviderErrorMessage(new Error(quotaCases[0][1]), "OpenAI") === "OpenAI says your account is out of credit — top up with them, then try again",
+  aiProviderErrorMessage(new Error(quotaCases[0][1]), "OpenAI")
+);
 
 console.log("house voice");
 const all = [MISSING_AI_API_KEY_MESSAGE, OFFLINE_MESSAGE, TIMEOUT_MESSAGE, ...kinds.map(([, raw]) => aiProviderErrorMessage(raw, "Gemini"))];
