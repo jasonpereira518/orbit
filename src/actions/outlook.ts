@@ -8,6 +8,7 @@ import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { getDb } from "@/db";
 import { outlookConnections } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { buildMicrosoftAuthUrl, getOutlookOAuthConfigSummary } from "@/lib/outlook";
 
@@ -18,6 +19,12 @@ export type OutlookConnectionStatus = {
   connected: boolean;
   emailAddress: string | null;
   lastSyncedAt: string | null;
+  /** Null when there is no connection row. See `deriveConnectionHealth`. */
+  status: ConnectionHealth | null;
+  /** The scheduler's last error, verbatim — never rendered as-is (`calendarPauseLine`). */
+  syncError: string | null;
+  /** ISO time of the next calendar sync, or null when none is scheduled. */
+  nextSyncAt: string | null;
   /** Safe: configured redirect URI only (no secrets). */
   redirectUri: string | null;
 };
@@ -31,6 +38,9 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
       connected: false,
       emailAddress: null,
       lastSyncedAt: null,
+      status: null,
+      syncError: null,
+      nextSyncAt: null,
       redirectUri: summary.redirectUri,
     };
   }
@@ -45,6 +55,17 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
     connected: Boolean(conn && conn.status === "active"),
     emailAddress: conn?.emailAddress || null,
     lastSyncedAt: conn?.lastSyncedAt?.toISOString() || null,
+    status: conn
+      ? deriveConnectionHealth({
+          status: conn.status,
+          nextSyncAt: conn.nextSyncAt,
+          syncError: conn.syncError,
+          // There is no Microsoft calendar sync — runSyncPass claims Google only.
+          calendarScopeGranted: false,
+        })
+      : null,
+    syncError: conn?.syncError ?? null,
+    nextSyncAt: conn?.nextSyncAt?.toISOString() ?? null,
     redirectUri: summary.redirectUri,
   };
 }

@@ -14,6 +14,7 @@ import {
   runGmailRecruiterScanJob,
 } from "@/lib/gmail-scan-processor";
 import {
+  hasCalendarScope,
   buildGmailAuthUrl,
   getGmailOAuthConfigSummary,
   hasContactsScope,
@@ -21,6 +22,7 @@ import {
   hasSendScope,
 } from "@/lib/gmail";
 import { isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
+import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
@@ -38,6 +40,12 @@ export type GmailConnectionStatus = {
    * and can scan, but must reconnect before Orbit can send on their behalf.
    */
   canSend: boolean;
+  /** Null when there is no connection row. See `deriveConnectionHealth`. */
+  status: ConnectionHealth | null;
+  /** The scheduler's last error, verbatim — never rendered as-is (`calendarPauseLine`). */
+  syncError: string | null;
+  /** ISO time of the next calendar sync, or null when none is scheduled. */
+  nextSyncAt: string | null;
   /** The grant covers gmail.readonly: the recruiter scan and confirmation emails can run. */
   canRead: boolean;
   /** The grant covers contacts.readonly. */
@@ -56,6 +64,9 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       emailAddress: null,
       lastSyncedAt: null,
       canSend: false,
+      status: null,
+      syncError: null,
+      nextSyncAt: null,
       canRead: false,
       canImportContacts: false,
       redirectUri: summary.redirectUri,
@@ -73,6 +84,16 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     emailAddress: conn?.emailAddress || null,
     lastSyncedAt: conn?.lastSyncedAt?.toISOString() || null,
     canSend: Boolean(conn && conn.status === "active" && hasSendScope(conn.scopes)),
+    status: conn
+      ? deriveConnectionHealth({
+          status: conn.status,
+          nextSyncAt: conn.nextSyncAt,
+          syncError: conn.syncError,
+          calendarScopeGranted: hasCalendarScope(conn.scopes),
+        })
+      : null,
+    syncError: conn?.syncError ?? null,
+    nextSyncAt: conn?.nextSyncAt?.toISOString() ?? null,
     canRead: Boolean(conn && conn.status === "active" && hasGmailReadScope(conn.scopes)),
     canImportContacts: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
     redirectUri: summary.redirectUri,
