@@ -23,7 +23,7 @@
 import { looksLikeCalendar, parseIcsEvents } from "../src/lib/calendar-import";
 import { isUnmailableAddress } from "../src/lib/outreach-types";
 import { canAutoSend, isDemoProspect } from "../src/lib/outreach-channels";
-import { formatDueLabel } from "../src/lib/dates";
+import { formatAbsoluteDay, formatAbsoluteDayUtc, formatDueLabel } from "../src/lib/dates";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -166,6 +166,42 @@ function main() {
   check("tone marks today", formatDueLabel(noon, noon)?.tone === "today");
   check("a null due date has no label", formatDueLabel(null) === null);
   check("an unparseable date has no label", formatDueLabel("not-a-date") === null);
+
+  console.log("\nthe absolute day a server renders is the one a browser renders");
+
+  // `RelativeTime` exists to remove a hydration mismatch, and its own absolute fallback put
+  // one back: `toLocaleDateString` with no arguments reads the RUNTIME's locale and
+  // timezone. The pinned variant is what both sides agree on.
+  const lateUtc = "2026-09-15T23:30:00Z";
+  check(
+    "the pinned formatter ignores the ambient locale",
+    formatAbsoluteDayUtc(lateUtc) === "Sep 15",
+    `got ${JSON.stringify(formatAbsoluteDayUtc(lateUtc))}`
+  );
+  check(
+    "and the ambient timezone, which is the half that changes the DAY",
+    formatAbsoluteDayUtc(lateUtc) === formatAbsoluteDay(lateUtc, { locale: "en-US", timeZone: "UTC" })
+  );
+  check(
+    "a reader east of UTC genuinely sees the next day",
+    formatAbsoluteDay(lateUtc, { locale: "en-US", timeZone: "Europe/Berlin" }) === "Sep 16",
+    `got ${JSON.stringify(formatAbsoluteDay(lateUtc, { locale: "en-US", timeZone: "Europe/Berlin" }))} — this is why the swap after mount is not optional`
+  );
+  check(
+    "and a reader west of UTC can see the previous one",
+    formatAbsoluteDay("2026-09-16T02:00:00Z", { locale: "en-US", timeZone: "America/Los_Angeles" }) === "Sep 15"
+  );
+  // Asserted as a property rather than an exact string: en-GB abbreviates September as
+  // "Sept" in current ICU and "Sep" in older ones, and the point here is the ORDER differing
+  // from en-US's "Sep 15" — which is the locale half of the mismatch — not the spelling.
+  const gb = formatAbsoluteDay(lateUtc, { locale: "en-GB", timeZone: "UTC" }) ?? "";
+  check(
+    "locale changes the order, not the day",
+    gb.startsWith("15") && gb !== formatAbsoluteDayUtc(lateUtc),
+    `got ${JSON.stringify(gb)} against en-US ${JSON.stringify(formatAbsoluteDayUtc(lateUtc))}`
+  );
+  check("a null date has no absolute day", formatAbsoluteDayUtc(null) === null);
+  check("an unparseable date has no absolute day", formatAbsoluteDayUtc("not-a-date") === null);
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

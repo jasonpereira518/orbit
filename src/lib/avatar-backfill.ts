@@ -2,6 +2,7 @@ import { and, asc, eq, notInArray, or, sql } from "drizzle-orm";
 import type { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { AvatarStorageError, MicrolinkRateLimitError } from "@/lib/contact-avatar";
+import { NO_PHOTO_PREFIX, NO_PHOTO_TTL_MS } from "@/lib/contact-avatar-url";
 import { deadlineReached } from "@/lib/time-budget";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
@@ -23,9 +24,44 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *     whatever the network does. Unattempted contacts are simply pending for next tick.
  */
 
-/** What the stored `profile_image_url` is, decided in SQL so the value never leaves Postgres. */
-const storedKind = sql<"none" | "durable" | "unusable" | "remote">`CASE
+/**
+ * What the stored `profile_image_url` is, decided in SQL so the value never leaves Postgres.
+ *
+ * The `no_photo` branch mirrors `hasFreshNoPhotoMarker`, and its absence was a real leak:
+ * the negative-cache marker is not a URL, so it fell through to `'remote'` and the backfill
+ * queued it as "a usable remote photo not yet in durable storage" — which sorts AHEAD of
+ * LinkedIn lookups, is attempted every run, and can never succeed. The rows Orbit had
+ * already established have no photo were the ones it retried first, forever.
+ *
+ * A marker inside its TTL is its own kind, excluded from the work predicate entirely. Past
+ * the TTL it reads as `'none'`, which is what makes the negative cache expire rather than
+ * become permanent. Both the prefix and the TTL are interpolated from the constants the JS
+ * predicate uses, so the two cannot drift again.
+ *
+ * The digits guard matches the JS, which treats an unparseable suffix as stale: without it a
+ * malformed marker would fail the bigint cast and take the whole query with it.
+ */
+/**
+ * The epoch-millisecond stamp inside a marker, or the rest of the string if it is malformed.
+ *
+ * `substr(x, n)`, not `substring(x FROM n)`: with a bound parameter Postgres reads the
+ * `FROM` form as the SQL-standard REGEX overload rather than the positional one, so the
+ * offset was matched as a pattern and every marker's stamp came back NULL — which read as
+ * "malformed", which read as "stale", which quietly disabled the negative cache entirely.
+ * The offset is inlined rather than bound for the same reason.
+ */
+const noPhotoStamp = sql`substr(btrim(${contacts.profileImageUrl}), ${sql.raw(String(NO_PHOTO_PREFIX.length + 1))})`;
+
+export const avatarBacklogKindSql = sql<"none" | "durable" | "unusable" | "remote" | "no_photo">`CASE
   WHEN ${contacts.profileImageUrl} IS NULL OR btrim(${contacts.profileImageUrl}) = '' THEN 'none'
+  WHEN ${contacts.profileImageUrl} LIKE ${NO_PHOTO_PREFIX + "%"} THEN
+    CASE
+      WHEN ${noPhotoStamp} ~ '^[0-9]+$'
+       AND (${noPhotoStamp})::bigint
+           > (extract(epoch from now()) * 1000)::bigint - ${NO_PHOTO_TTL_MS}
+      THEN 'no_photo'
+      ELSE 'none'
+    END
   WHEN ${contacts.profileImageUrl} LIKE 'data:image/%' THEN 'durable'
   WHEN ${contacts.profileImageUrl} LIKE '%.public.blob.vercel-storage.com%' THEN 'durable'
   WHEN ${contacts.profileImageUrl} LIKE '%unavatar.io%'
@@ -41,9 +77,9 @@ function needsWorkPredicate(userId: string, skipIds: string[]) {
     skipIds.length > 0 ? notInArray(contacts.id, skipIds) : undefined,
     or(
       // Needs LinkedIn resolution: a profile to look up, and nothing usable stored.
-      sql`(${hasLinkedIn}) AND ${storedKind} IN ('none', 'unusable')`,
+      sql`(${hasLinkedIn}) AND ${avatarBacklogKindSql} IN ('none', 'unusable')`,
       // A usable remote photo that is not yet in durable storage.
-      sql`${storedKind} = 'remote'`
+      sql`${avatarBacklogKindSql} = 'remote'`
     )
   );
 }
@@ -68,11 +104,11 @@ export async function findAvatarBackfillCandidates(
     .select({
       id: contacts.id,
       linkedinUrl: contacts.linkedinUrl,
-      remoteUrl: sql<string | null>`CASE WHEN ${storedKind} = 'remote' THEN ${contacts.profileImageUrl} ELSE NULL END`,
+      remoteUrl: sql<string | null>`CASE WHEN ${avatarBacklogKindSql} = 'remote' THEN ${contacts.profileImageUrl} ELSE NULL END`,
     })
     .from(contacts)
     .where(needsWorkPredicate(userId, options.skipIds))
-    .orderBy(sql`CASE WHEN ${storedKind} = 'remote' THEN 0 ELSE 1 END`, asc(contacts.id))
+    .orderBy(sql`CASE WHEN ${avatarBacklogKindSql} = 'remote' THEN 0 ELSE 1 END`, asc(contacts.id))
     .limit(Math.max(1, options.limit));
   return rows.map((r) => ({
     id: r.id,

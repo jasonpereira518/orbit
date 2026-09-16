@@ -18,10 +18,16 @@ const BLOB_AVATAR_HOST_SUFFIX = ".public.blob.vercel-storage.com";
  * through the two predicates below, so teaching them this shape makes the marker
  * invisible everywhere else, and no migration is involved.
  */
-const NO_PHOTO_PREFIX = "orbit:no-photo:";
+/**
+ * Exported because the SQL mirrors in `contact-avatar-sql.ts` and `avatar-backfill.ts`
+ * interpolate it rather than restating the literal. Those two carry a comment telling you to
+ * keep them in step with these predicates, and the marker shipped without either being
+ * updated — so the value is now shared rather than promised.
+ */
+export const NO_PHOTO_PREFIX = "orbit:no-photo:";
 
 /** How long to trust a negative result before trying the provider again. */
-const NO_PHOTO_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const NO_PHOTO_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function noPhotoMarker(now: Date = new Date()) {
   return `${NO_PHOTO_PREFIX}${now.getTime()}`;

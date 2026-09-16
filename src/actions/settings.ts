@@ -30,6 +30,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { redactSettingsForExport } from "@/lib/settings-export";
 import { encrypt } from "@/lib/crypto";
 import { purgeUserData } from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
@@ -540,23 +541,4 @@ export async function getPlanOverview() {
   return { entitlements, usage };
 }
 
-/**
- * Strip every credential from a settings row before it leaves the building.
- *
- * Listed by name rather than picked by an allowlist on purpose: a new secret column
- * added later should break this function's type, not quietly ride out in an export.
- */
-function redactSettingsForExport<T extends Record<string, unknown>>(row: T) {
-  const {
-    geminiApiKeyEncrypted: _gemini,
-    openaiApiKeyEncrypted: _openai,
-    anthropicApiKeyEncrypted: _anthropic,
-    apolloApiKeyEncrypted: _apollo,
-    resendApiKeyEncrypted: _resend,
-    twilioAccountSidEncrypted: _twilioSid,
-    twilioAuthTokenEncrypted: _twilioToken,
-    calendarFeedToken: _calendarFeedToken,
-    ...safe
-  } = row as Record<string, unknown>;
-  return safe;
-}
+

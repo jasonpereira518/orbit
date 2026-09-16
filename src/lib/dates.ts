@@ -119,10 +119,31 @@ export function formatDueLabel(
  */
 export function formatAbsoluteDay(
   due: Date | string | null | undefined,
-  locale?: string
+  options: { locale?: string; timeZone?: string } = {}
 ): string | null {
   if (!due) return null;
   const d = due instanceof Date ? due : new Date(due);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString(locale, { month: "short", day: "numeric" });
+  return d.toLocaleDateString(options.locale, {
+    month: "short",
+    day: "numeric",
+    ...(options.timeZone ? { timeZone: options.timeZone } : {}),
+  });
+}
+
+/**
+ * The same day, formatted identically on a server and in any browser.
+ *
+ * `toLocaleDateString` with no arguments reads the RUNTIME's locale and timezone, and those
+ * differ between the two: "Sep 15" against "15 Sep", and — the worse half — a timestamp late
+ * on the 15th in UTC is the 16th in UTC+2, so the two renders disagree about the DAY. Any
+ * component that server-renders this text and then hydrates gets a mismatch, which is
+ * exactly the bug `RelativeTime` was built to fix and then reintroduced through this helper.
+ *
+ * Pinned to en-US/UTC so both sides agree by construction. It is a placeholder, not the
+ * answer: the correct day depends on where the reader is, which only the browser knows, so
+ * every caller swaps to `formatAbsoluteDay` after mount.
+ */
+export function formatAbsoluteDayUtc(due: Date | string | null | undefined): string | null {
+  return formatAbsoluteDay(due, { locale: "en-US", timeZone: "UTC" });
 }

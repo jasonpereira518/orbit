@@ -20,7 +20,8 @@ import {
 import type { ReminderActionKind } from "@/db/schema";
 import { ACTION_KIND_LABELS } from "@/lib/reminder-action-kind";
 import { ReminderDoneSnooze } from "@/components/reminders/reminder-done-snooze";
-import { formatAbsoluteDay, formatDueLabel } from "@/lib/dates";
+import { formatDueLabel } from "@/lib/dates";
+import { AbsoluteDay } from "@/components/ui/relative-time";
 import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ExpandableText } from "@/components/ui/expandable-text";
@@ -177,9 +178,13 @@ export function ReminderCard({
             >
               {isDone ? "Completed" : due.text}
               {/* The absolute day alongside the relative phrase: two reminders on the
-                  same date used to read "in about 4 hours" and "in about 24 hours". */}
-              {!isDone && formatAbsoluteDay(dueDate) && (
-                <span className="text-muted-foreground"> · {formatAbsoluteDay(dueDate)}</span>
+                  same date used to read "in about 4 hours" and "in about 24 hours".
+                  `AbsoluteDay` rather than a bare `formatAbsoluteDay` because this is
+                  server-rendered: the raw helper reads the runtime's locale and timezone,
+                  which differ between the server and the reader's browser, so it both
+                  mismatched on hydration and could name the wrong day outright. */}
+              {!isDone && dueDate && (
+                <AbsoluteDay date={dueDate} className="text-muted-foreground" prefix=" · " />
               )}
             </p>
           )}
