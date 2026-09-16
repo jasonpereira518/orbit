@@ -8,7 +8,7 @@ import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -1870,17 +1870,46 @@ export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
          id integer PRIMARY KEY DEFAULT 1,
          version integer NOT NULL,
          applied_at timestamptz NOT NULL DEFAULT now(),
+         fingerprint text,
          CONSTRAINT schema_migrations_single_row CHECK (id = 1)
        )`
     );
-    const result = await run(
-      `SELECT version FROM schema_migrations WHERE id = 1`
-    );
-    const rows = rowsOf<{ version: number | string }>(result);
-    return Number(rows[0]?.version) >= SCHEMA_VERSION;
+    const result = await run(`SELECT version, fingerprint FROM schema_migrations WHERE id = 1`);
+    const row = rowsOf<{ version: number | string; fingerprint: string | null }>(result)[0];
+    return isSchemaCurrent(row ? { version: Number(row.version), fingerprint: row.fingerprint ?? null } : null);
   } catch {
     return false;
   }
+}
+
+/**
+ * A hash of every statement in `DDL`, `SCALE_DDL` and `alters` (which spreads
+ * `ADMIN_V2_STATEMENTS`), whitespace-collapsed. Recorded beside SCHEMA_VERSION: two
+ * branches that both shipped the same number with different statements disagree here, so
+ * the second one's statements run instead of being skipped by a matching integer.
+ *
+ * DDL embedded in code (`migratePgvector`, `ensureColumn` calls) is not hashed; changing
+ * that still needs a version bump, as today.
+ */
+let fingerprintMemo: string | undefined;
+export function schemaFingerprint(): string {
+  if (!fingerprintMemo) {
+    const statements = [DDL, ...SCALE_DDL, ...alters]
+      .map((s) => s.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    fingerprintMemo = createHash("sha256").update(statements.join("\n")).digest("hex");
+  }
+  return fingerprintMemo;
+}
+
+/** The decision `schemaIsCurrent` makes from the recorded row. Pure. */
+export function isSchemaCurrent(recorded: { version: number; fingerprint: string | null } | null): boolean {
+  if (!recorded || !Number.isFinite(recorded.version)) return false;
+  // A newer build migrated this database and an older one is serving (a rollback): never
+  // re-sweep with older DDL — the never-downgrade rule.
+  if (recorded.version > SCHEMA_VERSION) return true;
+  if (recorded.version < SCHEMA_VERSION) return false;
+  return recorded.fingerprint === schemaFingerprint();
 }
 
 /**
@@ -1908,17 +1937,18 @@ async function detectExtensions(run: StatementRunner) {
 
 export async function recordSchemaVersion(run: StatementRunner) {
   try {
-    // GREATEST: an older deployment (a rollback) must never lower the recorded version, or
-    // the next boot of the newer code would re-sweep and health would flap.
+    // Databases stamped before the fingerprint existed lack the column. Idempotent.
+    await run(`ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS fingerprint text`);
+    // Never downgrades: a rollback that sweeps must not overwrite a newer build's stamp.
+    // The fingerprint is hex, so inlining it is safe.
     await run(
-      `INSERT INTO schema_migrations (id, version, applied_at)
-       VALUES (1, ${SCHEMA_VERSION}, now())
+      `INSERT INTO schema_migrations (id, version, applied_at, fingerprint)
+       VALUES (1, ${SCHEMA_VERSION}, now(), '${schemaFingerprint()}')
        ON CONFLICT (id) DO UPDATE
-         SET version = GREATEST(schema_migrations.version, EXCLUDED.version),
-             applied_at = CASE
-               WHEN EXCLUDED.version > schema_migrations.version THEN EXCLUDED.applied_at
-               ELSE schema_migrations.applied_at
-             END`
+         SET version = EXCLUDED.version,
+             applied_at = EXCLUDED.applied_at,
+             fingerprint = EXCLUDED.fingerprint
+         WHERE schema_migrations.version <= EXCLUDED.version`
     );
   } catch (err) {
     // A boot that cannot record its version just re-runs the idempotent sweep next time.

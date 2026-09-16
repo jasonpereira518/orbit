@@ -346,6 +346,17 @@ async function main() {
     JSON.stringify(kept.rows)
   );
 
+  // A burned version number: the same integer stamped by another branch's statements. The
+  // fingerprint is what tells them apart, so this build's statements run rather than being
+  // skipped by a matching integer.
+  await client.query(
+    `UPDATE schema_migrations SET version = ${SCHEMA_VERSION}, fingerprint = 'another-branch' WHERE id = 1`
+  );
+  check(
+    "the same number stamped by other DDL forces the full sweep",
+    !(await schemaIsCurrent(client.query.bind(client)))
+  );
+
   await client.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
 
