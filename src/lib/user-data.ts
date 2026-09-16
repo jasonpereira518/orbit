@@ -66,6 +66,7 @@ import {
   PURGE_MAX_ATTEMPTS,
   planPurgeSteps,
   type PurgeStepKey,
+  isDataCategory,
 } from "@/lib/data-categories";
 
 export {
@@ -665,4 +666,24 @@ export async function getDataFootprint(
     );
   }
   return footprint;
+}
+
+/**
+ * A purge's result in the shape the settings dialog shows: categories only (the billing step
+ * is bookkeeping, not something the user picked), and a stop reported as data rather than a
+ * throw, because a thrown server-action error reaches production only as a digest.
+ */
+export async function deletionOutcome(
+  runPurge: () => Promise<PurgeOutcome>
+): Promise<{ deleted: DataCategory[]; pending: DataCategory[] }> {
+  try {
+    const outcome = await runPurge();
+    return { deleted: outcome.completed.filter(isDataCategory), pending: [] };
+  } catch (err) {
+    if (!(err instanceof PurgeIncompleteError)) throw err;
+    return {
+      deleted: err.completed.filter(isDataCategory),
+      pending: err.pending.filter(isDataCategory),
+    };
+  }
 }

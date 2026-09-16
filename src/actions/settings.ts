@@ -17,7 +17,7 @@ import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
 import {
   DATA_CATEGORY_IDS,
-  expandCategories,
+  deletionOutcome,
   getDataFootprint,
   purgeUserData,
   type DataCategory,
@@ -467,19 +467,17 @@ export async function deleteAllData(categories?: readonly DataCategory[]) {
     only = categories.filter((c): c is DataCategory =>
       (DATA_CATEGORY_IDS as string[]).includes(c)
     );
-    if (only.length === 0) return { deleted: [] as DataCategory[] };
+    if (only.length === 0) return { deleted: [] as DataCategory[], pending: [] as DataCategory[] };
   }
 
-  await purgeUserData(userId, only ? { only } : {});
+  const result = await deletionOutcome(() => purgeUserData(userId, only ? { only } : {}));
 
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/settings");
   revalidatePath("/outreach");
 
-  return {
-    deleted: only ? [...expandCategories(only)] : [...DATA_CATEGORY_IDS],
-  };
+  return result;
 }
 
 /** Everything the settings billing card needs, in one round trip. */
