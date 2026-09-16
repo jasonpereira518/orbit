@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
 import { resumeStalledImports } from "@/lib/import-stall";
+import { resumeStrandedPurges } from "@/lib/user-data";
 import { resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { runCaptureJobById } from "@/lib/capture-job-runner";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
@@ -138,6 +139,12 @@ export async function GET(request: Request) {
     followUpsSent: 0,
     /** Claimed but refused by Resend; released, so tomorrow retries them. */
     followUpsFailed: 0,
+    /** Deletion runs picked up, finished, still failing, and given up after 5 attempts. */
+    purgesFound: 0,
+    purgesFinished: 0,
+    purgesStillFailing: 0,
+    purgesGaveUp: 0,
+    purgeRunsPruned: 0,
   };
 
   try {
@@ -178,6 +185,20 @@ export async function GET(request: Request) {
       // run instead of vanishing, and says why.
       status = "partial";
       reportError(err, { where: "job.process-stalled.housekeeping" });
+    }
+
+    try {
+      // Deletion requests that stopped part-way: the user was told it is happening, so a
+      // stranded run is finished here, and one that keeps failing surfaces as purge.stuck.
+      const purges = await resumeStrandedPurges({ now: new Date() });
+      stats.purgesFound = purges.found;
+      stats.purgesFinished = purges.finished;
+      stats.purgesStillFailing = purges.stillFailing;
+      stats.purgesGaveUp = purges.gaveUp;
+      stats.purgeRunsPruned = purges.pruned;
+      if (purges.stillFailing > 0 || purges.gaveUp > 0) status = "partial";
+    } catch {
+      status = "partial";
     }
 
     try {

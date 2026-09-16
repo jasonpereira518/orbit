@@ -1,5 +1,5 @@
 import { del } from "@vercel/blob";
-import { eq, getTableName, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
 import {
@@ -10,7 +10,6 @@ import {
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
-  ignoredPeople,
   chatThreads,
   closenessCohorts,
   companies,
@@ -19,6 +18,7 @@ import {
   contactMerges,
   contacts,
   contactTags,
+  dataPurgeRuns,
   duplicateSuggestions,
   errorEvents,
   eventAliases,
@@ -31,6 +31,7 @@ import {
   feedbackScreenshots,
   gateEvents,
   gmailConnections,
+  ignoredPeople,
   imports,
   interactions,
   meetingSessions,
@@ -53,6 +54,7 @@ import {
   userRecruiterLinks,
   userSettings,
   webhookEndpoints,
+  type DataPurgeRunRow,
 } from "@/db/schema";
 import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
 import { recomputeRecruiterRating } from "@/lib/recruiters";
@@ -61,6 +63,9 @@ import {
   DATA_CATEGORY_META,
   expandCategories,
   type DataCategory,
+  PURGE_MAX_ATTEMPTS,
+  planPurgeSteps,
+  type PurgeStepKey,
 } from "@/lib/data-categories";
 
 export {
@@ -491,60 +496,137 @@ async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) 
   }
 }
 
+export type PurgeOutcome = { runId: string | null; completed: PurgeStepKey[] };
+
+/** Thrown when a step fails; the run stays `running` for `resumeStrandedPurges`. */
+export class PurgeIncompleteError extends Error {
+  readonly runId: string;
+  readonly completed: PurgeStepKey[];
+  readonly pending: PurgeStepKey[];
+  constructor(runId: string, completed: PurgeStepKey[], pending: PurgeStepKey[], cause: unknown) {
+    super(`Purge ${runId} stopped with ${pending.length} step(s) left`, { cause });
+    this.name = "PurgeIncompleteError";
+    this.runId = runId;
+    this.completed = completed;
+    this.pending = pending;
+  }
+}
+
+/** A run touched more recently than this is assumed to still be in flight. */
+export const PURGE_RESUME_AFTER_MS = 10 * 60 * 1000;
+const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
+  if (key === "billing") {
+    await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
+    return;
+  }
+  if (key === "preferences") {
+    await purgeUserSettings(db, userId, keepSettings);
+    return;
+  }
+  await STEPS[key].run(db, userId);
+}
+
+async function executePurgeRun(db: Db, run: DataPurgeRunRow): Promise<PurgeOutcome> {
+  const plan = planPurgeSteps(run.categories, run.fullPurge);
+  const done = new Set<string>(run.completedSteps);
+  for (const key of plan) {
+    if (done.has(key)) continue;
+    try {
+      await runPurgeStep(db, run.targetUserId, key, run.keepSettings);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await db
+        .update(dataPurgeRuns)
+        .set({ lastError: `${key}: ${message}`.slice(0, 500) })
+        .where(eq(dataPurgeRuns.id, run.id));
+      throw new PurgeIncompleteError(
+        run.id,
+        plan.filter((k) => done.has(k)),
+        plan.filter((k) => !done.has(k)),
+        err
+      );
+    }
+    done.add(key);
+    await db
+      .update(dataPurgeRuns)
+      .set({ completedSteps: plan.filter((k) => done.has(k)) })
+      .where(eq(dataPurgeRuns.id, run.id));
+  }
+  await db
+    .update(dataPurgeRuns)
+    .set({ status: "done", finishedAt: new Date(), lastError: null })
+    .where(eq(dataPurgeRuns.id, run.id));
+  return { runId: run.id, completed: plan };
+}
+
 /**
- * Delete Orbit data for a user (does not delete the Clerk account).
+ * (keep the existing doc comment here, plus:)
  *
- * With no `only`, this is the full purge: every step in `STEPS`, in `DATA_CATEGORY_META` order, plus the
- * two account-level steps below. `scripts/smoke-purge.ts` asserts that leaves nothing behind,
- * table by table. See `STEPS` for what each step covers and what is deliberately
- * left alone.
- *
- * `only` runs just the listed categories (already expanded through `implies` here, so a
- * caller cannot ask for a delete the database will silently exceed). The two account-level
- * steps are full-purge-only:
- *
- *   - `billing_events` is ANONYMISED, not deleted — Orbit's accounting record of what was
- *     charged, refunded and earned. Financial records have to survive a customer leaving,
- *     and deleting them would silently rewrite revenue history, so a month already reported
- *     would change months later. Nulling `user_id` severs the link to the person while
- *     leaving the money intact, which is what "no longer identifiable" asks for.
- *     (`scripts/smoke-purge.ts` counts rows `WHERE user_id = ...`, so this satisfies its
- *     no-leak assertion honestly rather than by exemption.) It is skipped for a partial
- *     delete because the account is still live: severing a subscription from its customer
- *     because they cleared their chat history would be a billing incident.
- *   - `user_settings` is partially reset — see `PRESERVED_SETTINGS_COLUMNS`. Runs for a
- *     partial delete too, but only when `preferences` is among the chosen categories.
- *
- * `keepSettings: false` (used only by the admin console's hard-delete, which also removes the
- * Clerk login) lets `user_settings` be deleted outright — the "entire account" case, where
- * none of the preserved columns is meant to survive.
+ * RESUMABLE. Every call is recorded in `data_purge_runs` before anything is deleted, and each
+ * finished step is written back. A throw leaves the run `running` with its `last_error`, and
+ * `resumeStrandedPurges` (the nightly job) re-runs what is left. neon-http has no
+ * transactions, so this ledger is what stands in for one.
  */
 export async function purgeUserData(
   userId: string,
   opts: { keepSettings?: boolean; only?: readonly DataCategory[] } = {}
-) {
+): Promise<PurgeOutcome> {
   const keepSettings = opts.keepSettings ?? true;
   const selected = opts.only
     ? expandCategories(opts.only)
     : new Set<DataCategory>(DATA_CATEGORY_IDS);
-  const isFullPurge = selected.size === DATA_CATEGORY_IDS.length;
+  if (selected.size === 0) return { runId: null, completed: [] };
+  const fullPurge = selected.size === DATA_CATEGORY_IDS.length;
   const db = await getDb();
 
-  for (const { id } of DATA_CATEGORY_META) {
-    if (!selected.has(id)) continue;
-    await STEPS[id].run(db, userId);
-  }
+  const [run] = await db
+    .insert(dataPurgeRuns)
+    .values({ targetUserId: userId, categories: [...selected], keepSettings, fullPurge })
+    .returning();
+  return executePurgeRun(db, run);
+}
 
-  if (isFullPurge) {
+/** The nightly backstop: finish stranded runs, give up on hopeless ones, prune old ones. */
+export async function resumeStrandedPurges(opts: { now: Date; limit?: number }) {
+  const db = await getDb();
+  const stats = { found: 0, finished: 0, stillFailing: 0, gaveUp: 0, pruned: 0 };
+  const idleSince = new Date(opts.now.getTime() - PURGE_RESUME_AFTER_MS);
+  const runs = await db
+    .select()
+    .from(dataPurgeRuns)
+    .where(and(eq(dataPurgeRuns.status, "running"), lt(dataPurgeRuns.lastAttemptAt, idleSince)))
+    .orderBy(asc(dataPurgeRuns.lastAttemptAt))
+    .limit(opts.limit ?? 10);
+  stats.found = runs.length;
+
+  for (const run of runs) {
+    if (run.attempts >= PURGE_MAX_ATTEMPTS) {
+      await db.update(dataPurgeRuns).set({ status: "failed" }).where(eq(dataPurgeRuns.id, run.id));
+      stats.gaveUp += 1;
+      continue;
+    }
+    const attempts = run.attempts + 1;
     await db
-      .update(billingEvents)
-      .set({ userId: null })
-      .where(eq(billingEvents.userId, userId));
+      .update(dataPurgeRuns)
+      .set({ attempts, lastAttemptAt: opts.now })
+      .where(eq(dataPurgeRuns.id, run.id));
+    try {
+      await executePurgeRun(db, { ...run, attempts });
+      stats.finished += 1;
+    } catch {
+      stats.stillFailing += 1;
+    }
   }
 
-  if (selected.has("preferences")) {
-    await purgeUserSettings(db, userId, keepSettings);
-  }
+  const pruneBefore = new Date(opts.now.getTime() - PURGE_RUN_RETENTION_MS);
+  const pruned = await db
+    .delete(dataPurgeRuns)
+    .where(and(eq(dataPurgeRuns.status, "done"), lt(dataPurgeRuns.finishedAt, pruneBefore)))
+    .returning();
+  stats.pruned = pruned.length;
+  return stats;
 }
 
 /**
