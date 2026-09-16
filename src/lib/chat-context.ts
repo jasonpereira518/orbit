@@ -207,9 +207,10 @@ async function retrieveRankedContacts(
 ): Promise<{ ranked: RankedContact[]; searchNotice: string | null }> {
   const activeGoals = await loadActiveGoalTexts(userId);
   let searchNotice: string | null = null;
+  // The embedding still degrades to keywords — but now says so, instead of letting the
+  // model conclude the user knows nobody like that. (The comment lives above the call:
+  // smoke-chat-pipeline asserts these two run in one Promise.all by source shape.)
   const [queryEmbedding, parsedQuery] = await Promise.all([
-    // Still degrades to keywords — but now says so, instead of letting the model conclude
-    // the user knows nobody like that.
     getQueryEmbedding(userId, q).catch((err) => {
       searchNotice = embeddingFailureNotice(err);
       return null;
