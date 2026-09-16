@@ -1,4 +1,4 @@
-import { AdminPageHeader, AdminPanel } from "@/components/admin/primitives";
+import { AdminLoading } from "@/components/admin/loading-shells";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function ToggleRows({ count }: { count: number }) {
@@ -14,25 +14,20 @@ function ToggleRows({ count }: { count: number }) {
   );
 }
 
-/** Mirrors /admin/product: header + Preview panel + three surface-toggle panels. */
+/** Mirrors /admin/product: header, preview, the constellation filter, then the toggle panels. */
 export default function AdminProductLoading() {
   return (
-    <>
-      <AdminPageHeader title="Product" subtitle="Loading surfaces…" />
-      <div className="space-y-6">
-        <AdminPanel title="Preview">
-          <Skeleton className="h-3 w-full max-w-md" />
-        </AdminPanel>
-        <AdminPanel title="Pages">
-          <ToggleRows count={4} />
-        </AdminPanel>
-        <AdminPanel title="Dashboard cards">
-          <ToggleRows count={3} />
-        </AdminPanel>
-        <AdminPanel title="Settings sections">
-          <ToggleRows count={3} />
-        </AdminPanel>
-      </div>
-    </>
+    <AdminLoading
+      title="Product"
+      subtitle="Loading surfaces…"
+      blocks={[
+        { panel: true, title: "Preview", body: <Skeleton className="h-3 w-full max-w-md" /> },
+        { panel: true, title: "Constellation", height: "h-44" },
+        { panel: true, title: "Pages", body: <ToggleRows count={4} /> },
+        { panel: true, title: "Dashboard cards", body: <ToggleRows count={3} /> },
+        { panel: true, title: "Widgets", body: <ToggleRows count={1} /> },
+        { panel: true, title: "Settings sections", body: <ToggleRows count={3} /> },
+      ]}
+    />
   );
 }

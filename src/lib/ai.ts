@@ -34,6 +34,7 @@ import {
   AI_INCOMPLETE_MESSAGE,
   aiProviderErrorMessage,
   aiProviderLabel,
+  classifyAiError,
   friendlyError,
 } from "@/lib/errors";
 import {
@@ -64,6 +65,37 @@ export const AI_CALL_TIMEOUT_MS = 45_000;
 /** A fresh signal per call; a shared one would abort every later call once it fired. */
 export function aiSignal(ms = AI_CALL_TIMEOUT_MS): AbortSignal {
   return AbortSignal.timeout(ms);
+}
+
+/**
+ * Retries the embedding backfill (and only the embedding backfill — see call sites) sends
+ * against a BYOK provider without any backoff: a 429 on batch 3 of 15,000 contacts aborted
+ * the whole pass immediately, and the next attempt — the next cron tick or self-kick — fired
+ * the identical request at the identical cadence, so a low-RPM free-tier key could spin
+ * without ever making progress while still burning background-job invocations.
+ *
+ * Bounded and short-lived on purpose: this smooths over a brief burst within the SAME pass,
+ * it does not replace the outer retry (`embedding_stale_at` staying set so the next pass
+ * retries) for a rate limit that does not clear in a few seconds — that contract is
+ * deliberate (see `embedding-backfill.ts`) and this must not swallow a sustained outage.
+ */
+const RATE_LIMIT_MAX_RETRIES = 3;
+const RATE_LIMIT_BASE_DELAY_MS = 500;
+
+/** Exported for `smoke-embedding-rate-limit-backoff.ts`; every real caller is in this file. */
+export async function withRateLimitBackoff<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= RATE_LIMIT_MAX_RETRIES || classifyAiError(err) !== "rate_limit") {
+        throw err;
+      }
+      const backoff = RATE_LIMIT_BASE_DELAY_MS * 2 ** attempt;
+      const jitter = backoff * (0.5 + Math.random() * 0.5);
+      await new Promise((resolve) => setTimeout(resolve, jitter));
+    }
+  }
 }
 
 const nullStr = z
@@ -1424,31 +1456,32 @@ export async function createEmbedding(userId: string, text: string) {
       kind: "embedding",
       keyOwner,
     },
-    async (report) => {
-      if (backend === "openai") {
-        const client = openaiClient(grant);
-        const res = await client.embeddings.create({
-          model: OPENAI_EMBEDDING_MODEL,
-          input,
-        }, { signal: aiSignal() });
-        report(tokensFromOpenAi(res));
-        const values = res.data[0]?.embedding;
+    (report) =>
+      withRateLimitBackoff(async () => {
+        if (backend === "openai") {
+          const client = openaiClient(grant);
+          const res = await client.embeddings.create({
+            model: OPENAI_EMBEDDING_MODEL,
+            input,
+          }, { signal: aiSignal() });
+          report(tokensFromOpenAi(res));
+          const values = res.data[0]?.embedding;
+          if (!values?.length) throw new Error("Empty embedding response");
+          return values;
+        }
+
+        const client = geminiClient(grant);
+        const res = await client.models.embedContent({
+          model: GEMINI_EMBEDDING_MODEL,
+          contents: input,
+          config: { abortSignal: aiSignal() },
+        });
+        // Gemini's embed endpoint reports no usage metadata — the row stores null tokens
+        // rather than a fabricated zero, and counts as volume.
+        const values = res.embeddings?.[0]?.values;
         if (!values?.length) throw new Error("Empty embedding response");
         return values;
-      }
-
-      const client = geminiClient(grant);
-      const res = await client.models.embedContent({
-        model: GEMINI_EMBEDDING_MODEL,
-        contents: input,
-        config: { abortSignal: aiSignal() },
-      });
-      // Gemini's embed endpoint reports no usage metadata — the row stores null tokens
-      // rather than a fabricated zero, and counts as volume.
-      const values = res.embeddings?.[0]?.values;
-      if (!values?.length) throw new Error("Empty embedding response");
-      return values;
-    },
+      }),
   ));
 }
 
@@ -1473,37 +1506,38 @@ export async function createEmbeddingsBatch(
       kind: "embedding",
       keyOwner,
     },
-    async (report) => {
-      if (backend === "openai") {
-        const client = openaiClient(grant);
-        const res = await client.embeddings.create({
-          model: OPENAI_EMBEDDING_MODEL,
-          input: inputs,
-        }, { signal: aiSignal() });
-        report(tokensFromOpenAi(res));
-        const values = res.data
-          .slice()
-          .sort((a, b) => a.index - b.index)
-          .map((d) => d.embedding);
-        if (values.length !== inputs.length || values.some((v) => !v?.length)) {
+    (report) =>
+      withRateLimitBackoff(async () => {
+        if (backend === "openai") {
+          const client = openaiClient(grant);
+          const res = await client.embeddings.create({
+            model: OPENAI_EMBEDDING_MODEL,
+            input: inputs,
+          }, { signal: aiSignal() });
+          report(tokensFromOpenAi(res));
+          const values = res.data
+            .slice()
+            .sort((a, b) => a.index - b.index)
+            .map((d) => d.embedding);
+          if (values.length !== inputs.length || values.some((v) => !v?.length)) {
+            throw new Error("Incomplete embedding batch response");
+          }
+          return values;
+        }
+
+        const client = geminiClient(grant);
+        const res = await client.models.embedContent({
+          model: GEMINI_EMBEDDING_MODEL,
+          contents: inputs,
+          config: { abortSignal: aiSignal() },
+        });
+        // No usage metadata from Gemini embeddings; see createEmbedding.
+        const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
+        if (values.length !== inputs.length || values.some((v) => !v.length)) {
           throw new Error("Incomplete embedding batch response");
         }
         return values;
-      }
-
-      const client = geminiClient(grant);
-      const res = await client.models.embedContent({
-        model: GEMINI_EMBEDDING_MODEL,
-        contents: inputs,
-        config: { abortSignal: aiSignal() },
-      });
-      // No usage metadata from Gemini embeddings; see createEmbedding.
-      const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
-      if (values.length !== inputs.length || values.some((v) => !v.length)) {
-        throw new Error("Incomplete embedding batch response");
-      }
-      return values;
-    },
+      }),
   ));
 }
 

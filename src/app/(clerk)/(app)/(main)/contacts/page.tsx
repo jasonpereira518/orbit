@@ -12,7 +12,7 @@ import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
 import { cn } from "@/lib/utils";
 
-const SORTS: ContactSort[] = ["name", "closeness", "recent"];
+const SORTS: ContactSort[] = ["name", "closeness", "recent", "relevance"];
 
 export default async function ContactsPage({
   searchParams,
@@ -27,9 +27,14 @@ export default async function ContactsPage({
   }>;
 }) {
   const params = await searchParams;
-  const sort = SORTS.includes(params.sort as ContactSort)
+  // There's no sort control in the UI yet, so `sort` only ever comes from a
+  // hand-typed URL today — but it still wins over the default whenever present,
+  // so a future sort control can override the implicit "relevance while
+  // searching" behavior below.
+  const explicitSort = SORTS.includes(params.sort as ContactSort)
     ? (params.sort as ContactSort)
-    : "name";
+    : undefined;
+  const sort: ContactSort = explicitSort ?? (params.q?.trim() ? "relevance" : "name");
 
   const filters = {
     q: params.q,

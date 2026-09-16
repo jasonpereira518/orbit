@@ -1,23 +1,21 @@
-import { AdminPageHeader, AdminPanel } from "@/components/admin/primitives";
-import { Skeleton } from "@/components/ui/skeleton";
+import { AdminLoading } from "@/components/admin/loading-shells";
 
 export default function AdminGrowthLoading() {
   return (
-    <>
-      <AdminPageHeader title="Growth" subtitle="Bucketing history…" />
-      <div className="space-y-6">
-        <div className="grid gap-6 lg:grid-cols-2">
-          <AdminPanel>
-            <Skeleton className="h-40 w-full" />
-          </AdminPanel>
-          <AdminPanel>
-            <Skeleton className="h-40 w-full" />
-          </AdminPanel>
-        </div>
-        <AdminPanel>
-          <Skeleton className="h-32 w-full" />
-        </AdminPanel>
-      </div>
-    </>
+    <AdminLoading
+      title="Growth"
+      subtitle="Bucketing history…"
+      blocks={[
+        { range: true },
+        {
+          pair: [
+            { title: "Signups by week", height: "h-64" },
+            { title: "Accounts writing, by week", height: "h-64" },
+          ],
+        },
+        { panel: true, title: "Activation by signup cohort", height: "h-96" },
+        { panel: true, title: "Did each month's intake stick?", height: "h-56" },
+      ]}
+    />
   );
 }

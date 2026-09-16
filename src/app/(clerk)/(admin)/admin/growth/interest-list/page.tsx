@@ -187,7 +187,7 @@ export default async function AdminInterestListPage({
           {sources.length === 0 ? (
             <EmptyState>No signups yet.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable minWidth="none"
               head={
                 <>
                   <Th>Source</Th>

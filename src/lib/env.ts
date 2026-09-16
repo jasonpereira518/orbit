@@ -32,6 +32,8 @@ export const EXPECTED_IN_PRODUCTION = [
   "STRIPE_SECRET_KEY",
   "BLOB_READ_WRITE_TOKEN",
   "SLACK_OPS_WEBHOOK_URL",
+  "SLACK_BOT_TOKEN",
+  "SLACK_ALERT_USER_ID",
   "HEALTH_TOKEN",
   "SENTRY_DSN",
   "NEXT_PUBLIC_SENTRY_DSN",
@@ -130,6 +132,13 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       for (const name of ["STRIPE_WEBHOOK_SECRET", ...STRIPE_PRICE_IDS]) {
         if (!has(env, name)) errors.push(`${name} is required when STRIPE_SECRET_KEY is set`);
       }
+    }
+
+    if (has(env, "SLACK_BOT_TOKEN") && !env.SLACK_BOT_TOKEN!.startsWith("xoxb-")) {
+      errors.push("SLACK_BOT_TOKEN must be a bot token (xoxb-...)");
+    }
+    if (has(env, "SLACK_BOT_TOKEN") !== has(env, "SLACK_ALERT_USER_ID")) {
+      errors.push("SLACK_BOT_TOKEN and SLACK_ALERT_USER_ID must be set together");
     }
 
     for (const name of FORBIDDEN_IN_PRODUCTION) {

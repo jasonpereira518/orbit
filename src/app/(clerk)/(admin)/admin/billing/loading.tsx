@@ -1,23 +1,22 @@
-import { Skeleton } from "@/components/ui/skeleton";
+import { AdminLoading } from "@/components/admin/loading-shells";
+import { MoneyTabs } from "@/components/admin/money-tabs";
 
 export default function AdminBillingLoading() {
   return (
-    <div className="space-y-6">
-      <div>
-        <Skeleton className="h-8 w-32" />
-        <Skeleton className="mt-2 h-4 w-64" />
-      </div>
-      <Skeleton className="h-10 w-full max-w-md" />
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-20 rounded-xl" />
-        ))}
-      </div>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Skeleton className="h-60 w-full rounded-xl" />
-        <Skeleton className="h-60 w-full rounded-xl" />
-      </div>
-      <Skeleton className="h-40 w-full rounded-xl" />
-    </div>
+    <AdminLoading
+      title="Money"
+      tabs={<MoneyTabs />}
+      blocks={[
+        { tiles: 4 },
+        {
+          pair: [
+            { title: "Recurring movement, 6 months", height: "h-64" },
+            { title: "Needs a decision", height: "h-64" },
+          ],
+        },
+        { panel: true, title: "Subscription health", height: "h-16" },
+        { panel: true, title: "Recent movements", height: "h-28" },
+      ]}
+    />
   );
 }
