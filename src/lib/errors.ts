@@ -412,10 +412,18 @@ export class ReauthRequiredError extends Error {
  * Whether an OAuth token-endpoint response means "this grant is dead, reconnect" rather
  * than "try again later". Google and Microsoft both return 400 with an `invalid_grant`
  * error code for a revoked or expired refresh token.
+ *
+ * The consent family is the same verdict in different words: Microsoft answers a refresh
+ * that now needs MFA or fresh admin consent with `interaction_required`, `consent_required`
+ * or `login_required`, and Google answers a Workspace re-auth policy with `invalid_rapt`.
+ * None of them clears on its own, so treating them as transient kept those rows `active`
+ * and failing on every run with no alert.
  */
 export function isRefreshRejection(status: number, body: string): boolean {
   if (status !== 400 && status !== 401) return false;
-  return /invalid_grant|invalid_client|unauthorized_client/i.test(body);
+  return /invalid_grant|invalid_client|unauthorized_client|interaction_required|consent_required|login_required|invalid_rapt/i.test(
+    body
+  );
 }
 
 /**

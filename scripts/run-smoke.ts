@@ -29,6 +29,7 @@ type Tier = "pure" | "pglite" | "manual";
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
+  "smoke-oauth-refresh-rejection": "pure",
   "smoke-report-error": "pure",
   "smoke-toast-actions": "pure",
   "smoke-timeline-cost": "pure",
