@@ -43,15 +43,27 @@ export function internalAuthHeaders(): Record<string, string> {
 }
 
 /**
- * `fetch` against this app's own internal routes, with the bearer attached.
+ * How long a self-kick may take. Every internal route answers as soon as it has queued its
+ * work in `after()`, so ten seconds is generous — except `/api/sync/run`, which runs inline;
+ * its continuation kick is best-effort by design (a lost one is picked up by the next run).
+ */
+export const INTERNAL_FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * `fetch` against this app's own internal routes, with the bearer attached and a timeout.
  *
  * Targets `getAppBaseUrl()` rather than the per-deployment `VERCEL_URL` so a preview build
  * does not kick a job on itself and then vanish; in production that is `APP_BASE_URL`.
+ * Without the timeout, one hung kick held the kicking invocation to its own maxDuration.
  */
 export function internalFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   for (const [k, v] of Object.entries(internalAuthHeaders())) headers.set(k, v);
-  return fetch(`${getAppBaseUrl()}${path}`, { ...init, headers });
+  return fetch(`${getAppBaseUrl()}${path}`, {
+    ...init,
+    headers,
+    signal: init.signal ?? AbortSignal.timeout(INTERNAL_FETCH_TIMEOUT_MS),
+  });
 }
 
 /**
