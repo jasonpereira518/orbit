@@ -1,4 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
+import { classifyAiError, friendlyError } from "@/lib/errors";
 import { getDb } from "@/db";
 import {
   gmailConnections,
@@ -29,7 +30,7 @@ import { markScanCompleted, resolveScanWindow } from "@/lib/recruiter-scan-state
 import { ensureUserLink, isViewerSharing, upsertCanonicalRecruiter } from "@/lib/recruiters";
 import { reportError } from "@/lib/report-error";
 
-export const GMAIL_SCAN_IMPORT_TYPE = "gmail_recruiter_scan";
+export { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-type";
 
 /**
  * Small on purpose. Each row is a handful of Gmail body fetches plus one LLM call, so
@@ -47,6 +48,42 @@ const MAX_IDS_PER_SENDER = 12;
  * Reaching it is reported in the UI, never silently truncated.
  */
 const MAX_CANDIDATE_SENDERS = 400;
+
+/** Senders failing back to back before the scan gives up rather than "completing". */
+export const MAX_CONSECUTIVE_SENDER_FAILURES = 5;
+
+/**
+ * Failure kinds that mean the KEY is the problem, not the sender. Every later sender would
+ * fail the same way, so the scan stops at the first — and, crucially, never reaches
+ * `markScanCompleted`, which would step the watermark over mail it never read.
+ */
+export const SCAN_KEY_PROBLEM_COPY = {
+  auth: "Your AI provider didn’t accept your API key — check it in Settings, then scan again",
+  quota: "Your AI provider says your account is out of credit — top up with them, then scan again",
+  model_unavailable: "Your AI model isn’t available — pick another in Settings, then scan again",
+} as const;
+
+export const SCAN_CONSECUTIVE_FAILURES_COPY =
+  "The scan stopped after several conversations in a row couldn’t be read — try again in a while";
+
+function scanAbortReason(err: unknown): string | null {
+  const kind = classifyAiError(err);
+  if (kind === "auth" || kind === "quota" || kind === "model_unavailable") {
+    // Provider copy that is already Orbit's own words passes through; raw text does not.
+    return friendlyError(err, SCAN_KEY_PROBLEM_COPY[kind]);
+  }
+  return null;
+}
+
+/** Gmail, the classifier and the continuation kick — injectable so the loop is testable. */
+export type ScanDeps = {
+  getAccessToken: (userId: string, opts?: { minValidityMs?: number }) => Promise<string>;
+  listPage: typeof listGmailMessagePage;
+  fetchHeaders: typeof fetchGmailHeaders;
+  fetchMessages: typeof fetchGmailMessages;
+  classify: typeof classifyRecruiterSender;
+  continueLater: (importId: string) => Promise<void>;
+};
 
 async function patchStats(importId: string, patch: Partial<ImportStats>) {
   const db = await getDb();
@@ -68,6 +105,15 @@ async function scheduleContinuation(importId: string) {
   }
 }
 
+const DEFAULT_SCAN_DEPS: ScanDeps = {
+  getAccessToken: getValidAccessToken,
+  listPage: listGmailMessagePage,
+  fetchHeaders: fetchGmailHeaders,
+  fetchMessages: fetchGmailMessages,
+  classify: classifyRecruiterSender,
+  continueLater: scheduleContinuation,
+};
+
 /**
  * Phase A: walk the mailbox and turn recruiter-ish senders into work rows.
  *
@@ -82,7 +128,8 @@ async function runDiscovery(
   userId: string,
   accessToken: string,
   jobStart: number,
-  scanAfter: Date
+  scanAfter: Date,
+  deps: ScanDeps
 ): Promise<boolean> {
   const db = await getDb();
 
@@ -107,11 +154,11 @@ async function runDiscovery(
         messagesScanned: scanned,
         candidateSenders: byEmail.size,
       });
-      await scheduleContinuation(importId);
+      await deps.continueLater(importId);
       return false;
     }
 
-    const page = await listGmailMessagePage(accessToken, {
+    const page = await deps.listPage(accessToken, {
       // Bounded by the resolved window and stripped of ATS/job-board mail server-side.
       // Both are free at Gmail and remove work that would otherwise cost a metadata fetch
       // and, past the prefilter, an LLM call on the user's own key.
@@ -121,7 +168,7 @@ async function runDiscovery(
     });
 
     if (page.messages.length > 0) {
-      const headers = await fetchGmailHeaders(accessToken, page.messages);
+      const headers = await deps.fetchHeaders(accessToken, page.messages);
       scanned += page.messages.length;
 
       for (const msg of headers) {
@@ -197,15 +244,16 @@ async function runDiscovery(
 async function processSender(
   userId: string,
   payload: GmailSenderRowPayload,
-  accessToken: string
+  accessToken: string,
+  deps: ScanDeps
 ): Promise<"recruiter" | "rejected"> {
-  const messages = await fetchGmailMessages(
+  const messages = await deps.fetchMessages(
     accessToken,
     payload.messageIds.slice(0, 5)
   );
   if (messages.length === 0) return "rejected";
 
-  const result = await classifyRecruiterSender(userId, {
+  const result = await deps.classify(userId, {
     senderName: payload.name,
     senderEmail: payload.email,
     firmGuess: payload.firm,
@@ -270,7 +318,7 @@ async function processSender(
  * all land here, and it re-reads job and row state from the DB every iteration rather
  * than assuming it is starting fresh.
  */
-export async function runGmailRecruiterScanJob(importId: string): Promise<void> {
+export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps = DEFAULT_SCAN_DEPS): Promise<void> {
   const db = await getDb();
   const jobStart = Date.now();
 
@@ -284,7 +332,9 @@ export async function runGmailRecruiterScanJob(importId: string): Promise<void> 
 
   let accessToken: string;
   try {
-    accessToken = await getValidAccessToken(userId);
+    // Valid for the whole invocation: a token minted with two minutes left would expire
+    // half-way through a page and read as a run of empty messages.
+    accessToken = await deps.getAccessToken(userId, { minValidityMs: TIME_BUDGET_MS + 60_000 });
   } catch (err) {
     await failImport(importId, err);
     return;
@@ -324,15 +374,18 @@ export async function runGmailRecruiterScanJob(importId: string): Promise<void> 
         accessToken,
         jobStart,
         scanAfter
+      ,
+        deps
       );
       if (!finished) return;
     }
 
     let processed = importRow.rowsProcessed ?? 0;
+    let consecutiveFailures = 0;
 
     while (true) {
       if (Date.now() - jobStart > TIME_BUDGET_MS) {
-        await scheduleContinuation(importId);
+        await deps.continueLater(importId);
         return;
       }
 
@@ -365,7 +418,8 @@ export async function runGmailRecruiterScanJob(importId: string): Promise<void> 
         }
 
         try {
-          const outcome = await processSender(userId, row.payload, accessToken);
+          const outcome = await processSender(userId, row.payload, accessToken, deps);
+          consecutiveFailures = 0;
           if (outcome === "recruiter") found += 1;
           else rejected += 1;
           await db
@@ -376,12 +430,16 @@ export async function runGmailRecruiterScanJob(importId: string): Promise<void> 
             })
             .where(eq(importJobRows.id, row.id));
         } catch (err) {
-          // A dead sender must not kill the scan — record why and move on. Reported
-          // (throttled): a scan where every sender fails is a key or provider problem, and
-          // the row's `errorMessage` is not something anyone is paged about.
+          // The key, not the sender: stop now, row left pending, watermark untouched.
+          const keyProblem = scanAbortReason(err);
+          if (keyProblem) {
+            await failImport(importId, new Error(keyProblem));
+            return;
+          }
+          // A dead sender must not kill the scan — record why and move on.
           const message = err instanceof Error ? err.message : "Classification failed";
-          reportError(err, { where: "job.gmail-scan.sender", level: "warning", extra: { rowId: row.id } });
           rejected += 1;
+          consecutiveFailures += 1;
           await db
             .update(importJobRows)
             .set({
@@ -390,6 +448,12 @@ export async function runGmailRecruiterScanJob(importId: string): Promise<void> 
               updatedAt: new Date(),
             })
             .where(eq(importJobRows.id, row.id));
+          // Unless they keep dying: a streak means the scan as a whole is broken, and
+          // "completing" would advance the watermark past everything it skipped.
+          if (consecutiveFailures >= MAX_CONSECUTIVE_SENDER_FAILURES) {
+            await failImport(importId, new Error(SCAN_CONSECUTIVE_FAILURES_COPY));
+            return;
+          }
         }
         processed += 1;
       }

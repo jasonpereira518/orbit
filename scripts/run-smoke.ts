@@ -172,6 +172,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-embedding-backfill": "pglite",
   "smoke-embedding-writes": "pglite",
   "smoke-entitlements": "pglite",
+  "smoke-gmail-scan-abort": "pglite",
   "smoke-gmail-scope-storage": "pglite",
   "smoke-health": "pglite",
   "smoke-hybrid-search": "pglite",
