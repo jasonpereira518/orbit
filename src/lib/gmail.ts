@@ -190,7 +190,7 @@ export function buildGmailAuthUrl(state: string, purpose: GooglePurpose) {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
 
-type TokenResponse = {
+export type TokenResponse = {
   access_token: string;
   refresh_token?: string;
   expires_in?: number;
@@ -313,6 +313,40 @@ export async function upsertGmailConnection(
 }
 
 /**
+ * Stores a refreshed access token — and only the token.
+ *
+ * A refresh is not a reconnect. `upsertGmailConnection` re-arms calendar sync (resets
+ * `next_sync_at`, `sync_failures`, `sync_error`) because the OAuth callback is the one place
+ * a person proves they want the connection back. Running that on every hourly refresh meant
+ * calendar-sync backoff never converged and a connection the scheduler had disarmed was
+ * re-armed by any unrelated Gmail action. Status is not touched either: a refresh only
+ * happens on an `active` row.
+ *
+ * Google usually omits `refresh_token` on a refresh; when it does rotate one, keep it.
+ */
+export async function storeRefreshedGmailToken(
+  userId: string,
+  tokens: TokenResponse
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(gmailConnections)
+    .set({
+      accessTokenEncrypted: encrypt(tokens.access_token),
+      ...(tokens.refresh_token
+        ? { refreshTokenEncrypted: encrypt(tokens.refresh_token) }
+        : {}),
+      tokenExpiresAt: tokens.expires_in
+        ? new Date(Date.now() + tokens.expires_in * 1000)
+        : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(gmailConnections.userId, userId));
+}
+
+const GMAIL_SESSION_EXPIRED = "Gmail session expired — reconnect";
+
+/**
  * Marks a connection as needing reconnection. Best-effort: health telemetry must never
  * turn a session-expired error into a 500.
  */
@@ -347,7 +381,21 @@ async function touchLastSynced(conn: { id: string; lastSyncedAt: Date | null }) 
   }
 }
 
-export async function getValidAccessToken(userId: string): Promise<string> {
+/**
+ * A usable access token, refreshing when it would expire within `minValidityMs`.
+ *
+ * `minValidityMs` defaults to a minute. A caller that will keep using the token for a
+ * long, time-boxed job (the recruiter scan) asks for its whole budget instead, so the token
+ * cannot expire half-way through a page of fetches.
+ *
+ * A dead grant is thrown as `ReauthRequiredError` itself, not re-wrapped: the sync scheduler
+ * decides retryable-or-not on the class, and a plain `Error` made it retry — re-arming the
+ * row `markNeedsReauth` had just parked.
+ */
+export async function getValidAccessToken(
+  userId: string,
+  opts: { minValidityMs?: number } = {}
+): Promise<string> {
   const db = await getDb();
   // No `status` predicate here on purpose. Filtering it out would make a needs_reauth row
   // invisible and turn a precise "session expired — reconnect" into a wrong
@@ -357,12 +405,13 @@ export async function getValidAccessToken(userId: string): Promise<string> {
   });
   if (!conn) throw new Error("Gmail is not connected");
   if (conn.status !== "active") {
-    throw new Error("Gmail session expired — reconnect");
+    throw new ReauthRequiredError(GMAIL_SESSION_EXPIRED);
   }
 
+  const minValidityMs = opts.minValidityMs ?? 60_000;
   const expiresSoon =
     conn.tokenExpiresAt &&
-    conn.tokenExpiresAt.getTime() < Date.now() + 60_000;
+    conn.tokenExpiresAt.getTime() < Date.now() + minValidityMs;
 
   if (!expiresSoon) {
     await touchLastSynced(conn);
@@ -371,7 +420,7 @@ export async function getValidAccessToken(userId: string): Promise<string> {
 
   if (!conn.refreshTokenEncrypted) {
     await markNeedsReauth(userId);
-    throw new Error("Gmail session expired — reconnect");
+    throw new ReauthRequiredError(GMAIL_SESSION_EXPIRED);
   }
 
   let refreshed;
@@ -380,13 +429,12 @@ export async function getValidAccessToken(userId: string): Promise<string> {
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
       await markNeedsReauth(userId);
-      throw new Error("Gmail session expired — reconnect");
+      throw new ReauthRequiredError(GMAIL_SESSION_EXPIRED);
     }
     throw err;
   }
 
-  // The upsert resets status to "active", which is the only path back from needs_reauth.
-  await upsertGmailConnection(userId, refreshed, conn.emailAddress);
+  await storeRefreshedGmailToken(userId, refreshed);
   await touchLastSynced({ id: conn.id, lastSyncedAt: null });
   return refreshed.access_token;
 }
