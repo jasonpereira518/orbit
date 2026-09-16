@@ -12,50 +12,8 @@ import {
 } from "@/lib/google-scopes";
 
 export { hasGmailReadScope } from "@/lib/google-scopes";
+import { googleFetchWithRetry as gmailFetchWithRetry } from "@/lib/google-fetch";
 
-
-/**
- * Gmail's "Units per minute per user" quota is cost-based, not request-count-based, so a
- * heavy scan can trip it well before any individual endpoint's own rate limit. A 403 for
- * that reason (`rateLimitExceeded` / `quotaExceeded` / `userRateLimitExceeded`, distinct
- * from a genuine permission-denied 403) and any 429 are transient and worth waiting out
- * rather than failing the whole scan.
- */
-const GMAIL_MAX_RETRIES = 5;
-
-async function isRetryableGmailResponse(res: Response): Promise<boolean> {
-  if (res.status === 429) return true;
-  if (res.status !== 403) return false;
-  const text = await res.clone().text();
-  return /rateLimitExceeded|quotaExceeded|userRateLimitExceeded/i.test(text);
-}
-
-/**
- * Wraps `fetch` with exponential backoff (plus jitter) on quota/rate-limit responses,
- * honoring `Retry-After` when Google sends one. A fresh `AbortSignal.timeout` is created
- * per attempt — reusing one across retries would leave later attempts pre-aborted.
- */
-async function gmailFetchWithRetry(
-  url: string | URL,
-  init: { method?: string; headers?: HeadersInit; body?: BodyInit; timeoutMs: number }
-): Promise<Response> {
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
-      method: init.method,
-      headers: init.headers,
-      body: init.body,
-      signal: AbortSignal.timeout(init.timeoutMs),
-    });
-    if (res.ok || attempt >= GMAIL_MAX_RETRIES || !(await isRetryableGmailResponse(res))) {
-      return res;
-    }
-    const retryAfterSeconds = Number(res.headers.get("retry-after"));
-    const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-      ? retryAfterSeconds * 1000
-      : Math.min(30_000, 500 * 2 ** attempt) + Math.random() * 250;
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-}
 
 /**
  * Sending as the user, rather than through Orbit's own Resend domain, is what makes a
@@ -440,9 +398,11 @@ export async function getValidAccessToken(
 }
 
 export async function fetchGoogleProfileEmail(accessToken: string) {
-  const res = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+  const res = await gmailFetchWithRetry("https://www.googleapis.com/oauth2/v2/userinfo", {
     headers: { Authorization: `Bearer ${accessToken}` },
+    timeoutMs: 10_000,
   });
+  // "profile" stays in this message: the callback's classifyOAuthFailure keys on it.
   if (!res.ok) throw new Error("Failed to load Google profile");
   const data = (await res.json()) as { email?: string };
   if (!data.email) throw new Error("Google account has no email");
@@ -486,8 +446,9 @@ export async function fetchGooglePeopleContacts(
     url.searchParams.set("pageSize", "200");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-    const res = await fetch(url, {
+    const res = await gmailFetchWithRetry(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      timeoutMs: 30_000,
     });
     if (!res.ok) {
       const text = await res.text();
@@ -826,6 +787,9 @@ export async function fetchGmailHeaders(
           timeoutMs: 10_000,
         }
       );
+      // A 401 is the session, not the message. Returning null here used to count a whole
+      // page of expired-token failures as "scanned, nothing recruiter-shaped".
+      if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
       if (!res.ok) return null;
       const msg = (await res.json()) as RawGmailMessage;
       const internal = Number(msg.internalDate);
@@ -841,7 +805,8 @@ export async function fetchGmailHeaders(
         listId: headerValue(msg, "List-Id"),
         precedence: headerValue(msg, "Precedence"),
       } satisfies GmailHeaderSummary;
-    } catch {
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
       return null;
     }
   });

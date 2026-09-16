@@ -90,6 +90,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-graph-canvas": "pure",
   "smoke-graph-intro": "pure",
   "smoke-graph-layout": "pure",
+  "smoke-google-fetch": "pure",
   "smoke-google-scopes": "pure",
   "smoke-google-calendar-map": "pure",
   "smoke-graph-positions": "pure",
