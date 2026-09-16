@@ -113,6 +113,16 @@ function main() {
     validateEnv({}, { vercelEnv: undefined }).missingExpected.length === 0 &&
       validateEnv({}, { vercelEnv: "preview" }).missingExpected.length === 0);
 
+  for (const name of [
+    "SLACK_OPS_CRITICAL_WEBHOOK_URL", "BETTERSTACK_HEARTBEAT_URL", "RESEND_WEBHOOK_SECRET",
+    "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI",
+  ]) {
+    check(`${name} is expected in production`, (EXPECTED_IN_PRODUCTION as readonly string[]).includes(name));
+    const r = prod({ [name]: undefined });
+    check(`production without ${name} warns and never errors`,
+      r.errors.length === 0 && r.warnings.some((w) => w.startsWith(name)), r.errors.join("; "));
+  }
+
   const preview = validateEnv(
     { DATABASE_URL: GOOD.DATABASE_URL, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x", CLERK_SECRET_KEY: "sk_test_x", ENCRYPTION_SECRET: GOOD.ENCRYPTION_SECRET },
     { vercelEnv: "preview" }

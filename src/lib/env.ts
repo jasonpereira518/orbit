@@ -42,6 +42,16 @@ export const EXPECTED_IN_PRODUCTION = [
   // Not read by the app at all — it exists so `checkMigrationTarget` below can tell a
   // preview build pointed at its own Neon branch from one pointed at production.
   "PRODUCTION_DB_HOST",
+  // Critical alerts also go here (the channel with push on); unset, criticals only reach #orbit-ops.
+  "SLACK_OPS_CRITICAL_WEBHOOK_URL",
+  // The only detector for a dead scheduler: the sweep pings it, the monitor pages on silence.
+  "BETTERSTACK_HEARTBEAT_URL",
+  // Unset, bounces and complaints are never recorded and a dead address is mailed forever.
+  "RESEND_WEBHOOK_SECRET",
+  // Gmail, Google Contacts and Calendar all ride this one OAuth client.
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
+  "GOOGLE_REDIRECT_URI",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [
