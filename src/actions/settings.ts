@@ -4,13 +4,7 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
-  aiSuggestions,
   contactEmbeddings,
-  contacts,
-  imports,
-  interactions,
-  reminders,
-  tags,
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
@@ -409,41 +403,6 @@ export async function saveSocialLinks(input: {
   return { ok: true };
 }
 
-export async function exportAllData() {
-  const userId = await requireUserId();
-  const db = await getDb();
-
-  const [
-    contactRows,
-    interactionRows,
-    reminderRows,
-    tagRows,
-    importRows,
-    suggestionRows,
-  ] = await Promise.all([
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      with: { contactTags: { with: { tag: true } } },
-    }),
-    db.query.interactions.findMany({ where: eq(interactions.userId, userId) }),
-    db.query.reminders.findMany({ where: eq(reminders.userId, userId) }),
-    db.query.tags.findMany({ where: eq(tags.userId, userId) }),
-    db.query.imports.findMany({ where: eq(imports.userId, userId) }),
-    db.query.aiSuggestions.findMany({
-      where: eq(aiSuggestions.userId, userId),
-    }),
-  ]);
-
-  return {
-    exportedAt: new Date().toISOString(),
-    contacts: contactRows,
-    interactions: interactionRows,
-    reminders: reminderRows,
-    tags: tagRows,
-    imports: importRows,
-    suggestions: suggestionRows,
-  };
-}
 
 /** Row counts per category, for the delete dialog. */
 export async function getDeletableDataFootprint() {
