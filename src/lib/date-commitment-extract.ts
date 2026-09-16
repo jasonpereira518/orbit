@@ -43,6 +43,14 @@ export type RejectedCounts = {
   relative: number;
   unverifiable: number;
   past: number;
+  /**
+   * The unrecognized relative phrases themselves, spelled as the note spells them, deduped
+   * case-insensitively, at most `MAX_REPORTED_PHRASES`. Only a phrase that passed the
+   * verbatim-containment check can be counted as `relative`, so the review can quote these
+   * without ever quoting the model. Optional: capture jobs stored before this field existed
+   * carry counts only.
+   */
+  relativePhrases?: string[];
 };
 
 export type DatedCommitmentResult = {
@@ -51,7 +59,7 @@ export type DatedCommitmentResult = {
 };
 
 export function emptyCommitmentResult(): DatedCommitmentResult {
-  return { commitments: [], rejected: { relative: 0, unverifiable: 0, past: 0 } };
+  return { commitments: [], rejected: { relative: 0, unverifiable: 0, past: 0, relativePhrases: [] } };
 }
 
 const nullTrimmed = z
@@ -129,6 +137,20 @@ const RELATIVE_RE =
 
 function normalizeForMatch(text: string) {
   return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+const MAX_REPORTED_PHRASES = 5;
+
+/** The phrase as the note spells it (case and spacing), or null when it is not there. */
+function spellingInNote(notes: string, phrase: string): string | null {
+  const words = phrase
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!words.length) return null;
+  const match = notes.match(new RegExp(words.join("\\s+"), "i"));
+  return match ? match[0] : null;
 }
 
 type MonthDay = { month: number; day: number; statedYear: number | null };
@@ -237,7 +259,8 @@ export function validateCommitments(
   const anchor = atLocalNoon(opts.anchor ?? today);
   const anchorIso = toIsoDay(anchor);
 
-  const rejected: RejectedCounts = { relative: 0, unverifiable: 0, past: 0 };
+  const relativePhrases: string[] = [];
+  const rejected: RejectedCounts = { relative: 0, unverifiable: 0, past: 0, relativePhrases };
   const commitments: DatedCommitment[] = [];
   const seen = new Set<string>();
 
@@ -267,6 +290,15 @@ export function validateCommitments(
       const rel = resolveRelativeDate(phrase, anchor);
       if (!rel) {
         rejected.relative += 1;
+        // Step 1 above already proved the phrase is in the note; quote the note's spelling.
+        const spelled = spellingInNote(notes, phrase);
+        if (
+          spelled &&
+          relativePhrases.length < MAX_REPORTED_PHRASES &&
+          !relativePhrases.some((p) => p.toLowerCase() === spelled.toLowerCase())
+        ) {
+          relativePhrases.push(spelled);
+        }
         continue;
       }
       resolvedDate = rel.date;

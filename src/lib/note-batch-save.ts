@@ -126,7 +126,14 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
   }
   const db = await getDb();
   const result = emptyNoteBatchResult();
-  result.skipped = { ...input.skipped, duplicate: 0 };
+  // Counts only. The phrase list is review-screen copy that comes back from the client with
+  // the save; the batch result has no use for it and should not store client strings.
+  result.skipped = {
+    relative: input.skipped.relative,
+    unverifiable: input.skipped.unverifiable,
+    past: input.skipped.past,
+    duplicate: 0,
+  };
   if (input.meeting) result.meeting = input.meeting.summary;
   const anchor = isoDayToLocalNoon(input.anchorIso);
   const [batch] = await db
