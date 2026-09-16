@@ -1707,6 +1707,32 @@ export const contactEmbeddings = pgTable(
   ]
 );
 
+/**
+ * Rows the embedding provider refused on their own, after the backfill bisected a failing
+ * batch down to a single text.
+ *
+ * Without a mark, one poison row fails its 200-row batch on every hourly pass forever and
+ * holds 199 healthy rows hostage with it. A profile row is also un-flagged
+ * (`contacts.embedding_stale_at = NULL`), so an edit re-stamps it and it gets another try; a
+ * meeting has no flag, so `PENDING_MEETINGS` in `embedding-backfill.ts` excludes anything
+ * listed here. `failed_at` is the last failure; `error_kind` is `classifyAiError`'s token.
+ * Purged with the `insights` category.
+ */
+export const embeddingFailures = pgTable(
+  "embedding_failures",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceType: text("source_type").$type<"profile" | "meeting">().notNull(),
+    sourceId: text("source_id").notNull(),
+    errorKind: text("error_kind"),
+    failedAt: timestamp("failed_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("embedding_failures_source_uidx").on(t.userId, t.sourceType, t.sourceId),
+  ]
+);
+
 export type RecruiterLinkStatus =
   | "planned"
   | "contacted"

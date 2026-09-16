@@ -24,6 +24,7 @@ import { sql } from "drizzle-orm";
   "imports",
   "ai_suggestions",
   "contact_embeddings",
+  "embedding_failures",
   "calendar_subscriptions",
   "outreach_campaigns",
   "outreach_prospects",

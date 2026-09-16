@@ -352,6 +352,15 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   content text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS embedding_failures (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_type text NOT NULL,
+  source_id text NOT NULL,
+  error_kind text,
+  failed_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS embedding_failures_source_uidx ON embedding_failures(user_id, source_type, source_id);
 CREATE TABLE IF NOT EXISTS contact_profiles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1446,7 +1455,9 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // (webhook dedupe), data_purge_runs (the resumable deletion ledger), and
 // recruiters.created_by_user_id plus user_recruiter_links.email/phone/linkedin_url with
 // their one-time PII backfill in alters.
-export const SCHEMA_VERSION = 59;
+// 60 = embedding_failures, the backfill's mark for rows the provider refused on their
+// own, so one poison row stops failing its batch every hour (launch phase 3a).
+export const SCHEMA_VERSION = 60;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a

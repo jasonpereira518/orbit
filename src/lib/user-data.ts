@@ -29,6 +29,7 @@ import {
   contactTags,
   dataPurgeRuns,
   duplicateSuggestions,
+  embeddingFailures,
   errorEvents,
   eventAliases,
   eventAttendees,
@@ -179,6 +180,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id")],
     counts: [aiSuggestions, contactEmbeddings, closenessCohorts],
     run: async (db, userId) => {
+      await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, userId));
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
       await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));

@@ -329,6 +329,13 @@ async function seed() {
     content: "embedded note content",
   });
 
+  await db.insert(schema.embeddingFailures).values({
+    userId: USER,
+    sourceType: "meeting",
+    sourceId: `cal:evt-unembeddable:${contact.id}`,
+    errorKind: "other",
+  });
+
   const [recruiter] = await db
     .insert(schema.recruiters)
     .values({ fullName: "Rec Ruiter", nameNormalized: "rec ruiter" })
