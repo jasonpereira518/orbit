@@ -73,6 +73,7 @@ export type HealthCode =
   | "ai.no_embedding_key"
   | "connection.gmail"
   | "connection.outlook"
+  | "connection.google_calendar"
   | "calendar.sync_error"
   | "import.failed"
   | "import.stalled"
@@ -108,6 +109,12 @@ export type HealthInput = {
   /** null = no connection at all, or OAuth is unconfigured on this deployment. */
   gmail: ConnectionFacts | null;
   outlook: ConnectionFacts | null;
+  /**
+   * Google Calendar sync, only when the grant includes the calendar scope. Null for no
+   * connection, no OAuth app, or a grant without calendar — a sync the user never asked
+   * for being parked is not something to alert about.
+   */
+  googleCalendar: { paused: boolean; reason: string | null } | null;
 
   calendarErrorCount: number;
   calendarErrorLabel: string | null;
@@ -234,6 +241,17 @@ export function evaluateAccountHealth(
     }
   }
 
+  // --- Google Calendar sync -----------------------------------------------------------
+  // Only on a healthy grant: a dead one already raises `connection.gmail`, and two alerts
+  // for one reconnect is noise. `warn`, not `error` — calendar is one input among many.
+  if (input.googleCalendar?.paused && input.gmail?.status === "active") {
+    findings.push({
+      code: "connection.google_calendar",
+      severity: "warn",
+      data: { reason: truncate(input.googleCalendar.reason) },
+    });
+  }
+
   // --- Calendar feeds -----------------------------------------------------------------
   // `warn`, not `error` as the admin inspector has it. `lastSyncStatus` is sticky until the
   // next SUCCESSFUL sync, so one transient ICS 503 would otherwise pin a red dot on the
@@ -354,7 +372,8 @@ const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
 /**
  * Non-dismissible, and why each one has to be:
  *   `ai.no_key` / `ai.no_embedding_key` — every AI feature is dark until a key exists.
- *   `connection.gmail` / `connection.outlook` — sync and mailbox scans stay paused.
+ *   `connection.gmail` / `connection.outlook` / `connection.google_calendar` — sync and
+ *     mailbox scans stay paused.
  *   `plan.contact_cap_reached` — no new contacts can be created at all.
  *   `billing.past_due` — see the note above.
  */
@@ -367,6 +386,7 @@ const KIND_BY_CODE: Record<HealthCode, AccountAlertKind> = {
   "ai.no_embedding_key": "ai_key",
   "connection.gmail": "connection",
   "connection.outlook": "connection",
+  "connection.google_calendar": "connection",
   "calendar.sync_error": "calendar",
   "import.failed": "import",
   "import.stalled": "import",
@@ -395,6 +415,7 @@ const CODE_RANK: HealthCode[] = [
   "ai.no_embedding_key",
   "connection.gmail",
   "connection.outlook",
+  "connection.google_calendar",
   "billing.past_due",
   "plan.contact_cap_reached",
   "plan.contact_cap_near",
@@ -472,6 +493,17 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
                 : "/imports#import-outlook-contacts",
             external: false,
           },
+          surfaceKey: "page.imports",
+        });
+        break;
+      }
+
+      case "connection.google_calendar": {
+        alerts.push({
+          ...base,
+          title: "Calendar sync is paused",
+          body: "New meetings aren’t reaching Orbit. Reconnect Google to start calendar sync again.",
+          cta: { label: "Reconnect", href: "/imports#import-google-contacts", external: false },
           surfaceKey: "page.imports",
         });
         break;
