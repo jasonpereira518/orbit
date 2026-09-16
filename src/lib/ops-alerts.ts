@@ -40,7 +40,11 @@ export type OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: Date | null; lastState: CronRunState | null };
     syncRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** The outbound webhook drain (`/api/webhooks/outbound/drain`), every ten minutes. */
+    drain: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
+  /** The last PARTIAL_STREAK process-stalled states, newest first. */
+  processStalledRecent: CronRunState[];
   /** Most recent delivery outcomes per source, newest first. */
   webhooks: { clerk: WebhookOutcome[]; stripe: WebhookOutcome[]; resend: WebhookOutcome[] };
   stripeCheckoutErrorsLastHour: number;
@@ -74,6 +78,7 @@ export const REMIND_AFTER_MS: Record<OpsSeverity, number | null> = {
 };
 
 const WEBHOOK_STREAK = 3;
+export const PARTIAL_STREAK = 3;
 const FAILED_IMPORT_BURST = 3;
 const ERROR_BURST = 5;
 const PERF_SLOW_BURST = 3;
@@ -111,6 +116,30 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Nightly job ${cron.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${cron.lastStartedAt?.toISOString() ?? "unknown"} ended ${cron.lastState}.`,
+      href: "/admin/health",
+    });
+  } else if (
+    s.processStalledRecent.length >= PARTIAL_STREAK &&
+    s.processStalledRecent.slice(0, PARTIAL_STREAK).every((state) => state === "partial")
+  ) {
+    out.push({
+      id: "cron.partial_streak",
+      severity: "warning",
+      title: "Nightly job keeps finishing partial",
+      detail: `The last ${PARTIAL_STREAK} runs ended partial — one housekeeping step is failing every time. The run stats on /admin/health show which counter stopped moving.`,
+      href: "/admin/health",
+    });
+  }
+
+  // The drain's own `partial` means customer endpoints refused deliveries, which is theirs to
+  // fix; `failed`/`stale` means the drain itself broke and nothing is being retried.
+  const drain = s.cron.drain;
+  if (drain.lastState === "failed" || drain.lastState === "stale") {
+    out.push({
+      id: "drain.failed",
+      severity: "warning",
+      title: `Outbound webhook drain ${drain.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${drain.lastStartedAt?.toISOString() ?? "unknown"} ended ${drain.lastState}; customer webhooks are not being retried.`,
       href: "/admin/health",
     });
   }

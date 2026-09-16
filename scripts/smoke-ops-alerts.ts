@@ -34,6 +34,7 @@ const HEALTHY: OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: hoursAgo(2), lastState: "ok" },
     syncRun: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    drain: { lastStartedAt: hoursAgo(0.2), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
@@ -51,6 +52,7 @@ const HEALTHY: OpsSnapshot = {
   wedgedSyncs: 0,
   failingSyncs: 0,
   stuckPurges: 0,
+  processStalledRecent: ["ok"],
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -68,6 +70,19 @@ function main() {
     Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: hoursAgo(2), lastState: "failed" } } }, "cron.failed")));
   check("cron last run stale (killed) → cron.failed",
     Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: hoursAgo(2), lastState: "stale" } } }, "cron.failed")));
+
+  check("three partial nightly runs in a row → cron.partial_streak (warning)",
+    find({ ...HEALTHY, processStalledRecent: ["partial", "partial", "partial"] }, "cron.partial_streak")?.severity === "warning");
+  check("two partials then an ok is not a streak",
+    !find({ ...HEALTHY, processStalledRecent: ["partial", "partial", "ok"] }, "cron.partial_streak"));
+  check("only two runs recorded is not yet a streak",
+    !find({ ...HEALTHY, processStalledRecent: ["partial", "partial"] }, "cron.partial_streak"));
+  check("a failed drain → drain.failed",
+    find({ ...HEALTHY, cron: { ...HEALTHY.cron, drain: { lastStartedAt: hoursAgo(0.1), lastState: "failed" } } }, "drain.failed")?.severity === "warning");
+  check("a killed drain → drain.failed",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, drain: { lastStartedAt: hoursAgo(1), lastState: "stale" } } }, "drain.failed")));
+  check("a partial drain (customer endpoints refusing) is not drain.failed",
+    !find({ ...HEALTHY, cron: { ...HEALTHY.cron, drain: { lastStartedAt: hoursAgo(0.1), lastState: "partial" } } }, "drain.failed"));
 
   // Connector sync. Its freshness window is its own (3h), not the nightly job's 25h — a job
   // that should run every fifteen minutes must not be able to go a full day unnoticed.

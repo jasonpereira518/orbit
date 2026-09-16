@@ -12,6 +12,7 @@ import { deriveCronRunState, finishCronRun, startCronRun, type CronRunStatus } f
 import { getEnvReport } from "@/lib/env";
 import { ERROR_SOURCES } from "@/lib/error-events";
 import {
+  PARTIAL_STREAK,
   evaluateOpsConditions,
   planTransitions,
   type OpsAlertRow,
@@ -54,13 +55,14 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     aiGroups,
     errorsLastHour,
     failedImports,
+    lastDrain,
   ] = await Promise.all([
       db
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "imports.process-stalled"))
         .orderBy(desc(cronRuns.startedAt))
-        .limit(1),
+        .limit(PARTIAL_STREAK),
       db
         .select()
         .from(cronRuns)
@@ -80,6 +82,12 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select({ n: sql<number>`count(*)::int` })
         .from(imports)
         .where(and(eq(imports.status, "failed"), gt(imports.updatedAt, dayAgo))),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "webhooks.drain"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
     ]);
 
   const [stuckPurgeRow] = await db
@@ -107,6 +115,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
 
   const nightly = lastNightly[0];
   const syncRun = lastSyncRun[0];
+  const drainRun = lastDrain[0];
   return {
     cron: {
       processStalled: {
@@ -117,7 +126,12 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         lastStartedAt: syncRun?.startedAt ?? null,
         lastState: syncRun ? deriveCronRunState(syncRun, now) : null,
       },
+      drain: {
+        lastStartedAt: drainRun?.startedAt ?? null,
+        lastState: drainRun ? deriveCronRunState(drainRun, now) : null,
+      },
     },
+    processStalledRecent: lastNightly.map((r) => deriveCronRunState(r, now)),
     webhooks,
     stripeCheckoutErrorsLastHour: stripeCheckout,
     resendRejectedLastHour: resendRejected,
