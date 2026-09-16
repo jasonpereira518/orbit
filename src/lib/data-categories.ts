@@ -203,3 +203,21 @@ export function planPurgeSteps(
   if (selected.has("preferences")) steps.push("preferences");
   return steps;
 }
+
+export type DisconnectProvider = "gmail" | "outlook";
+
+/**
+ * What "Also delete what Orbit imported from this account" deletes, as whole categories
+ * from the registry above, so the dialog can show each one's own label and description.
+ * Only categories an account actually fills and that stay within it: Gmail feeds the
+ * recruiter scan; Outlook feeds only contacts, and the `contacts` category is every contact.
+ */
+export const DISCONNECT_DELETE_CATEGORIES: Readonly<
+  Record<DisconnectProvider, readonly DataCategory[]>
+> = {
+  gmail: ["recruiters"],
+  outlook: [],
+};
+
+/** Where a user removes Orbit's Outlook access themselves (no app-side revoke exists). */
+export const MICROSOFT_ACCOUNT_URL = "https://myaccount.microsoft.com/";

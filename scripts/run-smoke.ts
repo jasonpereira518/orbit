@@ -71,6 +71,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-constellation-match": "pure",
   "smoke-contact-profile-format": "pure",
   "smoke-contacts-file": "pure",
+  "smoke-disconnect-categories": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
   "smoke-dev-logging": "pure",

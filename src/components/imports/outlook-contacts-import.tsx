@@ -10,6 +10,7 @@ import {
 } from "@/actions/outlook";
 import { previewOutlookContacts, type OutlookContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
@@ -167,12 +168,12 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
               >
                 {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
               </Button>
-              <Button
-                variant="outline"
+              <DisconnectAccountDialog
+                provider="outlook"
                 disabled={busy}
-                onClick={() =>
+                onConfirm={(opts) =>
                   start(async () => {
-                    await disconnectOutlook();
+                    await disconnectOutlook(opts);
                     setPeople([]);
                     setLoaded(false);
                     setStatus(null);
@@ -181,9 +182,7 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
                     getOutlookConnectionStatus().then(setStatus).catch(() => {});
                   })
                 }
-              >
-                Disconnect
-              </Button>
+              />
             </>
           )}
         </div>

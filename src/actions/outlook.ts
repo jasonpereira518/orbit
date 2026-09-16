@@ -2,6 +2,9 @@
 
 import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
+import { purgeUserData } from "@/lib/user-data";
+import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { getDb } from "@/db";
 import { outlookConnections } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
@@ -70,10 +73,20 @@ export async function startOutlookOAuth(returnTo?: string): Promise<{ url: strin
   return { url: buildMicrosoftAuthUrl(state) };
 }
 
-export async function disconnectOutlook() {
+/**
+ * Deleting the row is all Orbit can do: Microsoft has no endpoint that revokes one app's
+ * delegated token (`revokeSignInSessions` would sign the user out of every app). The
+ * disconnect dialog links the user to their Microsoft account to remove the grant there.
+ */
+export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
   const db = await getDb();
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+  const extra = DISCONNECT_DELETE_CATEGORIES.outlook;
+  if (opts.alsoDelete === true && extra.length > 0) {
+    await purgeUserData(userId, { only: extra });
+  }
+  revalidatePath("/settings");
 }
 
 export async function consumeOutlookOAuthState(

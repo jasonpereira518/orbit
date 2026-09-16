@@ -10,6 +10,7 @@ import {
 } from "@/actions/gmail";
 import { previewGoogleContacts, type GoogleContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
@@ -183,23 +184,21 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
               >
                 {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
               </Button>
-              <Button
-                variant="outline"
+              <DisconnectAccountDialog
+                provider="gmail"
                 disabled={busy}
-                onClick={() =>
+                onConfirm={(opts) =>
                   start(async () => {
-                    await disconnectGmail();
+                    await disconnectGmail(opts);
                     setPeople([]);
                     setLoaded(false);
                     setStatus(null);
-                    toast.success("Google disconnected");
+                    toast.success(opts.alsoDelete ? "Google disconnected and its recruiter data deleted" : "Google disconnected");
                     router.refresh();
                     getGmailConnectionStatus().then(setStatus).catch(() => {});
                   })
                 }
-              >
-                Disconnect
-              </Button>
+              />
             </>
           )}
         </div>

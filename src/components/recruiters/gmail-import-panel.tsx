@@ -18,6 +18,7 @@ import {
   updateBackgroundJob,
 } from "@/lib/background-jobs";
 import { Button } from "@/components/ui/button";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { toast } from "@/lib/toast";
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -251,20 +252,18 @@ export function GmailImportPanel({
               >
                 {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
               </Button>
-              <Button
-                variant="outline"
+              <DisconnectAccountDialog
+                provider="gmail"
                 disabled={pending || running}
-                onClick={() =>
+                onConfirm={(opts) =>
                   start(async () => {
-                    await disconnectGmail();
+                    await disconnectGmail(opts);
                     setScan(null);
-                    toast.success("Gmail disconnected");
+                    toast.success(opts.alsoDelete ? "Gmail disconnected and its recruiter data deleted" : "Gmail disconnected");
                     router.refresh();
                   })
                 }
-              >
-                Disconnect
-              </Button>
+              />
             </>
           )}
         </div>

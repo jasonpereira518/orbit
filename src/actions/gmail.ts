@@ -22,6 +22,8 @@ import {
 } from "@/lib/gmail";
 import { isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { purgeUserData } from "@/lib/user-data";
+import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
@@ -117,7 +119,7 @@ export async function startGmailOAuth(input: {
   return { url: buildGmailAuthUrl(state, input.purpose) };
 }
 
-export async function disconnectGmail() {
+export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
   const db = await getDb();
   const grant = await db.query.gmailConnections.findFirst({
@@ -127,6 +129,9 @@ export async function disconnectGmail() {
   // Row first: the disconnect is done even if Google never answers.
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
   if (grant) await revokeGoogleGrant(grant);
+  if (opts.alsoDelete === true) {
+    await purgeUserData(userId, { only: DISCONNECT_DELETE_CATEGORIES.gmail });
+  }
   revalidatePath("/recruiters");
 }
 
