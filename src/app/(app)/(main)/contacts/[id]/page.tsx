@@ -364,6 +364,7 @@ export default async function ContactDetailPage({
           contactId={contact.id}
           contactName={displayName}
           nextFollowUpAt={contact.nextFollowUpAt}
+          keepInTouchDays={contact.keepInTouchDays}
           phone={contact.phone}
         />
       </Suspense>
@@ -420,6 +421,7 @@ async function StreamedFollowUp({
   contactId: string;
   contactName: string;
   nextFollowUpAt: Date | string | null;
+  keepInTouchDays: number | null;
   phone: string | null;
 }) {
   const resolved = await sendOptions;

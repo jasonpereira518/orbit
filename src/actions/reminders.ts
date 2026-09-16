@@ -14,6 +14,7 @@ import { listActiveGoalTexts } from "@/actions/goals";
 import { parseDueDateInput } from "@/lib/dates";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
+import { normalizeCadence } from "@/lib/keep-in-touch";
 import {
   inferReminderActionKind,
   isReminderActionKind,
@@ -635,6 +636,37 @@ export async function scheduleContactFollowUpAt(
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
   return { reminder: row, dueDate: due.toISOString() };
+}
+
+/**
+ * Set or clear how often the user wants to speak to this contact.
+ *
+ * Pass null to clear. Deliberately does NOT schedule a follow-up: a cadence is a standing
+ * preference, and materializing it into a `next_follow_up_at` would make the contact
+ * ineligible for the very suggestion the cadence exists to produce (`isDiscoveryEligible`
+ * treats a booked follow-up as "already covered"). The due date stays derived — see
+ * `keepInTouchDue` in `@/lib/keep-in-touch`.
+ */
+export async function setKeepInTouchCadence(
+  contactId: string,
+  days: number | null
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  // Anything unusable collapses to "no cadence" rather than throwing: this is a preference
+  // control, and a bad value is better cleared than left half-set. `normalizeCadence` also
+  // rejects zero and negatives, which would otherwise make a contact permanently overdue.
+  const cadence = days === null ? null : normalizeCadence(days);
+
+  await db
+    .update(contacts)
+    .set({ keepInTouchDays: cadence, updatedAt: new Date() })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+
+  revalidateReminderPaths(contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  return { keepInTouchDays: cadence };
 }
 
 export async function clearContactFollowUp(contactId: string) {

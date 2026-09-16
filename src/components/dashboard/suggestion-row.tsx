@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 
 const REASON_LABELS: Record<string, string> = {
   awaiting_reply: "No reply yet",
+  keep_in_touch: "Keep in touch",
   dormant_high_value: "Dormant",
   linkedin_thread_quiet: "LinkedIn quiet",
   post_event: "Post-event",
@@ -24,6 +25,7 @@ const REASON_LABELS: Record<string, string> = {
 
 const REASON_STYLES: Record<string, string> = {
   awaiting_reply: "bg-rose-500/15 text-rose-800 dark:text-rose-200",
+  keep_in_touch: "bg-teal-500/15 text-teal-800 dark:text-teal-200",
   dormant_high_value: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
   linkedin_thread_quiet: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
   post_event: "bg-violet-500/15 text-violet-800 dark:text-violet-200",

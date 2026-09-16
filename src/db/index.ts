@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   last_interaction_at timestamptz,
   next_follow_up_at timestamptz,
   follow_up_status text DEFAULT 'none',
+  keep_in_touch_days integer,
   ai_summary text,
   notes text,
   embedding_stale_at timestamptz,
@@ -1086,8 +1087,13 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * (provenance, so a revert deletes exactly what the import inserted), imports.reverted_at
  * and .revert_stats. None of the three can be backfilled, so imports that finished before
  * this version stay unrevertible by construction.
+ *
+ * v35 = contacts.keep_in_touch_days: a per-contact interval the user states themselves,
+ * nullable because "never said" is not "never". Nothing to backfill — there is no existing
+ * signal that means the same thing, and inferring one from past interaction spacing would
+ * invent an intent the user never expressed.
  */
-export const SCHEMA_VERSION = 34;
+export const SCHEMA_VERSION = 35;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1524,6 +1530,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interactions", "external_id", "text");
   await ensureColumn(client, "interactions", "direction", "text");
   await ensureColumn(client, "contacts", "constellation_pin", "text");
+  await ensureColumn(client, "contacts", "keep_in_touch_days", "integer");
   await ensureColumn(
     client,
     "interactions",
@@ -2121,6 +2128,7 @@ const alters = [
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS resolution_note text`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS keep_in_touch_days integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS shared_to_pool integer NOT NULL DEFAULT 1`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,

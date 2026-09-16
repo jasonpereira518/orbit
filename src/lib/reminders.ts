@@ -12,6 +12,7 @@ import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
 import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
+import { keepInTouchDescription, keepInTouchDue } from "@/lib/keep-in-touch";
 import {
   buildConstellationClusters,
   toNamedGraphClusters,
@@ -28,6 +29,7 @@ const AUTO_SUGGESTION_TYPES = [
   "post_event",
   "linkedin_thread_quiet",
   "awaiting_reply",
+  "keep_in_touch",
 ] as const;
 
 const MAX_AUTO_SUGGESTIONS = 12;
@@ -43,6 +45,11 @@ const MAX_AUTO_SUGGESTIONS = 12;
 const GRAPH_PREVIEW_CONTACT_CAP = 150;
 
 const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
+  // Top of the order, because it is the only one the user stated rather than Orbit inferred.
+  // It rarely competes with `awaiting_reply` in practice — a contact you just reached out to
+  // has a recent `last_interaction_at`, so their cadence is not yet due — but where a short
+  // cadence and an unanswered message do collide, see the comment below.
+  keep_in_touch: 5,
   // Above post_event: an unanswered message names a specific thing the user did and a
   // specific decision to make about it, where the others describe a state of the
   // relationship. It is also the only one with a closing window — past 30 days
@@ -123,6 +130,7 @@ async function buildOutreachSuggestions(userId: string) {
       lastInteractionAt: true,
       firstInteractionAt: true,
       nextFollowUpAt: true,
+      keepInTouchDays: true,
       // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
       // an optional field here would let a caller forget the column and quietly never
       // suppress anything, with nothing failing to say so.
@@ -212,9 +220,40 @@ async function buildOutreachSuggestions(userId: string) {
     });
   }
 
+  // Who is past the interval their user set for them.
+  //
+  // Ranked above `awaiting_reply` deliberately: if somebody set a two-week cadence and the
+  // last thing on the record is a message they sent nine days ago, "you wanted to speak
+  // every two weeks and it has been sixteen days" is the more useful sentence — it carries
+  // the reason they will act on. The nudge to write again is implied by it.
+  for (const { contactId, cadenceDays, daysSince } of keepInTouchDue(
+    all.map((c) => ({
+      contactId: c.id,
+      keepInTouchDays: c.keepInTouchDays,
+      lastInteractionAt: c.lastInteractionAt,
+    }))
+  )) {
+    const c = byId.get(contactId);
+    if (!c || !isDiscoveryEligible(c)) continue;
+    upsertCandidate(c.id, {
+      suggestionType: "keep_in_touch",
+      title: `Check in with ${contactDisplayName(c)}`,
+      description: keepInTouchDescription(cadenceDays, daysSince),
+      relatedContactIds: [c.id],
+      confidenceScore: 90,
+    });
+  }
+
   const dormantHighValue = all.filter(
     (c) =>
       isDiscoveryEligible(c) &&
+      // A cadence is the user's own answer to "how often should I speak to this person",
+      // so the guess does not get a second vote. Without this, the mentor they deliberately
+      // set to yearly is "gone quiet" for nine months of every twelve — and a queue that
+      // nags about a decision the user already made is one they learn to stop reading.
+      // Note this suppresses dormancy even when the cadence IS due, because the
+      // `keep_in_touch` row above already covers that contact and says it better.
+      c.keepInTouchDays == null &&
       (c.priorityLevel >= 2 || c.relationshipScore >= 4) &&
       daysAgo(c.lastInteractionAt) >= 30
   );

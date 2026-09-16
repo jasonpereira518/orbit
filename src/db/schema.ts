@@ -336,6 +336,20 @@ export const contacts = pgTable(
     lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
     nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
     followUpStatus: text("follow_up_status").default("none"),
+    /**
+     * How often the user wants to speak to this person, in days. NULL — the default — means
+     * they never said, which is different from "never": a cadence is a statement of intent,
+     * and the absence of one is not an interval of infinity.
+     *
+     * Deliberately a plain interval rather than a next-due timestamp. A timestamp would have
+     * to be recomputed on every logged interaction, and would drift out of step with
+     * `last_interaction_at` the moment one write succeeded and the other did not. Storing the
+     * interval keeps the due date derived — see `keepInTouchDue` in `@/lib/keep-in-touch`.
+     *
+     * Setting one also suppresses the `dormant_high_value` heuristic for this contact:
+     * having been told how often, Orbit does not also guess.
+     */
+    keepInTouchDays: integer("keep_in_touch_days"),
     aiSummary: text("ai_summary"),
     notes: text("notes"),
 

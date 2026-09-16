@@ -28,6 +28,7 @@ import {
   completeFollowUpWithTouch,
   scheduleContactFollowUp,
   scheduleContactFollowUpAt,
+  setKeepInTouchCadence,
 } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +39,7 @@ import {
 } from "@/components/ui/card";
 import { DatePickerButton, toLocalYmd } from "@/components/ui/date-picker";
 import { Textarea } from "@/components/ui/textarea";
+import { KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
@@ -69,6 +71,7 @@ export function ContactFollowUpSection({
   contactId,
   contactName,
   nextFollowUpAt,
+  keepInTouchDays,
   sendOptions,
   phone,
   initialIntent,
@@ -77,6 +80,8 @@ export function ContactFollowUpSection({
   contactId: string;
   contactName: string;
   nextFollowUpAt?: string | Date | null;
+  /** The interval the user set for this contact, or null if they never did. */
+  keepInTouchDays?: number | null;
   sendOptions: ContactFollowUpSendOptions;
   phone?: string | null;
   /** Prefill intent for intro/reach-out drafts (e.g. related person). */
@@ -93,6 +98,11 @@ export function ContactFollowUpSection({
   const [sending, startSend] = useTransition();
   const [marking, startMark] = useTransition();
   const [scheduling, startSchedule] = useTransition();
+  const [cadencePending, startCadence] = useTransition();
+  // Optimistic, because the whole control is four buttons and a round-trip through
+  // `router.refresh()` is long enough to make a click feel dropped. Reset from the prop on
+  // failure so a rejected write cannot leave the UI claiming a cadence that was not saved.
+  const [cadence, setCadence] = useState<number | null>(keepInTouchDays ?? null);
 
   const scheduledYmd = dueYmd(nextFollowUpAt);
   const dueLabel = nextFollowUpAt
@@ -138,6 +148,28 @@ export function ContactFollowUpSection({
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Could not set reminder"
+        );
+      }
+    });
+  }
+
+  function saveCadence(days: number | null) {
+    const previous = cadence;
+    setCadence(days);
+    startCadence(async () => {
+      try {
+        const result = await setKeepInTouchCadence(contactId, days);
+        setCadence(result.keepInTouchDays);
+        toast.success(
+          result.keepInTouchDays
+            ? `Keeping in touch — every ${result.keepInTouchDays} days`
+            : "Cadence cleared"
+        );
+        router.refresh();
+      } catch (err) {
+        setCadence(previous);
+        toast.error(
+          err instanceof Error ? err.message : "Could not save cadence"
         );
       }
     });
@@ -309,6 +341,43 @@ export function ContactFollowUpSection({
               </Button>
             ) : null}
           </div>
+        </div>
+
+        <div>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              Keep in touch
+            </p>
+            {cadence ? null : (
+              <p className="text-xs text-muted-foreground">Not set</p>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {KEEP_IN_TOUCH_PRESETS.map((preset) => {
+              const active = cadence === preset.days;
+              return (
+                <Button
+                  key={preset.days}
+                  type="button"
+                  size="sm"
+                  variant={active ? "default" : "outline"}
+                  disabled={cadencePending}
+                  className="h-8 px-2.5"
+                  // Clicking the active interval turns it off, so the control needs no
+                  // separate "off" button competing with the four that mean something.
+                  aria-pressed={active}
+                  onClick={() => saveCadence(active ? null : preset.days)}
+                >
+                  {preset.label}
+                </Button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {cadence
+              ? "Orbit will remind you when it has been this long — and will stop guessing on its own."
+              : "Set an interval and Orbit will surface this contact when it lapses."}
+          </p>
         </div>
 
         <div>

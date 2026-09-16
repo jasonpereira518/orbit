@@ -108,6 +108,12 @@ type Person = {
   sharedInterests?: string[];
   tags?: string[];
   touches?: Touch[];
+  /**
+   * How often the user says they want to speak to this person, in days. Distinct from
+   * `followUpInDays`, which is one dated reminder: a cadence is a standing interval, and
+   * setting one tells Orbit to stop applying the dormancy guess to this contact.
+   */
+  cadenceDays?: number;
   /** Days: negative = overdue, positive = upcoming, undefined = no follow-up set. */
   followUpInDays?: number;
   /** A reminder row, so the Reminders page and the bell are not empty. */
@@ -446,6 +452,10 @@ const PEOPLE: Person[] = [
         notes: "Met after her panel at the design systems meetup. Swapped contacts.",
       },
     ],
+    // Lapsed quarterly. She is the case cadences exist for: closeness 2 and no priority, so
+    // no heuristic here would ever surface her, and the user would simply forget the person
+    // who offered to refer people.
+    cadenceDays: 90,
   },
   {
     fullName: "Ben Carter",
@@ -517,6 +527,10 @@ const PEOPLE: Person[] = [
     notes:
       "Asked the sharpest question after my talk and we kept talking in the hallway. Time zones make this a slow relationship.",
     tags: ["Engineering"],
+    // Yearly, and at 320 days deliberately NOT due — the seed's demonstration that a cadence
+    // buys silence as well as nudges. "Time zones make this a slow relationship" is the user
+    // saying so; a 30-day dormancy guess would talk over them.
+    cadenceDays: 365,
     touches: [
       {
         at: 320,
@@ -834,6 +848,7 @@ async function main() {
       sharedInterests: p.sharedInterests ?? [],
       firstInteractionAt: firstAt,
       lastInteractionAt: lastAt,
+      keepInTouchDays: p.cadenceDays ?? null,
       nextFollowUpAt:
         p.followUpInDays == null ? null : ahead(p.followUpInDays),
       followUpStatus: p.followUpInDays == null ? "none" : "pending",
