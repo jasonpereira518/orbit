@@ -9,7 +9,9 @@
 #
 # Secrets: DATABASE_URL (the production Neon URL, direct host, not -pooler),
 # BACKUP_AGE_PUBLIC_KEY (an age recipient, `age1...`; keep the matching private key
-# somewhere safe and OFF GitHub), SLACK_OPS_CRITICAL_WEBHOOK_URL (optional; pages on failure).
+# somewhere safe and OFF GitHub), SLACK_OPS_CRITICAL_WEBHOOK_URL (optional; pages on failure),
+# BETTERSTACK_BACKUP_HEARTBEAT_URL (optional; pinged after each stored dump — Better Stack pages
+# when none arrives for 36 h).
 #
 # It fails LOUDLY. Every run from Sep 6 to Sep 15 2026 failed and nobody heard: both secrets
 # were empty (an empty key read as `age: unknown recipient type ""`), and behind that the
@@ -96,6 +98,18 @@ jobs:
           path: orbit-*.pgc.age
           retention-days: 90
           if-no-files-found: error
+      # Only reached when every step above succeeded, so a ping means a dump was stored.
+      # Better Stack alerts when none arrives for 36 h: that is `backup.stale`, and it is the
+      # one signal that still works when this workflow stops running altogether.
+      - name: Tell Better Stack the backup landed
+        run: |
+          if [ -z "$BETTERSTACK_BACKUP_HEARTBEAT_URL" ]; then
+            echo "BETTERSTACK_BACKUP_HEARTBEAT_URL not set, skipping"
+            exit 0
+          fi
+          curl -sS --max-time 10 "$BETTERSTACK_BACKUP_HEARTBEAT_URL" > /dev/null || echo "heartbeat ping did not go through; Better Stack will notice the gap"
+        env:
+          BETTERSTACK_BACKUP_HEARTBEAT_URL: ${{ secrets.BETTERSTACK_BACKUP_HEARTBEAT_URL }}
       - name: Page on a failed backup
         if: failure()
         run: |

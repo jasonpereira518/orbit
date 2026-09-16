@@ -7,6 +7,7 @@ What to do when something is wrong, and how the routine things are done. Short o
 | Signal | Where |
 |---|---|
 | Something is down | Better Stack monitor on `/api/health` → `#orbit-ops-critical` |
+| Backups stopped (`backup.stale`) | Better Stack heartbeat "orbit backup" (36 h without a ping) → `#orbit-ops-critical`; then GitHub → Actions → `backup` |
 | A known condition opened / recovered | ops sweep → `#orbit-ops` (critical also → `#orbit-ops-critical`) |
 | An exception nobody anticipated | Sentry (linked from `/admin/health`) |
 | What is open right now | `/admin/health` → System status strip and Open alerts |

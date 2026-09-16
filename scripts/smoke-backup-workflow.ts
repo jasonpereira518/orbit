@@ -74,6 +74,21 @@ check("…and puts the pinned client's bin directory first on PATH", install.inc
 check("the dump proves pg_dump is the pinned major before dumping",
   dump.includes("pg_dump --version") && dump.includes("$PG_MAJOR") && dump.indexOf("pg_dump --version") < dump.indexOf("pg_dump --format"));
 
+console.log("\nA stored backup pings its own heartbeat (backup.stale is Better Stack's job)");
+const beatAt = src.indexOf("- name: Tell Better Stack the backup landed");
+const beat = stepAt(beatAt);
+check("a heartbeat step exists", beatAt !== -1);
+check("…after the upload, so it means a dump was stored", uploadAt !== -1 && beatAt > uploadAt, `${uploadAt} ${beatAt}`);
+check("…before the failure page, which stays last", pageAt > beatAt);
+check("…runs only on success (no if: always()/failure())", !/\bif:/.test(beat));
+check("…reads BETTERSTACK_BACKUP_HEARTBEAT_URL from secrets",
+  beat.includes("secrets.BETTERSTACK_BACKUP_HEARTBEAT_URL") && beat.includes('"$BETTERSTACK_BACKUP_HEARTBEAT_URL"'));
+check("…skips quietly when the secret is unset",
+  beat.includes('[ -z "$BETTERSTACK_BACKUP_HEARTBEAT_URL" ]') && beat.includes("exit 0"));
+check("…and can never fail the job (a Better Stack outage is not a failed backup)",
+  beat.includes("--max-time") && beat.includes("|| echo"));
+check("the header names the secret", src.slice(0, src.indexOf("name: backup")).includes("BETTERSTACK_BACKUP_HEARTBEAT_URL"));
+
 console.log("\nThe schedule is unchanged");
 check("still daily", src.includes('cron: "0 6 * * *"'));
 check("still runnable by hand", src.includes("workflow_dispatch:"));
