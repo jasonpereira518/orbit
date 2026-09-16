@@ -17,6 +17,8 @@ import {
   LIFETIME_INTRO_SEATS,
   LIFETIME_STANDARD_PRICE,
 } from "@/lib/plan-limits";
+import { LEGAL_LAST_UPDATED } from "@/lib/legal";
+import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 
 export const metadata: Metadata = {
   title: "Terms of Service — Orbit",
@@ -24,7 +26,7 @@ export const metadata: Metadata = {
     "The agreement covering your use of Orbit: what you can expect from the product, and what it expects from you.",
 };
 
-const LAST_UPDATED = "August 12, 2026";
+const LAST_UPDATED = LEGAL_LAST_UPDATED;
 const OPERATOR = "Jason Pereira";
 
 const HIGHLIGHTS: readonly Highlight[] = [
@@ -142,6 +144,12 @@ export default function TermsPage() {
           <p>
             Provide accurate account information, and keep it current. One
             person, one account — don&apos;t share logins or resell access.
+            Orbit records when you accepted these Terms and which version.
+          </p>
+          <p>
+            You can delete your account yourself, at any time, in Settings under
+            Data and privacy. Deleting it erases your Orbit data, cancels an
+            active Orbit Pro subscription, and removes your sign-in.
           </p>
         </DocSection>
 
@@ -220,10 +228,12 @@ export default function TermsPage() {
           title="Third-party services and your API keys"
         >
           <p>
-            Orbit integrates with services including Clerk, hosted Postgres,
-            Vercel, Stripe, AI providers (Google Gemini, OpenAI, Anthropic),
-            Apollo, Resend, Twilio, Google and Microsoft mail and calendar, and
-            LinkedIn CSV exports. Each has its own terms and privacy policy, and
+            Orbit integrates with services including Clerk, Vercel, Neon, Stripe,
+            AI providers (Google Gemini, OpenAI, Anthropic), Wispr Flow, Apollo,
+            Resend, Twilio, Google (Gmail, Contacts and Calendar), Microsoft
+            (Outlook contacts), Eventbrite, Luma and Partiful. The{" "}
+            <Link href="/privacy">Privacy Policy</Link> lists every service that
+            receives data and why. Each has its own terms and privacy policy, and
             your use of them through Orbit is also subject to those.
           </p>
           <p>
@@ -244,6 +254,14 @@ export default function TermsPage() {
             use one, relevant content from your Orbit data is sent to the
             provider you selected so it can generate a response, billed to your
             own key.
+          </p>
+          <p>
+            Some AI work runs in the background: search indexing, and — only if
+            you turn it on — deriving timeline events from imported LinkedIn
+            conversations, which shows an estimated cost before you do and is
+            capped at {TIMELINE_DAILY_CONTACT_CAP} conversations a day. Settings
+            shows the last 30 days of AI usage and its estimated cost; the bill
+            itself comes from your provider.
           </p>
           <p>
             AI output is probabilistic. It can be inaccurate, outdated,
@@ -289,16 +307,23 @@ export default function TermsPage() {
               if you later drop back to Free.
             </li>
             <li>
-              <strong>Cancel whenever you like.</strong> Orbit Pro runs to the
-              end of the period you have already paid for, then your account
-              returns to the Free Plan. Cancelling part-way through a period
-              does not trigger a pro-rated refund.
+              <strong>Cancel whenever you like.</strong> Write to us through the{" "}
+              <Link href="/contact">contact page</Link> and Orbit Pro ends at the
+              close of the period you have already paid for; deleting your account
+              in Settings cancels it immediately. Cancelling part-way through a
+              period does not trigger a pro-rated refund.
             </li>
             <li>
-              <strong>Payments are handled by our providers.</strong>{" "}
-              Subscriptions run through Clerk&apos;s billing and the one-time
-              tier through Stripe. Their terms govern the transaction itself,
-              and taxes are added where the law requires.
+              <strong>Payments are handled by Stripe.</strong> Both Orbit Pro and
+              Orbit Lifetime are sold through Stripe, whose terms govern the
+              transaction itself, and taxes are added where the law requires.
+              Orbit never sees your card.
+            </li>
+            <li>
+              <strong>Refunds and chargebacks end what they paid for.</strong> If
+              a payment is refunded in full, or reversed after a lost dispute, the
+              plan it paid for ends when Orbit records it and your account returns
+              to the Free Plan. Nothing in your account is deleted.
             </li>
             <li>
               <strong>AI, enrichment, and sending costs are separate.</strong>{" "}
@@ -329,11 +354,11 @@ export default function TermsPage() {
 
         <DocSection id="termination" index={12} title="Suspension and termination">
           <p>
-            You can stop using Orbit at any time and delete your data or your
-            whole account from Settings. We may suspend or terminate access if
-            you materially breach these Terms, if your use puts the service or
-            other people at risk, or if we discontinue the product — and we will
-            give notice where it is reasonable to do so.
+            You can stop using Orbit at any time, and delete some or all of your
+            data, or your whole account, from Settings. We may suspend or
+            terminate access if you materially breach these Terms, if your use
+            puts the service or other people at risk, or if we discontinue the
+            product — and we will give notice where it is reasonable to do so.
           </p>
           <p>
             Export what you want to keep before you go. After termination, your

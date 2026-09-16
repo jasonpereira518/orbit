@@ -9,6 +9,7 @@ import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
 import { GOOGLE_LIMITED_USE, GOOGLE_LIMITED_USE_SENTENCE, GOOGLE_SCOPE_DISCLOSURES } from "../src/lib/legal";
 
 const privacy = readFileSync("src/app/(site)/(docs)/privacy/page.tsx", "utf8");
+const terms = readFileSync("src/app/(site)/(docs)/terms/page.tsx", "utf8");
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -51,6 +52,14 @@ check("self-service account deletion is described", privacy.includes("Delete you
 check("the usage view is pointed to", privacy.includes("Integrations → AI provider"));
 check("the timeline cap is quoted from code", privacy.includes("TIMELINE_DAILY_CONTACT_CAP"));
 check("the date comes from legal.ts", privacy.includes("LEGAL_LAST_UPDATED"));
+
+console.log("Terms");
+check("subscriptions are no longer said to run through Clerk", !terms.includes("Clerk&apos;s billing") && !terms.includes("Clerk's billing"));
+check("billing is said to run through Stripe", terms.includes("Payments are handled by Stripe"));
+check("refunds and chargebacks end access", terms.includes("Refunds and chargebacks end what they paid for"));
+check("account deletion from Settings is described", terms.includes("delete your account yourself"));
+check("the Terms date comes from legal.ts", terms.includes("LEGAL_LAST_UPDATED"));
+check("the timeline cap is quoted from code", terms.includes("TIMELINE_DAILY_CONTACT_CAP"));
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
