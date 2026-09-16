@@ -290,6 +290,13 @@ async function seed() {
     icsUrl: "https://example.test/feed.ics",
   });
 
+  await db.insert(schema.calendarEvents).values({
+    userId: USER,
+    provider: "google",
+    externalId: "purge-fixture",
+    title: "Purge fixture meeting",
+  });
+
   // A scan handoff in flight when the account is deleted: a live grant, and a transcript
   // of the user's notes sitting behind it.
   await db.insert(schema.captureHandoffs).values({

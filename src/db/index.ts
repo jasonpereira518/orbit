@@ -1110,6 +1110,23 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  external_id text NOT NULL,
+  title text NOT NULL,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  organizer_email text,
+  organizer_name text,
+  attendees jsonb NOT NULL DEFAULT '[]'::jsonb,
+  location text,
+  description_excerpt text,
+  classification text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS meeting_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1319,6 +1336,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
  * Built as 41, then 46 (see v47 — burned by the page_views branch too), then 48 — which
  * the event-platform branch below also landed on independently. Same DDL-change rule:
  * two branches on one number means one of them silently never runs its migration.
+ * v56 = calendar_events (every fetched calendar event, independent of what — if anything —
+ * it does to a contact; feeds `chat-context.ts`'s "what's on my calendar" block), plus the
+ * Outlook Calendar connector's sibling of Google's continuous sync — no DDL of its own, it
+ * rides the existing `outlook_connections.scopes`/sync-state columns, but `calendar_events`
+ * needed a number above main's 55.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1403,7 +1425,9 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // `SCHEMA_VERSION = 54`, so only this changelog conflicted; a database already at 54 from
 // either branch still needs this table's two columns, hence one more bump rather than
 // reusing the number either side shipped it under.
-export const SCHEMA_VERSION = 55;
+//
+// 56 = calendar_events, on top of main's 55. See the changelog above.
+export const SCHEMA_VERSION = 56;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2660,6 +2684,12 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS event_companies_event_company_role_uidx ON event_companies(event_id, company_id, role)`,
   `CREATE INDEX IF NOT EXISTS event_companies_user_company_idx ON event_companies(user_id, company_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS target_companies_user_company_uidx ON target_companies(user_id, company_id)`,
+  // Schema v56: raw calendar context for chat. The CREATE TABLE above repairs a fresh
+  // database; this repairs an existing one, same rule as every version before it. The unique
+  // index is what makes a re-sync idempotent — see `upsertCalendarEvents` in
+  // `src/lib/calendar-events-store.ts`.
+  `CREATE UNIQUE INDEX IF NOT EXISTS calendar_events_provider_uidx ON calendar_events(user_id, provider, external_id)`,
+  `CREATE INDEX IF NOT EXISTS calendar_events_user_starts_idx ON calendar_events(user_id, starts_at)`,
 ];
 
 /**

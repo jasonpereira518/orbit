@@ -3326,10 +3326,12 @@ export const events = pgTable(
     role: text("role").$type<"attended" | "hosted">().default("attended").notNull(),
     /** How the event row itself got here, as distinct from how its roster did. */
     source: text("source")
-      .$type<"manual" | "page" | "luma" | "eventbrite">()
+      .$type<"manual" | "page" | "luma" | "eventbrite" | "google_calendar" | "outlook_calendar">()
       .default("manual")
       .notNull(),
-    provider: text("provider").$type<"luma" | "eventbrite">(),
+    provider: text("provider").$type<
+      "luma" | "eventbrite" | "google_calendar" | "outlook_calendar"
+    >(),
     providerEventId: text("provider_event_id"),
     description: text("description"),
     /**
@@ -3364,7 +3366,7 @@ export const events = pgTable(
      * what makes an auto-added event explainable rather than mysterious.
      */
     discoveredVia: text("discovered_via").$type<
-      "gcal" | "ics" | "luma_ics" | "partiful_ics" | "gmail"
+      "gcal" | "outlook" | "ics" | "luma_ics" | "partiful_ics" | "gmail"
     >(),
     /** What the user said they would do, where the source reported it. */
     rsvpStatus: text("rsvp_status").$type<
@@ -3688,6 +3690,48 @@ export const eventProviderConnections = pgTable(
   ]
 );
 
+/** One attendee on a `calendar_events` row, as stored in its `attendees` jsonb array. */
+export type CalendarEventAttendee = { name: string | null; email: string | null };
+
+/**
+ * Every calendar event a sync fetched, independent of what — if anything — it did to a
+ * contact. `google-calendar.ts`/`outlook-calendar.ts` write every non-cancelled event here
+ * regardless of `classification`, which is what lets `chat-context.ts` answer general
+ * schedule questions ("what's on my calendar this week") from real data rather than only from
+ * the subset that became an interaction, a discovered event, or a roster entry.
+ *
+ * Deliberately its own table rather than a view over `interactions`/`events`: those two only
+ * ever hold what the classifier decided was worth keeping, and this table's whole purpose is
+ * to hold what they leave out too (an ordinary team meeting, a personal block).
+ */
+export const calendarEvents = pgTable(
+  "calendar_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"google" | "microsoft">().notNull(),
+    /** iCalUID (Google) or Graph event id — never the row's own id. Re-syncing updates in place. */
+    externalId: text("external_id").notNull(),
+    title: text("title").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    organizerEmail: text("organizer_email"),
+    organizerName: text("organizer_name"),
+    attendees: jsonb("attendees").$type<CalendarEventAttendee[]>().default([]).notNull(),
+    location: text("location"),
+    descriptionExcerpt: text("description_excerpt"),
+    /** Mirrors `EventClassification.kind` from `calendar-classify.ts` — debugging only, never
+     *  read to decide behavior; the classifier is re-run live wherever that matters. */
+    classification: text("classification").$type<"one_on_one" | "networking" | "skip">(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("calendar_events_provider_uidx").on(t.userId, t.provider, t.externalId),
+    index("calendar_events_user_starts_idx").on(t.userId, t.startsAt),
+  ]
+);
+
 /**
  * One row per page view, written by `POST /api/track` from the client beacon in
  * `src/components/analytics/pageview-beacon.tsx`.
@@ -3813,6 +3857,8 @@ export type NewEventRecord = typeof events.$inferInsert;
 export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
 export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
 export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
+export type CalendarEventRow = typeof calendarEvents.$inferSelect;
+export type NewCalendarEventRow = typeof calendarEvents.$inferInsert;
 export type EventAlias = typeof eventAliases.$inferSelect;
 export type EventCompany = typeof eventCompanies.$inferSelect;
 export type TargetCompany = typeof targetCompanies.$inferSelect;

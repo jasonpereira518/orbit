@@ -4,6 +4,14 @@ import { outlookConnections } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
 
+/**
+ * A token minted before this scope shipped is still perfectly valid for Contacts and Profile,
+ * and does not retroactively gain Calendar access — exactly the same caveat `gmail.ts` records
+ * for `GOOGLE_CALENDAR_SCOPE`. `hasOutlookCalendarScope` is how the sync scheduler tells the
+ * two apart instead of discovering it as a 403 mid-sync.
+ */
+const MICROSOFT_CALENDAR_SCOPE = "https://graph.microsoft.com/Calendars.Read";
+
 const MICROSOFT_SCOPES = [
   "openid",
   "profile",
@@ -11,7 +19,13 @@ const MICROSOFT_SCOPES = [
   "offline_access",
   "https://graph.microsoft.com/Contacts.Read",
   "https://graph.microsoft.com/User.Read",
+  MICROSOFT_CALENDAR_SCOPE,
 ].join(" ");
+
+/** True once a connection has re-consented to the Calendar scope. */
+export function hasOutlookCalendarScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes(MICROSOFT_CALENDAR_SCOPE));
+}
 
 /** Canonical Outlook OAuth callback path — must match the Azure app's redirect URI. */
 export const OUTLOOK_CALLBACK_PATH = "/api/outlook/callback";

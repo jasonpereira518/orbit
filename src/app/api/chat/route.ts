@@ -108,7 +108,8 @@ export async function POST(request: Request) {
               ctx.modelRecruiters,
               (delta) => send({ type: "answer", delta }),
               ctx.focusProfile,
-              ctx.attachedContext
+              ctx.attachedContext,
+              ctx.calendarContext
             ),
           { userId }
         );

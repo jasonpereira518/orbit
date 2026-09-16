@@ -263,6 +263,11 @@ export async function loadCoverageSources(
            AND last_synced_at IS NOT NULL
            AND scopes LIKE '%calendar.readonly%'
       ) OR EXISTS (
+        SELECT 1 FROM outlook_connections
+         WHERE user_id = ${userId} AND status = 'active'
+           AND last_synced_at IS NOT NULL
+           AND scopes LIKE '%Calendars.Read%'
+      ) OR EXISTS (
         SELECT 1 FROM calendar_subscriptions
          WHERE user_id = ${userId} AND enabled = 1 AND last_sync_status = 'ok'
       ) AS calendar_connected

@@ -12,6 +12,7 @@ import type { EventListRow } from "@/lib/events/store";
 
 export const DISCOVERY_LABEL: Record<NonNullable<EventListRow["discoveredVia"]>, string> = {
   gcal: "Found in your calendar",
+  outlook: "Found in your calendar",
   ics: "Found in a calendar feed",
   luma_ics: "Found via Luma",
   partiful_ics: "Found via Partiful",
