@@ -52,6 +52,12 @@ export default defineConfig({
         ANTHROPIC_API_KEY: "",
         GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${AI_STUB_PORT}`,
         NEXT_TELEMETRY_DISABLED: "1",
+        // From the shell only, never a checkout's .env.local, so a local run renders /upgrade
+        // exactly as CI does. Export test-mode keys to run the Checkout flow.
+        STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY ?? "",
+        STRIPE_LIFETIME_PRICE_ID: process.env.STRIPE_LIFETIME_PRICE_ID ?? "",
+        STRIPE_PRO_MONTHLY_PRICE_ID: process.env.STRIPE_PRO_MONTHLY_PRICE_ID ?? "",
+        STRIPE_PRO_ANNUAL_PRICE_ID: process.env.STRIPE_PRO_ANNUAL_PRICE_ID ?? "",
       },
     },
   ],
