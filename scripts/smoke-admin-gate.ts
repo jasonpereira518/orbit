@@ -33,8 +33,10 @@ async function withEnv(env: Env) {
   if (env.adminIds === undefined) delete process.env.ADMIN_USER_IDS;
   else process.env.ADMIN_USER_IDS = env.adminIds;
 
-  if (env.nodeEnv === undefined) delete process.env.NODE_ENV;
-  else process.env.NODE_ENV = env.nodeEnv;
+  // Next types NODE_ENV as read-only; at runtime it's an ordinary env var.
+  const mutableEnv = process.env as Record<string, string | undefined>;
+  if (env.nodeEnv === undefined) delete mutableEnv.NODE_ENV;
+  else mutableEnv.NODE_ENV = env.nodeEnv;
 
   const mod = await import("../src/lib/admin");
 
@@ -43,8 +45,8 @@ async function withEnv(env: Env) {
     else process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = prevClerk;
     if (prevAdmin === undefined) delete process.env.ADMIN_USER_IDS;
     else process.env.ADMIN_USER_IDS = prevAdmin;
-    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
-    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevNodeEnv === undefined) delete mutableEnv.NODE_ENV;
+    else mutableEnv.NODE_ENV = prevNodeEnv;
   };
 
   return { mod, restore };
