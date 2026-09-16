@@ -31,6 +31,7 @@ import {
   claimDueConnections,
   disarmSync,
   markSyncResult,
+  oldestDueAgeMs,
   type ClaimedConnection,
 } from "@/lib/provider-connections";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
@@ -60,8 +61,30 @@ export const SYNC_TIME_BUDGET_MS = 4.5 * 60 * 1000;
  */
 export const PER_CONNECTION_BUDGET_MS = 60 * 1000;
 
-/** Claimed per run. Small because each one can take up to a minute. */
-export const CONNECTIONS_PER_RUN = 5;
+/** Claimed per run. Four run at once, each bounded by PER_CONNECTION_BUDGET_MS. */
+export const CONNECTIONS_PER_RUN = 20;
+
+/** Connections synced in parallel. Each is a different user's calendar and ingest context. */
+export const SYNC_CONCURRENCY = 4;
+
+/**
+ * Runs `worker` over `items` with at most `limit` in flight, settling every item — the
+ * Promise.allSettled guarantee without starting all twenty at once. Never rejects.
+ */
+export async function runSettledPool<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      await worker(item).catch(() => undefined);
+    }
+  });
+  await Promise.allSettled(lanes);
+}
 
 /** ICS feeds claimed per run. Cheaper than an API sync — one HTTP GET and a parse. */
 export const ICS_SUBSCRIPTIONS_PER_RUN = 10;
@@ -118,6 +141,8 @@ export type SyncRunStats = {
   enrichFetched: number;
   enrichFailed: number;
   budgetExhausted: boolean;
+  /** How overdue the oldest due connection was when the run started; null when none. */
+  oldestDueAgeMs: number | null;
 };
 
 function emptyRunStats(): SyncRunStats {
@@ -142,6 +167,7 @@ function emptyRunStats(): SyncRunStats {
     enrichFetched: 0,
     enrichFailed: 0,
     budgetExhausted: false,
+    oldestDueAgeMs: null,
   };
 }
 
@@ -259,22 +285,28 @@ export async function runSyncPass(
 
   // Google only, for now. Microsoft joins by adding its provider here once Outlook's
   // calendar/mail scopes ship — the claim and result bookkeeping are already provider-agnostic.
+  // Measured before claiming: after the claim, the rows it took are no longer "due".
+  stats.oldestDueAgeMs = await oldestDueAgeMs("google", now).catch(() => null);
   const claimed = await claimDueConnections("google", CONNECTIONS_PER_RUN, now);
   stats.claimed = claimed.length;
 
-  for (const conn of claimed) {
-    // Checked BEFORE each item, never after — a budget tested after the work has already run
-    // bounds nothing.
-    if (deadlineReached(deadline)) {
+  // A connection may START only while a full per-connection budget remains, so four lanes
+  // cannot carry the run past the function ceiling. Checked before each item, never after —
+  // a budget tested after the work has already run bounds nothing.
+  const startCutoff = deadline - PER_CONNECTION_BUDGET_MS;
+
+  // `stats` counters are mutated only between awaits, so lanes cannot lose an increment.
+  await runSettledPool(claimed, SYNC_CONCURRENCY, async (conn) => {
+    if (deadlineReached(startCutoff)) {
       stats.budgetExhausted = true;
-      // Release the claim so the next run picks it up immediately rather than waiting out
-      // the lease.
+      // Released immediately due, so the next run (or the continuation kick) picks it up
+      // rather than waiting out the lease.
       await markSyncResult(conn.provider, conn.id, {
         ok: true,
         cursor: conn.syncCursor,
         nextSyncAt: now,
       }).catch(() => null);
-      continue;
+      return;
     }
 
     // A token minted before the calendar scope shipped is still valid for Gmail and Contacts
@@ -289,7 +321,7 @@ export async function runSyncPass(
         "Calendar access not granted — reconnect Google to enable calendar sync",
         now
       ).catch(() => null);
-      continue;
+      return;
     }
 
     try {
@@ -312,7 +344,7 @@ export async function runSyncPass(
         retryable,
       }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
     }
-  }
+  });
 
   // ICS subscriptions are a third claimable source, in the same pass.
   //

@@ -249,6 +249,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-checkout-confirm": "pglite",
   "smoke-stripe-dedupe": "pglite",
   "smoke-surface-visibility": "pglite",
+  "smoke-sync-concurrency": "pglite",
   "smoke-sync-scheduler": "pglite",
   "smoke-sync-columns": "pglite",
   "smoke-trigram-search": "pglite",

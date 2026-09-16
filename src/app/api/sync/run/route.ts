@@ -52,6 +52,7 @@ export async function POST(request: Request) {
         contactsCreated: stats.contactsCreated,
         interactionsLogged: stats.interactionsLogged,
         budgetExhausted: stats.budgetExhausted,
+        oldestDueAgeMs: stats.oldestDueAgeMs ?? 0,
       },
     });
 
