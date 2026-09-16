@@ -19,7 +19,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
-import { SCHEMA_VERSION, reconcileSchema } from "../src/db";
+import { BUILD_MIGRATION_LOCK_WAIT_MS, SCHEMA_VERSION, reconcileSchema } from "../src/db";
 import { checkMigrationTarget, type VercelEnv } from "../src/lib/env";
 import { schemaCoverage } from "./lib/schema-coverage";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
@@ -45,7 +45,7 @@ async function main() {
   if (verdict.unarmed) console.warn(`migrate: warn  ${verdict.reason}`);
   console.log(`migrate: reconciling schema version ${SCHEMA_VERSION} on ${target}…`);
 
-  const result = await reconcileSchema();
+  const result = await reconcileSchema({ lockWaitMs: BUILD_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "sweep" });
   if (result.failed.length > 0) {
     console.error(`migrate: ${result.failed.length} DDL statement(s) failed:`);
     for (const f of result.failed) console.error(`  ✗ ${f.statement}\n      ${f.message}`);

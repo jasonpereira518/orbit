@@ -2976,8 +2976,14 @@ async function ready(): Promise<void> {
 
 /** How long a builder may hold the migration lease before another may steal it. */
 const MIGRATION_LEASE_MS = 5 * 60 * 1000;
-/** How long to wait for someone else's lease before giving up and sweeping anyway. */
-const MIGRATION_LOCK_WAIT_MS = 3 * 60 * 1000;
+/** How long `scripts/migrate.ts` waits for another builder's lease before sweeping anyway. */
+export const BUILD_MIGRATION_LOCK_WAIT_MS = 3 * 60 * 1000;
+/**
+ * How long a runtime cold start (`getDb()`) waits. Pages stop at 60 s, so the build wait
+ * would kill the request; on timeout the runtime path does NOT sweep — the holder is
+ * migrating, and racing it is what the lease prevents.
+ */
+export const RUNTIME_MIGRATION_LOCK_WAIT_MS = 20 * 1000;
 const MIGRATION_LOCK_POLL_MS = 2000;
 
 /**
@@ -2996,15 +3002,15 @@ const MIGRATION_LOCK_POLL_MS = 2000;
  * build at best. Two builds racing is not hypothetical: a production deploy and a preview
  * build, or two pushes in a minute, both call this.
  *
- * Never fails the caller. If the lease cannot be won within the wait, this logs and runs the
- * sweep anyway — exactly the behaviour that existed before this function did. A lock that can
- * turn a deploy into a hard failure when a previous builder died holding it would be a worse
- * trade than the race it prevents; the lease TTL covers that case, and this covers the TTL
- * being wrong.
+ * Never fails the caller. If the lease is not won within `options.waitMs`, `options.onTimeout`
+ * decides: the build sweeps anyway (the pre-lease behaviour — a lock that can turn a deploy
+ * into a hard failure when a previous builder died holding it would be a worse trade than the
+ * race it prevents), a runtime cold start serves without sweeping.
  */
 async function withMigrationLock<T>(
   run: StatementRunner,
-  body: () => Promise<T>
+  body: () => Promise<T>,
+  options: { waitMs: number; onTimeout: () => Promise<T> }
 ): Promise<T> {
   // The lease table has to exist before the sweep that creates every other table, so it is
   // created here rather than in the DDL. Concurrent `CREATE TABLE IF NOT EXISTS` can still
@@ -3026,7 +3032,7 @@ async function withMigrationLock<T>(
     // Already there, or raced. Either way the acquire below is the real test.
   }
 
-  const deadline = Date.now() + MIGRATION_LOCK_WAIT_MS;
+  const deadline = Date.now() + options.waitMs;
   while (Date.now() < deadline) {
     try {
       // Wins only when the row is absent or the previous holder's lease has expired. The
@@ -3055,12 +3061,7 @@ async function withMigrationLock<T>(
     await new Promise((resolve) => setTimeout(resolve, MIGRATION_LOCK_POLL_MS));
   }
 
-  if (!held) {
-    console.warn(
-      `[db] another builder has held the migration lease for ${MIGRATION_LOCK_WAIT_MS}ms; sweeping anyway`
-    );
-    return body();
-  }
+  if (!held) return options.onTimeout();
 
   try {
     return await body();
@@ -3082,6 +3083,15 @@ export type SchemaReconcileResult = {
   /** False when the recorded version already matched and nothing ran. */
   applied: boolean;
   failed: SchemaFailure[];
+  /** True when a runtime caller gave up on another holder's lease and did not sweep. */
+  lockTimedOut?: boolean;
+};
+
+export type ReconcileOptions = {
+  /** Default BUILD_MIGRATION_LOCK_WAIT_MS. */
+  lockWaitMs?: number;
+  /** When another holder keeps the lease past `lockWaitMs`: "sweep" (build, default) or "skip" (runtime). */
+  onLockTimeout?: "sweep" | "skip";
 };
 
 /**
@@ -3099,7 +3109,7 @@ export type SchemaReconcileResult = {
  * runs this ahead of `next build` and refuses to deploy on any failure, so in practice a
  * runtime boot only ever sees the no-op path.
  */
-export async function reconcileSchema(): Promise<SchemaReconcileResult> {
+export async function reconcileSchema(options: ReconcileOptions = {}): Promise<SchemaReconcileResult> {
   await ready();
   const neonSql = globalForDb.orbitNeonSql;
   const run: StatementRunner = neonSql
@@ -3113,7 +3123,8 @@ export async function reconcileSchema(): Promise<SchemaReconcileResult> {
     return { version: SCHEMA_VERSION, applied: false, failed: [] };
   }
 
-  return withMigrationLock(run, async () => {
+  const lockWaitMs = options.lockWaitMs ?? BUILD_MIGRATION_LOCK_WAIT_MS;
+  const sweep = async (): Promise<SchemaReconcileResult> => {
     // Re-check inside the lock. Whoever held it before us may have just finished the very
     // sweep we were about to run — this is the whole reason the lock is worth taking.
     if (await schemaIsCurrent(run)) {
@@ -3129,6 +3140,19 @@ export async function reconcileSchema(): Promise<SchemaReconcileResult> {
     }
     if (failed.length === 0) await recordSchemaVersion(run);
     return { version: SCHEMA_VERSION, applied: true, failed };
+  };
+
+  return withMigrationLock(run, sweep, {
+    waitMs: lockWaitMs,
+    onTimeout: async () => {
+      if ((options.onLockTimeout ?? "sweep") === "sweep") {
+        console.warn(`[db] another builder has held the migration lease for ${lockWaitMs}ms; sweeping anyway`);
+        return sweep();
+      }
+      console.warn(`[db] migration lease busy for ${lockWaitMs}ms; serving without sweeping while the holder migrates`);
+      await detectExtensions(run);
+      return { version: SCHEMA_VERSION, applied: false, failed: [], lockTimedOut: true };
+    },
   });
 }
 
@@ -3136,7 +3160,7 @@ export async function getDb(): Promise<Db> {
   await ready();
 
   if (!schemaReconciled) {
-    schemaReconciled = reconcileSchema()
+    schemaReconciled = reconcileSchema({ lockWaitMs: RUNTIME_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "skip" })
       .then(() => undefined)
       .catch((err) => {
         schemaReconciled = undefined;
