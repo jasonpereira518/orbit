@@ -33,18 +33,18 @@ export const PROVIDER_MODELS: Record<
 > = {
   gemini: [
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
+    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite (cheapest)" },
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
   ],
   openai: [
-    { value: "gpt-4o-mini", label: "GPT-4o mini" },
+    { value: "gpt-4o-mini", label: "GPT-4o mini (cheapest)" },
     { value: "gpt-4o", label: "GPT-4o" },
     { value: "gpt-4.1-mini", label: "GPT-4.1 mini" },
     { value: "gpt-4.1", label: "GPT-4.1" },
   ],
   anthropic: [
     { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 (cheapest)" },
     { value: "claude-opus-4", label: "Claude Opus 4" },
   ],
 };
