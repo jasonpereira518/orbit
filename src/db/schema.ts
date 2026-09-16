@@ -239,6 +239,17 @@ export const userSettings = pgTable("user_settings", {
    */
   subscriptionInterval: text("subscription_interval").$type<"month" | "year">(),
   /**
+   * `created` of the newest Stripe subscription event whose mirror write has been applied.
+   *
+   * Stripe does not deliver in order, and a retried `customer.subscription.updated` from
+   * before a cancellation would otherwise re-grant Pro. `decideStripeEvent` ignores any
+   * subscription-mirror event older than this (see `isStaleSubscriptionEvent`). Checkout
+   * completions are gated by it but never advance it: Stripe stamps the subscription's own
+   * events a second either side of the checkout, so letting checkout advance the clock would
+   * make the real `customer.subscription.created` look stale.
+   */
+  subscriptionEventAt: timestamp("subscription_event_at", { withTimezone: true }),
+  /**
    * Provenance for a comped plan. `compedPlan` alone is a fact with no story, and it
    * outranks every real billing signal in `resolvePlan` permanently — so six months later
    * "why is this account on Lifetime?" has to be answerable from the row itself.
@@ -317,7 +328,18 @@ export const userSettings = pgTable("user_settings", {
   suspendedBy: text("suspended_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => [
+  /**
+   * One Stripe customer belongs to one account. Partial because NULL is the common value
+   * (every free account, and Lifetime sessions that created no Customer). Checkout never
+   * reuses a customer across accounts, so a violation means a hand edit or a dashboard
+   * subscription carrying the wrong `orbit_user_id` — the webhook then 500s loudly instead
+   * of `findUserIdByStripeCustomerId` silently picking one of two accounts.
+   */
+  uniqueIndex("user_settings_stripe_customer_uidx")
+    .on(t.stripeCustomerId)
+    .where(sql`${t.stripeCustomerId} is not null`),
+]);
 
 export const companies = pgTable(
   "companies",
@@ -1707,6 +1729,14 @@ export const recruiters = pgTable(
     emailNormalized: text("email_normalized"),
     linkedinUrl: text("linkedin_url"),
     phone: text("phone"),
+    /**
+     * Who created this canonical row. Backfilled from the earliest link written within 120
+     * seconds of the row (Phase 0's `CREATOR_LINK_WINDOW_SECONDS`); null means the creator could not be determined (legacy rows).
+     * `rederiveSharedRecruiterPii` treats a non-null creator as "every shared contact field
+     * must be vouched for by a pooled link". Set to `deleted-account` when the creator's data
+     * is purged, so the strict rule keeps applying.
+     */
+    createdByUserId: text("created_by_user_id"),
     avgRating: integer("avg_rating").default(0).notNull(),
     ratingCount: integer("rating_count").default(0).notNull(),
     logCount: integer("log_count").default(0).notNull(),
@@ -3911,3 +3941,55 @@ export const adminProviderSnapshots = pgTable(
 
 export type PlanUpgradeEventRow = typeof planUpgradeEvents.$inferSelect;
 export type AdminProviderSnapshotRow = typeof adminProviderSnapshots.$inferSelect;
+
+/**
+ * Stripe event ids whose effects have been applied — the webhook's dedupe ledger.
+ *
+ * Separate from `webhook_deliveries` on purpose: that table deliberately has NO unique index
+ * on (source, event_id), because the retry count is the most useful thing it records.
+ * Only `handled` outcomes are written here, so an event that was ignored for a reason that
+ * can change (an unattributed customer) is still re-evaluated when Stripe retries it. No user
+ * column: nothing here identifies a person.
+ */
+export const stripeProcessedEvents = pgTable("stripe_processed_events", {
+  eventId: text("event_id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  processedAt: timestamp("processed_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * One row per `purgeUserData` call: the ledger that makes a deletion resumable.
+ *
+ * `completed_steps` grows as each step lands, so the nightly job re-runs only what is left
+ * (every step is an idempotent WHERE-user delete). After `PURGE_MAX_ATTEMPTS` the run is
+ * marked `failed` and the ops sweep raises `purge.stuck`.
+ *
+ * `target_user_id`, not `user_id`: `scripts/smoke-purge.ts` sweeps every table with a
+ * `userId` column and requires zero rows after a purge, and this record must outlive the
+ * purge it describes — the same convention as `admin_audit_log.target_user_id`. A Clerk id
+ * is inert once the account is gone; finished runs are pruned after 30 days.
+ */
+export const dataPurgeRuns = pgTable(
+  "data_purge_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    targetUserId: text("target_user_id").notNull(),
+    categories: jsonb("categories").$type<string[]>().default([]).notNull(),
+    keepSettings: boolean("keep_settings").default(true).notNull(),
+    fullPurge: boolean("full_purge").default(false).notNull(),
+    completedSteps: jsonb("completed_steps").$type<string[]>().default([]).notNull(),
+    status: text("status").$type<"running" | "done" | "failed">().default("running").notNull(),
+    attempts: integer("attempts").default(1).notNull(),
+    lastError: text("last_error"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).defaultNow().notNull(),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("data_purge_runs_status_attempt_idx").on(t.status, t.lastAttemptAt),
+    index("data_purge_runs_target_idx").on(t.targetUserId),
+  ]
+);
+
+export type StripeProcessedEventRow = typeof stripeProcessedEvents.$inferSelect;
+export type DataPurgeRunRow = typeof dataPurgeRuns.$inferSelect;
