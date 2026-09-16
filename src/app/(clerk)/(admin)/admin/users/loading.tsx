@@ -1,14 +1,11 @@
-import { Skeleton } from "@/components/ui/skeleton";
+import { AdminLoading } from "@/components/admin/loading-shells";
 
 export default function AdminUsersLoading() {
   return (
-    <div className="space-y-4">
-      <div>
-        <Skeleton className="h-8 w-32" />
-        <Skeleton className="mt-2 h-4 w-40" />
-      </div>
-      <Skeleton className="h-8 w-full" />
-      <Skeleton className="h-96 w-full rounded-xl" />
-    </div>
+    <AdminLoading
+      title="Users"
+      subtitle="Loading accounts…"
+      blocks={[{ toolbar: true }, { panel: true, height: "h-96" }]}
+    />
   );
 }
