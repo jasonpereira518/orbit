@@ -1,6 +1,7 @@
 "use server";
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { deleteReplacedAvatar } from "@/lib/avatar-blob";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -1248,6 +1249,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
             { profileImageUrl },
             { skipRevalidate: true }
           );
+          await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
           refreshed += 1;
         } else {
           unmatched += 1;
@@ -1272,6 +1274,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         },
         { skipRevalidate: true }
       );
+      if (profileImageUrl) await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
 
       // Apollo fills a gap; it never overwrites an extension capture. `saveContactProfile`
       // enforces that, so this call is unconditional and cheap when it is outranked.

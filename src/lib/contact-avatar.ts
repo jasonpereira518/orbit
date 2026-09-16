@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { put } from "@vercel/blob";
+import { putAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
 import {
@@ -386,12 +386,7 @@ async function persistAvatar(
   }
 
   try {
-    const blob = await put(`avatars/${contactId}.jpg`, encoded.buf, {
-      access: "public",
-      contentType: encoded.contentType,
-      addRandomSuffix: false,
-    });
-    return blob.url;
+    return await putAvatarBlob(contactId, encoded.buf, encoded.contentType);
   } catch (err) {
     throw new AvatarStorageError(
       `Couldn't save the photo to Blob storage: ${

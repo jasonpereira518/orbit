@@ -37,6 +37,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-admin-redaction": "pure",
   "smoke-admin-yc-calculations": "pure",
   "smoke-ai-key-check": "pure",
+  "smoke-avatar-blob": "pure",
   "smoke-avatar-storage": "pure",
   "smoke-avatar-tiers": "pure",
   "smoke-backdrop-filter": "pure",
