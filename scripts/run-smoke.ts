@@ -142,6 +142,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-account-deletion": "pglite",
   "smoke-api-keys": "pglite",
   "smoke-api-routes": "pglite",
+  "smoke-apollo-hosted-budget": "pglite",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-app-pulse": "pglite",

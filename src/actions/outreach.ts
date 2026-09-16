@@ -357,7 +357,12 @@ export async function updateCampaign(
   return updated;
 }
 
+/** Returned as data so the hosted-Apollo daily cap copy survives the action boundary. */
 export async function searchProspects(campaignId: string, page = 1) {
+  return asActionResult(() => searchProspectsCore(campaignId, page));
+}
+
+async function searchProspectsCore(campaignId: string, page = 1) {
   const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();

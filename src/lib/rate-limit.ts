@@ -73,6 +73,10 @@ export const RATE_LIMITS = {
   avatarSourceShared: { limit: 25, windowSec: 86_400 },
   /** One user's daily slice of each source, so one large network cannot drain it for all. */
   avatarSourceUser: { limit: 5, windowSec: 86_400 },
+  /** People searches per user per day on Orbit's HOSTED Apollo key. Own keys are uncapped. */
+  apolloSearch: { limit: 20, windowSec: 86_400 },
+  /** Person matches (one Apollo credit each) per user per day on the hosted key. */
+  apolloEnrich: { limit: 50, windowSec: 86_400 },
   /**
    * `submitFeedback`: a form post carrying up to three screenshots. Generous per
    * submission, tight per window — this is the largest row a user can create directly,

@@ -102,7 +102,12 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           audienceFilters: filters,
           reparseAudience: false,
         });
-        const result = await searchProspects(campaignId);
+        const res = await searchProspects(campaignId);
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        const result = res.value;
         setSearchTotal(result.total);
         setLastSearchSource(result.source);
         if (result.source === "demo") {
