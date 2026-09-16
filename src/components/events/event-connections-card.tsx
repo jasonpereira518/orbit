@@ -18,7 +18,7 @@
  * implied it would fetch the guest list of a party you attended would generate a support
  * ticket per user.
  */
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarPlus, ChevronDown, Loader2, Mail, Plug, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,7 @@ import type { EventConnectionProvider } from "@/lib/events/types";
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import { startGmailOAuth } from "@/actions/gmail";
 import type { GooglePurpose } from "@/lib/google-scopes";
+import { readOAuthReturn } from "@/lib/oauth-return";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 /** Where each platform hides its personal calendar link, in the fewest words that get there. */
@@ -69,6 +70,16 @@ function Steps({ name, steps }: { name: string; steps: string[] }) {
   );
 }
 
+const EVENTBRITE_RETURN = {
+  param: "eventbrite",
+  provider: "Eventbrite",
+  connectedText: "Eventbrite connected — events you host will sync automatically",
+  reasons: {
+    no_organization:
+      "That Eventbrite account has no organization to sync — create one on Eventbrite, then connect again",
+  },
+};
+
 export function EventConnectionsCard({
   connections,
   eventbriteConfigured,
@@ -87,6 +98,32 @@ export function EventConnectionsCard({
   const [showLumaField, setShowLumaField] = useState(false);
   const [feedUrl, setFeedUrl] = useState("");
   const [openFeed, setOpenFeed] = useState<"luma_ics" | "partiful_ics" | null>(null);
+
+  const oauthToasted = useRef(false);
+  useEffect(() => {
+    const result = readOAuthReturn(window.location.search, EVENTBRITE_RETURN);
+    if (!result) return;
+    if (!oauthToasted.current) {
+      oauthToasted.current = true;
+      if (result.tone === "success") toast.success(result.text);
+      else if (result.tone === "message") toast.message(result.text);
+      else toast.error(result.text);
+    }
+    // Stripped on the first gesture, not now — see `readOAuthReturn`. pointerdown/keydown
+    // fire before the click that could queue an action, so the restore lands first.
+    const strip = () =>
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${result.nextSearch}${window.location.hash}`
+      );
+    window.addEventListener("pointerdown", strip, { once: true, capture: true });
+    window.addEventListener("keydown", strip, { once: true, capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", strip, true);
+      window.removeEventListener("keydown", strip, true);
+    };
+  }, []);
 
   const byProvider = (provider: EventConnectionProvider) =>
     connections.find((c) => c.provider === provider);
