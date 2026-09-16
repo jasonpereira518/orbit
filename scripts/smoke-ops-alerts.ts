@@ -60,6 +60,7 @@ const HEALTHY: OpsSnapshot = {
   syncOldestDueAgeMs: null,
   aiRefusals24h: { unembeddable: 0, quotaAccounts: 0 },
   calendarDisarmed: 0,
+  sharedBudgets: { avatarSourcesExhausted: [], apolloCapHits: 0 },
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -145,6 +146,12 @@ function main() {
     find({ ...HEALTHY, backfillFailures24h: { accounts: 2, kinds: ["embeddings"] } }, "backfill.failed")?.severity === "warning");
   check("one account's failing backfill is that user's key, not an ops alert",
     !find({ ...HEALTHY, backfillFailures24h: { accounts: 1, kinds: ["embeddings"] } }, "backfill.failed"));
+
+  const exhausted = find({ ...HEALTHY, sharedBudgets: { avatarSourcesExhausted: ["unavatar"], apolloCapHits: 0 } }, "avatar.source_exhausted");
+  check("an exhausted photo source → avatar.source_exhausted (info), naming it",
+    exhausted?.severity === "info" && exhausted.detail.includes("unavatar"), exhausted?.detail);
+  check("accounts hitting the hosted Apollo cap → apollo.hosted_cap_hits (info)",
+    find({ ...HEALTHY, sharedBudgets: { avatarSourcesExhausted: [], apolloCapHits: 3 } }, "apollo.hosted_cap_hits")?.severity === "info");
 
   check("five disarmed calendars → calendar.disarmed (info)",
     find({ ...HEALTHY, calendarDisarmed: 5 }, "calendar.disarmed")?.severity === "info");

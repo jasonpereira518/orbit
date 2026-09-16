@@ -73,6 +73,8 @@ export type OpsSnapshot = {
   aiRefusals24h: { unembeddable: number; quotaAccounts: number };
   /** Active calendar-scoped Google connections disarmed with an error. */
   calendarDisarmed: number;
+  /** Shared third-party budgets refused today: photo sources out, accounts at the hosted Apollo cap. */
+  sharedBudgets: { avatarSourcesExhausted: string[]; apolloCapHits: number };
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
@@ -377,6 +379,24 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "info",
       title: "Accounts are out of AI provider credit",
       detail: `${s.aiRefusals24h.quotaAccounts} account(s) hit a quota or empty-balance error in the last day. Each already sees a "top up" alert; this is the count.`,
+      href: "/admin/health",
+    });
+  }
+  if (s.sharedBudgets.avatarSourcesExhausted.length > 0) {
+    out.push({
+      id: "avatar.source_exhausted",
+      severity: "info",
+      title: "A shared photo source is out for today",
+      detail: `${s.sharedBudgets.avatarSourcesExhausted.join(" and ")} used its whole daily allowance; photo lookups defer until the window resets.`,
+      href: "/admin/health",
+    });
+  }
+  if (s.sharedBudgets.apolloCapHits >= 1) {
+    out.push({
+      id: "apollo.hosted_cap_hits",
+      severity: "info",
+      title: "Accounts are hitting the hosted Apollo cap",
+      detail: `${s.sharedBudgets.apolloCapHits} account budget(s) for hosted Apollo search or enrichment ran out today — demand against the Apollo plan.`,
       href: "/admin/health",
     });
   }

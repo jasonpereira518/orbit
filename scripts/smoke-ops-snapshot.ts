@@ -10,9 +10,10 @@ import { run } from "./smoke/_env";
 // Off production, so the production-only fields stay quiet unless a section sets it.
 delete process.env.VERCEL_ENV;
 
-import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, like, or, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, cronRuns, embeddingFailures, errorEvents, usageEvents } from "../src/db/schema";
+import { contacts, cronRuns, embeddingFailures, errorEvents, rateLimitBuckets, usageEvents } from "../src/db/schema";
+import { RATE_LIMITS } from "../src/lib/rate-limit";
 import { recordBackfillFailure } from "../src/lib/backfill-failures";
 import { ERROR_SOURCES } from "../src/lib/error-events";
 import { evaluateOpsConditions } from "../src/lib/ops-alerts";
@@ -170,6 +171,28 @@ run(async () => {
     disarmedAfter === disarmedBefore + 5, `${disarmedBefore} → ${disarmedAfter}`);
   check("five at once open calendar.disarmed", (await idsNow()).includes("calendar.disarmed"));
   await db.execute(sql`DELETE FROM gmail_connections WHERE user_id LIKE 'snap-disarmed-%'`);
+
+  console.log("\nShared third-party budgets...");
+  const budgetRows = or(like(rateLimitBuckets.bucket, "avatarSource.shared:%"), like(rateLimitBuckets.bucket, "apollo.%"));
+  await db.delete(rateLimitBuckets).where(budgetRows);
+  const now2 = new Date();
+  await db.insert(rateLimitBuckets).values([
+    { bucket: "avatarSource.shared:unavatar", windowStartedAt: now2, count: RATE_LIMITS.avatarSourceShared.limit + 1 },
+    { bucket: "avatarSource.shared:microlink", windowStartedAt: now2, count: 3 },
+    { bucket: "apollo.search:snap-a", windowStartedAt: now2, count: RATE_LIMITS.apolloSearch.limit + 1 },
+    { bucket: "apollo.enrich:snap-b", windowStartedAt: now2, count: RATE_LIMITS.apolloEnrich.limit + 4 },
+    { bucket: "apollo.enrich:snap-c", windowStartedAt: now2, count: 2 },
+    // Refused, but in a window that ended over a day ago: yesterday's news.
+    { bucket: "apollo.search:snap-old", windowStartedAt: new Date(Date.now() - 30 * 3_600_000), count: 99 },
+  ]);
+  const budgets = (await loadOpsSnapshot(new Date(), null)).sharedBudgets;
+  check("only the source that went over its budget is exhausted",
+    JSON.stringify(budgets.avatarSourcesExhausted) === JSON.stringify(["unavatar"]), JSON.stringify(budgets));
+  check("each account over a hosted Apollo cap today is one hit", budgets.apolloCapHits === 2, JSON.stringify(budgets));
+  const budgetIds = await idsNow();
+  check("which open both conditions",
+    budgetIds.includes("avatar.source_exhausted") && budgetIds.includes("apollo.hosted_cap_hits"), budgetIds.join(","));
+  await db.delete(rateLimitBuckets).where(budgetRows);
 
   // (new sections go above this line)
 

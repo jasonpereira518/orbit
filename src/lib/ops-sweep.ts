@@ -1,8 +1,9 @@
 import { oldestDueAgeMs } from "@/lib/provider-connections";
 import { probeStatementTimeout } from "@/lib/health";
-import { and, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, like, or, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { contacts, cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns } from "@/db/schema";
+import { contacts, cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns, rateLimitBuckets } from "@/db/schema";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 import { aiErrorBreakdown } from "@/lib/admin-health";
 import {
   OUR_ERROR_KINDS,
@@ -63,6 +64,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     backlogAgg,
     refusalRes,
     disarmedRes,
+    budgetAgg,
   ] = await Promise.all([
       db
         .select()
@@ -127,6 +129,17 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
          WHERE status = 'active' AND next_sync_at IS NULL AND sync_error IS NOT NULL
            AND scopes LIKE '%calendar.readonly%'
       `),
+      // `consumeBucket` increments before it refuses, so count > limit inside the window
+      // means at least one request was refused. Thresholds come from RATE_LIMITS, never literals.
+      db
+        .select({ bucket: rateLimitBuckets.bucket, count: rateLimitBuckets.count })
+        .from(rateLimitBuckets)
+        .where(
+          and(
+            or(like(rateLimitBuckets.bucket, "avatarSource.shared:%"), like(rateLimitBuckets.bucket, "apollo.%")),
+            gt(rateLimitBuckets.windowStartedAt, dayAgo)
+          )
+        ),
     ]);
 
   const [stuckPurgeRow] = await db
@@ -205,6 +218,17 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     statementTimeout,
     syncOldestDueAgeMs,
     calendarDisarmed: Number(rowsOf<{ n: number }>(disarmedRes)[0]?.n ?? 0),
+    sharedBudgets: {
+      avatarSourcesExhausted: budgetAgg
+        .filter((r) => r.bucket.startsWith("avatarSource.shared:") && r.count > RATE_LIMITS.avatarSourceShared.limit)
+        .map((r) => r.bucket.slice("avatarSource.shared:".length))
+        .sort(),
+      apolloCapHits: budgetAgg.filter(
+        (r) =>
+          (r.bucket.startsWith("apollo.search:") && r.count > RATE_LIMITS.apolloSearch.limit) ||
+          (r.bucket.startsWith("apollo.enrich:") && r.count > RATE_LIMITS.apolloEnrich.limit)
+      ).length,
+    },
     aiRefusals24h: {
       unembeddable: Number(refusals?.unembeddable ?? 0),
       quotaAccounts: Number(refusals?.quota_accounts ?? 0),
