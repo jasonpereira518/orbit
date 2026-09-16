@@ -103,6 +103,7 @@ const ERROR_COPY: Record<MeetingRecorderErrorCode, { title: string; detail: stri
 const FATAL_COPY: Record<QueueFatal, string> = {
   "no-transcription-key":
     "Orbit has no key to transcribe with. Add an OpenAI or Gemini key in Settings — this meeting is kept and can be resumed.",
+  "transcription-refused": "This meeting is kept and can be resumed once that’s sorted.",
   "taken-over": "This meeting is being recorded in another tab now, so this one stopped.",
   gone: "This meeting was saved or discarded somewhere else.",
   "signed-out": "You were signed out. Sign in again — the meeting is kept and can be resumed.",
@@ -268,7 +269,8 @@ export function MeetingCapturePanel({
         onStatus: (seq, status, detail) => setSegment(seq, { status, detail }),
         onFatal: (code, message) => {
           fatalRef.current = true;
-          setFatal(FATAL_COPY[code] ?? message);
+          // A refused key's message is the provider-specific copy from the server.
+          setFatal(code === "transcription-refused" ? `${message}. ${FATAL_COPY[code]}` : FATAL_COPY[code] ?? message);
           stopForFatal.current();
         },
       });
