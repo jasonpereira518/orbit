@@ -14,16 +14,17 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-embedding-backfill";
 import { and, count, eq, inArray, isNotNull, isNull, notInArray } from "drizzle-orm";
 import type { createEmbeddingsBatch } from "../src/lib/ai";
 import { getDb } from "../src/db";
-import { contactEmbeddings, contacts, interactions, userSettings } from "../src/db/schema";
+import { contactEmbeddings, contacts, embeddingFailures, interactions, userSettings } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
 import { saveContactProfile } from "../src/lib/contact-profile";
-import { runEmbeddingBackfill } from "../src/lib/embedding-backfill";
+import { pendingMeetingCount, runEmbeddingBackfill } from "../src/lib/embedding-backfill";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const CLAIMABLE_USER = "smoke-embedding-backfill-claimable-user";
 const DRAIN_USER = "smoke-embedding-backfill-drain-user";
 const MEETING_USER = "smoke-embedding-backfill-meeting-user";
 const PROFILE_USER = "smoke-embedding-backfill-profile-user";
+const POISON_USER = "smoke-embedding-backfill-poison-user";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -501,6 +502,56 @@ async function testProfileFoldedIntoEmbeddingByBackfill() {
   await db.delete(userSettings).where(eq(userSettings.userId, PROFILE_USER));
 }
 
+/**
+ * Section 5: one row the provider refuses must not hold its batch hostage, and must not be
+ * retried every hour. The stub refuses any batch containing "POISON".
+ */
+async function testPoisonRowsAreIsolated() {
+  const db = await getDb();
+  await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, POISON_USER));
+  await db.delete(contacts).where(eq(contacts.userId, POISON_USER));
+  await ensureUserSettings(POISON_USER);
+  const now = new Date();
+  await db.insert(contacts).values(
+    ["Ada One", "Bea Two", "Cy Three", "POISON Person"].map((fullName) => ({
+      userId: POISON_USER, fullName, embeddingStaleAt: now,
+    }))
+  );
+  const [guest] = await db.insert(contacts).values({ userId: POISON_USER, fullName: "Meeting Guest" }).returning();
+  await db.insert(interactions).values([
+    { userId: POISON_USER, contactId: guest.id, interactionType: "meeting", interactionDate: new Date("2024-06-01T10:00:00Z"),
+      source: "calendar_import", externalId: `cal:ok:${guest.id}`, rawNotes: "Meeting: Planning" },
+    { userId: POISON_USER, contactId: guest.id, interactionType: "meeting", interactionDate: new Date("2024-06-02T10:00:00Z"),
+      source: "calendar_import", externalId: `cal:bad:${guest.id}`, rawNotes: "Meeting: POISON agenda" },
+  ]);
+
+  let poisonCalls = 0;
+  const refusing: typeof createEmbeddingsBatch = async (_userId, texts) => {
+    if (texts.some((t) => t.includes("POISON"))) {
+      poisonCalls++;
+      throw new Error("Invalid input: content could not be embedded");
+    }
+    return texts.map(() => Array(1536).fill(0.01));
+  };
+
+  const first = await runEmbeddingBackfill(POISON_USER, refusing);
+  check("the pass finishes instead of throwing", first.remaining === 0, JSON.stringify(first));
+  const marks = await db.select().from(embeddingFailures).where(eq(embeddingFailures.userId, POISON_USER));
+  check("the poison contact is marked", marks.some((m) => m.sourceType === "profile"), JSON.stringify(marks.map((m) => m.sourceType)));
+  check("the poison meeting is marked", marks.some((m) => m.sourceType === "meeting" && m.sourceId === `${guest.id}:cal:bad:${guest.id}`));
+  const [rowCount] = await db.select({ value: count() }).from(contactEmbeddings).where(eq(contactEmbeddings.userId, POISON_USER));
+  check("every healthy row was embedded (3 profiles + 1 meeting)", (rowCount?.value ?? 0) === 4, `rows ${rowCount?.value}`);
+  check("no marked meeting is pending", (await pendingMeetingCount(POISON_USER)) === 0);
+
+  poisonCalls = 0;
+  const second = await runEmbeddingBackfill(POISON_USER, refusing);
+  check("the next pass never sends the poison rows again", poisonCalls === 0 && second.embedded === 0, `${poisonCalls} poison calls`);
+
+  await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, POISON_USER));
+  await db.delete(contacts).where(eq(contacts.userId, POISON_USER));
+  await db.delete(userSettings).where(eq(userSettings.userId, POISON_USER));
+}
+
 async function main() {
   console.log("Embedding backfill (pglite)...");
   check("running with Clerk configured", isClerkConfigured() === true);
@@ -517,6 +568,9 @@ async function main() {
 
   console.log("\n-- profile text reaches the embedding via the claim query's with: --");
   await testProfileFoldedIntoEmbeddingByBackfill();
+
+  console.log("\n-- a refused row is isolated, marked and not retried --");
+  await testPoisonRowsAreIsolated();
 
   console.log("\nBackfill checks passed.");
 }
