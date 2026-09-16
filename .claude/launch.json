@@ -23,6 +23,12 @@
       "autoPort": true
     },
     {
+      "name": "orbit-bench-prod",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/bench/serve-static-bench.mjs", "3417"],
+      "port": 3417
+    },
+    {
       "name": "orbit-demo",
       "runtimeExecutable": "bash",
       "runtimeArgs": [

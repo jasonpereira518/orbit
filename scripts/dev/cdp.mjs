@@ -19,7 +19,7 @@ import { join } from "node:path";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
-export async function launch({ width = 1280, height = 800, mobile = false, reduceMotion = false } = {}) {
+export async function launch({ width = 1280, height = 800, mobile = false, reduceMotion = false, gpu = false, extraArgs = [] } = {}) {
   const port = 9300 + Math.floor(Math.random() * 500);
   const profile = mkdtempSync(join(tmpdir(), "orbit-cdp-"));
   const args = [
@@ -28,7 +28,10 @@ export async function launch({ width = 1280, height = 800, mobile = false, reduc
     "--headless=new",
     "--no-first-run",
     "--no-default-browser-check",
-    "--disable-gpu",
+    // Software raster by default (deterministic screenshots). Frame-rate measurements pass
+    // `gpu: true`: a real user's GPU rasterises, and swiftshader would bill paint to the CPU.
+    ...(gpu ? [] : ["--disable-gpu"]),
+    ...extraArgs,
     `--window-size=${width},${height}`,
     "--use-fake-ui-for-media-stream",
     "--use-fake-device-for-media-stream",
@@ -143,7 +146,7 @@ export async function launch({ width = 1280, height = 800, mobile = false, reduc
     await send("DOM.setFileInputFiles", { nodeId: q.nodeId, files: paths });
   };
   const close = () => { try { ws.close(); } catch {} proc.kill(); };
-  return { send, evaluate, goto, sleep, waitFor, waitHydrated, screenshot, click, clickSel, clickText, drag, key, type, setFiles, close, consoleErrors };
+  return { send, onEvent: on, evaluate, goto, sleep, waitFor, waitHydrated, screenshot, click, clickSel, clickText, drag, key, type, setFiles, close, consoleErrors };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
