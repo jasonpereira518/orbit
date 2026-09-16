@@ -32,8 +32,8 @@ function revealInteraction(interactionId: string) {
   flashSection(`interaction-${interactionId}`);
 }
 
-export function ContactBriefCard({ contactId, standing, recentDiscussions, nextSteps, stale }: {
-  contactId: string; standing: string | null; recentDiscussions: RecentDiscussion[]; nextSteps: OpenActionItem[]; stale: boolean;
+export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussions, nextSteps, stale }: {
+  contactId: string; standing: string | null; nextStep: string | null; recentDiscussions: RecentDiscussion[]; nextSteps: OpenActionItem[]; stale: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -56,6 +56,17 @@ export function ContactBriefCard({ contactId, standing, recentDiscussions, nextS
           <p className="text-sm leading-relaxed text-ink">
             {standing ?? "Log an interaction below and the brief will write itself from your notes."}
           </p>
+          {/* The one thing to do next, written with this contact's open commitments and
+              opportunities in front of the model. Null when nothing is open — which is a real
+              answer, and better than a generic nudge. */}
+          {nextStep && (
+            <p className="rounded-xl border border-primary/25 bg-primary/5 px-3 py-2 text-sm font-medium text-ink">
+              <span className="mr-1.5 text-xs font-semibold uppercase tracking-wide text-primary">
+                Next
+              </span>
+              {nextStep}
+            </p>
+          )}
           {recentDiscussions.length > 0 && (
             <div>
               <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent discussions</p>

@@ -14,6 +14,10 @@ import {
   WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
 import { z } from "zod";
+import {
+  impliedStepListSchema,
+  opportunityListSchema,
+} from "@/lib/ai-opportunity-schema";
 import { closenessLegend } from "@/lib/capture/closeness";
 import {
   withUsage,
@@ -126,7 +130,17 @@ export const noteParseSchema = z.object({
   tags: strList,
   summary: nullStr,
   key_facts: strList,
-  opportunities: strList,
+  /**
+   * Typed now, not `string[]`. The union also accepts the old bare-string shape, because a
+   * terse model still emits it and this field sits inside `people[]` — a hard Zod failure
+   * here would lose every person in the response, not one field.
+   */
+  opportunities: opportunityListSchema,
+  /**
+   * What the discussion calls for that nobody actually said. Kept strictly apart from
+   * `action_items`, which is only ever things the notes state outright.
+   */
+  implied_next_steps: impliedStepListSchema,
   shared_interests: strList,
   suggested_next_message: nullStr,
   confidence: nullConfidence,
@@ -1192,7 +1206,8 @@ const PERSON_FIELD_SHAPE = `{
   "tags": string[],
   "summary": string|null,
   "key_facts": string[],
-  "opportunities": string[],
+  "opportunities": [ { "kind": "internship"|"job"|"referral"|"introduction"|"startup_lead"|"mentor"|"investor"|"speaker"|"customer"|"collaboration"|"advice"|"other", "label": string, "direction": "they_offer"|"you_ask"|null, "due_phrase": string|null, "source_excerpt": string, "confidence": 0-1 } ],
+  "implied_next_steps": [ { "text": string, "rationale": string, "source_excerpt": string, "confidence": 0-1 } ],
   "shared_interests": string[],
   "suggested_next_message": string|null,
   "confidence": 0-1|null,
@@ -1297,7 +1312,11 @@ Rules:
 - relationship_score_suggestion: ${closenessLegend()}.
 - relevance: how directly this person advances the user's stated goals: 1=unrelated, 2=tangential, 3=plausibly useful, 4=clearly useful, 5=directly advances a goal. Null when no goals are listed.
 - If the notes only cover one person, return a single-item people array and an empty shared_notes array.
-- When seed people/hints are provided, include them if they appear in or clearly belong to this meeting, and prefer their emails when matching.`,
+- When seed people/hints are provided, include them if they appear in or clearly belong to this meeting, and prefer their emails when matching.
+- opportunities: CONCRETE possibilities the notes describe — a named internship, a referral offered, an intro promised, a company worth chasing, an investor who might be interested. NOT interests, NOT topics, NOT "seems friendly". label = 3-10 words in the notes' own vocabulary, never a full sentence and never the date. due_phrase = the deadline in the notes' own words when one is stated ("applications close Oct 15"), else null — never rewrite it into a calendar date. source_excerpt = the sentence it came from, copied VERBATIM from the notes. An opportunity with no verbatim sentence is dropped, so copy exactly.
+- implied_next_steps: what this discussion CALLS FOR that nobody said out loud — e.g. "she mentioned her team is hiring two backend engineers" implies offering a referral. At most two per person. An empty array is a correct and very common answer; do not invent one to fill the field. rationale = one short clause naming what in the notes implies it. source_excerpt = the sentence it was inferred from, VERBATIM. confidence below 0.6 when you are guessing at intent rather than reading it.
+- action_items stays ONLY things the notes explicitly state someone will do. Anything you inferred belongs in implied_next_steps, never in action_items.
+- REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").`,
   });
 
   const parsed = multiPersonNoteParseSchema.parse(JSON.parse(content));
@@ -1437,7 +1456,11 @@ Rules:
 - interaction_date: YYYY-MM-DD when known for this person/event; else null.
 - relationship_score_suggestion: ${closenessLegend()}.
 - relevance: how directly this person advances the user's stated goals: 1=unrelated, 2=tangential, 3=plausibly useful, 4=clearly useful, 5=directly advances a goal. Null when no goals are listed.
-- met_at may use shared event place when the person was clearly there.`,
+- met_at may use shared event place when the person was clearly there.
+- opportunities: CONCRETE possibilities the notes describe — a named internship, a referral offered, an intro promised, a company worth chasing, an investor who might be interested. NOT interests, NOT topics, NOT "seems friendly". label = 3-10 words in the notes' own vocabulary, never a full sentence and never the date. due_phrase = the deadline in the notes' own words when one is stated ("applications close Oct 15"), else null — never rewrite it into a calendar date. source_excerpt = the sentence it came from, copied VERBATIM from the notes. An opportunity with no verbatim sentence is dropped, so copy exactly.
+- implied_next_steps: what this discussion CALLS FOR that nobody said out loud — e.g. "she mentioned her team is hiring two backend engineers" implies offering a referral. At most two per person. An empty array is a correct and very common answer; do not invent one to fill the field. rationale = one short clause naming what in the notes implies it. source_excerpt = the sentence it was inferred from, VERBATIM. confidence below 0.6 when you are guessing at intent rather than reading it.
+- action_items stays ONLY things the notes explicitly state someone will do. Anything you inferred belongs in implied_next_steps, never in action_items.
+- REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").`,
     });
 
     const batchParsed = personDetailBatchSchema.parse(JSON.parse(batchRaw));
@@ -1470,6 +1493,7 @@ Rules:
         summary: found?.summary || null,
         key_facts: found?.key_facts || [],
         opportunities: found?.opportunities || [],
+        implied_next_steps: found?.implied_next_steps || [],
         shared_interests: found?.shared_interests || [],
         suggested_next_message: found?.suggested_next_message || null,
         confidence: found?.confidence || null,

@@ -288,6 +288,30 @@ CREATE TABLE IF NOT EXISTS action_items (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS action_items_user_item_hash_uidx ON action_items(user_id, item_hash);
 CREATE INDEX IF NOT EXISTS action_items_user_contact_status_idx ON action_items(user_id, contact_id, status);
+CREATE TABLE IF NOT EXISTS contact_opportunities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  label text NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  direction text,
+  source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL,
+  note_batch_id uuid,
+  source_excerpt text,
+  due_date timestamptz,
+  raw_date_phrase text,
+  confidence_score integer,
+  created_by text NOT NULL DEFAULT 'user',
+  item_hash text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  closed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS contact_opportunities_user_contact_idx ON contact_opportunities(user_id, contact_id, status);
+CREATE INDEX IF NOT EXISTS contact_opportunities_user_status_due_idx ON contact_opportunities(user_id, status, due_date);
+CREATE INDEX IF NOT EXISTS contact_opportunities_status_kind_idx ON contact_opportunities(status, kind);
+CREATE UNIQUE INDEX IF NOT EXISTS contact_opportunities_user_item_hash_uidx ON contact_opportunities(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS contact_briefs (
   contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
   user_id text NOT NULL,
@@ -748,6 +772,60 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   count integer NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS job_feed_sources (
+  id text PRIMARY KEY,
+  label text NOT NULL,
+  url text NOT NULL,
+  season text NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  etag text,
+  last_modified text,
+  last_fetched_at timestamptz,
+  last_changed_at timestamptz,
+  last_max_date_updated integer NOT NULL DEFAULT 0,
+  last_status text,
+  last_error text,
+  consecutive_failures integer NOT NULL DEFAULT 0,
+  bytes_last_fetched integer,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS job_postings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_id text NOT NULL REFERENCES job_feed_sources(id) ON DELETE CASCADE,
+  external_id text NOT NULL,
+  company_name text NOT NULL,
+  company_key text NOT NULL,
+  company_url text,
+  title text NOT NULL,
+  url text NOT NULL,
+  terms jsonb NOT NULL DEFAULT '[]',
+  locations jsonb NOT NULL DEFAULT '[]',
+  active boolean NOT NULL DEFAULT true,
+  is_visible boolean NOT NULL DEFAULT true,
+  sponsorship text,
+  date_posted timestamptz NOT NULL,
+  date_updated timestamptz NOT NULL,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS job_postings_source_external_uidx ON job_postings(source_id, external_id);
+CREATE INDEX IF NOT EXISTS job_postings_company_key_idx ON job_postings(company_key, date_posted);
+CREATE INDEX IF NOT EXISTS job_postings_date_updated_idx ON job_postings(date_updated);
+CREATE TABLE IF NOT EXISTS job_posting_matches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  posting_id uuid NOT NULL REFERENCES job_postings(id) ON DELETE CASCADE,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  opportunity_id uuid,
+  company_key text NOT NULL,
+  match_kind text NOT NULL,
+  suggestion_id uuid,
+  status text NOT NULL DEFAULT 'notified',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS job_posting_matches_user_posting_contact_uidx ON job_posting_matches(user_id, posting_id, contact_id);
+CREATE INDEX IF NOT EXISTS job_posting_matches_user_created_idx ON job_posting_matches(user_id, created_at);
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL DEFAULT 'clerk',
@@ -1403,7 +1481,23 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // `SCHEMA_VERSION = 54`, so only this changelog conflicted; a database already at 54 from
 // either branch still needs this table's two columns, hence one more bump rather than
 // reusing the number either side shipped it under.
-export const SCHEMA_VERSION = 55;
+//
+// v56 = the meeting-notes workflow, in ONE bump because later slices of it need none:
+// contact_opportunities (typed opportunity capture, replacing the untyped
+// contacts.opportunities array, which survives as a derived mirror); job_feed_sources /
+// job_postings / job_posting_matches (the internship feed that turns a posting at a watched
+// company into a suggestion); contacts.cadence_days/_phrase/_source/_set_at (a rhythm the
+// notes stated); reminders.origin/confidence_score (explicit vs. inferred next steps);
+// contact_briefs.next_step; and capture_jobs.batch_group_id/source_label/mention_picks
+// (one uploaded file = one meeting, plus the contacts an @-pick named).
+//
+// v57 = `contacts.search_tsv` rebuilt to include `opportunities` at weight C, so a referral
+// is findable by keyword and not only by the semantic arm. A separate bump rather than
+// folding it into 56 because 56 may already be stamped on a developer's database from an
+// earlier run of this branch, and such a database skips the sweep — the redefined generated
+// column would never be applied there. The DDL guard in `scripts/smoke-schema-ddl.ts`
+// refuses the fold for exactly that reason.
+export const SCHEMA_VERSION = 57;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1415,6 +1509,27 @@ export const SCHEMA_VERSION = 55;
  * Ordering matters: generated columns before the indexes that read them.
  */
 export const SCALE_DDL: string[] = [
+  // --- v56: meeting-notes workflow ---------------------------------------------------
+  //
+  // A cadence the notes actually stated ("check in monthly"). Days, because every consumer
+  // already works in days. Only the NEXT occurrence is ever scheduled off it — see the
+  // column comment in schema.ts for why this is not an RRULE and not a recurring series.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS cadence_days integer`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS cadence_phrase text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS cadence_source text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS cadence_set_at timestamptz`,
+  // Whether the notes SAID a reminder or Orbit inferred it. Existing rows default to
+  // 'explicit', which is correct: implied items did not exist before this column did.
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS origin text NOT NULL DEFAULT 'explicit'`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS confidence_score integer`,
+  // The brief's single "what to do next" clause.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS next_step text`,
+  // Multi-file capture: one file = one meeting = one job, grouped by batch_group_id.
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS batch_group_id uuid`,
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_label text`,
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS mention_picks jsonb NOT NULL DEFAULT '[]'`,
+  `CREATE INDEX IF NOT EXISTS capture_jobs_user_batch_idx ON capture_jobs(user_id, batch_group_id)`,
+
   // --- Generated columns -----------------------------------------------------------
   //
   // An attendee's employer, normalised. MUST stay byte-identical to `normalizeCompanyKey`
@@ -1468,11 +1583,30 @@ export const SCALE_DDL: string[] = [
   //
   // Tags are not here: they live in their own table and a generated column may only read
   // its own row. Tag matches are an EXISTS subquery in the search predicate instead.
+  //
+  // `opportunities` IS here, at weight C, and that is the point of the drop below. It is the
+  // denormalised mirror of `contact_opportunities` ("Referral — could forward my resume"), and
+  // without it the one search people specifically come back to Orbit to run — "who can refer
+  // me?" — matched only through the semantic arm, which is a ranking, not a guarantee. C
+  // rather than D because an opportunity is a deliberate classification of what a
+  // relationship can produce, not incidental prose.
+  //
+  // `::text` renders the jsonb array including its brackets and quotes; the 'simple'
+  // tokenizer discards those and keeps the words, which is all this needs. A subquery over
+  // `jsonb_array_elements_text` would read better and is not allowed in a generated column.
+  //
+  // Dropped first because a generated column's expression cannot be altered in place —
+  // `ADD COLUMN IF NOT EXISTS` against an existing column is a silent no-op, so a database
+  // that already has `search_tsv` would never pick the new expression up. Same reasoning as
+  // `linkedin_slug` above. Cheap to redo: the column is derived, Postgres refills it, the
+  // dependent GIN index is dropped with it and recreated by `contacts_search_gin` further
+  // down this list, and this only runs when `SCHEMA_VERSION` changes.
+  `ALTER TABLE contacts DROP COLUMN IF EXISTS search_tsv`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS search_tsv tsvector
      GENERATED ALWAYS AS (
        setweight(to_tsvector('simple', coalesce(full_name, '') || ' ' || coalesce(preferred_name, '')), 'A') ||
        setweight(to_tsvector('simple', coalesce(company, '') || ' ' || coalesce(school, '') || ' ' || coalesce(title, '')), 'B') ||
-       setweight(to_tsvector('simple', coalesce(email, '') || ' ' || coalesce(location, '') || ' ' || coalesce(how_met, '') || ' ' || coalesce(met_context, '') || ' ' || coalesce(industry, '')), 'C') ||
+       setweight(to_tsvector('simple', coalesce(email, '') || ' ' || coalesce(location, '') || ' ' || coalesce(how_met, '') || ' ' || coalesce(met_context, '') || ' ' || coalesce(industry, '') || ' ' || coalesce(opportunities::text, '')), 'C') ||
        setweight(to_tsvector('simple', coalesce(ai_summary, '') || ' ' || coalesce(notes, '')), 'D')
      ) STORED`,
 

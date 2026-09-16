@@ -35,6 +35,33 @@ const AUTO_SUGGESTION_TYPES = [
 const MAX_AUTO_SUGGESTIONS = 12;
 
 /**
+ * How long without a touch counts as dormant, when the person never said otherwise.
+ *
+ * A stated cadence replaces this per contact: somebody you agreed to speak with quarterly is
+ * not dormant on day 31, and telling them they have "gone quiet" on schedule is how a
+ * suggestion queue loses credibility.
+ */
+const DORMANT_DAYS = 30;
+
+/**
+ * How long a LinkedIn thread sits before it counts as gone quiet.
+ *
+ * Only the LOWER bound is cadence-aware. The upper bound (90 days) exists to stop ancient
+ * threads resurfacing forever and has nothing to do with an agreed rhythm, so a quarterly
+ * cadence must not drag it out to a year. Asymmetric on purpose.
+ */
+const LINKEDIN_QUIET_MIN_DAYS = 14;
+const LINKEDIN_QUIET_MAX_DAYS = 90;
+
+/**
+ * The idle window a contact's own cadence supplies, clamped to what the column allows.
+ * Null-safe: a contact who never stated one falls back to the caller's default.
+ */
+function idleThresholdFor(cadenceDays: number | null | undefined, fallback: number) {
+  return typeof cadenceDays === "number" && cadenceDays > 0 ? cadenceDays : fallback;
+}
+
+/**
  * The dashboard's "Constellation preview" card is a decorative, non-interactive
  * glance at the network (no search/filter UI) — it doesn't need every contact,
  * just enough to read as a constellation. Capping it keeps the dashboard's
@@ -130,6 +157,11 @@ async function buildOutreachSuggestions(userId: string) {
       lastInteractionAt: true,
       firstInteractionAt: true,
       nextFollowUpAt: true,
+      // A rhythm the person stated in a note. Projected explicitly — this query lists its
+      // columns, so a threshold that reads `cadenceDays` without this line gets `undefined`
+      // and silently falls back to the default for everybody.
+      cadenceDays: true,
+      cadencePhrase: true,
       // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
       // an optional field here would let a caller forget the column and quietly never
       // suppress anything, with nothing failing to say so.
@@ -182,14 +214,18 @@ async function buildOutreachSuggestions(userId: string) {
     (c) =>
       isDiscoveryEligible(c) &&
       (c.priorityLevel >= 2 || c.relationshipScore >= 4) &&
-      daysAgo(c.lastInteractionAt) >= 30
+      daysAgo(c.lastInteractionAt) >= idleThresholdFor(c.cadenceDays, DORMANT_DAYS)
   );
   for (const c of dormantHighValue) {
     const idle = daysAgo(c.lastInteractionAt);
     upsertCandidate(c.id, {
       suggestionType: "dormant_high_value",
       title: `Reach out to ${contactDisplayName(c)}`,
-      description: `Gone quiet — last touch ${idle} day${idle === 1 ? "" : "s"} ago`,
+      // Quoting the person back to themselves is the whole point of storing the phrase: "you
+      // said check in monthly" is a reason, where "gone quiet" is just an observation.
+      description: c.cadencePhrase
+        ? `You said "${c.cadencePhrase}" — last touch ${idle} day${idle === 1 ? "" : "s"} ago`
+        : `Gone quiet — last touch ${idle} day${idle === 1 ? "" : "s"} ago`,
       relatedContactIds: [c.id],
       confidenceScore: 80,
     });
@@ -222,7 +258,12 @@ async function buildOutreachSuggestions(userId: string) {
     const stats = messageStats.get(c.id);
     if (!stats || stats.count < 2) continue;
     const daysSinceLast = daysAgo(stats.last);
-    if (daysSinceLast < 14 || daysSinceLast > 90) continue;
+    if (
+      daysSinceLast < idleThresholdFor(c.cadenceDays, LINKEDIN_QUIET_MIN_DAYS) ||
+      daysSinceLast > LINKEDIN_QUIET_MAX_DAYS
+    ) {
+      continue;
+    }
     upsertCandidate(c.id, {
       suggestionType: "linkedin_thread_quiet",
       title: `Reach out to ${contactDisplayName(c)}`,
@@ -274,9 +315,14 @@ function followUpCandidateScore(contact: {
   relationshipScore: number;
   lastInteractionAt: Date | string | null;
   nextFollowUpAt: Date | string | null;
+  cadenceDays?: number | null;
 }) {
   const idleDays = Math.min(daysAgo(contact.lastInteractionAt), 365);
-  const idleScore = Number.isFinite(idleDays) ? idleDays / 30 : 2;
+  // Idle time measured against this person's OWN rhythm, so the score means "how overdue",
+  // not "how long". Dividing everyone by 30 ranked a quarterly contact above a weekly one
+  // purely for sitting still.
+  const window = idleThresholdFor(contact.cadenceDays, DORMANT_DAYS);
+  const idleScore = Number.isFinite(idleDays) ? idleDays / window : 2;
   return (
     (contact.priorityLevel || 0) * 4 +
     (contact.relationshipScore || 0) * 2 +
@@ -302,6 +348,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
       relationshipScore: true,
       lastInteractionAt: true,
       nextFollowUpAt: true,
+      cadenceDays: true,
     },
   });
 

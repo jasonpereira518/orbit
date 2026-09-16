@@ -212,6 +212,13 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
     index = buildDuplicateIndex(existing);
   }
 
+  // Absent means "the defaults", exactly like the reminder ticks below: a job whose
+  // decisions predate opportunities must keep everything the parse found, not silently
+  // drop it all because the section is missing.
+  const opportunityChoices = decisions.opportunities;
+  const opportunityChecked = (itemKey: string, index: number) =>
+    opportunityChoices ? opportunityChoices.checked.includes(`${itemKey}:${index}`) : true;
+
   const participants: NoteBatchParticipantInput[] = accepted.map(({ item, decision }) => {
     const edits = decision.edits ?? {};
     const parsed = {
@@ -241,9 +248,27 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
       createReminder: shouldCreateFollowUp(closeness, parsed.relevance, Boolean(parsed.follow_up_recommendation)),
       relationshipScore: closeness,
       tagNames: decision.tagNames?.length ? decision.tagNames : parsed.tags,
-      followUpDays: followUpDaysFor(closeness, parsed.follow_up_days),
+      // A rhythm the person stated outranks both the model's inference and the closeness
+      // table — they said the interval out loud.
+      followUpDays: followUpDaysFor(closeness, parsed.follow_up_days, item.cadence?.days),
+      cadenceDays: item.cadence?.days ?? null,
+      cadencePhrase: item.cadence?.phrase ?? null,
       interactionDate: item.interactionDate,
       interactionType: item.interactionType,
+      // Opportunities belong to the card that produced them, so rejecting a person drops
+      // theirs with them — `accepted` is already the filter. A per-opportunity untick from
+      // the summary narrows it further.
+      opportunities: (item.opportunities ?? [])
+        .filter((_, i) => opportunityChecked(item.key, i))
+        .map((o) => ({
+          kind: o.kind,
+          label: o.label,
+          direction: o.direction,
+          sourceExcerpt: o.sourceExcerpt,
+          rawDatePhrase: o.rawDatePhrase,
+          confidenceScore: o.confidenceScore,
+          dueDateIso: o.dueDateIso,
+        })),
     };
   });
 
@@ -265,6 +290,7 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
         dateBasis: s.dateBasis,
         anchorIso: s.anchorIso,
         dueDateIso: o.dueDateIso ?? s.dueDateIso,
+        origin: s.origin ?? "explicit",
       };
     });
 
