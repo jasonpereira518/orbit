@@ -239,6 +239,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-recruiter-pii": "pglite",
   "smoke-resend-rejection": "pglite",
   "smoke-schema-upgrade": "pglite",
+  "smoke-stripe-unattributed": "pglite",
   "smoke-stripe-webhook": "pglite",
   "smoke-billing-portal": "pglite",
   "smoke-checkout-confirm": "pglite",

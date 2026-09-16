@@ -63,6 +63,8 @@ export type OpsSnapshot = {
   missingExpectedEnv: string[];
   /** The app role's statement_timeout ("20s", "0" = none). Production only. */
   statementTimeout: string | null;
+  /** stripe.unattributed rows in the last day: checkout fulfilments vs everything else. */
+  stripeUnattributed24h: { fulfilments: number; other: number };
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
@@ -172,6 +174,17 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "critical",
       title: "Stripe checkout is failing",
       detail: `${s.stripeCheckoutErrorsLastHour} checkout attempt(s) errored in the last hour — nobody can pay.`,
+      href: "/admin/health",
+    });
+  }
+
+  const unattributed = s.stripeUnattributed24h;
+  if (unattributed.fulfilments + unattributed.other > 0) {
+    out.push({
+      id: "stripe.unattributed",
+      severity: unattributed.fulfilments > 0 ? "critical" : "warning",
+      title: unattributed.fulfilments > 0 ? "Someone paid and has no plan" : "Stripe events match no account",
+      detail: `${unattributed.fulfilments} checkout fulfilment(s) and ${unattributed.other} other Stripe event(s) in the last day matched no Orbit account. error_events (source stripe.unattributed) holds each event id.`,
       href: "/admin/health",
     });
   }

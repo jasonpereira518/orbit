@@ -84,6 +84,8 @@ export const ERROR_SOURCES = {
    * `recordBackfillFailure`, so a key that keeps failing is one row an hour, not one per kick.
    */
   backfillFailed: "backfill.failed",
+  /** A Stripe event no account matched (checkout, invoice, refund). Ids only. */
+  stripeUnattributed: "stripe.unattributed",
   /**
    * Wispr answered 401/403 to a user's own key. One row per rejected capture at most; the
    * key's fingerprint (never the key) lets Settings say "this key" rather than "a key".

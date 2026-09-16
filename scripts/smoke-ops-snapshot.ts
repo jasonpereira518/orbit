@@ -93,6 +93,16 @@ run(async () => {
     delete process.env.VERCEL_ENV;
   }
 
+  console.log("\nUnattributed Stripe events...");
+  await db.delete(errorEvents).where(eq(errorEvents.source, ERROR_SOURCES.stripeUnattributed));
+  await db.insert(errorEvents).values([
+    { source: ERROR_SOURCES.stripeUnattributed, kind: "checkout.session.completed", context: { eventId: "evt_a" } },
+    { source: ERROR_SOURCES.stripeUnattributed, kind: "invoice.paid", context: { eventId: "evt_b" } },
+  ]);
+  const su = (await loadOpsSnapshot(new Date(), null)).stripeUnattributed24h;
+  check("fulfilments and other events are counted apart", su.fulfilments === 1 && su.other === 1, JSON.stringify(su));
+  await db.delete(errorEvents).where(eq(errorEvents.source, ERROR_SOURCES.stripeUnattributed));
+
   // (new sections go above this line)
 
   if (failures > 0) {

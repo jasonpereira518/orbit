@@ -55,6 +55,7 @@ const HEALTHY: OpsSnapshot = {
   processStalledRecent: ["ok"],
   backfillFailures24h: { accounts: 0, kinds: [] },
   statementTimeout: "20s",
+  stripeUnattributed24h: { fulfilments: 0, other: 0 },
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -140,6 +141,11 @@ function main() {
     find({ ...HEALTHY, backfillFailures24h: { accounts: 2, kinds: ["embeddings"] } }, "backfill.failed")?.severity === "warning");
   check("one account's failing backfill is that user's key, not an ops alert",
     !find({ ...HEALTHY, backfillFailures24h: { accounts: 1, kinds: ["embeddings"] } }, "backfill.failed"));
+
+  check("an unattributed checkout → stripe.unattributed (critical)",
+    find({ ...HEALTHY, stripeUnattributed24h: { fulfilments: 1, other: 0 } }, "stripe.unattributed")?.severity === "critical");
+  check("an unattributed invoice or refund only → warning",
+    find({ ...HEALTHY, stripeUnattributed24h: { fulfilments: 0, other: 2 } }, "stripe.unattributed")?.severity === "warning");
 
   check("statement_timeout 0 → config.statement_timeout_unbounded (warning)",
     find({ ...HEALTHY, statementTimeout: "0" }, "config.statement_timeout_unbounded")?.severity === "warning");

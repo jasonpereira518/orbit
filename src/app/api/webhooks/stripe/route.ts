@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { decideStripeEvent } from "@/lib/billing-stripe";
-import { shouldRecordThrottled } from "@/lib/error-events";
+import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
 import {
   applyStripeDecision,
   isStripeEventProcessed,
@@ -82,6 +82,13 @@ export async function POST(req: NextRequest) {
       console.error(
         `Stripe ${event.type} (${event.id}) could not be attributed to a user.`
       );
+      // Logs expire in an hour; this row is what the ops sweep reads. Ids only — no amounts,
+      // emails or names from the payload. Not throttled: each one is a real incident.
+      await recordErrorEvent({
+        source: ERROR_SOURCES.stripeUnattributed,
+        kind: event.type,
+        context: { eventId: event.id, resourceId: decision.resourceId },
+      });
     }
 
     // Kept from Phase 0: /admin/health reads this to show when access was withdrawn.

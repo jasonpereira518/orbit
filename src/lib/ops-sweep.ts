@@ -58,6 +58,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     failedImports,
     lastDrain,
     backfillAgg,
+    unattributedAgg,
   ] = await Promise.all([
       db
         .select()
@@ -97,6 +98,11 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         })
         .from(errorEvents)
         .where(and(eq(errorEvents.source, ERROR_SOURCES.backfillFailed), gt(errorEvents.createdAt, dayAgo))),
+      db
+        .select({ kind: errorEvents.kind, n: sql<number>`count(*)::int` })
+        .from(errorEvents)
+        .where(and(eq(errorEvents.source, ERROR_SOURCES.stripeUnattributed), gt(errorEvents.createdAt, dayAgo)))
+        .groupBy(errorEvents.kind),
     ]);
 
   const [stuckPurgeRow] = await db
@@ -149,6 +155,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     backfillFailures24h: {
       accounts: backfillAgg[0]?.accounts ?? 0,
       kinds: backfillAgg[0]?.kinds ? backfillAgg[0].kinds.split(",") : [],
+    },
+    stripeUnattributed24h: {
+      fulfilments: unattributedAgg.filter((r) => r.kind.startsWith("checkout.session.")).reduce((sum, r) => sum + r.n, 0),
+      other: unattributedAgg.filter((r) => !r.kind.startsWith("checkout.session.")).reduce((sum, r) => sum + r.n, 0),
     },
     webhooks,
     stripeCheckoutErrorsLastHour: stripeCheckout,
