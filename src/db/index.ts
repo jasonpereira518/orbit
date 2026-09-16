@@ -1407,10 +1407,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // either branch still needs this table's two columns, hence one more bump rather than
 // reusing the number either side shipped it under.
 //
-// 57 = user_settings.terms_accepted_at, terms_version and timeline_backfill_enabled (launch
-// Phase 1: recorded Terms consent and the opt-in LinkedIn timeline backfill). 56 is claimed
-// by three open branches (calendar enrichment, both outreach redesigns), so this skips it.
-export const SCHEMA_VERSION = 57;
+// 58 = user_settings.terms_accepted_at, terms_version and timeline_backfill_enabled (launch
+// Phase 1: recorded Terms consent and the opt-in LinkedIn timeline backfill). 56 is claimed by
+// three open branches (calendar enrichment, both outreach redesigns) and 57 by the AI-key
+// gating branch, whose columns are different — and whose bump was still UNPUSHED, so the
+// "scan every remote branch" rule could not see it. Two branches sharing a number is the
+// trap in docs: a database stamped 57 by that branch would never run these ALTERs.
+export const SCHEMA_VERSION = 58;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
