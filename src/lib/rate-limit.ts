@@ -66,6 +66,14 @@ export const RATE_LIMITS = {
    */
   avatarResolve: { limit: 120, windowSec: 60 },
   /**
+   * App-wide daily allowance per quota'd photo source (Unavatar, Microlink), keyed on the
+   * source, not the user: both free tiers are ~25 lookups a day for the whole deployment,
+   * and the per-Lambda cooldowns cannot see each other.
+   */
+  avatarSourceShared: { limit: 25, windowSec: 86_400 },
+  /** One user's daily slice of each source, so one large network cannot drain it for all. */
+  avatarSourceUser: { limit: 5, windowSec: 86_400 },
+  /**
    * `submitFeedback`: a form post carrying up to three screenshots. Generous per
    * submission, tight per window — this is the largest row a user can create directly,
    * and nobody has anything to say five times in five minutes.

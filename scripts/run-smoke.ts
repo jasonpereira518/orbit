@@ -152,6 +152,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-admin-roster": "pglite",
   "smoke-admin-unmasked": "pglite",
   "smoke-avatar-migration": "pglite",
+  "smoke-avatar-source-budget": "pglite",
   "smoke-broadcasts": "pglite",
   "smoke-chat-context": "pglite",
   "smoke-clear-api-key": "pglite",

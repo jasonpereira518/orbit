@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { putAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   isDurableAvatarUrl,
   isUnfetchableImageUrl,
@@ -88,6 +89,32 @@ export class MicrolinkRateLimitError extends AvatarSourceRateLimitError {
   constructor(resetAt: number) {
     super(resetAt, "microlink", "LinkedIn photo lookup rate limit hit");
     this.name = "MicrolinkRateLimitError";
+  }
+}
+
+export type AvatarQuotaSource = "unavatar" | "microlink";
+
+/**
+ * Takes one lookup from the user's daily slice and from the app-wide allowance for this
+ * source. Returns the deferral to throw when either is spent, or null to go ahead.
+ * `userId: null` is for tests and scripts only. A limiter that cannot count defers too:
+ * spending quota we cannot see is exactly what this exists to stop.
+ */
+export async function claimAvatarSourceLookup(
+  source: AvatarQuotaSource,
+  userId: string | null
+): Promise<AvatarSourceRateLimitError | null> {
+  if (userId === null) return null;
+  const label = source === "unavatar" ? "unavatar.io" : "microlink";
+  try {
+    await consumeBucket("avatarSource.user", `${source}:${userId}`, RATE_LIMITS.avatarSourceUser);
+    if (!(source === "microlink" && process.env.MICROLINK_API_KEY?.trim())) {
+      await consumeBucket("avatarSource.shared", source, RATE_LIMITS.avatarSourceShared);
+    }
+    return null;
+  } catch (err) {
+    const retryAfterMs = isRateLimitedError(err) ? err.retryAfterSec * 1000 : 60_000;
+    return new AvatarSourceRateLimitError(Date.now() + retryAfterMs, label);
   }
 }
 
@@ -179,10 +206,13 @@ export function parseImageDataUrl(
  *
  * Throws {@link AvatarSourceRateLimitError} whenever a quota'd tier refused us and no
  * photo was found, so callers defer the contact instead of recording it as photoless.
+ *
+ * `userId` pays for the lookup from its daily share; null only in tests.
  */
 export async function fetchLinkedInPhotoUrl(
   contactId: string,
-  linkedinUrl: string
+  linkedinUrl: string,
+  userId: string | null
 ): Promise<string | null> {
   const slug = linkedinSlug(linkedinUrl);
   if (!slug) return null;
@@ -193,14 +223,19 @@ export async function fetchLinkedInPhotoUrl(
   if (Date.now() < unavatarCooldownUntil) {
     deferred = new AvatarSourceRateLimitError(unavatarCooldownUntil, "unavatar.io");
   } else {
-    const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
-    try {
-      const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
-      if (fromUnavatar) return fromUnavatar;
-    } catch (err) {
-      if (!(err instanceof AvatarSourceRateLimitError)) throw err;
-      noteUnavatarRateLimit(err.resetAt);
-      deferred = err;
+    const budget = await claimAvatarSourceLookup("unavatar", userId);
+    if (budget) {
+      deferred = budget;
+    } else {
+      const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
+      try {
+        const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
+        if (fromUnavatar) return fromUnavatar;
+      } catch (err) {
+        if (!(err instanceof AvatarSourceRateLimitError)) throw err;
+        noteUnavatarRateLimit(err.resetAt);
+        deferred = err;
+      }
     }
   }
 
@@ -208,6 +243,8 @@ export async function fetchLinkedInPhotoUrl(
   if (isMicrolinkRateLimited()) {
     throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
   }
+  const microlinkBudget = await claimAvatarSourceLookup("microlink", userId);
+  if (microlinkBudget) throw deferred ?? microlinkBudget;
 
   const normalized = linkedinUrl.includes("linkedin.com/in/")
     ? linkedinUrl.trim()

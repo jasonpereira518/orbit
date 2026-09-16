@@ -1057,7 +1057,7 @@ export async function backfillContactAvatars(
       runAvatarBackfillBatch(candidates, {
         deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
         persistRemote: downloadAndPersistAvatar,
-        resolveLinkedIn: fetchLinkedInPhotoUrl,
+        resolveLinkedIn: (contactId, url) => fetchLinkedInPhotoUrl(contactId, url, userId),
         resolveGravatar: fetchGravatarPhotoUrl,
         save: async (contactId, photoUrl) => {
           await db
@@ -1228,7 +1228,8 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         try {
           profileImageUrl = await fetchLinkedInPhotoUrl(
             contact.id,
-            contact.linkedinUrl
+            contact.linkedinUrl,
+            userId
           );
         } catch (err) {
           if (err instanceof AvatarSourceRateLimitError) {
