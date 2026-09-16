@@ -30,12 +30,13 @@ Orbit is a personal networking CRM. Paste in messy notes from a coffee chat or c
 
 ## Features
 
-- **Capture** — paste raw notes (one person or many), let AI pull out contacts, companies, and context, review, then save
+- **Capture** — paste raw notes (one person or many), let AI pull out contacts, companies, and context, review, then save. Unsaved notes are kept as you type, phones get a "Scan business card" camera button, and recent captures stay listed on the page with the original notes and photos one click away
+- **Command palette** — ⌘K / Ctrl+K from anywhere: jump to a person or page, start a capture, "Capture this" to send what you typed straight to Capture, or hand a question to the ask bar (⌘J)
 - **Contacts** — searchable list + profiles, relationship strength, recruiter tracking
 - **Dashboard** — follow-ups, dormant connections, and suggestions in one view
 - **Chat** — ask natural-language questions about who's in your network and who can help
 - **Constellation** — an interactive star-chart of your network, clustered by company and school
-- **Imports** — LinkedIn CSV/message exports, calendar ICS subscribe/upload, Gmail inbox (recruiter threads)
+- **Imports** — LinkedIn CSV/message exports, address-book files (vCard `.vcf` or Google/Outlook contacts CSV — no account connection needed), calendar ICS subscribe/upload, Gmail inbox (recruiter threads)
 - **Outreach** — search prospects (via Apollo) and send tracked email/SMS campaigns
 - **Knowledge base** — everything Orbit has learned about your network from notes, imports, and summaries in one searchable place
 - **Reminders** — timed follow-up nudges so no relationship goes cold
@@ -104,8 +105,9 @@ A few features also read credentials that aren't in `.env.example` yet: an **Apo
 | `/onboarding` | First-run tutorial — add or import your first people |
 | `/contacts` | Searchable contact list + profiles |
 | `/recruiters` | Recruiter tracking, linked from Contacts |
-| `/capture` | Paste notes → AI extract → review → save |
-| `/imports` | LinkedIn connections + messages, calendar ICS, Gmail |
+| `/capture` | Paste notes → AI extract → review → save; recent captures below |
+| `/capture/[id]` | One capture: the original notes and photos, and what they produced |
+| `/imports` | LinkedIn connections + messages, vCard / contacts CSV, calendar ICS, Gmail |
 | `/chat` | Ask who in your network can help |
 | `/graph` | Constellation — interactive network map |
 | `/knowledge` | Searchable knowledge base built from notes, imports, and summaries |

@@ -15,8 +15,15 @@ import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
-export function GoogleContactsImport() {
+/**
+ * `returnTo` is where Google's consent screen sends the user back to. /imports by default;
+ * the Integrations dialog in Settings passes its own URL so a connect started there lands
+ * back in the dialog, on this tab.
+ */
+export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
   const router = useRouter();
   const job = useImportJob();
   const [pending, start] = useTransition();
@@ -65,16 +72,34 @@ export function GoogleContactsImport() {
       params.delete("gmail");
       params.delete("reason");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
       router.refresh();
       getGmailConnectionStatus().then(setStatus).catch(() => {});
     } else if (google === "error") {
-      toast.error(params.get("reason") || "Google connection failed");
+      {
+        const oauth = describeOAuthReason(params.get("reason"), "Google");
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
       params.delete("google");
       params.delete("gmail");
       params.delete("reason");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
+      // Re-read the status: a Next router "restore" (which `replaceState` is) drops any
+      // server action still queued — here, the status fetch this card fired a moment ago
+      // on mount — without settling it, which would leave the card rendering nothing.
+      getGmailConnectionStatus().then(setStatus).catch(() => {});
     }
   }, [router]);
 
@@ -87,7 +112,7 @@ export function GoogleContactsImport() {
       <IntegrationUnavailable
         id="import-google-contacts"
         title="Google Contacts"
-        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        blurb="Not connected yet. Export your Google contacts as a vCard or Google CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
           "GOOGLE_CLIENT_ID",
           "GOOGLE_CLIENT_SECRET",
@@ -115,10 +140,10 @@ export function GoogleContactsImport() {
               onClick={() =>
                 start(async () => {
                   try {
-                    const { url } = await startGmailOAuth("/imports");
+                    const { url } = await startGmailOAuth(returnTo);
                     window.location.href = url;
                   } catch (err) {
-                    toast.error(err instanceof Error ? err.message : "OAuth failed");
+                    toast.error(friendlyError(err, TOAST_COPY.connectFailed));
                   }
                 })
               }
@@ -135,7 +160,7 @@ export function GoogleContactsImport() {
                       const res = await previewGoogleContacts();
                       setContactsScopeGranted(res.contactsScopeGranted);
                       if (!res.contactsScopeGranted) {
-                        toast.error("Reconnect Google to grant contacts access");
+                        toast.error("Reconnect Google to allow access to your contacts");
                         return;
                       }
                       setPeople(res.people);
@@ -146,7 +171,7 @@ export function GoogleContactsImport() {
                       toast.success(`Loaded ${res.people.length} contacts`);
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not load contacts"
+                        friendlyError(err, TOAST_COPY.loadContactsFailed)
                       );
                     }
                   })
@@ -212,7 +237,7 @@ export function GoogleContactsImport() {
                 setSelected(new Set());
                 setLoaded(false);
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Import failed");
+                toast.error(friendlyError(err, TOAST_COPY.importFailed));
               }
             }}
           >

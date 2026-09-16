@@ -56,6 +56,13 @@ async function main() {
   check("deep view on a healthy DB is still HTTP 200 (degraded is not down)", deep.httpStatus === 200);
   check("deep view names missing config, never values",
     Array.isArray((deep as { config?: { missingRequired?: unknown } }).config?.missingRequired));
+  // The runbook instructs setting statement_timeout on the Neon role and nothing verified
+  // that anyone did. The probe reports whatever the role carries, so "is it set" has an
+  // answer. PGlite reports its own default here; the assertion is that the field is read,
+  // not what production's value happens to be.
+  check("deep view reports the role's statement_timeout",
+    typeof deep.config?.statementTimeout === "string" || deep.config?.statementTimeout === null,
+    JSON.stringify(deep.config?.statementTimeout));
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

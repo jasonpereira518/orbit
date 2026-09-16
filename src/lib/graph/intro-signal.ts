@@ -212,11 +212,6 @@ export function markGraphViewportReady() {
   scheduleArrival();
 }
 
-/** Has the chart reported itself visible at least once this document? */
-export function isGraphViewportReady() {
-  return ready;
-}
-
 function scheduleArrival() {
   if (beatTimer !== null) return;
   // The floor is on unshifted wall clock on purpose: someone who tabbed away and came back to

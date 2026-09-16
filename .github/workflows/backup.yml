@@ -1,8 +1,8 @@
-# Weekly logical backup of the production database, plus a button to take one on demand
+# Daily logical backup of the production database, plus a button to take one on demand
 # (run it before any risky migration).
 #
 # Neon's own point-in-time restore window on the free tier is short (verify it under
-# Project → Settings; it has been 6 hours). This keeps 90 days of weekly `pg_dump`s as
+# Project → Settings; it has been 6 hours). This keeps 90 days of daily `pg_dump`s as
 # encrypted workflow artifacts — encrypted with `age` to a public key, so the artifact
 # store never holds readable customer data and the private key never leaves the password
 # manager. Restore steps are in docs/RUNBOOK.md.
@@ -13,7 +13,12 @@ name: backup
 
 on:
   schedule:
-    - cron: "0 6 * * 0"
+    # Daily, not weekly. Neon's free-tier PITR window is hours, so the gap between dumps IS
+    # the worst-case data loss: weekly meant corruption noticed on day six lost six days of
+    # every user's contacts. Daily makes that at most 24 hours. It is not free — 90 days of
+    # daily dumps is 90 artifacts instead of 13 — but artifact storage is the cheapest thing
+    # in this stack and the alternative is explaining a week of lost work to a paying user.
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 permissions:
