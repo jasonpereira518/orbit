@@ -209,7 +209,7 @@ export function OpsButtons({
               await sendTestSlackDMAction();
               toast.success("Test DM sent to Slack");
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Could not reach Slack");
+              toast.error(friendlyError(err, "Couldn’t reach Slack — try again?"));
             }
           })
         }
