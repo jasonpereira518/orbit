@@ -20,7 +20,7 @@
  */
 import "./smoke/_env";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import * as schema from "../src/db/schema";
 import {
@@ -133,6 +133,62 @@ async function seed() {
     .insert(schema.feedback)
     .values({ userId: USER, kind: "churn_reason", text: "their own words" });
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
+
+  // Generation-2 outreach: a research run holding five credits, plus the two things the
+  // `outreach` step must leave alone — the credit accounting and the suppression list.
+  const [sender] = await db
+    .insert(schema.outreachSenderAccounts)
+    .values({ userId: USER, kind: "gmail", transport: "api", address: `${USER}@example.test` })
+    .returning();
+  const [campaignV2] = await db
+    .insert(schema.outreachCampaigns)
+    .values({ userId: USER, name: "Campaign v2", generation: 2, senderAccountId: sender.id })
+    .returning();
+  const [prospectV2] = await db
+    .insert(schema.outreachProspects)
+    .values({
+      userId: USER,
+      campaignId: campaignV2.id,
+      externalId: "li:ada",
+      fullName: "Ada Lovelace",
+      // `on delete set null` from `contacts`: a contacts-only delete must sever this link,
+      // not take the prospect with it.
+      contactId: contact.id,
+    })
+    .returning();
+  const [runV2] = await db
+    .insert(schema.outreachResearchRuns)
+    .values({ userId: USER, campaignId: campaignV2.id, criteriaVersion: 1, fundingSource: "orbit" })
+    .returning();
+  await db.insert(schema.outreachResearchAttempts).values({
+    userId: USER,
+    campaignId: campaignV2.id,
+    prospectId: prospectV2.id,
+    runId: runV2.id,
+    fundingSource: "orbit",
+  });
+  await db.insert(schema.researchCreditAccounts).values({
+    userId: USER,
+    monthlyAllowance: 250,
+    monthlyHeld: 5,
+    periodStart: now,
+    periodEnd: new Date(now.getTime() + 30 * 86_400_000),
+  });
+  const [hold] = await db
+    .insert(schema.researchCreditHolds)
+    .values({ userId: USER, runId: runV2.id, amountMonthly: 5, periodStart: now })
+    .returning();
+  await db.insert(schema.researchCreditLedger).values({
+    userId: USER,
+    entryType: "reserve",
+    amountMonthly: -5,
+    holdId: hold.id,
+    runId: runV2.id,
+    idempotencyKey: "smoke-purge-selective-reserve",
+  });
+  await db
+    .insert(schema.outreachSuppressions)
+    .values({ userId: USER, kind: "email", value: "ada@analytical.io", reason: "opted_out" });
 
   // Tables folded into an existing category by the merge with main's newer feature
   // branches — each seeded here so a step that quietly forgets one, or a step that
@@ -303,6 +359,16 @@ async function main() {
   check("as do connected accounts", (afterContacts.get("connections") ?? 0) > 0);
 
   const db = await getDb();
+  // `outreach_prospects.contact_id` is `on delete set null`, not a cascade — which is why
+  // `contacts` does not imply `outreach`. The prospect stays; only its link to the contact goes.
+  check("as do outreach campaigns", (afterContacts.get("outreach") ?? 0) > 0);
+  const prospectAfterContacts = await db.query.outreachProspects.findFirst({
+    where: eq(schema.outreachProspects.userId, USER),
+  });
+  check(
+    "...with the prospect kept and its contact link severed",
+    Boolean(prospectAfterContacts) && prospectAfterContacts?.contactId === null
+  );
   const orphans = await db.execute(
     sql.raw(
       `SELECT count(*)::int AS n FROM contact_tags ct
@@ -385,6 +451,78 @@ async function main() {
     "activity deletes the upgrade celebration outright",
     (await countFor("plan_upgrade_events")) === 0
   );
+
+  console.log("\nOutreach keeps the credit accounting and the opt-outs");
+  // Why these four survive everything short of the entire account: see
+  // `SURVIVES_DELETE_ALL` in `scripts/smoke-purge.ts` and the note above `STEPS` in
+  // `src/lib/user-data.ts`. In short, the credit tables are Orbit's accounting (deleting the
+  // account row re-grants the allowance) and the suppressions protect the people contacted.
+  const OUTREACH_SURVIVORS = [
+    "research_credit_accounts",
+    "research_credit_holds",
+    "research_credit_ledger",
+    "outreach_suppressions",
+  ];
+  await reset();
+  await purgeUserData(USER, { only: ["outreach"] });
+  check("outreach is gone", (await countFor("outreach_campaigns")) === 0);
+  check(
+    "...with its prospects, research runs and attempts",
+    (await countFor("outreach_prospects")) === 0 &&
+      (await countFor("outreach_research_runs")) === 0 &&
+      (await countFor("outreach_research_attempts")) === 0
+  );
+  check("...and the sender account", (await countFor("outreach_sender_accounts")) === 0);
+  for (const name of OUTREACH_SURVIVORS) {
+    check(`...but ${name} survives`, (await countFor(name)) > 0);
+  }
+  // The run that held five credits is gone, so the hold has to be released on the way out —
+  // otherwise those five sit in `monthly_held` forever with nothing left to free them.
+  const accountAfterOutreach = await db.query.researchCreditAccounts.findFirst({
+    where: eq(schema.researchCreditAccounts.userId, USER),
+  });
+  check(
+    "...with the held credits returned, not stranded",
+    accountAfterOutreach?.monthlyHeld === 0
+  );
+  const holdAfterOutreach = await db.query.researchCreditHolds.findFirst({
+    where: eq(schema.researchCreditHolds.userId, USER),
+  });
+  check("...the hold marked released", holdAfterOutreach?.status === "released");
+  const releases = await db
+    .select({ amountMonthly: schema.researchCreditLedger.amountMonthly })
+    .from(schema.researchCreditLedger)
+    .where(
+      and(
+        eq(schema.researchCreditLedger.userId, USER),
+        eq(schema.researchCreditLedger.entryType, "release")
+      )
+    );
+  check(
+    "...and the release written to the ledger",
+    releases.length === 1 && releases[0].amountMonthly === 5
+  );
+  const afterOutreach = await witnessCounts();
+  const outreachCollateral = [...afterOutreach.entries()].filter(
+    ([id, n]) => id !== "outreach" && n === 0
+  );
+  check(
+    "nothing else was touched",
+    outreachCollateral.length === 0,
+    `also emptied: ${outreachCollateral.map(([id]) => id).join(", ")}`
+  );
+
+  // "Delete everything" is still not the entire account: the account stays live, so the
+  // survivors stay with it...
+  await purgeUserData(USER, { only: DATA_CATEGORY_IDS });
+  for (const name of OUTREACH_SURVIVORS) {
+    check(`${name} survives "delete everything"`, (await countFor(name)) > 0);
+  }
+  // ...until the account itself goes.
+  await purgeUserData(USER, { keepSettings: false });
+  for (const name of OUTREACH_SURVIVORS) {
+    check(`${name} goes with the entire account`, (await countFor(name)) === 0);
+  }
 
   console.log("\nSettings follow the preferences box, not the delete");
   await reset();

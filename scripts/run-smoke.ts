@@ -88,12 +88,18 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-progress-card": "pure",
   "smoke-landing-anchors": "pure",
   "smoke-landing-cards": "pure",
+  "smoke-legacy-outreach": "pure",
   "smoke-lifetime-pricing": "pure",
   "smoke-locked-participant": "pure",
   "smoke-marketing-footer": "pure",
   "smoke-mention-resolution": "pure",
   "smoke-note-parse-schema": "pure",
   "smoke-ops-alerts": "pure",
+  "smoke-outreach-criteria": "pure",
+  "smoke-outreach-identity": "pure",
+  "smoke-outreach-providers": "pure",
+  "smoke-outreach-ranking": "pure",
+  "smoke-outreach-serp": "pure",
   "smoke-parsers": "pure",
   "smoke-public-routes": "pure",
   "smoke-recruiter-query": "pure",
@@ -178,6 +184,19 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-history": "pglite",
   "smoke-meeting-sessions": "pglite",
   "smoke-ops-sweep": "pglite",
+  "smoke-outreach-campaigns": "pglite",
+  "smoke-outreach-candidates": "pglite",
+  "smoke-outreach-credits": "pglite",
+  "smoke-outreach-discovery": "pglite",
+  "smoke-outreach-funding": "pglite",
+  "smoke-outreach-gate": "pglite",
+  "smoke-outreach-jobs": "pglite",
+  "smoke-outreach-legacy-scope": "pglite",
+  "smoke-outreach-rerank": "pglite",
+  "smoke-outreach-research": "pglite",
+  "smoke-outreach-schema": "pglite",
+  "smoke-outreach-selection": "pglite",
+  "smoke-outreach-tenancy": "pglite",
   "smoke-admin-analytics": "pglite",
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",
@@ -207,6 +226,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-write-path": "pglite",
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
+  "smoke-outreach-races": "manual", // real Postgres concurrency; run by hand against a disposable Neon branch
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {

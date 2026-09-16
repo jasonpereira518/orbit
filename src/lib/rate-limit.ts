@@ -118,6 +118,11 @@ export const RATE_LIMITS = {
    * name on a normal roster, tight enough that a retry storm cannot run up their bill.
    */
   eventWhy: { limit: 30, windowSec: 3600 },
+  /**
+   * Orbit-funded Outreach discovery runs (spec §7.2). Runs on Orbit's Brave key are free to
+   * the user but not to Orbit, so they are counted per day; runs on the user's own keys are not.
+   */
+  outreachOrbitSearch: { limit: 5, windowSec: 86_400 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

@@ -1,5 +1,5 @@
 import { del } from "@vercel/blob";
-import { eq, getTableName, inArray, sql } from "drizzle-orm";
+import { and, eq, getTableName, inArray, sql } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
 import {
@@ -39,12 +39,31 @@ import {
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
+  outreachConversationMessages,
+  outreachConversations,
+  outreachDrafts,
+  outreachDraftVersions,
+  outreachEvidence,
+  outreachIdentities,
+  outreachJobs,
+  outreachMailSyncState,
+  outreachProspects,
+  outreachResearchAttempts,
+  outreachResearchRuns,
+  outreachRunnerSessions,
+  outreachSendAttempts,
+  outreachSendBatches,
+  outreachSenderAccounts,
+  outreachSuppressions,
   pageViews,
   planUpgradeEvents,
   recruiterMessages,
   recruiterScanState,
   reminderLists,
   reminders,
+  researchCreditAccounts,
+  researchCreditHolds,
+  researchCreditLedger,
   suggestedReminders,
   tags,
   targetCompanies,
@@ -55,6 +74,7 @@ import {
   webhookEndpoints,
 } from "@/db/schema";
 import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
+import { releaseHold } from "@/lib/outreach/credits/ledger";
 import { recomputeRecruiterRating } from "@/lib/recruiters";
 import {
   DATA_CATEGORY_IDS,
@@ -107,6 +127,23 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *     the evidence of the deletion itself.
  * A Clerk id is inert once the account is gone. `error_events`, by contrast, is data about
  * the user rather than about the operator, so it IS purged (by `activity`).
+ *
+ * And four user-scoped tables that NO step here deletes while the account is live — they go
+ * only once the account itself is gone, in `purgeAccountLedgers` below: the entire-account
+ * case (`keepSettings: false`, the admin hard-delete, which also deletes `user_settings`
+ * outright) and account deletion (`accountDeleted: true`, the Clerk `user.deleted` webhook):
+ *   - `research_credit_accounts`, `research_credit_holds`, `research_credit_ledger`: Orbit's
+ *     accounting of research-credit allowances rather than the user's content — the same
+ *     footing as `billing_events`. The lifetime grant is recorded by
+ *     `research_credit_accounts.lifetime_granted_at` and the monthly grant by the account's
+ *     period, so deleting the account row while the account is still live would re-grant 100
+ *     lifetime credits, or a fresh 250-credit month, to anyone who clicked "delete".
+ *   - `outreach_suppressions`: opt-outs and bounces. It protects the people who were
+ *     contacted, not the user — deleting it would let the next campaign reach someone who
+ *     already asked not to be.
+ * Once the account is deleted neither reason holds: there is no account left to re-grant to
+ * (a new signup gets a new Clerk id, so a fresh ledger either way), and no campaign left to
+ * send from — keeping them would only retain other people's addresses with no one to protect.
  */
 type CategoryStep = {
   /**
@@ -348,7 +385,53 @@ const STEPS: Record<DataCategory, CategoryStep> = {
   outreach: {
     counts: [outreachCampaigns],
     run: async (db, userId) => {
+      // Credits first. The research runs and attempts that own a hold are about to go, and
+      // `research_credit_holds` has no foreign key to either — it outlives them on purpose
+      // (see the survivors above) — so an active hold left alone would strand its credits
+      // in `monthly_held` / `lifetime_held` for good. `releaseHold` returns the unused
+      // remainder and writes the `release` ledger row, exactly as a run ending normally does.
+      const activeHolds = await db
+        .select({ id: researchCreditHolds.id })
+        .from(researchCreditHolds)
+        .where(
+          and(eq(researchCreditHolds.userId, userId), eq(researchCreditHolds.status, "active"))
+        );
+      for (const hold of activeHolds) {
+        await releaseHold(userId, hold.id);
+      }
+
+      // Generation-2 outreach, children before parents. Most of these would cascade from
+      // `outreach_campaigns`, but each carries its own `user_id` — so `smoke-purge` requires
+      // it, and leaving it to a cascade means a change to that FK silently strips it from
+      // deletion. The order also keeps every `on delete set null` from rewriting a row on the
+      // way to deleting it: messages before the send attempts they cite, attempts before
+      // their batches and drafts, drafts before the conversations they point at, evidence and
+      // attempts before their research runs, and campaigns and send attempts before the sender
+      // accounts and runner sessions they reference.
+      await db
+        .delete(outreachConversationMessages)
+        .where(eq(outreachConversationMessages.userId, userId));
+      await db.delete(outreachSendAttempts).where(eq(outreachSendAttempts.userId, userId));
+      await db.delete(outreachSendBatches).where(eq(outreachSendBatches.userId, userId));
+      await db.delete(outreachDraftVersions).where(eq(outreachDraftVersions.userId, userId));
+      await db.delete(outreachDrafts).where(eq(outreachDrafts.userId, userId));
+      await db.delete(outreachConversations).where(eq(outreachConversations.userId, userId));
+      await db.delete(outreachEvidence).where(eq(outreachEvidence.userId, userId));
+      await db
+        .delete(outreachResearchAttempts)
+        .where(eq(outreachResearchAttempts.userId, userId));
+      await db.delete(outreachResearchRuns).where(eq(outreachResearchRuns.userId, userId));
+      await db.delete(outreachIdentities).where(eq(outreachIdentities.userId, userId));
+      await db.delete(outreachJobs).where(eq(outreachJobs.userId, userId));
+      // Legacy prospects predate their `user_id` column (the v2 migration backfills it from
+      // the campaign); the cascade from `outreach_campaigns` below still takes any row that
+      // backfill missed, along with the generation-1 `outreach_messages` under it.
+      await db.delete(outreachProspects).where(eq(outreachProspects.userId, userId));
       await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
+      // Hang off no campaign. Mail sync state would cascade from its sender account.
+      await db.delete(outreachMailSyncState).where(eq(outreachMailSyncState.userId, userId));
+      await db.delete(outreachSenderAccounts).where(eq(outreachSenderAccounts.userId, userId));
+      await db.delete(outreachRunnerSessions).where(eq(outreachRunnerSessions.userId, userId));
     },
   },
   contacts: {
@@ -410,11 +493,13 @@ const STEPS: Record<DataCategory, CategoryStep> = {
  * Everything on `user_settings` that is NOT the user's own content, and so survives a
  * delete. The reasoning is that "delete all data" means "delete the data I put in," not
  * "erase the account":
- *   - the BYO provider keys (`*_api_key_encrypted` for Gemini/OpenAI/Anthropic/Apollo/Resend/
- *     Twilio/Wispr) plus `aiProvider`/`aiModel`, since a key without the selection that uses
- *     it is inert — these are credentials for third-party services the user pays for
+ *   - the BYO provider keys (`*_api_key_encrypted` for Gemini/OpenAI/Anthropic/Apollo/Brave/
+ *     Resend/Twilio/Wispr) plus `aiProvider`/`aiModel`, since a key without the selection that
+ *     uses it is inert — these are credentials for third-party services the user pays for
  *     directly, not Orbit data about them, unlike the Gmail/Outlook OAuth tokens the
- *     `connections` step purges
+ *     `connections` step purges. For the same reason the Brave and Apollo keys keep their
+ *     `*_key_verified_at` stamps (a kept key must not read as unverified) and Outreach keeps
+ *     `outreachFundingPreference`, the selection that decides whether the Brave key is used
  *   - `theme` and `desktopNotificationsEnabled`, cosmetic/device preferences rather than
  *     content
  *   - the Clerk identity mirror (`email`, `firstName`, `lastName`, `profileImageUrl`) and
@@ -427,8 +512,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
  *     user-entered content
  * Everything else on the row — onboarding/wizard state, `desktopNotifiedIds`, `socialLinks`,
  * the calendar feed token and its timestamps, `recruiterSharing` (back to its default of 0,
- * revoking the opt-in since there is no longer data behind it to share) — genuinely is app
- * state tied to the data being deleted, so the row is deleted and recreated with nothing but
+ * revoking the opt-in since there is no longer data behind it to share), `outreachSenderIntro`
+ * (the user's own prose), `linkedinRiskAcknowledgedAt` (asked again, like any dismissed
+ * prompt) — genuinely is app state tied to the data being deleted, so the row is deleted and
+ * recreated with nothing but
  * the id and the columns below, letting the rest fall back to a fresh row's defaults.
  *
  * ADDING A PER-USER FLAG? It belongs here unless it is content. A flag left off this list is
@@ -439,6 +526,9 @@ const PRESERVED_SETTINGS_COLUMNS = {
   openaiApiKeyEncrypted: true,
   anthropicApiKeyEncrypted: true,
   apolloApiKeyEncrypted: true,
+  braveApiKeyEncrypted: true,
+  braveKeyVerifiedAt: true,
+  apolloKeyVerifiedAt: true,
   resendApiKeyEncrypted: true,
   twilioAccountSidEncrypted: true,
   twilioAuthTokenEncrypted: true,
@@ -446,6 +536,7 @@ const PRESERVED_SETTINGS_COLUMNS = {
   wisprApiKeyEncrypted: true,
   aiProvider: true,
   aiModel: true,
+  outreachFundingPreference: true,
   theme: true,
   desktopNotificationsEnabled: true,
   email: true,
@@ -488,15 +579,31 @@ async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) 
 }
 
 /**
+ * The four tables no category step deletes (see the survivors listed above `STEPS`): the
+ * research-credit accounting and the suppression list. Only once the account is gone — while
+ * it is live, deleting the credit account would re-grant its allowance and deleting the
+ * suppressions would un-opt-out the people who asked. Runs after every category step, so the
+ * `outreach` step has already released the user's active holds (no credits strand in
+ * `*_held` on the way out). Ledger before holds before the account row, the order the rows
+ * were written in; none has a foreign key to another.
+ */
+async function purgeAccountLedgers(db: Db, userId: string) {
+  await db.delete(researchCreditLedger).where(eq(researchCreditLedger.userId, userId));
+  await db.delete(researchCreditHolds).where(eq(researchCreditHolds.userId, userId));
+  await db.delete(researchCreditAccounts).where(eq(researchCreditAccounts.userId, userId));
+  await db.delete(outreachSuppressions).where(eq(outreachSuppressions.userId, userId));
+}
+
+/**
  * Delete Orbit data for a user (does not delete the Clerk account).
  *
  * With no `only`, this is the full purge: every step in `STEPS`, in `DATA_CATEGORY_META` order, plus the
- * two account-level steps below. `scripts/smoke-purge.ts` asserts that leaves nothing behind,
- * table by table. See `STEPS` for what each step covers and what is deliberately
- * left alone.
+ * account-level steps below. `scripts/smoke-purge.ts` asserts that leaves nothing behind,
+ * table by table, apart from the survivors it names. See `STEPS` for what each step covers
+ * and what is deliberately left alone.
  *
  * `only` runs just the listed categories (already expanded through `implies` here, so a
- * caller cannot ask for a delete the database will silently exceed). The two account-level
+ * caller cannot ask for a delete the database will silently exceed). The account-level
  * steps are full-purge-only:
  *
  *   - `billing_events` is ANONYMISED, not deleted — Orbit's accounting record of what was
@@ -514,12 +621,19 @@ async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) 
  * `keepSettings: false` (used only by the admin console's hard-delete, which also removes the
  * Clerk login) lets `user_settings` be deleted outright — the "entire account" case, where
  * none of the preserved columns is meant to survive.
+ *
+ * `accountDeleted: true` (the Clerk `user.deleted` webhook) says the account itself is gone.
+ * Independent of `keepSettings` — it decides nothing about `user_settings` — it lets a full
+ * purge delete the research-credit accounting and the outreach suppression list
+ * (`purgeAccountLedgers`), which "delete all data" on a live account deliberately keeps.
+ * `keepSettings: false` implies the same on a full purge.
  */
 export async function purgeUserData(
   userId: string,
-  opts: { keepSettings?: boolean; only?: readonly DataCategory[] } = {}
+  opts: { keepSettings?: boolean; accountDeleted?: boolean; only?: readonly DataCategory[] } = {}
 ) {
   const keepSettings = opts.keepSettings ?? true;
+  const accountGone = opts.accountDeleted === true || !keepSettings;
   const selected = opts.only
     ? expandCategories(opts.only)
     : new Set<DataCategory>(DATA_CATEGORY_IDS);
@@ -536,6 +650,14 @@ export async function purgeUserData(
       .update(billingEvents)
       .set({ userId: null })
       .where(eq(billingEvents.userId, userId));
+  }
+
+  // Full purge AND the account gone (deleted, or hard-deleted with `keepSettings: false`),
+  // never either alone: a partial delete that happened to include `preferences` with
+  // `keepSettings: false` would still leave a live account whose next research run re-grants
+  // the credits this would erase.
+  if (isFullPurge && accountGone) {
+    await purgeAccountLedgers(db, userId);
   }
 
   if (selected.has("preferences")) {

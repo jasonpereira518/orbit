@@ -13,7 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-purge.ts
  */
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import "./smoke/_env";
 
 import { eq, getTableColumns, getTableName, sql } from "drizzle-orm";
@@ -21,8 +21,61 @@ import { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "../src/db";
 import * as schema from "../src/db/schema";
 import { purgeUserData } from "../src/lib/user-data";
+import { POST as clerkWebhook } from "../src/app/api/webhooks/clerk/route";
 
 const USER = "smoke-purge-user";
+
+/**
+ * User-scoped tables that "delete all data" deliberately leaves in place. Each is asserted
+ * to SURVIVE below — that is as much the contract as the rest being emptied — and all of them
+ * are asserted gone after the entire-account delete (`keepSettings: false`) at the end. The
+ * credit ledgers and suppressions are also asserted gone after an account deletion
+ * (`accountDeleted: true`), both called directly and through a signed Clerk `user.deleted`
+ * delivery.
+ *   - `user_settings`: the BYO provider keys and account metadata (see `purgeUserData`).
+ *   - `research_credit_accounts` / `_holds` / `_ledger`: Orbit's accounting of research-credit
+ *     allowances, on the same footing as `billing_events`. The lifetime grant is tracked by
+ *     `lifetime_granted_at` and the monthly grant by the account's period, so deleting the
+ *     account row while the account is live would re-grant 100 lifetime credits or a fresh
+ *     250-credit month.
+ *   - `outreach_suppressions`: opt-outs and bounces. It protects the people who were
+ *     contacted; deleting it would let the next campaign reach someone who asked not to be.
+ */
+const SURVIVES_DELETE_ALL = new Set([
+  "user_settings",
+  "research_credit_accounts",
+  "research_credit_holds",
+  "research_credit_ledger",
+  "outreach_suppressions",
+]);
+
+/**
+ * The four survivors that outlive "delete all data" only while the account is live: gone with
+ * the entire-account delete (`keepSettings: false`) and with an account deletion
+ * (`accountDeleted: true`, the Clerk `user.deleted` webhook).
+ */
+const SURVIVOR_LEDGERS = [
+  "research_credit_accounts",
+  "research_credit_holds",
+  "research_credit_ledger",
+  "outreach_suppressions",
+] as const;
+
+/** One row in each of `SURVIVOR_LEDGERS`, for a purge to prove it takes. */
+async function seedSurvivorLedgers(tag: string) {
+  const db = await getDb();
+  const now = new Date();
+  await db.insert(schema.researchCreditAccounts).values({
+    userId: USER, periodStart: now, periodEnd: new Date(now.getTime() + 30 * 86_400_000),
+  });
+  const [hold] = await db.insert(schema.researchCreditHolds).values({ userId: USER }).returning();
+  await db
+    .insert(schema.researchCreditLedger)
+    .values({ userId: USER, entryType: "reserve", holdId: hold.id, idempotencyKey: `smoke-purge-${tag}` });
+  await db
+    .insert(schema.outreachSuppressions)
+    .values({ userId: USER, kind: "email", value: `${tag}@analytical.io`, reason: "opted_out" });
+}
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -321,6 +374,89 @@ async function seed() {
 
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
 
+  // Generation-2 outreach: every one of these tables carries user_id, so each needs a row.
+  const [senderAccount] = await db
+    .insert(schema.outreachSenderAccounts)
+    .values({ userId: USER, kind: "gmail", transport: "api", address: "ada@analytical.io" })
+    .returning();
+  const [campaignV2] = await db
+    .insert(schema.outreachCampaigns)
+    .values({ userId: USER, name: "Campaign v2", generation: 2, senderAccountId: senderAccount.id })
+    .returning();
+  const [prospectV2] = await db
+    .insert(schema.outreachProspects)
+    .values({ userId: USER, campaignId: campaignV2.id, externalId: "li:ada", fullName: "Ada Lovelace" })
+    .returning();
+  await db.insert(schema.outreachIdentities).values({
+    userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, kind: "linkedin_slug", value: "ada",
+  });
+  const [runV2] = await db
+    .insert(schema.outreachResearchRuns)
+    .values({ userId: USER, campaignId: campaignV2.id, criteriaVersion: 1, fundingSource: "orbit" })
+    .returning();
+  await db.insert(schema.outreachEvidence).values({
+    userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, runId: runV2.id,
+    kind: "search_result", provider: "brave", contentHash: "h1", snippet: "Ada Lovelace — Analytical Engines",
+  });
+  await db.insert(schema.outreachResearchAttempts).values({
+    userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, runId: runV2.id, fundingSource: "orbit",
+  });
+  await db
+    .insert(schema.outreachSuppressions)
+    .values({ userId: USER, kind: "email", value: "ada@analytical.io", reason: "opted_out" });
+  await db.insert(schema.researchCreditAccounts).values({
+    userId: USER, periodStart: now, periodEnd: new Date(now.getTime() + 30 * 86_400_000),
+  });
+  const [creditHold] = await db
+    .insert(schema.researchCreditHolds)
+    .values({ userId: USER, runId: runV2.id })
+    .returning();
+  await db
+    .insert(schema.researchCreditLedger)
+    .values({ userId: USER, entryType: "reserve", holdId: creditHold.id, idempotencyKey: "smoke-purge" });
+  await db.insert(schema.outreachJobs).values({ userId: USER, campaignId: campaignV2.id, kind: "discovery.run" });
+  const [conversationV2] = await db
+    .insert(schema.outreachConversations)
+    .values({
+      userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, channel: "email",
+      provider: "gmail", providerThreadId: "thread-1",
+    })
+    .returning();
+  const [draftV2] = await db
+    .insert(schema.outreachDrafts)
+    .values({ userId: USER, campaignId: campaignV2.id, prospectId: prospectV2.id, kind: "initial" })
+    .returning();
+  const [draftVersion] = await db
+    .insert(schema.outreachDraftVersions)
+    .values({
+      userId: USER, draftId: draftV2.id, version: 1, channel: "email", fromAddress: "me@example.test",
+      body: "prose the user approved", renderedText: "prose the user approved", contentHash: "c1",
+    })
+    .returning();
+  const [sendBatch] = await db
+    .insert(schema.outreachSendBatches)
+    .values({ userId: USER, campaignId: campaignV2.id, method: "gmail_api", idempotencyKey: "b1" })
+    .returning();
+  const [runnerSession] = await db
+    .insert(schema.outreachRunnerSessions)
+    .values({ userId: USER, tokenHash: "f".repeat(64) })
+    .returning();
+  const [sendAttempt] = await db
+    .insert(schema.outreachSendAttempts)
+    .values({
+      userId: USER, campaignId: campaignV2.id, batchId: sendBatch.id, draftId: draftV2.id,
+      draftVersionId: draftVersion.id, contentHash: "c1", method: "gmail_api", runnerSessionId: runnerSession.id,
+    })
+    .returning();
+  await db.insert(schema.outreachConversationMessages).values({
+    userId: USER, conversationId: conversationV2.id, direction: "inbound", kind: "message",
+    sendAttemptId: sendAttempt.id, bodyText: "a reply from a real person", occurredAt: now,
+    observedVia: "gmail", dedupeKey: "gmail:m1",
+  });
+  await db
+    .insert(schema.outreachMailSyncState)
+    .values({ senderAccountId: senderAccount.id, userId: USER, provider: "gmail" });
+
   await db.insert(schema.contactEmbeddings).values({
     userId: USER,
     contactId: contact.id,
@@ -536,10 +672,12 @@ async function main() {
   const tables = userScopedTables();
   console.log(`Seeding one row in each of ${tables.length} user-scoped tables…`);
 
-  // Start clean in case a previous run died mid-way. The billing row needs deleting by
+  // Start clean in case a previous run died mid-way. The entire-account form, because the
+  // default purge leaves the credit account (keyed on user id) and the suppression list in
+  // place, and the next seed would collide with both. The billing row needs deleting by
   // hand: purge anonymises it rather than removing it, so it survives its own cleanup and
   // the unique `(source, event_id)` index would reject the next run's insert.
-  await purgeUserData(USER).catch(() => {});
+  await purgeUserData(USER, { keepSettings: false }).catch(() => {});
   await (await getDb())
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
@@ -564,9 +702,9 @@ async function main() {
 
   let leaked = 0;
   for (const { name } of tables) {
-    // Asserted separately below: the BYO provider key is a deliberate survivor (see
-    // `purgeUserData`), so this table legitimately keeps a row under the same user id.
-    if (name === "user_settings") continue;
+    // Asserted separately below: each is a deliberate survivor (see `SURVIVES_DELETE_ALL`),
+    // so it legitimately keeps rows under the same user id.
+    if (SURVIVES_DELETE_ALL.has(name)) continue;
     const remaining = await countFor(name);
     if (remaining === 0) {
       console.log(`  ok  ${name} is empty`);
@@ -608,6 +746,68 @@ async function main() {
     "...but the calendar feed token cleared",
     settingsAfterPurge?.calendarFeedToken === null
   );
+
+  // The outreach survivors — see `SURVIVES_DELETE_ALL`. As with `billing_events`, the no-leak
+  // sweep above would still pass if a later edit "tidied" any of these into a delete, so the
+  // survival itself is what gets asserted.
+  for (const name of SURVIVOR_LEDGERS) {
+    check(`${name} survives "delete all data"`, (await countFor(name)) > 0);
+  }
+  // The seeded hold was active and its research run is now gone. The `outreach` step must
+  // release it first, or its credits stay stuck in `*_held` with nothing left to free them.
+  const holdsAfterPurge = await ledgerDb
+    .select({ status: schema.researchCreditHolds.status })
+    .from(schema.researchCreditHolds)
+    .where(eq(schema.researchCreditHolds.userId, USER));
+  check(
+    "...with the active credit hold released rather than stranded",
+    holdsAfterPurge.length === 1 && holdsAfterPurge[0].status === "released"
+  );
+
+  // Account DELETION is not "delete all data": no live account is left to re-grant credits
+  // to (a new signup gets a new Clerk id), and the suppression list then only retains other
+  // people's addresses. `accountDeleted` takes the survivors too, independently of
+  // `keepSettings`.
+  await purgeUserData(USER, { accountDeleted: true });
+  for (const name of SURVIVOR_LEDGERS) {
+    check(`${name} is gone after an account-deleted purge`, (await countFor(name)) === 0);
+  }
+  check(
+    "...which leaves keepSettings to decide user_settings on its own",
+    Boolean(await ledgerDb.query.userSettings.findFirst({ where: eq(schema.userSettings.userId, USER) }))
+  );
+
+  // ...and the Clerk `user.deleted` webhook is that path. A correctly signed delivery, end to
+  // end through the route, so a regression to the plain purge fails here.
+  await seedSurvivorLedgers("webhook");
+  const priorSigningSecret = process.env.CLERK_WEBHOOK_SIGNING_SECRET;
+  const signingKey = randomBytes(24);
+  process.env.CLERK_WEBHOOK_SIGNING_SECRET = `whsec_${signingKey.toString("base64")}`;
+  const deliveryId = `msg_smoke_purge_${randomUUID()}`;
+  try {
+    const body = JSON.stringify({ object: "event", type: "user.deleted", data: { id: USER, object: "user", deleted: true } });
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac("sha256", signingKey).update(`${deliveryId}.${timestamp}.${body}`).digest("base64");
+    const response = await clerkWebhook(
+      new Request("http://localhost/api/webhooks/clerk", {
+        method: "POST",
+        headers: { "content-type": "application/json", "svix-id": deliveryId, "svix-timestamp": timestamp, "svix-signature": `v1,${signature}` },
+        body,
+      }) as never
+    );
+    check("a signed user.deleted delivery is handled", response.status === 200, String(response.status));
+    for (const name of SURVIVOR_LEDGERS) {
+      check(`...and takes ${name} with the account`, (await countFor(name)) === 0);
+    }
+  } finally {
+    if (priorSigningSecret === undefined) delete process.env.CLERK_WEBHOOK_SIGNING_SECRET;
+    else process.env.CLERK_WEBHOOK_SIGNING_SECRET = priorSigningSecret;
+    await ledgerDb.delete(schema.webhookDeliveries).where(eq(schema.webhookDeliveries.eventId, deliveryId));
+  }
+
+  // The admin hard-delete below still has to take them on its own, so give it some to take.
+  await seedSurvivorLedgers("hard-delete");
+
   await ledgerDb
     .delete(schema.userSettings)
     .where(eq(schema.userSettings.userId, USER));
@@ -626,6 +826,21 @@ async function main() {
   check(
     "keepSettings: false leaves no user_settings row at all",
     settingsAfterHardDelete === undefined
+  );
+  // ...and nothing else either: the entire-account case is the one path that takes the
+  // survivors, so here the sweep runs over every user-scoped table with no exemptions.
+  let hardLeaked = 0;
+  for (const { name } of tables) {
+    const remaining = await countFor(name);
+    if (remaining > 0) {
+      console.log(`  LEAK  ${name} still has ${remaining} row(s) after the entire-account delete`);
+      hardLeaked += 1;
+    }
+  }
+  check(
+    "keepSettings: false empties every user-scoped table, survivors included",
+    hardLeaked === 0,
+    `${hardLeaked} table(s) leaked`
   );
 
   // contact_tags has no user_id of its own, so the derived sweep above cannot see it.
@@ -658,6 +873,6 @@ main()
   })
   .catch(async (e) => {
     console.error("\nFAILED:", e.message);
-    await purgeUserData(USER).catch(() => {});
+    await purgeUserData(USER, { keepSettings: false }).catch(() => {});
     process.exit(1);
   });

@@ -118,6 +118,14 @@ export const userSettings = pgTable("user_settings", {
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
   twilioAuthTokenEncrypted: text("twilio_auth_token_encrypted"),
   twilioFromNumber: text("twilio_from_number"),
+  /** The reusable sender introduction each new campaign starts from (spec §8.3). */
+  outreachSenderIntro: text("outreach_sender_intro"),
+  /** Personal Brave Search key for Outreach research on the user's own account. */
+  braveApiKeyEncrypted: text("brave_api_key_encrypted"),
+  braveKeyVerifiedAt: timestamp("brave_key_verified_at", { withTimezone: true }),
+  apolloKeyVerifiedAt: timestamp("apollo_key_verified_at", { withTimezone: true }),
+  outreachFundingPreference: text("outreach_funding_preference").$type<"orbit" | "personal">(),
+  linkedinRiskAcknowledgedAt: timestamp("linkedin_risk_acknowledged_at", { withTimezone: true }),
   desktopNotifiedIds: jsonb("desktop_notified_ids")
     .$type<string[]>()
     .default([]),
@@ -1528,6 +1536,106 @@ export type OutreachSequenceStep = {
   intent?: string;
 };
 
+// ---------------------------------------------------------------------------------------
+// Generation-2 Outreach — docs/superpowers/specs/2026-09-13-outreach-campaigns-design.md §5.
+// Stored shapes live here beside their columns (the AudienceFilters precedent) and are
+// re-exported from `src/lib/outreach/types.ts`, which is what everything else imports.
+// ---------------------------------------------------------------------------------------
+export type OutreachChannel = "email" | "linkedin";
+export type OutreachSendingMethod =
+  | "gmail_api"
+  | "outlook_api"
+  | "browser_gmail"
+  | "browser_outlook"
+  | "browser_linkedin";
+export type OutreachSetupStep = "describe" | "audience" | "people" | "review" | "send" | "tracking";
+export type OutreachBrief = { purpose: string; desiredOutcome: string; notes?: string };
+export type OutreachCriterionKind = "role" | "organization" | "geography" | "experience" | "other";
+export type OutreachCriterion = {
+  id: string;
+  kind: OutreachCriterionKind;
+  label: string;
+  values: string[];
+  /** Lower is more important. Only meaningful for `preferred`. */
+  priority: number;
+};
+export type OutreachCriteria = {
+  required: OutreachCriterion[];
+  preferred: OutreachCriterion[];
+  exclusions: OutreachCriterion[];
+};
+export type OutreachVerdict = "match" | "partial" | "mismatch" | "unknown" | "conflicting";
+export type OutreachCriterionVerdict = {
+  criterionId: string;
+  verdict: OutreachVerdict;
+  evidenceIds: string[];
+  note: string;
+};
+export type OutreachRankExplanation = {
+  summary: string;
+  /** Set when the tier is `filtered`: the requirement it failed or the exclusion that applied. */
+  filteredReason?: string | null;
+  criteria: OutreachCriterionVerdict[];
+};
+export type OutreachRankTier = "strong" | "possible" | "weak" | "filtered";
+export type OutreachConfidence = "high" | "medium" | "low";
+export type OutreachResearchState =
+  | "none"
+  | "queued"
+  | "running"
+  | "done"
+  | "partial"
+  | "failed"
+  | "skipped_budget";
+export type OutreachEmailStatus = "verified" | "unverified" | "unavailable" | "bounced";
+export type OutreachProspectOrigin = "discovered" | "manual" | "legacy" | "demo";
+export type OutreachProspectFlags = {
+  existingContactId?: string;
+  previousCampaigns?: Array<{ id: string; name: string }>;
+  suppressed?: "opted_out" | "bounced" | "user";
+};
+export type OutreachIdentityKind = "linkedin_slug" | "email" | "apollo";
+export type OutreachFundingSource = "orbit" | "personal";
+export type OutreachRunStatus = "queued" | "running" | "completed" | "partial" | "failed" | "cancelled";
+export type OutreachRunPhase = "planning" | "searching" | "ranking" | "researching" | "finishing";
+export type OutreachRunPlan = {
+  source?: "ai" | "template";
+  queries: Array<{
+    q: string;
+    status: "pending" | "done" | "error";
+    pagesFetched: number;
+    results: number;
+    error?: string;
+  }>;
+};
+export type OutreachRunStats = {
+  /** The run used the explicit demo adapters (spec §7.5). */
+  demo?: boolean;
+  searchCalls?: number;
+  parsedCandidates?: number;
+  unparsedResults?: number;
+  providerErrors?: Record<string, number>;
+  stoppedReason?: string;
+  /**
+   * Set once the ranking phase has swept for prospects whose `created` list was lost to a
+   * crashed searching-phase retry (Task 15 ruling 2). The sweep runs at most once per run.
+   */
+  rankSweep?: boolean;
+};
+export type OutreachJobKind =
+  | "discovery.run"
+  | "ranking.batch"
+  | "ranking.rerank"
+  | "research.person"
+  | "drafts.generate"
+  | "send.user"
+  | "mail.sync"
+  | "conversation.classify"
+  | "conversation.suggest_reply"
+  | "followups.scan"
+  | "contacts.link";
+export type OutreachJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "paused";
+
 export const outreachCampaigns = pgTable(
   "outreach_campaigns",
   {
@@ -1545,6 +1653,21 @@ export const outreachCampaigns = pgTable(
       .$type<OutreachSequenceStep[]>()
       .default([]),
     lastSearchSource: text("last_search_source"),
+    /** 1 = legacy model, 2 = the generation-2 model in §5 of the campaigns spec. */
+    generation: integer("generation").default(1).notNull(),
+    brief: jsonb("brief").$type<OutreachBrief>(),
+    /** Generation 2 only; legacy rows keep `default_channel`. */
+    channel: text("channel").$type<OutreachChannel>(),
+    senderAccountId: uuid("sender_account_id").references(() => outreachSenderAccounts.id, {
+      onDelete: "set null",
+    }),
+    sendingMethod: text("sending_method").$type<OutreachSendingMethod>(),
+    senderIntro: text("sender_intro"),
+    criteria: jsonb("criteria").$type<OutreachCriteria>(),
+    criteriaVersion: integer("criteria_version").default(0).notNull(),
+    criteriaConfirmedAt: timestamp("criteria_confirmed_at", { withTimezone: true }),
+    setupStep: text("setup_step").$type<OutreachSetupStep>(),
+    launchedAt: timestamp("launched_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -1571,6 +1694,27 @@ export const outreachProspects = pgTable(
     location: text("location"),
     enrichment: jsonb("enrichment").$type<Record<string, unknown>>().default({}),
     status: text("status").default("suggested").notNull(),
+    /**
+     * Nullable only because legacy rows predate it; every generation-2 write sets it and the
+     * `alters` backfill fills legacy rows from their campaign.
+     */
+    userId: text("user_id"),
+    origin: text("origin").$type<OutreachProspectOrigin>(),
+    excludedReason: text("excluded_reason"),
+    headline: text("headline"),
+    rankScore: real("rank_score"),
+    rankTier: text("rank_tier").$type<OutreachRankTier>(),
+    rankExplanation: jsonb("rank_explanation").$type<OutreachRankExplanation>(),
+    rankedCriteriaVersion: integer("ranked_criteria_version"),
+    rankedAt: timestamp("ranked_at", { withTimezone: true }),
+    researchState: text("research_state").$type<OutreachResearchState>().default("none").notNull(),
+    /** How much of the ranking is evidence-backed — shown as "research confidence". */
+    researchConfidence: text("research_confidence").$type<OutreachConfidence>(),
+    emailStatus: text("email_status").$type<OutreachEmailStatus>(),
+    emailSource: text("email_source").$type<"apollo" | "user" | "legacy">(),
+    possibleDuplicateOf: uuid("possible_duplicate_of"),
+    duplicateReview: text("duplicate_review").$type<"pending" | "merged" | "distinct">(),
+    flags: jsonb("flags").$type<OutreachProspectFlags>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -1580,6 +1724,8 @@ export const outreachProspects = pgTable(
       t.campaignId,
       t.externalId
     ),
+    index("outreach_prospects_user_campaign_idx").on(t.userId, t.campaignId),
+    index("outreach_prospects_rank_idx").on(t.campaignId, t.rankScore),
   ]
 );
 
@@ -1613,6 +1759,561 @@ export const outreachMessages = pgTable(
     index("outreach_messages_outcome_idx").on(t.outcome),
     index("outreach_messages_scheduled_idx").on(t.scheduledFor),
   ]
+);
+
+/** The durable sender identity a campaign pins. Outlives OAuth connections (spec §5.6). */
+export const outreachSenderAccounts = pgTable(
+  "outreach_sender_accounts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    kind: text("kind").$type<"gmail" | "outlook" | "linkedin">().notNull(),
+    transport: text("transport").$type<"api" | "browser">().notNull(),
+    /** Stored normalized: lower-cased email, or the canonical LinkedIn profile URL. */
+    address: text("address").notNull(),
+    displayName: text("display_name"),
+    signature: text("signature"),
+    /** Null = unknown → enforce 200. Never above 300. */
+    linkedinNoteLimit: integer("linkedin_note_limit"),
+    status: text("status").$type<"active" | "needs_reauth" | "disconnected">().default("active").notNull(),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("outreach_sender_accounts_identity_uidx").on(t.userId, t.kind, t.transport, t.address),
+  ]
+);
+
+/** Strong identities per prospect; the unique index is what makes dedupe structural (§5.3). */
+export const outreachIdentities = pgTable(
+  "outreach_identities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    prospectId: uuid("prospect_id")
+      .notNull()
+      .references(() => outreachProspects.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<OutreachIdentityKind>().notNull(),
+    value: text("value").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("outreach_identities_campaign_kind_value_uidx").on(t.campaignId, t.kind, t.value),
+    index("outreach_identities_user_kind_value_idx").on(t.userId, t.kind, t.value),
+    index("outreach_identities_prospect_idx").on(t.prospectId),
+  ]
+);
+
+export const outreachResearchRuns = pgTable(
+  "outreach_research_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    criteriaVersion: integer("criteria_version").notNull(),
+    status: text("status").$type<OutreachRunStatus>().default("queued").notNull(),
+    phase: text("phase").$type<OutreachRunPhase>().default("planning").notNull(),
+    fundingSource: text("funding_source").$type<OutreachFundingSource>().notNull(),
+    queryBudget: integer("query_budget").default(0).notNull(),
+    queriesUsed: integer("queries_used").default(0).notNull(),
+    researchBudget: integer("research_budget").default(0).notNull(),
+    researchUsed: integer("research_used").default(0).notNull(),
+    candidatesFound: integer("candidates_found").default(0).notNull(),
+    plan: jsonb("plan").$type<OutreachRunPlan>().default({ queries: [] }).notNull(),
+    stats: jsonb("stats").$type<OutreachRunStats>().default({}).notNull(),
+    holdId: uuid("hold_id"),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("outreach_research_runs_campaign_idx").on(t.userId, t.campaignId, t.createdAt),
+    /** One active run per campaign (Task 15 ruling 1) — structural, not check-then-insert. */
+    uniqueIndex("outreach_research_runs_one_active_uidx")
+      .on(t.campaignId)
+      .where(sql`status IN ('queued', 'running')`),
+  ]
+);
+
+export const outreachEvidence = pgTable(
+  "outreach_evidence",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    prospectId: uuid("prospect_id")
+      .notNull()
+      .references(() => outreachProspects.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").references(() => outreachResearchRuns.id, { onDelete: "set null" }),
+    kind: text("kind").$type<"search_result" | "enrichment" | "web_page" | "user_note">().notNull(),
+    provider: text("provider").$type<"brave" | "apollo" | "user" | "demo">().notNull(),
+    url: text("url"),
+    title: text("title"),
+    /** ≤1,000 chars — enforced by the writer. */
+    snippet: text("snippet"),
+    facts: jsonb("facts").$type<Record<string, unknown>>().default({}).notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).defaultNow().notNull(),
+    contentHash: text("content_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("outreach_evidence_prospect_hash_uidx").on(t.prospectId, t.contentHash),
+    index("outreach_evidence_user_idx").on(t.userId),
+  ]
+);
+
+export const outreachResearchAttempts = pgTable(
+  "outreach_research_attempts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    prospectId: uuid("prospect_id")
+      .notNull()
+      .references(() => outreachProspects.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").references(() => outreachResearchRuns.id, { onDelete: "set null" }),
+    fundingSource: text("funding_source").$type<OutreachFundingSource>().notNull(),
+    status: text("status")
+      .$type<"queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled">()
+      .default("queued")
+      .notNull(),
+    creditState: text("credit_state").$type<"none" | "held" | "charged" | "released">().default("none").notNull(),
+    holdId: uuid("hold_id"),
+    providerCalls: jsonb("provider_calls").$type<Record<string, unknown>>().default({}).notNull(),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("outreach_research_attempts_prospect_idx").on(t.prospectId),
+    index("outreach_research_attempts_run_idx").on(t.userId, t.runId),
+  ]
+);
+
+/** User-level do-not-contact list: opt-outs and bounces block a person in every campaign. */
+export const outreachSuppressions = pgTable(
+  "outreach_suppressions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    kind: text("kind").$type<OutreachIdentityKind>().notNull(),
+    value: text("value").notNull(),
+    reason: text("reason").$type<"opted_out" | "bounced" | "user">().notNull(),
+    sourceConversationId: uuid("source_conversation_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("outreach_suppressions_identity_uidx").on(t.userId, t.kind, t.value)]
+);
+
+/**
+ * One row per user: the counters every reservation locks. Available monthly credits are
+ * `monthly_allowance - monthly_used - monthly_held`; available lifetime credits are
+ * `lifetime_remaining - lifetime_held`. `last_hold_*` are scratch columns the reserve statement
+ * writes so its RETURNING can report the split it just took (spec §7.6).
+ */
+export const researchCreditAccounts = pgTable("research_credit_accounts", {
+  userId: text("user_id").primaryKey(),
+  monthlyAllowance: integer("monthly_allowance").default(0).notNull(),
+  monthlyUsed: integer("monthly_used").default(0).notNull(),
+  monthlyHeld: integer("monthly_held").default(0).notNull(),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  lifetimeRemaining: integer("lifetime_remaining").default(0).notNull(),
+  lifetimeHeld: integer("lifetime_held").default(0).notNull(),
+  lifetimeGrantedAt: timestamp("lifetime_granted_at", { withTimezone: true }),
+  lastHoldMonthly: integer("last_hold_monthly").default(0).notNull(),
+  lastHoldLifetime: integer("last_hold_lifetime").default(0).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const researchCreditHolds = pgTable(
+  "research_credit_holds",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    runId: uuid("run_id"),
+    amountMonthly: integer("amount_monthly").default(0).notNull(),
+    amountLifetime: integer("amount_lifetime").default(0).notNull(),
+    usedMonthly: integer("used_monthly").default(0).notNull(),
+    usedLifetime: integer("used_lifetime").default(0).notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    status: text("status").$type<"active" | "settled" | "released">().default("active").notNull(),
+    /** Scratch: which bucket the latest charge drew from, so the charge CTE can move it. */
+    lastChargeBucket: text("last_charge_bucket").$type<"monthly" | "lifetime">(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("research_credit_holds_user_idx").on(t.userId, t.status)]
+);
+
+/** Append-only audit of every credit movement. Amounts are signed; one row per operation. */
+export const researchCreditLedger = pgTable(
+  "research_credit_ledger",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    entryType: text("entry_type")
+      .$type<"grant" | "reserve" | "charge" | "release" | "expire" | "adjust">()
+      .notNull(),
+    amountMonthly: integer("amount_monthly").default(0).notNull(),
+    amountLifetime: integer("amount_lifetime").default(0).notNull(),
+    holdId: uuid("hold_id"),
+    runId: uuid("run_id"),
+    attemptId: uuid("attempt_id"),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("research_credit_ledger_key_uidx").on(t.userId, t.idempotencyKey),
+    index("research_credit_ledger_user_idx").on(t.userId, t.createdAt),
+  ]
+);
+
+/** The leased job queue every generation-2 background task runs through (spec §5.5). */
+export const outreachJobs = pgTable(
+  "outreach_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    campaignId: uuid("campaign_id").references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<OutreachJobKind>().notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().default({}).notNull(),
+    status: text("status").$type<OutreachJobStatus>().default("queued").notNull(),
+    priority: integer("priority").default(0).notNull(),
+    runAfter: timestamp("run_after", { withTimezone: true }).defaultNow().notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    attempts: integer("attempts").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(5).notNull(),
+    progress: jsonb("progress").$type<Record<string, unknown>>().default({}).notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    lastError: text("last_error"),
+    idempotencyKey: text("idempotency_key"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("outreach_jobs_idempotency_uidx").on(t.userId, t.idempotencyKey),
+    index("outreach_jobs_due_idx").on(t.runAfter).where(sql`status IN ('queued', 'running')`),
+    index("outreach_jobs_user_status_idx").on(t.userId, t.status),
+  ]
+);
+
+export const outreachConversations = pgTable(
+  "outreach_conversations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    prospectId: uuid("prospect_id")
+      .notNull()
+      .references(() => outreachProspects.id, { onDelete: "cascade" }),
+    channel: text("channel").$type<"email" | "linkedin" | "sms">().notNull(),
+    senderAccountId: uuid("sender_account_id").references(() => outreachSenderAccounts.id, {
+      onDelete: "set null",
+    }),
+    provider: text("provider").$type<"gmail" | "outlook" | "linkedin" | "resend" | "twilio">().notNull(),
+    providerThreadId: text("provider_thread_id"),
+    linkedinInviteState: text("linkedin_invite_state").$type<"pending" | "accepted" | "withdrawn">(),
+    inviteAcceptedAt: timestamp("invite_accepted_at", { withTimezone: true }),
+    outcome: text("outcome").$type<"positive" | "neutral" | "negative" | "not_now" | "opted_out" | "bounced">(),
+    outcomeSource: text("outcome_source").$type<"ai" | "user">(),
+    outcomeSetAt: timestamp("outcome_set_at", { withTimezone: true }),
+    needsAttention: boolean("needs_attention").default(false).notNull(),
+    lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
+    lastOutboundAt: timestamp("last_outbound_at", { withTimezone: true }),
+    lastHumanReplyAt: timestamp("last_human_reply_at", { withTimezone: true }),
+    followUpDueAt: timestamp("follow_up_due_at", { withTimezone: true }),
+    followUpState: text("follow_up_state")
+      .$type<"none" | "due" | "suggested" | "suppressed" | "done">()
+      .default("none")
+      .notNull(),
+    followUpsSuggested: integer("follow_ups_suggested").default(0).notNull(),
+    suppressedReason: text("suppressed_reason").$type<"human_reply" | "opted_out" | "closed" | "bounced">(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("outreach_conversations_thread_uidx")
+      .on(t.userId, t.provider, t.providerThreadId)
+      .where(sql`provider_thread_id IS NOT NULL`),
+    index("outreach_conversations_campaign_idx").on(t.campaignId),
+    index("outreach_conversations_attention_idx").on(t.userId, t.needsAttention),
+    index("outreach_conversations_follow_up_idx")
+      .on(t.followUpDueAt)
+      .where(sql`follow_up_due_at IS NOT NULL`),
+  ]
+);
+
+export const outreachDrafts = pgTable(
+  "outreach_drafts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    prospectId: uuid("prospect_id")
+      .notNull()
+      .references(() => outreachProspects.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").references(() => outreachConversations.id, {
+      onDelete: "set null",
+    }),
+    kind: text("kind").$type<"initial" | "follow_up" | "reply">().notNull(),
+    step: integer("step").default(0).notNull(),
+    currentVersionId: uuid("current_version_id"),
+    approvedVersionId: uuid("approved_version_id"),
+    state: text("state")
+      .$type<"suggested" | "editing" | "approved" | "locked" | "discarded">()
+      .default("editing")
+      .notNull(),
+    blockedReason: text("blocked_reason"),
+    legacyMessageId: uuid("legacy_message_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("outreach_drafts_campaign_idx").on(t.campaignId, t.state),
+    uniqueIndex("outreach_drafts_legacy_uidx").on(t.legacyMessageId),
+  ]
+);
+
+export const outreachDraftVersions = pgTable(
+  "outreach_draft_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    draftId: uuid("draft_id")
+      .notNull()
+      .references(() => outreachDrafts.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    channel: text("channel").$type<OutreachChannel>().notNull(),
+    toAddress: text("to_address"),
+    recipientProfileUrl: text("recipient_profile_url"),
+    fromAddress: text("from_address").notNull(),
+    fromName: text("from_name"),
+    subject: text("subject"),
+    body: text("body").notNull(),
+    signature: text("signature"),
+    /** Exactly what is sent. */
+    renderedText: text("rendered_text").notNull(),
+    charCount: integer("char_count").default(0).notNull(),
+    contentHash: text("content_hash").notNull(),
+    createdBy: text("created_by").$type<"ai" | "user" | "batch_instruction" | "legacy">().default("ai").notNull(),
+    generationMeta: jsonb("generation_meta").$type<Record<string, unknown>>().default({}).notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("outreach_draft_versions_draft_version_uidx").on(t.draftId, t.version)]
+);
+
+export const outreachSendBatches = pgTable(
+  "outreach_send_batches",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    senderAccountId: uuid("sender_account_id").references(() => outreachSenderAccounts.id, {
+      onDelete: "set null",
+    }),
+    method: text("method").$type<OutreachSendingMethod>().notNull(),
+    status: text("status")
+      .$type<"queued" | "running" | "paused" | "cancelled" | "completed" | "blocked">()
+      .default("queued")
+      .notNull(),
+    blockedReason: text("blocked_reason"),
+    total: integer("total").default(0).notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("outreach_send_batches_idempotency_uidx").on(t.userId, t.idempotencyKey)]
+);
+
+export const outreachRunnerSessions = pgTable(
+  "outreach_runner_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    installId: text("install_id"),
+    /** SHA-256 of the session token. The token itself exists only in the Runner. */
+    tokenHash: text("token_hash").notNull(),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    sites: jsonb("sites").$type<string[]>().default([]).notNull(),
+    accounts: jsonb("accounts").$type<Record<string, unknown>>().default({}).notNull(),
+    status: text("status").$type<"active" | "paused" | "stopped" | "expired">().default("active").notNull(),
+    lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+    lastTrackingCheckAt: jsonb("last_tracking_check_at").$type<Record<string, string>>().default({}).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    stoppedAt: timestamp("stopped_at", { withTimezone: true }),
+    stopReason: text("stop_reason"),
+  },
+  (t) => [
+    uniqueIndex("outreach_runner_sessions_token_uidx").on(t.tokenHash),
+    index("outreach_runner_sessions_user_idx").on(t.userId, t.status),
+  ]
+);
+
+export const outreachSendAttempts = pgTable(
+  "outreach_send_attempts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    batchId: uuid("batch_id").references(() => outreachSendBatches.id, { onDelete: "set null" }),
+    draftId: uuid("draft_id")
+      .notNull()
+      .references(() => outreachDrafts.id, { onDelete: "cascade" }),
+    draftVersionId: uuid("draft_version_id")
+      .notNull()
+      .references(() => outreachDraftVersions.id, { onDelete: "cascade" }),
+    contentHash: text("content_hash").notNull(),
+    senderAccountId: uuid("sender_account_id").references(() => outreachSenderAccounts.id, {
+      onDelete: "set null",
+    }),
+    method: text("method").$type<OutreachSendingMethod>().notNull(),
+    state: text("state")
+      .$type<
+        | "pending"
+        | "claimed"
+        | "submitting"
+        | "accepted"
+        | "confirmed"
+        | "needs_verification"
+        | "failed"
+        | "cancelled"
+      >()
+      .default("pending")
+      .notNull(),
+    runAfter: timestamp("run_after", { withTimezone: true }).defaultNow().notNull(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    runnerSessionId: uuid("runner_session_id").references(() => outreachRunnerSessions.id, {
+      onDelete: "set null",
+    }),
+    providerDraftId: text("provider_draft_id"),
+    providerMessageId: text("provider_message_id"),
+    providerThreadId: text("provider_thread_id"),
+    rfcMessageId: text("rfc_message_id"),
+    errorCode: text("error_code"),
+    errorDetail: text("error_detail"),
+    retryable: boolean("retryable").default(false).notNull(),
+    checkpoint: jsonb("checkpoint").$type<Record<string, unknown>>().default({}).notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    /** One live-or-successful attempt per draft (spec §5.7) — the database blocks double sends. */
+    uniqueIndex("outreach_send_attempts_live_draft_uidx")
+      .on(t.draftId)
+      .where(
+        sql`state IN ('pending', 'claimed', 'submitting', 'accepted', 'confirmed', 'needs_verification')`
+      ),
+    index("outreach_send_attempts_due_idx").on(t.userId, t.state, t.runAfter),
+  ]
+);
+
+export const outreachConversationMessages = pgTable(
+  "outreach_conversation_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => outreachConversations.id, { onDelete: "cascade" }),
+    direction: text("direction").$type<"outbound" | "inbound">().notNull(),
+    kind: text("kind")
+      .$type<
+        | "message"
+        | "invitation"
+        | "invitation_accepted"
+        | "auto_reply"
+        | "bounce"
+        | "delivery_failure"
+        | "system"
+      >()
+      .notNull(),
+    sendAttemptId: uuid("send_attempt_id").references(() => outreachSendAttempts.id, {
+      onDelete: "set null",
+    }),
+    providerMessageId: text("provider_message_id"),
+    rfcMessageId: text("rfc_message_id"),
+    inReplyTo: text("in_reply_to"),
+    referencesIds: jsonb("references_ids").$type<string[]>().default([]).notNull(),
+    fromAddress: text("from_address"),
+    toAddresses: jsonb("to_addresses").$type<string[]>().default([]).notNull(),
+    subject: text("subject"),
+    /** Sanitized plain text, ≤20,000 chars — enforced by the writer. */
+    bodyText: text("body_text"),
+    bodyHash: text("body_hash"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    observedVia: text("observed_via").$type<"gmail" | "graph" | "runner" | "legacy" | "orbit">().notNull(),
+    sentOutsideOrbit: boolean("sent_outside_orbit").default(false).notNull(),
+    matchConfidence: text("match_confidence").$type<"exact" | "probable" | "ambiguous">().default("exact").notNull(),
+    /** `<observed_via>:<provider id>`, `runner:<hash>` or `legacy:<id>` (spec §5.8). */
+    dedupeKey: text("dedupe_key").notNull(),
+    legacyMessageId: uuid("legacy_message_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("outreach_conversation_messages_dedupe_uidx").on(t.userId, t.dedupeKey),
+    index("outreach_conversation_messages_conversation_idx").on(t.conversationId, t.occurredAt),
+    uniqueIndex("outreach_conversation_messages_legacy_uidx").on(t.legacyMessageId),
+  ]
+);
+
+/** One row per sender account; separate from `gmail_connections.sync_cursor` on purpose (§5.8). */
+export const outreachMailSyncState = pgTable(
+  "outreach_mail_sync_state",
+  {
+    senderAccountId: uuid("sender_account_id")
+      .primaryKey()
+      .references(() => outreachSenderAccounts.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"gmail" | "outlook">().notNull(),
+    cursor: jsonb("cursor").$type<Record<string, unknown>>().default({}).notNull(),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    status: text("status").$type<"idle" | "syncing" | "error" | "needs_reauth">().default("idle").notNull(),
+    error: text("error"),
+    failures: integer("failures").default(0).notNull(),
+    nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("outreach_mail_sync_state_user_idx").on(t.userId)]
 );
 
 export const contactEmbeddings = pgTable(
@@ -2060,10 +2761,12 @@ export const usageEvents = pgTable(
     userId: text("user_id").notNull(),
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "wispr">().notNull(),
+    provider: text("provider")
+      .$type<"gemini" | "openai" | "anthropic" | "wispr" | "brave" | "apollo">()
+      .notNull(),
     model: text("model").notNull(),
     kind: text("kind")
-      .$type<"completion" | "multimodal" | "embedding" | "transcription">()
+      .$type<"completion" | "multimodal" | "embedding" | "transcription" | "search" | "enrichment">()
       .notNull(),
     /**
      * Null means the provider did not report a count — Whisper bills per second of audio

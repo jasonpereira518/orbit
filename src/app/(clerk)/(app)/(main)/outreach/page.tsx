@@ -1,19 +1,27 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { listCampaigns } from "@/actions/outreach";
+import { CampaignList } from "@/components/campaigns/campaign-list";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { OutreachLocked } from "@/components/locked-feature";
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
 import { buttonVariants } from "@/components/ui/button";
+import { listCampaignsForUser } from "@/lib/outreach/campaigns";
+import { isOutreachNextEnabled } from "@/lib/outreach/gate";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { cn } from "@/lib/utils";
 
 export default async function OutreachPage() {
-  const { canUseOutreach } = await getEntitlements(await requireUserId());
+  const userId = await requireUserId();
+  const { canUseOutreach } = await getEntitlements(userId);
 
   if (!canUseOutreach) {
     return <OutreachLocked />;
+  }
+
+  if (await isOutreachNextEnabled(userId)) {
+    return <CampaignList campaigns={await listCampaignsForUser(userId)} />;
   }
 
   const campaigns = await listCampaigns();

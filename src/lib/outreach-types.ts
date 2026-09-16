@@ -117,3 +117,17 @@ export const DEFAULT_SEQUENCE_STEPS: SequenceStep[] = [
   { delayDays: 3, intent: "Polite follow-up referencing the first note" },
   { delayDays: 7, intent: "Final short bump with a clear opt-out" },
 ];
+
+/**
+ * The follow-ups a new campaign gets, chosen from its channel rather than a checkbox. Email
+ * follows up twice; LinkedIn once, a week later, since a second nudge there reads as
+ * pressure; SMS never automatically — unprompted follow-up texts carry carrier and consent
+ * risk. Every follow-up is skipped once the person replies (see `generateDueFollowUps`).
+ */
+export function smartSequenceFor(channel: OutreachChannel): SequenceStep[] {
+  if (channel === "email") return DEFAULT_SEQUENCE_STEPS.map((step) => ({ ...step }));
+  if (channel === "linkedin") {
+    return [{ delayDays: 7, intent: "Short, friendly nudge that adds one new reason to connect" }];
+  }
+  return [];
+}

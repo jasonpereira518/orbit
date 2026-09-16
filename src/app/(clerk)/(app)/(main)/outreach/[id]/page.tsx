@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getCampaign } from "@/actions/outreach";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
@@ -8,6 +8,8 @@ import { CampaignEditor } from "@/components/outreach/campaign-editor";
 import { CampaignWorkspace } from "@/components/outreach/campaign-workspace";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { getCampaignV2 } from "@/lib/outreach/campaigns";
+import { isOutreachNextEnabled } from "@/lib/outreach/gate";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import type { SequenceStep } from "@/lib/outreach-types";
 
@@ -17,9 +19,18 @@ export default async function OutreachCampaignPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { canUseOutreach } = await getEntitlements(await requireUserId());
+  const userId = await requireUserId();
+  const { canUseOutreach } = await getEntitlements(userId);
   if (!canUseOutreach) return <OutreachLocked />;
 
+  if (await isOutreachNextEnabled(userId)) {
+    const v2 = await getCampaignV2(userId, id);
+    // `redirect` throws, so it must stay outside any try/catch.
+    if (v2) redirect(v2.criteriaConfirmedAt ? `/outreach/${id}/people` : `/outreach/${id}/audience`);
+  }
+
+  // `getCampaign` finds generation-1 campaigns only, so a generation-2 id that reaches the
+  // legacy workspace (a user outside the gate, an admin viewing as a user) is a 404 here.
   let campaign;
   try {
     campaign = await getCampaign(id);

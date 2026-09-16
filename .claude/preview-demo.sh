@@ -11,6 +11,8 @@ export DATABASE_URL=""
 export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=""
 export CLERK_SECRET_KEY=""
 export NODE_ENV="development"
+# The redesigned Outreach is gated; local previews always show it.
+export OUTREACH_NEXT="${OUTREACH_NEXT:-on}"
 # The local binary, exec'd — not `npx`. npx forks a child `next-server`, so stopping the
 # preview kills the wrapper and orphans the server, which then blocks the next start.
 exec ./node_modules/.bin/next dev --port "${PORT:-3001}"
