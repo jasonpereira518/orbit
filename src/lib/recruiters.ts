@@ -589,3 +589,6 @@ export function communityScore(r: {
 }): number {
   return (r.avgRating / 10) * Math.max(1, r.logCount);
 }
+
+/** `created_by_user_id` after the creator's data is purged: not null, so vouching stays strict. */
+export const RECRUITER_DELETED_CREATOR = "deleted-account";

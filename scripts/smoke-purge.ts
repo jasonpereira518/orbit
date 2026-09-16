@@ -529,7 +529,15 @@ async function seed() {
     device: "desktop",
   });
 
-  return { recruiterId: recruiter.id };
+  // A second user's link keeps the shared row alive; a row only USER links must go.
+  await db.insert(schema.userRecruiterLinks).values({ userId: "smoke-purge-other-linker", recruiterId: recruiter.id });
+  const [soleRecruiter] = await db
+    .insert(schema.recruiters)
+    .values({ fullName: "Solo Recruiter", nameNormalized: "solo recruiter", email: "solo@example.test" })
+    .returning();
+  await db.insert(schema.userRecruiterLinks).values({ userId: USER, recruiterId: soleRecruiter.id, email: "solo@example.test" });
+
+  return { recruiterId: recruiter.id, soleRecruiterId: soleRecruiter.id };
 }
 
 async function main() {
@@ -544,7 +552,7 @@ async function main() {
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
     .catch(() => {});
-  const { recruiterId } = await seed();
+  const { recruiterId, soleRecruiterId } = await seed();
 
   console.log("\nSeeded");
   const seededCounts = new Map<string, number>();
@@ -646,6 +654,8 @@ async function main() {
     where: eq(schema.recruiters.id, recruiterId),
   });
   check("the shared recruiters directory survives", Boolean(survivor));
+  const sole = await db.query.recruiters.findFirst({ where: eq(schema.recruiters.id, soleRecruiterId) });
+  check("a recruiter only this user linked is deleted with them", !sole);
   await db.delete(schema.recruiters).where(eq(schema.recruiters.id, recruiterId));
 
   console.log("\nAll purge checks passed.");

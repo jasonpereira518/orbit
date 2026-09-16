@@ -45,21 +45,25 @@ import {
   pageViews,
   planUpgradeEvents,
   recruiterMessages,
+  recruiters,
   recruiterScanState,
   reminderLists,
   reminders,
   suggestedReminders,
   tags,
   targetCompanies,
+  type DataPurgeRunRow,
   usageEvents,
   userGoals,
   userRecruiterLinks,
   userSettings,
   webhookEndpoints,
-  type DataPurgeRunRow,
 } from "@/db/schema";
 import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
-import { recomputeRecruiterRating } from "@/lib/recruiters";
+import { recomputeRecruiterRating,
+  RECRUITER_DELETED_CREATOR,
+  rederiveSharedRecruiterPii,
+} from "@/lib/recruiters";
 import {
   DATA_CATEGORY_IDS,
   DATA_CATEGORY_META,
@@ -261,12 +265,11 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // `user_recruiter_links`, and nothing recomputes them on delete. Without the recompute
       // below, every deletion permanently inflates those counters on each recruiter the user
       // had linked — the shared directory would drift further from the truth every time.
-      const linkedRecruiterIds = (
-        await db.query.userRecruiterLinks.findMany({
-          where: eq(userRecruiterLinks.userId, userId),
-          columns: { recruiterId: true },
-        })
-      ).map((l) => l.recruiterId);
+      const departingLinks = await db.query.userRecruiterLinks.findMany({
+        where: eq(userRecruiterLinks.userId, userId),
+        columns: { recruiterId: true, email: true, phone: true, linkedinUrl: true },
+      });
+      const linkedRecruiterIds = departingLinks.map((l) => l.recruiterId);
 
       // The drafts and sent messages themselves, which carry `subject` and `body` — the
       // user's own prose to a named third party — plus the Gmail message and thread ids that
@@ -279,6 +282,24 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // failure was sitting red on main.
       await db.delete(recruiterMessages).where(eq(recruiterMessages.userId, userId));
       await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, userId));
+
+      // Third-party PII nobody else holds: a canonical row whose only links were this user's.
+      const ids = [...new Set(linkedRecruiterIds)];
+      if (ids.length > 0) {
+        await db.execute(sql`
+          DELETE FROM recruiters r
+           WHERE r.id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+             AND NOT EXISTS (SELECT 1 FROM user_recruiter_links l WHERE l.recruiter_id = r.id)
+        `);
+      }
+      await db
+        .update(recruiters)
+        .set({ createdByUserId: RECRUITER_DELETED_CREATOR })
+        .where(eq(recruiters.createdByUserId, userId));
+      // What this user contributed to rows others still use leaves with them.
+      for (const link of departingLinks) {
+        await rederiveSharedRecruiterPii(link.recruiterId, { withdrawn: link }).catch(() => {});
+      }
 
       for (const recruiterId of new Set(linkedRecruiterIds)) {
         // Best-effort: a stale counter must not block deleting someone's data.

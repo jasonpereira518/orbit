@@ -7,7 +7,8 @@ import { run } from "./smoke/_env";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { recruiters, userSettings } from "../src/db/schema";
+import { purgeUserData } from "../src/lib/user-data";
+import { recruiters, userRecruiterLinks, userSettings } from "../src/db/schema";
 import {
   ensureUserLink,
   pickPooledPii,
@@ -63,7 +64,24 @@ async function main() {
   check("turning sharing off withdraws the contribution", after.email === null, String(after.email));
   check("...but the contributor keeps it on their link", sharerLink.email === "pat@acme.test");
 
+  console.log("\nPurge");
+  const solo = await upsertCanonicalRecruiter({ fullName: "Solo Recruiter", firm: "Only Me", email: "solo@r.test" }, { contributePii: true, createdByUserId: "smoke-pii-viewer" });
+  await ensureUserLink({ userId: "smoke-pii-viewer", recruiterId: solo.id, email: "solo@r.test" });
+  const both = await upsertCanonicalRecruiter({ fullName: "Both Recruiter", firm: "Two Of Us", email: "both@r.test" }, { contributePii: true, createdByUserId: "smoke-pii-viewer" });
+  await ensureUserLink({ userId: "smoke-pii-viewer", recruiterId: both.id, email: "both@r.test" });
+  await ensureUserLink({ userId: "smoke-pii-private", recruiterId: both.id, email: "both.private@r.test" });
+
+  await purgeUserData("smoke-pii-viewer", { only: ["recruiters"] });
+  check("a recruiter only this user linked is deleted", !(await db.query.recruiters.findFirst({ where: eq(recruiters.id, solo.id) })));
+  const survivor = await db.query.recruiters.findFirst({ where: eq(recruiters.id, both.id) });
+  check("a recruiter someone else links survives", Boolean(survivor));
+  check("...without the departing user's contributed email", survivor?.email === null, String(survivor?.email));
+  check("...and no longer names them as creator", survivor?.createdByUserId === "deleted-account");
+  const otherLink = await db.query.userRecruiterLinks.findFirst({ where: eq(userRecruiterLinks.recruiterId, both.id) });
+  check("the other user's own details are untouched", otherLink?.email === "both.private@r.test");
+
   await db.delete(recruiters).where(eq(recruiters.id, created.id));
+  await db.delete(recruiters).where(eq(recruiters.id, both.id));
   console.log("\nAll recruiter-PII checks passed.");
 }
 
