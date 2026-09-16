@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     "What Orbit collects, who it shares data with, and how to export or delete everything in your account.",
 };
 
-const LAST_UPDATED = "September 12, 2026";
+const LAST_UPDATED = "September 16, 2026";
 
 const HIGHLIGHTS: readonly Highlight[] = [
   {
@@ -31,7 +31,7 @@ const HIGHLIGHTS: readonly Highlight[] = [
   {
     icon: Sparkles,
     title: "AI runs on your key",
-    body: "AI features are opt-in, you choose the provider, and in production every call bills to a key you supply.",
+    body: "AI features are opt-in and you choose the provider. Calls bill to a key you supply — except on Orbit Lifetime without one, where they run on Orbit's.",
   },
   {
     icon: Download,
@@ -87,7 +87,7 @@ const PROCESSORS = [
   {
     name: "Google Gemini, OpenAI, Anthropic",
     badge: "Optional",
-    body: "AI features, including transcribing meetings you record and reading pages you scan. Which one receives content depends on the provider and key you configure in Settings.",
+    body: "AI features, including transcribing meetings you record and reading pages you scan. Which one receives content depends on the provider and key you configure in Settings — or, on Orbit Lifetime without a key of your own, the provider Orbit's own keys run on.",
   },
   {
     name: "Wispr Flow",
@@ -189,8 +189,10 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Usage records</strong> — for each AI call, the operation,
-              provider, model, token counts, duration, and whether it succeeded.
-              This is what powers your cost view and lets failures be debugged.
+              provider, model, token counts, duration, whether it succeeded, and
+              whether it ran on your key or Orbit&apos;s.
+              This is what powers your cost view, measures Orbit Lifetime&apos;s
+              monthly AI allowance, and lets failures be debugged.
               It records the shape of the call, never the prompt or the reply.
             </li>
             <li>
@@ -290,17 +292,32 @@ export default function PrivacyPage() {
           <p>
             When you use an AI feature, content from your network — notes,
             contact context, chat prompts, the audio of meetings you record, and
-            photos of pages you scan — is sent to the provider configured in
-            Settings. You choose that provider, and in production every call
-            runs on an API key you supply, so the request lands on your own
-            account with that vendor and is governed by the retention settings
-            you have agreed with them.
+            photos of pages you scan — is sent to an AI provider: Google Gemini,
+            OpenAI, or Anthropic. Whose account the request lands on depends on
+            your plan:
           </p>
+          <ul>
+            <li>
+              <strong>With an API key you supply</strong>{" "}
+              — required on the Free
+              Plan and Orbit Pro, optional on Orbit Lifetime — the request lands
+              on your own account with the provider you chose in Settings, and
+              is governed by the retention settings you have agreed with them.
+            </li>
+            <li>
+              <strong>On Orbit Lifetime without a key of your own</strong>, the
+              request runs on Orbit&apos;s account with the provider and is
+              governed by Orbit&apos;s agreement with them. Orbit picks the
+              provider and model: the provider you selected where Orbit holds a
+              key for it, otherwise another of the three. Adding your own key
+              moves your requests back to your own account.
+            </li>
+          </ul>
           <p>
             The practical implication is worth stating directly:{" "}
             <strong>
               don&apos;t store anything in Orbit you would be unwilling to send
-              to your chosen AI provider
+              to an AI provider
             </strong>
             . AI output can also be wrong or invented — review anything before
             you act on it or send it to a real person.
@@ -471,7 +488,8 @@ export default function PrivacyPage() {
             globally, which means your data may be processed in countries other
             than the one you live in — most commonly the United States. Where
             you supply your own API keys, the processing location follows
-            whatever you have configured with that vendor.
+            whatever you have configured with that vendor; AI that runs on
+            Orbit&apos;s keys follows Orbit&apos;s configuration with it.
           </p>
         </DocSection>
 

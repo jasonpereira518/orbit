@@ -120,6 +120,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
   "smoke-account-alerts": "pglite",
+  "smoke-ai-access": "pglite",
   "smoke-api-keys": "pglite",
   "smoke-api-routes": "pglite",
   "smoke-action-items": "pglite",

@@ -21,6 +21,7 @@ import {
   costToRunBreakdown,
   paidSignupsByChannel,
 } from "@/lib/money-metrics";
+import { MANAGED_AI_BUDGET } from "@/lib/managed-ai-policy";
 
 export const metadata = { title: "Admin · Money · Costs" };
 
@@ -113,31 +114,29 @@ export default async function MoneyCostsPage() {
             }
           />
           <MetricTile
-            label="On Orbit's AI key"
+            label="On Orbit's AI keys"
             value={formatMicros(aiSpend.orbitKeyMicros)}
-            tone={aiSpend.orbitKeyMicros > 0 ? "danger" : "muted"}
-            hint={
-              aiSpend.orbitKeyMicros > 0 ? "should be zero in production" : "BYOK holding"
-            }
+            tone="muted"
+            hint={`Lifetime managed AI · capped at ${formatMicros(MANAGED_AI_BUDGET.monthlyCostMicros)}/account/month`}
           />
         </div>
 
         {/*
-         * `keyOwner: "orbit"` can only be written where `allowEnvProviderKeys()` returns
-         * true, which is anywhere that is not Vercel. A non-zero figure in production data
-         * therefore means either local-dev rows reaching a shared database, or Orbit's own
-         * keys actually serving users. Both are worth knowing immediately.
+         * `keyOwner: "orbit"` is written only for calls the AI gate (`src/lib/ai-access.ts`)
+         * ran on a MANAGED key: Lifetime accounts with no key of their own, and demo
+         * accounts. It is a real cost with a hard per-account ceiling (MANAGED_AI_BUDGET),
+         * and the ops sweep pages when its pace threatens what Lifetime brought in.
          */}
         {aiSpend.orbitKeyMicros > 0 && (
-          <AdminPanel title="AI on Orbit's key" className="border-destructive/50 bg-destructive/5">
+          <AdminPanel title="AI on Orbit's keys">
             <div className="flex items-start gap-3 text-sm">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
               <p>
-                {formatMicros(aiSpend.orbitKeyMicros)} of AI spend in the last 30 days was
-                billed to Orbit&apos;s own keys. Production is strictly bring-your-own-key,
-                so this is either local development writing into a shared database, or
-                users genuinely running on Orbit&apos;s credit. The second is an unbounded
-                cost.
+                {formatMicros(aiSpend.orbitKeyMicros)} of AI spend in the last 30 days ran on
+                Orbit&apos;s managed keys — Lifetime accounts that have not added a key of their
+                own. Each account is capped at{" "}
+                {formatMicros(MANAGED_AI_BUDGET.monthlyCostMicros)} a month; set{" "}
+                <code>ORBIT_MANAGED_AI=off</code> to stop managed AI for everyone at once.
               </p>
             </div>
           </AdminPanel>

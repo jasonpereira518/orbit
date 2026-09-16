@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   signup_attributed_at timestamptz,
   comped_plan text,
   lifetime_purchased_at timestamptz,
+  lifetime_checkout_session_id text,
+  lifetime_checkout_started_at timestamptz,
   stripe_customer_id text,
   subscription_plan text,
   subscription_status text,
@@ -1403,7 +1405,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // `SCHEMA_VERSION = 54`, so only this changelog conflicted; a database already at 54 from
 // either branch still needs this table's two columns, hence one more bump rather than
 // reusing the number either side shipped it under.
-export const SCHEMA_VERSION = 55;
+//
+// 61 = user_settings.lifetime_checkout_session_id + lifetime_checkout_started_at, the pending
+// Lifetime checkout the AI gate asks Stripe about before refusing a just-paid account. Built
+// as 57; renumbered past every open claim at PR time — 56 (calendar-contact-enrichment,
+// outreach-redesign ×2) and 58/59/60 (the launch-p1/p2/p3 stack). A database stamped by any
+// of those must still pick these columns up, which only a higher number guarantees.
+export const SCHEMA_VERSION = 61;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2077,6 +2085,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
   await ensureColumn(client, "user_settings", "comped_by", "text");
   await ensureColumn(client, "user_settings", "last_active_at", "timestamptz");
+  // v61: the pending Lifetime checkout the AI gate verifies with Stripe before refusing.
+  await ensureColumn(client, "user_settings", "lifetime_checkout_session_id", "text");
+  await ensureColumn(client, "user_settings", "lifetime_checkout_started_at", "timestamptz");
 
   // Clerk identity mirror. Columns rather than a new table, so they ride along on every
   // query that already reads `user_settings` — the admin roster gets a display name and an
@@ -2419,6 +2430,9 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
+  // v61: the pending Lifetime checkout the AI gate verifies with Stripe before refusing.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_checkout_session_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_checkout_started_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS yc_mode_enabled boolean DEFAULT false`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS estimated_monthly_churn_pct real`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stripe_customer_id text`,

@@ -9,6 +9,7 @@ import { MeetingCapturePanel } from "@/components/capture/meeting-capture-panel"
 import type { MeetingAnalysis } from "@/actions/meetings";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { isMeetingCaptureSupported, isMicMeetingCaptureSupported } from "@/lib/use-meeting-recorder";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 /**
  * Whether this browser can record a call. Only knowable on the client, so the server
@@ -35,6 +36,7 @@ function useMicMeetingSupported(): boolean {
 export function MeetingCaptureTab({
   resumable,
   hasApiKey,
+  aiReason = null,
   canTranscribe,
   onBusyChange,
   onAnalyzed,
@@ -43,6 +45,7 @@ export function MeetingCaptureTab({
 }: {
   resumable: ResumableMeeting | null;
   hasApiKey: boolean;
+  aiReason?: AiAccessDenial | null;
   canTranscribe: boolean;
   onBusyChange: (busy: boolean) => void;
   onAnalyzed: (analysis: MeetingAnalysis, sessionId: string) => void;
@@ -56,6 +59,7 @@ export function MeetingCaptureTab({
       <MeetingCapturePanel
         resumable={resumable}
         hasApiKey={hasApiKey}
+        aiReason={aiReason}
         canTranscribe={canTranscribe}
         captureSupported={supported}
         micSupported={micSupported}

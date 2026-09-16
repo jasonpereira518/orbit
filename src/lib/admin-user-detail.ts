@@ -25,6 +25,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { entitlementsForPlan, resolvePlan } from "@/lib/entitlements";
+import { managedKeysConfigured } from "@/lib/ai-access";
 import type { Entitlements, Plan, PlanSource } from "@/lib/entitlements";
 import { assertRevealable } from "@/lib/admin-redaction";
 
@@ -576,13 +577,19 @@ export async function getAdminUserDetail(
         ? keys.anthropic
         : keys.gemini;
 
-  if (!hasSelectedProviderKey) {
+  // The AI gate's rule (`managed-ai-policy.ts`): no key is only a failure off Lifetime, or
+  // on Lifetime when this deployment holds no managed key to fall back on.
+  const onManagedAi =
+    plan === "lifetime" && Object.values(managedKeysConfigured()).some(Boolean);
+  if (!hasSelectedProviderKey && !onManagedAi) {
     health.push({
       kind: "ai",
       severity: "error",
       label: `No ${provider} API key configured`,
       detail:
-        "Production is BYOK — every AI feature fails for this account until they add a key in Settings.",
+        plan === "lifetime"
+          ? "On Lifetime but this deployment has no managed AI key — every AI feature fails until one is set (ORBIT_MANAGED_*_API_KEY) or they add their own."
+          : "AI is bring-your-own-key off Lifetime — every AI feature fails for this account until they add a key in Settings.",
       at: null,
     });
   }

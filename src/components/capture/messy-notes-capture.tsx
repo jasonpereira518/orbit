@@ -6,8 +6,8 @@
  * is the one button.
  */
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { Loader2 } from "lucide-react";
+import { AiKeyNotice } from "@/components/ai-key-notice";
 import { clearCaptureDraft, readCaptureDraft, writeCaptureDraft } from "@/lib/capture-draft";
 import { CAPTURE_HANDOFF_EVENT, appendHandoff, takeCaptureHandoff } from "@/lib/capture-handoff";
 import { ScanControls, useScanDropZone, sortAndNormalizeScanFiles } from "@/components/scan/scan-controls";
@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import type { CaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { cn } from "@/lib/utils";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 /** Debounce for the draft autosave: long enough not to write on every keystroke. */
 const DRAFT_SAVE_DELAY_MS = 500;
@@ -122,7 +123,7 @@ export function MessyNotesCapture({
         dragging && "border-dashed border-import-scan bg-import-scan/5"
       )}
     >
-      {!ingest.hasApiKey && <MissingKeyNotice />}
+      {!ingest.hasApiKey && <MissingKeyNotice reason={ingest.aiReason} />}
       {preferredContactName && (
         <p className="rounded-xl bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
           Logging with <span className="font-medium text-foreground">{preferredContactName}</span> preferred for merge when they appear in the notes.
@@ -186,19 +187,9 @@ export function MessyNotesCapture({
   );
 }
 
-export function MissingKeyNotice() {
-  return (
-    <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
-      <p className="font-medium text-foreground">Add an AI API key to extract people from notes</p>
-      <p className="mt-1 text-muted-foreground">
-        Orbit needs your Gemini, OpenAI, or Anthropic key — add one in{" "}
-        <Link href="/settings" className="font-medium text-primary underline-offset-2 hover:underline">
-          Settings
-        </Link>
-        , then come back here.
-      </p>
-    </div>
-  );
+/** Capture's "AI can't run" notice — the shared one, worded for the gate's `reason`. */
+export function MissingKeyNotice({ reason }: { reason?: AiAccessDenial | null }) {
+  return <AiKeyNotice feature="capture" reason={reason} />;
 }
 
 /** Filename and provenance for whatever was last ingested — "note.jpg · via photos:2". */

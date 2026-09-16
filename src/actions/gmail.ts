@@ -9,6 +9,7 @@ import { gmailConnections, imports, userSettings } from "@/db/schema";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
+import { isAiAccessError } from "@/lib/ai-access";
 import {
   GMAIL_SCAN_IMPORT_TYPE,
   runGmailRecruiterScanJob,
@@ -172,12 +173,17 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
     }
 
     // Fail here rather than after the mailbox sweep: classification is the whole point of
-    // the scan, and `getAiConfig` throws for a user with no key configured.
+    // the scan, and `getAiConfig` throws when the AI gate would refuse this account. Asked
+    // as the scan itself will ask ("recruiter.scan"), so a Lifetime account whose
+    // background share of the managed allowance is spent is told so before it starts.
     try {
-      await getAiConfig(userId);
-    } catch {
-      throw new Error(
-        "Add an AI provider key in Settings before scanning — the scan uses it to identify recruiters and summarize your threads."
+      await getAiConfig(userId, "recruiter.scan");
+    } catch (err) {
+      if (isAiAccessError(err) && err.reason !== "key_required") {
+        throw new UserFacingError(err.message);
+      }
+      throw new UserFacingError(
+        "Add an AI API key in Settings before scanning — the scan uses it to identify recruiters and summarize your threads"
       );
     }
 

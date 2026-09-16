@@ -36,6 +36,7 @@ import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 export default async function ContactDetailPage({
   params,
@@ -408,7 +409,7 @@ async function StreamedTimeline({
   settings,
   ...rest
 }: {
-  settings: Promise<{ hasApiKey: boolean }>;
+  settings: Promise<{ hasApiKey: boolean; ai?: { reason: AiAccessDenial | null } }>;
   contactId: string;
   contactName: string;
   interactions: React.ComponentProps<typeof ContactTimeline>["interactions"];
@@ -416,10 +417,10 @@ async function StreamedTimeline({
     typeof ContactTimeline
   >["openActionItems"];
 }) {
-  const { hasApiKey } = await settings;
+  const { hasApiKey, ai } = await settings;
   return (
     <div className="reveal-mount">
-      <ContactTimeline {...rest} hasApiKey={hasApiKey} />
+      <ContactTimeline {...rest} hasApiKey={hasApiKey} aiReason={ai?.reason ?? null} />
     </div>
   );
 }

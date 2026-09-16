@@ -41,7 +41,9 @@ import { acceptedPeople, countDecisions, firstPendingIndex, initialPhaseFor, typ
 import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { MISSING_AI_API_KEY_MESSAGE, isMissingAiApiKeyError } from "@/lib/errors";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { meetingExtrasFromDigest } from "@/lib/meeting-extras";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { DUR, DUR_MS, EASE_HOUSE } from "@/lib/motion";
@@ -61,6 +63,7 @@ export function CaptureFlow({
   initialContactName = null,
   defaultMode = "messy",
   hasApiKey = true,
+  aiReason = null,
   canTranscribe = false,
   resumableMeeting = null,
   ignoredCount = 0,
@@ -73,6 +76,8 @@ export function CaptureFlow({
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
+  /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
+  aiReason?: AiAccessDenial | null;
   canTranscribe?: boolean;
   resumableMeeting?: ResumableMeeting | null;
   ignoredCount?: number;
@@ -110,6 +115,7 @@ export function CaptureFlow({
   const messy = useCaptureIngest({
     sourceKind: "messy",
     hasApiKey,
+    aiReason,
     initialNotes: prefill && prefill.sourceKind !== "voice" ? prefillText : "",
     initialJobId: prefill && prefill.sourceKind !== "voice" ? prefill.id : null,
     onAutoExtract: (text, hints, jobId) => void startExtraction({ text, hints, jobId, sourceKind: "messy" }),
@@ -117,6 +123,7 @@ export function CaptureFlow({
   const voice = useCaptureIngest({
     sourceKind: "voice",
     hasApiKey,
+    aiReason,
     initialNotes: prefill && prefill.sourceKind === "voice" ? prefillText : "",
     initialJobId: prefill && prefill.sourceKind === "voice" ? prefill.id : null,
   });
@@ -176,12 +183,20 @@ export function CaptureFlow({
       });
       if (!res.ok) {
         setPendingStart(false);
-        const missingKey = isMissingAiApiKeyError(res.error);
-        if (missingKey) {
-          messy.setHasApiKey(false);
-          voice.setHasApiKey(false);
+        const denial = aiDenialFromMessage(res.error);
+        if (denial) {
+          messy.noteAiRefusal(res.error);
+          voice.noteAiRefusal(res.error);
         }
-        toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+        // The gate's own words (allowance spent, payment clearing) say more than the generic
+        // key message; any other key-shaped error reads as the plain missing-key case.
+        toast.error(
+          denial && denial !== "key_required"
+            ? res.error
+            : isMissingAiApiKeyError(res.error)
+              ? MISSING_AI_API_KEY_MESSAGE
+              : res.error
+        );
         return;
       }
       seedCaptureJob(res.job, { force: true });
@@ -320,6 +335,7 @@ export function CaptureFlow({
               <MeetingCaptureTab
                 resumable={resumableMeeting}
                 hasApiKey={hasApiKey}
+                aiReason={aiReason}
                 canTranscribe={canTranscribe}
                 onBusyChange={setMeetingBusy}
                 onAnalyzed={onMeetingAnalyzed}

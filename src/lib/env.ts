@@ -60,6 +60,16 @@ const STRIPE_PRICE_IDS = [
   "STRIPE_PRO_ANNUAL_PRICE_ID",
 ] as const;
 
+/**
+ * Orbit's managed AI keys, which Lifetime accounts run on when they bring none
+ * (`src/lib/ai-access.ts`). Checked by presence only, here as everywhere.
+ */
+const MANAGED_AI_KEYS = [
+  "ORBIT_MANAGED_GEMINI_API_KEY",
+  "ORBIT_MANAGED_OPENAI_API_KEY",
+  "ORBIT_MANAGED_ANTHROPIC_API_KEY",
+] as const;
+
 /** Must never be set in production: each one hands out access on a keypress or a header. */
 const FORBIDDEN_IN_PRODUCTION = ["DEMO_ACCOUNT_USER_ID", "EXTENSION_DEV_SECRET"] as const;
 
@@ -137,6 +147,18 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
 
     for (const name of EXPECTED_IN_PRODUCTION) {
       if (!has(env, name)) warnings.push(`${name} is unset; the feature it enables is off`);
+    }
+    // Lifetime is sold as including AI. Selling it with no managed key means every buyer
+    // without a key of their own is refused — a warning rather than a failed build, since
+    // the ops sweep pages on it (`ai.managed_unconfigured`) and a key must never block a deploy.
+    if (
+      has(env, "STRIPE_SECRET_KEY") &&
+      !MANAGED_AI_KEYS.some((name) => has(env, name)) &&
+      env.ORBIT_MANAGED_AI?.trim().toLowerCase() !== "off"
+    ) {
+      warnings.push(
+        "No ORBIT_MANAGED_*_API_KEY is set; Lifetime is on sale but its included AI has no key to run on"
+      );
     }
     return { errors, warnings, missingRequired };
   }
