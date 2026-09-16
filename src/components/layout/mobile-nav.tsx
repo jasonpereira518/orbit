@@ -25,6 +25,7 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { SPRING_PILL, SPRING_TAP } from "@/lib/motion";
+import { beginRouteProgress } from "@/components/layout/route-progress";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 
@@ -182,6 +183,11 @@ export function MobileNav({
       if (entry.type === "more") {
         setMoreOpen(true);
       } else {
+        // The route-progress bar watches document clicks on anchors; a swipe that navigates
+        // has no anchor to watch, so it says so itself. This is the mobile equivalent of a
+        // sidebar link, on the devices where the wait is longest and the tap has no other
+        // acknowledgement at all.
+        beginRouteProgress();
         router.push(entry.href);
       }
     }

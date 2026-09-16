@@ -42,6 +42,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { beginRouteProgress } from "@/components/layout/route-progress";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Popover,
@@ -1421,6 +1422,10 @@ function GraphCanvasInner({
       }
 
       if (compact && node.type === "contact") {
+        // Tapping a star on a phone opens the profile outright rather than the inspect
+        // panel. No anchor, so the route-progress bar cannot see it — and `/contacts/[id]`
+        // is one of the heavier routes, on the narrowest device.
+        beginRouteProgress();
         router.push(`/contacts/${node.id}`);
         return;
       }
