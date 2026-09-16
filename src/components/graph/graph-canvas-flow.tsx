@@ -194,10 +194,9 @@ const edgeTypes: EdgeTypes = {
 /** Ambient galaxy drift — slow enough to feel alive without distracting. */
 const GALAXY_DEG_PER_MIN = 3;
 /**
- * How often the CSS-var rotation is committed back into node positions
- * (an O(contactCount) React state update). Spaced out further as the
- * network grows so the commit cost stays bounded; disabled entirely past
- * ROTATION_DISABLE_ABOVE contacts.
+ * How often the drift is committed into node positions (an O(contactCount) React state
+ * update). Spaced out further as the network grows so the commit cost stays bounded;
+ * disabled entirely past ROTATION_DISABLE_ABOVE contacts.
  */
 function rotationCommitMs(contactCount: number): number {
   if (contactCount > 900) return 1500;
@@ -205,6 +204,24 @@ function rotationCommitMs(contactCount: number): number {
   return 450;
 }
 const ROTATION_DISABLE_ABOVE = 2500;
+
+/**
+ * The last emphasised copy made of each structural node or edge, and what it was made for.
+ *
+ * Keyed weakly by the structural object, so an entry lives exactly as long as the node it
+ * decorates: a rotation commit, drag or remount produces new structural objects and the old
+ * entries are simply collected. `key` encodes every value the copy was built from; the same
+ * key means the same copy, and React Flow sees an unchanged object.
+ */
+const emphasisCache = new WeakMap<object, { key: string; value: unknown }>();
+
+function withEmphasis<T>(base: object, key: string, build: () => T): T {
+  const hit = emphasisCache.get(base);
+  if (hit && hit.key === key) return hit.value as T;
+  const value = build();
+  emphasisCache.set(base, { key, value });
+  return value;
+}
 
 // v5: the honest-orbit layout invalidated spiral-era drag positions.
 function buildStructuralNodes(
@@ -322,8 +339,6 @@ function GraphCanvasInner({
   const prevPeekZoomKey = useRef("");
   fitViewRef.current = fitView;
   getNodesRef.current = getNodes;
-  /** Total ambient rotation shown by the CSS var (rings + arm glow). */
-  const galaxyThetaRef = useRef(0);
   const prefersReducedMotion = usePrefersReducedMotion();
 
   const [orbitNodes, setOrbitNodes] = useState<Node[]>(() =>
@@ -400,16 +415,39 @@ function GraphCanvasInner({
     [hoveredId, selection, searchHitIds, searchDimActive]
   );
 
+  /**
+   * Whether the sky is drifting right now. One predicate for both halves of the motion: the
+   * rings' CSS animation below and the stars' timed commits in the effect further down. They
+   * have to agree — rings gliding on beside stars that have stopped reads as a broken chart.
+   */
+  const spinning =
+    !compact &&
+    !prefersReducedMotion &&
+    !selection &&
+    !searchDimActive &&
+    filteredContacts.length <= ROTATION_DISABLE_ABOVE;
+
+  /**
+   * The nodes React Flow draws: each structural node with this moment's emphasis applied.
+   *
+   * Every result goes through `withEmphasis`, which hands back the SAME object as last time
+   * when a node's emphasis did not change. That identity is the whole optimisation: React
+   * Flow keeps a node's internals, and skips re-rendering it, only when the object it is
+   * given is the one it already has. Rebuilding every node here — as this used to — meant a
+   * hover re-rendered all 1,000 stars to change the opacity of two of them.
+   */
   const nodes = useMemo(() => {
     return orbitNodes.map((n) => {
       if (n.type === "orbitRings") {
-        return n;
+        return withEmphasis(
+          n,
+          spinning ? "spin" : "still",
+          () => ({ ...n, data: { ...n.data, spinning } }) as Node
+        );
       }
       if (n.type === "user") {
-        return {
-          ...n,
-          selected: selection?.type === "user",
-        } as Node;
+        const selected = selection?.type === "user";
+        return withEmphasis(n, selected ? "sel" : "", () => ({ ...n, selected }) as Node);
       }
       if (n.type === "clusterLabel" || n.type === "nebula") {
         const nebula = n.data as NebulaData | { company?: string };
@@ -417,36 +455,48 @@ function GraphCanvasInner({
           "company" in nebula
             ? nebula.company
             : (n.data as { label?: string }).label;
-        return {
-          ...n,
-          hidden: false,
-          style: {
-            opacity: clusterEmphasis(co, focusCompany, company, searchDimActive),
-            transition: "opacity 200ms ease",
-          },
-        } as Node;
+        const opacity = clusterEmphasis(co, focusCompany, company, searchDimActive);
+        return withEmphasis(
+          n,
+          String(opacity),
+          () =>
+            ({
+              ...n,
+              hidden: false,
+              style: { opacity, transition: "opacity 200ms ease" },
+            }) as Node
+        );
       }
 
       const d = n.data as GraphNodeData;
       const emphasis = starEmphasis(n.id, focusState);
       const isHovered = hoveredId === n.id;
       const hasOverride = Boolean(positionOverrides[n.id]);
+      const motionPaused = isHovered || emphasis.selected || hasOverride;
+      // Anyone the reader asked about keeps a name at every zoom (see graph-nodes.tsx).
+      const labelPinned = isHovered || emphasis.selected || emphasis.spotlight;
 
-      return {
-        ...n,
-        selected: emphasis.selected,
-        hidden: false,
-        data: {
-          ...d,
-          motionPaused: isHovered || emphasis.selected || hasOverride,
-          spotlight: emphasis.spotlight,
-          spotlightSolo: emphasis.spotlightSolo,
-        },
-        style: {
-          opacity: emphasis.opacity,
-          transition: "opacity 200ms ease",
-        },
-      } as Node;
+      return withEmphasis(
+        n,
+        `${emphasis.opacity}|${emphasis.selected}|${emphasis.spotlight}|${emphasis.spotlightSolo}|${motionPaused}|${labelPinned}`,
+        () =>
+          ({
+            ...n,
+            selected: emphasis.selected,
+            hidden: false,
+            data: {
+              ...d,
+              motionPaused,
+              labelPinned,
+              spotlight: emphasis.spotlight,
+              spotlightSolo: emphasis.spotlightSolo,
+            },
+            style: {
+              opacity: emphasis.opacity,
+              transition: "opacity 200ms ease",
+            },
+          }) as Node
+      );
     });
   }, [
     orbitNodes,
@@ -457,6 +507,7 @@ function GraphCanvasInner({
     positionOverrides,
     focusCompany,
     company,
+    spinning,
   ]);
 
   const edges = useMemo(() => {
@@ -478,14 +529,21 @@ function GraphCanvasInner({
           { ...focusState, focusCluster }
         );
 
-        return {
-          ...e,
-          type: "labeled" as const,
-          label: undefined,
-          animated: false,
-          data: { ...e.data, label: undefined },
-          style: { ...e.style, opacity, strokeWidth },
-        } as Edge;
+        // Same identity rule as the nodes: an edge whose emphasis is unchanged keeps its
+        // object, so React Flow does not re-render it.
+        return withEmphasis(
+          e,
+          `${opacity}|${strokeWidth}`,
+          () =>
+            ({
+              ...e,
+              type: "labeled" as const,
+              label: undefined,
+              animated: false,
+              data: { ...e.data, label: undefined },
+              style: { ...e.style, opacity, strokeWidth },
+            }) as Edge
+        );
       });
 
     return mapped;
@@ -499,32 +557,37 @@ function GraphCanvasInner({
   ]);
 
   /**
-   * Ambient sky rotation. Every frame the accrued angle lands on a CSS var
-   * (rings rotate on the compositor, no React render); every
-   * rotationCommitMs(count) the pending delta is committed to node state as a
-   * plain rigid rotation about the sun — spaced out further as the network
-   * grows so the commit cost stays bounded, and disabled entirely past
-   * ROTATION_DISABLE_ABOVE contacts. Paused while dragging, while the
-   * inspect panel is open, while a search spotlight is active (a studied
-   * star must hold still), in the compact card, in hidden tabs, and under
-   * prefers-reduced-motion. State lives inside GraphCanvasInner, so a
-   * layoutKey remount resets θ to 0 alongside the freshly built (unrotated)
-   * layout — the stale CSS var dies with the old React Flow DOM node.
+   * Ambient sky rotation — the stars' half of it.
+   *
+   * The rings glide continuously as a CSS animation on the compositor (see
+   * `constellation-galaxy-spin` in globals.css). The stars cannot: each one is a positioned
+   * React Flow node, so moving them means writing new positions into node state. That commit
+   * is O(visible nodes), so it happens on a timer — every rotationCommitMs(count), spaced
+   * further apart as the network grows, and not at all past ROTATION_DISABLE_ABOVE contacts.
+   * The two stay in step because both advance at GALAXY_DEG_PER_MIN: the rings sweep, the
+   * stars step, at 3 degrees a minute.
+   *
+   * There is deliberately no per-frame work here at all. This used to run a rAF loop writing
+   * the angle to a CSS custom property every frame, which — on React Flow's root or on the
+   * rings' own element — forced Chrome to restyle or re-layerise the entire chart 60 times a
+   * second. At 1,500 contacts that alone took 4.8 of every 5 seconds of main thread, while
+   * the view sat perfectly still.
+   *
+   * Paused while dragging, while the inspect panel is open, while a search spotlight is
+   * active (a studied star must hold still), in the compact card, in hidden tabs, and under
+   * prefers-reduced-motion.
    */
   useEffect(() => {
     if (compact || prefersReducedMotion || selection || searchDimActive) return;
     if (filteredContacts.length > ROTATION_DISABLE_ABOVE) return;
 
     const commitMs = rotationCommitMs(filteredContacts.length);
-    let frame = 0;
+    const radiansPerMs = (((GALAXY_DEG_PER_MIN / 60) * Math.PI) / 180) / 1000;
     let last = performance.now();
-    let lastCommit = last;
-    let pendingDelta = 0;
+    let timer = 0;
 
-    const commitPending = () => {
-      const delta = pendingDelta;
-      if (delta === 0) return;
-      pendingDelta = 0;
+    const commit = (delta: number) => {
+      if (delta <= 0) return;
       const cos = Math.cos(delta);
       const sin = Math.sin(delta);
       setOrbitNodes((prev) =>
@@ -558,40 +621,31 @@ function GraphCanvasInner({
       );
     };
 
-    const tick = (now: number) => {
-      frame = requestAnimationFrame(tick);
-      const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+    const tick = () => {
+      const now = performance.now();
+      const elapsed = now - last;
       last = now;
-      if (draggingId.current !== null || document.hidden) return;
-
-      const delta = (((GALAXY_DEG_PER_MIN / 60) * Math.PI) / 180) * dt;
-      pendingDelta += delta;
-      galaxyThetaRef.current += delta;
-      storeApi
-        .getState()
-        .domNode?.style.setProperty(
-          "--galaxy-rot",
-          `${galaxyThetaRef.current.toFixed(6)}rad`
-        );
-
-      if (now - lastCommit >= commitMs) {
-        lastCommit = now;
-        commitPending();
+      // A dragged star must not be yanked out from under the pointer, and a hidden tab has
+      // nothing to show: in both cases the time simply does not accrue.
+      if (draggingId.current === null && !document.hidden) {
+        commit(elapsed * radiansPerMs);
       }
+      timer = window.setTimeout(tick, commitMs);
     };
 
-    frame = requestAnimationFrame(tick);
+    timer = window.setTimeout(tick, commitMs);
     return () => {
-      cancelAnimationFrame(frame);
-      // Keep stars in step with the CSS-var rotation across pauses
-      commitPending();
+      window.clearTimeout(timer);
+      // Keep the stars in step with the rings across a pause.
+      if (draggingId.current === null && !document.hidden) {
+        commit((performance.now() - last) * radiansPerMs);
+      }
     };
   }, [
     compact,
     prefersReducedMotion,
     selection,
     searchDimActive,
-    storeApi,
     filteredContacts.length,
   ]);
 
