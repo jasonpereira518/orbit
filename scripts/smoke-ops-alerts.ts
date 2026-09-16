@@ -53,6 +53,7 @@ const HEALTHY: OpsSnapshot = {
   failingSyncs: 0,
   stuckPurges: 0,
   processStalledRecent: ["ok"],
+  backfillFailures24h: { accounts: 0, kinds: [] },
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -134,6 +135,11 @@ function main() {
   const missing = find({ ...HEALTHY, missingRequiredEnv: ["CRON_SECRET", "APP_BASE_URL"] }, "config.missing");
   check("missing required env → config.missing naming the variables",
     missing?.severity === "warning" && missing.detail.includes("CRON_SECRET") && missing.detail.includes("APP_BASE_URL"), missing?.detail);
+  check("backfills failing for two accounts → backfill.failed (warning)",
+    find({ ...HEALTHY, backfillFailures24h: { accounts: 2, kinds: ["embeddings"] } }, "backfill.failed")?.severity === "warning");
+  check("one account's failing backfill is that user's key, not an ops alert",
+    !find({ ...HEALTHY, backfillFailures24h: { accounts: 1, kinds: ["embeddings"] } }, "backfill.failed"));
+
   check("Slack unset in production → config.alerts_undeliverable (warning)",
     find({ ...HEALTHY, missingExpectedEnv: ["SLACK_OPS_WEBHOOK_URL"] }, "config.alerts_undeliverable")?.severity === "warning");
   check("another missing expected variable is not an alert",

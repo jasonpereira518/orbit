@@ -1,3 +1,4 @@
+import { recordBackfillFailure } from "@/lib/backfill-failures";
 import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { isInternalRequest } from "@/lib/internal-auth";
@@ -39,6 +40,9 @@ export async function POST(request: Request) {
       // A failure leaves the work pending on purpose; the cron re-kicks it. Reported
       // (throttled) so a run that fails every time is visible, not silent.
       reportError(err, { where: "job.timeline-backfill", userId, level: "warning" });
+      // Sentry is for the exception; this row is what lets the ops sweep notice a backfill
+      // that keeps failing across accounts (`backfill.failed`).
+      await recordBackfillFailure("linkedin_timeline", userId, err);
     }
   });
 

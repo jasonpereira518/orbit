@@ -45,6 +45,8 @@ export type OpsSnapshot = {
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
   processStalledRecent: CronRunState[];
+  /** Distinct accounts and kinds with a backfill.failed row in the last day. */
+  backfillFailures24h: { accounts: number; kinds: string[] };
   /** Most recent delivery outcomes per source, newest first. */
   webhooks: { clerk: WebhookOutcome[]; stripe: WebhookOutcome[]; resend: WebhookOutcome[] };
   stripeCheckoutErrorsLastHour: number;
@@ -83,6 +85,7 @@ const FAILED_IMPORT_BURST = 3;
 const ERROR_BURST = 5;
 const PERF_SLOW_BURST = 3;
 const OUTAGE_ACCOUNTS = 2;
+const BACKFILL_FAILING_ACCOUNTS = 2;
 const DRIFT_AFTER_MS = 6 * 60 * 60 * 1000;
 
 const isRejected = (o: WebhookOutcome) => o === "invalid" || o === "error";
@@ -267,6 +270,16 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `${provider} is failing across accounts`,
       detail: `'${o.errorKind}' errors from ${o.accounts} accounts in the last day — the provider, not one user's key.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (s.backfillFailures24h.accounts >= BACKFILL_FAILING_ACCOUNTS) {
+    out.push({
+      id: "backfill.failed",
+      severity: "warning",
+      title: "Background backfills are failing",
+      detail: `${s.backfillFailures24h.kinds.join(" and ")} backfill failed for ${s.backfillFailures24h.accounts} accounts in the last day — the provider or Orbit, not one user's key.`,
       href: "/admin/health",
     });
   }

@@ -79,6 +79,12 @@ export const ERROR_SOURCES = {
    */
   providerHealthCheck: "provider.health_check",
   /**
+   * A background backfill (embeddings, LinkedIn timeline events) threw inside `after()`,
+   * where nothing else would ever see it. Throttled per (kind, account) per hour by
+   * `recordBackfillFailure`, so a key that keeps failing is one row an hour, not one per kick.
+   */
+  backfillFailed: "backfill.failed",
+  /**
    * Wispr answered 401/403 to a user's own key. One row per rejected capture at most; the
    * key's fingerprint (never the key) lets Settings say "this key" rather than "a key".
    */

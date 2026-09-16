@@ -33,6 +33,7 @@ async function reset() {
   await db
     .delete(cronRuns)
     .where(inArray(cronRuns.job, ["imports.process-stalled", "ops.sweep", "sync.run", "webhooks.drain"]));
+  await db.delete(errorEvents).where(inArray(errorEvents.source, [ERROR_SOURCES.backfillFailed]));
   // A healthy connector-sync run, so `sync.schedule_missed` stays quiet.
   //
   // This scenario is about the alert STATE MACHINE — open, remind, recover — and asserts an

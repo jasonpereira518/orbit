@@ -10,9 +10,11 @@ import { run } from "./smoke/_env";
 // Off production, so the production-only fields stay quiet unless a section sets it.
 delete process.env.VERCEL_ENV;
 
-import { inArray } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { cronRuns } from "../src/db/schema";
+import { cronRuns, errorEvents } from "../src/db/schema";
+import { recordBackfillFailure } from "../src/lib/backfill-failures";
+import { ERROR_SOURCES } from "../src/lib/error-events";
 import { evaluateOpsConditions } from "../src/lib/ops-alerts";
 import { loadOpsSnapshot } from "../src/lib/ops-sweep";
 
@@ -62,6 +64,22 @@ run(async () => {
   check("an ok run breaks the streak", !ids.includes("cron.partial_streak"), ids.join(","));
   check("a partial drain is not drain.failed", !ids.includes("drain.failed"), ids.join(","));
   await db.delete(cronRuns).where(inArray(cronRuns.job, [...JOBS]));
+
+  console.log("\nBackfill failures...");
+  await db.delete(errorEvents).where(eq(errorEvents.source, ERROR_SOURCES.backfillFailed));
+  const boom = new Error("Embedding provider answered 500");
+  check("the first failure for an account is recorded", await recordBackfillFailure("embeddings", "snap-backfill-a", boom));
+  check("a repeat within the hour is throttled", !(await recordBackfillFailure("embeddings", "snap-backfill-a", boom)));
+  check("another kind for the same account is its own row", await recordBackfillFailure("linkedin_timeline", "snap-backfill-a", boom));
+  await recordBackfillFailure("embeddings", "snap-backfill-b", boom);
+  const rows = await db.select().from(errorEvents).where(and(
+    eq(errorEvents.source, ERROR_SOURCES.backfillFailed), gt(errorEvents.createdAt, new Date(Date.now() - 60_000))));
+  check("three rows, never the raw error text beyond the friendly message", rows.length === 3, JSON.stringify(rows.map((r) => r.kind)));
+  const bf = (await loadOpsSnapshot(new Date(), null)).backfillFailures24h;
+  check("the snapshot counts distinct accounts and kinds",
+    bf.accounts === 2 && bf.kinds.includes("embeddings") && bf.kinds.includes("linkedin_timeline"), JSON.stringify(bf));
+  check("two accounts open backfill.failed", (await idsNow()).includes("backfill.failed"));
+  await db.delete(errorEvents).where(eq(errorEvents.source, ERROR_SOURCES.backfillFailed));
 
   // (new sections go above this line)
 

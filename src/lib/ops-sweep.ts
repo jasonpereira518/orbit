@@ -56,6 +56,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     errorsLastHour,
     failedImports,
     lastDrain,
+    backfillAgg,
   ] = await Promise.all([
       db
         .select()
@@ -88,6 +89,13 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .where(eq(cronRuns.job, "webhooks.drain"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
+      db
+        .select({
+          accounts: sql<number>`count(distinct ${errorEvents.userId})::int`,
+          kinds: sql<string | null>`string_agg(distinct ${errorEvents.kind}, ',')`,
+        })
+        .from(errorEvents)
+        .where(and(eq(errorEvents.source, ERROR_SOURCES.backfillFailed), gt(errorEvents.createdAt, dayAgo))),
     ]);
 
   const [stuckPurgeRow] = await db
@@ -100,7 +108,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const stripeCheckout = bySource.get(ERROR_SOURCES.stripeCheckout) ?? 0;
   const resendRejected = bySource.get(ERROR_SOURCES.resendRejected) ?? 0;
   const otherErrors = [...bySource.entries()]
-    .filter(([source]) => source !== ERROR_SOURCES.perfSlow)
+    .filter(([source]) => source !== ERROR_SOURCES.perfSlow && source !== ERROR_SOURCES.backfillFailed)
     .reduce((sum, [, n]) => sum + n, 0);
 
   const outages = new Map<string, { provider: string | null; errorKind: string; accounts: number }>();
@@ -132,6 +140,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       },
     },
     processStalledRecent: lastNightly.map((r) => deriveCronRunState(r, now)),
+    backfillFailures24h: {
+      accounts: backfillAgg[0]?.accounts ?? 0,
+      kinds: backfillAgg[0]?.kinds ? backfillAgg[0].kinds.split(",") : [],
+    },
     webhooks,
     stripeCheckoutErrorsLastHour: stripeCheckout,
     resendRejectedLastHour: resendRejected,
