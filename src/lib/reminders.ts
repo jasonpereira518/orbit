@@ -1,5 +1,5 @@
-import { and, eq, inArray } from "drizzle-orm";
-import { getDb } from "@/db";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
   aiSuggestions,
@@ -11,6 +11,7 @@ import {
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
+import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
 import {
   buildConstellationClusters,
   toNamedGraphClusters,
@@ -26,6 +27,7 @@ const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
   "post_event",
   "linkedin_thread_quiet",
+  "awaiting_reply",
 ] as const;
 
 const MAX_AUTO_SUGGESTIONS = 12;
@@ -41,6 +43,11 @@ const MAX_AUTO_SUGGESTIONS = 12;
 const GRAPH_PREVIEW_CONTACT_CAP = 150;
 
 const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
+  // Above post_event: an unanswered message names a specific thing the user did and a
+  // specific decision to make about it, where the others describe a state of the
+  // relationship. It is also the only one with a closing window — past 30 days
+  // `dormant_high_value` says something more useful.
+  awaiting_reply: 4,
   post_event: 3,
   linkedin_thread_quiet: 2,
   dormant_high_value: 1,
@@ -162,6 +169,47 @@ async function buildOutreachSuggestions(userId: string) {
     ) {
       candidateByContact.set(contactId, candidate);
     }
+  }
+
+  // Who is waiting on an answer.
+  //
+  // `DISTINCT ON` gives the single most recent interaction per contact in one indexed pass,
+  // rather than loading every interaction and reducing in JS — this runs on the dashboard.
+  // The ORDER BY must lead with `contact_id` for DISTINCT ON, and the `id` tiebreak keeps
+  // the result stable when two rows share a timestamp (a bulk note paste does exactly that).
+  const lastTouches = rowsOf<{
+    contact_id: string;
+    direction: "in" | "out" | null;
+    interaction_date: string | Date | null;
+  }>(
+    await db.execute(sql`
+      SELECT DISTINCT ON (contact_id)
+        contact_id, direction, interaction_date
+      FROM interactions
+      WHERE user_id = ${userId}
+      ORDER BY contact_id, interaction_date DESC, id DESC
+    `)
+  );
+
+  const byId = new Map(all.map((c) => [c.id, c]));
+  for (const { contactId, daysWaiting } of awaitingReplies(
+    lastTouches.map((r) => ({
+      contactId: r.contact_id,
+      direction: r.direction,
+      interactionDate: r.interaction_date,
+    }))
+  )) {
+    const c = byId.get(contactId);
+    // `isDiscoveryEligible` still applies: a contact with a follow-up already scheduled is
+    // covered, and one pinned off the constellation has been told to leave them alone.
+    if (!c || !isDiscoveryEligible(c)) continue;
+    upsertCandidate(c.id, {
+      suggestionType: "awaiting_reply",
+      title: `Nudge ${contactDisplayName(c)}`,
+      description: awaitingReplyDescription(daysWaiting),
+      relatedContactIds: [c.id],
+      confidenceScore: 85,
+    });
   }
 
   const dormantHighValue = all.filter(

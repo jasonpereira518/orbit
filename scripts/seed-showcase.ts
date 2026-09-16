@@ -76,6 +76,14 @@ type Touch = {
   type: "note" | "meeting" | "email" | "call" | "message";
   notes: string;
   topics?: string[];
+  /**
+   * Who sent it. Left off where the seed does not mean to claim one — most touches here are
+   * notes about a conversation, and "unknown" is the honest value for those.
+   *
+   * It is what makes a contact eligible for an `awaiting_reply` suggestion: the queue asks
+   * whether the most recent recorded touch is one the user sent. See `@/lib/awaiting-reply`.
+   */
+  direction?: "in" | "out";
 };
 
 type Person = {
@@ -566,8 +574,19 @@ const PEOPLE: Person[] = [
     metDaysAgo: 55,
     notes: "Works alongside Priya. Quiet, extremely good at Postgres.",
     sharedInterests: ["Postgres"],
+    // Emailed nine days ago, nothing back: this is what the `awaiting_reply` suggestion is
+    // built to surface, so the seed has to produce one. Note there is no "he did not reply"
+    // record anywhere — the state is inferred from this being the most recent touch, and any
+    // newer row of any kind clears it.
     touches: [
       { at: 55, type: "note", notes: "Dinner with Priya's team. Talked about Postgres indexing." },
+      {
+        at: 9,
+        type: "email",
+        direction: "out",
+        notes: "Emailed him the partial-index question from dinner. Nothing back yet.",
+        topics: ["Postgres"],
+      },
     ],
   },
   {
@@ -712,7 +731,17 @@ const PEOPLE: Person[] = [
       "Runs talent across the portfolio. Said she keeps a list of engineers looking to move and shares it with portfolio founders.",
     keyFacts: ["Keeps a portfolio-wide candidate list"],
     tags: ["Hiring", "Investor"],
-    touches: [{ at: 70, type: "note", notes: "Met through James. Offered access to the candidate list." }],
+    // The same case, waiting longer — so the queue has something to order.
+    touches: [
+      { at: 70, type: "note", notes: "Met through James. Offered access to the candidate list." },
+      {
+        at: 17,
+        type: "email",
+        direction: "out",
+        notes: "Asked her for the candidate list she offered. No reply so far.",
+        topics: ["Hiring"],
+      },
+    ],
   },
   {
     fullName: "Victor Reyes",
@@ -820,6 +849,7 @@ async function main() {
       contactId: idByName.get(p.fullName)!,
       interactionType: t.type,
       interactionDate: ago(t.at),
+      direction: t.direction ?? null,
       source: "showcase-seed",
       rawNotes: t.notes,
       topics: t.topics ?? [],

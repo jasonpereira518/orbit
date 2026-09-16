@@ -686,10 +686,21 @@ export async function completeFollowUpWithTouch(
     contactId,
     interactionType: channel,
     source: "follow_up",
-    // Orbit only ever logs a follow-up the user sent, so this is always outbound. Set
-    // explicitly rather than left NULL: NULL means "sender unknown" and would push the
-    // contact onto the legacy volume fallback in constellation eligibility.
-    direction: channel === "linkedin_message" ? "out" : undefined,
+    // Orbit only ever logs a follow-up the user sent, so this is always outbound — on every
+    // channel, not just LinkedIn.
+    //
+    // This used to set it for `linkedin_message` alone, for a reason that turns out to apply
+    // only there: NULL means "sender unknown", which pushes a contact onto the legacy volume
+    // fallback in constellation eligibility. But those counts are scoped to
+    // `interaction_type = 'linkedin_message'` (see `constellationSignalAggregates` in
+    // `closeness-cohort.ts`), so a direction on an email or a call row is invisible to them.
+    // The guard was correct and unnecessarily narrow.
+    //
+    // Recording it for every channel is what makes "waiting on a reply" possible at all: the
+    // job seeker's follow-ups are emails, and an email touch that recorded no direction was
+    // indistinguishable from a note someone typed about a conversation they had. See
+    // `@/lib/awaiting-reply`.
+    direction: "out",
     rawNotes: options?.notes,
     aiSummary:
       channel === "email"
