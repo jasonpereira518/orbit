@@ -43,9 +43,17 @@ run(async () => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      // A BYOK sender's From is resolved from their own verified domains (see
+      // `outreach-sender.ts`), so that lookup has to answer before the send is attempted.
+      // It is not the subject of this test — the refused SEND is.
+      if (req.url?.startsWith("/domains")) {
+        res.statusCode = 200;
+        res.end(JSON.stringify({ data: [{ name: "acme-robotics.io", status: "verified" }] }));
+        return;
+      }
       hits.push(`${req.headers.authorization} ${body.length}`);
       res.statusCode = 403;
-      res.setHeader("content-type", "application/json");
       res.end(JSON.stringify(RESEND_REFUSAL));
     });
   });

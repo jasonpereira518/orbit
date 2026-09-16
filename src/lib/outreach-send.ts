@@ -1,3 +1,4 @@
+import { outreachFromAddress } from "@/lib/outreach-sender";
 import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { Resend } from "resend";
@@ -48,6 +49,9 @@ export async function getOutreachSendConfig(userId: string) {
       settings?.twilioFromNumber?.trim() ||
       envKey(process.env.TWILIO_FROM_NUMBER),
     fromEmail: process.env.RESEND_FROM_EMAIL || "outreach@orbit.local",
+    /** True when the Resend key is the user's own — its From must be their domain. */
+    resendKeyIsPersonal: Boolean(ownResendKey),
+    firstName: settings?.firstName?.trim() || null,
     // The sender's own address (mirrored from Clerk), so replies — including the footer's
     // "reply and I'll remove you" opt-out — reach them, not Orbit.
     replyTo: settings?.email?.trim() || null,
@@ -123,10 +127,20 @@ export async function sendOutreachMessage(input: {
       throw new Error("Resend API key not configured. Add one in Settings.");
     }
 
+    // Orbit's domain is only sendable on Orbit's key; a personal key sends from a domain
+    // verified in that Resend account, or refuses.
+    const from = await outreachFromAddress({
+      userId: input.userId,
+      apiKey: config.resendApiKey,
+      resendKeyIsPersonal: config.resendKeyIsPersonal,
+      firstName: config.firstName,
+      hostedFrom: config.fromEmail,
+    });
+
     const resend = new Resend(config.resendApiKey);
     const result = await resend.emails.send(
       outreachEmailPayload({
-        from: config.fromEmail,
+        from,
         to: input.toEmail,
         subject: input.subject,
         text: body,
