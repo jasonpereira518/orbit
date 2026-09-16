@@ -230,13 +230,11 @@ export async function confirmCheckoutSession(
 /**
  * Live-demo cheat code: grants Lifetime with a keypress instead of a real checkout.
  *
- * Deliberately narrow. This is reachable from production (see the comment in
- * `plan-celebration-watcher.tsx` on why it has to be), so the gate can't be "is this
- * dev/staging" — it has to be "is this literally the one account the showcase runs
- * from". `DEMO_ACCOUNT_USER_ID` names that account's Clerk id; every other caller,
- * however they reached this action, gets `{ ok: false }` and nothing changes. Unset
- * (the default in any environment that hasn't configured a showcase account) disables
- * the shortcut entirely rather than falling back to some other check.
+ * Deliberately narrow. The gate is not "is this dev/staging" but "is this literally the one
+ * account the showcase runs from": `DEMO_ACCOUNT_USER_ID` names that account's Clerk id, and
+ * every other caller gets `{ ok: false }` with nothing changed. `src/lib/env.ts` forbids the
+ * variable in production builds, so there it is always unset and the shortcut is off; live
+ * demos run from a preview or local deployment.
  */
 export async function triggerDemoCelebration(): Promise<{ ok: boolean }> {
   const userId = await requireUserId();

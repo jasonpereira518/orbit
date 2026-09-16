@@ -261,14 +261,12 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Live-demo trigger — Ctrl+Shift+U. Unlike the dev preview above, this DOES exist in
-  // production: it's how the showcase account gets Lifetime on stage without a real
-  // Stripe checkout. It has to work in prod to be usable at the venue, so the guard that
-  // matters is server-side, not `NODE_ENV`: `triggerDemoCelebration` only ever comps the
-  // one Clerk account named by `DEMO_ACCOUNT_USER_ID`, checked against the caller's own
-  // session — every other signed-in user gets `{ ok: false }` and the keypress is a
-  // silent no-op, so the shortcut is worthless to anyone who isn't already signed into
-  // that specific account.
+  // Live-demo trigger — Ctrl+Shift+U. Unlike the dev preview above, this is not gated on
+  // NODE_ENV: it is how the showcase account gets Lifetime on stage without a real Stripe
+  // checkout, on whatever preview or local deployment the demo runs from. The guard that
+  // matters is server-side: `triggerDemoCelebration` only comps the one Clerk account named
+  // by `DEMO_ACCOUNT_USER_ID`, which src/lib/env.ts forbids in production, so there every
+  // keypress is a silent no-op.
   const demoTriggerBusyRef = useRef(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

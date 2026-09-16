@@ -51,6 +51,23 @@ check("every variable src/ reads is in .env.example (or platform-injected)", und
 const contract = [...REQUIRED_IN_PRODUCTION, ...EXPECTED_IN_PRODUCTION].filter((n) => !documented.has(n));
 check("every REQUIRED/EXPECTED production variable is documented", contract.length === 0, contract.join(", "));
 
+const scripts = Object.keys(
+  (JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> }).scripts
+);
+for (const doc of ["README.md", "docs/RUNBOOK.md", "docs/performance.md"]) {
+  const missing = [...readFileSync(doc, "utf8").matchAll(/npm run ([A-Za-z][\w:-]*\w)/g)]
+    .map((m) => m[1])
+    .filter((name) => !scripts.includes(name));
+  check(`${doc}: every \`npm run\` names a real script`, missing.length === 0, missing.join(", "));
+}
+const staleDemoClaims = [
+  ".env.example",
+  "src/actions/billing.ts",
+  "src/components/celebration/plan-celebration-watcher.tsx",
+].filter((file) => /reachable (in|from) production|DOES exist in\s+(\/\/\s*)?production/i.test(readFileSync(file, "utf8")));
+check("no comment claims the showcase shortcut works in production (env.ts forbids it)",
+  staleDemoClaims.length === 0, staleDemoClaims.join(", "));
+
 // (doc checks go above this line)
 
 if (failures > 0) {
