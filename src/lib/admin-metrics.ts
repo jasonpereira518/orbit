@@ -22,7 +22,8 @@ import {
  * Shape of the whole thing: one six-query fan-out builds a per-user rollup, and the
  * roster, funnel, alerts and most totals are plain JS reductions over that single dataset.
  * Six `GROUP BY user_id` scans are constant in user count, which is what keeps this from
- * being an N+1.
+ * being an N+1. The overview reuses the five aggregate scans for `ADMIN_AGGREGATES_TTL_MS`;
+ * everything else reads live.
  */
 
 export type AdminUserRow = {
@@ -171,42 +172,10 @@ function maxDate(
  * function over billing columns already fetched, which is exactly why the paywall split
  * the two apart.
  */
-export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
+/** The five whole-table GROUP BY user_id scans — the expensive half of the rollup. */
+async function queryAggregates() {
   const db = await getDb();
-
-  const [settingsRows, contactAgg, interactionAgg, importAgg, chatAgg, usageAgg] =
-    await Promise.all([
-      db
-        .select({
-          userId: userSettings.userId,
-          email: userSettings.email,
-          firstName: userSettings.firstName,
-          lastName: userSettings.lastName,
-          imageUrl: userSettings.profileImageUrl,
-          createdAt: userSettings.createdAt,
-          lastActiveAt: userSettings.lastActiveAt,
-          onboardingCompletedAt: userSettings.onboardingCompletedAt,
-          wizardCompletedAt: userSettings.wizardCompletedAt,
-          aiProvider: userSettings.aiProvider,
-          aiModel: userSettings.aiModel,
-          // Presence booleans only. The encrypted blobs must never be selected into an
-          // admin surface, let alone decrypted.
-          hasGemini: sql<boolean>`${userSettings.geminiApiKeyEncrypted} is not null`,
-          hasOpenai: sql<boolean>`${userSettings.openaiApiKeyEncrypted} is not null`,
-          hasAnthropic: sql<boolean>`${userSettings.anthropicApiKeyEncrypted} is not null`,
-          suspendedAt: userSettings.suspendedAt,
-          compedPlan: userSettings.compedPlan,
-          compedNote: userSettings.compedNote,
-          compedAt: userSettings.compedAt,
-          lifetimePurchasedAt: userSettings.lifetimePurchasedAt,
-          subscriptionPlan: userSettings.subscriptionPlan,
-          subscriptionStatus: userSettings.subscriptionStatus,
-          subscriptionPeriodEnd: userSettings.subscriptionPeriodEnd,
-          stripeCustomerId: userSettings.stripeCustomerId,
-        })
-        .from(userSettings)
-        .orderBy(desc(userSettings.createdAt)),
-
+  const [contactAgg, interactionAgg, importAgg, chatAgg, usageAgg] = await Promise.all([
       db
         .select({
           userId: contacts.userId,
@@ -259,6 +228,69 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
         })
         .from(usageEvents)
         .groupBy(usageEvents.userId),
+  ]);
+  return { contactAgg, interactionAgg, importAgg, chatAgg, usageAgg };
+}
+
+/**
+ * How long the /admin overview reuses one set of aggregates. The overview re-polls every
+ * 30 s; live, that is ten whole-table scans a minute per open tab on compute users share.
+ * Counts may lag by up to this long; user_settings — signups, plans, suspensions — never does.
+ */
+export const ADMIN_AGGREGATES_TTL_MS = 10 * 60 * 1000;
+
+let aggregateMemo: { at: number; value: ReturnType<typeof queryAggregates> } | null = null;
+
+function aggregatesWithin(maxAgeMs: number): ReturnType<typeof queryAggregates> {
+  const now = Date.now();
+  if (maxAgeMs > 0 && aggregateMemo && now - aggregateMemo.at <= maxAgeMs) return aggregateMemo.value;
+  const value = queryAggregates();
+  aggregateMemo = { at: now, value };
+  // A failed read must not be served for ten minutes.
+  value.catch(() => {
+    if (aggregateMemo?.value === value) aggregateMemo = null;
+  });
+  return value;
+}
+
+export async function loadAdminUserRows(
+  options: { aggregatesMaxAgeMs?: number } = {}
+): Promise<AdminUserRow[]> {
+  const db = await getDb();
+
+  const [settingsRows, { contactAgg, interactionAgg, importAgg, chatAgg, usageAgg }] =
+    await Promise.all([
+      db
+        .select({
+          userId: userSettings.userId,
+          email: userSettings.email,
+          firstName: userSettings.firstName,
+          lastName: userSettings.lastName,
+          imageUrl: userSettings.profileImageUrl,
+          createdAt: userSettings.createdAt,
+          lastActiveAt: userSettings.lastActiveAt,
+          onboardingCompletedAt: userSettings.onboardingCompletedAt,
+          wizardCompletedAt: userSettings.wizardCompletedAt,
+          aiProvider: userSettings.aiProvider,
+          aiModel: userSettings.aiModel,
+          // Presence booleans only. The encrypted blobs must never be selected into an
+          // admin surface, let alone decrypted.
+          hasGemini: sql<boolean>`${userSettings.geminiApiKeyEncrypted} is not null`,
+          hasOpenai: sql<boolean>`${userSettings.openaiApiKeyEncrypted} is not null`,
+          hasAnthropic: sql<boolean>`${userSettings.anthropicApiKeyEncrypted} is not null`,
+          suspendedAt: userSettings.suspendedAt,
+          compedPlan: userSettings.compedPlan,
+          compedNote: userSettings.compedNote,
+          compedAt: userSettings.compedAt,
+          lifetimePurchasedAt: userSettings.lifetimePurchasedAt,
+          subscriptionPlan: userSettings.subscriptionPlan,
+          subscriptionStatus: userSettings.subscriptionStatus,
+          subscriptionPeriodEnd: userSettings.subscriptionPeriodEnd,
+          stripeCustomerId: userSettings.stripeCustomerId,
+        })
+        .from(userSettings)
+        .orderBy(desc(userSettings.createdAt)),
+      aggregatesWithin(options.aggregatesMaxAgeMs ?? 0),
     ]);
 
   const byUser = <T extends { userId: string }>(rows: T[]) =>
@@ -553,8 +585,11 @@ export type AdminOverview = {
   missingKeyCount: number;
 };
 
-export async function getAdminOverview(now = new Date()): Promise<AdminOverview> {
-  const rows = await loadAdminUserRows();
+export async function getAdminOverview(
+  now = new Date(),
+  options: { aggregatesMaxAgeMs?: number } = {}
+): Promise<AdminOverview> {
+  const rows = await loadAdminUserRows({ aggregatesMaxAgeMs: options.aggregatesMaxAgeMs ?? ADMIN_AGGREGATES_TTL_MS });
   const ts = now.getTime();
 
   const activeSince = (days: number) =>
