@@ -193,6 +193,24 @@ async function main() {
   check("the retry books exactly one movement", tearLedger.length === 1 && tearLedger[0]?.mrrDeltaCents === 500, JSON.stringify(tearLedger.map((r) => r.mrrDeltaCents)));
   check("...and then writes the mirror", (await settingsFor(TEAR_USER))?.subscriptionStatus === "active");
 
+  console.log("\nAn older event delivered after a newer one is ignored");
+  await reset();
+  const base = Math.floor(Date.now() / 1000) - 3600;
+  await post(signed(subEvent("customer.subscription.updated", USER, {}, base)));
+  await post(signed(subEvent("customer.subscription.deleted", USER, { status: "canceled" }, base + 120)));
+  const ledgerBeforeLate = (await ledgerFor(USER)).length;
+  const lateUpdate = await post(signed(subEvent("customer.subscription.updated", USER, {}, base + 60)));
+  check("the late event -> 200", lateUpdate.status === 200);
+  const afterLate = await settingsFor(USER);
+  check("...and the cancellation stands", afterLate?.subscriptionStatus === "canceled", String(afterLate?.subscriptionStatus));
+  check("...recorded as stale", (await lastDelivery())?.reason === "stale_subscription_event");
+  check(
+    "the clock holds the newest applied event",
+    afterLate?.subscriptionEventAt?.getTime() === (base + 120) * 1000,
+    String(afterLate?.subscriptionEventAt)
+  );
+  check("the stale event booked nothing", (await ledgerFor(USER)).length === ledgerBeforeLate);
+
   await reset();
   console.log("\nAll Stripe dedupe checks passed.");
 }

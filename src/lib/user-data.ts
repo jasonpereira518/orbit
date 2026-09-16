@@ -464,6 +464,7 @@ const PRESERVED_SETTINGS_COLUMNS = {
   subscriptionPlan: true,
   subscriptionStatus: true,
   subscriptionPeriodEnd: true,
+  subscriptionEventAt: true,
   compedNote: true,
   compedAt: true,
   compedBy: true,

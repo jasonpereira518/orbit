@@ -66,6 +66,7 @@ export async function readDecideContext(
       subscriptionStatus: true,
       subscriptionPeriodEnd: true,
       subscriptionMonthlyCents: true,
+      subscriptionEventAt: true,
     },
   });
   const beforeCents =
@@ -93,6 +94,8 @@ export async function readDecideContext(
     hadPriorRevenue: beforeCents === 0 ? await hasPriorRevenue(userId) : false,
     now,
     chargePurpose,
+    lastSubscriptionEventAt: row?.subscriptionEventAt ?? null,
+    currentSubscriptionStatus: row?.subscriptionStatus ?? null,
   };
 }
 
@@ -137,7 +140,10 @@ export async function applyStripeDecision(
           monthlyCents: mirror.monthlyCents,
           interval: mirror.interval,
         },
-        { stripeCustomerId: mirror.stripeCustomerId }
+        {
+          stripeCustomerId: mirror.stripeCustomerId,
+          ...(mirror.eventAt ? { eventAt: mirror.eventAt } : {}),
+        }
       );
       return;
     case "lifetime_revoked":

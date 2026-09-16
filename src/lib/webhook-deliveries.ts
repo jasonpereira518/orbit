@@ -33,6 +33,8 @@ export const WEBHOOK_REASONS = {
   currencyUnsupported: "currency_unsupported",
   disputeWon: "dispute_won",
   noMovement: "no_movement",
+  /** A subscription event older than the one already applied (launch Phase 2). */
+  staleSubscriptionEvent: "stale_subscription_event",
 } as const;
 
 export type WebhookOutcome = "handled" | "ignored" | "invalid" | "error";

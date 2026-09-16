@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, count, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { and, count, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { queuePlanUpgradeTransition } from "@/lib/plan-upgrade-events";
 import { userSettings } from "@/db/schema";
@@ -244,7 +244,7 @@ export type SubscriptionMirror = {
 export async function setSubscriptionState(
   userId: string,
   mirror: SubscriptionMirror,
-  opts: { stripeCustomerId?: string | null; eventKey?: string } = {}
+  opts: { stripeCustomerId?: string | null; eventKey?: string; eventAt?: Date } = {}
 ) {
   const existing = await ensureUserSettings(userId);
   const db = await getDb();
@@ -262,6 +262,12 @@ export async function setSubscriptionState(
         : {}),
       ...(opts.stripeCustomerId !== undefined
         ? { stripeCustomerId: opts.stripeCustomerId }
+        : {}),
+      // GREATEST, not assignment: two deliveries racing must never move the clock backwards.
+      ...(opts.eventAt
+        ? {
+            subscriptionEventAt: sql`GREATEST(${userSettings.subscriptionEventAt}, ${opts.eventAt.toISOString()}::timestamptz)`,
+          }
         : {}),
       updatedAt: new Date(),
     })

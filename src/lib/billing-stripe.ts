@@ -92,6 +92,12 @@ export type MirrorInstruction =
       monthlyCents: number | null;
       interval: BillingInterval | null;
       stripeCustomerId: string | null;
+      /**
+       * The event's `created`, when this write should advance
+       * `user_settings.subscription_event_at`. Absent for checkout completions (gated by
+       * the clock, never advancing it) and for events that carry no `created`.
+       */
+      eventAt?: Date | null;
     }
   | { type: "lifetime"; userId: string; stripeCustomerId: string | null }
   /** A full refund or lost dispute of the Lifetime charge: clear `lifetime_purchased_at`. */
@@ -120,6 +126,10 @@ export type DecideContext = {
   /** Whether this account has ever produced revenue — the reactivation gate. */
   hadPriorRevenue: boolean;
   now: Date;
+  /** `user_settings.subscription_event_at`: the newest subscription event already applied. */
+  lastSubscriptionEventAt?: Date | null;
+  /** The mirror's current status, for the same-second tie-break. */
+  currentSubscriptionStatus?: "active" | "past_due" | "canceled" | null;
   /**
    * What the charge behind a full refund or a lost dispute paid for. Only read for
    * `charge.refunded` and `charge.dispute.closed`. Absent means "unknown" — which is what
@@ -136,6 +146,7 @@ export const STRIPE_IGNORE_REASONS = {
   currencyUnsupported: "currency_unsupported",
   disputeWon: "dispute_won",
   noMovement: "no_movement",
+  staleSubscriptionEvent: "stale_subscription_event",
 } as const;
 
 /* --------------------------------------------------------------- shape readers ------ */
@@ -422,6 +433,26 @@ function revocationFor(
   return NO_REVOCATION;
 }
 
+/**
+ * Whether a subscription-mirror event is older than what the mirror already reflects.
+ *
+ * Stripe does not order deliveries, and retries a failed one for three days, so an
+ * `updated` (active) created before a `deleted` can arrive after it and re-grant Pro.
+ * Comparing `created` against the last applied one closes that. Same second: a terminal
+ * event wins, and a non-terminal one loses to a cancellation already recorded.
+ */
+export function isStaleSubscriptionEvent(
+  ctx: Pick<DecideContext, "lastSubscriptionEventAt" | "currentSubscriptionStatus">,
+  createdAt: Date | null,
+  terminal: boolean
+): boolean {
+  const last = ctx.lastSubscriptionEventAt ?? null;
+  if (!last || !createdAt) return false;
+  if (createdAt.getTime() < last.getTime()) return true;
+  if (createdAt.getTime() > last.getTime()) return false;
+  return !terminal && ctx.currentSubscriptionStatus === "canceled";
+}
+
 export function decideStripeEvent(
   event: Pick<Stripe.Event, "id" | "type" | "created" | "data">,
   ctx: DecideContext
@@ -429,6 +460,8 @@ export function decideStripeEvent(
   const { userId, beforeCents, hadPriorRevenue } = ctx;
   const eventAt = secondsToDate(event.created, ctx.now);
   const { resourceId } = stripeEventSubject(event as Stripe.Event);
+  // Only real Stripe events carry `created`; hand-built fixtures without it are never gated.
+  const createdAt = typeof event.created === "number" ? new Date(event.created * 1000) : null;
 
   switch (event.type) {
     /* ------------------------------------------------------------ checkout ---------- */
@@ -478,6 +511,9 @@ export function decideStripeEvent(
       }
 
       if (planMeta === PRO_METADATA_VALUE) {
+        if (isStaleSubscriptionEvent(ctx, createdAt, false)) {
+          return ignored(STRIPE_IGNORE_REASONS.staleSubscriptionEvent, userId, resourceId);
+        }
         // The interval has to be known HERE. The optimistic grant establishes the "after"
         // value, and if it books $5 while the subscription is really annual, the next
         // `customer.subscription.updated` computes 417 against 500 and books a spurious
@@ -545,6 +581,9 @@ export function decideStripeEvent(
 
       const shape = subscriptionShape(subscription);
       const terminal = event.type === "customer.subscription.deleted";
+      if (isStaleSubscriptionEvent(ctx, createdAt, terminal)) {
+        return ignored(STRIPE_IGNORE_REASONS.staleSubscriptionEvent, userId, resourceId);
+      }
       const status = terminal ? "canceled" : subscription.status;
 
       let plan: "orbit" | null;
@@ -602,6 +641,7 @@ export function decideStripeEvent(
           monthlyCents: plan ? monthlyCents : null,
           interval: plan ? shape.interval : null,
           stripeCustomerId: customerIdOf(subscription),
+          eventAt: createdAt,
         },
         bookings: movement
           ? [
