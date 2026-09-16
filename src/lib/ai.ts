@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { decryptOrNull } from "@/lib/crypto";
-import { buildWisprContext, transcribeWithWispr } from "@/lib/wispr";
+import { buildWisprContext, recordWisprKeyRejected, transcribeWithWisprOutcome } from "@/lib/wispr";
 import {
   loadNetworkVocabulary,
   vocabularyToPromptLine,
@@ -16,6 +16,7 @@ import {
 import { z } from "zod";
 import { closenessLegend } from "@/lib/capture/closeness";
 import {
+  recordUsage,
   withUsage,
   tokensFromGemini,
   tokensFromOpenAi,
@@ -924,32 +925,31 @@ export async function transcribeAudioWithAI(
 
   const wisprKey = getWisprApiKey(settings);
   if (wisprKey) {
-    const text = await withUsage(
-      {
-        userId,
-        operation,
-        provider: "wispr",
-        model: "flow",
-        kind: "transcription",
-        keyOwner: settings?.wisprApiKeyEncrypted ? "user" : "orbit",
-      },
-      async () =>
-        // `transcribeWithWispr` never throws: a bad key, an outage or an unrecognised
-        // response shape all return null. `withUsage` therefore records this as a
-        // successful call with a null result, which is the honest reading — we reached the
-        // provider and got nothing usable, and the row exists to show the volume.
-        transcribeWithWispr(wisprKey, {
-          audioBase64: input.base64,
-          context: await buildWisprContext(userId, {
-            firstName: settings?.firstName,
-            lastName: settings?.lastName,
-          }),
-        }),
-    );
-    if (text) return { text, engine: "wispr" };
-    // Fall through. Wispr's wire format is unverified (see src/lib/wispr.ts), so a null
-    // here is as likely to be a schema surprise as an outage, and neither is worth
-    // failing a capture over.
+    const keyOwner = settings?.wisprApiKeyEncrypted ? "user" : "orbit";
+    const started = Date.now();
+    const outcome = await transcribeWithWisprOutcome(wisprKey, {
+      audioBase64: input.base64,
+      context: await buildWisprContext(userId, {
+        firstName: settings?.firstName,
+        lastName: settings?.lastName,
+      }),
+    });
+    // Recorded by hand: Wispr never throws, so `withUsage` filed every null — a dead key
+    // included — as a success. A rejected key is the user's (`auth`, outside
+    // OUR_ERROR_KINDS); any other null is `empty_response`.
+    recordUsage({
+      userId, operation, provider: "wispr", model: "flow", kind: "transcription", keyOwner,
+      success: outcome.text !== null,
+      errorKind: outcome.text !== null ? null : outcome.reason === "rejected_key" ? "auth" : "empty_response",
+      durationMs: Date.now() - started,
+    });
+    if (outcome.text !== null) return { text: outcome.text, engine: "wispr" };
+    if (outcome.reason === "rejected_key" && keyOwner === "user") {
+      await recordWisprKeyRejected(userId, wisprKey, outcome.status);
+    }
+    // Fall through to Whisper, then Gemini. Wispr's wire format is unverified (see
+    // src/lib/wispr.ts), so a null here is as likely to be a schema surprise as an
+    // outage, and neither is worth failing a capture over.
   }
 
   const openaiKey = getProviderApiKey("openai", settings);

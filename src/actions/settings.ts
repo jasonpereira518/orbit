@@ -9,7 +9,8 @@ import {
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { encrypt } from "@/lib/crypto";
+import { decryptOrNull, encrypt } from "@/lib/crypto";
+import { wisprKeyWasRejected } from "@/lib/wispr";
 import {
   DATA_CATEGORY_IDS,
   deletionOutcome,
@@ -44,9 +45,11 @@ export async function getSettings() {
   // Run alongside entitlements rather than after: neither depends on the other, and
   // `userHasApolloKey` already re-derives entitlements internally for its own hosted-key
   // check, so serializing them would only add latency.
-  const [entitlements, hasApolloKey] = await Promise.all([
+  const wisprKey = decryptOrNull(settings?.wisprApiKeyEncrypted);
+  const [entitlements, hasApolloKey, wisprKeyRejected] = await Promise.all([
     getEntitlements(userId),
     userHasApolloKey(userId),
+    wisprKey ? wisprKeyWasRejected(userId, wisprKey).catch(() => false) : Promise.resolve(false),
   ]);
   // Mirrors the two runtime resolvers so this card states what would actually be used:
   // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
@@ -75,6 +78,8 @@ export async function getSettings() {
      * configured, since that is precisely the case worth reporting.
      */
     hasWisprKey: Boolean(settings?.wisprApiKeyEncrypted),
+    /** Wispr refused the saved key on its latest try; clears when the key changes. */
+    wisprKeyRejected,
     hasApiKey:
       provider === "gemini"
         ? Boolean(settings?.geminiApiKeyEncrypted) ||

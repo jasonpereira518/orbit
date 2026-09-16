@@ -247,6 +247,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-user-settings-race": "pglite",
   "smoke-webhook-guard": "pglite",
   "smoke-webhook-delivery": "pglite",
+  "smoke-wispr-key-rejection": "pglite",
   "smoke-write-path": "pglite",
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly

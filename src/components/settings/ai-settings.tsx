@@ -265,6 +265,11 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             onChange={(e) => setWisprKey(e.target.value)}
           />
         </div>
+        {settings.wisprKeyRejected ? (
+          <p role="status" className="text-sm text-warning">
+            Wispr didn’t accept this key, so voice notes use your AI provider instead — replace it or clear it
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
