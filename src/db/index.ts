@@ -1460,6 +1460,45 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 export const SCHEMA_VERSION = 60;
 
 /**
+ * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
+ * SCALE_DDL ADD below (whitespace aside). `applyScaleSchema` compares the stored expression
+ * against it; `scripts/smoke-linkedin-slug-guard.ts` asserts the two cannot drift.
+ */
+export const LINKEDIN_SLUG_EXPRESSION =
+  "lower(nullif(split_part(split_part(split_part(split_part(coalesce(linkedin_url, \'\'), \'/in/\', 2), \'?\', 1), \'#\', 1), \'/\', 1), \'\'))";
+
+/** The rewrite SCALE_DDL performs when that expression changes. Matched by exact text. */
+export const DROP_LINKEDIN_SLUG_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS linkedin_slug";
+
+/** Postgres re-renders stored expressions (casts, upper-case keywords, parentheses). */
+export function normalizeGeneratedExpression(expr: string): string {
+  return expr.toLowerCase().replace(/::text/g, "").replace(/[\s()]/g, "");
+}
+
+/** Whether the stored linkedin_slug expression differs from LINKEDIN_SLUG_EXPRESSION. */
+export function linkedinSlugNeedsRewrite(stored: string | null): boolean {
+  if (stored === null) return false; // no column yet: the ADD creates it
+  return normalizeGeneratedExpression(stored) !== normalizeGeneratedExpression(LINKEDIN_SLUG_EXPRESSION);
+}
+
+/** The stored expression, null when there is no such column, undefined when unreadable. */
+async function storedLinkedinSlugExpression(run: StatementRunner): Promise<string | null | undefined> {
+  try {
+    const result = await run(
+      `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
+         FROM pg_attribute a
+         JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+        WHERE a.attrelid = to_regclass(\'public.contacts\')
+          AND a.attname = \'linkedin_slug\'
+          AND NOT a.attisdropped`
+    );
+    return rowsOf<{ expr: string | null }>(result)[0]?.expr ?? null;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
  * few thousand people. Kept apart from `DDL` because these are all `ALTER`/`CREATE INDEX`
  * statements: `CREATE TABLE IF NOT EXISTS` never adds a column to a table that already
@@ -1761,7 +1800,13 @@ async function runStatements(
  * added once the duplicate pairs already in the table are gone.
  */
 export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFailure[]) {
-  await runStatements(run, SCALE_DDL, "scale DDL", failed);
+  // The linkedin_slug DROP rewrites every contacts row under an exclusive lock, so it runs
+  // only when the stored expression is not the declared one (or cannot be read — then the
+  // old unconditional behaviour is the safe default).
+  const stored = await storedLinkedinSlugExpression(run);
+  const rewriteSlug = stored === undefined || linkedinSlugNeedsRewrite(stored);
+  const statements = rewriteSlug ? SCALE_DDL : SCALE_DDL.filter((s) => s !== DROP_LINKEDIN_SLUG_STATEMENT);
+  await runStatements(run, statements, "scale DDL", failed);
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
   // `ensureReady`), so local search finally behaves like production — unlike pgvector,
