@@ -77,6 +77,8 @@ export const RATE_LIMITS = {
   apolloSearch: { limit: 20, windowSec: 86_400 },
   /** Person matches (one Apollo credit each) per user per day on the hosted key. */
   apolloEnrich: { limit: 50, windowSec: 86_400 },
+  /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
+  contactForm: { limit: 3, windowSec: 600 },
   /**
    * `submitFeedback`: a form post carrying up to three screenshots. Generous per
    * submission, tight per window — this is the largest row a user can create directly,
