@@ -2,6 +2,7 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
 import {
   contactEmbeddings,
@@ -286,7 +287,23 @@ export async function clearApiKey(provider?: AiProvider) {
     .update(userSettings)
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
-  revalidatePath("/settings");
+
+  // Clearing a key can move embeddings to another provider — an Anthropic account falls
+  // back from OpenAI to Gemini. Vectors from two providers cannot be compared, so stale ones
+  // go, by the same rule `saveAiSettings` applies when a save changes the backend.
+  let embeddingReset = false;
+  if (existing) {
+    const selected = resolveAiProvider(existing.aiProvider);
+    const previousBackend = await embeddingBackendFor(selected, existing);
+    const nextBackend = await embeddingBackendFor(selected, { ...existing, ...patch });
+    embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);
+    if (embeddingReset) {
+      await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+    }
+  }
+
+  revalidatePathIfRequestScoped("/settings");
+  return { ok: true as const, embeddingReset };
 }
 
 /**

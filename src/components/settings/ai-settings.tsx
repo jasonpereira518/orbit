@@ -302,9 +302,38 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       <SettingsRow title="Saved keys">
         <ul className="space-y-1 text-sm text-muted-foreground">
           {settings.providers.map((p) => (
-            <li key={p.id}>
-              {p.label}:{" "}
-              {p.hasPersonalKey ? "saved" : p.usingEnv ? "local env" : "none"}
+            <li key={p.id} className="flex min-h-9 items-center justify-between gap-3">
+              <span>
+                {p.label}: {p.hasPersonalKey ? "saved" : p.usingEnv ? "local env" : "none"}
+              </span>
+              {/* Per key, not per selected provider: switching provider used to leave the
+                  old key live for embeddings and transcription with no way to remove it. */}
+              {p.hasPersonalKey ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={pending}
+                  aria-label={`Clear saved ${p.label} key`}
+                  onClick={() =>
+                    start(async () => {
+                      try {
+                        const res = await clearApiKey(p.id);
+                        setSettings(await getSettings());
+                        toast.success(
+                          res.embeddingReset
+                            ? `${p.label} key cleared — search will re-index`
+                            : `${p.label} key cleared`
+                        );
+                      } catch (err) {
+                        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+                      }
+                    })
+                  }
+                >
+                  Clear
+                </Button>
+              ) : null}
             </li>
           ))}
         </ul>
