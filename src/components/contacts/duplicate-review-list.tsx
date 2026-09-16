@@ -16,6 +16,8 @@ import {
 } from "@/actions/duplicates";
 import type { DuplicateCandidate, DuplicatePair } from "@/lib/duplicate-review";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 function describe(c: DuplicateCandidate) {
   return [c.title, c.company].filter(Boolean).join(" · ");
@@ -99,13 +101,13 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
         await mergeDuplicatePair(keep.id, drop.id, pair.reason);
         setDone("merged");
         toast.success(`Merged into ${keep.fullName}`, {
-          description: "The other record is hidden. You can undo this below.",
+          description: "The other record is hidden — you can undo this below",
         });
         router.refresh();
       } catch (err) {
-        toast.error("Could not merge", {
-          description: err instanceof Error ? err.message : "Please try again.",
-        });
+        // The description used to carry `err.message`, which production turns into the
+        // Server Components digest. See `friendlyError`.
+        toast.error(friendlyError(err, TOAST_COPY.mergeFailed));
       }
     });
 
@@ -113,10 +115,15 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
     startTransition(async () => {
       // By contact ids, not by suggestion id: a pair found by scanning for a shared name has
       // no stored row yet, and dismissing it is what creates one.
-      await dismissDuplicatePair(pair.keep.id, pair.merge.id);
-      setDone("dismissed");
-      toast.success("Dismissed", { description: "This pair won't be suggested again." });
-      router.refresh();
+      // Guarded like its siblings: unhandled, a failure here threw inside the transition.
+      try {
+        await dismissDuplicatePair(pair.keep.id, pair.merge.id);
+        setDone("dismissed");
+        toast.success("Dismissed", { description: "This pair won’t be suggested again" });
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t dismiss that pair — try again?"));
+      }
     });
 
   return (
@@ -186,12 +193,10 @@ export function DuplicateReviewList({
     startTransition(async () => {
       try {
         await undoMerge(mergeId);
-        toast.success("Merge undone", { description: "The contact and its history are back." });
+        toast.success("Merge undone", { description: "The contact and its history are back" });
         router.refresh();
       } catch (err) {
-        toast.error("Could not undo", {
-          description: err instanceof Error ? err.message : "Please try again.",
-        });
+        toast.error(friendlyError(err, TOAST_COPY.undoFailed));
       }
     });
 

@@ -188,11 +188,6 @@ export const followUpRequestSchema = z.intersection(
   followUpSchema
 );
 
-export const contactSearchRequestSchema = z.object({
-  q: z.string().trim().min(1).max(200),
-  limit: z.coerce.number().int().min(1).max(10).default(10),
-});
-
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;

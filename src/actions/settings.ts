@@ -15,7 +15,13 @@ import {
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
-import { purgeUserData } from "@/lib/user-data";
+import {
+  DATA_CATEGORY_IDS,
+  expandCategories,
+  getDataFootprint,
+  purgeUserData,
+  type DataCategory,
+} from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
 import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
@@ -65,6 +71,14 @@ export async function getSettings() {
     // Whether "Fill from Apollo" on the contact page has anything to call — computed via
     // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
     hasApolloKey,
+    /**
+     * Whether voice capture will try Wispr first.
+     *
+     * Presence only, like `keys` above — this decides whether the capture panel is
+     * entitled to say "Wispr didn't answer", and a rejected key still counts as
+     * configured, since that is precisely the case worth reporting.
+     */
+    hasWisprKey: Boolean(settings?.wisprApiKeyEncrypted),
     hasApiKey:
       provider === "gemini"
         ? Boolean(settings?.geminiApiKeyEncrypted) ||
@@ -127,6 +141,8 @@ export async function getSettings() {
       github: settings?.socialLinks?.github || "",
       website: settings?.socialLinks?.website || "",
     },
+    /** Null until the account has recorded a choice — see the column in schema.ts. */
+    desktopNotificationsEnabled: settings?.desktopNotificationsEnabled ?? null,
   };
 }
 
@@ -266,6 +282,45 @@ export async function clearApiKey(provider?: AiProvider) {
   revalidatePath("/settings");
 }
 
+/**
+ * Store or clear the Wispr transcription key.
+ *
+ * Its own action rather than a field on `saveAiSettings`, because Wispr is not an
+ * `AiProvider`: it transcribes and never completes, so it takes no part in provider or
+ * model selection and none of that action's re-indexing logic applies to it.
+ *
+ * An empty string clears the key; `undefined` leaves it untouched. That asymmetry is what
+ * lets the settings form send the field unconditionally without wiping a stored key every
+ * time an unrelated control is saved.
+ */
+export async function saveVoiceSettings(input: { wisprApiKey?: string }) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const existing = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+
+  const trimmed = input.wisprApiKey?.trim();
+  const wisprApiKeyEncrypted =
+    input.wisprApiKey === undefined
+      ? (existing?.wisprApiKeyEncrypted ?? null)
+      : trimmed
+        ? encrypt(trimmed)
+        : null;
+
+  if (existing) {
+    await db
+      .update(userSettings)
+      .set({ wisprApiKeyEncrypted, updatedAt: new Date() })
+      .where(eq(userSettings.userId, userId));
+  } else {
+    await db.insert(userSettings).values({ userId, wisprApiKeyEncrypted });
+  }
+
+  revalidatePath("/settings");
+  return { ok: true as const };
+}
+
 export async function saveOutreachSettings(input: {
   apolloApiKey?: string;
   resendApiKey?: string;
@@ -377,14 +432,41 @@ export async function exportAllData() {
   };
 }
 
-export async function deleteAllData() {
+/** Row counts per category, for the delete dialog. */
+export async function getDeletableDataFootprint() {
   const userId = await requireUserId();
-  await purgeUserData(userId);
+  return getDataFootprint(userId);
+}
+
+/**
+ * Delete the chosen categories of the caller's own data.
+ *
+ * `categories` is validated against `DATA_CATEGORY_IDS` rather than trusted: this is a
+ * server action, so its argument is a request body, and an unrecognised id must not silently
+ * widen or narrow a destructive call. An empty selection is a no-op, not a full purge —
+ * the failure mode of getting that backwards is unrecoverable.
+ */
+export async function deleteAllData(categories?: readonly DataCategory[]) {
+  const userId = await requireUserId();
+
+  let only: DataCategory[] | undefined;
+  if (categories) {
+    only = categories.filter((c): c is DataCategory =>
+      (DATA_CATEGORY_IDS as string[]).includes(c)
+    );
+    if (only.length === 0) return { deleted: [] as DataCategory[] };
+  }
+
+  await purgeUserData(userId, only ? { only } : {});
 
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/settings");
   revalidatePath("/outreach");
+
+  return {
+    deleted: only ? [...expandCategories(only)] : [...DATA_CATEGORY_IDS],
+  };
 }
 
 /** Everything the settings billing card needs, in one round trip. */

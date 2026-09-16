@@ -267,19 +267,6 @@ export async function countUnscoredContacts(userId: string): Promise<number> {
 }
 
 /**
- * Whether reading stored scores would be misleading right now.
- *
- * Dirtiness alone does not qualify: a stale *ranking* is the tradeoff this design accepts.
- * What does qualify is having no distribution at all, or contacts that have never been
- * scored — those would render as a closeness of zero, which is wrong rather than stale.
- */
-export async function needsRecalibration(userId: string): Promise<boolean> {
-  const row = await readCohortRow(userId);
-  if (!row || !isUsableSnapshot(row.snapshot)) return true;
-  return (await countUnscoredContacts(userId)) > 0;
-}
-
-/**
  * Score one contact against the stored distribution and write just that row.
  *
  * This is what keeps ordinary writes off the expensive path. Without it a newly created

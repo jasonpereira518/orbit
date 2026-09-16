@@ -61,6 +61,8 @@ import {
   normalizeInteractionType,
 } from "@/lib/interaction-types";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -117,7 +119,7 @@ export function InteractionDetailSheet({
         setDetail(await getInteractionDetail(id));
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not load this interaction"
+          friendlyError(err, "Couldn’t load this interaction — try again?")
         );
         onOpenChange(false);
       }
@@ -167,7 +169,7 @@ export function InteractionDetailSheet({
         await load(detail.id);
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not save");
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
     });
   }
@@ -182,7 +184,7 @@ export function InteractionDetailSheet({
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not summarize those notes"
+          friendlyError(err, "Couldn’t summarize those notes — try again?")
         );
       }
     });
@@ -198,7 +200,7 @@ export function InteractionDetailSheet({
         close();
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not delete");
+        toast.error(friendlyError(err, TOAST_COPY.deleteFailed));
       }
     });
   }
@@ -216,7 +218,7 @@ export function InteractionDetailSheet({
           return next;
         });
         toast.error(
-          err instanceof Error ? err.message : "Could not update action item"
+          friendlyError(err, "Couldn’t update that action item — try again?")
         );
       }
     });
