@@ -4,6 +4,9 @@ import { getDb } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
+import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
+import { isClerkConfigured } from "@/lib/demo-account";
+import { clerkClient } from "@clerk/nextjs/server";
 import { resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { runCaptureJobById } from "@/lib/capture-job-runner";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
@@ -145,6 +148,11 @@ export async function GET(request: Request) {
     purgesStillFailing: 0,
     purgesGaveUp: 0,
     purgeRunsPruned: 0,
+    /** Missed user.deleted webhooks: accounts checked against Clerk, and purged. */
+    orphansExamined: 0,
+    orphansPurged: 0,
+    orphanPurgeErrors: 0,
+    orphanSweepAborted: false,
   };
 
   try {
@@ -197,6 +205,26 @@ export async function GET(request: Request) {
       stats.purgesGaveUp = purges.gaveUp;
       stats.purgeRunsPruned = purges.pruned;
       if (purges.stillFailing > 0 || purges.gaveUp > 0) status = "partial";
+    } catch {
+      status = "partial";
+    }
+
+    try {
+      if (isClerkConfigured() && process.env.CLERK_SECRET_KEY) {
+        const clerk = await clerkClient();
+        const sweep = await sweepOrphanedAccounts({
+          now: new Date(),
+          lookup: async (ids) => {
+            const res = await clerk.users.getUserList({ userId: ids, limit: ids.length });
+            return new Set(res.data.map((u) => u.id));
+          },
+        });
+        stats.orphansExamined = sweep.examined;
+        stats.orphansPurged = sweep.purged;
+        stats.orphanPurgeErrors = sweep.purgeErrors;
+        stats.orphanSweepAborted = sweep.aborted;
+        if (sweep.aborted || sweep.purgeErrors > 0) status = "partial";
+      }
     } catch {
       status = "partial";
     }
