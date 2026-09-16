@@ -163,7 +163,10 @@ export function HealthLiveBody({
         ]}
       />
       <div className="-mt-4 mb-6 flex justify-end">
-        <OpsButtons slackConfigured={Boolean(ops?.slackConfigured)} />
+        <OpsButtons
+          slackConfigured={Boolean(ops?.slackConfigured)}
+          slackDmConfigured={Boolean(ops?.slackDmConfigured)}
+        />
       </div>
 
       <SystemStrip
