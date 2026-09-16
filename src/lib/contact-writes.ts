@@ -15,6 +15,7 @@ import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
+import { mergeFactList } from "@/lib/fact-lists";
 import {
   contactIdentities,
   contactTags,
@@ -58,6 +59,19 @@ export type ContactWriteOptions = {
    * is about to be redrawn anyway.
    */
   skipCloseness?: boolean;
+  /**
+   * Union `keyFacts` / `sharedInterests` / `opportunities` with what the contact already has
+   * instead of replacing them.
+   *
+   * For EXTRACTION paths only — a pasted note, a capture, the extension. Those have seen one
+   * conversation and cannot know that an older fact stopped being true, and they routinely
+   * return `[]` because the note was about something else; writing that through deleted
+   * everything the contact had accumulated. See `@/lib/fact-lists`.
+   *
+   * A person editing the contact must NOT set this: they are stating the whole list, and
+   * with this on they could never delete a single entry.
+   */
+  mergeFactLists?: boolean;
   /**
    * Pre-computed remaining contact allowance, or `null` for unlimited.
    *
@@ -762,6 +776,39 @@ export async function bulkMergeContactsForUser(
   return now;
 }
 
+/**
+ * Read the contact's current lists and union the incoming ones into them.
+ *
+ * Returns only the keys the patch actually carries, so a note that mentions no shared
+ * interests leaves that column entirely alone rather than rewriting it with itself.
+ * Returns null when the patch carries none of the three, so the extra read is skipped.
+ */
+async function mergedFactLists(
+  db: Awaited<ReturnType<typeof getDb>>,
+  userId: string,
+  id: string,
+  input: Partial<ContactInput>
+): Promise<Partial<Record<"keyFacts" | "sharedInterests" | "opportunities", string[]>> | null> {
+  const wanted = (["keyFacts", "sharedInterests", "opportunities"] as const).filter(
+    (key) => input[key] !== undefined
+  );
+  if (wanted.length === 0) return null;
+
+  const current = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, id), eq(contacts.userId, userId)),
+    columns: { keyFacts: true, sharedInterests: true, opportunities: true },
+  });
+  // No row means the update below will match nothing either; let it fall through and report
+  // that the ordinary way rather than inventing a patch for a contact that is not there.
+  if (!current) return null;
+
+  const patch: Partial<Record<(typeof wanted)[number], string[]>> = {};
+  for (const key of wanted) {
+    patch[key] = mergeFactList(current[key], input[key]);
+  }
+  return patch;
+}
+
 export async function updateContactForUser(
   userId: string,
   id: string,
@@ -778,6 +825,14 @@ export async function updateContactForUser(
     input.company !== undefined
       ? await companyFieldsForWrite(userId, input.company)
       : null;
+
+  // One extra read, and only on extraction paths that asked for it. Done here rather than at
+  // each call site so the union rule lives with the writer it qualifies — there is one
+  // writer for these columns and adding a second place that decides this is how the two
+  // drift apart.
+  const factPatch = options?.mergeFactLists
+    ? await mergedFactLists(db, userId, id, input)
+    : null;
 
   const [contact] = await db
     .update(contacts)
@@ -841,6 +896,8 @@ export async function updateContactForUser(
       ...(input.opportunities !== undefined
         ? { opportunities: input.opportunities }
         : {}),
+      // Last, so it overrides the three replacements above when the caller asked to merge.
+      ...(factPatch ?? {}),
       ...(input.nextFollowUpAt !== undefined
         ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
         : {}),

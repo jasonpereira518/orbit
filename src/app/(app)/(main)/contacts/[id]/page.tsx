@@ -331,6 +331,7 @@ export default async function ContactDetailPage({
           contactId={contact.id}
           aiSummary={contact.aiSummary}
           keyFacts={contact.keyFacts || []}
+          opportunities={contact.opportunities || []}
           sharedInterests={contact.sharedInterests || []}
           industry={contact.industry}
           closeness={closeness}

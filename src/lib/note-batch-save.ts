@@ -78,7 +78,10 @@ export type SaveNoteBatchOutput = {
  * runs from smoke scripts. Touched contacts are stamped `embeddingStaleAt` instead; the
  * server action that wraps this kicks the backfill and the brief regeneration in `after()`.
  */
-const WRITE_OPTS = { skipRevalidate: true, skipEmbedding: true, skipSummary: true } as const;
+// `mergeFactLists` because this is an extraction: it has read one note. Without it, a note
+// that mentions an existing contact in passing replaced their accumulated key facts, shared
+// interests and opportunities with the empty lists the model returned for them.
+const WRITE_OPTS = { skipRevalidate: true, skipEmbedding: true, skipSummary: true, mergeFactLists: true } as const;
 
 type ReminderDraft = {
   contactId: string | null;

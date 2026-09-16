@@ -105,6 +105,12 @@ type Person = {
   metDaysAgo: number;
   notes?: string;
   keyFacts?: string[];
+  /**
+   * What this person could help with, or be helped with. Written by every AI extraction and,
+   * until recently, shown only on the admin contact page — so the seed never had a reason to
+   * set it. It has a card on the profile now.
+   */
+  opportunities?: string[];
   sharedInterests?: string[];
   tags?: string[];
   touches?: Touch[];
@@ -147,6 +153,7 @@ const PEOPLE: Person[] = [
       "Was previously infra PM at Stripe",
       "Asked for a one-pager on Orbit's retrieval architecture",
     ],
+    opportunities: ["Will look at Orbit's retrieval setup if I send a write-up"],
     sharedInterests: ["AI infrastructure", "developer tools"],
     tags: ["AI", "Warm intro"],
     touches: [
@@ -445,6 +452,7 @@ const PEOPLE: Person[] = [
     notes:
       "Spoke on the panel about hiring designers who can code. Said she is always happy to refer people even when Figma is not hiring.",
     tags: ["Hiring"],
+    opportunities: ["Refers designers even when Figma is not hiring"],
     touches: [
       {
         at: 175,
@@ -744,6 +752,7 @@ const PEOPLE: Person[] = [
     notes:
       "Runs talent across the portfolio. Said she keeps a list of engineers looking to move and shares it with portfolio founders.",
     keyFacts: ["Keeps a portfolio-wide candidate list"],
+    opportunities: ["Can share the portfolio-wide candidate list"],
     tags: ["Hiring", "Investor"],
     // The same case, waiting longer — so the queue has something to order.
     touches: [
@@ -845,6 +854,7 @@ async function main() {
       dateMet: ago(p.metDaysAgo),
       notes: p.notes ?? null,
       keyFacts: p.keyFacts ?? [],
+      opportunities: p.opportunities ?? [],
       sharedInterests: p.sharedInterests ?? [],
       firstInteractionAt: firstAt,
       lastInteractionAt: lastAt,

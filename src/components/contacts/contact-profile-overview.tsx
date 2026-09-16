@@ -14,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { EditableFactList } from "@/components/contacts/editable-fact-list";
 import type { ClosenessBreakdown } from "@/lib/closeness";
 
 export function ContactProfileOverview({
@@ -21,6 +22,7 @@ export function ContactProfileOverview({
   aiSummary,
   keyFacts,
   sharedInterests,
+  opportunities,
   industry,
   closeness,
   lastTouchAt,
@@ -33,6 +35,7 @@ export function ContactProfileOverview({
   aiSummary: string | null;
   keyFacts: string[];
   sharedInterests: string[];
+  opportunities: string[];
   industry: string | null;
   closeness: ClosenessBreakdown;
   lastTouchAt: Date | string | null;
@@ -105,35 +108,37 @@ export function ContactProfileOverview({
         </CardContent>
       </Card>
 
-      {keyFacts.length > 0 ? (
-        <Card className="border-border/70 shadow-none">
-          <CardHeader>
-            <CardTitle as="h2">Key facts</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
-              {keyFacts.map((f) => (
-                <li key={f}>{f}</li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      ) : null}
+      {/* Rendered even when empty, unlike before. These are the fields the AI fills in, and
+          a card that only appears once something already exists gives the user no way to
+          add the first entry — or to discover that Orbit tracks this at all. `opportunities`
+          was the extreme case: written by every extraction, shown on the admin contact page,
+          and never once shown to the person whose network it describes. */}
+      <EditableFactList
+        contactId={contactId}
+        field="keyFacts"
+        title="Key facts"
+        addLabel="Add fact"
+        emptyHint="Nothing yet. Log an interaction and Orbit will pull these out — or add what matters yourself."
+        items={keyFacts}
+      />
 
-      {sharedInterests.length > 0 ? (
-        <Card className="border-border/70 shadow-none">
-          <CardHeader>
-            <CardTitle as="h2">Shared interests</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
-              {sharedInterests.map((interest) => (
-                <li key={interest}>{interest}</li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      ) : null}
+      <EditableFactList
+        contactId={contactId}
+        field="sharedInterests"
+        title="Shared interests"
+        addLabel="Add interest"
+        emptyHint="Nothing yet. These are what you have in common — useful openers when you next reach out."
+        items={sharedInterests}
+      />
+
+      <EditableFactList
+        contactId={contactId}
+        field="opportunities"
+        title="Opportunities"
+        addLabel="Add opportunity"
+        emptyHint="Nothing yet. What this person could help with, or you could help them with."
+        items={opportunities}
+      />
 
       {industry?.trim() ? (
         <Card className="border-border/70 shadow-none">
