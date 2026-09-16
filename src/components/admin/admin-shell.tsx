@@ -51,8 +51,8 @@ export function AdminShell({
       <div aria-hidden className="h-0.5 w-full bg-accent" />
 
       <header className="sticky top-0 z-30 border-b border-border/70 bg-card/90 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-6 px-6 py-3">
-          <Link href="/admin" className="flex items-center gap-2">
+        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-6 overflow-x-auto px-6 py-3">
+          <Link href="/admin" className="flex shrink-0 items-center gap-2">
             <span className="font-[family-name:var(--font-display)] text-base text-ink">
               Orbit
             </span>
@@ -61,7 +61,7 @@ export function AdminShell({
             </span>
           </Link>
 
-          <nav className="flex items-center gap-1">
+          <nav className="flex shrink-0 items-center gap-1">
             {navItems.map((item) => {
               const active = isAdminNavActive(pathname, item.href);
               return (
@@ -70,7 +70,7 @@ export function AdminShell({
                   href={item.href}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "group relative rounded-lg px-3 py-1.5 text-sm transition-colors duration-fast",
+                    "group relative shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-colors duration-fast",
                     active
                       ? "text-primary"
                       : "text-muted-foreground hover:text-foreground"
@@ -116,7 +116,7 @@ export function AdminShell({
             })}
           </nav>
 
-          <div className="ml-auto flex items-center gap-4 text-xs text-muted-foreground">
+          <div className="ml-auto flex shrink-0 items-center gap-4 text-xs text-muted-foreground">
             <YCModeToggle active={ycMode} />
             {adminEmail && (
               <span className="hidden sm:inline truncate max-w-[16rem]">
@@ -125,7 +125,7 @@ export function AdminShell({
             )}
             <Link
               href="/dashboard"
-              className="flex items-center gap-1 rounded-lg border border-border/70 px-2 py-1 transition-colors duration-fast hover:text-foreground"
+              className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-border/70 px-2 py-1 transition-colors duration-fast hover:text-foreground"
             >
               Open app
               <ArrowUpRight className="size-3" aria-hidden />
