@@ -12,7 +12,7 @@ delete process.env.VERCEL_ENV;
 
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, cronRuns, errorEvents } from "../src/db/schema";
+import { contacts, cronRuns, embeddingFailures, errorEvents, usageEvents } from "../src/db/schema";
 import { recordBackfillFailure } from "../src/lib/backfill-failures";
 import { ERROR_SOURCES } from "../src/lib/error-events";
 import { evaluateOpsConditions } from "../src/lib/ops-alerts";
@@ -128,6 +128,28 @@ run(async () => {
   check("which opens sync.lagging", (await idsNow()).includes("sync.lagging"));
   await db.execute(sql`DELETE FROM gmail_connections WHERE user_id = 'snap-lag'`);
   await db.delete(cronRuns).where(inArray(cronRuns.job, [...JOBS]));
+
+  console.log("\nProvider refusals...");
+  await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, "snap-unembeddable"));
+  await db.delete(usageEvents).where(inArray(usageEvents.userId, ["snap-quota-a", "snap-quota-b"]));
+  const before = (await loadOpsSnapshot(new Date(), null)).aiRefusals24h;
+  await db.insert(embeddingFailures).values(
+    Array.from({ length: 10 }, (_, i) => ({ userId: "snap-unembeddable", sourceType: "profile" as const, sourceId: `c-${i}`, errorKind: "other" }))
+  );
+  const quotaRow = { operation: "capture.parse", provider: "gemini" as const, model: "gemini-3.5-flash",
+    kind: "completion" as const, keyOwner: "user" as const, success: 0, errorKind: "quota" };
+  await db.insert(usageEvents).values([
+    { ...quotaRow, userId: "snap-quota-a" },
+    { ...quotaRow, userId: "snap-quota-a" },
+    { ...quotaRow, userId: "snap-quota-b" },
+  ]);
+  const after = (await loadOpsSnapshot(new Date(), null)).aiRefusals24h;
+  check("unembeddable rows in the last day are counted", after.unembeddable === before.unembeddable + 10, JSON.stringify(after));
+  check("quota failures are counted per account, not per call", after.quotaAccounts === before.quotaAccounts + 2, JSON.stringify(after));
+  const refusalIds = await idsNow();
+  check("which open both conditions", refusalIds.includes("embedding.unembeddable") && refusalIds.includes("ai.quota_failures"), refusalIds.join(","));
+  await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, "snap-unembeddable"));
+  await db.delete(usageEvents).where(inArray(usageEvents.userId, ["snap-quota-a", "snap-quota-b"]));
 
   // (new sections go above this line)
 

@@ -69,6 +69,8 @@ export type OpsSnapshot = {
   embeddingBacklog: { accounts: number; oldestAt: Date | null };
   /** How long the most overdue armed connection has waited; null when none is due. */
   syncOldestDueAgeMs: number | null;
+  /** Last 24 h: embedding_failures rows, and accounts with a `quota` usage failure. */
+  aiRefusals24h: { unembeddable: number; quotaAccounts: number };
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
@@ -94,6 +96,8 @@ const ERROR_BURST = 5;
 const PERF_SLOW_BURST = 3;
 const OUTAGE_ACCOUNTS = 2;
 const BACKFILL_FAILING_ACCOUNTS = 2;
+/** A starting value: one odd row is noise, a spike means the provider refuses a content shape. */
+export const UNEMBEDDABLE_SPIKE = 10;
 const DRIFT_AFTER_MS = 6 * 60 * 60 * 1000;
 
 /**
@@ -337,6 +341,25 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: "Semantic search is falling behind",
       detail: `${s.embeddingBacklog.accounts} account(s) have contacts waiting over ${EMBEDDING_BACKLOG_STALE_HOURS} h for search embeddings (oldest ${oldestHours.toFixed(1)} h), so search and chat fall back to keywords for them.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (s.aiRefusals24h.unembeddable >= UNEMBEDDABLE_SPIKE) {
+    out.push({
+      id: "embedding.unembeddable",
+      severity: "warning",
+      title: "The embedding provider is refusing content",
+      detail: `${s.aiRefusals24h.unembeddable} contacts or meetings were marked unembeddable in the last day — a spike means the provider started refusing a content shape, not one odd row.`,
+      href: "/admin/health",
+    });
+  }
+  if (s.aiRefusals24h.quotaAccounts >= 1) {
+    out.push({
+      id: "ai.quota_failures",
+      severity: "info",
+      title: "Accounts are out of AI provider credit",
+      detail: `${s.aiRefusals24h.quotaAccounts} account(s) hit a quota or empty-balance error in the last day. Each already sees a "top up" alert; this is the count.`,
       href: "/admin/health",
     });
   }

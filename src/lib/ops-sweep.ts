@@ -1,7 +1,7 @@
 import { oldestDueAgeMs } from "@/lib/provider-connections";
 import { probeStatementTimeout } from "@/lib/health";
 import { and, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import { contacts, cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns } from "@/db/schema";
 import { aiErrorBreakdown } from "@/lib/admin-health";
 import {
@@ -61,6 +61,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     backfillAgg,
     unattributedAgg,
     backlogAgg,
+    refusalRes,
   ] = await Promise.all([
       db
         .select()
@@ -113,6 +114,13 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         })
         .from(contacts)
         .where(isNotNull(contacts.embeddingStaleAt)),
+      // One statement for both provider-refusal signals Phase 3a hands over.
+      db.execute(sql`
+        SELECT
+          (SELECT count(*) FROM embedding_failures WHERE failed_at > now() - interval '24 hours')::int AS unembeddable,
+          (SELECT count(DISTINCT user_id) FROM usage_events
+            WHERE error_kind = 'quota' AND created_at > now() - interval '24 hours')::int AS quota_accounts
+      `),
     ]);
 
   const [stuckPurgeRow] = await db
@@ -143,6 +151,8 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const statementTimeout =
     process.env.VERCEL_ENV === "production" ? await probeStatementTimeout().catch(() => null) : null;
   const syncOldestDueAgeMs = await oldestDueAgeMs("google", now).catch(() => null);
+
+  const refusals = rowsOf<{ unembeddable: number; quota_accounts: number }>(refusalRes)[0];
 
   const nightly = lastNightly[0];
   const syncRun = lastSyncRun[0];
@@ -188,6 +198,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     missingExpectedEnv: getEnvReport().missingExpected,
     statementTimeout,
     syncOldestDueAgeMs,
+    aiRefusals24h: {
+      unembeddable: Number(refusals?.unembeddable ?? 0),
+      quotaAccounts: Number(refusals?.quota_accounts ?? 0),
+    },
     deploy: deploy
       ? { prodSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null, ...deploy }
       : null,

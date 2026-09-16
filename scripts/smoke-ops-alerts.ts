@@ -58,6 +58,7 @@ const HEALTHY: OpsSnapshot = {
   stripeUnattributed24h: { fulfilments: 0, other: 0 },
   embeddingBacklog: { accounts: 0, oldestAt: null },
   syncOldestDueAgeMs: null,
+  aiRefusals24h: { unembeddable: 0, quotaAccounts: 0 },
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -143,6 +144,13 @@ function main() {
     find({ ...HEALTHY, backfillFailures24h: { accounts: 2, kinds: ["embeddings"] } }, "backfill.failed")?.severity === "warning");
   check("one account's failing backfill is that user's key, not an ops alert",
     !find({ ...HEALTHY, backfillFailures24h: { accounts: 1, kinds: ["embeddings"] } }, "backfill.failed"));
+
+  check("a spike of unembeddable rows → embedding.unembeddable (warning)",
+    find({ ...HEALTHY, aiRefusals24h: { unembeddable: 10, quotaAccounts: 0 } }, "embedding.unembeddable")?.severity === "warning");
+  check("a few odd rows are not a spike",
+    !find({ ...HEALTHY, aiRefusals24h: { unembeddable: 3, quotaAccounts: 0 } }, "embedding.unembeddable"));
+  check("an account out of provider credit → ai.quota_failures (info)",
+    find({ ...HEALTHY, aiRefusals24h: { unembeddable: 0, quotaAccounts: 2 } }, "ai.quota_failures")?.severity === "info");
 
   check("a connection overdue by 3h while sync runs → sync.lagging (warning)",
     find({ ...HEALTHY, syncOldestDueAgeMs: 3 * 3_600_000 }, "sync.lagging")?.severity === "warning");
