@@ -358,19 +358,9 @@
      orange; behind 13px nav labels any alpha of it reads burnt rather than light. This is
      that same hue mixed toward white, so it stays unmistakably YC orange while going pale,
      and carries a higher alpha to keep the hover as *present* as the saturated version was.
-     `--accent` is not reusable here: it is a pale peach in light mode but a dark brown in
-     dark mode, so it would invert the intent on one of the two themes. */
+     No `.dark .yc-theme` counterpart: the admin console is always light
+     (`src/components/theme-provider.tsx` forces it on /admin). */
   --admin-nav-hover: rgb(255 178 127 / 0.45);
-}
-
-.dark .yc-theme {
-  --primary: #ff9152;
-  --primary-foreground: #2a1000;
-  --accent: #47280f;
-  --accent-foreground: #ff9152;
-  /* Dark mode needs no lightening — `--primary` is already a pale-bright orange here, so
-     this is that value at the alpha the wash wants. */
-  --admin-nav-hover: rgb(255 145 82 / 0.20);
 }
 
 @layer base {

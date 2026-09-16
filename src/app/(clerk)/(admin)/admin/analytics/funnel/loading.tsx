@@ -1,18 +1,17 @@
-import { AdminPageHeader, AdminPanel } from "@/components/admin/primitives";
-import { Skeleton } from "@/components/ui/skeleton";
+import { AdminLoading } from "@/components/admin/loading-shells";
+import { TrafficTabs } from "@/components/admin/traffic-tabs";
 
 export default function AdminFunnelLoading() {
   return (
-    <>
-      <AdminPageHeader title="Conversion" subtitle="Assembling the funnel…" />
-      <div className="space-y-6">
-        <AdminPanel>
-          <Skeleton className="h-56 w-full" />
-        </AdminPanel>
-        <AdminPanel>
-          <Skeleton className="h-32 w-full" />
-        </AdminPanel>
-      </div>
-    </>
+    <AdminLoading
+      title="Conversion"
+      subtitle="Joining traffic to accounts…"
+      tabs={<TrafficTabs />}
+      blocks={[
+        { range: true },
+        { panel: true, title: "The funnel", height: "h-64" },
+        { panel: true, title: "How to read this", height: "h-40" },
+      ]}
+    />
   );
 }

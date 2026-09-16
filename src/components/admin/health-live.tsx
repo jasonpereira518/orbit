@@ -546,7 +546,7 @@ export function HealthLiveBody({
                 No runs recorded yet. The ledger starts at the next midnight run.
               </EmptyState>
             ) : (
-              <AdminTable
+              <AdminTable minWidth="sm"
                 head={
                   <>
                     <Th>Started</Th>

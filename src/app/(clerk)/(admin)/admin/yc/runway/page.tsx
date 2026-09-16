@@ -90,7 +90,7 @@ export default async function RunwayPage() {
           {recentExpenses.length === 0 ? (
             <EmptyState>No expenses logged in the last 30 days.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable minWidth="none"
               head={
                 <>
                   <Th>Category</Th>
