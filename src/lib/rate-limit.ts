@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 import { getDb } from "@/db";
 import { rateLimitBuckets } from "@/db/schema";
 
@@ -118,6 +119,12 @@ export const RATE_LIMITS = {
    * name on a normal roster, tight enough that a retry storm cannot run up their bill.
    */
   eventWhy: { limit: 30, windowSec: 3600 },
+  /**
+   * Model-bound LinkedIn timeline conversations per user per day (audit A6). The runner
+   * keys the bucket by UTC date as well as user, so the cap resets at midnight UTC rather
+   * than 24 hours after the first call; the window only guarantees no reset mid-day.
+   */
+  timelineBackfillDaily: { limit: TIMELINE_DAILY_CONTACT_CAP, windowSec: 86_400 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

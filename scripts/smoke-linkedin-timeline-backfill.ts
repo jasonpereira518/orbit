@@ -18,10 +18,12 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-li-timeline";
 
 import { and, asc, eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, usageEvents, userSettings } from "../src/db/schema";
+import { contacts, interactions, rateLimitBuckets, usageEvents, userSettings } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
 import { extractLinkedInTimelineEvents } from "../src/lib/linkedin-timeline-events";
 import {
+  TIME_BUDGET_MS,
+  pendingTimelineAiContactCount,
   pendingTimelineContactCount,
   runLinkedInTimelineBackfill,
   usersWithPendingTimelineEvents,
@@ -33,6 +35,8 @@ const SKIP_USER = "smoke-li-timeline-skip-user";
 const LEGACY_USER = "smoke-li-timeline-legacy-user";
 const REAL_USER = "smoke-li-timeline-real-user";
 const SINGLE_USER = "smoke-li-timeline-single-user";
+const OFF_USER = "smoke-li-timeline-off-user";
+const CAP_USER = "smoke-li-timeline-cap-user";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -45,6 +49,7 @@ async function reset(userId: string) {
   await db.delete(interactions).where(eq(interactions.userId, userId));
   await db.delete(userSettings).where(eq(userSettings.userId, userId));
   await ensureUserSettings(userId);
+  await db.update(userSettings).set({ timelineBackfillEnabled: 1 }).where(eq(userSettings.userId, userId));
 }
 
 /** Seed one contact plus its LinkedIn message rows, shaped exactly as the adapter writes them. */
@@ -372,13 +377,88 @@ async function testSingleMessageSkipsModel() {
   check("and makes no AI call", calls.length === 0, `${calls.length} usage rows`);
 }
 
+/** Section 6: nothing runs, and nothing is kicked, for an account that has not opted in. */
+async function testOptIn() {
+  await reset(OFF_USER);
+  const db = await getDb();
+  await db.update(userSettings).set({ timelineBackfillEnabled: 0 }).where(eq(userSettings.userId, OFF_USER));
+  seen.length = 0;
+  await seedThread(OFF_USER, "Opted Out", [
+    { body: "Hi, loved the panel.", sentAt: new Date(Date.UTC(2024, 7, 1)) },
+    { body: "Coffee next week?", sentAt: new Date(Date.UTC(2024, 7, 2)) },
+  ]);
+
+  const off = await runLinkedInTimelineBackfill(OFF_USER, stubExtract);
+  check(
+    "an account that has not opted in derives nothing",
+    off.enabled === false && off.contactsProcessed === 0 && off.remaining === 1 && seen.length === 0,
+    JSON.stringify(off)
+  );
+  check("the cron sweep does not kick it", !(await usersWithPendingTimelineEvents(50)).includes(OFF_USER));
+
+  await db.update(userSettings).set({ timelineBackfillEnabled: 1 }).where(eq(userSettings.userId, OFF_USER));
+  const on = await runLinkedInTimelineBackfill(OFF_USER, stubExtract);
+  check("opting in lets the same work run", on.enabled && on.contactsProcessed === 1 && on.remaining === 0, JSON.stringify(on));
+}
+
+/**
+ * Section 7: the daily cap. Only model-bound threads (two or more usable messages) count
+ * against it; a one-message thread is free and never blocked by it.
+ */
+async function testDailyCap() {
+  await reset(CAP_USER);
+  seen.length = 0;
+  const day = (n: number) => new Date(Date.UTC(2024, 8, n));
+  const modelBound: string[] = [];
+  for (const name of ["Cap One", "Cap Two", "Cap Three"]) {
+    modelBound.push(
+      await seedThread(CAP_USER, name, [
+        { body: `Hi ${name}, great to meet you.`, sentAt: day(1) },
+        { body: "Coffee next week?", sentAt: day(2) },
+      ])
+    );
+  }
+  const single = await seedThread(CAP_USER, "Cap Single", [{ body: "Thanks for connecting.", sentAt: day(3) }]);
+
+  check("three threads would call the model", (await pendingTimelineAiContactCount(CAP_USER)) === 3);
+
+  const derived = async () => new Set((await eventRows(CAP_USER)).map((r) => r.contactId));
+  const monday = new Date(Date.UTC(2026, 8, 14, 9));
+
+  const first = await runLinkedInTimelineBackfill(CAP_USER, stubExtract, TIME_BUDGET_MS, { dailyCap: 2, now: monday });
+  const afterFirst = await derived();
+  check(
+    "the cap stops the pass after two model-bound threads",
+    first.capped && modelBound.filter((id) => afterFirst.has(id)).length === 2,
+    JSON.stringify(first)
+  );
+  check("one model-bound thread is left for tomorrow", (await pendingTimelineAiContactCount(CAP_USER)) === 1);
+
+  const later = await runLinkedInTimelineBackfill(CAP_USER, stubExtract, TIME_BUDGET_MS, {
+    dailyCap: 2,
+    now: new Date(monday.getTime() + 3_600_000),
+  });
+  const afterLater = await derived();
+  check(
+    "a second pass the same UTC day adds no model-bound thread",
+    later.capped && modelBound.filter((id) => afterLater.has(id)).length === 2,
+    JSON.stringify(later)
+  );
+
+  const tuesday = new Date(Date.UTC(2026, 8, 15, 0, 5));
+  const next = await runLinkedInTimelineBackfill(CAP_USER, stubExtract, TIME_BUDGET_MS, { dailyCap: 2, now: tuesday });
+  check("the next UTC day picks up the rest", !next.capped && next.remaining === 0, JSON.stringify(next));
+  check("the one-message thread was processed without counting against the cap", (await derived()).has(single));
+}
+
 async function cleanup() {
   const db = await getDb();
-  for (const userId of [DRAIN_USER, SKIP_USER, LEGACY_USER, REAL_USER, SINGLE_USER]) {
+  for (const userId of [DRAIN_USER, SKIP_USER, LEGACY_USER, REAL_USER, SINGLE_USER, OFF_USER, CAP_USER]) {
     await db.delete(contacts).where(eq(contacts.userId, userId));
     await db.delete(interactions).where(eq(interactions.userId, userId));
     await db.delete(userSettings).where(eq(userSettings.userId, userId));
   }
+  await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, "timelineBackfill:smoke-li-timeline-%"));
 }
 
 async function main() {
@@ -400,6 +480,12 @@ async function main() {
 
   console.log("\n-- one-message threads skip the model --");
   await testSingleMessageSkipsModel();
+
+  console.log("\n-- opt-in --");
+  await testOptIn();
+
+  console.log("\n-- the daily cap --");
+  await testDailyCap();
 
   await cleanup();
   console.log("\nTimeline backfill checks passed.");
