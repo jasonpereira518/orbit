@@ -742,10 +742,11 @@ async function seedRecruiters(
         source: "manual",
         contactId: "contact" in r && r.contact ? contactIdByName.get(r.contact) ?? null : null,
         ...r.link,
-        // Contact details unlock only for a row's creator (`isCreatorLink`), and a reused row
-        // was created by the first account seeded. The seed supplied these `.example` details
-        // for every account, so every seeded link is dated as the creator's.
-        createdAt: recruiter.createdAt,
+        // Contact details live per link (`resolveRecruiterPii`), and the seed reuses one
+        // global row across local accounts — so each seeded account gets its own copy of the
+        // `.example` details rather than reading someone else's.
+        email: r.email,
+        linkedinUrl: r.linkedinUrl,
       })
       .onConflictDoNothing();
     if (r.message) {

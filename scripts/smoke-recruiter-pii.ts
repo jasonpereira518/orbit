@@ -1,162 +1,70 @@
 /**
- * The recruiter directory's contact-detail boundary (audit A8).
- *
- * `recruiters` is global. Linking any row by id, or by name + firm, used to unlock its
- * email, phone and LinkedIn for anyone — whether or not the person who contributed them
- * had sharing on — and anyone could fill a row's empty contact fields. Now details unlock
- * for the row's creator, or for a sharing viewer when the creator shares; a private caller
- * never writes details onto an existing row.
- *
- * Run: npx tsx scripts/smoke-recruiter-pii.ts
+ * Recruiter contact details are per link; the shared row holds only what sharing users
+ * vouch for (audit A8). Run: npx tsx scripts/smoke-recruiter-pii.ts
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { gmailConnections, recruiterMessages, recruiters, userRecruiterLinks, userSettings } from "../src/db/schema";
-import { ensureUserSettings } from "../src/lib/user-settings";
-import { listRecruiterDrafts, sendRecruiterDrafts } from "../src/actions/recruiter-messages";
+import { recruiters, userSettings } from "../src/db/schema";
 import {
   ensureUserLink,
-  isCreatorLink,
+  pickPooledPii,
+  resolveRecruiterPii,
+  resweepUserRatings,
   toPublicRecruiter,
-  unlockedRecruiterIds,
   upsertCanonicalRecruiter,
 } from "../src/lib/recruiters";
 
-const A = "smoke-pii-a";
-const B = "smoke-pii-b";
-const VIEWER = "demo-user";
-const FIRM = "ZZSmokePii";
-const NAME = `${FIRM} Recruiter`;
-const A_EMAIL = "alex@zzsmokepii.test";
-
-let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
-  if (ok) console.log(`  ok   ${label}`);
-  else {
-    failures++;
-    console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`);
-  }
+  if (!ok) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
+  console.log(`  ok  ${label}`);
 }
+const none = { email: null, phone: null, linkedinUrl: null };
 
-async function cleanup() {
+async function main() {
+  console.log("Pure");
+  const row = { email: "shared@r.test", phone: null, linkedinUrl: null };
+  check("own link wins", resolveRecruiterPii(row, { email: "mine@r.test", phone: null, linkedinUrl: null }, true).email === "mine@r.test");
+  check("pooled viewer falls back to the shared row", resolveRecruiterPii(row, null, true).email === "shared@r.test");
+  check("a link alone no longer unlocks someone else's details", resolveRecruiterPii(row, { ...none }, false).email === null);
+  check("strict: an unvouched value is dropped", pickPooledPii(row, [], { strict: true }).email === null);
+  check("strict: a vouched value stays (case-insensitive)", pickPooledPii(row, [{ ...none, email: "SHARED@r.test" }], { strict: true }).email === "shared@r.test");
+  check("legacy: an unvouched value stays", pickPooledPii(row, [], { strict: false }).email === "shared@r.test");
+  check("legacy: withdrawn by its owner, it goes", pickPooledPii(row, [], { strict: false, withdrawn: { ...none, email: "shared@r.test" } }).email === null);
+  check("an empty field is filled from a pooled link", pickPooledPii({ ...none }, [{ ...none, phone: "+1 555" }], { strict: true }).phone === "+1 555");
+
+  console.log("\nDatabase");
   const db = await getDb();
-  await db.delete(recruiterMessages).where(eq(recruiterMessages.userId, VIEWER));
-  await db.delete(gmailConnections).where(eq(gmailConnections.userId, VIEWER));
-  await db.delete(userRecruiterLinks).where(inArray(userRecruiterLinks.userId, [A, B, VIEWER]));
-  await db.delete(recruiters).where(eq(recruiters.firm, FIRM));
-  await db.delete(userSettings).where(inArray(userSettings.userId, [A, B, VIEWER]));
-}
-
-async function setSharing(userId: string, on: boolean) {
-  const db = await getDb();
-  await db.update(userSettings).set({ recruiterSharing: on ? 1 : 0 }).where(eq(userSettings.userId, userId));
-}
-
-async function row(id: string) {
-  const db = await getDb();
-  return (await db.query.recruiters.findFirst({ where: eq(recruiters.id, id) }))!;
-}
-
-async function unlockedFor(userId: string, id: string) {
-  return (await unlockedRecruiterIds(userId, [await row(id)])).has(id);
-}
-
-run(async () => {
-  await cleanup();
-  const db = await getDb();
-  for (const userId of [A, B]) await db.insert(userSettings).values({ userId, recruiterSharing: 0 });
-
-  console.log("The creator sees what they contributed");
-  // What logRecruiter does: create the row, then the creator's link.
-  const created = await upsertCanonicalRecruiter({ fullName: NAME, firm: FIRM, email: A_EMAIL }, { callerIsSharing: false });
-  await ensureUserLink({ userId: A, recruiterId: created.id });
-  // Age the row and A's link by an hour, so B's link (made now) is unambiguously not the creator's.
-  const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
-  await db.update(recruiters).set({ createdAt: hourAgo }).where(eq(recruiters.id, created.id));
-  await db
-    .update(userRecruiterLinks)
-    .set({ createdAt: new Date(hourAgo.getTime() + 1000) })
-    .where(and(eq(userRecruiterLinks.userId, A), eq(userRecruiterLinks.recruiterId, created.id)));
-  check("A (private, creator) sees the email", await unlockedFor(A, created.id));
-
-  console.log("\nB, sharing off, links the same row by id");
-  const { link: linkB } = await ensureUserLink({ userId: B, recruiterId: created.id });
-  check("B's link is not the creator's", !isCreatorLink(await row(created.id), linkB));
-  check("B cannot read A's email", !(await unlockedFor(B, created.id)));
-  check("toPublicRecruiter hides it from B", toPublicRecruiter(await row(created.id), linkB, false).email === null);
-
-  console.log("\nB logs the same person by name + firm with their own details");
-  const matched = await upsertCanonicalRecruiter(
-    { fullName: NAME, firm: FIRM, email: "other@zzsmokepii.test", phone: "+15555550100", specialty: ["Platform"] },
-    { callerIsSharing: false }
+  await db.insert(userSettings).values([
+    { userId: "smoke-pii-private", recruiterSharing: 0 },
+    { userId: "smoke-pii-sharer", recruiterSharing: 1 },
+    { userId: "smoke-pii-viewer", recruiterSharing: 1 },
+  ]);
+  const created = await upsertCanonicalRecruiter(
+    { fullName: "Pat Recruiter", firm: "Acme Talent", email: "pat.private@r.test" },
+    { contributePii: false, createdByUserId: "smoke-pii-private" }
   );
-  const afterB = await row(created.id);
-  check("it matched A's row", matched.id === created.id);
-  check("B's phone was NOT written onto the shared row", afterB.phone === null, String(afterB.phone));
-  check("A's email is unchanged", afterB.email === A_EMAIL);
-  check("non-contact fields still merge (specialty)", (afterB.specialty ?? []).includes("Platform"));
-  check("B still cannot read A's email", !(await unlockedFor(B, created.id)));
+  check("a private user's email never reaches the shared row", created.email === null && created.createdByUserId === "smoke-pii-private");
+  const { link: privateLink } = await ensureUserLink({ userId: "smoke-pii-private", recruiterId: created.id, email: "pat.private@r.test" });
+  check("...it is on their own link", privateLink.email === "pat.private@r.test");
 
-  console.log("\nConsent follows the contributor");
-  await setSharing(B, true);
-  check("B sharing alone does not unlock A's private details", !(await unlockedFor(B, created.id)));
-  await setSharing(A, true);
-  check("once A shares, sharing B sees them", await unlockedFor(B, created.id));
-  await setSharing(B, false);
-  check("B opting out loses them again", !(await unlockedFor(B, created.id)));
+  const same = await upsertCanonicalRecruiter({ fullName: "Pat Recruiter", firm: "Acme Talent", email: "pat@acme.test" }, { contributePii: true, createdByUserId: "smoke-pii-sharer" });
+  const { link: sharerLink } = await ensureUserLink({ userId: "smoke-pii-sharer", recruiterId: same.id, email: "pat@acme.test" });
+  check("a sharing user's email fills the shared row", same.id === created.id && same.email === "pat@acme.test");
+  const fresh = (await db.query.recruiters.findFirst({ where: eq(recruiters.id, created.id) }))!;
+  check("the private owner still sees their own address", toPublicRecruiter(fresh, privateLink, false).email === "pat.private@r.test");
+  check("a pooled viewer sees the contributed one", toPublicRecruiter(fresh, null, true).email === "pat@acme.test");
 
-  console.log("\nA sharing caller may still fill an empty field");
-  await upsertCanonicalRecruiter({ fullName: NAME, firm: FIRM, phone: "+15555550199" }, { callerIsSharing: true });
-  check("the phone was filled", (await row(created.id)).phone === "+15555550199");
+  await db.update(userSettings).set({ recruiterSharing: 0 }).where(eq(userSettings.userId, "smoke-pii-sharer"));
+  await resweepUserRatings("smoke-pii-sharer");
+  const after = (await db.query.recruiters.findFirst({ where: eq(recruiters.id, created.id) }))!;
+  check("turning sharing off withdraws the contribution", after.email === null, String(after.email));
+  check("...but the contributor keeps it on their link", sharerLink.email === "pat@acme.test");
 
-  console.log("\nisCreatorLink edges");
-  const t = new Date("2026-09-15T12:00:00Z");
-  check("same instant counts", isCreatorLink({ createdAt: t }, { createdAt: t }));
-  check("two minutes later counts", isCreatorLink({ createdAt: t }, { createdAt: new Date(t.getTime() + 120_000) }));
-  check("three minutes later does not", !isCreatorLink({ createdAt: t }, { createdAt: new Date(t.getTime() + 180_000) }));
-  check("a link older than the row does not", !isCreatorLink({ createdAt: t }, { createdAt: new Date(t.getTime() - 1000) }));
-  check("no link does not", !isCreatorLink({ createdAt: t }, null));
+  await db.delete(recruiters).where(eq(recruiters.id, created.id));
+  console.log("\nAll recruiter-PII checks passed.");
+}
 
-  console.log("\nDrafts and sends honour the same rule (as demo mode's demo-user)");
-  delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  delete process.env.CLERK_SECRET_KEY;
-  process.env.ORBIT_DEMO_DATA = "off";
-  (process.env as Record<string, string>).NODE_ENV = "development";
-  await setSharing(A, false);
-  await ensureUserSettings(VIEWER);
-  await ensureUserLink({ userId: VIEWER, recruiterId: created.id });
-  const [draft] = await db
-    .insert(recruiterMessages)
-    .values({
-      userId: VIEWER,
-      recruiterId: created.id,
-      intent: "set_up_chat",
-      subject: "Coffee next week?",
-      body: "Hi — would you have twenty minutes next week?",
-      status: "draft",
-    })
-    .returning();
-  // A connection row so the send gets past "Connect Gmail first". Its token is junk: a send
-  // that got as far as Gmail would fail and mark the draft "failed".
-  await db.insert(gmailConnections).values({
-    userId: VIEWER,
-    emailAddress: "demo@orbit.local",
-    accessTokenEncrypted: "not-a-real-token",
-    status: "active",
-  });
-
-  const listed = (await listRecruiterDrafts()).find((d) => d.id === draft.id);
-  check("the draft list hides A's email from the viewer", listed?.recruiterEmail === null, JSON.stringify(listed));
-  await sendRecruiterDrafts([draft.id]).catch((err: unknown) => {
-    if (!(err instanceof Error && err.message.includes("static generation store"))) throw err;
-  });
-  const afterSend = await db.query.recruiterMessages.findFirst({ where: eq(recruiterMessages.id, draft.id) });
-  check("sending to a locked recruiter attempts nothing — the draft stays a draft", afterSend?.status === "draft", String(afterSend?.status));
-
-  await cleanup();
-  if (failures > 0) throw new Error(`${failures} check(s) failed`);
-  console.log("\nAll recruiter PII checks passed.");
-});
+run(main);

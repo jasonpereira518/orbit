@@ -22,8 +22,11 @@ import {
   recomputeRecruiterRating,
   resweepUserRatings,
   searchCanonicalRecruiters,
+  mergeRecruiterFields,
+  pooledIdsForViewer,
+  rederiveSharedRecruiterPii,
+  resolveRecruiterPii,
   toPublicRecruiter,
-  unlockedRecruiterIds,
   upsertCanonicalRecruiter,
   type PublicRecruiter,
 } from "@/lib/recruiters";
@@ -49,10 +52,9 @@ export async function listDiscoverRecruiters(
     q,
     limit: 40,
   });
-  // Every row here is pooled by construction, and none is linked by this viewer — but a row
-  // is pooled by ANY sharing link, so its details show only where its creator shares.
-  const unlocked = await unlockedRecruiterIds(userId, rows);
-  return rows.map((r) => toPublicRecruiter(r, null, unlocked.has(r.id)));
+  // Every row here is pooled by construction, and none is linked by this viewer: the shared
+  // values are what a sharing viewer may see.
+  return rows.map((r) => toPublicRecruiter(r, null, true));
 }
 
 export async function listMyRecruiters(): Promise<PublicRecruiter[]> {
@@ -63,8 +65,8 @@ export async function listMyRecruiters(): Promise<PublicRecruiter[]> {
     with: { recruiter: true },
     orderBy: [desc(userRecruiterLinks.updatedAt)],
   });
-  const unlocked = await unlockedRecruiterIds(userId, links.map((l) => l.recruiter));
-  return links.map((l) => toPublicRecruiter(l.recruiter, l, unlocked.has(l.recruiter.id)));
+  const pooled = await pooledIdsForViewer(userId, links.map((l) => l.recruiterId));
+  return links.map((l) => toPublicRecruiter(l.recruiter, l, pooled.has(l.recruiterId)));
 }
 
 export async function getRecruiter(id: string): Promise<PublicRecruiter | null> {
@@ -90,8 +92,7 @@ export async function getRecruiter(id: string): Promise<PublicRecruiter | null> 
     if (!pooled.has(id)) return null;
   }
 
-  const unlocked = await unlockedRecruiterIds(userId, [row]);
-  return toPublicRecruiter(row, link ?? null, unlocked.has(id));
+  return toPublicRecruiter(row, link ?? null, (await pooledIdsForViewer(userId, [id])).has(id));
 }
 
 /** Current sharing state, for the toggle card. */
@@ -143,6 +144,8 @@ export async function setLinkShared(recruiterId: string, shared: boolean) {
     .where(eq(userRecruiterLinks.id, link.id));
 
   await recomputeRecruiterRating(recruiterId);
+  // This link just joined or left the pool: the shared row re-derives what is still vouched for.
+  await rederiveSharedRecruiterPii(recruiterId, { withdrawn: link });
   revalidateRecruiterPaths(recruiterId);
   return { shared };
 }
@@ -165,8 +168,9 @@ export type LogRecruiterInput = {
 export async function logRecruiter(input: LogRecruiterInput) {
   return asActionResult(async () => {
     const userId = await requireRecruitersUser();
-    // A private caller's contact details never land on a row someone else created.
-    const callerIsSharing = await isViewerSharing(userId);
+    // Contact details reach the SHARED row only from someone who shares; they always land
+    // on this user's own link.
+    const sharing = await isViewerSharing(userId);
     const fullName = input.fullName?.trim();
     if (!fullName && !input.recruiterId) {
       throw new UserFacingError("Add the recruiter’s name first");
@@ -180,15 +184,16 @@ export async function logRecruiter(input: LogRecruiterInput) {
         where: eq(recruiters.id, recruiterId),
       });
       if (!existing) throw new Error("Recruiter not found");
-      if (fullName || input.email || input.firm || input.linkedinUrl) {
-        await upsertCanonicalRecruiter({
-          fullName: fullName || existing.fullName,
-          firm: input.firm ?? existing.firm,
-          specialty: input.specialty,
-          email: input.email ?? existing.email,
-          linkedinUrl: input.linkedinUrl ?? existing.linkedinUrl,
-          phone: input.phone ?? existing.phone,
-        }, { callerIsSharing });
+      // Patch THIS row directly: going back through upsertCanonicalRecruiter would let an
+      // email match — and then patch — a different recruiter than the one being logged.
+      const patch = mergeRecruiterFields(existing, {
+        fullName: fullName || existing.fullName,
+        firm: input.firm,
+        specialty: input.specialty,
+        ...(sharing ? { email: input.email, linkedinUrl: input.linkedinUrl, phone: input.phone } : {}),
+      });
+      if (Object.keys(patch).length > 1) {
+        await db.update(recruiters).set(patch).where(eq(recruiters.id, existing.id));
       }
     } else {
       const created = await upsertCanonicalRecruiter({
@@ -198,7 +203,7 @@ export async function logRecruiter(input: LogRecruiterInput) {
         email: input.email,
         linkedinUrl: input.linkedinUrl,
         phone: input.phone,
-      }, { callerIsSharing });
+      }, { contributePii: sharing, createdByUserId: userId });
       recruiterId = created.id;
     }
 
@@ -213,6 +218,9 @@ export async function logRecruiter(input: LogRecruiterInput) {
       userId,
       recruiterId: recruiterId!,
       status: input.status || "planned",
+      email: input.email,
+      phone: input.phone,
+      linkedinUrl: input.linkedinUrl,
       notes: input.notes || null,
       source: input.source || "manual",
       personalRating: rating,
@@ -286,7 +294,7 @@ export async function loadRecruitersForChat(
     limit: 20,
   });
   // Chat recites what it is given, so it gets only the details this viewer may read.
-  const unlocked = await unlockedRecruiterIds(userId, personal.map((l) => l.recruiter));
+  const pooledPersonal = await pooledIdsForViewer(userId, personal.map((l) => l.recruiterId));
 
   const q = question.toLowerCase();
   const tokens = q
@@ -310,9 +318,10 @@ export async function loadRecruitersForChat(
         status: l.status,
         notes: l.notes,
         contactId: l.contactId,
-        piiUnlocked: unlocked.has(r.id),
-        email: unlocked.has(r.id) ? r.email : null,
-        linkedinUrl: unlocked.has(r.id) ? r.linkedinUrl : null,
+        piiUnlocked: true,
+        ...(({ email, linkedinUrl }) => ({ email, linkedinUrl }))(
+          resolveRecruiterPii(r, l, pooledPersonal.has(r.id))
+        ),
         score: 100 + personalBoost + tokenHits * 10 + communityScore(r),
       };
     })

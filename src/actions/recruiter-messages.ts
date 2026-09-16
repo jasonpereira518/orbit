@@ -25,7 +25,7 @@ import {
   type RecruiterDraft,
   type SendDraftsResult,
 } from "@/lib/recruiter-message-types";
-import { unlockedRecruiterIds } from "@/lib/recruiters";
+import { pooledIdsForViewer, resolveRecruiterPii } from "@/lib/recruiters";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { actionFailure } from "@/lib/action-failure";
 
@@ -34,16 +34,16 @@ const SEND_SPACING_MS = 1200;
 
 function toDraft(
   row: RecruiterMessage,
-  recruiter: { fullName: string; firm: string | null; email: string | null },
-  /** From `unlockedRecruiterIds`: a draft never reveals an address its sender cannot see. */
-  emailVisible: boolean
+  recruiter: { fullName: string; firm: string | null },
+  /** From `resolveRecruiterPii`: a draft never reveals an address its sender cannot see. */
+  recruiterEmail: string | null
 ): RecruiterDraft {
   return {
     id: row.id,
     recruiterId: row.recruiterId,
     recruiterName: recruiter.fullName,
     recruiterFirm: recruiter.firm,
-    recruiterEmail: emailVisible ? recruiter.email : null,
+    recruiterEmail,
     intent: row.intent as RecruiterIntent,
     subject: row.subject,
     body: row.body,
@@ -141,7 +141,7 @@ export async function generateRecruiterDrafts(
       }))
     );
 
-    const unlocked = await unlockedRecruiterIds(userId, links.map((l) => l.recruiter));
+    const pooled = await pooledIdsForViewer(userId, links.map((l) => l.recruiterId));
     const created: RecruiterDraft[] = [];
     for (let i = 0; i < links.length; i += 1) {
       const draft = drafts[i];
@@ -158,7 +158,13 @@ export async function generateRecruiterDrafts(
           gmailThreadId: links[i].gmailThreadId,
         })
         .returning();
-      created.push(toDraft(row, links[i].recruiter, unlocked.has(links[i].recruiterId)));
+      created.push(
+        toDraft(
+          row,
+          links[i].recruiter,
+          resolveRecruiterPii(links[i].recruiter, links[i], pooled.has(links[i].recruiterId)).email
+        )
+      );
     }
 
     if (created.length === 0) {
@@ -174,9 +180,16 @@ export async function listRecruiterDrafts(): Promise<RecruiterDraft[]> {
   const userId = await requireRecruitersUser();
   const db = await getDb();
   const rows = await db
-    .select({ message: recruiterMessages, recruiter: recruiters })
+    .select({ message: recruiterMessages, recruiter: recruiters, link: userRecruiterLinks })
     .from(recruiterMessages)
     .innerJoin(recruiters, eq(recruiters.id, recruiterMessages.recruiterId))
+    .leftJoin(
+      userRecruiterLinks,
+      and(
+        eq(userRecruiterLinks.recruiterId, recruiterMessages.recruiterId),
+        eq(userRecruiterLinks.userId, recruiterMessages.userId)
+      )
+    )
     .where(
       and(
         eq(recruiterMessages.userId, userId),
@@ -184,8 +197,10 @@ export async function listRecruiterDrafts(): Promise<RecruiterDraft[]> {
       )
     )
     .orderBy(asc(recruiterMessages.createdAt));
-  const unlocked = await unlockedRecruiterIds(userId, rows.map((r) => r.recruiter));
-  return rows.map((r) => toDraft(r.message, r.recruiter, unlocked.has(r.recruiter.id)));
+  const pooled = await pooledIdsForViewer(userId, rows.map((r) => r.recruiter.id));
+  return rows.map((r) =>
+    toDraft(r.message, r.recruiter, resolveRecruiterPii(r.recruiter, r.link, pooled.has(r.recruiter.id)).email)
+  );
 }
 
 export async function updateRecruiterDraft(
@@ -270,9 +285,16 @@ export async function sendRecruiterDrafts(
     const from = { name: profile?.name?.trim() || null, email: conn.emailAddress };
 
     const rows = await db
-      .select({ message: recruiterMessages, recruiter: recruiters })
+      .select({ message: recruiterMessages, recruiter: recruiters, link: userRecruiterLinks })
       .from(recruiterMessages)
       .innerJoin(recruiters, eq(recruiters.id, recruiterMessages.recruiterId))
+      .leftJoin(
+        userRecruiterLinks,
+        and(
+          eq(userRecruiterLinks.recruiterId, recruiterMessages.recruiterId),
+          eq(userRecruiterLinks.userId, recruiterMessages.userId)
+        )
+      )
       .where(
         and(
           eq(recruiterMessages.userId, userId),
@@ -281,14 +303,14 @@ export async function sendRecruiterDrafts(
         )
       )
       .orderBy(asc(recruiterMessages.createdAt));
-    // The shared row's email is only ever an address this user may read.
-    const unlocked = await unlockedRecruiterIds(userId, rows.map((r) => r.recruiter));
+    // Only an address this user may read: their own link first, then the pool.
+    const pooled = await pooledIdsForViewer(userId, rows.map((r) => r.recruiter.id));
 
     const failed: SendDraftsResult["failed"] = [];
     let sent = 0;
 
     for (const [index, row] of rows.entries()) {
-      const to = unlocked.has(row.recruiter.id) ? row.recruiter.email : null;
+      const to = resolveRecruiterPii(row.recruiter, row.link, pooled.has(row.recruiter.id)).email;
       if (!to) {
         failed.push({
           id: row.message.id,

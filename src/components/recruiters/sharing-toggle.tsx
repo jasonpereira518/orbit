@@ -18,8 +18,9 @@ import { friendlyError } from "@/lib/errors";
  *
  * The copy states what leaves the account and what never does. That list is load-bearing,
  * not decoration: it is the only place a user is told that notes and AI summaries stay
- * private. Keep it in sync with `toPublicRecruiter` and `unlockedRecruiterIds` (a row's
- * contact details reach other sharing users only when its creator shares).
+ * private. Keep it in sync with `toPublicRecruiter` and `resolveRecruiterPii`: contact
+ * details live on each user's own link, and reach the pool only while a pooled link
+ * vouches for them.
  */
 export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
   const router = useRouter();

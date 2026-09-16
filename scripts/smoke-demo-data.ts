@@ -37,7 +37,7 @@ import {
 import { ensureLocalDemoData } from "../src/lib/demo-data/ensure";
 import { DEMO_PEOPLE } from "../src/lib/demo-data/network";
 import { ensureUserSettings } from "../src/lib/user-settings";
-import { unlockedRecruiterIds } from "../src/lib/recruiters";
+import { resolveRecruiterPii } from "../src/lib/recruiters";
 import { needsOnboarding } from "../src/lib/onboarding";
 
 const FRESH = "smoke-demo-fresh";
@@ -156,17 +156,24 @@ async function main() {
 
     console.log("\nrecruiter contact details, first and later accounts");
     // Contact details unlock only for a row's creator (`isCreatorLink`). The seed reuses the
-    // global recruiter rows, so a later account's links must still count as the creator's —
-    // otherwise every demo recruiter reads "Contact locked" and has no email to draft to.
+    // global recruiter rows, so each account's own link must carry the details — otherwise a
+    // later account reads "Contact locked" and has no email to draft to.
     const demoRows = await db.select().from(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
     check("the seed made the three demo recruiters", demoRows.length === 3, String(demoRows.length));
-    check("the first account sees their details", (await unlockedRecruiterIds(FRESH, demoRows)).size === 3);
-    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    await db.update(recruiters).set({ createdAt: dayAgo }).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
+    const seenBy = async (userId: string) => {
+      const links = await db
+        .select()
+        .from(userRecruiterLinks)
+        .where(eq(userRecruiterLinks.userId, userId));
+      const byId = new Map(links.map((l) => [l.recruiterId, l]));
+      const rows = await db.select().from(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
+      return rows.filter((r) => resolveRecruiterPii(r, byId.get(r.id) ?? null, false).email).length;
+    };
+    check("the first account sees their details", (await seenBy(FRESH)) === 3, String(await seenBy(FRESH)));
     await ensureLocalDemoData(SECOND);
     const reused = await db.select().from(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
     check("a later account reuses the rows rather than duplicating them", reused.length === 3, String(reused.length));
-    check("…and still sees their details", (await unlockedRecruiterIds(SECOND, reused)).size === 3);
+    check("…and still sees their details", (await seenBy(SECOND)) === 3, String(await seenBy(SECOND)));
   } finally {
     setNodeEnv(priorNodeEnv);
     await cleanup();

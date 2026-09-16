@@ -225,7 +225,7 @@ async function processSender(
       email: payload.email,
       specialty: result.rolesDiscussed,
     },
-    { callerIsSharing: await isViewerSharing(userId) }
+    { contributePii: await isViewerSharing(userId), createdByUserId: userId }
   );
 
   await ensureUserLink({
@@ -233,6 +233,8 @@ async function processSender(
     recruiterId: recruiter.id,
     status: "contacted",
     source: "gmail",
+    // From THIS user's mailbox: it belongs on their own link whether or not they share.
+    email: payload.email,
   });
 
   const dates = messages
