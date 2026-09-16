@@ -2,6 +2,7 @@
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { deleteReplacedAvatar } from "@/lib/avatar-blob";
+import { deleteContactForUser } from "@/lib/contact-delete";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -776,10 +777,7 @@ export async function rateContacts(
 
 export async function deleteContact(id: string) {
   const userId = await requireUserId();
-  const db = await getDb();
-  await db
-    .delete(contacts)
-    .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
+  await deleteContactForUser(userId, id);
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/graph");

@@ -50,6 +50,7 @@ import {
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
+import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 import {
   AVATARS_UPDATED_EVENT,
   type AvatarsUpdatedDetail,
@@ -660,8 +661,7 @@ export function ContactsList({
             <DialogHeader>
               <DialogTitle>Delete {confirmContact?.fullName}?</DialogTitle>
               <DialogDescription>
-                This removes the contact and their interaction history. This
-                cannot be undone.
+                {CONTACT_DELETE_EXPLAINER}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2 sm:gap-2">
