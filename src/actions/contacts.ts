@@ -1039,8 +1039,15 @@ export async function listLinkedInRefreshTargets(): Promise<{
   const db = await getDb();
   const apiKey = await getApolloApiKey(userId);
 
+  // Filtered in SQL rather than fetched-then-filtered: this used to pull every contact on
+  // the account (indexed only by userId) just to throw away everyone without a LinkedIn
+  // URL. `contacts_user_linkedin_idx` covers `(userId, linkedinUrl)`, so the predicate below
+  // is served by the same index instead of a full account scan.
   const rows = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
+    where: and(
+      eq(contacts.userId, userId),
+      sql`${contacts.linkedinUrl} is not null and btrim(${contacts.linkedinUrl}) <> ''`
+    ),
     columns: {
       id: true,
       fullName: true,
@@ -1049,16 +1056,12 @@ export async function listLinkedInRefreshTargets(): Promise<{
     },
   });
 
-  const targets = rows
-    .filter((r): r is typeof r & { linkedinUrl: string } =>
-      Boolean(r.linkedinUrl?.trim())
-    )
-    .map((r) => ({
-      id: r.id,
-      fullName: r.fullName,
-      email: r.email,
-      linkedinUrl: r.linkedinUrl.trim(),
-    }));
+  const targets = rows.map((r) => ({
+    id: r.id,
+    fullName: r.fullName,
+    email: r.email,
+    linkedinUrl: r.linkedinUrl!.trim(),
+  }));
 
   return { targets, hasApollo: Boolean(apiKey) };
 }
@@ -1467,7 +1470,27 @@ export async function sendContactFollowUpEmail(
   return { ok: true as const };
 }
 
-/** Contacts related by company, school, howMet, mentions, tags, or interests. */
+/**
+ * Contacts related by company, school, howMet, mentions, tags, or interests.
+ *
+ * This used to `findMany` the user's whole contact table plus every contact's tags, on
+ * every single contact-profile view — the widest, most frequently-hit full-network scan
+ * in the app (it pulled `notes` and `aiSummary` for every contact just to score six).
+ *
+ * `bestReason()` in `findRelatedContacts` only needs two things per candidate: the narrow
+ * fields it compares directly (name, company, companyId, school, howMet, sharedInterests,
+ * relationshipScore, and the mention corpus), and — only for `sharedTags` — whether the
+ * candidate shares at least two tags with the source. The first group is fetched here as
+ * one narrow, joinless scan (drops firstName/title/location/profileImageUrl/linkedinUrl/
+ * email/phone, and the per-contact tags relation, none of which `bestReason` reads); the
+ * tags share is answered by a bounded, indexed `GROUP BY … HAVING count(*) >= 2` instead
+ * of hydrating every contact's tag list to count overlaps in JS. Both together are still
+ * O(contacts) in row count — mention detection over free text is a whole-network question
+ * like the dashboard's clustering, and is named as such rather than hidden — but the row
+ * WIDTH drops from 19 columns plus a tags join to 12 narrow columns plus a small aggregate.
+ * Only the winning six get the wide display columns this function used to fetch for
+ * everyone.
+ */
 export async function listRelatedContacts(
   contactId: string,
   limit = 6
@@ -1476,24 +1499,16 @@ export async function listRelatedContacts(
   const db = await getDb();
   const goals = await listActiveGoalTexts();
 
-  const rows = await db.query.contacts.findMany({
+  const narrowRows = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
-    with: { contactTags: { with: { tag: true } } },
     columns: {
       id: true,
       fullName: true,
       preferredName: true,
-      firstName: true,
-      title: true,
       company: true,
       companyId: true,
       school: true,
-      location: true,
       howMet: true,
-      profileImageUrl: true,
-      linkedinUrl: true,
-      email: true,
-      phone: true,
       notes: true,
       aiSummary: true,
       keyFacts: true,
@@ -1501,16 +1516,80 @@ export async function listRelatedContacts(
       relationshipScore: true,
     },
   });
+  if (!narrowRows.some((r) => r.id === contactId)) return [];
 
-  return findRelatedContacts(
+  // Tags share is the one reason findRelatedContacts needs that isn't in the narrow scan
+  // above. Answered as a bounded aggregate over the join table rather than hydrating every
+  // contact's tag list: only contacts sharing >=2 tags with the source can ever produce a
+  // "sharedTags" match, and HAVING keeps the result set to that size, not the account size.
+  const sourceTagIds = (
+    await db
+      .select({ tagId: contactTags.tagId })
+      .from(contactTags)
+      .where(eq(contactTags.contactId, contactId))
+  ).map((r) => r.tagId);
+
+  const sharedTagCounts = sourceTagIds.length
+    ? await db
+        .select({ contactId: contactTags.contactId, shared: sql<number>`count(*)` })
+        .from(contactTags)
+        .where(
+          and(
+            inArray(contactTags.tagId, sourceTagIds),
+            sql`${contactTags.contactId} <> ${contactId}::uuid`
+          )
+        )
+        .groupBy(contactTags.contactId)
+        .having(sql`count(*) >= 2`)
+    : [];
+  const sharesTwoTags = new Set(sharedTagCounts.map((r) => r.contactId));
+
+  const ranked = findRelatedContacts(
     contactId,
-    rows.map((r) => ({
+    narrowRows.map((r) => ({
       ...r,
-      tags: r.contactTags.map((ct) => ct.tag.name),
+      // A placeholder, not a real tag list: `bestReason` only ever compares the source's
+      // own `tags` against a candidate's `tagSet` (never the reverse), via
+      // `sharedCountFromSignals(...) >= 2`. So the source needs a two-element placeholder
+      // whenever it has any tags at all, and each *other* contact needs the same
+      // placeholder exactly when the aggregate above found it shares >= 2 real tags with
+      // the source — `sharesTwoTags` excludes the source's own id, which is why it is
+      // special-cased rather than checked directly.
+      tags:
+        r.id === contactId
+          ? sourceTagIds.length > 0
+            ? ["__shared__", "__shared__"]
+            : []
+          : sharesTwoTags.has(r.id)
+            ? ["__shared__", "__shared__"]
+            : [],
     })),
     limit,
     goals
   );
+  if (ranked.length === 0) return ranked;
+
+  // The narrow scan above never selected the display columns the card actually renders
+  // (avatar, title, location, contact links) — fetch those only for the handful that won,
+  // by id, rather than for every contact that was scored.
+  const displayRows = await db.query.contacts.findMany({
+    where: inArray(
+      contacts.id,
+      ranked.map((r) => r.id)
+    ),
+    columns: {
+      id: true,
+      firstName: true,
+      title: true,
+      location: true,
+      profileImageUrl: true,
+      linkedinUrl: true,
+      email: true,
+      phone: true,
+    },
+  });
+  const displayById = new Map(displayRows.map((r) => [r.id, r]));
+  return ranked.map((r) => ({ ...r, ...(displayById.get(r.id) ?? {}) }));
 }
 
 /** Lightweight contact payload for the floating ask bar person chip. */
