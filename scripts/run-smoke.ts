@@ -31,6 +31,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-friendly-error": "pure",
   "smoke-report-error": "pure",
   "smoke-toast-actions": "pure",
+  "smoke-timeline-cost": "pure",
   "smoke-toast-copy": "pure",
   "smoke-admin-gate": "pure",
   "smoke-admin-redaction": "pure",

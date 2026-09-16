@@ -18,9 +18,9 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-li-timeline";
 
 import { and, asc, eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, userSettings } from "../src/db/schema";
+import { contacts, interactions, usageEvents, userSettings } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
-import type { extractLinkedInTimelineEvents } from "../src/lib/linkedin-timeline-events";
+import { extractLinkedInTimelineEvents } from "../src/lib/linkedin-timeline-events";
 import {
   pendingTimelineContactCount,
   runLinkedInTimelineBackfill,
@@ -32,6 +32,7 @@ const DRAIN_USER = "smoke-li-timeline-drain-user";
 const SKIP_USER = "smoke-li-timeline-skip-user";
 const LEGACY_USER = "smoke-li-timeline-legacy-user";
 const REAL_USER = "smoke-li-timeline-real-user";
+const SINGLE_USER = "smoke-li-timeline-single-user";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -351,9 +352,29 @@ async function testRealExtractorEndToEnd() {
   );
 }
 
+/**
+ * Section 5: a one-message thread never reaches the model. It still gets its rule-based
+ * reach-out (which is what keeps the pending predicate making progress), but no AI call —
+ * most threads in a LinkedIn export are a single unanswered message.
+ */
+async function testSingleMessageSkipsModel() {
+  await reset(SINGLE_USER);
+  const events = await extractLinkedInTimelineEvents(SINGLE_USER, "single-scope", [
+    { from: "them", content: "Want to grab coffee next Tuesday?", parsedDate: new Date(Date.UTC(2024, 5, 3)) },
+  ]);
+  check(
+    "a one-message thread yields only the rule-based reach-out",
+    events.length === 1 && events[0].interactionType === "reach_out",
+    JSON.stringify(events.map((e) => e.interactionType))
+  );
+  const db = await getDb();
+  const calls = await db.query.usageEvents.findMany({ where: eq(usageEvents.userId, SINGLE_USER) });
+  check("and makes no AI call", calls.length === 0, `${calls.length} usage rows`);
+}
+
 async function cleanup() {
   const db = await getDb();
-  for (const userId of [DRAIN_USER, SKIP_USER, LEGACY_USER, REAL_USER]) {
+  for (const userId of [DRAIN_USER, SKIP_USER, LEGACY_USER, REAL_USER, SINGLE_USER]) {
     await db.delete(contacts).where(eq(contacts.userId, userId));
     await db.delete(interactions).where(eq(interactions.userId, userId));
     await db.delete(userSettings).where(eq(userSettings.userId, userId));
@@ -376,6 +397,9 @@ async function main() {
 
   console.log("\n-- the real extractor through the default seam --");
   await testRealExtractorEndToEnd();
+
+  console.log("\n-- one-message threads skip the model --");
+  await testSingleMessageSkipsModel();
 
   await cleanup();
   console.log("\nTimeline backfill checks passed.");
