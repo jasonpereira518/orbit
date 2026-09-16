@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -13,6 +13,8 @@ import {
   tags,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { getRankedContacts } from "@/actions/search";
+import type { RankedContact } from "@/lib/hybrid-search";
 import {
   CONTACTS_PAGE_SIZE,
   type ContactPickerOption,
@@ -128,12 +130,34 @@ export async function listContactsPage(
 
   const sort: ContactSort = filters?.sort ?? "name";
   const limit = Math.min(Math.max(filters?.limit ?? CONTACTS_PAGE_SIZE, 1), 200);
-  const cursor = decodeCursor(filters?.cursor, sort);
+  // "relevance" has no stable keyset — see `orderFor` — so it never accepts a cursor and
+  // always returns its first (only) page.
+  const cursor = sort === "relevance" ? null : decodeCursor(filters?.cursor, sort);
 
   const conditions = [eq(contacts.userId, userId)];
 
   const q = filters?.q?.trim();
-  if (q) conditions.push(searchCondition(q));
+  // Reused below by `orderFor` (relevance ranking) and by the match-reason map — one
+  // hybrid-search call serves widening, ranking, and explaining, instead of asking thrice.
+  let semanticIds: string[] = [];
+  let matchReasons = new Map<string, string>();
+  if (q) {
+    // Short queries are prefix lookups ("mar" -> Marcus) that `searchCondition` alone
+    // already serves well; below this length a semantic round trip only adds latency.
+    // At 3+ chars, OR in contacts whose title/company/experience is a semantic match
+    // even when no literal keyword overlaps ("Full-time SWE at Google" finding someone
+    // whose stored role is "Software Engineer" at Google, full time). Request the max
+    // hybridSearchContacts will give (80) rather than its default 12, since this list
+    // also drives relevance ordering, not just widening the match.
+    const ranked = q.length >= 3 ? await getRankedContacts(userId, q, 80) : [];
+    semanticIds = ranked.map((r) => r.id);
+    matchReasons = matchReasonsFor(ranked);
+    conditions.push(
+      semanticIds.length
+        ? or(searchCondition(q), inArray(contacts.id, semanticIds))!
+        : searchCondition(q)
+    );
+  }
 
   const company = filters?.company?.trim();
   if (company) {
@@ -170,12 +194,15 @@ export async function listContactsPage(
     .select(contactsListSelection)
     .from(contacts)
     .where(and(...conditions))
-    .orderBy(...orderFor(sort))
+    .orderBy(...orderFor(sort, semanticIds))
     // One extra row answers "is there more" without a second count.
     .limit(limit + 1);
 
-  const hasMore = rows.length > limit;
-  const page = hasMore ? rows.slice(0, limit) : rows;
+  const fetchedExtra = rows.length > limit;
+  const page = fetchedExtra ? rows.slice(0, limit) : rows;
+  // Relevance has no keyset to resume from, so it never claims there's more — the caller
+  // gets one ranked page and the "Showing X of Y" footer if that page is short of `total`.
+  const hasMore = sort !== "relevance" && fetchedExtra;
 
   const [tagsByContact, total] = await Promise.all([
     tagsForContacts(page.map((r) => r.id)),
@@ -204,10 +231,30 @@ export async function listContactsPage(
       nextFollowUpAt: row.nextFollowUpAt,
       lastInteractionAt: row.lastInteractionAt,
       tags: tagsByContact.get(row.id) ?? [],
+      matchReason: matchReasons.get(row.id) ?? null,
     })),
     nextCursor: hasMore ? encodeCursor(cursorFor(sort, page[page.length - 1])) : null,
     total,
   };
+}
+
+/**
+ * Why a contact showed up, for the ones where that isn't obvious from the row itself.
+ *
+ * A contact only gets a reason when it matched via the `experience` or `semantic` arm and
+ * *neither* `fts` nor `trigram` — i.e. only when nothing already visible on the row (name,
+ * company, title) would explain the match. A contact whose company field literally says
+ * "Google" doesn't need a label telling the user it matched "Google"; one who matches only
+ * because a past role or an unrelated-looking bio was semantically similar does.
+ */
+function matchReasonsFor(ranked: RankedContact[]): Map<string, string> {
+  const reasons = new Map<string, string>();
+  for (const r of ranked) {
+    if (r.matchedArms.includes("fts") || r.matchedArms.includes("trigram")) continue;
+    if (r.matchedArms.includes("experience")) reasons.set(r.id, "Matched via work history");
+    else if (r.matchedArms.includes("semantic")) reasons.set(r.id, "Matched by meaning");
+  }
+  return reasons;
 }
 
 /**
@@ -221,14 +268,34 @@ export async function listContactsPage(
  * same way. Pairing a descending sort with an ascending id silently produces a condition
  * that skips rows on one side of each tie and repeats them on the other.
  */
-function orderFor(sort: ContactSort) {
+function orderFor(sort: ContactSort, rankedIds: string[] = []) {
   if (sort === "closeness") {
     return [desc(contacts.closeness), desc(contacts.id)];
   }
   if (sort === "recent") {
     return [desc(contacts.updatedAt), desc(contacts.id)];
   }
+  if (sort === "relevance") {
+    // Rank first, name as the tiebreak — both for genuine ties and for rows `array_position`
+    // can't place at all: a contact that matched only the literal `searchCondition`, never
+    // the hybrid-search arms, falls through to name order after every ranked hit.
+    return [relevanceRank(rankedIds), asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
+  }
   return [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
+}
+
+/**
+ * Position within `rankedIds`, ascending so the best hybrid-search match (index 0) sorts
+ * first; `array_position` returns null for a contact the ranking never produced, and null
+ * sorts last under ascending order by default — hence the explicit `nulls last` rather than
+ * relying on that default holding.
+ */
+function relevanceRank(rankedIds: string[]) {
+  if (rankedIds.length === 0) return sql`0`;
+  return sql`array_position(array[${sql.join(
+    rankedIds.map((id) => sql`${id}::uuid`),
+    sql`, `
+  )}]::uuid[], ${contacts.id}) nulls last`;
 }
 
 function cursorCondition(cursor: Cursor) {
