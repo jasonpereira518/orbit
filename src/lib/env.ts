@@ -68,6 +68,8 @@ export type EnvReport = {
   warnings: string[];
   /** Names from REQUIRED_IN_PRODUCTION that are unset. Feeds the ops sweep's `config.missing`. */
   missingRequired: string[];
+  /** Names from EXPECTED_IN_PRODUCTION that are unset. Production only. Feeds `config.alerts_undeliverable`. */
+  missingExpected: string[];
 };
 
 type EnvBag = Record<string, string | undefined>;
@@ -78,6 +80,7 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
   const errors: string[] = [];
   const warnings: string[] = [];
   const missingRequired: string[] = [];
+  const missingExpected: string[] = [];
 
   if (options.vercelEnv === "production") {
     for (const name of REQUIRED_IN_PRODUCTION) {
@@ -127,9 +130,12 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     }
 
     for (const name of EXPECTED_IN_PRODUCTION) {
-      if (!has(env, name)) warnings.push(`${name} is unset; the feature it enables is off`);
+      if (!has(env, name)) {
+        warnings.push(`${name} is unset; the feature it enables is off`);
+        missingExpected.push(name);
+      }
     }
-    return { errors, warnings, missingRequired };
+    return { errors, warnings, missingRequired, missingExpected };
   }
 
   if (options.vercelEnv === "preview") {
@@ -149,14 +155,14 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     if (!has(env, "PRODUCTION_DB_HOST")) {
       warnings.push("PRODUCTION_DB_HOST is unset; the preview-migration guard is unarmed");
     }
-    return { errors, warnings, missingRequired };
+    return { errors, warnings, missingRequired, missingExpected };
   }
 
   // Local development and CI: nothing is required — PGlite and demo mode cover the rest.
   for (const name of REQUIRED_IN_PRODUCTION) {
     if (!has(env, name)) warnings.push(`${name} is unset (required in production)`);
   }
-  return { errors, warnings, missingRequired };
+  return { errors, warnings, missingRequired, missingExpected };
 }
 
 /** The report for this process. */

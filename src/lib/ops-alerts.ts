@@ -53,6 +53,8 @@ export type OpsSnapshot = {
   errorEventsLastHour: number;
   perfSlowLastHour: number;
   missingRequiredEnv: string[];
+  /** EXPECTED_IN_PRODUCTION names that are unset (production only). */
+  missingExpectedEnv: string[];
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
@@ -265,6 +267,18 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: "Production is missing required configuration",
       detail: `Unset: ${s.missingRequiredEnv.join(", ")}.`,
+    });
+  }
+
+  // Persisted even though it can never reach Slack (see runOpsSweep): this row IS the alert,
+  // on /admin/health and in the deep /api/health view.
+  if (s.missingExpectedEnv.includes("SLACK_OPS_WEBHOOK_URL")) {
+    out.push({
+      id: "config.alerts_undeliverable",
+      severity: "warning",
+      title: "Alerts are not reaching Slack",
+      detail: "SLACK_OPS_WEBHOOK_URL is unset in production, so every alert stays on /admin/health until someone looks.",
+      href: "/admin/health",
     });
   }
 

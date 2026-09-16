@@ -45,6 +45,7 @@ const HEALTHY: OpsSnapshot = {
   errorEventsLastHour: 0,
   perfSlowLastHour: 0,
   missingRequiredEnv: [],
+  missingExpectedEnv: [],
   deploy: { prodSha: "abc", mainSha: "abc", mainCommittedAt: hoursAgo(30) },
   reauthNeeded: 0,
   wedgedSyncs: 0,
@@ -118,6 +119,11 @@ function main() {
   const missing = find({ ...HEALTHY, missingRequiredEnv: ["CRON_SECRET", "APP_BASE_URL"] }, "config.missing");
   check("missing required env → config.missing naming the variables",
     missing?.severity === "warning" && missing.detail.includes("CRON_SECRET") && missing.detail.includes("APP_BASE_URL"), missing?.detail);
+  check("Slack unset in production → config.alerts_undeliverable (warning)",
+    find({ ...HEALTHY, missingExpectedEnv: ["SLACK_OPS_WEBHOOK_URL"] }, "config.alerts_undeliverable")?.severity === "warning");
+  check("another missing expected variable is not an alert",
+    !find({ ...HEALTHY, missingExpectedEnv: ["SENTRY_DSN"] }, "config.alerts_undeliverable"));
+
   check("prod behind main by more than 6h → deploy.drift",
     Boolean(find({ ...HEALTHY, deploy: { prodSha: "abc", mainSha: "def", mainCommittedAt: hoursAgo(7) } }, "deploy.drift")));
   check("prod behind main by an hour is just a deploy in flight",

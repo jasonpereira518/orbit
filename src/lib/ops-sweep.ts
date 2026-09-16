@@ -128,6 +128,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     errorEventsLastHour: otherErrors,
     perfSlowLastHour: perfSlow,
     missingRequiredEnv: getEnvReport().missingRequired,
+    missingExpectedEnv: getEnvReport().missingExpected,
     deploy: deploy
       ? { prodSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null, ...deploy }
       : null,
