@@ -124,6 +124,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-scan-image": "pure",
   "smoke-scan-reorder": "pure",
   "smoke-scale-schema": "pure", // own in-memory PGlite
+  "smoke-schedules": "pure",
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
   "smoke-stripe-ordering": "pure",

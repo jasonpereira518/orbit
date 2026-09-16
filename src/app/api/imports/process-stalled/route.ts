@@ -95,14 +95,12 @@ async function pruneOlderThan(
 }
 
 /**
- * Vercel Cron target: resumes server-owned import jobs whose invocation died
- * mid-run. Runs once/day (Hobby plan's minimum cron interval) — the primary
- * resumption path is still the processor's own self-continuation via the
- * `[id]/continue` route; this is only a last-resort backstop.
+ * The hourly backstop, scheduled by `.github/workflows/ops.yml` (the only scheduler):
+ * resumes server-owned import and capture jobs whose invocation died mid-run. The primary
+ * resumption path is still each job's own self-continuation; this is the last resort.
  *
- * It is also the only scheduled job in the product, so housekeeping rides along and every
- * run is recorded in `cron_runs`. Note the consequence for anything that depends on this:
- * a job that loses self-continuation can sit stalled for up to 24 hours.
+ * Housekeeping rides along and every run is recorded in `cron_runs`. A job that loses
+ * self-continuation can sit stalled for up to an hour.
  */
 export async function GET(request: Request) {
   // Auth first, before any write: an unauthenticated probe must not be able to

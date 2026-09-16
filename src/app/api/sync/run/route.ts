@@ -1,9 +1,7 @@
 /**
  * The continuous-sync scheduler's entry point.
  *
- * Driven by GitHub Actions rather than Vercel Cron: Hobby allows one cron and it belongs to
- * `/api/imports/process-stalled`, so `.github/workflows/ops.yml` is already the real
- * scheduler for everything else. Self-continuation posts back to this same route rather than
+ * Driven by GitHub Actions (.github/workflows/ops.yml), the only scheduler. Self-continuation posts back to this same route rather than
  * a second path, which keeps `PUBLIC_ROUTES` small.
  *
  * `POST` because it mutates. Route Handlers are uncached by default and `POST` can never be

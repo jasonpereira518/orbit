@@ -37,12 +37,30 @@ BEHIND the code — a build whose migration did not run — and is worth waking 
 
 ## The nightly job or the sweep stopped
 
-1. `/admin/health` → "Ops sweep" tile. Quiet for over 30 min means the GitHub schedule is
-   not firing: Actions → `ops` → is the workflow disabled (60 idle days on a public repo)?
-   Re-enable it, or run it with **Run workflow**.
-2. "Nightly job" tile red: trigger it by hand —
+1. `/admin/health` → "Ops sweep" tile. Quiet for over 30 min means the GitHub schedule is not
+   firing — see "Scheduled workflows were disabled" below.
+2. "Nightly job" tile red (it runs hourly, from `ops.yml` only): trigger it by hand —
    `curl -H "Authorization: Bearer $CRON_SECRET" https://orbit.jasonpereira.live/api/imports/process-stalled`
    A 401 means `CRON_SECRET` differs between Vercel and GitHub.
+
+## Scheduled workflows were disabled (GitHub's 60-day rule)
+
+GitHub disables a public repository's scheduled workflows after 60 days without repository
+activity. That stops `ops` (sweep, process-stalled, drain, connector sync) and `backup` at once;
+the Better Stack heartbeat goes quiet within 30 minutes.
+
+```bash
+gh api repos/jasonpereira518/orbit/actions/workflows --jq '.workflows[] | [.name, .state] | @tsv'
+# a disabled one reads "disabled_inactivity"
+gh workflow enable ops.yml --repo jasonpereira518/orbit
+gh workflow enable backup.yml --repo jasonpereira518/orbit
+gh workflow run ops.yml --repo jasonpereira518/orbit
+gh workflow run backup.yml --repo jasonpereira518/orbit
+```
+
+Or GitHub → Actions → the workflow → **Enable workflow**, then **Run workflow**. Any push to
+`main` resets the timer; a recurring calendar reminder every 45 days runs the `gh api` line
+above. Vercel Pro crons remove the rule entirely.
 
 ## Alert → what to do
 
