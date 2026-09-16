@@ -339,7 +339,9 @@ export function planTransitions(
 
   for (const c of conditions) {
     const prev = prevById.get(c.id);
-    if (!prev || !prev.active || prev.severity !== c.severity) {
+    // `lastNotifiedAt === null` on an active row means the sweep persisted the condition but
+    // Slack never took the message (see runOpsSweep). Offer it again until it lands.
+    if (!prev || !prev.active || prev.severity !== c.severity || prev.lastNotifiedAt === null) {
       out.open.push(c);
       continue;
     }

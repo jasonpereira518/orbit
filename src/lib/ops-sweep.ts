@@ -170,6 +170,8 @@ export type OpsSweepResult = {
   recovered: string[];
   active: string[];
   deliveryFailures: number;
+  /** Conditions whose Slack message failed this sweep. Their state is persisted regardless. */
+  undelivered: string[];
 };
 
 async function loadPreviousRows(): Promise<OpsAlertRow[]> {
@@ -222,6 +224,7 @@ export async function runOpsSweep(options: {
     recovered: [],
     active: [],
     deliveryFailures: 0,
+    undelivered: [],
   };
 
   try {
@@ -234,66 +237,64 @@ export async function runOpsSweep(options: {
     const previous = await loadPreviousRows();
     const plan = planTransitions(previous, conditions, now);
 
+    const prevById = new Map(previous.map((r) => [r.id, r]));
     const detailOf = (c: OpsCondition) => ({ title: c.title, detail: c.detail, href: c.href ?? null });
+    const markNotified = (id: string) =>
+      db
+        .update(opsAlertState)
+        .set({ lastNotifiedAt: now, notifyCount: sql`${opsAlertState.notifyCount} + 1`, updatedAt: now })
+        .where(eq(opsAlertState.id, id));
 
+    // State is written BEFORE delivery; delivery only stamps `last_notified_at`. The old order
+    // (deliver, then persist) left `ops_alert_state` empty whenever Slack was unset or down —
+    // so /admin/health showed nothing at exactly the moment nothing reached a phone either.
     for (const c of plan.open) {
-      try {
-        await deliver({ kind: "open", condition: c });
-      } catch (err) {
-        // Left un-persisted on purpose: it opens again next sweep. Reported, because a
-        // delivery that fails is the alerting path itself failing — the one alert Slack
-        // can never carry.
-        reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "open", condition: c.id } });
-        result.deliveryFailures += 1;
-        continue;
-      }
+      const prev = prevById.get(c.id);
+      // A retry of an undelivered open keeps its opening time; a fresh open or an escalation
+      // starts the clock again.
+      const openedAt = prev && prev.active && prev.severity === c.severity ? prev.openedAt : now;
       await db
         .insert(opsAlertState)
         .values({
-          id: c.id,
-          severity: c.severity,
-          active: true,
-          openedAt: now,
-          lastSeenAt: now,
-          lastNotifiedAt: now,
-          notifyCount: 1,
-          detail: detailOf(c),
-          updatedAt: now,
+          id: c.id, severity: c.severity, active: true, openedAt, lastSeenAt: now,
+          lastNotifiedAt: null, notifyCount: 0, detail: detailOf(c), updatedAt: now,
         })
         .onConflictDoUpdate({
           target: opsAlertState.id,
           set: {
-            severity: c.severity,
-            active: true,
-            openedAt: now,
-            lastSeenAt: now,
-            lastNotifiedAt: now,
-            notifyCount: sql`${opsAlertState.notifyCount} + 1`,
-            detail: detailOf(c),
-            updatedAt: now,
+            severity: c.severity, active: true, openedAt, lastSeenAt: now,
+            lastNotifiedAt: null, detail: detailOf(c), updatedAt: now,
           },
         });
+      try {
+        await deliver({ kind: "open", condition: c });
+      } catch (err) {
+        // Reported, because a delivery that fails is the alerting path itself failing — the
+        // one alert Slack can never carry.
+        reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "open", condition: c.id } });
+        result.deliveryFailures += 1;
+        result.undelivered.push(c.id);
+        continue;
+      }
+      await markNotified(c.id);
       result.opened.push(c.id);
     }
 
     for (const c of plan.remind) {
+      await db
+        .update(opsAlertState)
+        .set({ lastSeenAt: now, detail: detailOf(c), updatedAt: now })
+        .where(eq(opsAlertState.id, c.id));
       try {
         await deliver({ kind: "remind", condition: c });
       } catch (err) {
+        // `last_notified_at` is untouched, so the reminder is due again next sweep.
         reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "remind", condition: c.id } });
         result.deliveryFailures += 1;
+        result.undelivered.push(c.id);
         continue;
       }
-      await db
-        .update(opsAlertState)
-        .set({
-          lastSeenAt: now,
-          lastNotifiedAt: now,
-          notifyCount: sql`${opsAlertState.notifyCount} + 1`,
-          detail: detailOf(c),
-          updatedAt: now,
-        })
-        .where(eq(opsAlertState.id, c.id));
+      await markNotified(c.id);
       result.reminded.push(c.id);
     }
 
@@ -305,18 +306,19 @@ export async function runOpsSweep(options: {
     }
 
     for (const row of plan.recover) {
+      // Closed first and unconditionally: the page must stop showing a condition that is gone.
+      // A recovery message lost to a Slack outage is not retried — the open did reach Slack,
+      // and /admin/health shows it closed.
+      await db.update(opsAlertState).set({ active: false, updatedAt: now }).where(eq(opsAlertState.id, row.id));
+      result.recovered.push(row.id);
+      if (row.lastNotifiedAt === null) continue; // nobody was told it opened
       try {
         await deliver({ kind: "recover", condition: conditionFromRow(row) });
       } catch (err) {
         reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "recover", condition: row.id } });
         result.deliveryFailures += 1;
-        continue;
+        result.undelivered.push(row.id);
       }
-      await db
-        .update(opsAlertState)
-        .set({ active: false, updatedAt: now })
-        .where(eq(opsAlertState.id, row.id));
-      result.recovered.push(row.id);
     }
 
     if (result.deliveryFailures > 0) result.status = "partial";

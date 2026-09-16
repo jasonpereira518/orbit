@@ -165,6 +165,12 @@ function main() {
   t = planTransitions([row("a", { severity: "warning" })], [cond("a", "critical")], NOW);
   check("an escalation in severity re-opens", t.open.length === 1 && t.open[0].severity === "critical");
 
+  t = planTransitions([row("a", { lastNotifiedAt: null, notifyCount: 0 })], [cond("a", "warning")], NOW);
+  check("an active row Slack never took is offered as an open again", t.open.length === 1 && t.unchanged.length === 0 && t.remind.length === 0);
+
+  t = planTransitions([row("a", { lastNotifiedAt: null, notifyCount: 0 })], [], NOW);
+  check("a never-announced row still recovers (state closes)", t.recover.length === 1);
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

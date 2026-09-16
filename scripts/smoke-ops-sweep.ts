@@ -102,6 +102,47 @@ async function main() {
   check("stripe.checkout_error opened", forced.opened.includes("stripe.checkout_error"));
   check("delivered as critical", sent.some((d) => d.kind === "open" && d.condition.severity === "critical"));
 
+  console.log("\nSlack is down: the condition is persisted anyway, and retried...");
+  await reset();
+  const failing = {
+    deliver: async () => { throw new Error("Slack webhook answered 500"); },
+    heartbeat: async () => {},
+  };
+  const down = await runOpsSweep({ trigger: "manual", deps: failing });
+  check("a failed delivery marks the sweep partial", down.status === "partial" && down.deliveryFailures === 1, JSON.stringify(down));
+  check("it is reported as undelivered, not opened",
+    down.undelivered.includes("cron.missed") && !down.opened.includes("cron.missed"), JSON.stringify(down));
+  const pending = await db.query.opsAlertState.findFirst({ where: eq(opsAlertState.id, "cron.missed") });
+  check("the row exists, active, never notified",
+    pending?.active === true && pending.lastNotifiedAt === null && pending.notifyCount === 0, JSON.stringify(pending));
+
+  sent.length = 0;
+  const retried = await runOpsSweep({ trigger: "manual", deps });
+  check("the next sweep announces it as an open",
+    sent.length === 1 && sent[0].kind === "open" && sent[0].condition.id === "cron.missed" && retried.opened.includes("cron.missed"),
+    JSON.stringify(sent));
+  const delivered = await db.query.opsAlertState.findFirst({ where: eq(opsAlertState.id, "cron.missed") });
+  check("and stamps the notification without moving openedAt",
+    delivered?.notifyCount === 1 && delivered.lastNotifiedAt !== null &&
+      delivered.openedAt.getTime() === pending!.openedAt.getTime(), JSON.stringify(delivered));
+
+  const nightly = await startCronRun("imports.process-stalled", "manual");
+  await finishCronRun(nightly, { status: "ok" });
+  const closedWhileDown = await runOpsSweep({ trigger: "manual", deps: failing });
+  const closed = await db.query.opsAlertState.findFirst({ where: eq(opsAlertState.id, "cron.missed") });
+  check("a recovery during a Slack outage still closes the row",
+    closed?.active === false && closedWhileDown.recovered.includes("cron.missed"), JSON.stringify(closed));
+
+  console.log("\nAn alert nobody was told about recovers silently...");
+  await reset();
+  await runOpsSweep({ trigger: "manual", deps: failing });
+  const again = await startCronRun("imports.process-stalled", "manual");
+  await finishCronRun(again, { status: "ok" });
+  sent.length = 0;
+  const silent = await runOpsSweep({ trigger: "manual", deps });
+  check("no recovery message for an open that never reached Slack",
+    sent.length === 0 && silent.recovered.includes("cron.missed"), JSON.stringify(sent));
+
   await db.delete(opsAlertState).where(eq(opsAlertState.id, "stripe.checkout_error"));
   await reset();
   console.log("\nA Resend rejection reaches the snapshot...");
