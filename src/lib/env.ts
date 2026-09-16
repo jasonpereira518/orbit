@@ -258,3 +258,44 @@ export function checkMigrationTarget(
   }
   return { allowed: true, reason: `target ${target ?? "(unparseable)"} is not the production host` };
 }
+
+/** drizzle-kit subcommands that write schema to the database the config points at. */
+export const DRIZZLE_WRITE_COMMANDS = ["push", "migrate", "drop"] as const;
+
+/**
+ * Whether this drizzle-kit invocation may run. `drizzle.config.ts` calls it with its own
+ * argv. Fail-closed for writing commands: they need explicit consent, a parseable target,
+ * and a PRODUCTION_DB_HOST that is not that target. Names hosts, never credentials.
+ */
+export function checkDrizzleCommand(
+  argv: readonly string[],
+  env: EnvBag
+): { allowed: boolean; reason: string } {
+  const command = argv.find((a) => (DRIZZLE_WRITE_COMMANDS as readonly string[]).includes(a));
+  if (!command) return { allowed: true, reason: "not a schema-writing drizzle-kit command" };
+  if (env.ALLOW_DRIZZLE_PUSH?.trim() !== "1") {
+    return {
+      allowed: false,
+      reason:
+        `drizzle-kit ${command} is refused unless ALLOW_DRIZZLE_PUSH=1. It drops what Orbit ` +
+        "manages outside schema.ts (embedding_vector, the HNSW index, the migration tables); " +
+        "use npm run db:migrate instead.",
+    };
+  }
+  const target = databaseHost(env.DATABASE_URL);
+  if (!target) return { allowed: false, reason: `drizzle-kit ${command} needs a postgres:// DATABASE_URL.` };
+  const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
+  if (!production) {
+    return {
+      allowed: false,
+      reason: `drizzle-kit ${command} is refused while PRODUCTION_DB_HOST is unset: nothing can tell ${target} from production.`,
+    };
+  }
+  if (target === production) {
+    return {
+      allowed: false,
+      reason: `drizzle-kit ${command} is refused: DATABASE_URL points at ${target}, which PRODUCTION_DB_HOST names as production.`,
+    };
+  }
+  return { allowed: true, reason: `target ${target} is not the production host` };
+}

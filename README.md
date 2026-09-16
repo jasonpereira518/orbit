@@ -78,6 +78,7 @@ Restart `npm run dev` afterward if the server was already running, so it reloads
 | `npm run db:setup` | Bootstrap schema + verify read/write |
 | `npm run db:migrate` | Reconcile the schema to `SCHEMA_VERSION` — what every Vercel build runs before `next build` |
 | `npm run db:check` | Fail when DDL changed without a `SCHEMA_VERSION` bump |
+| `npm run db:push:DANGEROUS` | `drizzle-kit push`. Refused unless `ALLOW_DRIZZLE_PUSH=1` and `DATABASE_URL` is not `PRODUCTION_DB_HOST`; prefer `db:migrate` |
 | `npm run db:generate` | Generate SQL migrations under `drizzle/` (reference only; the app never applies them) |
 | `npm run db:seed` | Insert a sample contact for `demo-user` |
 
