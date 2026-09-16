@@ -218,6 +218,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-trigram-search": "pglite",
   "smoke-transcription-vocabulary": "pglite",
   "smoke-usage-events": "pglite",
+  "smoke-usage-summary": "pglite",
   "smoke-user-settings-race": "pglite",
   "smoke-webhook-guard": "pglite",
   "smoke-webhook-delivery": "pglite",

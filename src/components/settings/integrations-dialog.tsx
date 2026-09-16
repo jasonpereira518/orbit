@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
+import { AiUsageCard } from "@/components/settings/ai-usage-card";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { ApiSettings } from "@/components/settings/api-settings";
@@ -422,7 +423,12 @@ function Panel({
 }) {
   switch (id) {
     case "ai":
-      return <AiSettings initialSettings={initialSettings} />;
+      return (
+        <div className="space-y-5">
+          <AiSettings initialSettings={initialSettings} />
+          <AiUsageCard />
+        </div>
+      );
     case "outreach":
       return <OutreachSettings initial={initialSettings.outreach} />;
     case "calendar":
