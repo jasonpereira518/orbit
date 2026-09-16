@@ -3,6 +3,8 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { senderProfileBlock } from "@/lib/sender-profile";
+import { loadSenderBio } from "@/lib/sender-profile-server";
 import { formatHowMetSummary } from "@/lib/met-context";
 
 const draftSchema = z.object({
@@ -88,6 +90,34 @@ async function loadContactContext(userId: string, contactId: string) {
   return { contact, recent };
 }
 
+/**
+ * The user-message half of the draft prompt.
+ *
+ * Extracted so it can be asserted without an AI provider. The blocks themselves were easy to
+ * unit-test and the interpolation was not, which is the half that actually breaks: a context
+ * block that is built correctly and then never interpolated looks exactly like a working
+ * feature until someone reads a generated message closely.
+ */
+export function composeDraftContext(parts: {
+  goalsBlock: string;
+  senderBlock: string | null;
+  profileBlock: string;
+  reminderBlock?: string | null;
+  intentBlock: string | null;
+  transcript: string;
+}): string {
+  return `${parts.goalsBlock}
+${parts.senderBlock ? `${parts.senderBlock}\n` : ""}
+Contact:
+${parts.profileBlock}
+
+${parts.reminderBlock?.trim() || "Reminder: Warm follow-up from contact profile"}
+${parts.intentBlock ? `\n${parts.intentBlock}` : ""}
+
+Conversation history (newest first):
+${parts.transcript || "(no interactions logged yet)"}`;
+}
+
 export function buildProfileBlock(contact: ContactRow) {
   const howMet = formatHowMetSummary({
     metContext: contact.metContext,
@@ -137,6 +167,12 @@ async function draftFromContext(input: {
     input.userGoals.length > 0
       ? `Your active goals: ${input.userGoals.join("; ")}`
       : "Your active goals: (none specified)";
+
+  // Who the message is from, beyond a first name. Loaded here rather than threaded through
+  // every caller so no draft path can be left without it — that is exactly how the sign-off
+  // name above ended up being fetched inline too. Omitted entirely when unset; see
+  // `senderProfileBlock` on why "unknown" is worse than absent.
+  const senderBlock = senderProfileBlock(await loadSenderBio(input.userId));
 
   const channelLabel =
     input.channel === "email"
@@ -195,18 +231,16 @@ Rules:
 - Do not invent facts, meetings, or shared history that are not in the context.
 - If conversation history is thin, lean on the reminder title/notes and known profile details.
 - Prefer a soft, specific CTA (one ask) over a laundry list.
-- ${signOffRule}
+${senderBlock ? "- Write from the sender's own background where it makes the ask land. Never restate their bio back to the recipient.\n" : ""}- ${signOffRule}
 ${intentBlock ? "- Honor the user's stated intent when drafting." : ""}`,
-    user: `${goalsBlock}
-
-Contact:
-${profileBlock}
-
-${input.reminderBlock?.trim() || "Reminder: Warm follow-up from contact profile"}
-${intentBlock ? `\n${intentBlock}` : ""}
-
-Conversation history (newest first):
-${transcript || "(no interactions logged yet)"}`,
+    user: composeDraftContext({
+      goalsBlock,
+      senderBlock,
+      profileBlock,
+      reminderBlock: input.reminderBlock,
+      intentBlock,
+      transcript,
+    }),
   });
 
   return {

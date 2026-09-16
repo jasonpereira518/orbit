@@ -1,4 +1,6 @@
 import { completeJson } from "@/lib/ai";
+import { senderProfileBlock } from "@/lib/sender-profile";
+import { loadSenderBio } from "@/lib/sender-profile-server";
 import type { OutreachChannel } from "@/lib/outreach-types";
 
 export type DraftInput = {
@@ -65,10 +67,18 @@ export async function generateOutreachDraft(
   userId: string,
   input: DraftInput
 ): Promise<GeneratedDraft> {
+  // These two were one block until now: the user's GOALS were being labelled "Sender
+  // background", because that is the slot the prompt wanted and goals were the only thing
+  // available to fill it. They are different things — a goal is what the user is trying to
+  // achieve, a bio is who is asking — and conflating them is part of why drafts reached for
+  // "[Your Name]". The "secondary context" guard stays on both: it is what stops the model
+  // turning either into a product pitch.
   const goalsBlock =
     input.userGoals.length > 0
-      ? `Sender background (secondary context only — do not invent a product pitch from these): ${input.userGoals.join("; ")}`
-      : "Sender background: (not specified)";
+      ? `Sender goals (secondary context only — do not invent a product pitch from these): ${input.userGoals.join("; ")}`
+      : "Sender goals: (not specified)";
+
+  const senderBlock = senderProfileBlock(await loadSenderBio(userId));
 
   const prospectBlock = [
     `Name: ${input.prospect.fullName}`,
@@ -116,7 +126,7 @@ Critical rules:
 - Do not use identical phrasing across people — vary openers and hooks.
 Return JSON: { "subject": string|null, "body": string }`,
     user: `${goalsBlock}
-
+${senderBlock ? `${senderBlock}\n` : ""}
 Prospect:
 ${prospectBlock}
 

@@ -140,6 +140,17 @@ export const userSettings = pgTable("user_settings", {
   lastName: text("last_name"),
   profileImageUrl: text("profile_image_url"),
   /**
+   * How the user describes themselves, in their own words — role, what they are working on,
+   * what they are looking for. Fed to every message Orbit drafts on their behalf.
+   *
+   * Free text rather than title/company columns on purpose: the useful version of this is a
+   * sentence ("backend engineer moving into platform work, looking for a staff role"), and
+   * structured fields would collect a job title nobody needed while missing the part that
+   * makes an ask land. NULL means never written, and every prompt omits the block entirely
+   * rather than saying "unknown" — a model told the sender is unknown writes around it.
+   */
+  senderBio: text("sender_bio"),
+  /**
    * How this account arrived — captured on FIRST touch of a marketing page and persisted
    * on the first authenticated request. Write-once: a user who lands via a Reddit link,
    * browses for a week and finally signs up after a direct visit was acquired by Reddit,

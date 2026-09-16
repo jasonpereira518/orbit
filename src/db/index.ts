@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   first_name text,
   last_name text,
   profile_image_url text,
+  sender_bio text,
   signup_referrer text,
   signup_utm_source text,
   signup_utm_medium text,
@@ -1088,6 +1089,11 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * and .revert_stats. None of the three can be backfilled, so imports that finished before
  * this version stay unrevertible by construction.
  *
+ * v37 = user_settings.sender_bio: a line or two the user writes about themselves, fed to
+ * every draft generator. The outreach prompt already told the model to "prefer campaign
+ * intent over sender background when they conflict" — there was no sender background to
+ * conflict with, and drafts leaked "[Your Name]" placeholders for want of one.
+ *
  * v36 = contacts_user_last_touch_idx, backing the "Last spoken" ordering on /contacts.
  * Index only, no column: `last_interaction_at` has always been there, it just had nothing
  * reading it in order.
@@ -1097,7 +1103,7 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * signal that means the same thing, and inferring one from past interaction spacing would
  * invent an intent the user never expressed.
  */
-export const SCHEMA_VERSION = 36;
+export const SCHEMA_VERSION = 37;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1539,6 +1545,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interactions", "direction", "text");
   await ensureColumn(client, "contacts", "constellation_pin", "text");
   await ensureColumn(client, "contacts", "keep_in_touch_days", "integer");
+  await ensureColumn(client, "user_settings", "sender_bio", "text");
   await ensureColumn(
     client,
     "interactions",
@@ -2137,6 +2144,7 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS keep_in_touch_days integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS shared_to_pool integer NOT NULL DEFAULT 1`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
