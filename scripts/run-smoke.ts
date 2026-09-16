@@ -151,6 +151,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-trigram-search": "pglite",
   "smoke-usage-events": "pglite",
   "smoke-user-settings-race": "pglite",
+  "smoke-warm-paths": "pglite",
   "smoke-webhook-guard": "pglite",
   "smoke-webhook-delivery": "pglite",
   "smoke-write-path": "pglite",

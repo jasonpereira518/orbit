@@ -32,6 +32,8 @@ import {
   generateOutreachDraftsBatch,
 } from "@/lib/outreach-drafts";
 import { assessOutreachQuality } from "@/lib/outreach-quality";
+import { orgKeysFor } from "@/lib/warm-paths";
+import { findWarmPaths } from "@/lib/warm-paths-server";
 import { sendOutreachMessage } from "@/lib/outreach-send";
 import { isDemoProspect } from "@/lib/outreach-channels";
 import {
@@ -147,11 +149,31 @@ export async function getCampaign(campaignId: string) {
   if (!campaign) throw new Error("Campaign not found");
 
   const metrics = computeCampaignMetrics(campaign.prospects);
+
+  // Who the user ALREADY knows at the companies this campaign is targeting.
+  //
+  // Orbit has recorded every contact's current and past employers since `contact_experiences`
+  // shipped, indexed on `(user_id, organization_normalized)` — an index that exists for this
+  // exact question and had no reader outside the settings export and the profile page. So a
+  // campaign could target eight companies, draft eight cold emails, and never mention that a
+  // former colleague works at one of them. For this audience that is the single most useful
+  // fact in the product, and it was one query away.
+  //
+  // Keyed off the prospects' own companies rather than the campaign's audience filters: the
+  // filters are what was ASKED for, the prospects are who was actually found, and it is the
+  // latter the user is looking at on this page.
+  const warmPaths = await findWarmPaths(
+    userId,
+    orgKeysFor(campaign.prospects.map((p) => p.company))
+  );
+
   return {
     ...campaign,
     metrics,
     channelBreakdown: computeChannelBreakdown(campaign.prospects),
     stepBreakdown: computeStepBreakdown(campaign.prospects),
+    // A plain object so it survives the server/client boundary; a Map does not.
+    warmPaths: Object.fromEntries(warmPaths),
   };
 }
 
