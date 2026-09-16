@@ -2,9 +2,11 @@ import { del } from "@vercel/blob";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
 import {
+  actionItems,
   aiSuggestions,
   apiIdempotencyKeys,
   apiKeys,
@@ -12,12 +14,17 @@ import {
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
+  capturePhotos,
+  chatMessages,
   chatThreads,
   closenessCohorts,
   companies,
+  contactBriefs,
   contactEmbeddings,
+  contactExperiences,
   contactIdentities,
   contactMerges,
+  contactProfiles,
   contacts,
   contactTags,
   dataPurgeRuns,
@@ -34,7 +41,9 @@ import {
   gateEvents,
   gmailConnections,
   ignoredPeople,
+  importJobRows,
   imports,
+  interactionMentions,
   interactions,
   meetingSessions,
   meetingTranscriptSegments,
@@ -120,7 +129,42 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * A Clerk id is inert once the account is gone. `error_events`, by contrast, is data about
  * the user rather than about the operator, so it IS purged (by `activity`).
  */
+/** One dataset of a category's export: a page of this user's rows, snake_case keys. */
+export type ExportSource = {
+  name: string;
+  page: (userId: string, limit: number, offset: number) => SQL;
+  transform?: (row: Record<string, unknown>) => Record<string, unknown>;
+};
+
+/** Every row of `table` whose `user_id` is this user, in a stable order. */
+export function ownRowsSource(table: PgTable, orderBy = "id"): ExportSource {
+  const name = getTableName(table);
+  return {
+    name,
+    page: (userId, limit, offset) =>
+      sql`SELECT * FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${sql.identifier(orderBy)} LIMIT ${limit} OFFSET ${offset}`,
+  };
+}
+
+const own = ownRowsSource;
+const joined = (name: string, page: ExportSource["page"]): ExportSource => ({ name, page });
+const withUrl = (source: ExportSource, prefix: string): ExportSource => ({
+  ...source,
+  transform: (row) => ({ ...row, url: `${prefix}${String(row.id)}` }),
+});
+const contactsSource: ExportSource = {
+  ...own(contacts),
+  // Inline bytes and public Blob URLs become the owner-only avatar route.
+  transform: (row) => {
+    const url = typeof row.profile_image_url === "string" ? row.profile_image_url : null;
+    const proxied = url && (url.startsWith("data:") || url.includes(".public.blob.vercel-storage.com"));
+    return { ...row, profile_image_url: proxied ? `/api/avatars/${String(row.id)}` : url };
+  },
+};
+
 type CategoryStep = {
+  /** What this category exports — one dataset per table, same boundary as the delete. */
+  exports: ExportSource[];
   /**
    * User-scoped tables whose rows are counted for the figure beside the checkbox. Join
    * tables with no `user_id` of their own (`contact_tags`) are deleted by the step but
@@ -132,6 +176,7 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
+    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id")],
     counts: [aiSuggestions, contactEmbeddings, closenessCohorts],
     run: async (db, userId) => {
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
@@ -140,6 +185,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   notes: {
+    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), withUrl(own(capturePhotos), "/api/capture/photos/")],
     counts: [
       interactions,
       noteBatches,
@@ -180,6 +226,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   reminders: {
+    exports: [own(reminders), own(reminderLists), own(suggestedReminders)],
     counts: [reminders, reminderLists, suggestedReminders],
     run: async (db, userId) => {
       // Before `reminders` (and before `contacts`, further down): its FKs are `set null`,
@@ -190,12 +237,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   imports: {
+    exports: [own(imports), own(importJobRows)],
     counts: [imports],
     run: async (db, userId) => {
       await db.delete(imports).where(eq(imports.userId, userId));
     },
   },
   connections: {
+    exports: [own(gmailConnections), own(outlookConnections), own(calendarSubscriptions), own(eventProviderConnections)],
     counts: [
       gmailConnections,
       outlookConnections,
@@ -226,6 +275,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   events: {
+    exports: [own(events), own(eventAttendees), own(eventCompanies), own(eventAliases)],
     counts: [events, eventAttendees],
     run: async (db, userId) => {
       // Before `contacts`: `event_attendees.contact_id` is `on delete set null`, so deleting
@@ -247,18 +297,25 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   goals: {
+    exports: [own(userGoals)],
     counts: [userGoals],
     run: async (db, userId) => {
       await db.delete(userGoals).where(eq(userGoals.userId, userId));
     },
   },
   chat: {
+    exports: [own(chatThreads), own(chatMessages)],
     counts: [chatThreads],
     run: async (db, userId) => {
       await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
     },
   },
   recruiters: {
+    exports: [
+      joined("user_recruiter_links", (userId, limit, offset) => sql`SELECT l.*, r.full_name AS recruiter_full_name, r.firm AS recruiter_firm FROM user_recruiter_links l JOIN recruiters r ON r.id = l.recruiter_id WHERE l.user_id = ${userId} ORDER BY l.id LIMIT ${limit} OFFSET ${offset}`),
+      own(recruiterMessages),
+      own(recruiterScanState),
+    ],
     counts: [userRecruiterLinks, recruiterMessages],
     run: async (db, userId) => {
       // `recruiters.avg_rating` / `rating_count` / `log_count` are denormalized counters over
@@ -311,6 +368,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   api: {
+    exports: [own(apiKeys), own(webhookEndpoints), own(outboundWebhookDeliveries), own(apiIdempotencyKeys, "idempotency_key")],
     counts: [apiKeys, webhookEndpoints, outboundWebhookDeliveries, apiIdempotencyKeys],
     run: async (db, userId) => {
       // `api_keys` matters most: a key that outlives the data it reaches is a live credential
@@ -328,6 +386,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   activity: {
+    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews)],
     counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents],
     run: async (db, userId) => {
       await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
@@ -357,6 +416,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   feedback: {
+    exports: [own(feedback), withUrl(own(feedbackScreenshots), "/api/feedback/screenshots/")],
     counts: [feedback, feedbackScreenshots],
     run: async (db, userId) => {
       // Both are personal — one is literally the user's own words — so erasure means
@@ -387,12 +447,29 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   outreach: {
+    exports: [
+      own(outreachCampaigns),
+      joined("outreach_prospects", (userId, limit, offset) => sql`SELECT p.* FROM outreach_prospects p JOIN outreach_campaigns c ON c.id = p.campaign_id WHERE c.user_id = ${userId} ORDER BY p.id LIMIT ${limit} OFFSET ${offset}`),
+      joined("outreach_messages", (userId, limit, offset) => sql`SELECT m.* FROM outreach_messages m JOIN outreach_prospects p ON p.id = m.prospect_id JOIN outreach_campaigns c ON c.id = p.campaign_id WHERE c.user_id = ${userId} ORDER BY m.id LIMIT ${limit} OFFSET ${offset}`),
+    ],
     counts: [outreachCampaigns],
     run: async (db, userId) => {
       await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
     },
   },
   contacts: {
+    exports: [
+      contactsSource,
+      own(companies),
+      own(contactMerges),
+      own(contactIdentities),
+      own(duplicateSuggestions),
+      own(targetCompanies),
+      own(contactBriefs, "contact_id"),
+      own(contactProfiles),
+      own(contactExperiences),
+      joined("contact_tags", (userId, limit, offset) => sql`SELECT ct.* FROM contact_tags ct JOIN contacts c ON c.id = ct.contact_id WHERE c.user_id = ${userId} ORDER BY ct.id LIMIT ${limit} OFFSET ${offset}`),
+    ],
     // The `implies` list in `DATA_CATEGORY_META` is what stops this step from quietly
     // exceeding a partial request: `interactions`, `reminders`, `contact_embeddings` and
     // `contact_tags` are all `on delete cascade` from `contacts` and go the moment a
@@ -441,12 +518,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   tags: {
+    exports: [own(tags)],
     counts: [tags],
     run: async (db, userId) => {
       await db.delete(tags).where(eq(tags.userId, userId));
     },
   },
   preferences: {
+    exports: [own(userSettings)],
     counts: [],
     run: async () => {
       // Handled by `purgeUserSettings` at the end of `purgeUserData`, not here: what survives
@@ -456,6 +535,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
 };
+
+export function exportSourcesFor(category: DataCategory): readonly ExportSource[] {
+  return STEPS[category].exports;
+}
+
+export function countedTableNames(category: DataCategory): string[] {
+  return STEPS[category].counts.map(getTableName);
+}
 
 /**
  * Everything on `user_settings` that is NOT the user's own content, and so survives a
