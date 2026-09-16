@@ -59,6 +59,7 @@ const HEALTHY: OpsSnapshot = {
   embeddingBacklog: { accounts: 0, oldestAt: null },
   syncOldestDueAgeMs: null,
   aiRefusals24h: { unembeddable: 0, quotaAccounts: 0 },
+  calendarDisarmed: 0,
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -144,6 +145,10 @@ function main() {
     find({ ...HEALTHY, backfillFailures24h: { accounts: 2, kinds: ["embeddings"] } }, "backfill.failed")?.severity === "warning");
   check("one account's failing backfill is that user's key, not an ops alert",
     !find({ ...HEALTHY, backfillFailures24h: { accounts: 1, kinds: ["embeddings"] } }, "backfill.failed"));
+
+  check("five disarmed calendars → calendar.disarmed (info)",
+    find({ ...HEALTHY, calendarDisarmed: 5 }, "calendar.disarmed")?.severity === "info");
+  check("one or two disarmed calendars is user churn, not an alert", !find({ ...HEALTHY, calendarDisarmed: 2 }, "calendar.disarmed"));
 
   check("a spike of unembeddable rows → embedding.unembeddable (warning)",
     find({ ...HEALTHY, aiRefusals24h: { unembeddable: 10, quotaAccounts: 0 } }, "embedding.unembeddable")?.severity === "warning");

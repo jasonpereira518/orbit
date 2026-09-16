@@ -62,6 +62,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     unattributedAgg,
     backlogAgg,
     refusalRes,
+    disarmedRes,
   ] = await Promise.all([
       db
         .select()
@@ -120,6 +121,11 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
           (SELECT count(*) FROM embedding_failures WHERE failed_at > now() - interval '24 hours')::int AS unembeddable,
           (SELECT count(DISTINCT user_id) FROM usage_events
             WHERE error_kind = 'quota' AND created_at > now() - interval '24 hours')::int AS quota_accounts
+      `),
+      db.execute(sql`
+        SELECT count(*)::int AS n FROM gmail_connections
+         WHERE status = 'active' AND next_sync_at IS NULL AND sync_error IS NOT NULL
+           AND scopes LIKE '%calendar.readonly%'
       `),
     ]);
 
@@ -198,6 +204,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     missingExpectedEnv: getEnvReport().missingExpected,
     statementTimeout,
     syncOldestDueAgeMs,
+    calendarDisarmed: Number(rowsOf<{ n: number }>(disarmedRes)[0]?.n ?? 0),
     aiRefusals24h: {
       unembeddable: Number(refusals?.unembeddable ?? 0),
       quotaAccounts: Number(refusals?.quota_accounts ?? 0),

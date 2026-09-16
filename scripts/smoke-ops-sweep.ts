@@ -39,6 +39,8 @@ async function reset() {
   // Shared with Phase 3a's embedding smokes.
   await db.execute(sql`DELETE FROM embedding_failures WHERE failed_at > now() - interval '24 hours'`);
   await db.execute(sql`DELETE FROM usage_events WHERE error_kind = 'quota'`);
+  // Other scripts' disarmed rows would otherwise add up to a burst.
+  await db.execute(sql`UPDATE gmail_connections SET sync_error = NULL WHERE next_sync_at IS NULL AND sync_error IS NOT NULL`);
   // A healthy connector-sync run, so `sync.schedule_missed` stays quiet.
   //
   // This scenario is about the alert STATE MACHINE — open, remind, recover — and asserts an

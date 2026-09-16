@@ -71,6 +71,8 @@ export type OpsSnapshot = {
   syncOldestDueAgeMs: number | null;
   /** Last 24 h: embedding_failures rows, and accounts with a `quota` usage failure. */
   aiRefusals24h: { unembeddable: number; quotaAccounts: number };
+  /** Active calendar-scoped Google connections disarmed with an error. */
+  calendarDisarmed: number;
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
@@ -119,6 +121,9 @@ const SYNC_SCHEDULE_SILENT_MS = 3 * 60 * 60 * 1000;
 
 /** A connection this overdue while runs are happening means demand outgrew a run. */
 export const SYNC_LAG_ALERT_MS = 2 * 60 * 60 * 1000;
+
+/** Disarmed calendars at once that read as a Google-side change rather than user churn. */
+export const CALENDAR_DISARM_BURST = 5;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -296,6 +301,18 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: "Connector sync has given up on an account",
       detail: `${s.failingSyncs} connection(s) were disarmed after repeated sync failures and will not retry until the user reconnects.`,
+      href: "/admin/health",
+    });
+  }
+
+  // `sync.failing` above already says "we gave up on an account". This is the burst: many
+  // calendars disarmed at once is a Google-side change (a scope, an API, a quota), not churn.
+  if (s.calendarDisarmed >= CALENDAR_DISARM_BURST) {
+    out.push({
+      id: "calendar.disarmed",
+      severity: "info",
+      title: "Many calendar syncs are disarmed",
+      detail: `${s.calendarDisarmed} Google calendar connections are disarmed with an error — check for a Google-side change before blaming users.`,
       href: "/admin/health",
     });
   }

@@ -151,6 +151,26 @@ run(async () => {
   await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, "snap-unembeddable"));
   await db.delete(usageEvents).where(inArray(usageEvents.userId, ["snap-quota-a", "snap-quota-b"]));
 
+  console.log("\nDisarmed calendars...");
+  await db.execute(sql`DELETE FROM gmail_connections WHERE user_id LIKE 'snap-disarmed-%'`);
+  const disarmedBefore = (await loadOpsSnapshot(new Date(), null)).calendarDisarmed;
+  for (let i = 0; i < 5; i++) {
+    await db.execute(sql`INSERT INTO gmail_connections
+      (user_id, email_address, access_token_encrypted, status, scopes, next_sync_at, sync_failures, sync_error)
+      VALUES (${`snap-disarmed-${i}`}, ${`snap-disarmed-${i}@example.com`}, 'enc', 'active',
+              'https://www.googleapis.com/auth/calendar.readonly', NULL, 6, 'Google Calendar 403: forbidden')`);
+  }
+  // Disarmed without the calendar scope is a Gmail-only account: not counted.
+  await db.execute(sql`INSERT INTO gmail_connections
+    (user_id, email_address, access_token_encrypted, status, scopes, next_sync_at, sync_failures, sync_error)
+    VALUES ('snap-disarmed-mail', 'snap-disarmed-mail@example.com', 'enc', 'active',
+            'https://www.googleapis.com/auth/gmail.readonly', NULL, 0, 'Calendar access not granted')`);
+  const disarmedAfter = (await loadOpsSnapshot(new Date(), null)).calendarDisarmed;
+  check("disarmed calendar connections are counted, mail-only ones are not",
+    disarmedAfter === disarmedBefore + 5, `${disarmedBefore} → ${disarmedAfter}`);
+  check("five at once open calendar.disarmed", (await idsNow()).includes("calendar.disarmed"));
+  await db.execute(sql`DELETE FROM gmail_connections WHERE user_id LIKE 'snap-disarmed-%'`);
+
   // (new sections go above this line)
 
   if (failures > 0) {
