@@ -1763,6 +1763,14 @@ export const userRecruiterLinks = pgTable(
     emailCount: integer("email_count").default(0).notNull(),
     /** Most recent Gmail thread with this recruiter, so replies thread correctly. */
     gmailThreadId: text("gmail_thread_id"),
+    /**
+     * This user's own contact details for the recruiter. Contact details live HERE, per link:
+     * the canonical `recruiters` row carries only what sharing users contributed to the pool.
+     * `toPublicRecruiter` reads these first, then pooled values (audit A8).
+     */
+    email: text("email"),
+    phone: text("phone"),
+    linkedinUrl: text("linkedin_url"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

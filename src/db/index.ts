@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   subscription_period_end timestamptz,
   subscription_monthly_cents integer,
   subscription_interval text,
+  subscription_event_at timestamptz,
   comped_note text,
   comped_at timestamptz,
   comped_by text,
@@ -512,6 +513,7 @@ CREATE TABLE IF NOT EXISTS recruiters (
   email_normalized text,
   linkedin_url text,
   phone text,
+  created_by_user_id text,
   avg_rating integer NOT NULL DEFAULT 0,
   rating_count integer NOT NULL DEFAULT 0,
   log_count integer NOT NULL DEFAULT 0,
@@ -539,6 +541,9 @@ CREATE TABLE IF NOT EXISTS user_recruiter_links (
   last_email_at timestamptz,
   email_count integer NOT NULL DEFAULT 0,
   gmail_thread_id text,
+  email text,
+  phone text,
+  linkedin_url text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -769,6 +774,28 @@ CREATE INDEX IF NOT EXISTS webhook_deliveries_created_idx ON webhook_deliveries(
 CREATE INDEX IF NOT EXISTS webhook_deliveries_event_idx ON webhook_deliveries(event_id);
 CREATE INDEX IF NOT EXISTS webhook_deliveries_target_idx ON webhook_deliveries(target_user_id);
 CREATE INDEX IF NOT EXISTS webhook_deliveries_type_created_idx ON webhook_deliveries(event_type, created_at);
+CREATE TABLE IF NOT EXISTS stripe_processed_events (
+  event_id text PRIMARY KEY,
+  event_type text NOT NULL,
+  processed_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS data_purge_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  target_user_id text NOT NULL,
+  categories jsonb NOT NULL DEFAULT '[]',
+  keep_settings boolean NOT NULL DEFAULT true,
+  full_purge boolean NOT NULL DEFAULT false,
+  completed_steps jsonb NOT NULL DEFAULT '[]',
+  status text NOT NULL DEFAULT 'running',
+  attempts integer NOT NULL DEFAULT 1,
+  last_error text,
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  last_attempt_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS data_purge_runs_status_attempt_idx ON data_purge_runs(status, last_attempt_at);
+CREATE INDEX IF NOT EXISTS data_purge_runs_target_idx ON data_purge_runs(target_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS user_settings_stripe_customer_uidx ON user_settings(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS error_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -1413,7 +1440,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // gating branch, whose columns are different — and whose bump was still UNPUSHED, so the
 // "scan every remote branch" rule could not see it. Two branches sharing a number is the
 // trap in docs: a database stamped 57 by that branch would never run these ALTERs.
-export const SCHEMA_VERSION = 58;
+//
+// 59 = launch Phase 2: user_settings.subscription_event_at (the Stripe ordering clock) and
+// the partial unique index on user_settings.stripe_customer_id, stripe_processed_events
+// (webhook dedupe), data_purge_runs (the resumable deletion ledger), and
+// recruiters.created_by_user_id plus user_recruiter_links.email/phone/linkedin_url with
+// their one-time PII backfill in alters.
+export const SCHEMA_VERSION = 59;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2685,6 +2718,23 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS event_companies_event_company_role_uidx ON event_companies(event_id, company_id, role)`,
   `CREATE INDEX IF NOT EXISTS event_companies_user_company_idx ON event_companies(user_id, company_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS target_companies_user_company_uidx ON target_companies(user_id, company_id)`,
+  // Launch Phase 2. Columns first, then the one-time recruiter PII backfill, whose statements
+  // read the columns they fill. Each backfill statement only fills what is still null, so a
+  // re-run on any later version bump changes nothing.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_event_at timestamptz`,
+  `ALTER TABLE recruiters ADD COLUMN IF NOT EXISTS created_by_user_id text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS phone text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS linkedin_url text`,
+  // The creator is the earliest link written within 120 seconds of the canonical row (the same window as the Phase 0 runtime rule), since
+  // upsertCanonicalRecruiter and ensureUserLink run back to back in one request.
+  `UPDATE recruiters r SET created_by_user_id = f.user_id FROM (SELECT DISTINCT ON (l.recruiter_id) l.recruiter_id, l.user_id FROM user_recruiter_links l JOIN recruiters r2 ON r2.id = l.recruiter_id WHERE l.created_at <= r2.created_at + interval '120 seconds' ORDER BY l.recruiter_id, l.created_at) f WHERE r.id = f.recruiter_id AND r.created_by_user_id IS NULL`,
+  // The creator, or the only linker, is who put the shared details there, so they go onto that link.
+  // Anything else stays on the shared row only: its contributor cannot be determined.
+  `UPDATE user_recruiter_links l SET email = COALESCE(l.email, r.email), phone = COALESCE(l.phone, r.phone), linkedin_url = COALESCE(l.linkedin_url, r.linkedin_url) FROM recruiters r WHERE r.id = l.recruiter_id AND (r.email IS NOT NULL OR r.phone IS NOT NULL OR r.linkedin_url IS NOT NULL) AND (l.user_id = r.created_by_user_id OR NOT EXISTS (SELECT 1 FROM user_recruiter_links o WHERE o.recruiter_id = l.recruiter_id AND o.id <> l.id))`,
+  // A Gmail-scan link matched this row by the sender address first, so that address is almost
+  // always the one in this user's own mailbox.
+  `UPDATE user_recruiter_links l SET email = r.email FROM recruiters r WHERE r.id = l.recruiter_id AND l.source = 'gmail' AND l.email IS NULL AND r.email IS NOT NULL`,
 ];
 
 /**
