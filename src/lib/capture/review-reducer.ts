@@ -11,6 +11,15 @@ import type {
   CaptureJobResult,
   CaptureJobStatus,
 } from "@/lib/capture/types";
+import { clampCloseness } from "@/lib/capture/closeness";
+import {
+  followUpDaysFor,
+  planReminders,
+  shouldCreateFollowUp,
+  type PlannedReminder,
+  type ReminderPlanCommitment,
+  type ReminderPlanParticipant,
+} from "@/lib/note-batches";
 
 export type CapturePhase =
   | "input"
@@ -150,4 +159,42 @@ export function parseTagNames(text: string): string[] {
     out.push(t);
   }
   return out;
+}
+
+/** The reminder-relevant facts of one accepted card, derived exactly as the save derives them. */
+export function reminderFactsFor(
+  item: BulkNotePersonPreview,
+  decision: CaptureDecision
+): ReminderPlanParticipant & { closeness: number } {
+  const closeness = clampCloseness(decision.relationshipScore, clampCloseness(item.parsed.relationship_score_suggestion));
+  return {
+    name: decision.edits?.name?.trim() || item.parsed.name,
+    actionItems: item.parsed.action_items,
+    createReminder: shouldCreateFollowUp(closeness, item.parsed.relevance, Boolean(item.parsed.follow_up_recommendation)),
+    followUpDays: followUpDaysFor(closeness, item.parsed.follow_up_days),
+    followUpTitle: item.parsed.follow_up_recommendation,
+    closeness,
+  };
+}
+
+/** Every reminder a save of this job would write, given the dated suggestions still ticked. */
+export function plannedCaptureReminders(
+  result: Pick<CaptureJobResult, "items" | "anchorIso">,
+  decisions: CaptureDecisions | null | undefined,
+  commitments: readonly ReminderPlanCommitment[]
+): PlannedReminder[] {
+  return planReminders({
+    anchorIso: result.anchorIso,
+    participants: acceptedPeople(result.items, decisions).map(({ item, decision }) => reminderFactsFor(item, decision)),
+    commitments,
+  });
+}
+
+/** The summary's Save button: "Save meeting + 3 contacts + 2 reminders". */
+export function saveButtonLabel(counts: { meeting: boolean; contacts: number; reminders: number }): string {
+  const parts: string[] = [];
+  if (counts.meeting) parts.push("meeting");
+  if (counts.contacts) parts.push(`${counts.contacts} ${counts.contacts === 1 ? "contact" : "contacts"}`);
+  if (counts.reminders) parts.push(`${counts.reminders} ${counts.reminders === 1 ? "reminder" : "reminders"}`);
+  return parts.length ? `Save ${parts.join(" + ")}` : "Save";
 }

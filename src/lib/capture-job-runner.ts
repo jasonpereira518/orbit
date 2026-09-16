@@ -24,8 +24,7 @@ import {
   settleCaptureJob,
   type CaptureJobRow,
 } from "@/lib/capture-jobs";
-import { acceptedPeople, defaultReminderKeys, setAsidePeople } from "@/lib/capture/review-reducer";
-import { clampCloseness } from "@/lib/capture/closeness";
+import { acceptedPeople, defaultReminderKeys, reminderFactsFor, setAsidePeople } from "@/lib/capture/review-reducer";
 import type { CaptureJobResult, CaptureSavedSummary } from "@/lib/capture/types";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
@@ -34,7 +33,7 @@ import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 import { upsertIgnoredPeople, type IgnoredPersonInput } from "@/lib/ignored-people";
 import { getMeetingSession, getNoteBatchForUser, markMeetingSessionSaved, toNoteBatchMeeting } from "@/lib/meeting-sessions";
 import { meetingExtrasFromDigest } from "@/lib/meeting-extras";
-import { captureSourceKinds, followUpDaysFor, shouldCreateFollowUp } from "@/lib/note-batches";
+import { captureSourceKinds } from "@/lib/note-batches";
 import { attachCapturePhotos } from "@/lib/capture-photos";
 import {
   saveNoteBatch,
@@ -250,15 +249,15 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
       })[0];
       if (top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE) mergeContactId = top.contact.id;
     }
-    const closeness = clampCloseness(decision.relationshipScore, clampCloseness(parsed.relationship_score_suggestion));
+    const facts = reminderFactsFor(item, decision);
     return {
       notes: item.notes,
       parsed,
       mergeContactId,
-      createReminder: shouldCreateFollowUp(closeness, parsed.relevance, Boolean(parsed.follow_up_recommendation)),
-      relationshipScore: closeness,
+      createReminder: facts.createReminder,
+      relationshipScore: facts.closeness,
       tagNames: decision.tagNames?.length ? decision.tagNames : parsed.tags,
-      followUpDays: followUpDaysFor(closeness, parsed.follow_up_days),
+      followUpDays: facts.followUpDays,
       interactionDate: item.interactionDate,
       interactionType: item.interactionType,
     };

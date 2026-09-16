@@ -17,7 +17,7 @@ import { decisionFromDraft, draftFromItem } from "@/components/capture/review/pe
 import type { PersonDraft } from "@/components/capture/review/person-card";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
-import { acceptedPeople, countDecisions, defaultReminderKeys, peopleDecisions } from "@/lib/capture/review-reducer";
+import { acceptedPeople, countDecisions, defaultReminderKeys, peopleDecisions, plannedCaptureReminders, saveButtonLabel } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobResult, CaptureReminderChoices } from "@/lib/capture/types";
 import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 
@@ -82,17 +82,23 @@ export function CaptureSummary({
   const counts = countDecisions(result.items, decisions);
   const [editing, setEditing] = useState<string | null>(null);
   const checkedDates = suggestions.filter((s) => s.checked).length;
-
-  const saveLabel = useMemo(() => {
-    const parts: string[] = [];
-    if (hasMeeting) parts.push("meeting");
-    if (accepted.length) parts.push(`${accepted.length} ${accepted.length === 1 ? "contact" : "contacts"}`);
-    const reminderCount = checkedDates + meetingExtraCount;
-    if (reminderCount) parts.push(`${reminderCount} ${reminderCount === 1 ? "reminder" : "reminders"}`);
-    return parts.length ? `Save ${parts.join(" + ")}` : "Save";
-  }, [accepted.length, checkedDates, hasMeeting, meetingExtraCount]);
-
-  const actionItemCount = accepted.reduce((n, a) => n + a.item.parsed.action_items.length, 0);
+  // Everything the save will write, not just the ticked dates: each accepted person's action
+  // items and fallback follow-up count too, after the save's own de-duplication. Meeting
+  // digest items are counted by their ticks.
+  const planned = useMemo(
+    () =>
+      plannedCaptureReminders(
+        result,
+        decisions,
+        suggestions
+          .filter((s) => s.checked)
+          .map((s) => ({ title: s.title, dueDateIso: s.dueDateIso, dateBasis: s.dateBasis, personName: s.personNameOverride ?? s.personName }))
+      ),
+    [result, decisions, suggestions]
+  );
+  const reminderCount = planned.length + meetingExtraCount;
+  const saveLabel = saveButtonLabel({ meeting: hasMeeting, contacts: accepted.length, reminders: reminderCount });
+  const actionItemCount = planned.filter((p) => p.kind === "action_item").length;
   const dueLabel = result.anchorIso ? format(addDays(new Date(`${result.anchorIso}T12:00:00`), 14), "MMM d") : "in 2 weeks";
   const editingEntry = editing ? accepted.find((a) => a.item.key === editing) ?? null : null;
   const canSave = hasMeeting || accepted.length > 0 || checkedDates > 0;
@@ -167,7 +173,7 @@ export function CaptureSummary({
           </ul>
         ) : hasMeeting ? (
           <p className="text-sm text-muted-foreground">
-            No people to save from this meeting — its summary{checkedDates + meetingExtraCount > 0 ? " and reminders" : ""} will still be saved.
+            No people to save from this meeting — its summary{reminderCount > 0 ? " and reminders" : ""} will still be saved.
           </p>
         ) : suggestions.length > 0 ? (
           <p className="text-sm text-muted-foreground">No people to save from these notes — just the dates below.</p>

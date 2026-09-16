@@ -219,6 +219,93 @@ export function dropSupersededWindowDrafts<
   });
 }
 
+export type PlannedReminder = {
+  kind: "action_item" | "dated" | "follow_up";
+  /** The person's lowercased name — contacts have no ids before the save. */
+  contactKey: string | null;
+  title: string;
+  dueDate: Date;
+  dateBasis: ReminderDateBasis;
+};
+export type ReminderPlanParticipant = {
+  name: string | null;
+  actionItems: readonly string[];
+  createReminder: boolean;
+  followUpDays: number | null;
+  followUpTitle: string | null;
+};
+export type ReminderPlanCommitment = { title: string; dueDateIso: string; dateBasis: ReminderDateBasis; personName: string | null };
+
+/** Mirrors `MAX_ACTION_ITEMS_PER_INTERACTION` in src/lib/action-items.ts, which reaches @/db and cannot be imported here. */
+const PLAN_MAX_ACTION_ITEMS = 10;
+
+function planNameKey(name: string | null | undefined): string | null {
+  return name?.trim().toLowerCase() || null;
+}
+function planIsoNoon(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0, 0);
+}
+function planDayKey(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Every reminder `saveNoteBatch` would write for a fresh batch, without a database: step 1a
+ * (one window reminder per distinct action item), step 2 (dated commitments, bound to a
+ * participant by name), step 3 (the fallback follow-up for a person with no other draft),
+ * step 4 (`dropSupersededWindowDrafts`) and step 5's itemHash de-duplication. Meeting digest
+ * items are not planned; callers add their tick count. `smoke-capture-reminder-count`
+ * proves this equals what the save writes.
+ */
+export function planReminders(input: {
+  anchorIso: string;
+  participants: readonly ReminderPlanParticipant[];
+  commitments: readonly ReminderPlanCommitment[];
+}): PlannedReminder[] {
+  const anchor = planIsoNoon(input.anchorIso);
+  const names = new Set(input.participants.map((p) => planNameKey(p.name)).filter((k): k is string => Boolean(k)));
+  const drafts: PlannedReminder[] = [];
+
+  for (const p of input.participants) {
+    const key = planNameKey(p.name);
+    const seen = new Set<string>();
+    for (const raw of p.actionItems) {
+      const text = raw.replace(/^ +| +$/g, "");
+      const lowered = text.toLowerCase();
+      if (!text || seen.has(lowered)) continue;
+      if (seen.size >= PLAN_MAX_ACTION_ITEMS) break;
+      seen.add(lowered);
+      drafts.push({ kind: "action_item", contactKey: key, title: text, dueDate: windowDueDate(anchor), dateBasis: "window" });
+    }
+  }
+  for (const c of input.commitments) {
+    const key = planNameKey(c.personName);
+    drafts.push({ kind: "dated", contactKey: key && names.has(key) ? key : null, title: c.title, dueDate: planIsoNoon(c.dueDateIso), dateBasis: c.dateBasis });
+  }
+  for (const p of input.participants) {
+    const key = planNameKey(p.name);
+    if (!p.createReminder || !key || drafts.some((d) => d.contactKey === key)) continue;
+    drafts.push({
+      kind: "follow_up",
+      contactKey: key,
+      title: p.followUpTitle || `Follow up with ${p.name}`,
+      dueDate: windowDueDate(anchor, p.followUpDays || DEFAULT_FOLLOW_UP_WINDOW_DAYS),
+      dateBasis: "window",
+    });
+  }
+
+  const hashes = new Set<string>();
+  return dropSupersededWindowDrafts(drafts, (d) => d.contactKey).filter((d) => {
+    if (d.kind === "action_item") return true;
+    const hash = `${planDayKey(d.dueDate)}|${d.title.trim().toLowerCase()}`;
+    if (hashes.has(hash)) return false;
+    hashes.add(hash);
+    return true;
+  });
+}
+
 /**
  * Picks which parsed item (if any) should be locked to a known contact when the bulk
  * notes panel is opened from that contact's profile (`lockedParticipantId`). Pure so it
