@@ -107,7 +107,8 @@ export async function POST(request: Request) {
               ctx.modelRecruiters,
               (delta) => send({ type: "answer", delta }),
               ctx.focusProfile,
-              ctx.attachedContext
+              ctx.attachedContext,
+              { signal: request.signal }
             ),
           { userId }
         );
@@ -134,11 +135,18 @@ export async function POST(request: Request) {
           })),
         });
       } catch (err) {
+        // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
+        // an error of ours either — the provider call was aborted on purpose.
+        if (request.signal.aborted) return;
         // The status line is already sent, so this reaches the client as an event. Report it:
         // a mid-stream failure used to leave no trace outside the person's screen.
         send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });
       } finally {
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // Already closed by the runtime when the client disconnected.
+        }
       }
     },
   });

@@ -1871,12 +1871,15 @@ async function streamText(
     temperature?: number;
     maxOutputTokens?: number;
     operation: string;
+    signal?: AbortSignal;
   },
   onDelta: (delta: string) => void
 ): Promise<string> {
   const { provider, model, apiKey, keyOwner } = await getAiConfig(userId);
   const temperature = input.temperature ?? 0.3;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
+  // One deadline per call plus the caller's own abort — a fresh deadline per call, as always.
+  const signal = input.signal ? AbortSignal.any([aiSignal(), input.signal]) : aiSignal();
 
   return withUsage(
     { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
@@ -1894,7 +1897,7 @@ async function streamText(
           model,
           contents: input.user,
           config: {
-            abortSignal: aiSignal(),
+            abortSignal: signal,
             temperature,
             maxOutputTokens,
             systemInstruction: input.system,
@@ -1920,7 +1923,7 @@ async function streamText(
               { role: "user", content: input.user },
             ],
           },
-          { signal: aiSignal() }
+          { signal }
         );
         let usage: unknown = null;
         for await (const chunk of stream) {
@@ -1939,7 +1942,7 @@ async function streamText(
             system: input.system,
             messages: [{ role: "user", content: input.user }],
           },
-          { signal: aiSignal() }
+          { signal }
         );
         for await (const event of stream) {
           if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
@@ -1951,7 +1954,8 @@ async function streamText(
 
       if (!full.trim()) throw new Error("Empty AI response");
       return full;
-    })
+    }),
+    { cancelSignal: input.signal }
   );
 }
 
@@ -1978,7 +1982,8 @@ export async function chatWithNetworkStream(
   recruitersContext: NonNullable<Parameters<typeof chatWithNetwork>[6]>,
   onDelta: (delta: string) => void,
   focusProfile: Parameters<typeof chatWithNetwork>[7] = null,
-  attachedContext: Parameters<typeof chatWithNetwork>[8] = null
+  attachedContext: Parameters<typeof chatWithNetwork>[8] = null,
+  options: { signal?: AbortSignal } = {}
 ): Promise<SplitResult> {
   const prompt = buildChatPrompt({
     question,
@@ -1998,6 +2003,7 @@ export async function chatWithNetworkStream(
       temperature: 0.3,
       user: prompt.user,
       system: `${prompt.systemCore}${CHAT_STREAM_TAIL}`,
+      signal: options.signal,
     },
     (delta) => {
       const out = splitter.push(delta);
