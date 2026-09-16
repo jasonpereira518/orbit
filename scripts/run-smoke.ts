@@ -127,6 +127,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-settings-layout": "pure",
   "smoke-sky-figures": "pure",
   "smoke-timeline-vocabulary": "pure",
+  "smoke-twilio-opt-out": "pure",
   "smoke-webhook-signing": "pure",
   "smoke-warp-chrono": "pure",
   "smoke-voice-recording": "pure",

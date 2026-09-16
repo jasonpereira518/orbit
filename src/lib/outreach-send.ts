@@ -1,3 +1,4 @@
+import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { Resend } from "resend";
 import twilio from "twilio";
@@ -155,11 +156,18 @@ export async function sendOutreachMessage(input: {
   }
 
   const client = twilio(config.twilioAccountSid, config.twilioAuthToken);
-  const message = await client.messages.create({
-    from: config.twilioFromNumber,
-    to: input.toPhone,
-    body,
-  });
+  let message;
+  try {
+    message = await client.messages.create({
+      from: config.twilioFromNumber,
+      to: input.toPhone,
+      body,
+    });
+  } catch (err) {
+    // The footer's promise, kept by Twilio: a STOP'd number is final, not "try again".
+    if (isTwilioOptOut(err)) throw new UserFacingError(SMS_OPTED_OUT_MESSAGE);
+    throw err;
+  }
 
   return { deliveryId: message.sid };
 }
