@@ -1,5 +1,6 @@
 import { del } from "@vercel/blob";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
@@ -377,6 +378,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     // contact does, ticked or not.
     counts: [contacts, companies, contactMerges],
     run: async (db, userId) => {
+      // Read before anything goes: the contact rows and merge snapshots are the only record
+      // of which Blob objects are this user's. The objects have no foreign key to cascade.
+      const photoRows = await db.execute(sql`
+        SELECT profile_image_url AS url FROM contacts WHERE user_id = ${userId} AND profile_image_url LIKE '%.public.blob.vercel-storage.com/avatars/%'
+        UNION
+        SELECT loser_snapshot->>'profile_image_url' AS url FROM contact_merges WHERE user_id = ${userId} AND loser_snapshot->>'profile_image_url' LIKE '%.public.blob.vercel-storage.com/avatars/%'
+      `);
+      const photoUrls = rowsOf<{ url: string }>(photoRows).map((r) => r.url);
       // Duplicate-prevention rows. `contact_identities` and `duplicate_suggestions` do
       // cascade from `contacts`, but they are deleted explicitly for the same reason
       // `event_attendees` is: they carry their own `user_id`, so `smoke-purge` requires
@@ -406,6 +415,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // leave behind.
       await db.delete(targetCompanies).where(eq(targetCompanies.userId, userId));
       await db.delete(companies).where(eq(companies.userId, userId));
+      // After the rows: a Blob outage leaves orphaned objects, never undeleted people.
+      await deleteAvatarBlobs(photoUrls);
     },
   },
   tags: {

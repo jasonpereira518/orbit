@@ -213,6 +213,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-delete-partial": "pglite",
   "smoke-clerk-orphan-sweep": "pglite",
   "smoke-oauth-revoke": "pglite",
+  "smoke-avatar-cleanup": "pglite",
   "smoke-preserved-settings": "pglite",
   "smoke-terms-acceptance": "pglite",
   "smoke-delete-my-account": "pglite",
