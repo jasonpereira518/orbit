@@ -81,10 +81,10 @@ export function managedModel(provider: AiProvider, requested: string | null | un
  * THE CAP. A one-time payment funding open-ended inference is only safe with a ceiling, so
  * every managed call counts against a monthly allowance per account (calendar month, UTC).
  *
- * The NUMBERS are a pricing decision, not an engineering one, and are placeholders until
- * Jason picks one of the options in the PR description. $1.00 a month is roughly 150 chat
- * answers or 200 note captures on Gemini 3.5 Flash; at that ceiling the $25 intro price
- * covers two years of maximal use and the $75 standard price six.
+ * The NUMBERS are a pricing decision, not an engineering one. Jason chose $1.00 a month
+ * (Sep 16 2026, over $0.50 and $2.50): roughly 140 chat answers or 200 note captures on
+ * Gemini 3.5 Flash. At that ceiling the $25 intro price covers two years of maximal use and
+ * the $75 standard price six; typical use is far lower. Change it here, and only here.
  *
  *  - `monthlyCostMicros`  estimated provider spend, from `usage_events.estimated_cost_micros`
  *  - `monthlyCalls`       a runaway-loop guard that holds even where cost is unknown
