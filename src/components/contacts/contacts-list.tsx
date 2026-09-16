@@ -151,6 +151,8 @@ export type ContactsListFilters = {
   company?: string;
   minScore?: number;
   followUp?: "due";
+  /** Days since the last logged interaction — see `parseQuietDays`. */
+  quiet?: number;
   sort?: ContactSort;
   letter?: string;
   tag?: string;
@@ -331,6 +333,7 @@ export function ContactsList({
     if (filters.minScore) params.set("minScore", String(filters.minScore));
     if (filters.followUp) params.set("followUp", filters.followUp);
     if (filters.tag) params.set("tag", filters.tag);
+    if (filters.quiet) params.set("quiet", String(filters.quiet));
     if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
     params.set("letter", letter);
     router.replace(`/contacts?${params.toString()}`);

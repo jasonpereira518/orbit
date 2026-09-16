@@ -15,6 +15,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import {
   CONTACTS_PAGE_SIZE,
+  parseQuietDays,
   type ContactPickerOption,
   type ContactSort,
   type ContactsPage,
@@ -89,7 +90,8 @@ export type {
 type Cursor =
   | { s: "name"; k: string; n: string; id: string }
   | { s: "closeness"; c: number; id: string }
-  | { s: "recent"; u: string; id: string };
+  | { s: "recent"; u: string; id: string }
+  | { s: "last_touch"; t: string | null; id: string };
 
 function encodeCursor(cursor: Cursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
@@ -158,6 +160,21 @@ export async function listContactsPage(
         and t.user_id = ${userId}
         and lower(trim(t.name)) = ${tag.toLowerCase()}
     )`);
+  }
+
+  // "Gone quiet": nothing logged for at least this many days. A contact with no interaction
+  // at all qualifies — `last_interaction_at` is stamped at create, so NULL here means the
+  // column predates that or an import left it empty, and either way "never" is quieter than
+  // any threshold. Inlined rather than bound because an interval built from a parameter is
+  // awkward in Postgres; `parseQuietDays` has already reduced it to one of three integers,
+  // so there is no user string anywhere near this.
+  const quiet = parseQuietDays(filters?.quiet);
+  if (quiet !== null) {
+    conditions.push(
+      sql`(${contacts.lastInteractionAt} is null or ${contacts.lastInteractionAt} <= now() - ${sql.raw(
+        `interval '${quiet} days'`
+      )})`
+    );
   }
 
   if (filters?.followUp === "due") {
@@ -261,6 +278,12 @@ function orderFor(sort: ContactSort) {
   if (sort === "recent") {
     return [desc(contacts.updatedAt), desc(contacts.id)];
   }
+  if (sort === "last_touch") {
+    // NULLS LAST, so the people you have never logged an interaction with sit at the bottom
+    // rather than the top. Postgres puts NULLs FIRST under DESC by default, which would open
+    // this list with everyone the user has no information about — the opposite of useful.
+    return [sql`${contacts.lastInteractionAt} desc nulls last`, desc(contacts.id)];
+  }
   return [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
 }
 
@@ -273,6 +296,22 @@ function cursorCondition(cursor: Cursor) {
   if (cursor.s === "recent") {
     return sql`(${contacts.updatedAt}, ${contacts.id}) < (${new Date(cursor.u)}, ${cursor.id}::uuid)`;
   }
+  if (cursor.s === "last_touch") {
+    // NULLS LAST has two phases, and a plain row-value comparison cannot express either:
+    // `(col, id) < (NULL, x)` evaluates to NULL, which excludes every row, so a single
+    // condition here silently truncates the list at the first page.
+    //
+    // Phase one, still inside the dated rows: take anything strictly older, plus every
+    // undated row, since those all sort after the dated ones.
+    if (cursor.t !== null) {
+      return sql`(
+        (${contacts.lastInteractionAt}, ${contacts.id}) < (${new Date(cursor.t)}, ${cursor.id}::uuid)
+        or ${contacts.lastInteractionAt} is null
+      )`;
+    }
+    // Phase two, already into the undated tail: only undated rows remain, ordered by id.
+    return sql`(${contacts.lastInteractionAt} is null and ${contacts.id} < ${cursor.id}::uuid)`;
+  }
   // Row-value comparison rather than the unrolled OR chain, so the planner can satisfy it
   // straight from `contacts_user_sort_idx`.
   return sql`(${contacts.sortKey}, ${contacts.fullName}, ${contacts.id}) > (${cursor.k}, ${cursor.n}, ${cursor.id}::uuid)`;
@@ -280,13 +319,27 @@ function cursorCondition(cursor: Cursor) {
 
 function cursorFor(
   sort: ContactSort,
-  row: { id: string; sortKey: string | null; fullName: string; closeness: number | null; updatedAt: Date }
+  row: {
+    id: string;
+    sortKey: string | null;
+    fullName: string;
+    closeness: number | null;
+    updatedAt: Date;
+    lastInteractionAt: Date | null;
+  }
 ): Cursor {
   if (sort === "closeness") {
     return { s: "closeness", c: row.closeness ?? 0, id: row.id };
   }
   if (sort === "recent") {
     return { s: "recent", u: new Date(row.updatedAt).toISOString(), id: row.id };
+  }
+  if (sort === "last_touch") {
+    return {
+      s: "last_touch",
+      t: row.lastInteractionAt ? new Date(row.lastInteractionAt).toISOString() : null,
+      id: row.id,
+    };
   }
   return { s: "name", k: row.sortKey ?? "", n: row.fullName, id: row.id };
 }

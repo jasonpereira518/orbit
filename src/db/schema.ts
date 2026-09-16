@@ -424,6 +424,11 @@ export const contacts = pgTable(
     index("contacts_user_updated_idx").on(t.userId, t.updatedAt),
     index("contacts_user_closeness_idx").on(t.userId, t.closeness.desc(), t.id.desc()),
     index("contacts_user_recent_idx").on(t.userId, t.updatedAt.desc(), t.id.desc()),
+    index("contacts_user_last_touch_idx").on(
+      t.userId,
+      t.lastInteractionAt.desc().nullsLast(),
+      t.id.desc()
+    ),
     index("contacts_company_id_idx").on(t.companyId),
     // The browser extension resolves a profile to a contact on every panel open;
     // without these, each lookup is a full per-user scan.

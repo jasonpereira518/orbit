@@ -1088,12 +1088,16 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * and .revert_stats. None of the three can be backfilled, so imports that finished before
  * this version stay unrevertible by construction.
  *
+ * v36 = contacts_user_last_touch_idx, backing the "Last spoken" ordering on /contacts.
+ * Index only, no column: `last_interaction_at` has always been there, it just had nothing
+ * reading it in order.
+ *
  * v35 = contacts.keep_in_touch_days: a per-contact interval the user states themselves,
  * nullable because "never said" is not "never". Nothing to backfill — there is no existing
  * signal that means the same thing, and inferring one from past interaction spacing would
  * invent an intent the user never expressed.
  */
-export const SCHEMA_VERSION = 35;
+export const SCHEMA_VERSION = 36;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1196,6 +1200,10 @@ export const SCALE_DDL: string[] = [
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
+  // Backs the "Last spoken" sort. NULLS LAST must be spelled out here and in `orderFor`
+  // together: an index whose null ordering disagrees with the query's is simply not used,
+  // and the sort silently becomes a full scan as the network grows.
+  `CREATE INDEX IF NOT EXISTS contacts_user_last_touch_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
