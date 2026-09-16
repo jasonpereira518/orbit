@@ -35,6 +35,11 @@ console.log("calendarPauseLine");
 check("scope trouble asks for calendar access", calendarPauseLine("Google Calendar 403: insufficient scope") === "Calendar sync paused — reconnect Google and allow calendar access");
 check("anything else asks to reconnect", calendarPauseLine("Google Calendar 503: upstream") === "Calendar sync paused — reconnect Google to start it again");
 check("never repeats the raw provider text", !calendarPauseLine('{"error":"secret"}').includes("secret"));
+check(
+  "the Microsoft card says Microsoft, not Google",
+  calendarPauseLine("Graph 503: upstream", "Microsoft") === "Calendar sync paused — reconnect Microsoft to start it again",
+  calendarPauseLine("Graph 503: upstream", "Microsoft"),
+);
 
 console.log("connectionSummary");
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);

@@ -10,6 +10,7 @@ import {
 } from "@/actions/gmail";
 import { previewGoogleContacts, type GoogleContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
+import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
@@ -38,6 +39,16 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
     job?.kind === "google_contacts" && job.status === "running" ? job : null;
   const importProgress = googleJob?.progress ?? null;
   const busy = pending || job?.status === "running";
+  // One handler for the header link and the button: both start the same contacts consent.
+  const connect = () =>
+    start(async () => {
+      try {
+        const { url } = await startGmailOAuth({ purpose: "contacts", returnTo });
+        window.location.href = url;
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+      }
+    });
   // The status knows the stored grant; the preview result can narrow it further.
   const contactsGranted = contactsScopeGranted && (status?.canImportContacts ?? true);
 
@@ -133,27 +144,30 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
         <div>
           <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {status.connected
-              ? `Connected as ${status.emailAddress}${!contactsGranted ? " — reconnect to grant contacts access" : ""}`
-              : "Connect your Google account to import contacts directly."}
+            {status.status === "needs_reauth"
+              ? `${SESSION_EXPIRED_LINE} to import contacts again`
+              : status.connected
+                ? `Connected as ${status.emailAddress}${!contactsGranted ? " — reconnect to grant contacts access" : ""}`
+                : "Connect your Google account to import contacts directly."}
           </p>
+          {status.status === "disarmed" ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
+              <span>{calendarPauseLine(status.syncError)}</span>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={connect}>
+                Reconnect Google
+              </Button>
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {!status.connected || !contactsGranted ? (
             <Button
               disabled={busy}
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const { url } = await startGmailOAuth({ purpose: "contacts", returnTo });
-                    window.location.href = url;
-                  } catch (err) {
-                    toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-                  }
-                })
-              }
+              onClick={connect}
             >
-              {status.connected ? "Reconnect Google" : "Connect Google"}
+              {status.connected || status.status === "needs_reauth"
+                ? "Reconnect Google"
+                : "Connect Google"}
             </Button>
           ) : (
             <>

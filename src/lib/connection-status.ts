@@ -25,11 +25,11 @@ export const SESSION_EXPIRED_LINE = "Session expired — reconnect";
 export const CALENDAR_PAUSED_SHORT = "Calendar sync paused";
 
 /** The full line for a card. Never echoes `sync_error`, which can be a provider's raw body. */
-export function calendarPauseLine(syncError: string | null): string {
+export function calendarPauseLine(syncError: string | null, provider: "Google" | "Microsoft" = "Google"): string {
   if (syncError && /not granted|insufficient|scope/i.test(syncError)) {
-    return `${CALENDAR_PAUSED_SHORT} — reconnect Google and allow calendar access`;
+    return `${CALENDAR_PAUSED_SHORT} — reconnect ${provider} and allow calendar access`;
   }
-  return `${CALENDAR_PAUSED_SHORT} — reconnect Google to start it again`;
+  return `${CALENDAR_PAUSED_SHORT} — reconnect ${provider} to start it again`;
 }
 
 /** One line for the Integrations card and nav, which truncate — so the short forms. */
