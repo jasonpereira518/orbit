@@ -243,6 +243,56 @@ async function seed() {
     matchedBy: "exact_name",
   });
 
+  // Cascade-covered (from `contacts`), seeded anyway, same reasoning as `contactBriefs`.
+  // A typed opportunity carries a verbatim sentence out of someone's notes, so it is at
+  // least as sensitive as the interaction it came from and must leave with the account.
+  await db.insert(schema.contactOpportunities).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "internship",
+    label: "summer internship on the infra team",
+    sourceInteractionId: interaction.id,
+    sourceExcerpt: "she said they open summer internship applications in October",
+    createdBy: "ai",
+    itemHash: "opportunity-hash",
+  });
+
+  // `job_feed_sources` and `job_postings` are global, so `userScopedTables()` skips them —
+  // but a MATCH names one of this user's contacts, carries a `user_id`, and is therefore
+  // account data. Seeded from a real posting row so the cascade from `contacts` is what is
+  // actually under test, not an orphan insert.
+  const [feedSource] = await db
+    .insert(schema.jobFeedSources)
+    .values({
+      id: "smoke.purge.feed",
+      label: "Smoke feed",
+      url: "https://example.com/listings.json",
+      season: "Summer 2027",
+    })
+    .returning();
+  const [posting] = await db
+    .insert(schema.jobPostings)
+    .values({
+      sourceId: feedSource.id,
+      externalId: "smoke-posting-1",
+      companyName: "Acme",
+      companyKey: "acme",
+      title: "Software Engineer Intern",
+      url: "https://example.com/jobs/1",
+      terms: ["Summer 2027"],
+      locations: ["Remote"],
+      datePosted: new Date(),
+      dateUpdated: new Date(),
+    })
+    .returning();
+  await db.insert(schema.jobPostingMatches).values({
+    userId: USER,
+    postingId: posting.id,
+    contactId: contact.id,
+    companyKey: "acme",
+    matchKind: "internship",
+  });
+
   const [list] = await db
     .insert(schema.reminderLists)
     .values({ userId: USER, name: "Inbox", nameNormalized: "inbox" })

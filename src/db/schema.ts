@@ -84,6 +84,7 @@ import type {
   IgnoredPersonReason,
 } from "@/lib/capture/types";
 import type { CaptureParseHints } from "@/lib/ai";
+import type { MentionPick } from "@/lib/mentions/mention-picks";
 
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -391,6 +392,28 @@ export const contacts = pgTable(
     lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
     nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
     followUpStatus: text("follow_up_status").default("none"),
+
+    /**
+     * A recurring rhythm the notes actually stated — "check in monthly", "ping me every two
+     * weeks". Written by the capture save when the model found the phrase and
+     * `parseCadencePhrase` could resolve it; null otherwise, which means "nobody said".
+     *
+     * Days rather than a unit+count pair or an RRULE because every consumer already works in
+     * days (`windowDueDate`, the idle thresholds in `src/lib/reminders.ts`), and "every two
+     * weeks" and "biweekly" collapse to 14 with no ambiguity. "Monthly" is 30, which drifts
+     * about five days a year — fine for a nudge, and exactly why this never creates a
+     * recurring series. Only the NEXT occurrence is ever scheduled.
+     *
+     * Nothing to do with `cadence` in `src/lib/closeness.ts`, which is a touch-COUNT score
+     * component. Same word, different noun — do not unify them.
+     */
+    cadenceDays: integer("cadence_days"),
+    /** The phrase verbatim, so a suggestion can say: you said "check in monthly". */
+    cadencePhrase: text("cadence_phrase"),
+    cadenceSource: text("cadence_source").$type<"note" | "user">(),
+    /** When it was last stated, so a newer note supersedes an older one rather than racing it. */
+    cadenceSetAt: timestamp("cadence_set_at", { withTimezone: true }),
+
     aiSummary: text("ai_summary"),
     notes: text("notes"),
 
@@ -792,6 +815,19 @@ export const reminders = pgTable(
     sourceExcerpt: text("source_excerpt"),
     rawDatePhrase: text("raw_date_phrase"),
     dateBasis: text("date_basis").$type<ReminderDateBasis>(),
+    /**
+     * Whether the notes SAID this ("explicit") or Orbit inferred it from what was discussed
+     * ("implied").
+     *
+     * Deliberately not another `reminder_type` value: that column encodes DATE provenance
+     * (manual / extracted_date / ai_suggested) and is read by `TYPE_LABELS` in
+     * `reminder-card.tsx` and by the collision rule in `note-batch-save.ts`. Overloading it
+     * would break both, and the two facts are orthogonal — an implied step can still carry
+     * an extracted date.
+     */
+    origin: text("origin").$type<ReminderOrigin>().default("explicit").notNull(),
+    /** 0-100, matching `suggested_reminders`. Only ever set on AI-produced rows. */
+    confidenceScore: integer("confidence_score"),
     /** `buildSuggestionItemHash(sourceHash, dueIso, title)`; soft-unique per user (NULLs allowed) so a re-paste cannot recreate a reminder. */
     itemHash: text("item_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -864,6 +900,15 @@ export const suggestedReminders = pgTable(
 export type ReminderDateBasis = "absolute" | "relative" | "vague" | "window";
 
 /**
+ * Where a reminder's *content* came from: the notes said it, or Orbit inferred it from what
+ * was discussed. Orthogonal to `reminderType`, which says where its DATE came from.
+ *
+ * Every row written before this shipped reads as `"explicit"`, which is correct — implied
+ * items did not exist, so nothing pre-existing can be one.
+ */
+export type ReminderOrigin = "explicit" | "implied";
+
+/**
  * What one confirmed note paste produced, rendered by `/capture/[batchId]`. Stored as a
  * snapshot: the rows it points at may later be edited or dismissed, and the page shows
  * live status alongside this record of what was created.
@@ -874,6 +919,14 @@ export type NoteBatchResult = {
   unresolvedMentions: { text: string; context: string | null }[];
   actionItems: { id: string; contactId: string; text: string; reminderId: string | null }[];
   reminders: { id: string; contactId: string | null; title: string; dueIso: string; dateBasis: ReminderDateBasis; rawDatePhrase: string | null; sourceExcerpt: string | null }[];
+  /**
+   * Typed opportunities the batch opened.
+   *
+   * OPTIONAL, and it has to stay that way: every batch saved before this shipped has a
+   * `result` jsonb with no such key, and `/capture/[batchId]` renders straight off this
+   * snapshot. A required field would make those pages throw on `undefined.map`.
+   */
+  opportunities?: { id: string; contactId: string; kind: string; label: string; dueIso: string | null }[];
   skipped: { relative: number; unverifiable: number; past: number; duplicate: number };
   /** Present only when the batch came from a recorded meeting (`/capture?mode=meeting`). */
   meeting?: NoteBatchMeeting;
@@ -1015,6 +1068,85 @@ export const actionItems = pgTable(
   ]
 );
 
+/**
+ * What kind of possibility an opportunity is. Plain `text` with no CHECK and no `pgEnum`,
+ * like every other enum in this file, so widening it needs no DDL and no version bump.
+ * Labels, hints and the alias table that repairs model output live in
+ * `src/lib/opportunity-kinds.ts`, which imports these unions rather than restating them.
+ */
+export type OpportunityKind =
+  | "internship"
+  | "job"
+  | "referral"
+  | "introduction"
+  | "startup_lead"
+  | "mentor"
+  | "investor"
+  | "speaker"
+  | "customer"
+  | "collaboration"
+  | "advice"
+  | "other";
+
+export type OpportunityStatus = "open" | "in_progress" | "landed" | "passed" | "dismissed";
+
+/** Which side is offering. Null is common and correct — most notes do not say. */
+export type OpportunityDirection = "they_offer" | "you_ask";
+
+/**
+ * A concrete possibility a conversation surfaced: an internship, a referral someone offered,
+ * an intro they promised, a company worth chasing.
+ *
+ * Replaces the untyped `contacts.opportunities` string array, which had no UI, no status and
+ * no way to hang a reminder off it — and which `updateContactForUser` overwrote wholesale, so
+ * a second note about the same person silently deleted the first note's opportunities. That
+ * column survives as a DERIVED mirror with exactly one writer
+ * (`syncContactOpportunityMirror`), because four readers predate this table.
+ */
+export const contactOpportunities = pgTable(
+  "contact_opportunities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<OpportunityKind>().notNull(),
+    /** 3-10 words in the note's own vocabulary. Never a sentence, never the date. */
+    label: text("label").notNull(),
+    status: text("status").$type<OpportunityStatus>().default("open").notNull(),
+    direction: text("direction").$type<OpportunityDirection>(),
+    /**
+     * `set null`, not cascade: deleting an interaction corrects the record of a conversation,
+     * it does not assert the opportunity never existed.
+     */
+    sourceInteractionId: uuid("source_interaction_id").references(() => interactions.id, { onDelete: "set null" }),
+    noteBatchId: uuid("note_batch_id"),
+    /** The verbatim sentence it came from — the same auditability contract as `reminders.source_excerpt`. */
+    sourceExcerpt: text("source_excerpt"),
+    dueDate: timestamp("due_date", { withTimezone: true }),
+    rawDatePhrase: text("raw_date_phrase"),
+    /** 0-100, matching `ai_suggestions` and `suggested_reminders`. */
+    confidenceScore: integer("confidence_score"),
+    createdBy: text("created_by").$type<"ai" | "user">().default("user").notNull(),
+    /**
+     * `buildOpportunityItemHash(sourceHash, contactId, kind, label)`. Soft-unique per user
+     * with NULLs allowed, exactly like `reminders.item_hash`: re-pasting a note to fix a typo
+     * must not duplicate somebody's pipeline, and a hand-added row (hash null) can never
+     * collide with anything.
+     */
+    itemHash: text("item_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("contact_opportunities_user_contact_idx").on(t.userId, t.contactId, t.status),
+    index("contact_opportunities_user_status_due_idx").on(t.userId, t.status, t.dueDate),
+    /** The job-feed matcher's only read: every open internship/referral, across all users. */
+    index("contact_opportunities_status_kind_idx").on(t.status, t.kind),
+    uniqueIndex("contact_opportunities_user_item_hash_uidx").on(t.userId, t.itemHash),
+  ]
+);
+
 export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
 export type MeetingSegmentEngine = "wispr" | "whisper" | "gemini" | "silent";
 
@@ -1099,6 +1231,13 @@ export const contactBriefs = pgTable("contact_briefs", {
   recentDiscussions: jsonb("recent_discussions").$type<{ interactionId: string; dateIso: string; line: string }[]>().default([]).notNull(),
   generatedAt: timestamp("generated_at", { withTimezone: true }).defaultNow().notNull(),
   basisInteractionId: uuid("basis_interaction_id"),
+  /**
+   * One imperative clause naming the most useful thing to do next, or null when nothing is
+   * open. Distinct from `standing`, which says where things are; this says what to do about
+   * it, and it is the only part of the brief written with the contact's open commitments and
+   * opportunities in front of the model.
+   */
+  nextStep: text("next_step"),
   model: text("model"),
 });
 
@@ -2280,6 +2419,25 @@ export const captureJobs = pgTable(
     /** Transcribed media, in arrival order. */
     ingestedBlocks: jsonb("ingested_blocks").$type<CaptureIngestedBlock[]>().default([]).notNull(),
     sources: jsonb("sources").$type<string[]>().default([]).notNull(),
+    /**
+     * Shared by every job from one multi-file drop; null for an ordinary single capture.
+     *
+     * Load-bearing beyond grouping: `queueCaptureJob` discards every other reviewable job
+     * when a new one starts, because a second Extract would otherwise orphan cards nobody
+     * can get back to. A batch has a queue UI that CAN get back to all of them, so that rule
+     * is skipped exactly when this is set.
+     */
+    batchGroupId: uuid("batch_group_id"),
+    /** The original filename, for the queue row. `sources` holds provenance ("photos:3"), not names. */
+    sourceLabel: text("source_label"),
+    /**
+     * Contacts the person picked with `@` while writing, carried to the save so an explicit
+     * choice never goes back through fuzzy name resolution.
+     *
+     * Deliberately NOT folded into `input_hints`: a contact id is not a parse hint, and
+     * anything on an AI-facing type eventually finds its way into a prompt.
+     */
+    mentionPicks: jsonb("mention_picks").$type<MentionPick[]>().default([]).notNull(),
     /** `capture_photos` ids stored at upload, attached to the batch when the job saves. */
     photoIds: jsonb("photo_ids").$type<string[]>().default([]).notNull(),
     transcriptionEngine: text("transcription_engine"),
@@ -2301,6 +2459,7 @@ export const captureJobs = pgTable(
   (t) => [
     index("capture_jobs_user_status_idx").on(t.userId, t.status, t.updatedAt),
     index("capture_jobs_stall_idx").on(t.status, t.updatedAt),
+    index("capture_jobs_user_batch_idx").on(t.userId, t.batchGroupId),
   ]
 );
 
@@ -2486,6 +2645,139 @@ export const opsAlertState = pgTable("ops_alert_state", {
   detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * The internship/job feeds Orbit watches, and the state that makes re-reading them cheap.
+ *
+ * GLOBAL, not per-user — one feed serves everybody, the same way `cron_runs` and
+ * `ops_alert_state` are global. Nothing user-specific is ever sent to the source: the
+ * request is an unauthenticated GET of a public file. The obvious "optimisation" — asking
+ * the source only about the companies we care about — would leak every user's
+ * target-company list to a third party, and must not be built.
+ */
+export const jobFeedSources = pgTable("job_feed_sources", {
+  /** Stable, chosen id (e.g. "simplify.summer2027"), not generated — see `src/lib/jobs/feed-sources.ts`. */
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  url: text("url").notNull(),
+  /** Matched against each listing's `terms`, e.g. "Summer 2027". */
+  season: text("season").notNull(),
+  /** The operator kill switch. A deploy re-seeds rows but never re-enables a disabled one. */
+  enabled: boolean("enabled").default(true).notNull(),
+  /** Conditional-GET state. A 304 is a header exchange and costs nothing, which is the steady state. */
+  etag: text("etag"),
+  lastModified: text("last_modified"),
+  lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true }),
+  /** Last 200 (not 304). A season that has ended stops changing, which is how rot is detected. */
+  lastChangedAt: timestamp("last_changed_at", { withTimezone: true }),
+  /**
+   * Unix SECONDS, matching the feed's own units — the incremental cursor.
+   *
+   * Keyed on each listing's `date_updated`, never `date_posted`: a posting can be flipped
+   * inactive or have its URL corrected without `date_posted` moving, and those are exactly
+   * the changes worth re-reading.
+   */
+  lastMaxDateUpdated: integer("last_max_date_updated").default(0).notNull(),
+  lastStatus: text("last_status").$type<JobFeedStatus>(),
+  lastError: text("last_error"),
+  consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
+  bytesLastFetched: integer("bytes_last_fetched"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type JobFeedStatus =
+  | "ok"
+  | "not_modified"
+  | "too_large"
+  | "http_error"
+  | "schema_drift"
+  | "unreachable";
+
+/**
+ * One normalised posting from a feed. Global, like its source.
+ *
+ * Every string here is third-party text that ends up in something a user reads, so it is
+ * sanitized at ingest (`src/lib/jobs/listing-schema.ts`) and never written into
+ * `contacts.notes`, `interactions.raw_notes` or `contacts.ai_summary` — those are read
+ * verbatim into the chat prompt and the contact embedding.
+ */
+export const jobPostings = pgTable(
+  "job_postings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceId: text("source_id").notNull().references(() => jobFeedSources.id, { onDelete: "cascade" }),
+    /**
+     * The feed's own id. `text`, NOT `uuid`, even though the source documents it as one: it
+     * is third-party input, and typing the column turns a single malformed row into a failed
+     * batch insert. The same call `interactions.external_id` already makes.
+     */
+    externalId: text("external_id").notNull(),
+    companyName: text("company_name").notNull(),
+    /** `jobCompanyKeys().primary` — what the matcher joins on. */
+    companyKey: text("company_key").notNull(),
+    /** Stored, but never rendered as a link by anything in the notification path. */
+    companyUrl: text("company_url"),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    terms: jsonb("terms").$type<string[]>().default([]).notNull(),
+    locations: jsonb("locations").$type<string[]>().default([]).notNull(),
+    active: boolean("active").default(true).notNull(),
+    isVisible: boolean("is_visible").default(true).notNull(),
+    /** Absent in some forks of the feed. Parsed defensively; null is a normal value. */
+    sponsorship: text("sponsorship"),
+    datePosted: timestamp("date_posted", { withTimezone: true }).notNull(),
+    dateUpdated: timestamp("date_updated", { withTimezone: true }).notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    /** The ingest idempotency key, and the upsert target. */
+    uniqueIndex("job_postings_source_external_uidx").on(t.sourceId, t.externalId),
+    /** The matcher's read, and the backfill read when a company becomes newly watched. */
+    index("job_postings_company_key_idx").on(t.companyKey, t.datePosted),
+    /** Retention pruning, whenever it is added. Cheap to declare now. */
+    index("job_postings_date_updated_idx").on(t.dateUpdated),
+  ]
+);
+
+/**
+ * One posting, one contact, one notification — forever.
+ *
+ * Not keyed on (user, posting): two contacts at the same company are two genuinely different
+ * reasons to reach out, and collapsing them would silently pick one. Volume is controlled by
+ * aggregating into a single suggestion per contact per run, not by throwing matches away.
+ *
+ * A match the volume guard suppressed is still WRITTEN, with `status: "suppressed"` and no
+ * suggestion. The unique index then permanently blocks a re-notification — which is the
+ * right answer, because "we already decided this one was noise" is a decision worth keeping —
+ * and the row is the only record of why the user was never told.
+ */
+export const jobPostingMatches = pgTable(
+  "job_posting_matches",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    postingId: uuid("posting_id").notNull().references(() => jobPostings.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    /**
+     * The `contact_opportunities` row that made this company watched. Deliberately not a
+     * foreign key: closing or deleting an opportunity should not erase the record of why the
+     * user was told something.
+     */
+    opportunityId: uuid("opportunity_id"),
+    companyKey: text("company_key").notNull(),
+    matchKind: text("match_kind").$type<"internship" | "referral">().notNull(),
+    /** The `ai_suggestions` row this fed. Null when the volume guard suppressed it. */
+    suggestionId: uuid("suggestion_id"),
+    status: text("status").$type<"notified" | "suppressed" | "dismissed">().default("notified").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("job_posting_matches_user_posting_contact_uidx").on(t.userId, t.postingId, t.contactId),
+    index("job_posting_matches_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
 
 /**
  * One row per inbound webhook delivery, including the ones that are rejected or ignored.
@@ -3128,6 +3420,7 @@ export const contactsRelations = relations(contacts, ({ one, many }) => ({
     references: [contactProfiles.contactId],
   }),
   experiences: many(contactExperiences),
+  opportunities: many(contactOpportunities),
 }));
 
 export const tagsRelations = relations(tags, ({ many }) => ({
@@ -3167,6 +3460,10 @@ export const actionItemsRelations = relations(actionItems, ({ one }) => ({
 }));
 export const contactBriefsRelations = relations(contactBriefs, ({ one }) => ({
   contact: one(contacts, { fields: [contactBriefs.contactId], references: [contacts.id] }),
+}));
+export const contactOpportunitiesRelations = relations(contactOpportunities, ({ one }) => ({
+  contact: one(contacts, { fields: [contactOpportunities.contactId], references: [contacts.id] }),
+  interaction: one(interactions, { fields: [contactOpportunities.sourceInteractionId], references: [interactions.id] }),
 }));
 
 export const reminderListsRelations = relations(reminderLists, ({ many }) => ({
@@ -3799,6 +4096,10 @@ export type NoteBatch = typeof noteBatches.$inferSelect;
 export type InteractionMention = typeof interactionMentions.$inferSelect;
 export type ActionItem = typeof actionItems.$inferSelect;
 export type ContactBrief = typeof contactBriefs.$inferSelect;
+export type ContactOpportunity = typeof contactOpportunities.$inferSelect;
+export type JobFeedSource = typeof jobFeedSources.$inferSelect;
+export type JobPosting = typeof jobPostings.$inferSelect;
+export type JobPostingMatch = typeof jobPostingMatches.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type AiSuggestion = typeof aiSuggestions.$inferSelect;
 export type ImportRecord = typeof imports.$inferSelect;

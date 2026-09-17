@@ -122,11 +122,18 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 
 /* ---------------------------------------------------------------- source guard ------- */
 
+/**
+ * Paths are returned with forward slashes on every platform.
+ *
+ * `join` uses the OS separator, so on Windows this yielded `src\lib\ai-access.ts` while every
+ * exemption below is written `src/lib/ai-access.ts`. Nothing matched, and the guard reported
+ * the gate itself — plus `wispr.ts` and its own source file — as offenders on a clean tree.
+ */
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) return walk(path);
-    return /\.(ts|tsx|mts|js|mjs)$/.test(name) ? [path] : [];
+    return /\.(ts|tsx|mts|js|mjs)$/.test(name) ? [path.replace(/\\/g, "/")] : [];
   });
 }
 

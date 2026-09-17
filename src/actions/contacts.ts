@@ -691,6 +691,9 @@ export async function getContact(id: string) {
           interactionType: true,
           interactionDate: true,
           sameDayOrder: true,
+          // Which captured batch produced this row, so the timeline can say the summary came
+          // from a meeting capture rather than a hand-typed note.
+          noteBatchId: true,
           aiSummary: true,
         },
         extras: {
