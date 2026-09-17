@@ -43,6 +43,7 @@ const ABLATIONS = {
   notwinkle: `.constellation-twinkle-group{animation:none!important}`,
   nolabels: `.react-flow__node-contact p{display:none!important}`,
   noclusternames: `.react-flow__node-clusterLabel{display:none!important}`,
+  noedgelayer: `.constellation-stage .react-flow__edges{will-change:auto!important}`,
   noedges: `.react-flow__edges,.react-flow__edge{display:none!important}`,
   novpwill: `.constellation-stage .react-flow__viewport{will-change:auto!important}`,
 };
