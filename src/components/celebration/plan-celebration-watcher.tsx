@@ -4,8 +4,13 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getCurrentPlan, triggerDemoCelebration } from "@/actions/billing";
+import {
+  confirmCheckoutSession,
+  getCurrentPlan,
+  triggerDemoCelebration,
+} from "@/actions/billing";
 import { useAppPulse } from "@/lib/app-pulse-store";
+import { toast } from "@/lib/toast";
 import type { Plan } from "@/lib/plan-limits";
 import {
   PLAN_RANK,
@@ -32,6 +37,20 @@ const CelebrationStage = dynamic(
 const FAST_POLL_MS = 2_000;
 const FAST_POLL_ATTEMPTS = 30;
 
+/**
+ * Claims one queued upgrade for this account, or null if none is owed.
+ *
+ * Rejects rather than returning null on a transport failure, so the caller can
+ * tell "nothing to celebrate" from "could not ask" — those need opposite
+ * handling, and conflating them is how a celebration goes missing.
+ */
+async function claimPlanUpgrade(): Promise<{ plan: Plan } | null> {
+  const res = await fetch("/api/plan-upgrades/claim", { method: "POST" });
+  if (!res.ok) throw new Error(`claim failed: ${res.status}`);
+  const body = (await res.json()) as { event?: { plan: Plan } | null };
+  return body.event ?? null;
+}
+
 type ActiveRun = {
   plan: PaidPlan;
   startAt: "accrete" | "ignite";
@@ -45,15 +64,29 @@ type ActiveRun = {
  * the AppShell root is transform-animated during warp, which would break a
  * `fixed` overlay mounted inside it.
  *
- * Detection is client-side only: the server-reported plan against one
- * localStorage key. Writing the key BEFORE starting is the whole dedupe —
- * every competing feed (prop, fast poll, ambient poll, StrictMode's second
- * effect run, another tab via fresh reads) then classifies as "same".
+ * Detection is two-layer. The localStorage key is the LOCAL dedupe: writing it
+ * before starting is what makes every competing feed (prop, fast poll, ambient
+ * poll, StrictMode's second effect run, another tab via fresh reads) classify
+ * as "same" without a network round trip each.
+ *
+ * The SERVER is the authority on whether a celebration is still owed.
+ * `POST /api/plan-upgrades/claim` returns a queued upgrade once and never
+ * again, which is what a per-device key cannot do: upgrade on a phone and the
+ * laptop would otherwise celebrate the same transition a second time, and
+ * clearing site data would replay it forever.
+ *
+ * The ordering below is deliberate. The key is written only once the claim
+ * RESOLVES, because writing it first would classify the next tick as "same"
+ * and a failed claim would lose the celebration permanently. `claimingRef`
+ * covers the gap that leaves open — without it the four feeds would each fire
+ * a claim in the same tick.
  */
 export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   const router = useRouter();
   const [active, setActive] = useState<ActiveRun | null>(null);
   const activeRef = useRef<ActiveRun | null>(null);
+  /** One claim at a time: the four feeds can all reach `maybeCelebrate` in one tick. */
+  const claimingRef = useRef(false);
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
@@ -98,14 +131,38 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
           return;
         case "same":
           return;
-        case "upgrade":
-          writeLastSeenPlan(next);
-          if (!isPaidPlan(next)) return;
-          pendingRef.current = next;
-          tryStartPending();
+        case "upgrade": {
+          if (!isPaidPlan(next)) {
+            writeLastSeenPlan(next);
+            return;
+          }
+          if (claimingRef.current) return;
+          claimingRef.current = true;
+          claimPlanUpgrade()
+            .then((claimed) => {
+              // Only now: a claim that resolved is a decision, either way.
+              writeLastSeenPlan(next);
+              claimingRef.current = false;
+              // null = another device already celebrated this transition. No show here,
+              // but the pages in this tab still describe the old plan (AI notices, gates),
+              // so re-render them.
+              if (!claimed) {
+                router.refresh();
+                return;
+              }
+              pendingRef.current = next;
+              tryStartPending();
+            })
+            .catch(() => {
+              // Network blip. Leave the key untouched so the next feed tick
+              // re-classifies as "upgrade" and tries again — the queued event
+              // is durable and still unclaimed.
+              claimingRef.current = false;
+            });
+        }
       }
     },
-    [start, tryStartPending],
+    [start, tryStartPending, router],
   );
 
   // Deferred starts fire the moment the tab is visible and no warp is flying.
@@ -137,9 +194,13 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     const params = new URLSearchParams(window.location.search);
     const upgraded = params.get("upgraded");
     if (upgraded !== "pro" && upgraded !== "lifetime") return;
+    // Lifetime's success URL carries the Checkout Session, so the first tick can ask Stripe
+    // directly instead of waiting on the webhook (`confirmCheckoutSession`).
+    const sessionId = upgraded === "lifetime" ? params.get("session_id") : null;
 
     const url = new URL(window.location.href);
     url.searchParams.delete("upgraded");
+    url.searchParams.delete("session_id");
     // Strip immediately so a refresh cannot re-arm; the hash (and its scroll
     // target) survives the replace.
     router.replace(url.pathname + url.search + url.hash);
@@ -155,6 +216,14 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
       attempts += 1;
       running = true;
       try {
+        // Inside the tick, not before the `router.replace` above: a server action queued
+        // during that navigation is dropped and hangs.
+        if (attempts === 1 && sessionId) {
+          const { status } = await confirmCheckoutSession(sessionId);
+          if (status === "processing") {
+            toast.info("Your payment is still clearing — Lifetime switches on the moment it does");
+          }
+        }
         maybeCelebrate(await getCurrentPlan());
       } catch {
         // Network blips: the next tick, the ambient poll, or the next page
@@ -175,6 +244,19 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   useEffect(() => {
     if (pulsePlan) maybeCelebrate(pulsePlan);
   }, [pulsePlan, maybeCelebrate]);
+
+  // A plan change that no celebration will follow — a downgrade, a refund, a revoked comp,
+  // an upgrade another tab already celebrated — still changes what this tab's pages should
+  // say: the AI gate re-resolves the plan on every call, so a page rendered on the old plan
+  // would keep offering (or refusing) AI it no longer matches. Re-render the server tree
+  // when the pulse disagrees with the plan it was rendered with. Runs after Feed 3, so an
+  // upgrade that is being claimed or is waiting to play is left to the celebration, which
+  // refreshes at handoff.
+  useEffect(() => {
+    if (!pulsePlan || pulsePlan === plan) return;
+    if (activeRef.current || claimingRef.current || pendingRef.current) return;
+    router.refresh();
+  }, [pulsePlan, plan, router]);
 
   // Dev preview — fakes the animation only, never touches billing. `NODE_ENV`
   // is inlined at build time, so this half doesn't exist in production bundles.

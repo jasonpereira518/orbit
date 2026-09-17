@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import {
   cancelImportSession,
   confirmCalendarImport,
+  confirmContactsFileImport,
   confirmGoogleContactsImport,
   confirmOutlookContactsImport,
   getImportJobStatus,
@@ -30,6 +31,7 @@ export type ImportJobKind =
   | "messages"
   | "google_contacts"
   | "outlook_contacts"
+  | "contacts_file"
   | "calendar";
 
 export type ImportJobSnapshot = {
@@ -48,6 +50,7 @@ export type ImportJobInput =
   | { kind: "messages"; csvText: string; fileName: string; ids: string[] }
   | { kind: "google_contacts"; ids: string[] }
   | { kind: "outlook_contacts"; ids: string[] }
+  | { kind: "contacts_file"; text: string; fileName: string; ids: string[] }
   | {
       kind: "calendar";
       calendarKind: "ics" | "csv";
@@ -100,6 +103,8 @@ function importJobLabel(kind: ImportJobKind) {
       return "Importing Google contacts";
     case "outlook_contacts":
       return "Importing Outlook contacts";
+    case "contacts_file":
+      return "Importing address book";
     case "calendar":
       return "Importing calendar";
   }
@@ -211,6 +216,7 @@ type ServerOwnedKind =
   | "messages"
   | "google_contacts"
   | "outlook_contacts"
+  | "contacts_file"
   | "calendar";
 
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
@@ -434,6 +440,13 @@ export function startImportJob(input: ImportJobInput) {
       if (input.kind === "outlook_contacts") {
         await runServerOwnedImportJob(jobId, "outlook_contacts", label, total, () =>
           confirmOutlookContactsImport(input.ids)
+        );
+        return;
+      }
+
+      if (input.kind === "contacts_file") {
+        await runServerOwnedImportJob(jobId, "contacts_file", label, total, () =>
+          confirmContactsFileImport(input.text, input.fileName, input.ids)
         );
         return;
       }

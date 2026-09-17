@@ -78,15 +78,14 @@ export const APP_NAV_CORE: AppNavItem[] = [
   DASHBOARD,
   CONTACTS,
   CAPTURE,
-  EVENTS,
-  IMPORTS,
   REMINDERS,
   CHAT,
+  IMPORTS,
   CONSTELLATION,
 ];
 
 /** Items under the Extras divider (Settings is rendered separately) */
-export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -111,10 +110,10 @@ export const MOBILE_BOTTOM_NAV: Array<
 ];
 
 export const MOBILE_MORE_NAV = [
-  EVENTS,
-  IMPORTS,
   REMINDERS,
+  IMPORTS,
   CONSTELLATION,
+  EVENTS,
   OUTREACH,
   KNOWLEDGE,
 ];

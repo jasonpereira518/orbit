@@ -126,7 +126,8 @@ export type CostToRunPoint = {
 /**
  * What Orbit costs the people who use it, as a DISTRIBUTION rather than an average.
  *
- * Production is strictly BYOK, so this is the users' money, not Orbit's — but it is the
+ * Mostly the users' money, not Orbit's (BYOK on every plan but Lifetime; managed Lifetime
+ * spend is the costs page's "On Orbit's AI keys" tile) — but it is the
  * number that decides whether BYOK stays viable, and a mean hides the only interesting
  * case. One power user at fifty times the median is the whole story, and an average
  * reports it as a mild uptick.

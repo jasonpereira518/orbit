@@ -22,6 +22,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type ContactOption = {
   id: string;
@@ -106,7 +108,7 @@ export function ReminderFormFields({
         );
       })
       .catch(() => {
-        if (!cancelled) toast.error("Could not load contacts");
+        if (!cancelled) toast.error(TOAST_COPY.loadContactsFailed);
       });
     return () => {
       cancelled = true;
@@ -116,7 +118,7 @@ export function ReminderFormFields({
   function submit() {
     const trimmed = title.trim();
     if (!trimmed) {
-      toast.error("Title is required");
+      toast.error("Give it a title first");
       return;
     }
     start(async () => {
@@ -150,17 +152,18 @@ export function ReminderFormFields({
             contactId: contactId || undefined,
             actionKind: kind,
           });
-          toast.success("Reminder created");
+          toast.success(TOAST_COPY.reminderSet);
         }
         onClose();
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error
-            ? err.message
-            : mode === "edit"
-              ? "Could not update reminder"
-              : "Could not create reminder"
+          friendlyError(
+            err,
+            mode === "edit"
+              ? "Couldn’t update that reminder — try again?"
+              : "Couldn’t create that reminder — try again?"
+          )
         );
       }
     });

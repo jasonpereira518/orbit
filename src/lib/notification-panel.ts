@@ -1,6 +1,6 @@
-import { and, eq, isNotNull, lte } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiSuggestions, contacts, reminders, suggestedReminders } from "@/db/schema";
+import { aiSuggestions, captureJobs, contacts, reminders, suggestedReminders } from "@/db/schema";
 import { getEntitlements } from "@/lib/entitlements";
 import { getAccountAlerts, hasErrorAlert } from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
@@ -32,6 +32,7 @@ export async function loadNotificationPanel(
     datedSuggestions,
     entitlements,
     alerts,
+    captureRows,
   ] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
@@ -78,11 +79,22 @@ export async function loadNotificationPanel(
     opts.withAlerts
       ? getAccountAlerts(userId)
       : Promise.resolve<AccountAlert[]>([]),
+    // A capture waiting on the person: extracted but not reviewed, or failed recently.
+    // One indexed read, so the 90-second watcher can afford it.
+    db.query.captureJobs.findMany({
+      where: and(
+        eq(captureJobs.userId, userId),
+        inArray(captureJobs.status, ["ready", "reviewing", "failed"])
+      ),
+      columns: { id: true, status: true, result: true, error: true, updatedAt: true },
+      orderBy: (j, { desc: descOrder }) => [descOrder(j.updatedAt)],
+      limit: 3,
+    }),
   ]);
 
   type PanelItem = {
     id: string;
-    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder";
+    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review";
     title: string;
     body: string | null;
     url: string;
@@ -166,6 +178,23 @@ export async function loadNotificationPanel(
       urgency: "info",
       suggestedReminderId: s.id,
       contactId: s.contactId,
+    });
+  }
+
+  for (const job of captureRows) {
+    const isFailed = job.status === "failed";
+    if (isFailed && now.getTime() - job.updatedAt.getTime() > 24 * 60 * 60 * 1000) continue;
+    const n = job.result?.items.length ?? 0;
+    items.push({
+      id: `capture:${job.id}`,
+      kind: "capture_review",
+      title: isFailed
+        ? "Couldn’t read your notes"
+        : `${n} ${n === 1 ? "person" : "people"} ready to review`,
+      body: isFailed ? job.error : "From your last capture — pick up where you left off.",
+      url: "/capture",
+      dueAt: null,
+      urgency: "info",
     });
   }
 

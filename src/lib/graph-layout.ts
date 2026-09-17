@@ -108,6 +108,8 @@ export type GraphNodeData = {
   spotlight?: boolean;
   /** The one-and-only search hit — bobs gently so the eye lands on it. */
   spotlightSolo?: boolean;
+  /** Hovered, selected or a search hit: labelled at every zoom, not just close up. */
+  labelPinned?: boolean;
   motionPaused?: boolean;
 };
 
@@ -115,6 +117,8 @@ export type OrbitRingsData = {
   kind: "rings";
   radii: number[];
   showLabels?: boolean;
+  /** Whether the ambient drift is running; set per render by the chart, not by the layout. */
+  spinning?: boolean;
 };
 
 export type ClusterLabelData = {

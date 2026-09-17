@@ -1,7 +1,7 @@
 import { and, asc, eq, notInArray, or, sql } from "drizzle-orm";
 import type { getDb } from "@/db";
 import { contacts } from "@/db/schema";
-import { AvatarStorageError, MicrolinkRateLimitError } from "@/lib/contact-avatar";
+import { AvatarSourceRateLimitError, AvatarStorageError } from "@/lib/contact-avatar";
 import { deadlineReached } from "@/lib/time-budget";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
@@ -23,6 +23,15 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *     whatever the network does. Unattempted contacts are simply pending for next tick.
  */
 
+/**
+ * How long a failed lookup is remembered before the contact is tried again.
+ *
+ * The backfill is mounted on every authenticated page, so without this every visit
+ * re-attempted every unresolvable contact against every free tier. Free in dollars,
+ * but not in latency or in goodwill with the upstream services.
+ */
+export const AVATAR_RECHECK_DAYS = 30;
+
 /** What the stored `profile_image_url` is, decided in SQL so the value never leaves Postgres. */
 const storedKind = sql<"none" | "durable" | "unusable" | "remote">`CASE
   WHEN ${contacts.profileImageUrl} IS NULL OR btrim(${contacts.profileImageUrl}) = '' THEN 'none'
@@ -41,10 +50,19 @@ function needsWorkPredicate(userId: string, skipIds: string[]) {
     eq(contacts.userId, userId),
     skipIds.length > 0 ? notInArray(contacts.id, skipIds) : undefined,
     or(
-      // Needs a lookup — by LinkedIn URL (Microlink/Unavatar/Apollo) or by email
-      // (a connected Google/Outlook account) — and nothing usable stored yet.
-      sql`(${hasLinkedIn} OR ${hasEmail}) AND ${storedKind} IN ('none', 'unusable')`,
-      // A usable remote photo that is not yet in durable storage.
+      // Something to look up — a LinkedIn profile, or an email for a connected
+      // Google/Outlook account or Gravatar — and nothing usable stored. Email alone
+      // qualifies, so the backlog counter is larger than it was before those sources
+      // existed.
+      //
+      // A contact we already tried and failed is left alone until the cooldown
+      // expires; otherwise the backlog never shrinks and every visit re-pays for it.
+      sql`(${hasLinkedIn} OR ${hasEmail})
+        AND ${storedKind} IN ('none', 'unusable')
+        AND (${contacts.profileImageCheckedAt} IS NULL
+             OR ${contacts.profileImageCheckedAt} < now() - ${sql.raw(`interval '${AVATAR_RECHECK_DAYS} days'`)})`,
+      // A usable remote photo that is not yet in durable storage. Always worth a go:
+      // it costs no third-party quota, just a fetch we already know the URL for.
       sql`${storedKind} = 'remote'`
     )
   );
@@ -113,13 +131,17 @@ export type AvatarBatchDeps = {
   resolveConnectedAccount?: (contactId: string, email: string) => Promise<string | null>;
   /** Resolve a LinkedIn profile photo (Microlink/Unavatar); null when none is findable. */
   resolveLinkedIn: (contactId: string, linkedinUrl: string) => Promise<string | null>;
+  /** Resolve a photo from Gravatar by email; null when the address has none. */
+  resolveGravatar: (contactId: string, email: string) => Promise<string | null>;
   /**
    * Apollo people/match as the last resort for a LinkedIn headshot — it costs a credit,
-   * so it only runs once the free LinkedIn sources above have already come up empty.
-   * Optional so callers without Apollo access can omit it.
+   * so it only runs once every free source above has already come up empty. Optional
+   * so callers without Apollo access can omit it.
    */
   resolveApollo?: (contactId: string, linkedinUrl: string) => Promise<string | null>;
   save: (contactId: string, photoUrl: string) => Promise<void>;
+  /** Record that a contact was tried and yielded nothing, starting its cooldown. */
+  markChecked: (contactId: string) => Promise<void>;
 };
 
 export type AvatarBatchResult = {
@@ -151,6 +173,10 @@ export async function runAvatarBackfillBatch(
     if (deadlineReached(deps.deadline, now)) break;
     try {
       let photoUrl: string | null = null;
+      // Set when a source refused us for quota rather than answering. Such a contact
+      // stays retryable (kept out of failedIds, never cooldown-stamped) so it gets a
+      // real look once the source's quota resets.
+      let quotaDeferred = false;
 
       if (contact.remoteUrl) {
         photoUrl = await deps.persistRemote(contact.id, contact.remoteUrl);
@@ -164,14 +190,20 @@ export async function runAvatarBackfillBatch(
         try {
           photoUrl = await deps.resolveLinkedIn(contact.id, contact.linkedinUrl);
         } catch (err) {
-          if (err instanceof MicrolinkRateLimitError) {
+          if (err instanceof AvatarSourceRateLimitError) {
             rateLimitedUntil = err.resetAt;
-            // Unavatar was already tried inside the resolver; retry after the cooldown,
-            // but still worth a shot at Apollo below before giving up on this contact.
+            // A quota'd tier (Unavatar or Microlink) never got a real look. Gravatar and
+            // Apollo are different services, so still try them — but keep the contact
+            // retryable rather than starting its cooldown.
+            quotaDeferred = true;
           } else {
             throw err;
           }
         }
+      }
+
+      if (!photoUrl && contact.email) {
+        photoUrl = await deps.resolveGravatar(contact.id, contact.email);
       }
 
       if (!photoUrl && contact.linkedinUrl && deps.resolveApollo) {
@@ -180,7 +212,12 @@ export async function runAvatarBackfillBatch(
 
       if (!photoUrl) {
         failed += 1;
-        failedIds.push(contact.id);
+        // A quota-deferred contact is not a real miss — do not start its cooldown, or
+        // Unavatar's 25-a-day limit would write off everyone past the 25th for a month.
+        if (!quotaDeferred) {
+          failedIds.push(contact.id);
+          await deps.markChecked(contact.id);
+        }
         continue;
       }
 
@@ -188,7 +225,7 @@ export async function runAvatarBackfillBatch(
       saved += 1;
       savedIds.push(contact.id);
     } catch (err) {
-      if (err instanceof MicrolinkRateLimitError) {
+      if (err instanceof AvatarSourceRateLimitError) {
         rateLimitedUntil = err.resetAt;
         break;
       }

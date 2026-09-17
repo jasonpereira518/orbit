@@ -40,6 +40,8 @@ import {
   type OutreachMessageStatus,
   type SequenceStep,
 } from "@/lib/outreach-types";
+import { friendlyError, UserFacingError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 async function requireCampaign(userId: string, campaignId: string) {
   const db = await getDb();
@@ -89,6 +91,39 @@ async function priorNotesForContact(contactId: string | null) {
     .filter(Boolean)
     .join(" | ")
     .slice(0, 500);
+}
+
+/**
+ * Batched form of `priorNotesForContact` for draft generation over a whole prospect
+ * list — one `interactions` query instead of one per prospect. Returns a map whose
+ * values match `priorNotesForContact`'s per-contact string shape exactly (a contact
+ * with no interaction rows simply has no entry, so callers fall back with `?? null`).
+ */
+async function priorNotesForContacts(contactIds: string[]) {
+  const byContact = new Map<string, string>();
+  if (!contactIds.length) return byContact;
+  const db = await getDb();
+  const rows = await db.query.interactions.findMany({
+    where: inArray(interactions.contactId, contactIds),
+    orderBy: [desc(interactions.interactionDate)],
+  });
+  const grouped = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = grouped.get(row.contactId) ?? [];
+    if (list.length < 3) list.push(row);
+    grouped.set(row.contactId, list);
+  }
+  for (const [contactId, list] of grouped) {
+    byContact.set(
+      contactId,
+      list
+        .map((row) => row.aiSummary || row.rawNotes)
+        .filter(Boolean)
+        .join(" | ")
+        .slice(0, 500)
+    );
+  }
+  return byContact;
 }
 
 export async function listCampaigns() {
@@ -539,6 +574,12 @@ export async function generateOutreachDrafts(input: {
     throw new Error("No prospects selected for draft generation.");
   }
 
+  const priorNotesByContact = await priorNotesForContacts(
+    targetProspects
+      .map((p) => p.contactId)
+      .filter((id): id is string => Boolean(id))
+  );
+
   const draftInputs = await Promise.all(
     targetProspects.map(async (prospect, index) => ({
       channel,
@@ -554,7 +595,9 @@ export async function generateOutreachDrafts(input: {
         company: prospect.company,
         location: prospect.location,
         enrichmentSummary: enrichmentSummary(prospect.enrichment),
-        priorNotes: await priorNotesForContact(prospect.contactId),
+        priorNotes: prospect.contactId
+          ? (priorNotesByContact.get(prospect.contactId) ?? null)
+          : null,
       },
       templateSeed: input.templateSeed,
       variationHint: `Variant ${index + 1} of ${targetProspects.length}`,
@@ -893,16 +936,29 @@ export async function generateDueFollowUps(campaignId: string) {
   const goals = await listActiveGoalTexts();
   const now = new Date();
 
-  const due = await db.query.outreachMessages.findMany({
-    where: and(
-      eq(outreachMessages.status, "scheduled"),
-      lte(outreachMessages.scheduledFor, now)
-    ),
-    with: {
-      prospect: true,
-    },
+  const campaignProspectIds = await db.query.outreachProspects.findMany({
+    where: eq(outreachProspects.campaignId, campaignId),
+    columns: { id: true },
   });
 
+  const due = campaignProspectIds.length
+    ? await db.query.outreachMessages.findMany({
+        where: and(
+          eq(outreachMessages.status, "scheduled"),
+          lte(outreachMessages.scheduledFor, now),
+          inArray(
+            outreachMessages.prospectId,
+            campaignProspectIds.map((p) => p.id)
+          )
+        ),
+        with: {
+          prospect: true,
+        },
+      })
+    : [];
+
+  // Kept as a defensive no-op check, cheap insurance against the `with: { prospect }`
+  // join ever returning a row outside the campaign-scoped prospect id set above.
   const dueForCampaign = due.filter((m) => m.prospect.campaignId === campaignId);
   let generated = 0;
 
@@ -1006,7 +1062,9 @@ export async function sendOutreachMessageAction(messageId: string) {
     },
   ]);
   if (quality.blocking.length) {
-    throw new Error(quality.blocking[0].message);
+    // Deliberate wording, so `friendlyError` lets it through where it is caught on the
+    // server — the per-message loop in `bulkSendOutreach`.
+    throw new UserFacingError(quality.blocking[0].message);
   }
 
   const channel = message.channel as OutreachChannel;
@@ -1111,19 +1169,24 @@ export async function bulkSendOutreach(input: {
     campaignId: input.campaignId,
     messageIds: input.messageIds,
   });
+  // Both outcomes come back as data. They used to be thrown, and a thrown message is a
+  // digest in production — so the client's `startsWith("Quality warnings:")` check could
+  // never match there, and a blocked send never said why. The dialog pre-checks quality
+  // through `previewBulkSendQuality`, so these are the safety net for drafts that
+  // changed in between; a safety net that says nothing is not one.
   if (quality.blocking.length) {
-    throw new Error(
-      `Cannot send: ${quality.blocking[0].message}${
-        quality.blocking.length > 1
-          ? ` (+${quality.blocking.length - 1} more)`
-          : ""
-      }`
-    );
+    const more =
+      quality.blocking.length > 1 ? ` (and ${quality.blocking.length - 1} more)` : "";
+    return {
+      status: "blocked" as const,
+      reason: `Can’t send yet — ${quality.blocking[0].message}${more}`,
+    };
   }
   if (!input.ignoreWarnings && quality.warnings.length) {
-    throw new Error(
-      `Quality warnings: ${quality.warnings[0].message}. Confirm to send anyway.`
-    );
+    return {
+      status: "needs_confirmation" as const,
+      warning: quality.warnings[0].message,
+    };
   }
 
   const ids = input.messageIds.slice(0, BULK_SEND_LIMIT);
@@ -1137,7 +1200,7 @@ export async function bulkSendOutreach(input: {
       results.push({
         messageId,
         ok: false,
-        error: err instanceof Error ? err.message : "Send failed",
+        error: friendlyError(err, TOAST_COPY.sendFailed),
       });
     }
   }
@@ -1145,6 +1208,7 @@ export async function bulkSendOutreach(input: {
   revalidatePath(`/outreach/${input.campaignId}`);
   revalidatePath("/outreach");
   return {
+    status: "sent" as const,
     sent: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok).length,
     results,
