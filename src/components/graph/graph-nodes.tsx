@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -18,12 +18,10 @@ import {
   RING_LABELS,
   type ClusterLabelData,
   type GraphNodeData,
-  type NebulaData,
   type OrbitRingsData,
 } from "@/lib/graph-layout";
 import { withAlpha } from "@/lib/school-color";
 import {
-  NEBULA_BOX_RADII,
   NEBULA_LOBE_EDGE,
   NEBULA_LOBE_MID,
   nebulaLobes,
@@ -426,52 +424,131 @@ function ContactNodeComponent({
   );
 }
 
-/** Stable 0..1 from a string, so each cluster's wash keeps its shape. */
-function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
-  const r = data.radius;
-  const color = data.color;
+export type NebulaWashCluster = {
+  /** Seeds the lobes, so a cluster's cloud is the same shape here as on the dashboard card. */
+  seed: string;
+  color: string;
+  /** Centre, in layout px. */
+  x: number;
+  y: number;
+  radius: number;
+  /** The cluster's emphasis: 1, or dimmed because a search is pulling the eye elsewhere. */
+  opacity: number;
+};
 
-  // Soft lobes only. The wash used to add two rotated conic "filament" layers under
-  // `mask-image`, and blur all three (one by 30% of the radius) inside a breathing
-  // animation. Each nebula is a box four radii across, so those filters were the most
-  // expensive surfaces in the sky, re-rastered at every zoom — and the spokes they drew were
-  // visual noise over the stars a reader is trying to pick out. Offset radial gradients
-  // already fade to nothing; they need no blur to read as a cloud.
-  const { size, lobes } = useMemo(() => {
-    // Box runs well past the stars so the wash dissolves before any boundary. The lobes
-    // themselves come from `nebula-lobes.ts`, which the dashboard preview paints from too.
-    const size = r * NEBULA_BOX_RADII;
-    const pct = (v: number) => 50 + (v / size) * 100;
-    const lobes = nebulaLobes(data.company, r)
-      .map(
-        (lobe) =>
-          `radial-gradient(ellipse ${lobe.rx.toFixed(0)}px ${lobe.ry.toFixed(
-            0
-          )}px at ${pct(lobe.x).toFixed(1)}% ${pct(lobe.y).toFixed(1)}%, ${withAlpha(
-            color,
-            lobe.alpha
-          )} 0%, ${withAlpha(color, lobe.alpha * 0.45)} ${NEBULA_LOBE_MID * 100}%, transparent ${
-            NEBULA_LOBE_EDGE * 100
-          }%)`
-      )
-      .join(", ");
+export type NebulaWashData = {
+  kind: "nebulaWash";
+  clusters: NebulaWashCluster[];
+  /** World-space box the canvas covers. */
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+};
 
-    return { size, lobes };
-  }, [data.company, color, r]);
+/**
+ * Longest side of the wash canvas's backing store.
+ *
+ * Lower than it sounds: at 10,000 contacts the washes span ~33,000 world px, so this samples
+ * the sky at about a sixteenth of a pixel per world unit and every zoom past 0.03 is drawn
+ * from the same bitmap. That is affordable here in a way it would not be for text, because a
+ * lobe is a radial gradient at 7.5% alpha over a near-black sky: the whole tonal range of the
+ * thing being magnified is a fifteenth of a step of 8-bit black, so interpolating it is
+ * invisible. Raising it would cost real GPU memory — 2048 square is already 16MB — for a
+ * sharpness nothing in the picture can express.
+ */
+const NEBULA_WASH_MAX_BACKING_PX = 2048;
+
+/**
+ * Every cluster's wash, as one canvas: the soft coloured clouds the constellations sit in.
+ *
+ * This used to be one absolutely-positioned box per cluster, each four cluster radii across —
+ * up to ~10,500 world px at 10,000 contacts — carrying five CSS radial gradients. The
+ * gradients were never the cost. Flattening all five to one changed nothing, and so did
+ * giving the boxes `background: none` and leaving them in place; hiding the boxes themselves
+ * took a full-range zoom at 10,000 contacts from 36fps to 57fps. 485 very large overlapping
+ * surfaces are simply more than the compositor will carry across a zoom, whatever is painted
+ * in them, and capping their count does not help because the big ones are the expensive ones.
+ *
+ * So the sky gets one element, drawn the way `StarDustNode` below draws the stars: world units
+ * at the camera's quantised zoom, held still while the camera moves, redrawn when it stops.
+ * The lobes come from `nebula-lobes.ts` — the same five ellipses the CSS drew and the dashboard
+ * preview paints — so the sky is the same sky it was, minus 485 layers.
+ */
+function NebulaWashNodeComponent({ data }: NodeProps & { data: NebulaWashData }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Quarter-octave steps, as the dust uses: a camera flight crosses a few of these, not one
+  // per frame.
+  const zoom = useStore((s) =>
+    Math.pow(2, Math.round(Math.log2(Math.max(s.transform[2], 0.01)) * 4) / 4)
+  );
+  const moving = useCameraMoving();
+  const drawnOnce = useRef(false);
+
+  // A layout effect, so the clouds are there on the frame the canvas first appears rather than
+  // one frame later — the same reason the dust draws in one.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    // Never skip the first draw: an empty canvas is a sky with no clusters in it.
+    if (moving && drawnOnce.current) return;
+    drawnOnce.current = true;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const scale = Math.min(
+      Math.max(zoom, 0.01) * dpr,
+      NEBULA_WASH_MAX_BACKING_PX / Math.max(data.width, data.height)
+    );
+    const w = Math.max(1, Math.ceil(data.width * scale));
+    const h = Math.max(1, Math.ceil(data.height * scale));
+    // Resizing reallocates and clears the backing store; do it only when the size changed.
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
+    ctx.clearRect(data.minX, data.minY, data.width, data.height);
+
+    for (const cluster of data.clusters) {
+      // The cluster's dim is applied to its five lobes together, as the element's `opacity`
+      // applied it to the five backgrounds together. Instant rather than the 200ms fade the
+      // boxes had: a canvas redraws, it does not transition. The stars above made the same
+      // trade for the same reason.
+      ctx.globalAlpha = cluster.opacity;
+      for (const lobe of nebulaLobes(cluster.seed, cluster.radius)) {
+        // Under half a backing pixel there is nothing to draw, and a zero-radius gradient throws.
+        if (lobe.rx * scale < 0.5 || lobe.ry * scale < 0.5) continue;
+        const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, lobe.rx);
+        fill.addColorStop(0, withAlpha(cluster.color, lobe.alpha));
+        fill.addColorStop(NEBULA_LOBE_MID, withAlpha(cluster.color, lobe.alpha * 0.45));
+        // `withAlpha(color, 0)` rather than `transparent`, so the fade does not run through
+        // transparent BLACK and leave a grey bruise on a light sky.
+        fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(cluster.color, 0));
+        fill.addColorStop(1, withAlpha(cluster.color, 0));
+        ctx.save();
+        // An ellipse rx by ry, as `radial-gradient(ellipse rx ry at …)` drew it: a circle of
+        // radius rx, squashed vertically. The gradient is built in this squashed space, so it
+        // stretches with the shape exactly as the CSS one did.
+        ctx.translate(cluster.x + lobe.x, cluster.y + lobe.y);
+        ctx.scale(1, lobe.ry / lobe.rx);
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.arc(0, 0, lobe.rx, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }, [data, zoom, moving]);
 
   return (
-    <div
-      className="nodrag cursor-pointer"
-      style={{ width: size, height: size }}
-      // No `title`: the haze spans the whole cluster, so a native tooltip followed the pointer
-      // over every star in it. The cluster's name label carries the "Zoom to" hint.
-      aria-label={`Zoom to ${data.company} cluster`}
-    >
-      <div
-        className="absolute inset-0"
-        style={{ width: size, height: size, background: lobes }}
-      />
-    </div>
+    <canvas
+      ref={canvasRef}
+      // Pointer-transparent, so a click on the haze reaches the pane, which names the cluster
+      // under it by hit-testing the cluster circles (see `clusterAt` in graph-canvas-flow.tsx).
+      // The cluster's own name node keeps the keyboard and screen-reader route to "Zoom to X".
+      aria-hidden
+      className="constellation-nebula-wash pointer-events-none block"
+      style={{ width: data.width, height: data.height }}
+    />
   );
 }
 
@@ -848,6 +925,6 @@ export const OrbitRingsNode = memo(OrbitRingsNodeComponent);
 export const SunNode = memo(SunNodeComponent);
 export const ContactNode = memo(ContactNodeComponent);
 export const ClusterLabelNode = memo(ClusterLabelNodeComponent);
-export const NebulaNode = memo(NebulaNodeComponent);
+export const NebulaWashNode = memo(NebulaWashNodeComponent);
 export const StarDustNode = memo(StarDustNodeComponent);
 export const LabeledEdge = memo(LabeledEdgeComponent);

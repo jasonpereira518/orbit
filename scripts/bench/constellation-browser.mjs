@@ -36,7 +36,7 @@ const trace = argv.includes("--trace");
  * only — it answers "which part of the sky costs the frames", not "is the chart fast".
  */
 const ABLATIONS = {
-  nonebula: `.react-flow__node-nebula{display:none!important}`,
+  nonebula: `.constellation-nebula-wash{display:none!important}`,
   nodust: `.react-flow__node-starDust{display:none!important}`,
   noanim: `*,*::before,*::after{animation:none!important}`,
   nostarfield: `.constellation-starfield{display:none!important}`,
