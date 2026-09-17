@@ -50,6 +50,26 @@ jobs:
           fetch-depth: 1
           ref: main
 
+      # WHY THIS EXISTS. Every gated step below has been skipping. A scan of the last 60
+      # scheduled runs (2026-09-14 to 2026-09-17) found not one of them executing: no ops
+      # sweep, no webhook drain, no connector sync, no job-feed sweep. Only the health probe
+      # ran, so the workflow looked green the whole time.
+      #
+      # Two clauses gate those steps and either could be the cause, so this prints both
+      # before anything depends on them. The square brackets are load-bearing: they are how
+      # an empty string and a string with stray whitespace tell themselves apart, and an
+      # empty `github.event.schedule` is the leading theory. Until #200 these conditions
+      # were written `!= '*/15 * * * *'`, which is TRUE for an empty value — so an unset
+      # context would have gone unnoticed for as long as it has been unset, and the
+      # allow-list rewrite would have converted a silent pass into a silent skip.
+      #
+      # Costs nothing and calls nothing. Delete it once the answer is in the log.
+      - name: What triggered this run
+        run: |
+          echo "event_name = [${{ github.event_name }}]"
+          echo "schedule    = [${{ github.event.schedule }}]"
+          echo "utc now     = $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
       - name: Health probe
         id: health
         continue-on-error: true
@@ -57,6 +77,10 @@ jobs:
           code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "health: HTTP $code"; cat /tmp/health.json 2>/dev/null; echo
+          # Named in the log because `continue-on-error` makes the step's own conclusion
+          # always `success`, so a red probe is invisible in the run summary — which is half
+          # of why three days of gated steps skipping looked like a healthy workflow.
+          test "$code" = "200" || echo "health probe FAILED — every gated step below will skip"
           test "$code" = "200"
         env:
           APP_URL: ${{ secrets.APP_URL }}
