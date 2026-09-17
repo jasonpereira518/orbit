@@ -1089,6 +1089,11 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * and .revert_stats. None of the three can be backfilled, so imports that finished before
  * this version stay unrevertible by construction.
  *
+ * v38 = contact_job_changes: the first record anywhere that a contact MOVED. Company and
+ * title were overwritten in place, so "they just joined Stripe" was indistinguishable from
+ * "they have been at Stripe for six years". Nothing to backfill — the previous values were
+ * never kept.
+ *
  * v37 = user_settings.sender_bio: a line or two the user writes about themselves, fed to
  * every draft generator. The outreach prompt already told the model to "prefer campaign
  * intent over sender background when they conflict" — there was no sender background to
@@ -1103,7 +1108,7 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * signal that means the same thing, and inferring one from past interaction spacing would
  * invent an intent the user never expressed.
  */
-export const SCHEMA_VERSION = 37;
+export const SCHEMA_VERSION = 38;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1115,6 +1120,23 @@ export const SCHEMA_VERSION = 37;
  * Ordering matters: generated columns before the indexes that read them.
  */
 export const SCALE_DDL: string[] = [
+  // Job-change history. In SCALE_DDL rather than the local `alters` list further down
+  // because that one is only scanned for ALTERs — a CREATE TABLE there runs, but
+  // `smoke-schema-ddl` cannot see it, and the table would be invisible to the parity check
+  // that keeps Neon and PGlite in step.
+  `CREATE TABLE IF NOT EXISTS contact_job_changes (
+     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+     user_id text NOT NULL,
+     contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+     previous_company text,
+     new_company text,
+     previous_title text,
+     new_title text,
+     source text,
+     detected_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS contact_job_changes_user_idx ON contact_job_changes(user_id, detected_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS contact_job_changes_contact_idx ON contact_job_changes(contact_id, detected_at DESC)`,
   // --- Generated columns -----------------------------------------------------------
   //
   // Last-name sort key. This is the keyset-pagination ordering column, and it must agree

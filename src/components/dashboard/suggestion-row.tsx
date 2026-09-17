@@ -15,6 +15,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const REASON_LABELS: Record<string, string> = {
+  job_change: "New role",
   awaiting_reply: "No reply yet",
   keep_in_touch: "Keep in touch",
   dormant_high_value: "Dormant",
@@ -24,6 +25,7 @@ const REASON_LABELS: Record<string, string> = {
 };
 
 const REASON_STYLES: Record<string, string> = {
+  job_change: "bg-indigo-500/15 text-indigo-800 dark:text-indigo-200",
   awaiting_reply: "bg-rose-500/15 text-rose-800 dark:text-rose-200",
   keep_in_touch: "bg-teal-500/15 text-teal-800 dark:text-teal-200",
   dormant_high_value: "bg-amber-500/15 text-amber-800 dark:text-amber-200",

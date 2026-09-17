@@ -16,8 +16,10 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
 import { mergeFactList } from "@/lib/fact-lists";
+import { detectJobChange } from "@/lib/job-changes";
 import {
   contactIdentities,
+  contactJobChanges,
   contactTags,
   contacts,
   interactions,
@@ -834,6 +836,17 @@ export async function updateContactForUser(
     ? await mergedFactLists(db, userId, id, input)
     : null;
 
+  // The before-image, read only when this patch could constitute a move. One extra read on
+  // writes that touch company or title — which is enrichment refreshes and the edit form,
+  // not the hot paths.
+  const previousJob =
+    input.company !== undefined || input.title !== undefined
+      ? ((await db.query.contacts.findFirst({
+          where: and(eq(contacts.id, id), eq(contacts.userId, userId)),
+          columns: { company: true, title: true },
+        })) ?? null)
+      : null;
+
   const [contact] = await db
     .update(contacts)
     .set({
@@ -905,6 +918,30 @@ export async function updateContactForUser(
     })
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
     .returning();
+
+  // Record the move, if it was one. After the update and deliberately non-fatal: a failure
+  // to note a job change must never cost the user the edit they actually made.
+  if (contact && previousJob) {
+    const change = detectJobChange(previousJob, {
+      company: input.company,
+      title: input.title,
+    });
+    if (change) {
+      try {
+        await db.insert(contactJobChanges).values({
+          userId,
+          contactId: id,
+          previousCompany: change.previousCompany,
+          newCompany: change.newCompany,
+          previousTitle: change.previousTitle,
+          newTitle: change.newTitle,
+          source: input.source ?? null,
+        });
+      } catch {
+        // Nothing to do about it here; the contact row is already correct.
+      }
+    }
+  }
 
   // Keep identity rows in step with the columns. An email corrected here must release the
   // old address and claim the new one, or duplicate prevention keeps matching on a value

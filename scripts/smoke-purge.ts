@@ -185,6 +185,18 @@ async function seed() {
     source: "extension",
   });
 
+  // Cascade-covered (from `contacts`), seeded anyway for the same reason: a new user-scoped
+  // table that account deletion silently misses is exactly what this script exists to catch.
+  await db.insert(schema.contactJobChanges).values({
+    userId: USER,
+    contactId: contact.id,
+    previousCompany: "Google",
+    newCompany: "Databricks",
+    previousTitle: "Engineering Manager",
+    newTitle: "Director of Engineering",
+    source: "apollo",
+  });
+
   await db.insert(schema.actionItems).values({
     userId: USER,
     contactId: contact.id,

@@ -12,6 +12,10 @@ import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
 import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
+import {
+  JOB_CHANGE_FRESH_DAYS,
+  describeJobChange,
+} from "@/lib/job-changes";
 import { keepInTouchDescription, keepInTouchDue } from "@/lib/keep-in-touch";
 import {
   buildConstellationClusters,
@@ -30,6 +34,7 @@ const AUTO_SUGGESTION_TYPES = [
   "linkedin_thread_quiet",
   "awaiting_reply",
   "keep_in_touch",
+  "job_change",
 ] as const;
 
 const MAX_AUTO_SUGGESTIONS = 12;
@@ -45,7 +50,11 @@ const MAX_AUTO_SUGGESTIONS = 12;
 const GRAPH_PREVIEW_CONTACT_CAP = 150;
 
 const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
-  // Top of the order, because it is the only one the user stated rather than Orbit inferred.
+  // Above even a stated cadence, because unlike everything else here it expires. A
+  // congratulation lands in the weeks after a move and reads as an afterthought a quarter
+  // later; a cadence that slips by a week is still a cadence.
+  job_change: 6,
+  // Top of the heuristics, because it is the only one the user stated rather than Orbit inferred.
   // It rarely competes with `awaiting_reply` in practice — a contact you just reached out to
   // has a recent `last_interaction_at`, so their cadence is not yet due — but where a short
   // cadence and an unanswered message do collide, see the comment below.
@@ -217,6 +226,43 @@ async function buildOutreachSuggestions(userId: string) {
       description: awaitingReplyDescription(daysWaiting),
       relatedContactIds: [c.id],
       confidenceScore: 85,
+    });
+  }
+
+  // Who just moved.
+  //
+  // `DISTINCT ON` keeps the most recent move per contact: somebody who changes title twice
+  // in a month should produce one suggestion naming where they ended up, not two.
+  const recentMoves = rowsOf<{
+    contact_id: string;
+    previous_company: string | null;
+    new_company: string | null;
+    previous_title: string | null;
+    new_title: string | null;
+  }>(
+    await db.execute(sql`
+      SELECT DISTINCT ON (contact_id)
+        contact_id, previous_company, new_company, previous_title, new_title
+      FROM contact_job_changes
+      WHERE user_id = ${userId}
+        AND detected_at >= now() - ${sql.raw(`interval '${JOB_CHANGE_FRESH_DAYS} days'`)}
+      ORDER BY contact_id, detected_at DESC, id DESC
+    `)
+  );
+  for (const move of recentMoves) {
+    const c = byId.get(move.contact_id);
+    if (!c || !isDiscoveryEligible(c)) continue;
+    upsertCandidate(c.id, {
+      suggestionType: "job_change",
+      title: `Congratulate ${contactDisplayName(c)}`,
+      description: describeJobChange({
+        previousCompany: move.previous_company,
+        newCompany: move.new_company,
+        previousTitle: move.previous_title,
+        newTitle: move.new_title,
+      }),
+      relatedContactIds: [c.id],
+      confidenceScore: 92,
     });
   }
 

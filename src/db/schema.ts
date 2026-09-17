@@ -1022,6 +1022,41 @@ export const contactProfiles = pgTable(
  * month, and a synthesized `2019-01-01` would claim a precision the source does not have —
  * which any future overlap comparison would silently inherit.
  */
+/**
+ * A recorded move: this contact's company or title changed from one real value to another.
+ *
+ * Nothing recorded this before. `contacts.company` and `.title` are overwritten in place by
+ * the LinkedIn/Apollo refresh and by ordinary edits, so the previous employer was simply
+ * gone — the app could tell you where someone works and never that they had just moved,
+ * which is the one moment when reaching out is easiest and most welcome.
+ *
+ * Only value-to-different-value transitions land here. Learning a company for the first time
+ * (NULL to something) is Orbit finding out, not the contact changing jobs, and treating the
+ * two alike would congratulate people on jobs they have held for years the first time an
+ * enrichment pass ran. See `detectJobChange` in `@/lib/job-changes`.
+ */
+export const contactJobChanges = pgTable(
+  "contact_job_changes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    previousCompany: text("previous_company"),
+    newCompany: text("new_company"),
+    previousTitle: text("previous_title"),
+    newTitle: text("new_title"),
+    /** Which write saw it: an enrichment refresh, an import, or the user editing the row. */
+    source: text("source"),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("contact_job_changes_user_idx").on(t.userId, t.detectedAt.desc()),
+    index("contact_job_changes_contact_idx").on(t.contactId, t.detectedAt.desc()),
+  ]
+);
+
 export const contactExperiences = pgTable(
   "contact_experiences",
   {

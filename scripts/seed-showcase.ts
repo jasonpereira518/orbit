@@ -27,6 +27,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   aiSuggestions,
+  contactJobChanges,
   contactTags,
   contacts,
   interactions,
@@ -111,6 +112,12 @@ type Person = {
    * set it. It has a card on the profile now.
    */
   opportunities?: string[];
+  /**
+   * Where they were before. Produces a `contact_job_changes` row so the seed can demonstrate
+   * the "New role" suggestion — that table is written by the contact write path when a value
+   * changes, which a seed inserting rows for the first time can never trigger.
+   */
+  previousRole?: { company: string; title?: string; daysAgo: number };
   sharedInterests?: string[];
   tags?: string[];
   touches?: Touch[];
@@ -692,14 +699,18 @@ const PEOPLE: Person[] = [
     fullName: "Chris Nowak",
     firstName: "Chris",
     lastName: "Nowak",
-    title: "Engineering Manager",
-    company: "Google",
+    title: "Director of Engineering",
+    company: "Databricks",
     location: "New York, NY",
     closeness: 2,
     howMet: "Former coworker's referral",
     metDaysAgo: 300,
-    notes: "Manages a search infra team. Aisha vouched for him. We have never met in person.",
+    notes: "Managed a search infra team at Google. Aisha vouched for him. We have never met in person.",
     tags: ["Former coworker"],
+    // Ten days ago, which is squarely inside the window where a congratulation still reads
+    // as one. Nobody has spoken to him in 300 days, so without this he is just another
+    // dormant contact — the move is the reason to write.
+    previousRole: { company: "Google", title: "Engineering Manager", daysAgo: 10 },
     touches: [{ at: 300, type: "email", notes: "Referral intro from Aisha. Brief exchange." }],
   },
   {
@@ -883,6 +894,20 @@ async function main() {
   );
   if (interactionRows.length) {
     await db.insert(interactions).values(interactionRows);
+  }
+
+  const jobChangeRows = PEOPLE.filter((p) => p.previousRole).map((p) => ({
+    userId: USER!,
+    contactId: idByName.get(p.fullName)!,
+    previousCompany: p.previousRole!.company,
+    newCompany: p.company ?? null,
+    previousTitle: p.previousRole!.title ?? null,
+    newTitle: p.title ?? null,
+    source: "showcase-seed",
+    detectedAt: ago(p.previousRole!.daysAgo),
+  }));
+  if (jobChangeRows.length) {
+    await db.insert(contactJobChanges).values(jobChangeRows);
   }
 
   const insertedTags = ALL_TAGS.length
