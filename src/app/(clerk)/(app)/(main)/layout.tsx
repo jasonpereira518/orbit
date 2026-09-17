@@ -44,6 +44,15 @@ export default async function MainAppLayout({
   // a layout is otherwise impossible in the App Router: layouts do not receive it, and
   // `usePathname` is client-side. The group is already `force-dynamic`, so reading a header
   // forfeits no caching.
+  //
+  // NOT sufficient on its own, though: Next's client router does not re-execute a shared
+  // layout when navigating between two routes it wraps, so a `Link` click from, say,
+  // Dashboard straight to Events never re-runs this function at all — only the target
+  // page's own segment gets refetched. This still covers a full page load (including a
+  // hidden/coming-soon URL typed or bookmarked directly) and every OTHER route in the
+  // group, so it stays; `comingSoon` additionally re-checks itself at the page level
+  // (`pageVisibilityGate` in `src/components/coming-soon/page-gate.tsx`) precisely because
+  // it is reached by exactly this kind of sibling click from the nav.
   const pathname = (await headers()).get("x-pathname") ?? "";
   const surface = surfaceForPathname(pathname);
   if (surface) {

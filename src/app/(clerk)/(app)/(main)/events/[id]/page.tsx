@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EventHero } from "@/components/events/event-hero";
@@ -88,6 +89,11 @@ export default async function EventDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // See `pageVisibilityGate`'s doc comment: the layout-level check does not catch a click
+  // straight from a sibling route, so this page re-checks itself.
+  const gate = await pageVisibilityGate("page.events");
+  if (gate) return gate;
+
   const { id } = await params;
 
   // Both started before the first await and settled to a value, so they are already in flight

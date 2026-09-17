@@ -209,11 +209,19 @@ async function main() {
       }
       check("an operator is exempt from hiding", adminOk);
 
-      // Coming-soon pages ride the same exemption: the operator building the page keeps it,
-      // and everyone else loses the page AND the surfaces elsewhere that point into it.
+      // Coming-soon pages do NOT ride that exemption — they default closed for admins too,
+      // so an unreleased feature cannot ship early just because whoever built it is an
+      // admin. `isPreviewingUnreleased` reads a separate opt-in cookie; outside a request
+      // context (this script) that read throws and is caught as false, so both viewers land
+      // on the same default here — which is exactly the case worth asserting.
       const forAdmin = await resolveSurfaceVisibility(ADMIN);
-      check("an operator still reaches coming-soon pages", forAdmin.comingSoon.size === 0);
       const forUser = await resolveSurfaceVisibility(USER);
+      check(
+        "an operator gets the coming-soon screen for unreleased pages by default",
+        COMING_SOON_KEYS.size > 0 &&
+          !forAdmin.previewingUnreleased &&
+          [...COMING_SOON_KEYS].every((k) => forAdmin.comingSoon.has(k))
+      );
       check(
         "an ordinary user gets the coming-soon screen for every marked page",
         COMING_SOON_KEYS.size > 0 &&
@@ -221,9 +229,9 @@ async function main() {
       );
       const companions = Object.values(COMING_SOON_COMPANIONS).flat();
       check(
-        "a coming-soon page hides its companion surfaces from that user",
+        "a coming-soon page hides its companion surfaces for both a user and a default admin",
         companions.every((k) => forUser.hidden.has(k)) &&
-          companions.every((k) => !forAdmin.hidden.has(k))
+          companions.every((k) => forAdmin.hidden.has(k))
       );
       check(
         "every coming-soon companion is a real surface hung off a coming-soon page",
