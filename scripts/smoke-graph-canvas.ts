@@ -48,7 +48,6 @@ import {
 } from "../src/components/graph/use-small-sky";
 import { STAR_HIT_PAD, starSize, starVisual, zoomRelief } from "../src/lib/graph/star-style";
 import { buildHybridGraphLayout, type GraphContactInput } from "../src/lib/graph-layout";
-import { readFileSync } from "node:fs";
 import { buildSkyIndex } from "../src/components/graph/sky-canvas/sky-index";
 import {
   FOCUS_DIM_OPACITY,
@@ -289,16 +288,24 @@ console.log("\nflick velocity\n");
 console.log("\nframing\n");
 // ---------------------------------------------------------------------------
 {
-  const empty = computeSunExtents([], {}, []);
+  const sunOnly = buildHybridGraphLayout([], "Test User").nodes;
+  /** Layout nodes for bare contact stars at the given points — framing only reads positions. */
+  const starsAt = (points: Record<string, Vec2>) => [
+    ...sunOnly,
+    ...Object.entries(points).map(
+      ([id, position]) =>
+        ({ id, type: "contact", position, data: {} }) as unknown as (typeof sunOnly)[number]
+    ),
+  ];
+  const empty = computeSunExtents([], []);
   check(
     "computeSunExtents floors at 240 so an empty sky still frames",
     empty.maxAbsX === 240 && empty.maxAbsY === 240
   );
 
-  const layout = buildHybridGraphLayout([], "Test User");
-  const withOverride = computeSunExtents(layout.nodes, { someone: { x: 4000, y: 10 } }, []);
+  const withOverride = computeSunExtents(starsAt({ someone: { x: 4000, y: 10 } }), []);
   check(
-    "a position override far from the sun expands the extents",
+    "a star far from the sun expands the extents",
     withOverride.maxAbsX >= 4000,
     `got ${withOverride.maxAbsX}`
   );
@@ -320,7 +327,7 @@ console.log("\nframing\n");
   const pane = { width: 393, height: 700 };
   const inset = { x: 28, top: 112, bottom: 60 };
   const lopsided = { east: { x: 1400, y: 60 }, west: { x: -300, y: -220 }, south: { x: 200, y: 420 } };
-  const phone = fitStarsToPane(layout.nodes, lopsided, pane, inset);
+  const phone = fitStarsToPane(starsAt(lopsided), pane, inset);
   const stars = [{ x: 0, y: 0 }, ...Object.values(lopsided)].map((p) => worldToScreen(p, phone));
   check(
     "fitStarsToPane keeps every star inside the pane's clear band",
@@ -333,14 +340,14 @@ console.log("\nframing\n");
     ),
     stars.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")
   );
-  const sunExtents = computeSunExtents(layout.nodes, lopsided, []);
+  const sunExtents = computeSunExtents(starsAt(lopsided), []);
   const sunK = zoomToFitSunCentered(sunExtents.maxAbsX, sunExtents.maxAbsY, pane.width, pane.height);
   check(
     "fitStarsToPane frames a lopsided sky larger than the sun-centred fit does",
     phone.k > sunK * 1.2,
     `phone k ${phone.k.toFixed(3)} vs sun-centred ${sunK.toFixed(3)}`
   );
-  const lonely = fitStarsToPane(layout.nodes, {}, pane, inset);
+  const lonely = fitStarsToPane(starsAt({}), pane, inset);
   check(
     "fitStarsToPane caps a sun-only sky at the default-framing ceiling",
     lonely.k === SKY_FIT_MAX_ZOOM && Number.isFinite(lonely.x) && Number.isFinite(lonely.y),
@@ -352,8 +359,8 @@ console.log("\nframing\n");
   for (let i = 0; i < 60; i++) crowd[`c${i}`] = { x: (rng() - 0.5) * 800, y: (rng() - 0.5) * 800 };
   crowd.farEast = { x: 5000, y: 0 };
   crowd.farWest = { x: -4200, y: 30 };
-  const crowded = fitStarsToPane(layout.nodes, crowd, pane, inset);
-  const untrimmed = fitStarsToPane(layout.nodes, { farEast: crowd.farEast, farWest: crowd.farWest, core: { x: 400, y: 400 } }, pane, inset);
+  const crowded = fitStarsToPane(starsAt(crowd), pane, inset);
+  const untrimmed = fitStarsToPane(starsAt({ farEast: crowd.farEast, farWest: crowd.farWest, core: { x: 400, y: 400 } }), pane, inset);
   const inBand = Object.values(crowd)
     .map((p) => worldToScreen(p, crowded))
     .filter((p) => p.x >= inset.x - 1e-6 && p.x <= pane.width - inset.x + 1e-6).length;
@@ -370,8 +377,8 @@ console.log("\nframing\n");
   // A small network (a few hundred world units across) must open larger than the
   // sun-centred fit, whose 240-unit floor pinned every such sky at one zoom.
   const small = { a: { x: 180, y: 40 }, b: { x: -120, y: -90 }, c: { x: 60, y: 150 } };
-  const smallPhone = fitStarsToPane(layout.nodes, small, pane, inset);
-  const smallSun = computeSunExtents(layout.nodes, small, []);
+  const smallPhone = fitStarsToPane(starsAt(small), pane, inset);
+  const smallSun = computeSunExtents(starsAt(small), []);
   check(
     "fitStarsToPane opens a small network closer than the sun-centred floor allows",
     smallPhone.k > zoomToFitSunCentered(smallSun.maxAbsX, smallSun.maxAbsY, pane.width, pane.height),
@@ -550,7 +557,7 @@ console.log("\nbacking store\n");
     keyFacts: null,
   }));
   const layout = buildHybridGraphLayout(contacts, "Test User");
-  const extents = computeSunExtents(layout.nodes, {}, []);
+  const extents = computeSunExtents(layout.nodes, []);
 
   const DPR_CAP = 2;
   const pane = { width: 430, height: 932 };
@@ -729,7 +736,7 @@ console.log("\nthe index the renderer draws from\n");
     keyFacts: null,
   }));
   const layout = buildHybridGraphLayout(contacts, "Test User");
-  const index = buildSkyIndex(layout, {});
+  const index = buildSkyIndex(layout);
 
   check("every contact becomes a star", index.stars.length === 300);
   check("the sun is found", index.sun !== null && index.sun.x === 0 && index.sun.y === 0);
@@ -760,22 +767,6 @@ console.log("\nthe index the renderer draws from\n");
         t.y - t.r >= index.bounds.minY &&
         t.y + t.r <= index.bounds.maxY
     )
-  );
-
-  /**
-   * A star arranged on a laptop must sit in the same place on a phone. The canvas never
-   * writes overrides back — dragging a two-pixel star is not a gesture a finger can
-   * perform — but it must honour the ones already stored.
-   */
-  const moved = buildSkyIndex(layout, { c7: { x: 4321, y: -765 } });
-  const star = moved.starsById.get("c7");
-  check(
-    "a saved position from the desktop chart is honoured for rendering",
-    star?.x === 4321 && star?.y === -765
-  );
-  check(
-    "...and so is its tap target, or the star and its hitbox would separate",
-    moved.grid.targets.some((t) => t.id === "c7" && t.x === 4321 && t.y === -765)
   );
 
   // Tapping a person inside a cluster must open the person, not reframe the cluster.
@@ -818,38 +809,6 @@ console.log("\ngesture constants\n");
   );
 }
 
-
-// ---------------------------------------------------------------------------
-console.log("\nthe phone never writes a layout it cannot make\n");
-// ---------------------------------------------------------------------------
-{
-  /**
-   * Structural, because the failure is silent and unrecoverable.
-   *
-   * The canvas has no drag — a two-pixel star is not something a finger can place — so
-   * it reads saved positions and must never write them. The specific trap: `goHome`
-   * clears the overrides AND persists the empty map, which on a phone would make an
-   * innocuous Home tap permanently delete a sky the user arranged on a laptop, from the
-   * one device that cannot rebuild it.
-   */
-  const mobile = readFileSync("src/components/graph/graph-canvas-mobile.tsx", "utf8");
-  check(
-    "the canvas renderer never imports the position writer",
-    !/\bsavePositions\b/.test(mobile),
-    "reading a hand-arranged sky is required; writing one from a phone is not possible"
-  );
-  check(
-    "...nor the merge helper that feeds it",
-    !/\bmergePositionsForStorage\b/.test(mobile)
-  );
-
-  const shell = readFileSync("src/components/graph/network-graph.tsx", "utf8");
-  check(
-    "and the shared Home button guards its clear-and-save on the renderer",
-    /hadOverrides && !smallSky/.test(shell),
-    "Home must reset the camera on the canvas, not wipe stored positions"
-  );
-}
 
 console.log("\nAll graph-canvas smoke checks passed.\n");
 process.exit(0);

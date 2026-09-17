@@ -26,17 +26,6 @@ const NetworkGraphFull = dynamic(
   }
 );
 
-const NetworkGraphCompact = dynamic(
-  () =>
-    import("@/components/graph/network-graph").then((m) => ({
-      default: m.NetworkGraph,
-    })),
-  {
-    ssr: false,
-    loading: () => <ConstellationLoading className="h-[300px]" />,
-  }
-);
-
 /**
  * Decision two: the payload has arrived, so the layout cost is finally knowable.
  *
@@ -90,10 +79,6 @@ export function NetworkGraphLazy({
     if (compact) return;
     decideFromPayload(contactCount);
   }, [compact, contactCount]);
-
-  if (compact) {
-    return <NetworkGraphCompact initialData={initialData} compact />;
-  }
 
   return <NetworkGraphFull initialData={initialData} />;
 }

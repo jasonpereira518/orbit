@@ -10,7 +10,6 @@
  */
 import type { NebulaData, buildHybridGraphLayout } from "@/lib/graph-layout";
 
-type PositionMap = import("@/lib/graph-positions").PositionMap;
 
 export type Vec2 = { x: number; y: number };
 export type WorldRect = { minX: number; minY: number; maxX: number; maxY: number };
@@ -53,7 +52,6 @@ export type MeasuredNode = {
  */
 export function computeSunExtents(
   layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
-  positionOverrides: PositionMap,
   liveNodes: MeasuredNode[]
 ): { maxAbsX: number; maxAbsY: number } {
   let maxAbsX = 240;
@@ -81,10 +79,6 @@ export function computeSunExtents(
       const r = (n.data as NebulaData).radius || 80;
       expand(n.position.x, n.position.y, r, r);
     }
-  }
-
-  for (const pos of Object.values(positionOverrides)) {
-    expand(pos.x, pos.y, 56, 64);
   }
 
   for (const n of liveNodes) {
@@ -257,7 +251,6 @@ function trimmedRange(values: number[]): [number, number] {
  */
 export function fitStarsToPane(
   layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
-  positionOverrides: PositionMap,
   pane: { width: number; height: number },
   inset: { x: number; top: number; bottom: number }
 ): Camera {
@@ -267,7 +260,6 @@ export function fitStarsToPane(
       points.push(n.position);
     }
   }
-  for (const pos of Object.values(positionOverrides)) points.push(pos);
 
   // The sun always stays in frame, whatever the trim does to the stars around it.
   const [loX, hiX] = points.length > 0 ? trimmedRange(points.map((p) => p.x)) : [0, 0];

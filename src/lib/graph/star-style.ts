@@ -88,7 +88,9 @@ export function starVisual(data: GraphNodeData, selected: boolean): StarVisual {
     size,
     disc: baseDisc * (spotlight ? 1.3 : 1),
     glow: Math.max(3, score * 2.2),
-    spotlightBoost: spotlight ? 1.9 : 1,
+    // The full bloom is for a lone hit. When a search lights up a whole company, every hit
+    // blooming at once merged the cluster into one white mass and buried the names.
+    spotlightBoost: spotlight ? (data.spotlightSolo ? 1.9 : 1.3) : 1,
     alphaScale: dimmedScatter ? 0.55 : 1,
     fill: tint ? mixWithWhite(tint, 0.35) : "#ffffff",
     core: tint ? mixWithWhite(tint, 0.85) : "#ffffff",
