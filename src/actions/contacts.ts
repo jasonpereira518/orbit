@@ -1,6 +1,7 @@
 "use server";
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
 import { deleteReplacedAvatar } from "@/lib/avatar-blob";
 import { deleteContactForUser } from "@/lib/contact-delete";
 import { revalidatePath } from "next/cache";
@@ -135,7 +136,7 @@ export async function listContactsPage(
   const conditions = [eq(contacts.userId, userId)];
 
   const q = filters?.q?.trim();
-  if (q) conditions.push(searchCondition(q));
+  if (q) conditions.push(contactSearchCondition(q));
 
   const company = filters?.company?.trim();
   if (company) {
@@ -261,45 +262,6 @@ function cursorFor(
 }
 
 /**
- * Match a query against the stored search vector, fuzzily against names, and against tags.
- *
- * Four branches because they answer different questions. `search_tsv` is whole-word and
- * ranked, and covers everything on the contact row. The `%` prefix match is kept for the
- * partial-word case a user typing into a filter box expects: "mar" should find "Marcus"
- * before they finish the word, which neither full-text nor trigram will do. Trigram
- * similarity is what finds someone when the spelling is off by a character — it is
- * index-backed via `contacts_name_trgm` on `lower(full_name)`/`lower(company)`, so it is
- * only worth adding for queries long enough to produce meaningful trigrams. Tags cannot be
- * in a generated column — they live in their own table — so they are an EXISTS.
- *
- * `search_tsv` is written as a bare identifier because Drizzle has no `tsvector` column
- * type to declare it with; Postgres maintains it as a generated column either way. The
- * query selects `from contacts` unaliased, so the qualified name resolves.
- */
-function searchCondition(q: string) {
-  const like = `${q.toLowerCase()}%`;
-  const lowered = q.toLowerCase();
-  // Trigram similarity only helps (and only uses its index) for queries long
-  // enough to produce meaningful trigrams; short prefixes are served by LIKE.
-  const fuzzy =
-    lowered.length >= 4
-      ? sql` or lower(${contacts.fullName}) % ${lowered} or lower(coalesce(${contacts.company}, '')) % ${lowered}`
-      : sql``;
-  return sql`(
-    contacts.search_tsv @@ websearch_to_tsquery('simple', ${q})
-    or lower(${contacts.fullName}) like ${like}
-    or lower(coalesce(${contacts.company}, '')) like ${like}
-    or lower(coalesce(${contacts.email}, '')) like ${like}
-    ${fuzzy}
-    or exists (
-      select 1 from contact_tags ct
-      join tags t on t.id = ct.tag_id
-      where ct.contact_id = ${contacts.id} and lower(t.name) like ${like}
-    )
-  )`;
-}
-
-/**
  * Contacts for a picker — a bounded, searchable slice rather than the whole network.
  *
  * Three components (capture, the reminder dialog, the onboarding wizard) filled a `<select>`
@@ -326,7 +288,7 @@ export async function searchContactsForPicker(
 
   const conditions = [eq(contacts.userId, userId)];
   const term = q?.trim();
-  if (term) conditions.push(searchCondition(term));
+  if (term) conditions.push(contactSearchCondition(term));
 
   const rows = await db
     .select({
@@ -343,6 +305,9 @@ export async function searchContactsForPicker(
     .from(contacts)
     .where(and(...conditions))
     .orderBy(
+      // Name matches first, so "Priya" opens on Priya rather than on whoever sorts first
+      // among the people whose notes mention her.
+      ...(term ? [asc(nameMatchTierSql(term))] : []),
       ...(order === "recent"
         ? [
             // Never-spoken-to contacts fall to the back and sort alphabetically among

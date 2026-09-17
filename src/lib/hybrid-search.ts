@@ -7,6 +7,7 @@ import {
 } from "@/db";
 import { contacts, contactEmbeddings } from "@/db/schema";
 import { normalizeCompanyKey } from "@/lib/company-name";
+import { applyNameMatchPolicy } from "@/lib/contact-search-rank";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { cosineSimilarity } from "@/lib/ai";
 
@@ -578,7 +579,9 @@ export async function hybridSearchContacts(
     return rows.map((h) => ({ ...h, relevance: max > 0 ? h.rrfScore / max : 0 }));
   };
 
-  let results = normalizeToOwnMax(hydrated);
+  // Name matches first for a one-word lookup, and a note that merely mentions the name
+  // does not sit beside the person it names. See `applyNameMatchPolicy`.
+  let results = applyNameMatchPolicy(normalizeToOwnMax(hydrated), options.query);
 
   // Recall guard: an over-narrow filter should widen, not starve. Filtered
   // hits stay first (spec-mandated order); backfill is appended after them,
