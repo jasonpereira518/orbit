@@ -9,6 +9,7 @@ import {
   contacts,
   interactionMentions,
   interactions,
+  noteBatches,
   reminders,
   tags,
 } from "@/db/schema";
@@ -1697,7 +1698,7 @@ export async function getInteractionDetail(interactionId: string) {
   });
   if (!row) throw new Error("Interaction not found");
 
-  const [items, mentioned] = await Promise.all([
+  const [items, mentioned, batch] = await Promise.all([
     db
       .select({
         id: actionItems.id,
@@ -1727,7 +1728,21 @@ export async function getInteractionDetail(interactionId: string) {
           eq(interactionMentions.interactionId, interactionId)
         )
       ),
+    // The call-level digest of a recorded meeting, which no per-person row can carry: one
+    // meeting produces one interaction per participant, each summarised for THAT person,
+    // and the summary of the meeting itself only ever lived in `note_batches.result`.
+    //
+    // Scoped by user as well as by id. `interactions.note_batch_id` is a plain column with
+    // no foreign key, so it is not self-evidently this caller's batch.
+    row.noteBatchId
+      ? db.query.noteBatches.findFirst({
+          where: and(eq(noteBatches.id, row.noteBatchId), eq(noteBatches.userId, userId)),
+          columns: { id: true, result: true },
+        })
+      : Promise.resolve(undefined),
   ]);
+
+  const meeting = batch?.result?.meeting ?? null;
 
   return {
     id: row.id,
@@ -1753,6 +1768,27 @@ export async function getInteractionDetail(interactionId: string) {
     /** True when the items above came from `action_items` and can therefore be checked off. */
     actionItemsCheckable: items.length > 0,
     mentions: mentioned,
+    /**
+     * The capture this interaction came from, when it came from one.
+     *
+     * `batchId` is set for every captured interaction and is the link to the full results
+     * page. `meeting` is set only for a recorded meeting, and carries the parts that belong
+     * to the CALL rather than to any one person — what it was called, what it was about,
+     * and what was decided.
+     *
+     * A meeting saved with zero participants creates no `interactions` row at all (the
+     * contact FK is `NOT NULL`), so `/capture/[batchId]` remains its only home. That is a
+     * deliberate limit, not an oversight: the alternative is inventing a contact to hang it
+     * on.
+     */
+    batchId: row.noteBatchId,
+    meeting: meeting
+      ? {
+          title: meeting.title,
+          summary: meeting.summary,
+          decisions: meeting.decisions ?? [],
+        }
+      : null,
   };
 }
 

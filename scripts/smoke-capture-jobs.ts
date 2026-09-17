@@ -11,13 +11,14 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-capture-jobs";
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { captureJobs, contacts, ignoredPeople, noteBatches, reminders, userSettings } from "../src/db/schema";
+import { captureJobs, contactOpportunities, contacts, ignoredPeople, noteBatches, reminders, userSettings } from "../src/db/schema";
 import {
   CAPTURE_CLAIM_STALE_MS,
   claimCaptureJob,
   createCaptureJob,
   discardCaptureJobRow,
   findActiveCaptureJob,
+  recordCaptureChoicesRow,
   recordCaptureDecisionRow,
   queueCaptureJobRow,
   appendIngestedBlocks,
@@ -49,7 +50,16 @@ function person(name: string, over: Partial<CaptureParseResult["items"][number][
 function fakeParse(corpus: string): CaptureParseResult {
   return {
     items: [
-      { key: "0-Ada Lovelace", notes: "Met Ada", parsed: person("Ada Lovelace"), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-01", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
+      {
+        key: "0-Ada Lovelace", notes: "Met Ada", parsed: person("Ada Lovelace"), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [],
+        interactionDate: "2026-09-01", interactionType: "meeting_note", impliedSteps: [], cadence: null,
+        opportunities: [
+          // Filed as an introduction by the extraction. It is a referral, and the review's
+          // Select is the only place that can say so.
+          { kind: "introduction", label: "forward my resume to the infra team", direction: "they_offer", sourceExcerpt: "She offered to forward my resume to the infra team.", rawDatePhrase: null, confidenceScore: 85, dueDateIso: null },
+          { kind: "speaker", label: "a slot at their internal talk series", direction: "they_offer", sourceExcerpt: "Mentioned a slot at their internal talk series.", rawDatePhrase: null, confidenceScore: 70, dueDateIso: null },
+        ],
+      },
       { key: "1-Grace Hopper", notes: "Met Grace", parsed: person("Grace Hopper", { relationship_score_suggestion: 5 }), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-01", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
       { key: "2-Alan Turing", notes: "Met Alan", parsed: person("Alan Turing"), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-01", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
     ],
@@ -129,6 +139,16 @@ async function main() {
   await recordCaptureDecisionRow(USER, job.id, "1-Grace Hopper", { decision: "reject", index: 1, mergeContactId: null, relationshipScore: 5, tagNames: [], decidedAt: new Date().toISOString() });
   await recordCaptureDecisionRow(USER, job.id, "2-Alan Turing", { decision: "accept", index: 2, mergeContactId: null, relationshipScore: 2, tagNames: [], decidedAt: new Date().toISOString() });
 
+  console.log("\nOpportunity ticks…");
+  // One untick and one kind correction, written the way the summary writes them. Both have
+  // to survive into `contact_opportunities` or the controls were decorative — and the kind
+  // in particular is what a later search for "referral" matches on.
+  const withChoices = await recordCaptureChoicesRow(USER, job.id, {
+    opportunities: { checked: ["0-Ada Lovelace:0"], kinds: { "0-Ada Lovelace:0": "referral" } },
+  });
+  check("choices land in their own section", withChoices?.decisions.opportunities?.checked.join() === "0-Ada Lovelace:0", JSON.stringify(withChoices?.decisions.opportunities));
+  check("  without disturbing the people section", Object.keys(withChoices?.decisions.people ?? {}).length === 3, JSON.stringify(Object.keys(withChoices?.decisions.people ?? {})));
+
   console.log("\nSaving…");
   // The action moves the row to `saving` before kicking; mirror that here.
   await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, job.id));
@@ -145,6 +165,12 @@ async function main() {
   const adaDays = Math.round((new Date(ada.nextFollowUpAt!).getTime() - new Date("2026-09-01T12:00:00").getTime()) / 86_400_000);
   check("…on the closeness cadence (4 → 30 days)", adaDays === 30, `${adaDays}`);
   check("the saved summary maps cards to contacts", savedRow?.result?.saved?.contactIdByKey["0-Ada Lovelace"] === ada.id, JSON.stringify(savedRow?.result?.saved));
+
+  const opps = await db.query.contactOpportunities.findMany({ where: eq(contactOpportunities.userId, USER) });
+  check("only the ticked opportunity is written", opps.length === 1, JSON.stringify(opps.map((o) => o.label)));
+  check("  with the kind the review corrected it to", opps[0]?.kind === "referral", opps[0]?.kind);
+  check("  on the person whose card produced it", opps[0]?.contactId === ada.id);
+  check("  keeping the note's own words", opps[0]?.label === "forward my resume to the infra team", opps[0]?.label);
 
   const ignored = await db.query.ignoredPeople.findMany({ where: eq(ignoredPeople.userId, USER) });
   const byName = Object.fromEntries(ignored.map((r) => [r.displayName, r.reason]));
