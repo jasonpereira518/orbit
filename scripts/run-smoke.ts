@@ -177,6 +177,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-clear-api-key": "pglite",
   "smoke-scan-handoff": "pglite",
   "smoke-capture-jobs": "pglite",
+  "smoke-capture-merge-target": "pure",
   "smoke-capture-reminder-count": "pglite",
   "smoke-capture-job-stall": "pglite",
   "smoke-capture-queue": "pglite",

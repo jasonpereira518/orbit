@@ -225,3 +225,22 @@ export function saveButtonLabel(counts: { meeting: boolean; contacts: number; re
   if (counts.reminders) parts.push(`${counts.reminders} ${counts.reminders === 1 ? "reminder" : "reminders"}`);
   return parts.length ? `Save ${parts.join(" + ")}` : "Save";
 }
+
+/**
+ * Where a card saved as "New" goes after the save re-runs duplicate detection. A card
+ * defaults to merging into any duplicate it showed (`defaultMergeId`), so "New" on a card
+ * that showed candidates is a choice, and the save must not reverse it. A confident match
+ * the card never showed — a contact created since the parse, say by a retried save — is
+ * still merged, which is what keeps a retry from creating the person twice.
+ */
+export function saveTimeMergeTarget(
+  item: Pick<BulkNotePersonPreview, "duplicates">,
+  decision: Pick<CaptureDecision, "mergeContactId">,
+  top: { id: string; confidence: number } | null,
+  threshold: number
+): string | null {
+  if (decision.mergeContactId) return decision.mergeContactId;
+  if (!top || top.confidence < threshold) return null;
+  if (item.duplicates.some((d) => d.id === top.id)) return null;
+  return top.id;
+}

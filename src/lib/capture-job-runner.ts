@@ -24,7 +24,7 @@ import {
   settleCaptureJob,
   type CaptureJobRow,
 } from "@/lib/capture-jobs";
-import { acceptedPeople, defaultReminderKeys, reminderFactsFor, setAsidePeople } from "@/lib/capture/review-reducer";
+import { acceptedPeople, defaultReminderKeys, reminderFactsFor, saveTimeMergeTarget, setAsidePeople } from "@/lib/capture/review-reducer";
 import type { CaptureJobResult, CaptureSavedSummary } from "@/lib/capture/types";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
@@ -257,7 +257,12 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
         company: parsed.company,
         title: parsed.role,
       })[0];
-      if (top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE) mergeContactId = top.contact.id;
+      mergeContactId = saveTimeMergeTarget(
+        item,
+        decision,
+        top ? { id: top.contact.id, confidence: top.confidence } : null,
+        DUPLICATE_MERGE_CONFIDENCE
+      );
     }
     const facts = reminderFactsFor(item, decision);
     return {
