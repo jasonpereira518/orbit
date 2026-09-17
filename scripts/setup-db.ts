@@ -113,7 +113,11 @@ async function main() {
   console.log("✓ Schema ready and read/write OK");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Explicit exits: PGlite keeps handles open, so without one a successful run never returns.
+main().then(
+  () => process.exit(0),
+  (e) => {
+    console.error(e);
+    process.exit(1);
+  }
+);
