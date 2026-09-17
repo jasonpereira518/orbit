@@ -29,6 +29,9 @@ import {
   updateChatThreadContext,
 } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
+import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
+import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
+import { ScanControls } from "@/components/scan/scan-controls";
 import {
   COMPOSER_TEXT_BOX,
   ComposerMirror,
@@ -151,8 +154,17 @@ export function ChatPanel() {
   const [question, setQuestion] = useState(initialQuestionFromUrl);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [contextOpen, setContextOpen] = useState(false);
-  const [contextNote, setContextNote] = useState("");
   const [contextSaving, setContextSaving] = useState(false);
+  /**
+   * Photo/webcam/phone-QR OCR for the context box, reusing the same media-to-text pipeline
+   * as Capture's Messy Notes tab (`ScanControls` + `useCaptureIngest`) — server-side OCR
+   * only, never the contact-extraction step, since nothing here ever calls Extract.
+   */
+  const contextIngest = useCaptureIngest({ sourceKind: "messy" });
+  // Destructured for stable `useCallback` deps: `contextIngest` itself is a fresh object
+  // every render, but `setNotes` (a `useState` setter) and `reset` (its own `useCallback`)
+  // are not.
+  const { setNotes: setContextNotes, reset: resetContext } = contextIngest;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
@@ -182,6 +194,9 @@ export function ChatPanel() {
   /** The `+` menu is outside the field, so it reaches the splice through here. */
   const composerRef = useRef<MentionComposerHandle | null>(null);
   const stickToBottomRef = useRef(true);
+  /** The context box's text when the current dictation session started. */
+  const contextDictationBaseRef = useRef("");
+  const contextTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Dictation ───────────────────────────────────────────────────────────────────────
   // Dictated words occupy a span anchored at wherever the caret was when you started, so
@@ -312,6 +327,36 @@ export function ChatPanel() {
   }, [dictation.cancel]);
 
   /**
+   * Dictation for the context box — the simple case `useDictation`'s own doc comment
+   * anticipates. No caret anchoring: the box is a plain, one-at-a-time `<Textarea>` in a
+   * sheet with nothing else focused while it's open, so a session can just replace
+   * "everything after what was there when it started" on every transcript.
+   */
+  const contextDictation = useDictation({
+    onSessionStart: () => {
+      contextDictationBaseRef.current = contextIngest.notes;
+    },
+    onTranscript: (span) => {
+      const base = contextDictationBaseRef.current;
+      contextIngest.setNotes(base && span ? `${base} ${span}` : base || span);
+    },
+    onEffect: (effect) => {
+      if (effect === "toast-denied") {
+        toast.error(
+          "Orbit needs microphone access to dictate — allow it in your browser’s site settings",
+          { id: "dictation-denied" },
+        );
+      } else if (effect === "toast-no-microphone") {
+        toast.error("No microphone found", { id: "dictation-no-mic" });
+      } else if (effect === "toast-network") {
+        toast.error("Dictation needs a connection right now", {
+          id: "dictation-network",
+        });
+      }
+    },
+  });
+
+  /**
    * Caret restoration, before paint. The rAF idiom used elsewhere in this file visibly
    * lags when results land five times a second.
    */
@@ -420,7 +465,7 @@ export function ChatPanel() {
       const { thread, messages: rows } = await getChatThread(id);
       setThreadId(thread.id);
       setThreadTitle(thread.title);
-      setContextNote(thread.contextNote ?? "");
+      setContextNotes(thread.contextNote ?? "");
       stickToBottomRef.current = true;
       setMessages(
         rows.map((row) =>
@@ -450,21 +495,21 @@ export function ChatPanel() {
     } finally {
       setLoadingThread(false);
     }
-  }, [clearComposer, scrollToBottom]);
+  }, [clearComposer, scrollToBottom, setContextNotes]);
 
   const saveContext = useCallback(async () => {
     setContextSaving(true);
     try {
       const id = await ensureThread();
-      await updateChatThreadContext(id, contextNote);
+      await updateChatThreadContext(id, contextIngest.notes);
       setContextOpen(false);
-      toast.success(contextNote.trim() ? "Context saved" : "Context cleared");
+      toast.success(contextIngest.notes.trim() ? "Context saved" : "Context cleared");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save context");
     } finally {
       setContextSaving(false);
     }
-  }, [ensureThread, contextNote]);
+  }, [ensureThread, contextIngest.notes]);
 
   const startNewChat = useCallback(() => {
     start(async () => {
@@ -475,7 +520,7 @@ export function ChatPanel() {
         setMessages([]);
         clearComposer();
         setLastUserQuery("");
-        setContextNote("");
+        resetContext();
         setThreads((prev) => [
           {
             id: created.id,
@@ -490,7 +535,7 @@ export function ChatPanel() {
         toast.error(friendlyError(err, "Couldn’t start a chat — try again?"));
       }
     });
-  }, [clearComposer]);
+  }, [clearComposer, resetContext]);
 
   const removeThread = useCallback(
     (id: string) => {
@@ -503,7 +548,7 @@ export function ChatPanel() {
             setThreadTitle(null);
             setMessages([]);
             clearComposer();
-            setContextNote("");
+            resetContext();
           }
           toast.success("Chat deleted");
         } catch (err) {
@@ -511,7 +556,7 @@ export function ChatPanel() {
         }
       });
     },
-    [clearComposer, threadId]
+    [clearComposer, threadId, resetContext]
   );
 
   const sendQuestion = useCallback(
@@ -1046,7 +1091,13 @@ export function ChatPanel() {
       <Sheet open={contextOpen} onOpenChange={setContextOpen}>
         <SheetContent
           side="right"
-          className="w-full gap-0 overflow-y-auto sm:max-w-md"
+          // Wider than the default `sm:max-w-sm`(384px) the Sheet caps `side="right"` at —
+          // needed so the three scan buttons ("Upload notes / media", "Webcam", "Use your
+          // phone") fit on one row instead of wrapping. `data-[side=right]:` matches the
+          // built-in rule's own selector shape so this override actually wins the cascade;
+          // a plain `sm:max-w-*` here loses to it (same trap `interaction-detail-sheet.tsx`
+          // sidesteps by not fighting a `data-[side=right]` rule at all).
+          className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-lg"
         >
           <SheetHeader className="border-b border-border/60">
             <SheetTitle>Chat context</SheetTitle>
@@ -1057,25 +1108,58 @@ export function ChatPanel() {
           </SheetHeader>
           <div className="flex flex-col gap-3 p-4">
             <Textarea
+              ref={contextTextareaRef}
               rows={8}
               placeholder="e.g. I'm prepping for a fundraise this quarter, so prioritize investor intros."
-              value={contextNote}
-              onChange={(e) => setContextNote(e.target.value)}
-              className="resize-none"
+              value={contextIngest.notes}
+              onChange={(e) => contextIngest.setNotes(e.target.value)}
+              // `field-sizing-content` (the shared Textarea's default) sizes off the typed
+              // content alone, so `rows` never gave this its starting height — an explicit
+              // floor does. Matches Capture's own notes box (`messy-notes-capture.tsx`).
+              className="min-h-[220px] resize-none"
               disabled={contextSaving}
             />
-            <Button
-              type="button"
-              className="self-end"
-              onClick={saveContext}
-              disabled={contextSaving}
-            >
-              {contextSaving ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                "Save"
-              )}
-            </Button>
+
+            {/* Same media-to-text pipeline as Capture's Messy Notes tab: a photo, the
+                webcam, or a phone QR handoff all just OCR into the box above — nothing
+                here ever queues extraction. */}
+            <ScanControls
+              accept={CAPTURE_FILE_ACCEPT}
+              disabled={contextSaving || contextIngest.busy || contextDictation.listening}
+              onRawFiles={contextIngest.handleFilesSelected}
+              onPages={contextIngest.ingestScanPages}
+              onTranscript={(text, sources, jobId) =>
+                contextIngest.onPhoneTranscript(text, sources, jobId ?? null)
+              }
+            />
+            {contextIngest.busy && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" /> Reading…
+              </span>
+            )}
+
+            <div className="flex items-center justify-between gap-2">
+              <DictationButton
+                state={contextDictation.state}
+                level={contextDictation.level}
+                disabled={contextSaving || contextIngest.busy}
+                onToggle={(source) => {
+                  contextDictation.toggle();
+                  if (source === "pointer") contextTextareaRef.current?.focus();
+                }}
+              />
+              <Button
+                type="button"
+                onClick={saveContext}
+                disabled={contextSaving || contextIngest.busy}
+              >
+                {contextSaving ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  "Save"
+                )}
+              </Button>
+            </div>
           </div>
         </SheetContent>
       </Sheet>
