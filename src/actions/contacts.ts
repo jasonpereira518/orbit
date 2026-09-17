@@ -42,6 +42,7 @@ import {
 } from "@/lib/triage-candidates";
 import {
   enrichPeopleFromLinkedIn,
+  fetchApolloLinkedInPhoto,
   getApolloApiKey,
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
@@ -58,6 +59,11 @@ import {
   AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
 import { clientAvatarUrlSql, contactsListSelection } from "@/lib/contact-avatar-sql";
+import {
+  buildGooglePhotoIndex,
+  buildOutlookContactIndex,
+  fetchOutlookContactPhoto,
+} from "@/lib/contact-avatar-connectors";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   countAvatarBackfillCandidates,
@@ -1125,14 +1131,60 @@ export async function backfillContactAvatars(
     };
   }
 
+  // Only worth hitting Google/Outlook/Apollo when this batch could actually use them —
+  // most ticks are pure LinkedIn resolution and shouldn't pay for an unused lookup.
+  const needsConnectedAccount = candidates.some((c) => c.email);
+  const needsApollo = candidates.some((c) => c.linkedinUrl);
+
+  const [googlePhotoByEmail, outlookContactIdByEmail, apolloApiKey] = await Promise.all([
+    needsConnectedAccount ? buildGooglePhotoIndex(userId) : Promise.resolve(new Map<string, string>()),
+    needsConnectedAccount
+      ? buildOutlookContactIndex(userId)
+      : Promise.resolve(new Map<string, string>()),
+    needsApollo ? getApolloApiKey(userId) : Promise.resolve(null),
+  ]);
+
+  const resolveConnectedAccount = needsConnectedAccount
+    ? async (contactId: string, email: string): Promise<string | null> => {
+        const key = email.trim().toLowerCase();
+
+        const googlePhoto = googlePhotoByEmail.get(key);
+        if (googlePhoto) {
+          const persisted = await downloadAndPersistAvatar(contactId, googlePhoto);
+          if (persisted) return persisted;
+        }
+
+        const outlookContactId = outlookContactIdByEmail.get(key);
+        if (outlookContactId) {
+          const photoDataUrl = await fetchOutlookContactPhoto(userId, outlookContactId);
+          if (photoDataUrl) {
+            const persisted = await downloadAndPersistAvatar(contactId, photoDataUrl);
+            if (persisted) return persisted;
+          }
+        }
+
+        return null;
+      }
+    : undefined;
+
+  const resolveApollo = apolloApiKey
+    ? async (contactId: string, linkedinUrl: string): Promise<string | null> => {
+        const photoUrl = await fetchApolloLinkedInPhoto(userId, linkedinUrl);
+        if (!photoUrl) return null;
+        return downloadAndPersistAvatar(contactId, photoUrl);
+      }
+    : undefined;
+
   const result = await traced(
     "contacts.backfillAvatars",
     () =>
       runAvatarBackfillBatch(candidates, {
         deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
         persistRemote: downloadAndPersistAvatar,
+        resolveConnectedAccount,
         resolveLinkedIn: fetchLinkedInPhotoUrl,
         resolveGravatar: fetchGravatarPhotoUrl,
+        resolveApollo,
         save: async (contactId, photoUrl) => {
           await db
             .update(contacts)
