@@ -35,7 +35,13 @@ import {
   type SorterState,
   type StagedFile,
 } from "../src/lib/capture/bins";
-import { estimatePreparedBytes, prepareNotice } from "../src/lib/capture/prepare-upload";
+import {
+  estimatePreparedBytes,
+  prepareNotice,
+  prepareUploadFiles,
+  type PageRenderer,
+} from "../src/lib/capture/prepare-upload";
+import type { ScanPage } from "../src/lib/scan-capture";
 import { CAPTURE_MAX_UPLOAD_BYTES } from "../src/lib/capture-limits";
 import { MAX_SCAN_PAGES, SCAN_TARGET_BYTES } from "../src/lib/scan-image";
 
@@ -273,6 +279,161 @@ console.log("\ntruncation and unreadable files are always said out loud");
   check("both at once are joined, not dropped", both?.includes("·") === true, both ?? "null");
 }
 
+/**
+ * A renderer that does everything the real one does except touch a canvas: it hands back
+ * page-shaped objects, honours the budget it is given, and records what it was asked for.
+ *
+ * The rasterizing itself needs a browser and is not the part that breaks. THE BUDGET
+ * ARITHMETIC IS. An off-by-one there does not throw — it quietly returns a note one page
+ * short, and the page that went missing is indistinguishable from a page that had nothing
+ * written on it.
+ */
+function fakeRenderer(pdfPages: Record<string, number> = {}) {
+  const asked: { name: string; budget: number }[] = [];
+  const revoked: string[] = [];
+  const page = (filename: string, body: string): ScanPage => ({
+    id: filename,
+    filename,
+    mimeType: "image/jpeg",
+    base64: Buffer.from(body, "utf8").toString("base64"),
+    previewUrl: `blob:${filename}`,
+    width: 10,
+    height: 10,
+    bytes: body.length,
+  });
+  const renderer: PageRenderer = {
+    rasterizePdf: async (f, budget) => {
+      asked.push({ name: f.name, budget });
+      const total = pdfPages[f.name] ?? 1;
+      const kept = Math.max(0, Math.min(total, budget));
+      return {
+        pages: Array.from({ length: kept }, (_, i) =>
+          page(`${f.name}-p${i + 1}.jpg`, `page ${i + 1} of ${f.name}`)
+        ),
+        dropped: total - kept,
+      };
+    },
+    normalizeImageFile: async (f) => {
+      asked.push({ name: f.name, budget: 1 });
+      if (f.name.endsWith(".heic")) throw new Error("no decoder");
+      return page(`${f.name}.jpg`, `image ${f.name}`);
+    },
+    releaseScanPage: (pg) => void revoked.push(pg.previewUrl),
+  };
+  return { renderer, asked, revoked };
+}
+
+const asFile = (name: string, type = "", body = "x") => new File([body], name, { type });
+
+async function preparation() {
+  console.log("\npreparing one note's files");
+
+  {
+    // The bug this whole change exists for: a PDF used to go up untouched and be refused by
+    // name. It must come back as images, and no PDF may survive into the request.
+    const { renderer } = fakeRenderer({ "notes.pdf": 3 });
+    const out = await prepareUploadFiles([asFile("notes.pdf", "application/pdf")], renderer);
+    check(
+      "a PDF becomes pages, and no PDF survives",
+      out.files.length === 3 && out.files.every((f) => f.type === "image/jpeg"),
+      JSON.stringify(out.files.map((f) => f.name))
+    );
+    check("  nothing was truncated", out.droppedPages === 0 && out.failures.length === 0);
+    // The bytes have to survive base64, or the upload is a dozen unreadable files.
+    const first = await out.files[0]!.text();
+    check("  and the page's bytes come back intact", first === "page 1 of notes.pdf", first);
+  }
+
+  {
+    const { renderer, asked } = fakeRenderer({ "long.pdf": 40 });
+    const out = await prepareUploadFiles([asFile("long.pdf", "application/pdf")], renderer);
+    check("a long PDF stops at the cap", out.files.length === MAX_SCAN_PAGES, String(out.files.length));
+    check("  and says how much it left", out.droppedPages === 40 - MAX_SCAN_PAGES, String(out.droppedPages));
+    check(
+      "  having been told the budget up front, not slicing after",
+      asked[0]!.budget === MAX_SCAN_PAGES,
+      String(asked[0]!.budget)
+    );
+  }
+
+  {
+    // THE REGRESSION THIS PINS. Four photos and a PDF in one note is ONE request, so the
+    // PDF gets eight pages, not twelve. Getting it wrong builds a request that is too big
+    // and fails at the server — after the person has waited for twelve pages to render.
+    const { renderer, asked } = fakeRenderer({ "deck.pdf": 30 });
+    const out = await prepareUploadFiles(
+      [
+        asFile("a.jpg", "image/jpeg"),
+        asFile("b.jpg", "image/jpeg"),
+        asFile("c.jpg", "image/jpeg"),
+        asFile("d.jpg", "image/jpeg"),
+        asFile("deck.pdf", "application/pdf"),
+      ],
+      renderer
+    );
+    const pdfAsk = asked.find((a) => a.name === "deck.pdf")!;
+    check("photos spend the budget the PDF then draws on", pdfAsk.budget === MAX_SCAN_PAGES - 4, String(pdfAsk.budget));
+    check("  so the note lands on the cap, never over it", out.files.length === MAX_SCAN_PAGES, String(out.files.length));
+  }
+
+  {
+    const many = Array.from({ length: MAX_SCAN_PAGES + 3 }, (_, i) => asFile(`p${i}.jpg`, "image/jpeg"));
+    const { renderer } = fakeRenderer();
+    const out = await prepareUploadFiles(many, renderer);
+    check("photos past the cap are dropped, not squeezed in", out.files.length === MAX_SCAN_PAGES, String(out.files.length));
+    check("  and counted", out.droppedPages === 3, String(out.droppedPages));
+  }
+
+  {
+    // Order is reading order. A note whose pages arrive shuffled reads as nonsense, and the
+    // text around them has to keep its place too.
+    const { renderer } = fakeRenderer({ "mid.pdf": 2 });
+    const out = await prepareUploadFiles(
+      [asFile("first.md", "text/markdown"), asFile("mid.pdf", "application/pdf"), asFile("last.md", "text/markdown")],
+      renderer
+    );
+    check(
+      "order is preserved across kinds",
+      out.files.map((f) => f.name).join() === "first.md,mid.pdf-p1.jpg,mid.pdf-p2.jpg,last.md",
+      out.files.map((f) => f.name).join()
+    );
+  }
+
+  {
+    // Text, invites and audio are read server-side from their own bytes; re-encoding them
+    // would be damage. A note of only text must not even load the renderer.
+    const { renderer, asked } = fakeRenderer();
+    const original = asFile("notes.md", "text/markdown", "# Standup");
+    const out = await prepareUploadFiles([original, asFile("invite.ics", "text/calendar")], renderer);
+    check("a note of only text needs no renderer at all", asked.length === 0);
+    check("  and its files are passed through untouched", out.files[0] === original);
+  }
+
+  {
+    const { renderer } = fakeRenderer();
+    const out = await prepareUploadFiles([asFile("ok.jpg", "image/jpeg"), asFile("phone.heic", "image/heic")], renderer);
+    check("one bad file does not sink the note", out.files.length === 1, String(out.files.length));
+    check("  and the bad one is named", out.failures[0]?.name === "phone.heic", JSON.stringify(out.failures));
+  }
+
+  {
+    // A note where NOTHING could be read must not upload an empty request: that leaves a
+    // capture job with no content, which reads on the timeline as a meeting about nothing.
+    const { renderer } = fakeRenderer();
+    const out = await prepareUploadFiles([asFile("phone.heic", "image/heic")], renderer);
+    check("a note that is entirely unreadable prepares nothing", out.files.length === 0);
+    check("  rather than looking like a success", out.failures.length === 1);
+  }
+
+  {
+    // An object URL nobody revokes holds its blob for the life of the document. This path
+    // has no thumbnails to show, so every page it mints must be released straight away.
+    const { renderer, revoked } = fakeRenderer({ "notes.pdf": 5 });
+    await prepareUploadFiles([asFile("notes.pdf", "application/pdf"), asFile("a.jpg", "image/jpeg")], renderer);
+    check("every page's object URL is revoked", revoked.length === 6, String(revoked.length));
+  }
+}
+
 console.log("\nthe invariant catches what it is for");
 
 {
@@ -284,5 +445,14 @@ console.log("\nthe invariant catches what it is for");
   check("a placed id that was never staged is caught", invariantBroken({ ...st, trayIds: [id, "ghost"] }) !== null);
 }
 
-console.log(failures === 0 ? "\nAll capture bin checks passed." : `\n${failures} check(s) failed.`);
-process.exit(failures === 0 ? 0 : 1);
+// Chained rather than top-level `await`: tsx transforms these scripts to CJS, which has
+// no top-level await. Everything above this line is synchronous and has already run.
+preparation()
+  .catch((err: unknown) => {
+    console.error(err);
+    failures++;
+  })
+  .finally(() => {
+    console.log(failures === 0 ? "\nAll capture bin checks passed." : `\n${failures} check(s) failed.`);
+    process.exit(failures === 0 ? 0 : 1);
+  });

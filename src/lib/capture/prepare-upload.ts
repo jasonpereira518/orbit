@@ -39,6 +39,7 @@ import {
   ScanError,
   classifyScanFile,
 } from "@/lib/scan-image";
+import type { ScanPage } from "@/lib/scan-capture";
 
 export type PrepareFailure = {
   /** The file as the person named it, so the message can point at something they can see. */
@@ -65,6 +66,22 @@ export type PreparedUpload = {
 
 /** Just enough of a `File` to price it, so the estimate is testable without the DOM. */
 export type WeighableFile = { name: string; type: string; size: number };
+
+/**
+ * The browser-only half, named so it can be swapped.
+ *
+ * The budget accounting below is the part worth testing — an off-by-one there does not
+ * throw, it silently returns a note eleven pages long and nobody finds out until the
+ * meeting they needed is the one that got cut. But it cannot run under node, because
+ * rasterizing needs a canvas. So it is injected, the same way `readDroppedEntries` takes
+ * structural entries and `separateTray` takes a `mintId`: the arithmetic becomes reachable
+ * with plain data, and the default is still the real renderer.
+ */
+export type PageRenderer = {
+  rasterizePdf: (file: File, budget: number) => Promise<{ pages: ScanPage[]; dropped: number }>;
+  normalizeImageFile: (file: File) => Promise<ScanPage>;
+  releaseScanPage: (page: ScanPage) => void;
+};
 
 /**
  * What one note will weigh once it has been prepared — the number the size cap should be
@@ -135,15 +152,17 @@ function messageFor(file: File, err: unknown): string {
  * free, and hoisting it would pull the bundle in at module scope — which is the thing the
  * dynamic import is for.
  */
-export async function prepareUploadFiles(files: readonly File[]): Promise<PreparedUpload> {
+export async function prepareUploadFiles(
+  files: readonly File[],
+  renderer?: PageRenderer
+): Promise<PreparedUpload> {
   const visual = files.filter((f) => classifyScanFile(f.name, f.type) !== "unsupported");
   // Nothing visual: no renderer, no re-encode, and — importantly — no change at all to the
   // path a folder of plain text notes already took.
   if (!visual.length) return { files: [...files], droppedPages: 0, failures: [] };
 
-  const { normalizeImageFile, rasterizePdf, releaseScanPage } = await import(
-    "@/lib/scan-capture"
-  );
+  const { normalizeImageFile, rasterizePdf, releaseScanPage } =
+    renderer ?? (await import("@/lib/scan-capture"));
 
   const out: File[] = [];
   const failures: PrepareFailure[] = [];
