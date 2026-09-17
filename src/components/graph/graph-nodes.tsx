@@ -453,28 +453,31 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
   );
 }
 
-function ClusterLabelNodeComponent({
-  data,
-}: NodeProps & { data: ClusterLabelData }) {
-  // Round zoom so labels don't re-render on every pan/zoom frame
-  const zoom = useStore((s) => Math.round(s.transform[2] * 40) / 40);
-  // Partially counteract viewport zoom so names stay readable when zoomed out,
-  // while still shrinking a little as you zoom in on a constellation.
-  const inv = 1 / Math.max(zoom, 0.08);
-  const scale = Math.min(2.8, Math.max(0.7, Math.pow(inv, 0.85)));
-  const brand = data.nebulaColor;
-  const count = data.count ?? 0;
+/**
+ * How much larger a cluster's name is than a star's name, at every zoom. A star's name is 11px
+ * enlarged by `zoomRelief` as the camera pulls back; the cluster title follows the same curve
+ * (for a typical 12px star), so it stays the bigger of the two however far you zoom.
+ */
+const CLUSTER_NAME_RATIO = 1.25;
+const TYPICAL_STAR_DISC = 12;
+/** The name's line box and the headcount line's, in unscaled px. */
+const CLUSTER_NAME_LINE_H = 15;
+const CLUSTER_COUNT_LINE_H = 12;
+/** Rough advance of the 11px semibold, letter-spaced name — enough to keep it on screen. */
+const CLUSTER_NAME_CHAR_W = 7.4;
+/** Below this zoom the name never pins; the whole sky is in view and every name is too. */
+export const CLUSTER_NAME_PIN_MIN_ZOOM = 0.3;
+/** Screen px kept clear at the top (the chart's search and cluster controls) and the sides. */
+const CLUSTER_NAME_PIN_TOP_PX = 64;
+const CLUSTER_NAME_PIN_SIDE_PX = 16;
 
+/** A cluster's name, and in the summary view its headcount, before any scaling. */
+function ClusterNameText({ data, showCount }: { data: ClusterLabelData; showCount: boolean }) {
+  const count = data.count ?? 0;
+  const brand = data.nebulaColor;
   return (
-    <div
-      className="nopan nodrag flex cursor-pointer flex-col items-center px-2 py-1"
-      title={`Zoom to ${data.label}`}
-      style={{
-        transform: `scale(${scale})`,
-        transformOrigin: "center center",
-      }}
-    >
-      <span className="relative inline-block whitespace-nowrap text-center text-[11px] font-semibold tracking-[0.08em]">
+    <>
+      <span className="relative inline-block whitespace-nowrap text-center text-[11px] font-semibold leading-[15px] tracking-[0.08em]">
         {brand ? (
           <span
             aria-hidden
@@ -487,11 +490,117 @@ function ClusterLabelNodeComponent({
         <span className="relative text-white">{data.label}</span>
       </span>
       {/* In the summary view the cluster stands in for its people, so it says how many. */}
-      {data.summary && count > 0 && (
-        <span className="whitespace-nowrap text-[9px] font-medium tabular-nums tracking-[0.06em] text-white/55">
+      {showCount && (
+        <span className="relative whitespace-nowrap text-[9px] font-medium leading-3 tabular-nums tracking-[0.06em] text-white/55">
           {count.toLocaleString()} {count === 1 ? "person" : "people"}
         </span>
       )}
+    </>
+  );
+}
+
+function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }) {
+  const { data } = props;
+  const zoom = useStore((s) => Math.round(s.transform[2] * 40) / 40);
+  const scale = CLUSTER_NAME_RATIO * starZoomRelief(TYPICAL_STAR_DISC, zoom);
+  const showCount = Boolean(data.summary) && (data.count ?? 0) > 0;
+
+  if (data.pinnable && data.box && data.anchor) {
+    return <PinnableClusterName {...props} scale={scale} showCount={showCount} />;
+  }
+
+  /**
+   * Zoomed out: just the name, as its own node. The node is placed by its bottom-centre
+   * (origin [0.5, 1], set by the chart) at the anchor above the cluster, and scaled about that
+   * point so it grows upward, away from the stars.
+   *
+   * Deliberately none of the pinning machinery. A cluster-sized box per name, even an invisible
+   * one, halved the frame rate of a pan across a 10,000-person sky of 870 clusters; this is the
+   * markup that holds 60.
+   */
+  return (
+    <div
+      className="nopan nodrag flex cursor-pointer flex-col items-center px-2 py-0.5"
+      title={`Zoom to ${data.label}`}
+      style={{
+        transform: `scale(${scale.toFixed(3)})`,
+        transformOrigin: "50% 100%",
+      }}
+    >
+      <ClusterNameText data={data} showCount={showCount} />
+    </div>
+  );
+}
+
+/**
+ * Zoomed in: the name, kept in view while you look at its cluster.
+ *
+ * The node spans the whole cluster (`data.box`), so it is on screen whenever any of the cluster
+ * is, and it lets pointers through everywhere but the name. The name's home is just above the
+ * cluster's top star; once the camera is close enough that home is off the top (or side) of the
+ * view, the name slides along the view's edge instead, for as long as the cluster is still on
+ * screen, and leaves with it.
+ */
+function PinnableClusterName({
+  data,
+  width,
+  height,
+  positionAbsoluteX,
+  positionAbsoluteY,
+  scale,
+  showCount,
+}: NodeProps & { data: ClusterLabelData; scale: number; showCount: boolean }) {
+  const box = data.box ?? { width: width ?? 0, height: height ?? 0 };
+  const anchor = data.anchor ?? { x: box.width / 2, y: 0 };
+
+  // A string, so a pan re-renders only a name that is actually pinned: every other one
+  // computes "0|0" frame after frame and stays put.
+  const pin = useStore((s) => {
+    const [tx, ty, k] = s.transform;
+    const sc = CLUSTER_NAME_RATIO * starZoomRelief(TYPICAL_STAR_DISC, k);
+    const nameH = (CLUSTER_NAME_LINE_H + (showCount ? CLUSTER_COUNT_LINE_H : 0)) * sc;
+    const halfW = (data.label.length * CLUSTER_NAME_CHAR_W * sc) / 2;
+
+    const viewTop = (CLUSTER_NAME_PIN_TOP_PX - ty) / k - positionAbsoluteY;
+    const viewLeft = (CLUSTER_NAME_PIN_SIDE_PX - tx) / k - positionAbsoluteX;
+    const viewRight = (s.width - CLUSTER_NAME_PIN_SIDE_PX - tx) / k - positionAbsoluteX;
+
+    // Down, never below the box: past that the cluster is leaving and the name goes with it.
+    const dy = Math.min(Math.max(0, viewTop - (anchor.y - nameH)), box.height - anchor.y);
+    // Across, within the view where it fits and never beyond the cluster's own edges.
+    let x = anchor.x;
+    if (viewRight - viewLeft > halfW * 2) {
+      x = Math.min(Math.max(x, viewLeft + halfW), viewRight - halfW);
+    }
+    x = Math.min(Math.max(x, 0), box.width);
+    const px = (v: number) => Math.round(v * k) / k;
+    return `${px(x - anchor.x)}|${px(dy)}`;
+  });
+  const [dx, dy] = pin.split("|").map(Number);
+  const pinned = dx !== 0 || dy !== 0;
+
+  return (
+    <div className="pointer-events-none relative" style={{ width: box.width, height: box.height }}>
+      <div
+        className="nopan nodrag pointer-events-auto absolute flex w-max cursor-pointer flex-col items-center px-2 py-0.5"
+        title={`Zoom to ${data.label}`}
+        style={{
+          left: anchor.x + dx,
+          top: anchor.y + dy,
+          // Bottom-centre on the anchor, then scaled about that point, so the name grows upward.
+          transform: `translate(-50%, -100%) scale(${scale.toFixed(3)})`,
+          transformOrigin: "50% 100%",
+        }}
+      >
+        {/* Pinned over the stars, it needs a ground to stay legible. Solid, not blurred. */}
+        {pinned && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-full bg-[#05070c]/75"
+          />
+        )}
+        <ClusterNameText data={data} showCount={showCount} />
+      </div>
     </div>
   );
 }

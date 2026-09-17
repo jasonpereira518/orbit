@@ -301,7 +301,8 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
   // Cluster names first: they are the map's coarse legend and must win any collision
   // against an individual star's label.
   if (camera.k >= LABEL_MIN_ZOOM * 0.5) {
-    ctx.font = "600 11px system-ui, sans-serif";
+    // 13px against the stars' 11px: a cluster's name is the larger of the two, as on desktop.
+    ctx.font = "600 13px system-ui, sans-serif";
     for (const label of index.clusterLabels) {
       if (
         label.x < world.minX ||
@@ -311,9 +312,11 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
       ) {
         continue;
       }
-      const p = worldToScreen({ x: label.x, y: label.y }, camera);
+      const anchor = worldToScreen({ x: label.x, y: label.y }, camera);
+      // The anchor is the name's bottom edge, above the cluster's top star; text draws from its top.
+      const p = { x: anchor.x, y: anchor.y - 16 };
       const fitted = fitText(ctx, label.label, LABEL_MAX_WIDTH);
-      const rect = { x: p.x - fitted.width / 2, y: p.y, w: fitted.width, h: 14 };
+      const rect = { x: p.x - fitted.width / 2, y: p.y, w: fitted.width, h: 16 };
       placed.push(rect);
       ctx.globalAlpha = clusterEmphasis(
         label.label,

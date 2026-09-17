@@ -32,6 +32,7 @@ import {
   OrbitRingsNode,
   StarDustNode,
   SunNode,
+  CLUSTER_NAME_PIN_MIN_ZOOM,
   type StarDustData,
   type StarDustPoint,
 } from "@/components/graph/graph-nodes";
@@ -712,6 +713,8 @@ function GraphCanvasInner({
   );
 
   const labelZoom = useStore((s) => zoomStep(s.transform[2]));
+  // Cluster names can pin in view from here in (see ClusterLabelNode in graph-nodes.tsx).
+  const labelPinnable = useStore((s) => s.transform[2] >= CLUSTER_NAME_PIN_MIN_ZOOM);
   // Independent of hover on purpose: moving the pointer must not reshuffle which names show.
   // Only over stars that can be drawn: the summary's mounted hits, or the star window. Over the
   // whole sky this ran on every keystroke of a search — 10,000 label boxes to name a handful.
@@ -847,14 +850,29 @@ function GraphCanvasInner({
         out.push(
           withEmphasis(
             n,
-            `${opacity}|${isLabel && summary}`,
+            `${opacity}|${isLabel && summary}|${isLabel && labelPinnable}`,
             () =>
               ({
                 ...n,
                 hidden: false,
                 ...(isLabel
                   ? {
-                      data: { ...label, summary },
+                      // Sized to the cluster (see ClusterLabelData.box), and see-through to
+                      // pointers everywhere but the name itself, so the stars under it stay
+                      // clickable.
+                      // Placed by the name's anchor: the cluster-sized box around it when the
+                      // name can pin, otherwise the name's own box sitting on it.
+                      ...(labelPinnable && label.box && label.anchor
+                        ? {
+                            width: label.box.width,
+                            height: label.box.height,
+                            origin: [
+                              label.anchor.x / label.box.width,
+                              label.anchor.y / label.box.height,
+                            ] as [number, number],
+                          }
+                        : { origin: [0.5, 1] as [number, number] }),
+                      data: { ...label, summary, pinnable: labelPinnable },
                       ariaLabel: summary
                         ? `${label.label}, ${label.count ?? 0} ${
                             label.count === 1 ? "person" : "people"
@@ -863,7 +881,11 @@ function GraphCanvasInner({
                     }
                   : null),
                 // A handful of clusters, so their fade is affordable — unlike the stars below.
-                style: { opacity, transition: "opacity 200ms ease" },
+                style: {
+                  opacity,
+                  transition: "opacity 200ms ease",
+                  ...(isLabel ? { pointerEvents: "none" as const } : null),
+                },
               }) as Node
           )
         );
@@ -926,6 +948,7 @@ function GraphCanvasInner({
     company,
     sky.entering,
     labelled,
+    labelPinnable,
     searchHitIds,
     windowing,
     mounted,

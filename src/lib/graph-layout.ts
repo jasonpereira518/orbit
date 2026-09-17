@@ -136,6 +136,16 @@ export type ClusterLabelData = {
    * carries their headcount. Set per render by the chart, not by the layout.
    */
   summary?: boolean;
+  /**
+   * The node's box, in layout px: the cluster's stars plus room above them for the name. The
+   * node spans the whole cluster so it is on screen whenever any of the cluster is — which is
+   * what lets the name stay pinned in view while you are zoomed in on it.
+   */
+  box?: { width: number; height: number };
+  /** Where the name's bottom-centre sits, in px from the box's top-left: just above the top star. */
+  anchor?: { x: number; y: number };
+  /** Zoomed in far enough to pin the name in view. Set per render by the chart. */
+  pinnable?: boolean;
 };
 
 export type NebulaData = {
@@ -214,6 +224,13 @@ function isOverdue(nextFollowUpAt: Date | string | null | undefined) {
 }
 
 type PolarPosition = { x: number; y: number; angle: number; radius: number };
+
+/** Layout px between a cluster's highest star and the bottom of its name — clear of its glow. */
+const CLUSTER_LABEL_GAP = 22;
+/** Room reserved above that for the name itself, so the node's box contains it. */
+const CLUSTER_LABEL_HEAD = 48;
+/** Margin around the stars on the other three sides of the box. */
+const CLUSTER_LABEL_PAD = 24;
 
 function toPosition(x: number, y: number): PolarPosition {
   return { x, y, angle: Math.atan2(y, x), radius: Math.hypot(x, y) };
@@ -609,7 +626,6 @@ export function buildHybridGraphLayout(
   const clusterColorById = new Map<string, string>();
   for (const geom of geoms) {
     const cluster = geom.cluster;
-    const center = centers.get(cluster.id)!;
     const color = clusterBrandColor(cluster.name, cluster.kind);
     clusterColorById.set(cluster.id, color);
 
@@ -645,10 +661,24 @@ export function buildHybridGraphLayout(
       zIndex: 0,
     });
 
-    // Label just outside the footprint, away from the sun — it lands in the
-    // guaranteed gap between shells.
-    const centerAngle = Math.atan2(center.y, center.x);
-    const labelRadius = Math.hypot(center.x, center.y) + geom.foot;
+    // The name sits centred just above the cluster's highest star, so it reads as the
+    // constellation's title. It used to hang outside the footprint on the side facing away from
+    // the sun, which could be the bottom of the figure or off the screen entirely once the
+    // camera framed the cluster.
+    let top = Infinity;
+    let bottom = -Infinity;
+    let left = Infinity;
+    let right = -Infinity;
+    for (const p of memberPositions) {
+      top = Math.min(top, p.y);
+      bottom = Math.max(bottom, p.y);
+      left = Math.min(left, p.x);
+      right = Math.max(right, p.x);
+    }
+    const boxLeft = left - CLUSTER_LABEL_PAD;
+    const boxTop = top - CLUSTER_LABEL_GAP - CLUSTER_LABEL_HEAD;
+    const boxWidth = right + CLUSTER_LABEL_PAD - boxLeft;
+    const boxHeight = bottom + CLUSTER_LABEL_PAD - boxTop;
     clusterNodes.push({
       id: `cluster-${cluster.id}`,
       type: "clusterLabel",
@@ -659,11 +689,11 @@ export function buildHybridGraphLayout(
         nebulaColor: color,
         clusterKind: cluster.kind,
         clusterId: cluster.id,
+        box: { width: boxWidth, height: boxHeight },
+        anchor: { x: (left + right) / 2 - boxLeft, y: CLUSTER_LABEL_HEAD },
       },
-      position: {
-        x: Math.cos(centerAngle) * labelRadius,
-        y: Math.sin(centerAngle) * labelRadius,
-      },
+      // The name's anchor. The chart sets the node's origin so its box lands around it.
+      position: { x: (left + right) / 2, y: top - CLUSTER_LABEL_GAP },
       draggable: false,
       selectable: true,
       zIndex: 7,

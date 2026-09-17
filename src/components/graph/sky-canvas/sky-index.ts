@@ -112,6 +112,7 @@ export function buildSkyIndex(layout: {
     }
     if (node.type === "clusterLabel") {
       const d = node.data as ClusterLabelData;
+      // The node sits at the name's anchor: bottom-centre, just above the cluster's top star.
       clusterLabels.push({
         id: node.id,
         x: p.x,
@@ -170,7 +171,8 @@ export function buildSkyIndex(layout: {
   for (const l of clusterLabels) {
     // Rectangular in spirit; a radius covering the 104px label box is close enough for a
     // finger and keeps one uniform grid rather than two.
-    targets.push({ id: l.id, x: l.x, y: l.y, r: 60, kind: "clusterLabel" });
+    // Centred on the name, which sits above its anchor.
+    targets.push({ id: l.id, x: l.x, y: l.y - 8, r: 60, kind: "clusterLabel" });
   }
 
   let minX = -240;
