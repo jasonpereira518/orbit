@@ -1,6 +1,11 @@
 /**
- * The state machine behind a multi-file notes drop: one uploaded file becomes one capture
- * job, which becomes one meeting on one person's timeline.
+ * The state machine behind a multi-file notes drop: one BIN becomes one capture job, which
+ * becomes one meeting on one person's timeline.
+ *
+ * A bin is usually one file and sometimes several — three photos of the same whiteboard are
+ * one meeting, and the sorting dialog is where that is decided (`src/lib/capture/bins.ts`).
+ * Everything here is per-bin for that reason, and the size cap in particular: the limit is on
+ * the REQUEST, so four photos that each fit can add up to one that does not.
  *
  * Pure — no React, no DOM, no `fetch` of its own — so `scripts/smoke-capture-fanout.ts` can
  * drive the whole thing with a stub uploader and assert the properties that matter.
@@ -28,16 +33,19 @@ export type FanoutStatus =
   | "skipped";
 
 export type FanoutEntry = {
-  /** Stable client key. Never the filename — two files can share one. */
+  /** Stable client key. Never a filename — a folder drop routinely holds two `notes.md`. */
   id: string;
+  /** What the bin is called, and what the capture job is labelled with. */
   label: string;
+  /** The bin's TOTAL, which is what the per-request cap actually applies to. */
   bytes: number;
+  /** How many files go up in this one request. One, for an ordinary note. */
+  fileCount: number;
   status: FanoutStatus;
-  /** The capture job this file became, once the upload lands. */
+  /** The capture job this bin became, once the upload lands. */
   jobId: string | null;
-  /** YYYY-MM-DD, editable before the run starts. */
+  /** YYYY-MM-DD. Set in the sorting dialog, before the run starts. */
   anchorIso: string | null;
-  anchorSource: "filename" | "mtime" | "none";
   error: string | null;
   /** Epoch ms this entry may next be attempted. Only set while `waiting`. */
   retryAt: number | null;
@@ -137,13 +145,16 @@ export function replaceEntry(
 }
 
 /**
- * How many rate-limit tokens a drop of this size costs.
+ * How many rate-limit tokens a drop of this shape costs.
  *
- * Exists so the arithmetic is asserted rather than remembered: with `autoQueue` each file is
- * ONE token, and the budget is 30 a minute. Without it each file cost two, so twelve files
- * needed 24 of the 30, fifteen was exactly the ceiling, and the sixteenth was refused
- * mid-drop.
+ * Counted in BINS, not files: one bin is one request however many files it carries, so
+ * grouping is what actually buys headroom — forty photos sorted into four meetings is four
+ * tokens, not forty.
+ *
+ * Exists so the arithmetic is asserted rather than remembered: with `autoQueue` a bin is ONE
+ * token against a budget of 30 a minute. Without it each cost two, so twelve needed 24 of
+ * the 30, fifteen was exactly the ceiling, and the sixteenth was refused mid-drop.
  */
-export function rateLimitTokensFor(fileCount: number, autoQueue = true): number {
-  return autoQueue ? fileCount : fileCount * 2;
+export function rateLimitTokensFor(binCount: number, autoQueue = true): number {
+  return autoQueue ? binCount : binCount * 2;
 }

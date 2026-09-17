@@ -33,10 +33,10 @@ function entry(id: string, over: Partial<FanoutEntry> = {}): FanoutEntry {
     id,
     label: `${id}.md`,
     bytes: 100,
+    fileCount: 1,
     status: "pending",
     jobId: null,
     anchorIso: null,
-    anchorSource: "none",
     error: null,
     retryAt: null,
     attempts: 0,
@@ -145,13 +145,16 @@ console.log("\nthe rate-limit arithmetic that made autoQueue necessary");
 
 {
   // RATE_LIMITS.capture is 30/60s.
-  check("twelve files cost 12 tokens with autoQueue", rateLimitTokensFor(12) === 12);
+  check("twelve bins cost 12 tokens with autoQueue", rateLimitTokensFor(12) === 12);
   check("  and 24 without it — most of the budget", rateLimitTokensFor(12, false) === 24);
-  check("thirty files fit with autoQueue", rateLimitTokensFor(30) <= 30);
+  check("thirty bins fit with autoQueue", rateLimitTokensFor(30) <= 30);
   // Two tokens a file put the ceiling at exactly fifteen; the sixteenth was refused
   // mid-drop, which is the failure autoQueue removes.
   check("  fifteen was exactly the old ceiling", rateLimitTokensFor(15, false) === 30);
   check("  and sixteen did not fit", rateLimitTokensFor(16, false) > 30);
+  // Forty photos sorted into four meetings is four requests, not forty — which is the whole
+  // point of letting somebody group them before anything is uploaded.
+  check("grouping is what buys the headroom", rateLimitTokensFor(4) === 4);
 }
 
 console.log("\nAll capture fan-out checks passed.");

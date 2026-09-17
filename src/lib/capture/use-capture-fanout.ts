@@ -6,6 +6,11 @@
  * the pump that keeps `concurrency` uploads in flight, and the timer that wakes a `waiting`
  * entry when its `Retry-After` expires.
  *
+ * It does NOT own staging. What was dropped, how it is grouped and what each group is called
+ * all belong to the sorting dialog (`src/lib/capture/bins.ts`); this is handed the finished
+ * plan and uploads it. That split is why the dialog can be re-opened and re-sorted without
+ * anything here knowing, and why this file holds no `File` in state.
+ *
  * The pump is driven from an effect rather than a loop so a 429's wait does not block the
  * other slot: each completed upload re-renders, the effect runs again, and whatever is ready
  * starts. That also means `cancel` is just "stop starting new ones" — an upload already in
@@ -13,7 +18,6 @@
  * capture path makes.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { anchorForFile } from "@/lib/capture/file-date";
 import {
   DEFAULT_FANOUT_CONCURRENCY,
   applyOutcome,
@@ -25,21 +29,23 @@ import {
   type FanoutSummary,
   type UploadOutcome,
 } from "@/lib/capture/fanout";
-import { oversizeMessage, uploadCaptureMedia } from "@/lib/capture/ingest-client";
+import { uploadCaptureMedia } from "@/lib/capture/ingest-client";
+import type { PlannedUpload } from "@/lib/capture/bins";
 
 export type FanoutUploader = (input: {
-  file: File;
+  files: File[];
+  label: string;
   batchGroupId: string;
   anchorIso: string | null;
 }) => Promise<UploadOutcome>;
 
 /** The real uploader. Injected so the hook can be driven by a stub in a story or a test. */
-const defaultUploader: FanoutUploader = async ({ file, batchGroupId, anchorIso }) => {
+const defaultUploader: FanoutUploader = async ({ files, label, batchGroupId, anchorIso }) => {
   const res = await uploadCaptureMedia({
     sourceKind: "messy",
-    files: [file],
+    files,
     batchGroupId,
-    sourceLabel: file.name,
+    sourceLabel: label,
     anchorDate: anchorIso,
     autoQueue: true,
   });
@@ -56,7 +62,7 @@ function newId() {
 export function useCaptureFanout(opts?: {
   concurrency?: number;
   uploader?: FanoutUploader;
-  /** Called once each file has settled, with the job ids that were created. */
+  /** Called once every bin has settled, with the job ids that were created. */
   onSettled?: (jobIds: string[]) => void;
 }) {
   const concurrency = opts?.concurrency ?? DEFAULT_FANOUT_CONCURRENCY;
@@ -64,11 +70,10 @@ export function useCaptureFanout(opts?: {
 
   const [entries, setEntries] = useState<FanoutEntry[]>([]);
   const [running, setRunning] = useState(false);
-  const [rejected, setRejected] = useState<string | null>(null);
 
-  // The File objects themselves never enter React state: they are large, and storing them
-  // there means every re-render of the queue retains the whole drop in memory.
-  const filesRef = useRef(new Map<string, File>());
+  // The File objects never enter React state: they are large, and storing them there means
+  // every re-render of the queue retains the whole drop in memory.
+  const filesRef = useRef(new Map<string, File[]>());
   const settledRef = useRef(false);
   // Kept in a ref and synced in an effect rather than assigned during render: the callback
   // is usually an inline arrow, so depending on it directly would re-arm the settle effect
@@ -78,71 +83,55 @@ export function useCaptureFanout(opts?: {
     onSettledRef.current = opts?.onSettled;
   }, [opts?.onSettled]);
 
-  const add = useCallback((files: File[]) => {
-    if (!files.length) return;
-    // Per FILE, not per drop: each one is its own request, so the per-upload cap is what
-    // applies. A single oversized file is refused by name rather than failing the batch.
-    const tooBig = files.filter((f) => oversizeMessage([{ name: f.name, size: f.size }]));
-    if (tooBig.length) {
-      setRejected(oversizeMessage([{ name: tooBig[0].name, size: tooBig[0].size }]));
-    } else {
-      setRejected(null);
-    }
-    const usable = files.filter((f) => !tooBig.includes(f));
-    if (!usable.length) return;
+  /** One batch id per run, minted when the run starts rather than per bin — it is what tells
+   *  `queueCaptureJob` these jobs belong together and must not discard one another. */
+  const batchIdRef = useRef<string | null>(null);
 
-    const now = new Date();
-    setEntries((prev) => {
-      const next = [...prev];
-      for (const file of usable) {
+  /**
+   * Take a sorted plan and begin.
+   *
+   * `resolve` turns a staged file id back into the `File`, because the plan carries ids and
+   * the dialog holds the bytes. A plan referring to a file that is no longer available fails
+   * that one entry rather than the run.
+   */
+  const start = useCallback(
+    (plans: readonly PlannedUpload[], resolve: (fileId: string) => File | undefined) => {
+      if (!plans.length) return;
+      const next: FanoutEntry[] = [];
+      const files = new Map<string, File[]>();
+      for (const plan of plans) {
         const id = newId();
-        filesRef.current.set(id, file);
-        const guess = anchorForFile({ name: file.name, lastModified: file.lastModified }, now);
+        const resolved = plan.fileIds.map(resolve).filter((f): f is File => Boolean(f));
+        files.set(id, resolved);
         next.push({
           id,
-          label: file.name,
-          bytes: file.size,
-          status: "pending",
+          label: plan.label,
+          bytes: plan.bytes,
+          fileCount: resolved.length,
+          status: resolved.length ? "pending" : "failed",
           jobId: null,
-          anchorIso: guess.iso,
-          anchorSource: guess.source,
-          error: null,
+          anchorIso: plan.anchorIso,
+          error: resolved.length ? null : "Those files are no longer available",
           retryAt: null,
           attempts: 0,
         });
       }
-      return next;
-    });
-  }, []);
-
-  const remove = useCallback((id: string) => {
-    filesRef.current.delete(id);
-    setEntries((prev) => prev.filter((e) => e.id !== id));
-  }, []);
-
-  const setAnchor = useCallback((id: string, iso: string | null) => {
-    setEntries((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, anchorIso: iso, anchorSource: "filename" } : e))
-    );
-  }, []);
+      filesRef.current = files;
+      batchIdRef.current = newId();
+      settledRef.current = false;
+      setEntries(next);
+      setRunning(true);
+    },
+    []
+  );
 
   const reset = useCallback(() => {
     filesRef.current.clear();
     settledRef.current = false;
+    batchIdRef.current = null;
     setEntries([]);
     setRunning(false);
-    setRejected(null);
   }, []);
-
-  // One batch id per run, minted when the run starts rather than per file — it is what tells
-  // `queueCaptureJob` these jobs belong together and must not discard one another.
-  const batchIdRef = useRef<string | null>(null);
-  const start = useCallback(() => {
-    if (!entries.length) return;
-    batchIdRef.current = batchIdRef.current ?? newId();
-    settledRef.current = false;
-    setRunning(true);
-  }, [entries.length]);
 
   const cancelPending = useCallback(() => {
     setRunning(false);
@@ -166,15 +155,15 @@ export function useCaptureFanout(opts?: {
 
     let cancelled = false;
     for (const entry of ready) {
-      const file = filesRef.current.get(entry.id);
-      if (!file) {
+      const files = filesRef.current.get(entry.id);
+      if (!files?.length) {
         setEntries((prev) =>
-          replaceEntry(prev, { ...entry, status: "failed", error: "That file is no longer available" })
+          replaceEntry(prev, { ...entry, status: "failed", error: "Those files are no longer available" })
         );
         continue;
       }
       setEntries((prev) => replaceEntry(prev, markUploading(entry)));
-      void uploader({ file, batchGroupId, anchorIso: entry.anchorIso })
+      void uploader({ files, label: entry.label, batchGroupId, anchorIso: entry.anchorIso })
         .then((outcome) => {
           if (cancelled) return;
           setEntries((prev) => {
@@ -219,16 +208,5 @@ export function useCaptureFanout(opts?: {
     onSettledRef.current?.(entries.map((e) => e.jobId).filter((id): id is string => Boolean(id)));
   }, [running, entries, summary.done]);
 
-  return {
-    entries,
-    summary,
-    running,
-    rejected,
-    add,
-    remove,
-    setAnchor,
-    start,
-    cancelPending,
-    reset,
-  };
+  return { entries, summary, running, start, cancelPending, reset };
 }
