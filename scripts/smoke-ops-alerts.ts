@@ -34,6 +34,7 @@ const HEALTHY: OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: hoursAgo(2), lastState: "ok" },
     syncRun: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    jobFeed: { lastStartedAt: hoursAgo(1), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
@@ -118,6 +119,36 @@ function main() {
     find({ ...HEALTHY, wedgedSyncs: 2 }, "sync.wedged")?.severity === "warning");
   check("a disarmed connection → sync.failing",
     find({ ...HEALTHY, failingSyncs: 1 }, "sync.failing")?.severity === "warning");
+
+  // The job feed. `/admin/health` reads two named cron jobs and this is not one of them, so
+  // these conditions are the ONLY thing that would ever say the feed stopped being read —
+  // and a feed that stopped being read looks exactly like a quiet hiring season.
+  const jobFeed = (over: OpsSnapshot["cron"]["jobFeed"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, jobFeed: over },
+  });
+  // The likeliest real failure by far: the cron line was never added, or was silently
+  // widened away by an `if:` gate somewhere in ops.yml.
+  check("the job feed never ran → jobfeed.schedule_missed",
+    Boolean(find(jobFeed({ lastStartedAt: null, lastState: null }), "jobfeed.schedule_missed")));
+  check("the job feed silent for 8h → jobfeed.schedule_missed",
+    Boolean(find(jobFeed({ lastStartedAt: hoursAgo(8), lastState: "ok" }), "jobfeed.schedule_missed")));
+  // Hourly, with the same loose multiple the sync gets: GitHub Actions schedules lag under
+  // load, and one skipped hour is not worth a Slack message.
+  check("  but 2h is still within tolerance",
+    !find(jobFeed({ lastStartedAt: hoursAgo(2), lastState: "ok" }), "jobfeed.schedule_missed"));
+  check("the job feed run failed → jobfeed.run_failed",
+    Boolean(find(jobFeed({ lastStartedAt: hoursAgo(1), lastState: "failed" }), "jobfeed.run_failed")));
+  check("a killed run is reported too",
+    Boolean(find(jobFeed({ lastStartedAt: hoursAgo(1), lastState: "stale" }), "jobfeed.run_failed")));
+  // `partial` is the ordinary shape of a first run against an empty cursor, and of any run
+  // where one of several feeds was briefly unreachable. Alerting on it would train whoever
+  // reads these to ignore them.
+  check("  a partial run is not an alert",
+    !find(jobFeed({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "jobfeed.run_failed"));
+  // Nobody gets paged because an internship notification is late.
+  check("  and none of it is critical",
+    find(jobFeed({ lastStartedAt: null, lastState: null }), "jobfeed.schedule_missed")?.severity === "warning");
 
   check("three invalid Clerk deliveries in a row → critical",
     find({ ...HEALTHY, webhooks: { ...HEALTHY.webhooks, clerk: ["invalid", "invalid", "invalid"] } }, "webhook.invalid_streak:clerk")?.severity === "critical");
