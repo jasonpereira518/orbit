@@ -16,8 +16,8 @@
 import {
   MIN_KEY_CHARS,
   companiesMatch,
+  jobCompanyBucketKey,
   jobCompanyKeys,
-  lookupKeysFor,
 } from "../src/lib/jobs/company-match";
 import {
   DEFAULT_JOB_FEEDS,
@@ -85,7 +85,7 @@ console.log("\nshort keys never match loosely");
   check('"EY" ≈ "EY"', match("EY", "EY"));
   check('"X" ≠ "Xero"', !match("X", "Xero"));
   const hp = jobCompanyKeys("HP")!;
-  check(`short keys are dropped from lookups (MIN_KEY_CHARS=${MIN_KEY_CHARS})`, lookupKeysFor(hp).length === 1, JSON.stringify(lookupKeysFor(hp)));
+  check(`a name under MIN_KEY_CHARS=${MIN_KEY_CHARS} has no variants to match on`, hp.variants.length === 0, JSON.stringify(hp.variants));
 }
 
 console.log("\nkey sets");
@@ -103,9 +103,48 @@ console.log("\nkey sets");
 }
 
 {
-  const keys = lookupKeysFor(jobCompanyKeys("Acme Technologies Group")!);
-  check("lookup keys are deduped", new Set(keys).size === keys.length, JSON.stringify(keys));
-  check("  and include the stripped form", keys.includes("acme"), JSON.stringify(keys));
+  const keys = jobCompanyKeys("Acme Technologies Group")!;
+  check("variants are deduped", new Set(keys.variants).size === keys.variants.length, JSON.stringify(keys.variants));
+  check("  and include the stripped form", keys.variants.includes("acme"), JSON.stringify(keys.variants));
+}
+
+console.log("\nthe bucket key: one column, and it has to work in both directions");
+
+{
+  const bucket = (name: string) => jobCompanyBucketKey(jobCompanyKeys(name)!);
+  // The case a lookup-key set cannot do. `job_postings.company_key` is ONE indexed column,
+  // so if the posting is filed under the longer name, no probe built from the shorter one
+  // can reach it — and a feed that writes "Stripe, Inc." while the contact says "Stripe" is
+  // completely ordinary. Reducing both sides first removes the direction from the problem.
+  check("suffix or not, one bucket", bucket("Stripe") === bucket("Stripe, Inc."), `${bucket("Stripe")} vs ${bucket("Stripe, Inc.")}`);
+  check("  spaces or not, one bucket", bucket("Capital One") === bucket("capitalone"), `${bucket("Capital One")} vs ${bucket("capitalone")}`);
+  check("  and both at once", bucket("Capital One, N.A.") === bucket("capitalone"), `${bucket("Capital One, N.A.")} vs ${bucket("capitalone")}`);
+
+  // The over-reduction this guards against. `companyFamilyKey`'s "first token of three or
+  // more characters" would put these together; the cost there is two dots near each other
+  // on a star map, and the cost here is telling somebody their contact works where a job
+  // just opened.
+  check('"Apple Bank" is not "Apple"', bucket("Apple Bank") !== bucket("Apple"));
+  check('"HPE" is not "HP"', bucket("HPE") !== bucket("HP"));
+
+  // Too short to reduce safely, so it falls back to the canonical form — the one comparison
+  // `companiesMatch` allows a name that short.
+  check('"HP" buckets as itself', bucket("HP") === "hp", bucket("HP"));
+
+  // The bucket is a pre-filter; `companiesMatch` still decides. Anything sharing a bucket
+  // must survive that check, or the matcher would throw away rows the index found.
+  for (const [a, b] of [
+    ["Stripe", "Stripe, Inc."],
+    ["Capital One", "capitalone"],
+    ["Capital One, N.A.", "Capital One"],
+    ["HP", "HP"],
+  ] as const) {
+    const ka = jobCompanyKeys(a)!;
+    const kb = jobCompanyKeys(b)!;
+    if (bucket(a) === bucket(b)) {
+      check(`  a shared bucket survives companiesMatch (${a} / ${b})`, companiesMatch(ka, kb));
+    }
+  }
 }
 
 console.log("\nthe feed URL");

@@ -66,7 +66,7 @@ export type CaptureUploadResult =
       sources: string[];
       transcriptionEngine: string | null;
     }
-  | { ok: false; error: string; status: number };
+  | { ok: false; error: string; status: number; retryAfterSec: number | null };
 
 /**
  * Send media to `/api/capture/jobs`, which transcribes it inside the request and leaves a
@@ -76,10 +76,32 @@ export async function uploadCaptureMedia(input: {
   sourceKind: CaptureJobSource;
   text?: string;
   files: Array<File | { filename: string; mimeType: string; blob: Blob }>;
+  /** Set when this file is one of a multi-file drop. Suspends the one-review-at-a-time rule. */
+  batchGroupId?: string | null;
+  /** The original filename, for the queue row. */
+  sourceLabel?: string | null;
+  /** YYYY-MM-DD read off the filename or mtime, offered to the parse as `hints.eventDate`. */
+  anchorDate?: string | null;
+  /** Contacts named with `@` in the composer. */
+  mentionPicks?: Array<{ id: string; name: string }>;
+  /**
+   * Queue and start extraction inside this same request.
+   *
+   * For the fan-out path only, and the reason is arithmetic: every file otherwise costs two
+   * `RATE_LIMITS.capture` tokens, one here and one in `queueCaptureJob`, so twelve files
+   * needed 24 of the 30 a minute allows. The single-capture flow keeps them separate because
+   * it has a transcript-editing step in between; a folder of meeting notes does not.
+   */
+  autoQueue?: boolean;
 }): Promise<CaptureUploadResult> {
   const form = new FormData();
   form.set("sourceKind", input.sourceKind);
   if (input.text) form.set("text", input.text);
+  if (input.batchGroupId) form.set("batchGroupId", input.batchGroupId);
+  if (input.sourceLabel) form.set("sourceLabel", input.sourceLabel);
+  if (input.anchorDate) form.set("anchorDate", input.anchorDate);
+  if (input.mentionPicks?.length) form.set("mentionPicks", JSON.stringify(input.mentionPicks));
+  if (input.autoQueue) form.set("autoQueue", "1");
   for (const f of input.files) {
     if (f instanceof File) form.append("files", f, f.name);
     else form.append("files", new File([f.blob], f.filename, { type: f.mimeType }), f.filename);
@@ -91,9 +113,14 @@ export async function uploadCaptureMedia(input: {
   });
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
+    // Carried out so the queue can wait rather than drop the file. A 429 in the middle of a
+    // twelve-file drop must never mean "that one silently did not upload".
+    const header = res.headers.get("Retry-After");
+    const retryAfterSec = header && /^\d+$/.test(header) ? Number(header) : null;
     return {
       ok: false,
       status: res.status,
+      retryAfterSec,
       error: typeof body.error === "string" ? body.error : "Couldn’t read that file — try again?",
     };
   }

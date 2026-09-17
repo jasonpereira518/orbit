@@ -43,6 +43,12 @@ export type OpsSnapshot = {
     syncRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
     /** The outbound webhook drain (`/api/webhooks/outbound/drain`), every ten minutes. */
     drain: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /**
+     * The hourly job feed. Alerted on here rather than shown on `/admin/health`, because
+     * that page reads two named jobs and this is not one of them — so without a condition,
+     * a feed that stopped being read is indistinguishable from a quiet hiring season.
+     */
+    jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
   processStalledRecent: CronRunState[];
@@ -145,6 +151,17 @@ export const SYNC_LAG_ALERT_MS = 2 * 60 * 60 * 1000;
 
 /** Disarmed calendars at once that read as a Google-side change rather than user churn. */
 export const CALENDAR_DISARM_BURST = 5;
+
+/**
+ * How long the job-feed sweep may be silent before it is treated as dead.
+ *
+ * The schedule is hourly and this is six times that — the same loose multiple the connector
+ * sync gets, for the same reason: GitHub Actions schedules lag under load and are disabled
+ * outright after 60 days without a commit on a public repository.
+ *
+ * `warning`, never `critical`: nobody is paged because an internship notification is late.
+ */
+const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -300,6 +317,37 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: "Connector sync is falling behind",
       detail: `The most overdue connection has waited ${((s.syncOldestDueAgeMs ?? 0) / 3_600_000).toFixed(1)} h — more accounts are due than a run can sync.`,
+      href: "/admin/health",
+    });
+  }
+
+  // The same pair for the job feed. A `partial` is deliberately NOT alerted on: it is the
+  // ordinary shape of a first run against an empty cursor, and of any run where one of
+  // several feeds was briefly unreachable. Only silence and outright failure mean nobody is
+  // going to find out about an opening.
+  const jobFeed = s.cron.jobFeed;
+  const jobFeedSilentFor = jobFeed.lastStartedAt
+    ? now.getTime() - jobFeed.lastStartedAt.getTime()
+    : null;
+  // Null counts as missed, exactly as it does for the connector sync above: "the cron line
+  // was never added" is the likeliest way this feature quietly does nothing, and it is
+  // indistinguishable from a quiet hiring season from any other angle.
+  if (jobFeedSilentFor === null || jobFeedSilentFor > JOB_FEED_SILENT_MS) {
+    out.push({
+      id: "jobfeed.schedule_missed",
+      severity: "warning",
+      title: "Job feed sweep has stopped running",
+      detail: jobFeed.lastStartedAt
+        ? `Last started ${jobFeed.lastStartedAt.toISOString()}; nobody is being told when a role opens at a company they know somebody at.`
+        : "No run has ever been recorded; nobody is being told when a role opens at a company they know somebody at.",
+      href: "/admin/health",
+    });
+  } else if (jobFeed.lastState === "failed" || jobFeed.lastState === "stale") {
+    out.push({
+      id: "jobfeed.run_failed",
+      severity: "warning",
+      title: `Job feed sweep ${jobFeed.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${jobFeed.lastStartedAt?.toISOString() ?? "unknown"} ended ${jobFeed.lastState}.`,
       href: "/admin/health",
     });
   }

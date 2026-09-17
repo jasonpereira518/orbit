@@ -54,7 +54,7 @@ const TIMEOUT_MS = 8_000;
 const MAX_ATTEMPTS = 3;
 
 /** Identify honestly. A site that would rather not be read this way can say so. */
-export const USER_AGENT = "OrbitBot/1.0 (+https://orbit.app; event page preview)";
+export const USER_AGENT = "OrbitBot/1.0 (+https://orbit.app; link previews and public feeds)";
 
 export class EventPageError extends Error {
   code:
@@ -66,7 +66,12 @@ export class EventPageError extends Error {
     /** An order or wallet page. It exists, but no public event page is derivable from it. */
     | "private_page"
     /** The link resolved to a login wall, whose title is not this event's title. */
-    | "sign_in_required";
+    | "sign_in_required"
+    /**
+     * The body ran past `maxBytes` and the caller asked to be told rather than handed a
+     * truncated one. Only reachable with `onOverflow: "error"` — see `GuardedFetchOptions`.
+     */
+    | "too_large";
   constructor(code: EventPageError["code"], message: string) {
     super(message);
     this.name = "EventPageError";
@@ -86,6 +91,43 @@ export type GuardedFetchOptions = {
   errorSource?: string;
   /** The message for a response whose content type is not allowed. */
   wrongTypeMessage?: string;
+  /**
+   * Extra request headers, merged under the ones this module sets.
+   *
+   * For conditional-GET validators (`If-None-Match`, `If-Modified-Since`) and nothing else.
+   * NEVER credentials: this follows redirects, and a header set here would be replayed to
+   * whatever the chain lands on — which is the exact hazard `assertDeliverable` exists for,
+   * except that the guard cannot help once the secret has already been sent.
+   */
+  headers?: Record<string, string>;
+  /**
+   * Per-attempt timeout. The default suits a web page; a multi-megabyte document needs
+   * longer, and 8s would abort it mid-download every time on a cold connection.
+   */
+  timeoutMs?: number;
+  /**
+   * What to do when the body runs past `maxBytes`.
+   *
+   * "truncate" is the default and what every page caller wants — half an HTML document
+   * still has a `<title>`. "error" is for a document that is parsed as a whole: a truncated
+   * JSON file surfaces as a `JSON.parse` column number rather than as "the file grew", and
+   * a silent truncation there would be read as "the feed shrank" and advance a cursor past
+   * data that was never seen.
+   */
+  onOverflow?: "truncate" | "error";
+};
+
+export type GuardedFetchResult = {
+  /** The URL the body finally came from — relative links resolve against it. */
+  url: string;
+  text: string;
+  status: number;
+  headers: Headers;
+  /**
+   * The server answered 304 to a conditional request. `text` is empty and `status` is 304;
+   * this flag exists so a caller cannot mistake "unchanged" for "now empty".
+   */
+  notModified: boolean;
 };
 
 function sleep(ms: number) {
@@ -104,12 +146,17 @@ function jitteredBackoffMs(attempt: number) {
  * trusting it means a hostile server can hand us an unbounded body and exhaust the function's
  * memory. Reading through the reader and cancelling is the only cap that actually holds.
  */
-async function readCapped(res: Response, maxBytes: number): Promise<string> {
+async function readCapped(
+  res: Response,
+  maxBytes: number,
+  onOverflow: "truncate" | "error"
+): Promise<string> {
   if (!res.body) return "";
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let out = "";
   let total = 0;
+  let overflowed = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -119,6 +166,9 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
       // is precisely the shape a hostile server would send, and the case the cap exists for.
       const room = maxBytes - total;
       if (value.byteLength >= room) {
+        overflowed = true;
+        // Still only `room` bytes, even on the error path: the throw happens after the
+        // reader is cancelled, and nothing unbounded is ever held.
         out += decoder.decode(value.subarray(0, room));
         break;
       }
@@ -127,6 +177,9 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
     }
   } finally {
     await reader.cancel().catch(() => {});
+  }
+  if (overflowed && onOverflow === "error") {
+    throw new EventPageError("too_large", `That response is larger than ${maxBytes} bytes.`);
   }
   return out;
 }
@@ -143,11 +196,20 @@ function typeAllowed(contentType: string | null, allowed: readonly string[]): bo
  */
 async function attemptOnce(
   url: string,
-  options: Required<Pick<GuardedFetchOptions, "accept" | "contentTypes" | "maxBytes" | "wrongTypeMessage">> & {
+  options: Required<
+    Pick<
+      GuardedFetchOptions,
+      "accept" | "contentTypes" | "maxBytes" | "wrongTypeMessage" | "headers" | "timeoutMs" | "onOverflow"
+    >
+  > & {
     deps: FetchPageDeps;
     errorSource: string;
   }
-): Promise<{ kind: "redirect"; location: string } | { kind: "ok"; text: string }> {
+): Promise<
+  | { kind: "redirect"; location: string }
+  | { kind: "ok"; text: string; status: number; headers: Headers }
+  | { kind: "not_modified"; status: number; headers: Headers }
+> {
   let last: Response | null = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     // Immediately before the request, every time — including on a retry, because DNS can
@@ -159,8 +221,11 @@ async function attemptOnce(
       res = await options.deps.fetch(url, {
         method: "GET",
         redirect: "manual",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(options.timeoutMs),
         headers: {
+          // Caller headers first, so neither the agent string nor `accept` can be
+          // overwritten by them — those two are this module's promise about itself.
+          ...options.headers,
           "user-agent": USER_AGENT,
           accept: options.accept,
         },
@@ -173,6 +238,15 @@ async function attemptOnce(
       continue;
     }
     last = res;
+
+    // Answered before the redirect branch: 304 sits in the 3xx range but is not a
+    // redirect, carries no `Location`, and would otherwise be reported as "redirected to
+    // nowhere" — which is what a conditional GET gets for its trouble every single time
+    // nothing has changed.
+    if (res.status === 304) {
+      await res.body?.cancel().catch(() => {});
+      return { kind: "not_modified", status: 304, headers: res.headers };
+    }
 
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
@@ -191,7 +265,12 @@ async function attemptOnce(
         await res.body?.cancel().catch(() => {});
         throw new EventPageError("not_html", options.wrongTypeMessage);
       }
-      return { kind: "ok", text: await readCapped(res, options.maxBytes) };
+      return {
+        kind: "ok",
+        text: await readCapped(res, options.maxBytes, options.onOverflow),
+        status: res.status,
+        headers: res.headers,
+      };
     }
 
     if (attempt === MAX_ATTEMPTS - 1) {
@@ -225,12 +304,15 @@ async function attemptOnce(
 export async function guardedFetchText(
   start: string,
   options: GuardedFetchOptions = {}
-): Promise<{ url: string; text: string }> {
+): Promise<GuardedFetchResult> {
   const resolved = {
     accept: options.accept ?? "text/html,application/xhtml+xml",
     contentTypes: options.contentTypes ?? ALLOWED_CONTENT_TYPES,
     maxBytes: options.maxBytes ?? MAX_HTML_BYTES,
     wrongTypeMessage: options.wrongTypeMessage ?? "That link is not a web page.",
+    headers: options.headers ?? {},
+    timeoutMs: options.timeoutMs ?? TIMEOUT_MS,
+    onOverflow: options.onOverflow ?? ("truncate" as const),
     deps: options.deps ?? { fetch },
     errorSource: options.errorSource ?? ERROR_SOURCES.eventPageFetch,
   };
@@ -245,7 +327,12 @@ export async function guardedFetchText(
       // assertDeliverable's refusals land here. Its messages are already user-facing.
       throw new EventPageError("blocked", (error as Error).message);
     }
-    if (result.kind === "ok") return { url, text: result.text };
+    if (result.kind === "ok") {
+      return { url, text: result.text, status: result.status, headers: result.headers, notModified: false };
+    }
+    if (result.kind === "not_modified") {
+      return { url, text: "", status: 304, headers: result.headers, notModified: true };
+    }
     url = result.location;
   }
   throw new EventPageError("too_many_redirects", "That link redirected too many times.");

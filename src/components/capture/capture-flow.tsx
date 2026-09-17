@@ -24,7 +24,11 @@ import { analyzeMeetingSession, type MeetingAnalysis } from "@/actions/meetings"
 import { CaptureResumeNotice } from "@/components/capture/capture-resume-notice";
 import { CaptureSaved } from "@/components/capture/capture-saved";
 import { CaptureSummary, choicesFromSuggestions, suggestionsFromChoices } from "@/components/capture/capture-summary";
+import type { OpportunityReviewItem } from "@/lib/capture/types";
 import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureMode } from "@/components/capture/capture-tabs";
+import { NotesLibraryUpload } from "@/components/capture/notes-library-upload";
+import { CaptureQueuePanel } from "@/components/capture/capture-queue-panel";
+import { discardCaptureBatch, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { ExtractingStage } from "@/components/capture/extracting-stage";
 import { IgnoredPeopleSection } from "@/components/capture/ignored-people-section";
 import { MeetingCaptureTab } from "@/components/capture/meeting-capture-tab";
@@ -37,7 +41,7 @@ import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import { clearCaptureJob, refreshCaptureJob, seedCaptureJob, useCaptureJob } from "@/lib/capture/job-store";
-import { acceptedPeople, countDecisions, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
+import { acceptedPeople, choicesFromOpportunities, countDecisions, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
@@ -60,6 +64,7 @@ const SOURCE_LABEL: Record<CaptureJobSource, string> = {
 
 export function CaptureFlow({
   initialJob,
+  initialJobs = [],
   initialContactId = null,
   initialContactName = null,
   defaultMode = "messy",
@@ -73,6 +78,8 @@ export function CaptureFlow({
   history = null,
 }: {
   initialJob: CaptureJobView | null;
+  /** Every reachable job, so a multi-file drop can render its queue. */
+  initialJobs?: CaptureJobView[];
   initialContactId?: string | null;
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
@@ -104,6 +111,54 @@ export function CaptureFlow({
   const [mode, setMode] = useState<CaptureMode>(() =>
     initialJob && (initialJob.status === "transcribed" || initialJob.status === "ingesting") ? tabForSource(initialJob.sourceKind) : defaultMode
   );
+  /**
+   * The queue over a multi-file drop.
+   *
+   * Polled separately from the single-job store rather than folded into it: that store holds
+   * exactly one job by design and has other subscribers, and widening it to a collection
+   * would change what every one of them reads. This is additive and disappears when there is
+   * only one job.
+   */
+  const [queue, setQueue] = useState<CaptureJobView[]>(initialJobs);
+  /**
+   * ONE upload's jobs, not every job that is still open.
+   *
+   * `getActiveCaptureJobs` returns everything reachable, which can span two folder drops and
+   * a lone Extract — the batch rule in `queueCaptureJob` stops a batch discarding its
+   * siblings, so several can be open at once. The panel is headed "This upload" and its
+   * Discard all is deliberately scoped to one `batchGroupId`, so rendering the others would
+   * make both of those statements false: it would name somebody else's drop as part of this
+   * one, and then discard only a third of what it had just listed.
+   *
+   * The active job's batch wins, so opening a row from an older drop switches the panel to
+   * that drop rather than leaving it pointing at the newest.
+   */
+  const activeBatchId =
+    queue.find((j) => j.id === job?.id)?.batchGroupId ??
+    queue.find((j) => j.batchGroupId)?.batchGroupId ??
+    null;
+  const batchJobs = activeBatchId
+    ? queue.filter((j) => j.batchGroupId === activeBatchId)
+    : [];
+  const queueBusy = batchJobs.some((j) =>
+    ["ingesting", "transcribed", "queued", "extracting", "saving"].includes(j.status)
+  );
+  useEffect(() => {
+    if (batchJobs.length <= 1 || !queueBusy) return;
+    let alive = true;
+    const t = setInterval(() => {
+      void getActiveCaptureJobs()
+        .then((rows) => {
+          if (alive) setQueue(rows);
+        })
+        .catch(() => null);
+    }, 2500);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [batchJobs.length, queueBusy]);
+
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [pendingStart, setPendingStart] = useState(false);
   const [reviewOpened, setReviewOpened] = useState(false);
@@ -348,6 +403,39 @@ export function CaptureFlow({
                 tabId={captureTabId("meeting")}
               />
             )}
+            {batchJobs.length > 1 && activeBatchId && (
+              <div className="mb-4">
+                <CaptureQueuePanel
+                  jobs={batchJobs}
+                  activeJobId={job?.id ?? null}
+                  onOpen={(jobId) => {
+                    const next = batchJobs.find((j) => j.id === jobId);
+                    if (next) seedCaptureJob(next, { force: true });
+                  }}
+                  onDiscardAll={() => {
+                    void discardCaptureBatch(activeBatchId).then(() => {
+                      // Only this batch leaves the list. Clearing the whole thing would hide
+                      // any other drop still open until the next poll brought it back.
+                      setQueue((prev) => prev.filter((j) => j.batchGroupId !== activeBatchId));
+                      router.refresh();
+                    });
+                  }}
+                />
+              </div>
+            )}
+            {mode === "library" && (
+              <NotesLibraryUpload
+                hasApiKey={hasApiKey}
+                panelId={capturePanelId("library")}
+                tabId={captureTabId("library")}
+                onQueued={() => {
+                  void getActiveCaptureJobs()
+                    .then(setQueue)
+                    .catch(() => null);
+                  router.refresh();
+                }}
+              />
+            )}
             {mode === "structured" && (
               <div id={capturePanelId("structured")} role="tabpanel" aria-labelledby={captureTabId("structured")}>
                 <StructuredCaptureForm initialContactId={initialContactId} initialContactName={initialContactName} />
@@ -453,7 +541,12 @@ function SummaryStep({
 }) {
   const result = job.result!;
   const [suggestions, setSuggestions] = useState<SuggestionReviewItem[]>(() => suggestionsFromChoices(result, job.decisions.reminders));
+  // The opportunity ticks are held as CHOICES rather than as rows, because the rows are
+  // derived from whoever is still accepted — see `opportunityRows`. Keeping rows here would
+  // mean re-deriving them every time a card was set aside.
+  const [opportunityChoices, setOpportunityChoices] = useState(() => job.decisions.opportunities);
   const timer = useRef<number | null>(null);
+  const opportunityTimer = useRef<number | null>(null);
 
   function change(next: SuggestionReviewItem[]) {
     setSuggestions(next);
@@ -465,11 +558,37 @@ function SummaryStep({
     }, 400);
   }
 
+  function changeOpportunities(next: OpportunityReviewItem[]) {
+    const choices = choicesFromOpportunities(next, result.items, opportunityChoices);
+    setOpportunityChoices(choices);
+    if (opportunityTimer.current) window.clearTimeout(opportunityTimer.current);
+    opportunityTimer.current = window.setTimeout(() => {
+      void recordCaptureChoices(job.id, { opportunities: choices }).then((res) => {
+        if (res.ok) seedCaptureJob(res.job, { force: true });
+      });
+    }, 400);
+  }
+
+  /**
+   * Save flushes both debounces first.
+   *
+   * Without this, ticking a box and hitting Save inside 400ms saves the state from before
+   * the tick — the write the runner reads is the one in the database, not the one on screen.
+   */
   async function saveNow() {
+    const pending: Parameters<typeof recordCaptureChoices>[1] = {};
     if (timer.current) {
       window.clearTimeout(timer.current);
       timer.current = null;
-      const res = await recordCaptureChoices(job.id, { reminders: choicesFromSuggestions(suggestions, result.suggestedReminders) });
+      pending.reminders = choicesFromSuggestions(suggestions, result.suggestedReminders);
+    }
+    if (opportunityTimer.current) {
+      window.clearTimeout(opportunityTimer.current);
+      opportunityTimer.current = null;
+      pending.opportunities = opportunityChoices;
+    }
+    if (Object.keys(pending).length) {
+      const res = await recordCaptureChoices(job.id, pending);
       if (res.ok) seedCaptureJob(res.job, { force: true });
     }
     onSave();
@@ -482,6 +601,8 @@ function SummaryStep({
       decisions={job.decisions}
       suggestions={suggestions}
       onSuggestionsChange={change}
+      opportunityChoices={opportunityChoices}
+      onOpportunitiesChange={changeOpportunities}
       onDecide={onDecide}
       onSave={() => void saveNow()}
       onStartOver={onStartOver}

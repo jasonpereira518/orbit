@@ -47,6 +47,7 @@ export const PUBLIC_ROUTES = [
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
   "/api/sync/run",
+  "/api/jobs/feed/sweep",
   "/api/webhooks/outbound/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key
   // (`src/lib/api/auth.ts`), which Clerk knows nothing about. Exempted from

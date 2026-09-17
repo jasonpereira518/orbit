@@ -26,6 +26,15 @@ import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import { constellationEligibility } from "@/lib/constellation-eligibility";
 
+/**
+ * The suggestion types `buildOutreachSuggestions` OWNS — it deletes and rebuilds exactly
+ * these on a refresh.
+ *
+ * Nothing written by anything else may join this list. `job_posting_signal`
+ * (`src/lib/jobs/matcher.ts`) in particular: it is produced hourly by a cron from a feed
+ * this process cannot re-derive, so adding it here would wipe every job signal the moment
+ * somebody opened the dashboard.
+ */
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
   "post_event",

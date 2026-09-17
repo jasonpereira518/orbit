@@ -10,6 +10,8 @@ import type {
   CaptureDecisions,
   CaptureJobResult,
   CaptureJobStatus,
+  CaptureOpportunityChoices,
+  OpportunityReviewItem,
 } from "@/lib/capture/types";
 import { clampCloseness } from "@/lib/capture/closeness";
 import {
@@ -20,6 +22,7 @@ import {
   type ReminderPlanCommitment,
   type ReminderPlanParticipant,
 } from "@/lib/note-batches";
+import type { OpportunityKind } from "@/lib/opportunity-kinds";
 
 export type CapturePhase =
   | "input"
@@ -173,6 +176,95 @@ export function defaultReminderKeys(
     .map((s) => s.key);
 }
 
+/**
+ * Opportunity ticks and kind corrections.
+ *
+ * Here rather than in the summary component for the reason the header gives: the runner and
+ * the review UI have to agree, and a default that lives in only one of them shows one set
+ * on screen and saves another. Absent choices mean "keep everything the parse found", so a
+ * job whose decisions were written before this section existed does not silently save none.
+ */
+export function opportunityKey(personKey: string, index: number): string {
+  return `${personKey}:${index}`;
+}
+
+export function opportunityChecked(
+  choices: CaptureOpportunityChoices | null | undefined,
+  key: string
+): boolean {
+  return choices ? choices.checked.includes(key) : true;
+}
+
+export function opportunityKindFor(
+  choices: CaptureOpportunityChoices | null | undefined,
+  key: string,
+  fallback: OpportunityKind
+): OpportunityKind {
+  return choices?.kinds?.[key] ?? fallback;
+}
+
+/**
+ * The rows to review, from the people who are still ACCEPTED.
+ *
+ * Derived rather than held in state, because setting somebody aside has to take their
+ * opportunities with them — the runner filters by the accepted set, so a list that kept
+ * showing them would be offering to save rows that could never be written.
+ */
+export function opportunityRows(
+  accepted: readonly { item: BulkNotePersonPreview; decision: CaptureDecision }[],
+  choices: CaptureOpportunityChoices | null | undefined
+): OpportunityReviewItem[] {
+  const rows: OpportunityReviewItem[] = [];
+  for (const { item, decision } of accepted) {
+    const personName = decision.edits?.name?.trim() || item.parsed?.name || "Unnamed";
+    (item.opportunities ?? []).forEach((o, i) => {
+      const key = opportunityKey(item.key, i);
+      rows.push({
+        ...o,
+        key,
+        personName,
+        kind: opportunityKindFor(choices, key, o.kind),
+        checked: opportunityChecked(choices, key),
+      });
+    });
+  }
+  return rows;
+}
+
+/**
+ * `previous` carries keys that are not on screen — the opportunities of somebody who has
+ * been set aside. Without it, setting a person aside and then changing your mind brings
+ * their opportunities back unticked, because the write in between could only see the
+ * visible rows.
+ */
+export function choicesFromOpportunities(
+  rows: readonly OpportunityReviewItem[],
+  items: readonly BulkNotePersonPreview[],
+  previous: CaptureOpportunityChoices | null | undefined
+): CaptureOpportunityChoices {
+  const baseKind = new Map<string, OpportunityKind>();
+  for (const item of items) {
+    (item.opportunities ?? []).forEach((o, i) => baseKind.set(opportunityKey(item.key, i), o.kind));
+  }
+  const visible = new Set(rows.map((r) => r.key));
+
+  const kinds: Record<string, OpportunityKind> = {};
+  for (const [key, kind] of Object.entries(previous?.kinds ?? {})) {
+    if (!visible.has(key)) kinds[key] = kind;
+  }
+  for (const row of rows) {
+    if (row.kind !== baseKind.get(row.key)) kinds[row.key] = row.kind;
+  }
+
+  return {
+    checked: [
+      ...(previous?.checked ?? []).filter((k) => !visible.has(k)),
+      ...rows.filter((r) => r.checked).map((r) => r.key),
+    ],
+    ...(Object.keys(kinds).length ? { kinds } : {}),
+  };
+}
+
 /** Comma string ↔ list, the one place tags are split so the card and the dialog agree. */
 export function parseTagNames(text: string): string[] {
   const seen = new Set<string>();
@@ -218,11 +310,13 @@ export function plannedCaptureReminders(
 }
 
 /** The summary's Save button: "Save meeting + 3 contacts + 2 reminders". */
-export function saveButtonLabel(counts: { meeting: boolean; contacts: number; reminders: number }): string {
+export function saveButtonLabel(counts: { meeting: boolean; contacts: number; reminders: number; opportunities?: number }): string {
   const parts: string[] = [];
   if (counts.meeting) parts.push("meeting");
   if (counts.contacts) parts.push(`${counts.contacts} ${counts.contacts === 1 ? "contact" : "contacts"}`);
   if (counts.reminders) parts.push(`${counts.reminders} ${counts.reminders === 1 ? "reminder" : "reminders"}`);
+  const opportunities = counts.opportunities ?? 0;
+  if (opportunities) parts.push(`${opportunities} ${opportunities === 1 ? "opportunity" : "opportunities"}`);
   return parts.length ? `Save ${parts.join(" + ")}` : "Save";
 }
 

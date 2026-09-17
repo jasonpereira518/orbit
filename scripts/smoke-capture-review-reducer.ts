@@ -4,15 +4,21 @@
  */
 import {
   acceptedPeople,
+  choicesFromOpportunities,
   countDecisions,
   defaultMergeId,
   defaultReminderKeys,
   firstPendingIndex,
   initialPhaseFor,
+  opportunityRows,
   parseTagNames,
   setAsidePeople,
 } from "../src/lib/capture/review-reducer";
-import type { BulkNotePersonPreview, CaptureDecisions } from "../src/lib/capture/types";
+import type {
+  BulkNotePersonPreview,
+  CaptureDecisions,
+  CaptureOpportunityPreview,
+} from "../src/lib/capture/types";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -60,5 +66,74 @@ for (const status of ["ingesting", "transcribed", "failed", "discarded"] as cons
 
 check("confident reminders are ticked by default", defaultReminderKeys([{ key: "a", confidenceScore: 60 }, { key: "b", confidenceScore: 59 }]).join() === "a");
 check("tags split, trim and dedupe case-insensitively", parseTagNames(" founder, AI ,ai,, ").join("|") === "founder|AI");
+
+console.log("\nopportunity ticks and kind corrections");
+
+/**
+ * These two live here rather than in the summary component because the RUNNER reads them
+ * too. A default that existed in only one of them would show one set on screen and save
+ * another, which is the single worst failure this review step can have.
+ */
+{
+  const opp = (label: string, kind: CaptureOpportunityPreview["kind"]): CaptureOpportunityPreview => ({
+    kind, label, direction: null, sourceExcerpt: `…${label}…`, rawDatePhrase: null, confidenceScore: 80, dueDateIso: null,
+  });
+  const named = (name: string) => ({ name } as BulkNotePersonPreview["parsed"]);
+  const withOpps = [
+    item("a", { parsed: named("Ada"), opportunities: [opp("forward my resume", "referral"), opp("summer internship", "internship")] }),
+    item("b", { parsed: named("Bea"), opportunities: [opp("intro to their VP", "introduction")] }),
+  ];
+  const allAccepted: CaptureDecisions = { people: { a: dec("accept", 0), b: dec("accept", 1) } };
+  const accepted = acceptedPeople(withOpps, allAccepted);
+
+  // Absent choices are the defaults. A job whose decisions were written before this section
+  // existed must keep everything the parse found, not silently save none of it.
+  const fresh = opportunityRows(accepted, undefined);
+  check("with no choices yet, everything is ticked", fresh.length === 3 && fresh.every((r) => r.checked));
+  check("  keys are <personKey>:<index>", fresh.map((r) => r.key).join() === "a:0,a:1,b:0");
+  check("  and each row names whose card produced it", fresh[2].personName === "Bea", fresh[2].personName);
+  // A name corrected on the card is the name the row should show — the person edited it
+  // because the extraction got it wrong, and showing the original here would contradict
+  // the card they just fixed.
+  const renamed = opportunityRows(
+    acceptedPeople(withOpps, { people: { a: { ...dec("accept", 0), edits: { name: "Ada Lovelace" } }, b: dec("accept", 1) } }),
+    undefined
+  );
+  check("  an edited name wins over the parsed one", renamed[0].personName === "Ada Lovelace", renamed[0].personName);
+
+  const unticked = choicesFromOpportunities(
+    fresh.map((r) => (r.key === "a:1" ? { ...r, checked: false } : r)),
+    withOpps,
+    undefined
+  );
+  check("unticking one drops just that key", unticked.checked.join() === "a:0,b:0");
+  check("  and records no kind override", unticked.kinds === undefined, JSON.stringify(unticked.kinds));
+
+  // The correction the Select exists for: a referral filed as an introduction is a referral
+  // nobody will find when they search for one.
+  const corrected = choicesFromOpportunities(
+    fresh.map((r) => (r.key === "b:0" ? { ...r, kind: "referral" as const } : r)),
+    withOpps,
+    undefined
+  );
+  check("a changed kind is recorded", corrected.kinds?.["b:0"] === "referral", JSON.stringify(corrected.kinds));
+  check("  and an unchanged one is not", Object.keys(corrected.kinds ?? {}).length === 1);
+  check("the correction survives a re-read", opportunityRows(accepted, corrected).find((r) => r.key === "b:0")?.kind === "referral");
+
+  // Setting somebody aside has to take their opportunities off the list — the runner
+  // filters by the accepted set, so showing them would offer to save rows that can never
+  // be written.
+  const bAside: CaptureDecisions = { people: { a: dec("accept", 0), b: dec("reject", 1) } };
+  const visible = opportunityRows(acceptedPeople(withOpps, bAside), corrected);
+  check("a set-aside person's opportunities leave the list", visible.map((r) => r.key).join() === "a:0,a:1");
+
+  // …but the write that happens while they are off screen must not forget them, or changing
+  // your mind brings them back unticked and re-corrected to nothing.
+  const whileAside = choicesFromOpportunities(visible, withOpps, corrected);
+  check("  their tick is carried through anyway", whileAside.checked.includes("b:0"), JSON.stringify(whileAside.checked));
+  check("  as is their corrected kind", whileAside.kinds?.["b:0"] === "referral", JSON.stringify(whileAside.kinds));
+  const restored = opportunityRows(accepted, whileAside);
+  check("  so re-accepting them restores both", restored.find((r) => r.key === "b:0")?.checked === true && restored.find((r) => r.key === "b:0")?.kind === "referral");
+}
 
 console.log("\nsmoke-capture-review-reducer: all checks passed");

@@ -107,6 +107,7 @@ run(async () => {
     check("the button says so", saveButtonLabel({ meeting: false, contacts: 3, reminders: planned.length }) === "Save 3 contacts + 2 reminders");
     check("label: singular and meeting forms", saveButtonLabel({ meeting: true, contacts: 1, reminders: 1 }) === "Save meeting + 1 contact + 1 reminder");
     check("label: nothing to count", saveButtonLabel({ meeting: false, contacts: 0, reminders: 0 }) === "Save");
+    check("label: opportunities count too", saveButtonLabel({ meeting: false, contacts: 1, reminders: 0, opportunities: 2 }) === "Save 1 contact + 2 opportunities");
 
     console.log("\nSaved…");
     await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, job.id));

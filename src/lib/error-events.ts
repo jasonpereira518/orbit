@@ -108,6 +108,12 @@ export const ERROR_SOURCES = {
    * revoked or exhausted managed key takes AI away from every Lifetime account at once.
    */
   managedAi: "ai.managed",
+  /**
+   * A job feed could not be read (`src/lib/jobs/feed-fetch.ts`). Recorded only when the
+   * retry ladder was exhausted or the document did not parse — a 304 is the steady state
+   * and a few malformed listings are normal, so neither is an error.
+   */
+  jobFeedFetch: "jobs.feed_fetch",
 } as const;
 
 export type ErrorEventInput = {

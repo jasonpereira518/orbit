@@ -32,7 +32,7 @@ async function reset() {
   const db = await getDb();
   await db
     .delete(cronRuns)
-    .where(inArray(cronRuns.job, ["imports.process-stalled", "ops.sweep", "sync.run", "webhooks.drain"]));
+    .where(inArray(cronRuns.job, ["imports.process-stalled", "ops.sweep", "sync.run", "webhooks.drain", "jobs.feed-sweep"]));
   await db.delete(errorEvents).where(inArray(errorEvents.source, [ERROR_SOURCES.backfillFailed, ERROR_SOURCES.stripeUnattributed]));
   await db.execute(sql`UPDATE contacts SET embedding_stale_at = NULL WHERE embedding_stale_at < now() - interval '6 hours'`);
   await db.execute(sql`UPDATE gmail_connections SET next_sync_at = NULL WHERE next_sync_at < now() - interval '1 hour'`);
@@ -42,18 +42,24 @@ async function reset() {
   // Other scripts' disarmed rows would otherwise add up to a burst.
   await db.execute(sql`UPDATE gmail_connections SET sync_error = NULL WHERE next_sync_at IS NULL AND sync_error IS NOT NULL`);
   await db.execute(sql`DELETE FROM rate_limit_buckets WHERE bucket LIKE 'avatarSource.shared:%' OR bucket LIKE 'apollo.%'`);
-  // A healthy connector-sync run, so `sync.schedule_missed` stays quiet.
+  // A healthy run of every OTHER scheduled job, so their own "has stopped running"
+  // conditions stay quiet.
   //
   // This scenario is about the alert STATE MACHINE — open, remind, recover — and asserts an
-  // exact delivery count to pin it. Leaving `sync.run` absent would fire a second, unrelated
-  // condition and turn every count here into a running tally of the catalogue's size.
-  await db.insert(cronRuns).values({
-    job: "sync.run",
-    status: "ok",
-    trigger: "manual",
-    startedAt: new Date(Date.now() - 5 * 60_000),
-    finishedAt: new Date(Date.now() - 5 * 60_000),
-  });
+  // exact delivery count to pin it. Leaving any of these absent fires a second, unrelated
+  // condition and turns every count here into a running tally of the catalogue's size. Each
+  // new scheduled job needs a row here; that is the cost of asserting an exact count, and it
+  // is worth paying.
+  const recently = new Date(Date.now() - 5 * 60_000);
+  await db.insert(cronRuns).values(
+    (["sync.run", "jobs.feed-sweep"] as const).map((job) => ({
+      job,
+      status: "ok" as const,
+      trigger: "manual" as const,
+      startedAt: recently,
+      finishedAt: recently,
+    }))
+  );
   // The whole table: it is local PGlite (DATABASE_URL deleted above) and every row is a
   // memory of what a previous sweep said, which is exactly what this scenario controls.
   await db.delete(opsAlertState);

@@ -141,12 +141,31 @@ export function companiesMatch(a: CompanyKeySet, b: CompanyKeySet): boolean {
 }
 
 /**
- * Every key a posting should be indexed under, so the matcher can look a company up rather
- * than comparing it against every watched company in turn.
+ * The ONE key a company is filed under, so two spellings of the same employer land in the
+ * same bucket and the matcher can look a company up instead of comparing it against every
+ * watched company in turn.
  *
- * Always includes `primary`, so a name too short to have variants is still findable by an
- * exact match — the one comparison `companiesMatch` allows it.
+ * This is the most-reduced variant: suffixes stripped, then spaces collapsed. It is what
+ * makes the lookup work in BOTH directions, which a set of lookup keys does not:
+ *
+ *   The posting side is a single indexed column (`job_postings.company_key`). Filing a
+ *   posting under `primary` and probing it with the contact's variants finds "Capital One"
+ *   from a contact at "Capital One, N.A." — but NOT the reverse, because no probe key can
+ *   be longer than the stored one. A feed whose name carries the suffix and a contact whose
+ *   name does not is an ordinary case, and it would silently never match.
+ *
+ *   Reducing both sides first removes the direction entirely: "Capital One", "Capital One,
+ *   N.A." and "capitalone" all file under `capitalone`.
+ *
+ * Falls back to `primary` when the reduced form is too short to be safe — "HP" stays "hp"
+ * and can then only match by exact equality, which is the one comparison `companiesMatch`
+ * allows a name that short. Over-reduction is the failure mode this guards: "Apple Bank"
+ * reduces to `applebank`, never to `apple`.
+ *
+ * The bucket is a cheap pre-filter, not the decision. `companiesMatch` still has the final
+ * say on every candidate it returns, because that is the rule you can audit a match against.
  */
-export function lookupKeysFor(keys: CompanyKeySet): string[] {
-  return [...new Set([keys.primary, ...keys.variants])];
+export function jobCompanyBucketKey(keys: CompanyKeySet): string {
+  const reduced = (keys.stripped ?? keys.primary).replace(/\s+/g, "");
+  return reduced.length >= MIN_KEY_CHARS ? reduced : keys.primary;
 }

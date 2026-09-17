@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { getContact } from "@/actions/contacts";
-import { getActiveCaptureJob } from "@/actions/capture-jobs";
+import { getActiveCaptureJob, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { countIgnoredPeople } from "@/actions/ignored-people";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
@@ -35,6 +35,10 @@ export default async function CapturePage({
     .catch(() => null);
   // Same for the job and the ignored count: the page must render without either.
   const jobPromise = getActiveCaptureJob().catch(() => null);
+  // Every job still reachable, so a multi-file drop can render its queue. `.catch` because a
+  // failed side read must not take the page with it — the single-job resume above is what
+  // the page actually needs to function.
+  const jobsPromise = getActiveCaptureJobs().catch(() => []);
   const ignoredPromise = countIgnoredPeople().catch(() => 0);
 
   let contactId: string | null = null;
@@ -52,6 +56,7 @@ export default async function CapturePage({
   const { usage } = await planPromise;
   const resumableMeeting = await resumablePromise;
   const job = await jobPromise;
+  const jobs = await jobsPromise;
   const ignoredCount = await ignoredPromise;
   // An unfinished meeting is the one thing on this page that can be lost by ignoring it,
   // so it opens on the Meeting tab unless the link asked for something specific.
@@ -74,6 +79,7 @@ export default async function CapturePage({
       </div>
       <CaptureFlowLazy
         initialJob={job}
+        initialJobs={jobs}
         initialContactId={contactId}
         initialContactName={contactName}
         defaultMode={defaultMode}
