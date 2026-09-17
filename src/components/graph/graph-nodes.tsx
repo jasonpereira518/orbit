@@ -288,7 +288,7 @@ function ContactNodeComponent({
         </div>
         <div
           className={cn(
-            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+            "constellation-star-label pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
             bright ? "opacity-100" : "opacity-75 group-hover:opacity-100"
           )}
         >
@@ -376,7 +376,7 @@ function ContactNodeComponent({
         />
         <div
           className={cn(
-            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+            "constellation-star-label pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
             bright
               ? "opacity-100"
               : dimmedScatter

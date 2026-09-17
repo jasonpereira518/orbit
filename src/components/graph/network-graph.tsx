@@ -89,6 +89,7 @@ import { CONSTELLATION_STAR_PX } from "@/lib/graph/starfield-scale";
 import { clusterBrandColor } from "@/lib/school-color";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { lodBandFor } from "@/lib/graph-lod";
 import { cn } from "@/lib/utils";
 import {
   dismissBackgroundJob,
@@ -815,6 +816,10 @@ function GraphCanvas(props: {
  *
  * Rounded to two decimals so the write is skipped for the sub-perceptual changes a pan or
  * an inertial settle produces. Renders nothing.
+ *
+ * It also publishes `data-lod`, which is the one piece of state the stars cannot derive from
+ * the scale in CSS alone — a custom property can size a length, but it cannot switch a rule
+ * on or off. See `LABEL_LOD_ZOOM`.
  */
 function GraphZoomVariable() {
   const storeApi = useStoreApi();
@@ -828,7 +833,16 @@ function GraphZoomVariable() {
     ) as HTMLElement | null;
     if (!root) return;
     let last = "";
+    let lastLod = "";
     const write = (scale: number) => {
+      // Written before the early return below: the LOD band changes far less often than the
+      // rounded scale, but it must still be set on the very first write, and skipping it
+      // whenever the scale was unchanged would leave the attribute stale after a remount.
+      const lod = lodBandFor(scale);
+      if (lod !== lastLod) {
+        lastLod = lod;
+        root.dataset.lod = lod;
+      }
       const next = (Math.round(scale * 100) / 100).toString();
       if (next === last) return;
       last = next;
@@ -843,6 +857,7 @@ function GraphZoomVariable() {
       // Left set, a stale scale would size the hit targets on the next visit to the graph
       // before the first write lands.
       root.style.removeProperty("--graph-zoom");
+      delete root.dataset.lod;
     };
   }, [storeApi]);
 

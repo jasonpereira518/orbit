@@ -1161,6 +1161,23 @@
   animation-delay: var(--twinkle-delay, 0s);
 }
 
+/*
+ * Level of detail: no labels when they cannot be read.
+ *
+ * A star label is 11px of text. At the fit view of a large network the camera sits around
+ * 0.11, which renders it about 1.2px tall — and 1,298 of those were the most expensive
+ * thing on the page. Measured on a 2,024-contact network, five zoom steps in and five out:
+ * 13,752ms of long tasks with labels, 8,594ms without. `display: none` rather than opacity
+ * or visibility, because only removing them from layout and paint buys that.
+ *
+ * `data-lod` is written by `GraphZoomVariable` in `network-graph.tsx`, and only when the
+ * band changes rather than on every zoom step. CSS cannot branch on a custom property's
+ * value, which is why this is an attribute and not another `--graph-*` variable.
+ */
+.constellation-stage[data-lod="far"] .constellation-star-label {
+  display: none;
+}
+
 .constellation-nebula {
   animation: constellation-nebula-breathe 7s ease-in-out infinite;
   filter: blur(1px);
