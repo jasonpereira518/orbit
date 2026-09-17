@@ -1564,7 +1564,10 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // database stamped 62 by main never ran 58-60's statements, and one stamped 60 by the launch
 // stack never ran 61-62's, so only a number above both makes each pick up the other. 63 is
 // claimed by the unpushed onboarding-flow-revision worktree, the same trap 57 was.
-export const SCHEMA_VERSION = 64;
+//
+// 65 = launch Phase 4 polish: no DDL. Two idempotent data migrations at the end of
+// `alters` — calendar feed tokens hashed in place, li-event interactions tagged ai_derived.
+export const SCHEMA_VERSION = 65;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2974,6 +2977,16 @@ const alters = [
   // A Gmail-scan link matched this row by the sender address first, so that address is almost
   // always the one in this user's own mailbox.
   `UPDATE user_recruiter_links l SET email = r.email FROM recruiters r WHERE r.id = l.recruiter_id AND l.source = 'gmail' AND l.email IS NULL AND r.email IS NOT NULL`,
+  // Launch Phase 4: calendar feed tokens are stored as their SHA-256, hex, matching
+  // hashCalendarFeedToken in src/lib/calendar-feed.ts. Idempotent: live tokens are
+  // 43-character base64url, so a stored 64-hex value is already a hash and is left alone.
+  `UPDATE user_settings
+      SET calendar_feed_token = encode(sha256(convert_to(calendar_feed_token, 'UTF8')), 'hex')
+    WHERE calendar_feed_token IS NOT NULL AND calendar_feed_token !~ '^[0-9a-f]{64}$'`,
+  // Launch Phase 4: LinkedIn timeline events a model inferred are tagged ai_derived, so
+  // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
+  `UPDATE interactions SET source = 'ai_derived'
+    WHERE external_id LIKE 'li-event:%' AND source IS DISTINCT FROM 'ai_derived'`,
 ];
 
 /**
