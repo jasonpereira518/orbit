@@ -118,11 +118,31 @@ export function CaptureFlow({
    * only one job.
    */
   const [queue, setQueue] = useState<CaptureJobView[]>(initialJobs);
-  const queueBusy = queue.some((j) =>
+  /**
+   * ONE upload's jobs, not every job that is still open.
+   *
+   * `getActiveCaptureJobs` returns everything reachable, which can span two folder drops and
+   * a lone Extract — the batch rule in `queueCaptureJob` stops a batch discarding its
+   * siblings, so several can be open at once. The panel is headed "This upload" and its
+   * Discard all is deliberately scoped to one `batchGroupId`, so rendering the others would
+   * make both of those statements false: it would name somebody else's drop as part of this
+   * one, and then discard only a third of what it had just listed.
+   *
+   * The active job's batch wins, so opening a row from an older drop switches the panel to
+   * that drop rather than leaving it pointing at the newest.
+   */
+  const activeBatchId =
+    queue.find((j) => j.id === job?.id)?.batchGroupId ??
+    queue.find((j) => j.batchGroupId)?.batchGroupId ??
+    null;
+  const batchJobs = activeBatchId
+    ? queue.filter((j) => j.batchGroupId === activeBatchId)
+    : [];
+  const queueBusy = batchJobs.some((j) =>
     ["ingesting", "transcribed", "queued", "extracting", "saving"].includes(j.status)
   );
   useEffect(() => {
-    if (queue.length <= 1 || !queueBusy) return;
+    if (batchJobs.length <= 1 || !queueBusy) return;
     let alive = true;
     const t = setInterval(() => {
       void getActiveCaptureJobs()
@@ -135,7 +155,7 @@ export function CaptureFlow({
       alive = false;
       clearInterval(t);
     };
-  }, [queue.length, queueBusy]);
+  }, [batchJobs.length, queueBusy]);
 
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [pendingStart, setPendingStart] = useState(false);
@@ -377,20 +397,20 @@ export function CaptureFlow({
                 tabId={captureTabId("meeting")}
               />
             )}
-            {queue.length > 1 && (
+            {batchJobs.length > 1 && activeBatchId && (
               <div className="mb-4">
                 <CaptureQueuePanel
-                  jobs={queue}
+                  jobs={batchJobs}
                   activeJobId={job?.id ?? null}
                   onOpen={(jobId) => {
-                    const next = queue.find((j) => j.id === jobId);
+                    const next = batchJobs.find((j) => j.id === jobId);
                     if (next) seedCaptureJob(next, { force: true });
                   }}
                   onDiscardAll={() => {
-                    const batchId = queue.find((j) => j.batchGroupId)?.batchGroupId;
-                    if (!batchId) return;
-                    void discardCaptureBatch(batchId).then(() => {
-                      setQueue([]);
+                    void discardCaptureBatch(activeBatchId).then(() => {
+                      // Only this batch leaves the list. Clearing the whole thing would hide
+                      // any other drop still open until the next poll brought it back.
+                      setQueue((prev) => prev.filter((j) => j.batchGroupId !== activeBatchId));
                       router.refresh();
                     });
                   }}
