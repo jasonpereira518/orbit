@@ -8,6 +8,12 @@
  * So the invariant is re-checked after EVERY operation below, including the ones that look
  * obviously safe. The ones that look obviously safe are the ones that quietly stop being it.
  *
+ * The second half of the file is about a different way to lose a note: refusing to upload
+ * one that would have been fine. A bin is sized by what its files will weigh once they are
+ * PREPARED, and preparation moves that number in both directions — photos are re-encoded
+ * down, a PDF is rasterized up — so checking the size on disk refuses a bin of whiteboard
+ * photos while waving through a PDF that cannot fit.
+ *
  * Run: npx tsx scripts/smoke-capture-bins.ts
  */
 import {
@@ -29,6 +35,9 @@ import {
   type SorterState,
   type StagedFile,
 } from "../src/lib/capture/bins";
+import { estimatePreparedBytes, prepareNotice } from "../src/lib/capture/prepare-upload";
+import { CAPTURE_MAX_UPLOAD_BYTES } from "../src/lib/capture-limits";
+import { MAX_SCAN_PAGES, SCAN_TARGET_BYTES } from "../src/lib/scan-image";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -44,10 +53,11 @@ function intact(label: string, state: SorterState, ok: boolean, detail = "") {
 }
 
 let n = 0;
-const file = (name: string, size = 100, path = ""): StagedFile => ({
+const file = (name: string, size = 100, path = "", type = ""): StagedFile => ({
   id: `f${++n}`,
   name,
   size,
+  type,
   lastModified: 0,
   path,
 });
@@ -200,6 +210,67 @@ console.log("\nthe size cap is per upload, not per file");
   // Reported, never auto-split: splitting would silently make two meetings out of the one
   // the person just said was one.
   check("  and the bin is left exactly as it was", st.bins[0]!.fileIds.length === 2);
+}
+
+console.log("\nwhat a note will actually weigh, which is not what was picked");
+
+{
+  const MB = 1024 * 1024;
+  // The case the sorting dialog exists to encourage. Five phone photos of one whiteboard
+  // total 25MB on disk and would be refused on raw bytes — but each becomes at most one
+  // page, so the note is nowhere near the cap. Refusing it would be the feature declining
+  // its own worked example.
+  const photos = Array.from({ length: 5 }, (_, i) => file(`board${i}.jpg`, 5 * MB, "", "image/jpeg"));
+  let st = stageFiles(emptyState(), photos).state;
+  st = moveFiles(addBin(st, "bin1", "Whiteboard"), st.files.map((f) => f.id), "bin1");
+  const plan = planUploads(st, seed, estimatePreparedBytes)[0]!;
+  check("the raw size is still reported honestly", plan.bytes === 25 * MB, String(plan.bytes));
+  check("  but five photos are priced as five pages", plan.uploadBytes === 5 * SCAN_TARGET_BYTES, String(plan.uploadBytes));
+  check("  so a bin of whiteboard photos is not refused",
+    oversizedUploads([plan], CAPTURE_MAX_UPLOAD_BYTES).length === 0);
+  check("  which checking raw bytes would have done",
+    oversizedUploads([{ ...plan, uploadBytes: plan.bytes }], CAPTURE_MAX_UPLOAD_BYTES).length === 1);
+
+  // And the other direction, which fails at the server rather than in the dialog: a small
+  // PDF becomes a dozen JPEG pages that weigh far more than it did.
+  let pdfState = stageFiles(emptyState(), [file("report.pdf", 2 * MB, "", "application/pdf")]).state;
+  pdfState = moveFiles(addBin(pdfState, "bin1"), [pdfState.files[0]!.id], "bin1");
+  const pdfPlan = planUploads(pdfState, seed, estimatePreparedBytes)[0]!;
+  check("a 2MB PDF is priced at the whole page budget",
+    pdfPlan.uploadBytes === MAX_SCAN_PAGES * SCAN_TARGET_BYTES, String(pdfPlan.uploadBytes));
+  check("  and the budget still fits in one request",
+    pdfPlan.uploadBytes < CAPTURE_MAX_UPLOAD_BYTES,
+    `${pdfPlan.uploadBytes} vs ${CAPTURE_MAX_UPLOAD_BYTES}`);
+
+  // Text is read from its own bytes server-side, so it is priced at what it is.
+  check("a text note is priced at its size", estimatePreparedBytes([file("n.md", 4096)]) === 4096);
+  check("no files weigh nothing", estimatePreparedBytes([]) === 0);
+  // Classification falls back to the extension, because engines leave `type` blank often.
+  check("a typeless .pdf is still a PDF",
+    estimatePreparedBytes([file("x.pdf", 10)]) === MAX_SCAN_PAGES * SCAN_TARGET_BYTES);
+  // More images than the budget cannot cost more than the budget.
+  const many = Array.from({ length: MAX_SCAN_PAGES + 8 }, (_, i) => file(`p${i}.jpg`, 10, "", "image/jpeg"));
+  check("more photos than the cap are priced at the cap",
+    estimatePreparedBytes(many) === MAX_SCAN_PAGES * SCAN_TARGET_BYTES);
+}
+
+console.log("\ntruncation and unreadable files are always said out loud");
+
+{
+  check("a clean note says nothing",
+    prepareNotice({ files: [], droppedPages: 0, failures: [] }) === null);
+  const truncated = prepareNotice({ files: [], droppedPages: 9, failures: [] });
+  check("a truncated note names the cap", truncated?.includes(String(MAX_SCAN_PAGES)) === true, truncated ?? "null");
+  const oneBad = prepareNotice({ files: [], droppedPages: 0, failures: [{ name: "a.heic", message: "a.heic is an iPhone photo" }] });
+  check("one unreadable file is named", oneBad === "a.heic is an iPhone photo", oneBad ?? "null");
+  const manyBad = prepareNotice({
+    files: [],
+    droppedPages: 0,
+    failures: [{ name: "a", message: "x" }, { name: "b", message: "y" }],
+  });
+  check("several are counted rather than listed", manyBad === "2 files couldn’t be read", manyBad ?? "null");
+  const both = prepareNotice({ files: [], droppedPages: 2, failures: [{ name: "a", message: "x" }] });
+  check("both at once are joined, not dropped", both?.includes("·") === true, both ?? "null");
 }
 
 console.log("\nthe invariant catches what it is for");

@@ -393,6 +393,16 @@ export async function normalizeCaptureInput(
       audios.push(file);
       continue;
     }
+    // Named rather than shrugged at, because one wrong answer here is common enough to be
+    // worth its own sentence: a PDF is something every capture picker offers, and nothing
+    // on this side reads one. They are rasterized to JPEG pages in the browser — see
+    // `src/lib/capture/prepare-upload.ts` — so a PDF arriving here means a client skipped
+    // that step, not that the person picked the wrong kind of file.
+    if (extOf(file.filename) === "pdf" || file.mimeType === "application/pdf") {
+      throw new Error(
+        `${file.filename || "That PDF"} arrived as a PDF. PDF pages are turned into images in the browser before upload.`
+      );
+    }
     throw new Error(
       `Unsupported file type: ${file.filename || file.mimeType}`
     );

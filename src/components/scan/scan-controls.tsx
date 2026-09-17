@@ -72,8 +72,10 @@ export async function sortAndNormalizeScanFiles(
     }
     try {
       if (classifyScanFile(file.name, file.type) === "pdf") {
-        const out = await rasterizePdf(file);
-        pages.push(...out.pages.slice(0, MAX_SCAN_PAGES - pages.length));
+        // The budget, not a slice afterwards: rendering and JPEG-encoding pages only to
+        // discard them is the expensive half of the work done for nothing.
+        const out = await rasterizePdf(file, MAX_SCAN_PAGES - pages.length);
+        pages.push(...out.pages);
         droppedPages += out.dropped;
       } else {
         pages.push(await normalizeImageFile(file));

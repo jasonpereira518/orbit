@@ -55,6 +55,7 @@ import {
   type FilePreview,
 } from "@/lib/capture/file-preview";
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
+import { estimatePreparedBytes } from "@/lib/capture/prepare-upload";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -144,6 +145,7 @@ export function NotesSorterDialog({
         id,
         name: file.name,
         size: file.size,
+        type: file.type,
         lastModified: file.lastModified,
         path,
       };
@@ -177,7 +179,10 @@ export function NotesSorterDialog({
     };
   }, []);
 
-  const plans = useMemo(() => planUploads(state, seedFromFile), [state]);
+  // Priced at what the request will weigh once prepared, not at what the files weigh now —
+  // photos shrink and PDFs grow, and checking the wrong number refuses a bin of whiteboard
+  // photos while waving through a PDF that cannot fit. See `estimatePreparedBytes`.
+  const plans = useMemo(() => planUploads(state, seedFromFile, estimatePreparedBytes), [state]);
   const oversized = useMemo(
     () => oversizedUploads(plans, CAPTURE_MAX_UPLOAD_BYTES),
     [plans]
@@ -444,8 +449,9 @@ export function NotesSorterDialog({
 
                   {tooBig && (
                     <p className="text-xs text-destructive">
-                      Over {formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} — one note goes up in
-                      one request, so take a file out of this bin.
+                      Over {formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} once its pages are
+                      images — one note goes up in one request, so take a file out of this
+                      bin.
                     </p>
                   )}
                 </section>
