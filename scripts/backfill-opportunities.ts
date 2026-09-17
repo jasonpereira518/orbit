@@ -16,9 +16,15 @@
  * and the text, and the insert is `ON CONFLICT DO NOTHING` on `(user_id, item_hash)`, so a
  * second run writes nothing. Safe to run repeatedly and safe to run while the app is up.
  *
+ * TARGETS `DATABASE_URL`, and refuses to run without one. It used to import the SMOKE
+ * preamble, which deletes that variable and points the driver at a throwaway PGlite
+ * directory — so it connected to an empty database, found nothing, and printed
+ * "contacts with legacy opportunities: 0". Which is indistinguishable from "already done",
+ * in front of the exact data-loss window described above.
+ *
  * Run: npx tsx scripts/backfill-opportunities.ts [--dry]
  */
-import "./smoke/_env";
+import { requireRealDatabase } from "./lib/operational-db";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import {
@@ -31,6 +37,7 @@ const BATCH = 500;
 
 async function main() {
   const dry = process.argv.includes("--dry");
+  requireRealDatabase("backfill-opportunities");
   const db = await getDb();
 
   let offset = 0;
