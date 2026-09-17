@@ -10,9 +10,14 @@
  * Idempotent: every write is `ON CONFLICT DO NOTHING` on the unique index, and an event whose
  * keys already exist is skipped. Safe to run repeatedly, and safe to run while the app is up.
  *
+ * TARGETS `DATABASE_URL`, and refuses to run without one. It used to import the SMOKE
+ * preamble, which deletes that variable and points the driver at a throwaway PGlite
+ * directory — so it reported zero events to alias, which reads exactly like a database that
+ * had already been backfilled.
+ *
  * Run: npx tsx scripts/backfill-event-aliases.ts [--dry]
  */
-import "./smoke/_env";
+import { requireRealDatabase } from "./lib/operational-db";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import { keysForEvent } from "../src/lib/events/discovery/record";
@@ -21,6 +26,7 @@ const BATCH = 500;
 
 async function main() {
   const dry = process.argv.includes("--dry");
+  requireRealDatabase("backfill-event-aliases");
   const db = await getDb();
 
   const events = rowsOf<{
