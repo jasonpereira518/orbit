@@ -34,6 +34,7 @@ const HEALTHY: OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: hoursAgo(2), lastState: "ok" },
     syncRun: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    jobFeed: { lastStartedAt: hoursAgo(1), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
@@ -48,6 +49,16 @@ const HEALTHY: OpsSnapshot = {
   reauthNeeded: 0,
   wedgedSyncs: 0,
   failingSyncs: 0,
+  managedAi: {
+    configured: true,
+    switchedOff: false,
+    lifetimeAccounts: 3,
+    spentLast24hMicros: 40_000,
+    spentLast30dMicros: 600_000,
+    lifetimeCashCents: 7_500,
+    accountsAtCap: 0,
+    failingProviders: [],
+  },
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -56,6 +67,32 @@ const find = (s: OpsSnapshot, id: string) => evaluateOpsConditions(s, NOW).find(
 function main() {
   console.log("Condition catalogue...");
   check("a healthy snapshot raises nothing", ids(HEALTHY).length === 0, ids(HEALTHY).join(","));
+
+  // Orbit's managed AI keys — the Lifetime cost exposure.
+  const managed = (over: Partial<OpsSnapshot["managedAi"]>): OpsSnapshot => ({
+    ...HEALTHY,
+    managedAi: { ...HEALTHY.managedAi, ...over },
+  });
+  check("a refused managed key → critical, per provider",
+    find(managed({ failingProviders: ["gemini"] }), "ai.managed_failing:gemini")?.severity === "critical");
+  check("Lifetime accounts but no managed key → warning",
+    find(managed({ configured: false }), "ai.managed_unconfigured")?.severity === "warning");
+  check("…says so differently when the kill switch did it",
+    /ORBIT_MANAGED_AI=off/.test(find(managed({ configured: false, switchedOff: true }), "ai.managed_unconfigured")?.detail ?? ""));
+  check("no Lifetime accounts, no key → nothing to say",
+    !find(managed({ configured: false, lifetimeAccounts: 0 }), "ai.managed_unconfigured"));
+  check("$5 in a day → ai.managed_spend_spike",
+    Boolean(find(managed({ spentLast24hMicros: 5_000_000 }), "ai.managed_spend_spike")));
+  check("a pace that eats Lifetime revenue in under four years → ai.managed_runway",
+    // $10 in 30 days ≈ $122/yr against $75 booked ≈ 0.6 years.
+    Boolean(find(managed({ spentLast30dMicros: 10_000_000, lifetimeCashCents: 7_500 }), "ai.managed_runway")));
+  check("…a sustainable pace is quiet",
+    // $1.20 in 30 days ≈ $14.60/yr against $750 booked ≈ 51 years.
+    !find(managed({ spentLast30dMicros: 1_200_000, lifetimeCashCents: 75_000 }), "ai.managed_runway"));
+  check("…spend with no Lifetime revenue behind it is flagged",
+    /no Lifetime revenue/.test(find(managed({ spentLast30dMicros: 2_000_000, lifetimeCashCents: 0 }), "ai.managed_runway")?.detail ?? ""));
+  check("accounts at the cap → info (the cap may be too tight)",
+    find(managed({ accountsAtCap: 2 }), "ai.managed_cap_hit")?.severity === "info");
 
   check("cron never ran → cron.missed (warning)",
     find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: null, lastState: null } } }, "cron.missed")?.severity === "warning");
@@ -82,6 +119,36 @@ function main() {
     find({ ...HEALTHY, wedgedSyncs: 2 }, "sync.wedged")?.severity === "warning");
   check("a disarmed connection → sync.failing",
     find({ ...HEALTHY, failingSyncs: 1 }, "sync.failing")?.severity === "warning");
+
+  // The job feed. `/admin/health` reads two named cron jobs and this is not one of them, so
+  // these conditions are the ONLY thing that would ever say the feed stopped being read —
+  // and a feed that stopped being read looks exactly like a quiet hiring season.
+  const jobFeed = (over: OpsSnapshot["cron"]["jobFeed"]): OpsSnapshot => ({
+    ...HEALTHY,
+    cron: { ...HEALTHY.cron, jobFeed: over },
+  });
+  // The likeliest real failure by far: the cron line was never added, or was silently
+  // widened away by an `if:` gate somewhere in ops.yml.
+  check("the job feed never ran → jobfeed.schedule_missed",
+    Boolean(find(jobFeed({ lastStartedAt: null, lastState: null }), "jobfeed.schedule_missed")));
+  check("the job feed silent for 8h → jobfeed.schedule_missed",
+    Boolean(find(jobFeed({ lastStartedAt: hoursAgo(8), lastState: "ok" }), "jobfeed.schedule_missed")));
+  // Hourly, with the same loose multiple the sync gets: GitHub Actions schedules lag under
+  // load, and one skipped hour is not worth a Slack message.
+  check("  but 2h is still within tolerance",
+    !find(jobFeed({ lastStartedAt: hoursAgo(2), lastState: "ok" }), "jobfeed.schedule_missed"));
+  check("the job feed run failed → jobfeed.run_failed",
+    Boolean(find(jobFeed({ lastStartedAt: hoursAgo(1), lastState: "failed" }), "jobfeed.run_failed")));
+  check("a killed run is reported too",
+    Boolean(find(jobFeed({ lastStartedAt: hoursAgo(1), lastState: "stale" }), "jobfeed.run_failed")));
+  // `partial` is the ordinary shape of a first run against an empty cursor, and of any run
+  // where one of several feeds was briefly unreachable. Alerting on it would train whoever
+  // reads these to ignore them.
+  check("  a partial run is not an alert",
+    !find(jobFeed({ lastStartedAt: hoursAgo(1), lastState: "partial" }), "jobfeed.run_failed"));
+  // Nobody gets paged because an internship notification is late.
+  check("  and none of it is critical",
+    find(jobFeed({ lastStartedAt: null, lastState: null }), "jobfeed.schedule_missed")?.severity === "warning");
 
   check("three invalid Clerk deliveries in a row → critical",
     find({ ...HEALTHY, webhooks: { ...HEALTHY.webhooks, clerk: ["invalid", "invalid", "invalid"] } }, "webhook.invalid_streak:clerk")?.severity === "critical");

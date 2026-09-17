@@ -735,12 +735,6 @@ export function scatterFieldFactor(memberCount: number) {
   return 1 + overflow * 0.012;
 }
 
-/** Half-extent of a placed cluster — capped figure plus its scatter field. */
-export function constellationFootprint(starCount: number) {
-  const n = Math.max(1, starCount);
-  return scaleForStarCount(figureStarCount(n)) * scatterFieldFactor(n) + 90;
-}
-
 /**
  * Assign classic constellation figures across clusters (same order → same shapes).
  * Figures are capped at FIGURE_STAR_MAX stars — the cluster's top members trace

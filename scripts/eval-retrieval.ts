@@ -1,7 +1,8 @@
 /**
  * Retrieval accuracy eval: recall@12 and recall@60 over fixture questions.
  * Without an AI key: lexical arms only. With a key (GEMINI_API_KEY or
- * OPENAI_API_KEY in env, local only): + semantic arm and rerank stage.
+ * OPENAI_API_KEY in env, local only — the local stand-ins for Orbit's managed keys, used
+ * via a Lifetime comp on the eval user): + semantic arm and rerank stage.
  * Stop dev servers on .data/pglite first (PGlite is single-writer).
  * Run: npx tsx scripts/eval-retrieval.ts
  */
@@ -18,6 +19,8 @@ import { hybridSearchContacts } from "../src/lib/hybrid-search";
 import { rebuildContactEmbeddingsBatch } from "../src/lib/search";
 import { getQueryEmbedding } from "../src/lib/embedding-cache";
 import { rerankCandidates } from "../src/lib/chat-retrieval";
+import { managedKeysConfigured } from "../src/lib/ai-access";
+import { setCompedPlan } from "../src/lib/user-settings";
 
 const U = "eval-retrieval-user";
 
@@ -63,7 +66,13 @@ async function main() {
     }
   }
 
-  const hasKey = Boolean(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY);
+  // The eval user runs AI through the gate like everyone else. Off Vercel the local
+  // GEMINI_API_KEY / OPENAI_API_KEY act as Orbit's managed keys, which only a Lifetime
+  // account may use — so the harness comps its synthetic user to Lifetime rather than
+  // reaching around the gate for a key.
+  const configured = managedKeysConfigured();
+  const hasKey = configured.gemini || configured.openai;
+  if (hasKey) await setCompedPlan(U, "lifetime", { note: "eval-retrieval harness" });
   if (hasKey) {
     console.log("AI key detected: building embeddings + running semantic arm & rerank.");
     await rebuildContactEmbeddingsBatch(U, [...idByEmail.values()]);

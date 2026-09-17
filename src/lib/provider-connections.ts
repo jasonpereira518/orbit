@@ -38,8 +38,6 @@ const PROVIDER_TABLES: Record<SyncProvider, string> = {
   microsoft: "outlook_connections",
 };
 
-export const SYNC_PROVIDERS = Object.keys(PROVIDER_TABLES) as SyncProvider[];
-
 /**
  * How long a claim is honoured before another run may take the row.
  *

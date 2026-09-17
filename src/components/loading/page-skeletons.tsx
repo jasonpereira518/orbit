@@ -209,6 +209,69 @@ export function FormPageSkeleton({ wide = false }: { wide?: boolean }) {
   );
 }
 
+function SettingsCardSkeleton({ rows = 1, tall = false }: { rows?: number; tall?: boolean }) {
+  return (
+    <div className="space-y-4 rounded-2xl border border-border/70 p-6">
+      <div className="space-y-2">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-4 w-72 max-w-full" />
+      </div>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="space-y-2 border-t border-border/60 pt-4">
+          <Skeleton className="h-4 w-28" />
+          <Skeleton className={cn("w-full rounded-lg", tall ? "h-24" : "h-9")} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Matches /settings: the five group labels, and cards shaped like the ones under each —
+ * Account's two, Preferences' merged card and two lists, the Integrations tile grid,
+ * Resources, Data.
+ */
+export function SettingsPageSkeleton() {
+  const label = <Skeleton className="ml-1 h-3 w-24" />;
+  return (
+    <div className="mx-auto max-w-2xl space-y-10">
+      <PageHeaderSkeleton />
+      <div className="space-y-4">
+        {label}
+        <SettingsCardSkeleton rows={1} tall />
+        <SettingsCardSkeleton rows={1} />
+      </div>
+      <div className="space-y-4">
+        {label}
+        <SettingsCardSkeleton rows={2} />
+        <SettingsCardSkeleton rows={1} />
+      </div>
+      <div className="space-y-4">
+        {label}
+        <div className="space-y-4 rounded-2xl border border-border/70 p-6">
+          <div className="space-y-2">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-64 max-w-full" />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 w-full rounded-xl" />
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="space-y-4">
+        {label}
+        <SettingsCardSkeleton rows={2} />
+      </div>
+      <div className="space-y-4">
+        {label}
+        <SettingsCardSkeleton rows={2} />
+      </div>
+    </div>
+  );
+}
+
 /** Matches /capture/[batchId]: the results view, not the capture form it's nested under. */
 export function NoteBatchResultSkeleton() {
   return (
@@ -266,10 +329,15 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
       <div className="shrink-0 space-y-2 border-t border-border/60 p-4">
         <div className="mx-auto max-w-3xl space-y-2.5">
           <Skeleton className="h-14 w-full rounded-lg" />
-          <div className="flex flex-wrap gap-1.5">
-            <Skeleton className="h-6 w-28 rounded-full" />
-            <Skeleton className="h-6 w-36 rounded-full" />
-            <Skeleton className="h-6 w-32 rounded-full" />
+          {/* The suggestion pills, at their real height. Fixed on purpose: the composer
+              footer is `shrink-0` above a message list with no floor, so a placeholder of
+              the wrong height hands the panel a different layout than the one that swaps in
+              — the failure GraphPageSkeleton's comment below records. Kept in step with
+              `PILL_BOX` in components/chat/suggestion-cards.tsx. */}
+          <div className="flex gap-2 overflow-hidden">
+            <Skeleton className="h-8 w-52 shrink-0 rounded-full" />
+            <Skeleton className="h-8 w-44 shrink-0 rounded-full" />
+            <Skeleton className="h-8 w-56 shrink-0 rounded-full" />
           </div>
         </div>
       </div>
@@ -294,6 +362,20 @@ export function CaptureFormSkeleton() {
         </div>
       ))}
       <Skeleton className="h-32 w-full rounded-lg" />
+      {/*
+        The scan controls: two tap tiles below md, a three-button row above it. Sized to
+        match so the skeleton does not collapse to a shorter form and then jump when the
+        real controls arrive.
+      */}
+      <div className="grid grid-cols-2 gap-2 md:hidden">
+        <Skeleton className="h-[86px] rounded-xl" />
+        <Skeleton className="h-[86px] rounded-xl" />
+      </div>
+      <div className="hidden gap-2 md:flex">
+        <Skeleton className="h-9 w-44 rounded-lg" />
+        <Skeleton className="h-9 w-28 rounded-lg" />
+        <Skeleton className="h-9 w-36 rounded-lg" />
+      </div>
       <Skeleton className="mt-2 h-9 w-32" />
     </div>
   );
@@ -314,10 +396,12 @@ export function CapturePageSkeleton() {
 
 export function ChatPageSkeleton() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5">
+    // Same phone height as the chat page itself, so the load doesn't jump.
+    <div className="flex h-[calc(100dvh-11rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-5 md:h-[calc(100dvh-4rem)]">
       <div className="shrink-0 space-y-2">
         <Skeleton className="h-9 w-64" />
-        <Skeleton className="h-4 w-80 max-w-full" />
+        {/* The page hides its subtitle on phones. */}
+        <Skeleton className="hidden h-4 w-80 max-w-full sm:block" />
       </div>
       <ChatPanelSkeleton className="flex-1" />
     </div>
@@ -336,27 +420,6 @@ export function GraphPageSkeleton() {
         <Skeleton className="h-4 w-80 max-w-full" />
       </div>
       <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
-    </div>
-  );
-}
-
-/**
- * Shared by the admin billing subpages (costs, run-cost, movement, demand): a title,
- * a search bar, a 4-up stat grid, and two chart/table blocks. The four pages were
- * copy-pasting this same shape.
- */
-export function AdminBillingSubpageSkeleton() {
-  return (
-    <div className="space-y-6">
-      <Skeleton className="h-9 w-48" />
-      <Skeleton className="h-10 w-full max-w-md" />
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-20" />
-        ))}
-      </div>
-      <Skeleton className="h-64" />
-      <Skeleton className="h-48" />
     </div>
   );
 }
@@ -688,7 +751,7 @@ export function SuspendedPageSkeleton() {
 
 /**
  * Mirrors the real pricing page's section order 1:1 — see
- * src/app/(marketing)/pricing/page.tsx and src/components/pricing/*. Kept in
+ * src/app/(clerk)/(marketing)/pricing/page.tsx and src/components/pricing/*. Kept in
  * sync deliberately: this is a full-page async Server Component (auth() +
  * two DB reads), so it's the marketing route most likely to actually show a
  * loading state, and a generic skeleton here would visibly jump on swap-in.
@@ -853,7 +916,10 @@ export function InterestPageSkeleton() {
             <Skeleton className="h-14 flex-1 rounded-xl bg-white/5" />
             <Skeleton className="h-14 w-full rounded-xl bg-white/10 sm:w-32" />
           </div>
-          <Skeleton className="mt-3 h-3 w-64 max-w-full bg-white/5" />
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <Skeleton className="h-3.5 w-10 rounded-full bg-white/10" />
+            <Skeleton className="h-3 w-56 max-w-full bg-white/5" />
+          </div>
         </div>
 
         <section className="mt-20">
@@ -869,18 +935,6 @@ export function InterestPageSkeleton() {
               </li>
             ))}
           </ul>
-        </section>
-
-        <section className="mt-24 grid items-center gap-8 md:mt-32 lg:grid-cols-[minmax(0,1.1fr)_auto] lg:gap-14">
-          <div className="space-y-4">
-            <Skeleton className="h-8 w-full max-w-sm bg-white/10" />
-            <Skeleton className="h-4 w-full max-w-md bg-white/5" />
-            <Skeleton className="h-4 w-2/3 max-w-md bg-white/5" />
-          </div>
-          <div className="flex gap-3">
-            <Skeleton className="h-11 w-24 rounded-full bg-white/5" />
-            <Skeleton className="h-11 w-32 rounded-full bg-white/10" />
-          </div>
         </section>
 
         <section className="mt-24 md:mt-32">

@@ -44,6 +44,19 @@ additive and idempotent, so old code runs fine on a newer schema. Then fix forwa
 | `config.missing` | Vercel → Environment Variables. The alert names the variable. |
 | `ai.provider_outage:*` | Not ours; it clears when the provider recovers. |
 | `perf.slow_burst` | `/admin/health` → error events → `perf.slow` rows name the call and account. |
+| `ai.managed_failing:*` | Orbit's own key for that provider was refused or throttled — every Lifetime account without a key of its own has lost AI. Check the key and its quota in the provider console; replace `ORBIT_MANAGED_<PROVIDER>_API_KEY` in Vercel and redeploy. |
+| `ai.managed_unconfigured` | Lifetime accounts exist but no `ORBIT_MANAGED_*_API_KEY` is set (or `ORBIT_MANAGED_AI=off`). Set one, or accept that Lifetime is BYOK until you do. |
+| `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is outrunning what Lifetime brought in. `/admin/billing/costs` → "On Orbit's AI keys". Lower `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
+| `ai.managed_cap_hit` | Info: accounts used their whole monthly allowance. A rising count means the cap is too tight for real use. |
+
+## Managed AI keys (Orbit Lifetime)
+
+AI is bring-your-own-key on every plan except Lifetime. A Lifetime account with no key of its own runs on Orbit's managed keys, and only `src/lib/ai-access.ts` can issue one (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client).
+
+- **Keys:** `ORBIT_MANAGED_GEMINI_API_KEY` (cheapest, preferred), `ORBIT_MANAGED_OPENAI_API_KEY`, `ORBIT_MANAGED_ANTHROPIC_API_KEY`, `ORBIT_MANAGED_WISPR_API_KEY`. Production only reads these names; the bare `GEMINI_API_KEY`-style names work off Vercel only.
+- **Kill switch:** `ORBIT_MANAGED_AI=off`. Every Lifetime account falls back to BYOK, with the notice "Orbit’s AI isn’t available right now — add your own API key".
+- **Cap:** `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, per account per calendar month (UTC), metered from `usage_events` where `key_owner = 'orbit'`. Bulk background work stops at half.
+- **Revocation:** anything that takes Lifetime away takes managed AI away on the account's next AI call — there is no cache to clear. Today that is removing a comp in `/admin`; a full refund or a lost dispute does it once the launch plan's P0 revocation (`revokeLifetimePurchase`) lands. Until then, refund a Lifetime purchase AND clear `lifetime_purchased_at` by hand.
 
 ## Rotate a secret
 
@@ -55,7 +68,7 @@ additive and idempotent, so old code runs fine on a newer schema. Then fix forwa
 
 ## Restore the database
 
-Weekly encrypted dumps: GitHub → Actions → `backup` → artifacts (90 days). Take a fresh one
+Daily encrypted dumps: GitHub → Actions → `backup` → artifacts (90 days). Take a fresh one
 first with **Run workflow** if the database is still readable.
 
 ```bash
@@ -70,5 +83,7 @@ branch in Neon (or set `DATABASE_URL` to it) once it looks right.
 ## Neon one-time settings
 
 - `ALTER ROLE <app role> SET statement_timeout = '20s';` — bounds a runaway query; the
-  HTTP driver cannot set this per session.
+  HTTP driver cannot set this per session. **Verify it**: `GET /api/health?token=$HEALTH_TOKEN`
+  reports `config.statementTimeout`. `"0"` means unbounded — the ALTER ROLE never ran, or ran
+  on the wrong role.
 - Verify the restore window under Project → Settings.

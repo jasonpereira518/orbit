@@ -118,7 +118,7 @@ export function PlanSettings({
       <div className="relative space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-medium text-ink">Pricing Plan</h2>
+            <h3 className="text-lg font-medium text-ink">Pricing Plan</h3>
             <p className="mt-1 text-sm text-muted-foreground">{copy.tagline}</p>
           </div>
           <span
@@ -187,9 +187,9 @@ export function PlanSettings({
             Read from the same copy the pricing page renders, so the two cannot
             describe a tier differently. */}
         <div className="border-t border-border/60 pt-4">
-          <h3 className="text-sm font-medium text-ink">
+          <h4 className="text-sm font-medium text-ink">
             What&apos;s included
-          </h3>
+          </h4>
           {/* Columns, not a two-column grid. A grid ties both cells of a row to
               the tallest of them, so a feature that wraps to two lines opened a
               double gap under its short neighbour. Columns flow independently,

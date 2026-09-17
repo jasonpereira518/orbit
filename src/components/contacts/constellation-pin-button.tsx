@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { setConstellationPin } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 type Pin = "in" | "out" | null;
 
@@ -48,7 +49,7 @@ export function ConstellationPinButton({
         router.refresh();
       } catch (err) {
         setCurrent(previous);
-        toast.error(err instanceof Error ? err.message : "Could not change that.");
+        toast.error(friendlyError(err, "Couldn’t change that — try again?"));
       }
     });
   }

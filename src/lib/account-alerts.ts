@@ -1,5 +1,6 @@
 import { AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
 import type { Plan, PlanSource } from "@/lib/plan-limits";
+import { integrationHref } from "@/components/settings/sections";
 
 /**
  * What is wrong with an account, and how to say it to the person who owns it.
@@ -100,7 +101,10 @@ export type ConnectionFacts = {
  */
 export type HealthInput = {
   aiProvider: AiProvider;
-  /** Personal key for the selected provider, OR a usable env key. Never a decrypted secret. */
+  /**
+   * Whether AI would run: a personal key for the selected provider, or — on Orbit Lifetime —
+   * Orbit's managed key (`aiReadyFromSettings`). Never a decrypted secret.
+   */
   hasAiKey: boolean;
   onboardingCompletedAt: Date | null;
 
@@ -434,7 +438,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           title: `Add your ${str(f.data.providerLabel) ?? "AI"} API key`,
           body:
             "Capture, chat, suggestions and search stay switched off until Orbit has a key. Orbit never charges you for AI — you bring your own.",
-          cta: { label: "Open AI settings", href: "/settings#settings-ai", external: false },
+          cta: { label: "Open AI settings", href: integrationHref("ai"), external: false },
           surfaceKey: "settings.ai",
         });
         break;
@@ -447,7 +451,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           title: "Semantic search needs an OpenAI or Gemini key",
           body:
             "Anthropic has no embeddings API, so search falls back to keywords until you add a second key.",
-          cta: { label: "Open AI settings", href: "/settings#settings-ai", external: false },
+          cta: { label: "Open AI settings", href: integrationHref("ai"), external: false },
           surfaceKey: "settings.ai",
         });
         break;
@@ -488,7 +492,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           body: str(f.data.detail) ?? "Orbit couldn't read the feed on its last try.",
           cta: {
             label: "Check calendar feeds",
-            // `/settings#settings-calendar` is Orbit's OUTBOUND ICS feed. This alert is
+            // Settings → Integrations → Calendar feed is Orbit's OUTBOUND ICS feed. This alert is
             // about an INBOUND subscription in `calendar_subscriptions`, which is managed
             // on the imports page — the old link sent people to an unrelated card.
             href: "/imports#import-panel-calendar",
