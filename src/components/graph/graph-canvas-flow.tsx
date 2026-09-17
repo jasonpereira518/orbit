@@ -265,6 +265,17 @@ const STAR_DUST_ID = "star-dust";
 const CLUSTER_NAME_SPARSE_BELOW_ZOOM = 0.2;
 /** Below that zoom, at most this many of the largest clusters are considered for a name. */
 const CLUSTER_NAME_SPARSE_MAX = 36;
+/**
+ * At the home framing itself, a few more names than that, with slightly tighter gaps.
+ *
+ * Home is the one view that is only ever read — the whole sky in the pane, nothing to aim at —
+ * so it can carry a longer legend. One step in from home the sky is something you are moving
+ * through, and names appearing and vanishing as you go reads worse than a shorter list, so the
+ * number above takes over again.
+ */
+const CLUSTER_NAME_HOME_MAX = 56;
+/** How far in from the home zoom still counts as home; `zoomStep`'s steps are about 1.19x. */
+const CLUSTER_NAME_HOME_SLACK = 1.12;
 
 /** A label's box in layout px, as graph-nodes.tsx draws it: `max-w-[104px]`, `mt-2`, 11px + 9px lines. */
 const LABEL_MAX_W = 104;
@@ -287,11 +298,17 @@ function clusterNameWinners(
   labels: LayoutNodes,
   zoom: number,
   withCount: boolean,
-  highlighted: string | null
+  highlighted: string | null,
+  atHome: boolean
 ): Set<string> {
   type Box = { x0: number; y0: number; x1: number; y1: number };
   const sparse = zoom < CLUSTER_NAME_SPARSE_BELOW_ZOOM;
-  const spacing = sparse ? { x: 1.9, y: 2.6 } : { x: 1.15, y: 1.15 };
+  const home = sparse && atHome;
+  const spacing = sparse
+    ? home
+      ? { x: 1.6, y: 2.2 }
+      : { x: 1.9, y: 2.6 }
+    : { x: 1.15, y: 1.15 };
   // Far out, only the largest clusters compete for a name at all: a gap on the far side of the
   // sky is no reason to label a two-person cluster while the view is about the big picture.
   const eligible = sparse
@@ -302,7 +319,7 @@ function clusterNameWinners(
               ((b.data as ClusterLabelData).count ?? 0) -
               ((a.data as ClusterLabelData).count ?? 0)
           )
-          .slice(0, CLUSTER_NAME_SPARSE_MAX)
+          .slice(0, home ? CLUSTER_NAME_HOME_MAX : CLUSTER_NAME_SPARSE_MAX)
           .map((n) => n.id)
       )
     : null;
@@ -854,6 +871,20 @@ function GraphCanvasInner({
   const labelPinnable = useStore((s) => s.transform[2] >= CLUSTER_NAME_PIN_MIN_ZOOM);
 
   /**
+   * Whether the camera is at the home framing — the zoom `DefaultViewFitter` picks — which is the
+   * only view that gets the longer legend of cluster names. Derived from the same pure function
+   * the fitter uses rather than remembered from the last flight, so it is still right after a
+   * resize, a filter, or a pinch back out to the edge of the zoom range.
+   */
+  const paneW = useStore((s) => s.width);
+  const paneH = useStore((s) => s.height);
+  const atHome = useMemo(() => {
+    const { maxAbsX, maxAbsY } = computeSunExtents(sky.layout.nodes, []);
+    const home = zoomToFitSunCentered(maxAbsX, maxAbsY, paneW, paneH);
+    return labelZoom <= home * CLUSTER_NAME_HOME_SLACK;
+  }, [sky.layout.nodes, paneW, paneH, labelZoom]);
+
+  /**
    * The cluster the reader deliberately picked: clicked or searched (`focusCluster`), filtered
    * to, or holding the selected person. Its name always shows and, zoomed in, stays in view.
    * Not hover — pointing across a sky must not make names appear and pin under the cursor.
@@ -877,8 +908,15 @@ function GraphCanvasInner({
     [sky.layout.nodes]
   );
   const clusterNamesShown = useMemo(
-    () => clusterNameWinners(clusterLabelNodes, labelZoom, summary, highlightedCluster),
-    [clusterLabelNodes, labelZoom, summary, highlightedCluster]
+    () =>
+      clusterNameWinners(
+        clusterLabelNodes,
+        labelZoom,
+        summary,
+        highlightedCluster,
+        atHome
+      ),
+    [clusterLabelNodes, labelZoom, summary, highlightedCluster, atHome]
   );
   // Independent of hover on purpose: moving the pointer must not reshuffle which names show.
   // Only over stars that can be drawn: the summary's mounted hits, or the star window. Over the
@@ -1429,6 +1467,16 @@ function GraphCanvasInner({
   // Carries React Flow's measurements (and selection) into the nodes it is handed next. Only
   // changes that land on a stored node count: the star-dust node is derived, never stored, and
   // a no-op must not hand back a new array — that re-derives every node and re-renders the sky.
+  /**
+   * Whether the camera is moving right now, which is the only time the sky is worth promoting to
+   * its own compositor layer (see `.constellation-moving` in globals.css). Held in a ref and
+   * written straight to the DOM: a pan must not re-render the chart to toggle a class.
+   */
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const setMoving = useCallback((moving: boolean) => {
+    stageRef.current?.classList.toggle("constellation-moving", moving);
+  }, []);
+
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     setSky((s) => {
       const ids = new Set(s.nodes.map((n) => n.id));
@@ -1484,6 +1532,9 @@ function GraphCanvasInner({
           focusable: false,
         }}
         nodesDraggable={false}
+        ref={stageRef}
+        onMoveStart={() => setMoving(true)}
+        onMoveEnd={() => setMoving(false)}
         className="constellation-stage"
       >
         <DefaultViewFitter
