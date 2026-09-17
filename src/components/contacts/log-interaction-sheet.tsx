@@ -11,7 +11,11 @@ import { undoNoteBatch } from "@/actions/note-batches";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  FIELD_BARE,
+  FIELD_SHELL,
+  MentionComposer,
+} from "@/components/composer/mention-composer";
 import {
   Sheet,
   SheetContent,
@@ -25,6 +29,7 @@ import {
 } from "@/lib/interaction-types";
 import { requestInteractionFlight } from "@/components/contacts/interaction-flight";
 import { pickLockedParticipant, withLockedSeedPerson } from "@/lib/note-batches";
+import { activePicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import { friendlyError, isMissingAiApiKeyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -80,6 +85,7 @@ export function LogInteractionSheet({
 }) {
   const router = useRouter();
   const submitRef = useRef<HTMLButtonElement>(null);
+  const notesRef = useRef<HTMLTextAreaElement>(null);
 
   /** The flight's origin, captured while the button still exists. */
   function launchFrom() {
@@ -93,11 +99,22 @@ export function LogInteractionSheet({
   const [type, setType] = useState<InteractionTypeValue>("meeting");
   const [date, setDate] = useState(todayYmd);
   const [notes, setNotes] = useState("");
+  /**
+   * Other people named with `@`.
+   *
+   * The sheet only ever saves ONE participant — the person whose profile it was opened from
+   * — so an `@` here is always somebody else, and always a mention rather than a second
+   * contact. That is the same thing extraction already tries to do from the prose, minus
+   * the guessing: "caught up with @Ada about it" links to the Ada you pointed at rather than
+   * to whichever Ada the name matcher likes.
+   */
+  const [mentionPicks, setMentionPicks] = useState<MentionPick[]>([]);
 
   function reset() {
     setType("meeting");
     setDate(todayYmd());
     setNotes("");
+    setMentionPicks([]);
     setStage("idle");
   }
 
@@ -149,7 +166,11 @@ export function LogInteractionSheet({
           withLockedSeedPerson(
             { eventDate: date || null, interactionType: type },
             contactName
-          )
+          ),
+          // Only the picks whose token is still in the box: the list is append-only, so a
+          // name typed and then deleted is still in it, and sending that would link the
+          // note to somebody the user took back out.
+          { mentionPicks: activePicks(text, mentionPicks) }
         );
 
         if (!res.ok) {
@@ -358,17 +379,32 @@ export function LogInteractionSheet({
 
           <div className="space-y-2">
             <Label htmlFor="log-interaction-notes">Notes</Label>
-            <Textarea
-              id="log-interaction-notes"
-              rows={9}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder={`What did you talk about with ${contactName}? What did you learn, and what did you say you'd do next?`}
-            />
+            {/* `relative` anchors the `@` menu to this box. Below it: the sheet scrolls, and
+                a menu hanging above a nine-row field is the first thing to go off the top. */}
+            <div className="relative">
+              <MentionComposer
+                className={FIELD_SHELL}
+                textareaRef={notesRef}
+                value={notes}
+                onValueChange={setNotes}
+                picks={mentionPicks}
+                onPicksChange={setMentionPicks}
+                menuPlacement="below"
+                // The field itself stays editable while a save is in flight, as it always
+                // has; only the menu shuts. A pick made now would splice into text the save
+                // has already taken a copy of, so the token would appear with nothing behind
+                // it.
+                menuEnabled={!pending}
+                id="log-interaction-notes"
+                rows={9}
+                placeholder={`What did you talk about with ${contactName}? What did you learn, and what did you say you'd do next?`}
+                textareaClassName={FIELD_BARE}
+              />
+            </div>
             <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
               <Sparkles className="mt-px size-3 shrink-0" />
               {hasApiKey
-                ? "Write it however you like — the summary, action items and any dates get pulled out for you."
+                ? "Write it however you like — the summary, action items and any dates get pulled out for you. Type @ to link someone else who came up."
                 : `Saved as written. ${AI_HINT_COPY[aiReason ?? "key_required"]}.`}
             </p>
           </div>

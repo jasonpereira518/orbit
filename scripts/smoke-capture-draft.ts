@@ -61,7 +61,7 @@ console.log("\nDrafts");
 {
   const s = memoryStorage();
   const key = captureDraftKey("u1", null);
-  writeCaptureDraft(s, key, { notes: "Met Sarah at AWS", sources: ["text"], photoIds: ["p1"] }, T0);
+  writeCaptureDraft(s, key, { notes: "Met Sarah at AWS", sources: ["text"], photoIds: ["p1"], mentionPicks: [] }, T0);
   const back = readCaptureDraft(s, key, T0 + 60_000);
   check("a written draft reads back", back?.notes === "Met Sarah at AWS" && back.photoIds[0] === "p1" && back.savedAt === T0);
 
@@ -76,11 +76,11 @@ console.log("\nDrafts");
   check("a week-old draft is gone", readCaptureDraft(s, key, T0 + DRAFT_TTL_MS + 1) === null);
   check("  and removed, not just ignored", !s.map.has(key));
 
-  writeCaptureDraft(s, key, { notes: "still typing", sources: [], photoIds: [] }, T0);
-  writeCaptureDraft(s, key, { notes: "   ", sources: [], photoIds: [] }, T0 + 1);
+  writeCaptureDraft(s, key, { notes: "still typing", sources: [], photoIds: [], mentionPicks: [] }, T0);
+  writeCaptureDraft(s, key, { notes: "   ", sources: [], photoIds: [], mentionPicks: [] }, T0 + 1);
   check("clearing the textarea removes the draft rather than saving an empty one", !s.map.has(key));
 
-  writeCaptureDraft(s, key, { notes: "", sources: ["photos:1"], photoIds: ["p9"] }, T0);
+  writeCaptureDraft(s, key, { notes: "", sources: ["photos:1"], photoIds: ["p9"], mentionPicks: [] }, T0);
   check("photos alone are still worth restoring", readCaptureDraft(s, key, T0)?.photoIds[0] === "p9");
   check(
     "  until they expire, when there is nothing left to restore",
@@ -92,19 +92,63 @@ console.log("\nDrafts");
   s.map.set(key, JSON.stringify({ notes: 42, sources: [], photoIds: [], savedAt: T0 }));
   check("a draft of the wrong shape reads as no draft", readCaptureDraft(s, key, T0) === null);
 
-  writeCaptureDraft(s, key, { notes: "x", sources: [], photoIds: [] }, T0);
+  writeCaptureDraft(s, key, { notes: "x", sources: [], photoIds: [], mentionPicks: [] }, T0);
   clearCaptureDraft(s, key);
   check("clearing removes it", !s.map.has(key));
 
   check("storage that throws never throws back — read", readCaptureDraft(brokenStorage, key, T0) === null);
   let threw = false;
   try {
-    writeCaptureDraft(brokenStorage, key, { notes: "x", sources: [], photoIds: [] }, T0);
+    writeCaptureDraft(brokenStorage, key, { notes: "x", sources: [], photoIds: [], mentionPicks: [] }, T0);
     clearCaptureDraft(brokenStorage, key);
   } catch {
     threw = true;
   }
   check("  — write and clear", !threw);
+}
+
+console.log("\n@-picks ride along with the text");
+{
+  const s = memoryStorage();
+  const key = captureDraftKey("u1", null);
+  const ADA = "11111111-1111-4111-8111-111111111111";
+  writeCaptureDraft(
+    s,
+    key,
+    { notes: "Coffee with @Ada", sources: [], photoIds: [], mentionPicks: [{ id: ADA, name: "Ada" }] },
+    T0
+  );
+  const back = readCaptureDraft(s, key, T0 + 1000);
+  // Without this the text comes back and the links quietly do not: the `@Ada` token is
+  // still in the box, but nothing is left that knows who it stands for.
+  check("a pick survives the round trip", back?.mentionPicks[0]?.id === ADA, JSON.stringify(back?.mentionPicks));
+
+  // localStorage is the user's own machine, and a pick ends up as a contact id in a write.
+  s.map.set(
+    key,
+    JSON.stringify({
+      notes: "x",
+      sources: [],
+      photoIds: [],
+      mentionPicks: [{ id: "not-a-uuid", name: "Mallory" }, { id: ADA, name: "Ada" }],
+      savedAt: T0,
+    })
+  );
+  const cleaned = readCaptureDraft(s, key, T0);
+  check(
+    "an edited draft's bad pick is stripped on the way out",
+    cleaned?.mentionPicks.length === 1 && cleaned.mentionPicks[0].id === ADA,
+    JSON.stringify(cleaned?.mentionPicks)
+  );
+
+  // Drafts written before `@`-picks existed are still good drafts; throwing one away would
+  // lose a page of notes to a schema change.
+  s.map.set(key, JSON.stringify({ notes: "older draft", sources: [], photoIds: [], savedAt: T0 }));
+  const legacy = readCaptureDraft(s, key, T0);
+  check(
+    "a draft from before picks existed still restores",
+    legacy?.notes === "older draft" && legacy.mentionPicks.length === 0
+  );
 }
 
 console.log("\nCapture this (handoff)");

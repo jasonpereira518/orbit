@@ -10,6 +10,8 @@
  * Pure apart from the `Storage` it is handed, so `scripts/smoke-capture-draft.ts` can drive
  * it with an in-memory one.
  */
+import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
+
 export const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
@@ -27,6 +29,16 @@ export type CaptureDraft = {
   /** `ingestCaptureMedia`'s source labels, so the saved capture is labelled correctly. */
   sources: string[];
   photoIds: string[];
+  /**
+   * Contacts named with `@`, kept so a restored draft's tokens are still green and still
+   * link on save. Without them the text comes back and the links quietly do not.
+   *
+   * Run through `sanitizeMentionPicks` on the way OUT as well as in: localStorage is the
+   * user's own machine and anything there can be edited, and this ends up as a contact id
+   * in a write. The shape check is cheap; skipping it is how a draft becomes an injection
+   * point for the price of an open devtools tab.
+   */
+  mentionPicks: MentionPick[];
   /** Epoch ms of the last write. */
   savedAt: number;
 };
@@ -79,6 +91,9 @@ export function readCaptureDraft(
     safeRemove(storage, key);
     return null;
   }
+  // Optional on purpose: drafts written before `@`-picks existed are still good drafts, and
+  // throwing one away would lose a page of notes to a schema change.
+  const mentionPicks = sanitizeMentionPicks(d.mentionPicks);
   if (now - d.savedAt > DRAFT_TTL_MS) {
     safeRemove(storage, key);
     return null;
@@ -89,7 +104,7 @@ export function readCaptureDraft(
     safeRemove(storage, key);
     return null;
   }
-  return { notes: d.notes, sources: d.sources, photoIds, savedAt: d.savedAt };
+  return { notes: d.notes, sources: d.sources, photoIds, mentionPicks, savedAt: d.savedAt };
 }
 
 /**
@@ -107,7 +122,14 @@ export function writeCaptureDraft(
     return;
   }
   try {
-    storage.setItem(key, JSON.stringify({ ...draft, savedAt: now } satisfies CaptureDraft));
+    storage.setItem(
+      key,
+      JSON.stringify({
+        ...draft,
+        mentionPicks: sanitizeMentionPicks(draft.mentionPicks),
+        savedAt: now,
+      } satisfies CaptureDraft)
+    );
   } catch {
     // Full or disabled storage (private browsing on some browsers). The page still works;
     // it just cannot promise to remember.

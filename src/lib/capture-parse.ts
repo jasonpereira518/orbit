@@ -32,7 +32,8 @@ import { buildDuplicateIndex, findDuplicateCandidatesIndexed, type DuplicateSubj
 import { UserFacingError } from "@/lib/errors";
 import { isSelf } from "@/lib/meeting-digest";
 import { getMeetingTranscript, loadMeetingSelf } from "@/lib/meeting-sessions";
-import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
+import { resolveMentionsWithPicks, type MentionCandidate } from "@/lib/mention-resolution";
+import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type { PreviewMention } from "@/lib/note-batches";
 import { hashSourceNote, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
 import { emptyOpportunityResult, validateOpportunities } from "@/lib/opportunity-extract";
@@ -60,6 +61,14 @@ export type CaptureParseOptions = {
   meetingSessionId?: string | null;
   /** The user's active goals for `relevance` scoring. Loaded from `user_goals` when omitted. */
   goals?: string[];
+  /**
+   * Contacts named with `@` in the composer.
+   *
+   * Sanitised by the boundary that took them from the browser (`sanitizeMentionPicks`) and
+   * checked against the user's own contacts by `resolveMentionsWithPicks`, which is the
+   * only thing here that knows what the user owns.
+   */
+  mentionPicks?: readonly MentionPick[];
   /** Injectable clock, for the smoke suite. */
   now?: Date;
 };
@@ -224,6 +233,28 @@ export async function runCaptureParse(
   // contact list per person.
   const duplicateIndex = buildDuplicateIndex(existing);
 
+  /**
+   * Picked contacts, by every name they could be written under in the note.
+   *
+   * `@Sarah` is the user answering the question the duplicate matcher is about to guess at,
+   * so where they agree this changes nothing and where they disagree the user wins. The
+   * case it exists for is the one the matcher cannot do anything about: a contact filed as
+   * "Sarah Chen-Alvarez" and a note that says Sarah.
+   */
+  const ownedById = new Map(existing.map((c) => [c.id, c]));
+  const pickedByName = new Map<string, string>();
+  for (const pick of opts.mentionPicks ?? []) {
+    // Not the caller's contact — forged, or deleted since the pick. Same check, and same
+    // reasoning, as `resolveMentionsWithPicks`.
+    const contact = ownedById.get(pick.id);
+    if (!contact) continue;
+    for (const name of [pick.name, contact.fullName]) {
+      const key = name?.trim().toLowerCase();
+      // First pick wins, so two people cannot fight over one spelling.
+      if (key && !pickedByName.has(key)) pickedByName.set(key, pick.id);
+    }
+  }
+
   const items: BulkNotePersonPreview[] = participants.map((person, index) => {
     const { source_excerpt, ...parsedBase } = person;
     const sharedForPerson = sharedNotesForPerson(parsedBase.name, shared_notes);
@@ -244,7 +275,9 @@ export async function runCaptureParse(
     }).slice(0, 5);
 
     const top = duplicates[0];
-    const suggestedMergeId = top && top.confidence >= 0.85 ? top.contact.id : null;
+    const suggestedMergeId =
+      pickedByName.get(parsed.name?.trim().toLowerCase() ?? "") ??
+      (top && top.confidence >= 0.85 ? top.contact.id : null);
 
     // Same haystack choice the commitments pass makes above, for the same reason: a
     // meeting's corpus is AI-written, so containment in it would only prove the digest
@@ -315,9 +348,10 @@ export async function runCaptureParse(
     // non-null assertion above would otherwise hand `resolveMentions` a null name.
     ...mentionedOnly.map((p) => ({ name: p.name, context: p.context, company: p.company, nearPerson: null })),
   ];
-  const { resolved, unresolved } = resolveMentions(
+  const { resolved, unresolved } = resolveMentionsWithPicks(
     existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title })),
     candidates,
+    opts.mentionPicks ?? [],
     { excludeContactIds: items.map((i) => i.suggestedMergeId).filter((id): id is string => Boolean(id)) }
   );
   const mentions: PreviewMention[] = [
