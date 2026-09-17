@@ -10,6 +10,7 @@
  * date a past interaction. This always looks forward.
  */
 import { WEEKDAYS, atLocalNoon } from "@/lib/interaction-date";
+import { formatDistance } from "date-fns";
 
 export type DateBasis = "absolute" | "relative" | "vague";
 
@@ -145,4 +146,16 @@ export function resolveRelativeDate(
   }
 
   return null;
+}
+
+/**
+ * "Last touch …" wording. A timestamp later today reads "today" rather than "in about 9
+ * hours": date-only interactions were stored at noon before `clampSameDayToNow`, so old rows
+ * still carry a noon that is ahead of the morning. Anything else is date-fns' own distance.
+ */
+export function formatLastTouch(at: Date, now: Date = new Date()): string {
+  const sameDay =
+    at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  if (sameDay && at.getTime() > now.getTime()) return "today";
+  return formatDistance(at, now, { addSuffix: true });
 }

@@ -50,6 +50,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-review-reducer": "pure",
   "smoke-capture-skipped-phrases": "pure",
   "smoke-reminder-dedupe": "pure",
+  "smoke-last-touch": "pure",
   "smoke-capture-draft": "pure",
   "smoke-chat-mentions": "pure",
   "smoke-chat-pipeline": "pure",
