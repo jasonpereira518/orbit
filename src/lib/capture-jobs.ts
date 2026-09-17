@@ -21,6 +21,7 @@ import {
   type CaptureIngestedBlock,
   type CaptureJobResult,
   type CaptureJobStatus,
+  type CaptureOpportunityChoices,
   type CaptureReminderChoices,
   type CaptureJobSource,
 } from "@/lib/capture/types";
@@ -406,11 +407,19 @@ export async function recordCaptureDecisionRow(
 export async function recordCaptureChoicesRow(
   userId: string,
   id: string,
-  choices: { reminders?: CaptureReminderChoices; meeting?: CaptureDecisions["meeting"] }
+  choices: {
+    reminders?: CaptureReminderChoices;
+    meeting?: CaptureDecisions["meeting"];
+    opportunities?: CaptureOpportunityChoices;
+  }
 ): Promise<CaptureJobRow | null> {
+  // A `||` merge of named sections, so writing one never disturbs another — the reminder
+  // ticks and the opportunity ticks are saved by different debounces and would otherwise
+  // race each other to overwrite the whole column.
   const patch: Record<string, unknown> = {};
   if (choices.reminders) patch.reminders = choices.reminders;
   if (choices.meeting) patch.meeting = choices.meeting;
+  if (choices.opportunities) patch.opportunities = choices.opportunities;
   if (!Object.keys(patch).length) return getCaptureJobRow(userId, id);
   const db = await getDb();
   const [row] = await db

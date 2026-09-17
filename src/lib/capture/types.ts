@@ -227,6 +227,15 @@ export type CaptureOpportunityChoices = {
   kinds?: Record<string, OpportunityKind>;
 };
 
+/** One extracted opportunity with the review state the summary keeps for it. */
+export type OpportunityReviewItem = CaptureOpportunityPreview & {
+  /** `<personKey>:<index>` — the key `CaptureOpportunityChoices` stores. */
+  key: string;
+  /** Whose card produced it. Shown, never edited: rejecting the person drops the row. */
+  personName: string;
+  checked: boolean;
+};
+
 /** What the save wrote, kept on the job so the saved state can render after a reload. */
 export type CaptureSavedSummary = {
   batchId: string;

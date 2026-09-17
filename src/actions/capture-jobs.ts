@@ -31,6 +31,7 @@ import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type {
   CaptureDecision,
   CaptureDecisions,
+  CaptureOpportunityChoices,
   CaptureReminderChoices,
   CaptureJobSource,
 } from "@/lib/capture/types";
@@ -221,7 +222,11 @@ export async function recordCaptureDecision(
 /** The summary's ticks: which dated commitments and meeting items become reminders. */
 export async function recordCaptureChoices(
   jobId: string,
-  choices: { reminders?: CaptureReminderChoices; meeting?: CaptureDecisions["meeting"] }
+  choices: {
+    reminders?: CaptureReminderChoices;
+    meeting?: CaptureDecisions["meeting"];
+    opportunities?: CaptureOpportunityChoices;
+  }
 ): Promise<Ok | Fail> {
   try {
     const userId = await requireUserId();

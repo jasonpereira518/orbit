@@ -24,9 +24,17 @@ import {
   settleCaptureJob,
   type CaptureJobRow,
 } from "@/lib/capture-jobs";
-import { acceptedPeople, defaultReminderKeys, setAsidePeople } from "@/lib/capture/review-reducer";
+import {
+  acceptedPeople,
+  defaultReminderKeys,
+  opportunityChecked,
+  opportunityKey,
+  opportunityKindFor,
+  setAsidePeople,
+} from "@/lib/capture/review-reducer";
 import { clampCloseness } from "@/lib/capture/closeness";
 import type { CaptureJobResult, CaptureSavedSummary } from "@/lib/capture/types";
+
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
@@ -215,9 +223,11 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
   // Absent means "the defaults", exactly like the reminder ticks below: a job whose
   // decisions predate opportunities must keep everything the parse found, not silently
   // drop it all because the section is missing.
+  // Both rules come from `review-reducer.ts`, where the summary reads them too. The kind is
+  // the field extraction most often gets nearly right, and it is what a later search matches
+  // on — so a correction made in the review has to reach the row, or the control was
+  // decorative.
   const opportunityChoices = decisions.opportunities;
-  const opportunityChecked = (itemKey: string, index: number) =>
-    opportunityChoices ? opportunityChoices.checked.includes(`${itemKey}:${index}`) : true;
 
   const participants: NoteBatchParticipantInput[] = accepted.map(({ item, decision }) => {
     const edits = decision.edits ?? {};
@@ -259,9 +269,10 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
       // theirs with them — `accepted` is already the filter. A per-opportunity untick from
       // the summary narrows it further.
       opportunities: (item.opportunities ?? [])
-        .filter((_, i) => opportunityChecked(item.key, i))
-        .map((o) => ({
-          kind: o.kind,
+        .map((o, i) => ({ o, key: opportunityKey(item.key, i) }))
+        .filter(({ key }) => opportunityChecked(opportunityChoices, key))
+        .map(({ o, key }) => ({
+          kind: opportunityKindFor(opportunityChoices, key, o.kind),
           label: o.label,
           direction: o.direction,
           sourceExcerpt: o.sourceExcerpt,

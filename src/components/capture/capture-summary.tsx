@@ -16,9 +16,10 @@ import { PlanetBadge } from "@/components/capture/review/planet-badge";
 import { decisionFromDraft, draftFromItem } from "@/components/capture/review/person-deck";
 import type { PersonDraft } from "@/components/capture/review/person-card";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
+import { SuggestedOpportunitiesReview } from "@/components/capture/suggested-opportunities-review";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
-import { acceptedPeople, countDecisions, defaultReminderKeys, peopleDecisions } from "@/lib/capture/review-reducer";
-import type { CaptureDecision, CaptureDecisions, CaptureJobResult, CaptureReminderChoices } from "@/lib/capture/types";
+import { acceptedPeople, countDecisions, defaultReminderKeys, opportunityRows, peopleDecisions } from "@/lib/capture/review-reducer";
+import type { CaptureDecision, CaptureDecisions, CaptureJobResult, CaptureOpportunityChoices, CaptureReminderChoices, OpportunityReviewItem } from "@/lib/capture/types";
 import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 
 export function suggestionsFromChoices(result: CaptureJobResult, choices: CaptureReminderChoices | undefined): SuggestionReviewItem[] {
@@ -51,6 +52,8 @@ export function CaptureSummary({
   decisions,
   suggestions,
   onSuggestionsChange,
+  opportunityChoices,
+  onOpportunitiesChange,
   onDecide,
   onSave,
   onStartOver,
@@ -66,6 +69,8 @@ export function CaptureSummary({
   decisions: CaptureDecisions;
   suggestions: SuggestionReviewItem[];
   onSuggestionsChange: (next: SuggestionReviewItem[]) => void;
+  opportunityChoices: CaptureOpportunityChoices | undefined;
+  onOpportunitiesChange: (next: OpportunityReviewItem[]) => void;
   onDecide: (key: string, decision: CaptureDecision) => void;
   onSave: () => void;
   onStartOver: () => void;
@@ -82,6 +87,8 @@ export function CaptureSummary({
   const counts = countDecisions(result.items, decisions);
   const [editing, setEditing] = useState<string | null>(null);
   const checkedDates = suggestions.filter((s) => s.checked).length;
+  const opportunities = opportunityRows(accepted, opportunityChoices);
+  const checkedOpportunities = opportunities.filter((o) => o.checked).length;
 
   const saveLabel = useMemo(() => {
     const parts: string[] = [];
@@ -89,8 +96,11 @@ export function CaptureSummary({
     if (accepted.length) parts.push(`${accepted.length} ${accepted.length === 1 ? "contact" : "contacts"}`);
     const reminderCount = checkedDates + meetingExtraCount;
     if (reminderCount) parts.push(`${reminderCount} ${reminderCount === 1 ? "reminder" : "reminders"}`);
+    if (checkedOpportunities) {
+      parts.push(`${checkedOpportunities} ${checkedOpportunities === 1 ? "opportunity" : "opportunities"}`);
+    }
     return parts.length ? `Save ${parts.join(" + ")}` : "Save";
-  }, [accepted.length, checkedDates, hasMeeting, meetingExtraCount]);
+  }, [accepted.length, checkedDates, checkedOpportunities, hasMeeting, meetingExtraCount]);
 
   const actionItemCount = accepted.reduce((n, a) => n + a.item.parsed.action_items.length, 0);
   const dueLabel = result.anchorIso ? format(addDays(new Date(`${result.anchorIso}T12:00:00`), 14), "MMM d") : "in 2 weeks";
@@ -186,6 +196,14 @@ export function CaptureSummary({
           people={accepted.map(({ item, decision }) => ({ key: item.key, name: decision.edits?.name || item.parsed.name || "Unnamed" }))}
           onChange={onSuggestionsChange}
           skipped={result.suggestionsSkipped}
+        />
+
+        {/* Below the reminders, deliberately. A reminder is something to do and has a date;
+            an opportunity is something that exists and has no deadline of its own. The order
+            is the urgency. */}
+        <SuggestedOpportunitiesReview
+          items={opportunities}
+          onChange={onOpportunitiesChange}
         />
 
         {error && (

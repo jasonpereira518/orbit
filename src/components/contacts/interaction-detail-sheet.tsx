@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   MoreHorizontal,
+  NotebookPen,
   Pencil,
   Sparkles,
   Trash2,
@@ -434,6 +435,43 @@ export function InteractionDetailSheet({
               </div>
             )}
 
+            {/* Above "Also came up" and below the action items, because this is context for
+                everything already read: the per-person summary at the top answers "what did
+                THEY say", and this answers "what was the meeting". */}
+            {detail.meeting && (
+              <div>
+                <SectionLabel>From the meeting</SectionLabel>
+                <div className="space-y-2 rounded-xl border border-border/50 bg-muted/20 p-3">
+                  <p className="text-sm font-medium text-ink">{detail.meeting.title}</p>
+                  {detail.meeting.summary.trim() && (
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      {detail.meeting.summary.trim()}
+                    </p>
+                  )}
+                  {detail.meeting.decisions.length > 0 && (
+                    <div>
+                      <p className="mb-1 text-xs font-medium text-muted-foreground">
+                        Decided
+                      </p>
+                      <ul className="space-y-1">
+                        {detail.meeting.decisions.map((d, i) => (
+                          <li
+                            key={`${i}-${d}`}
+                            className="flex gap-2 text-sm leading-relaxed text-ink"
+                          >
+                            <span aria-hidden className="text-muted-foreground">
+                              &middot;
+                            </span>
+                            <span className="min-w-0 flex-1">{d}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {detail.mentions.length > 0 && (
               <div>
                 <SectionLabel>Also came up</SectionLabel>
@@ -461,6 +499,18 @@ export function InteractionDetailSheet({
                 <p className="text-sm text-muted-foreground">
                   Nothing was written down for this one.
                 </p>
+              )}
+              {/* The way back to everything the capture produced — the other people, the
+                  reminders, the original photos. Reuses the affordance `reminder-card.tsx`
+                  already has rather than inventing one. */}
+              {detail.batchId && (
+                <Link
+                  href={`/capture/${detail.batchId}`}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+                >
+                  <NotebookPen className="size-3" />
+                  {detail.meeting ? "Meeting notes" : "The capture this came from"}
+                </Link>
               )}
             </div>
           </div>

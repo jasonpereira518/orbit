@@ -24,6 +24,7 @@ import { analyzeMeetingSession, type MeetingAnalysis } from "@/actions/meetings"
 import { CaptureResumeNotice } from "@/components/capture/capture-resume-notice";
 import { CaptureSaved } from "@/components/capture/capture-saved";
 import { CaptureSummary, choicesFromSuggestions, suggestionsFromChoices } from "@/components/capture/capture-summary";
+import type { OpportunityReviewItem } from "@/lib/capture/types";
 import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureMode } from "@/components/capture/capture-tabs";
 import { ExtractingStage } from "@/components/capture/extracting-stage";
 import { IgnoredPeopleSection } from "@/components/capture/ignored-people-section";
@@ -37,7 +38,7 @@ import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import { clearCaptureJob, refreshCaptureJob, seedCaptureJob, useCaptureJob } from "@/lib/capture/job-store";
-import { acceptedPeople, countDecisions, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
+import { acceptedPeople, choicesFromOpportunities, countDecisions, firstPendingIndex, initialPhaseFor, type CapturePhase } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
@@ -448,7 +449,12 @@ function SummaryStep({
 }) {
   const result = job.result!;
   const [suggestions, setSuggestions] = useState<SuggestionReviewItem[]>(() => suggestionsFromChoices(result, job.decisions.reminders));
+  // The opportunity ticks are held as CHOICES rather than as rows, because the rows are
+  // derived from whoever is still accepted — see `opportunityRows`. Keeping rows here would
+  // mean re-deriving them every time a card was set aside.
+  const [opportunityChoices, setOpportunityChoices] = useState(() => job.decisions.opportunities);
   const timer = useRef<number | null>(null);
+  const opportunityTimer = useRef<number | null>(null);
 
   function change(next: SuggestionReviewItem[]) {
     setSuggestions(next);
@@ -460,11 +466,37 @@ function SummaryStep({
     }, 400);
   }
 
+  function changeOpportunities(next: OpportunityReviewItem[]) {
+    const choices = choicesFromOpportunities(next, result.items, opportunityChoices);
+    setOpportunityChoices(choices);
+    if (opportunityTimer.current) window.clearTimeout(opportunityTimer.current);
+    opportunityTimer.current = window.setTimeout(() => {
+      void recordCaptureChoices(job.id, { opportunities: choices }).then((res) => {
+        if (res.ok) seedCaptureJob(res.job, { force: true });
+      });
+    }, 400);
+  }
+
+  /**
+   * Save flushes both debounces first.
+   *
+   * Without this, ticking a box and hitting Save inside 400ms saves the state from before
+   * the tick — the write the runner reads is the one in the database, not the one on screen.
+   */
   async function saveNow() {
+    const pending: Parameters<typeof recordCaptureChoices>[1] = {};
     if (timer.current) {
       window.clearTimeout(timer.current);
       timer.current = null;
-      const res = await recordCaptureChoices(job.id, { reminders: choicesFromSuggestions(suggestions, result.suggestedReminders) });
+      pending.reminders = choicesFromSuggestions(suggestions, result.suggestedReminders);
+    }
+    if (opportunityTimer.current) {
+      window.clearTimeout(opportunityTimer.current);
+      opportunityTimer.current = null;
+      pending.opportunities = opportunityChoices;
+    }
+    if (Object.keys(pending).length) {
+      const res = await recordCaptureChoices(job.id, pending);
       if (res.ok) seedCaptureJob(res.job, { force: true });
     }
     onSave();
@@ -477,6 +509,8 @@ function SummaryStep({
       decisions={job.decisions}
       suggestions={suggestions}
       onSuggestionsChange={change}
+      opportunityChoices={opportunityChoices}
+      onOpportunitiesChange={changeOpportunities}
       onDecide={onDecide}
       onSave={() => void saveNow()}
       onStartOver={onStartOver}
