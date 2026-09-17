@@ -194,6 +194,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-constellation-signals": "pglite",
   "smoke-contact-profile": "pglite",
   "smoke-contact-search-rank": "pglite",
+  "smoke-contacts-search-paging": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
   "smoke-csp-report": "pglite",
   "smoke-embedding-backfill": "pglite",
