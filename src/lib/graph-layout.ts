@@ -108,8 +108,10 @@ export type GraphNodeData = {
   spotlight?: boolean;
   /** The one-and-only search hit — bobs gently so the eye lands on it. */
   spotlightSolo?: boolean;
-  /** Hovered, selected or a search hit: labelled at every zoom, not just close up. */
+  /** Hovered, selected or the sole search hit: labelled at every zoom, whatever overlaps it. */
   labelPinned?: boolean;
+  /** Lost the label collision pass: its name would overlap a higher-priority one. */
+  labelHidden?: boolean;
   /** Hovered or selected: drawn above its neighbours. Set per render by the chart. */
   raised?: boolean;
   /** Newly arrived in the sky: plays the entrance once. Set per render by the chart. */

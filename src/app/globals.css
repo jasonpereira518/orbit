@@ -982,20 +982,6 @@
   }
 }
 
-@keyframes constellation-spotlight {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 0 rgba(255, 246, 214, 0.8),
-      0 0 20px 4px rgba(255, 255, 255, 0.5);
-  }
-  50% {
-    box-shadow:
-      0 0 0 12px rgba(255, 246, 214, 0),
-      0 0 36px 10px rgba(255, 255, 255, 0.7);
-  }
-}
-
 @keyframes constellation-bob {
   0%,
   100% {
@@ -1073,8 +1059,17 @@
   animation: constellation-corona-outer 4.8s ease-in-out infinite;
 }
 
+/*
+ * A search hit's ring holds still. It used to pulse its box-shadow forever, and a box-shadow
+ * animation is a repaint, not a compositor effect: searching a 311-person company repainted the
+ * chart's entire viewport layer every frame (14fps standing still) and re-committed the layer
+ * tree 60 times a second, which is what made the stars flash and the page blank in patches.
+ * The sole hit still bobs (a transform, so compositor-only) to catch the eye.
+ */
 .constellation-spotlight-ring {
-  animation: constellation-spotlight 1.8s ease-in-out infinite;
+  box-shadow:
+    0 0 0 2px rgba(255, 246, 214, 0.55),
+    0 0 18px 4px rgba(255, 255, 255, 0.4);
 }
 
 .constellation-bob {

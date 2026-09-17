@@ -209,8 +209,17 @@ function ContactNodeComponent({
     subtitle,
   } = starVisual(data, Boolean(selected));
   const bright = selected || Boolean(data.spotlight);
-  // Unmounted rather than hidden: an invisible label still costs its DOM, style and raster.
-  const showLabel = Boolean(data.labelPinned) || zoom >= LABEL_HIDE_BELOW_ZOOM;
+  /**
+   * Unmounted rather than hidden: an invisible label still costs its DOM, style and raster.
+   *
+   * `labelPinned` (hovered, selected, the sole search hit) always shows. Otherwise the star
+   * must have won its place in the chart's collision pass (`labelHidden` false) — labels are
+   * drawn in world units, so names that overlap overlap at every zoom, and a dense cluster
+   * read as one illegible smear — and search hits show at any zoom while the rest wait for 0.1.
+   */
+  const showLabel =
+    Boolean(data.labelPinned) ||
+    (!data.labelHidden && (Boolean(data.spotlight) || zoom >= LABEL_HIDE_BELOW_ZOOM));
   /**
    * Handles only where a figure line ends. React Flow needs them to anchor an edge and
    * measures every one on mount; a scatter star has no edges, so its pair was two DOM
@@ -257,7 +266,7 @@ function ContactNodeComponent({
         {showLabel && (
           <div
             className={cn(
-              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center group-hover:z-30",
               bright ? "opacity-100" : "opacity-75 group-hover:opacity-100"
             )}
           >
@@ -351,7 +360,7 @@ function ContactNodeComponent({
         {showLabel && (
           <div
             className={cn(
-              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center group-hover:z-30",
               bright
                 ? "opacity-100"
                 : dimmedScatter
@@ -432,7 +441,8 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
     <div
       className="nodrag cursor-pointer"
       style={{ width: size, height: size }}
-      title={`Zoom to ${data.company}`}
+      // No `title`: the haze spans the whole cluster, so a native tooltip followed the pointer
+      // over every star in it. The cluster's name label carries the "Zoom to" hint.
       aria-label={`Zoom to ${data.company} cluster`}
     >
       <div
