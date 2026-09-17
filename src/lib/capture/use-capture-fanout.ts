@@ -30,6 +30,7 @@ import {
   type UploadOutcome,
 } from "@/lib/capture/fanout";
 import { uploadCaptureMedia } from "@/lib/capture/ingest-client";
+import { prepareNotice, prepareUploadFiles } from "@/lib/capture/prepare-upload";
 import type { PlannedUpload } from "@/lib/capture/bins";
 
 export type FanoutUploader = (input: {
@@ -39,17 +40,39 @@ export type FanoutUploader = (input: {
   anchorIso: string | null;
 }) => Promise<UploadOutcome>;
 
-/** The real uploader. Injected so the hook can be driven by a stub in a story or a test. */
+/**
+ * The real uploader. Injected so the hook can be driven by a stub in a story or a test.
+ *
+ * PREPARATION HAPPENS HERE, per note, immediately before that note's request — not once for
+ * the whole drop in the sorting dialog. Two reasons, and the second is the one that fixes a
+ * bug:
+ *
+ *   1. It is paced. Rasterizing a PDF is the most expensive thing this feature does, and
+ *      doing it inside the pump means at most `concurrency` of them run at once, on notes
+ *      the person actually pressed Read on rather than on everything they dropped.
+ *   2. The page budget is per REQUEST, so preparing per request is what gives each note its
+ *      own `MAX_SCAN_PAGES`. Prepared together, a drop of three PDFs read the first few
+ *      pages of the first one and none of the other two.
+ *
+ * A note whose files ALL fail to prepare is a failed note, not an empty upload: sending a
+ * request with no files would leave a capture job with nothing in it, which reads on the
+ * timeline as a meeting about nothing.
+ */
 const defaultUploader: FanoutUploader = async ({ files, label, batchGroupId, anchorIso }) => {
+  const prepared = await prepareUploadFiles(files);
+  if (!prepared.files.length) {
+    const why = prepared.failures[0]?.message ?? "Nothing in this note could be read";
+    return { ok: false, error: why, status: 0, retryAfterSec: null };
+  }
   const res = await uploadCaptureMedia({
     sourceKind: "messy",
-    files,
+    files: prepared.files,
     batchGroupId,
     sourceLabel: label,
     anchorDate: anchorIso,
     autoQueue: true,
   });
-  if (res.ok) return { ok: true, jobId: res.job.id };
+  if (res.ok) return { ok: true, jobId: res.job.id, notice: prepareNotice(prepared) };
   return { ok: false, error: res.error, status: res.status, retryAfterSec: res.retryAfterSec };
 };
 
@@ -112,6 +135,7 @@ export function useCaptureFanout(opts?: {
           jobId: null,
           anchorIso: plan.anchorIso,
           error: resolved.length ? null : "Those files are no longer available",
+          notice: null,
           retryAt: null,
           attempts: 0,
         });

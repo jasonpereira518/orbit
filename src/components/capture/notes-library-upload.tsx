@@ -255,6 +255,13 @@ export function NotesLibraryUpload({
                     {e.anchorIso ? ` · ${e.anchorIso}` : ""} · {STATUS_COPY[e.status]}
                     {e.error ? ` — ${e.error}` : ""}
                   </span>
+                  {/* A note that went up short still went up, so this is not styled as a
+                      failure — but it is never left unsaid. */}
+                  {e.notice && (
+                    <span className="mt-0.5 block text-xs text-amber-600 dark:text-amber-500">
+                      {e.notice}
+                    </span>
+                  )}
                 </span>
                 {e.status === "uploading" && (
                   <Loader2 className="size-4 animate-spin text-muted-foreground" />
