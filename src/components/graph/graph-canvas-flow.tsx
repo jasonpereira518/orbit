@@ -264,7 +264,7 @@ const STAR_DUST_ID = "star-dust";
 /** Below this zoom, cluster names keep much wider gaps between them (see `clusterNameWinners`). */
 const CLUSTER_NAME_SPARSE_BELOW_ZOOM = 0.2;
 /** Below that zoom, at most this many of the largest clusters are considered for a name. */
-const CLUSTER_NAME_SPARSE_MAX = 36;
+const CLUSTER_NAME_SPARSE_MAX = 56;
 
 /** A label's box in layout px, as graph-nodes.tsx draws it: `max-w-[104px]`, `mt-2`, 11px + 9px lines. */
 const LABEL_MAX_W = 104;
@@ -291,7 +291,7 @@ function clusterNameWinners(
 ): Set<string> {
   type Box = { x0: number; y0: number; x1: number; y1: number };
   const sparse = zoom < CLUSTER_NAME_SPARSE_BELOW_ZOOM;
-  const spacing = sparse ? { x: 1.9, y: 2.6 } : { x: 1.15, y: 1.15 };
+  const spacing = sparse ? { x: 1.6, y: 2.2 } : { x: 1.15, y: 1.15 };
   // Far out, only the largest clusters compete for a name at all: a gap on the far side of the
   // sky is no reason to label a two-person cluster while the view is about the big picture.
   const eligible = sparse
@@ -1429,6 +1429,16 @@ function GraphCanvasInner({
   // Carries React Flow's measurements (and selection) into the nodes it is handed next. Only
   // changes that land on a stored node count: the star-dust node is derived, never stored, and
   // a no-op must not hand back a new array — that re-derives every node and re-renders the sky.
+  /**
+   * Whether the camera is moving right now, which is the only time the sky is worth promoting to
+   * its own compositor layer (see `.constellation-moving` in globals.css). Held in a ref and
+   * written straight to the DOM: a pan must not re-render the chart to toggle a class.
+   */
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const setMoving = useCallback((moving: boolean) => {
+    stageRef.current?.classList.toggle("constellation-moving", moving);
+  }, []);
+
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     setSky((s) => {
       const ids = new Set(s.nodes.map((n) => n.id));
@@ -1484,6 +1494,9 @@ function GraphCanvasInner({
           focusable: false,
         }}
         nodesDraggable={false}
+        ref={stageRef}
+        onMoveStart={() => setMoving(true)}
+        onMoveEnd={() => setMoving(false)}
         className="constellation-stage"
       >
         <DefaultViewFitter
