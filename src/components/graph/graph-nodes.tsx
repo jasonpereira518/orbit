@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -12,15 +12,20 @@ import {
   type EdgeProps,
   type NodeProps,
 } from "@xyflow/react";
+import { useCameraMoving } from "@/components/graph/camera-motion";
 import { cn } from "@/lib/utils";
 import {
   RING_LABELS,
   type ClusterLabelData,
   type GraphNodeData,
-  type NebulaData,
   type OrbitRingsData,
 } from "@/lib/graph-layout";
 import { withAlpha } from "@/lib/school-color";
+import {
+  NEBULA_LOBE_EDGE,
+  NEBULA_LOBE_MID,
+  nebulaLobes,
+} from "@/lib/graph/nebula-lobes";
 import {
   STAR_HIT_PAD,
   starVisual,
@@ -230,6 +235,7 @@ function ContactNodeComponent({
   if (isComet) {
     const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
     const disc = size + 2;
+    const cometRelief = starZoomRelief(disc, zoom);
     return (
       <div
         className={cn(
@@ -266,15 +272,26 @@ function ContactNodeComponent({
         {showLabel && (
           <div
             className={cn(
-              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center group-hover:z-30",
+              "pointer-events-none absolute left-1/2 z-10 w-max -translate-x-1/2 text-center group-hover:z-30",
               bright ? "opacity-100" : "opacity-75 group-hover:opacity-100"
             )}
+            // Sized like a star's name (see `labelScale` below): comets used to keep an 11px
+            // name whatever the camera did, so a drifting contact read smaller than the star
+            // beside it.
+            style={{
+              top: (disc * (1 + cometRelief)) / 2 + 8 * cometRelief,
+              fontSize: 11 * cometRelief,
+              maxWidth: 104 * cometRelief,
+            }}
           >
-            <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
+            <p className="truncate font-medium leading-tight text-[#ffb4a0]">
               {data.label}
             </p>
             {subtitle && (
-              <p className="truncate text-[9px] leading-tight text-[#ff8a70]/70">
+              <p
+                className="truncate leading-tight text-[#ff8a70]/70"
+                style={{ fontSize: 9 * cometRelief }}
+              >
                 {subtitle}
               </p>
             )}
@@ -301,6 +318,14 @@ function ContactNodeComponent({
    * untouched. See `zoomRelief` in `@/lib/graph/star-style` for the reasoning.
    */
   const zoomRelief = starZoomRelief(disc, zoom);
+  /**
+   * The name is sized in px and placed under the enlarged disc, rather than riding a scaled
+   * wrapper. `transform: scale()` magnifies the glyphs the browser already drew — inside the
+   * chart's composited viewport that is what made names look soft as you zoomed — where a
+   * font-size draws them at the size they are shown at.
+   */
+  const labelScale = zoomRelief;
+  const labelTop = (disc * (1 + labelScale)) / 2 + 8 * labelScale;
 
   return (
     <div
@@ -357,99 +382,178 @@ function ContactNodeComponent({
             data.school ? ` · ${data.school}` : ""
           }`}
         />
-        {showLabel && (
-          <div
+      </div>
+      {showLabel && (
+        <div
+          className={cn(
+            "pointer-events-none absolute left-1/2 z-10 w-max -translate-x-1/2 text-center group-hover:z-30",
+            bright
+              ? "opacity-100"
+              : dimmedScatter
+                ? "opacity-65 group-hover:opacity-100"
+                : "opacity-85 group-hover:opacity-100"
+          )}
+          style={{
+            top: labelTop,
+            fontSize: 11 * labelScale,
+            maxWidth: 104 * labelScale,
+          }}
+        >
+          <p
             className={cn(
-              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center group-hover:z-30",
-              bright
-                ? "opacity-100"
-                : dimmedScatter
-                  ? "opacity-65 group-hover:opacity-100"
-                  : "opacity-85 group-hover:opacity-100"
+              "truncate font-medium leading-tight text-white/95",
+              data.spotlight && "font-semibold text-white"
             )}
           >
+            {data.label}
+          </p>
+          {subtitle && (
             <p
               className={cn(
-                "truncate text-[11px] font-medium leading-tight text-white/95",
-                data.spotlight && "font-semibold text-white"
+                "truncate leading-tight text-white/45",
+                data.spotlight && "text-white/70"
               )}
+              style={{ fontSize: 9 * labelScale }}
             >
-              {data.label}
+              {subtitle}
             </p>
-            {subtitle && (
-              <p
-                className={cn(
-                  "truncate text-[9px] leading-tight text-white/45",
-                  data.spotlight && "text-white/70"
-                )}
-              >
-                {subtitle}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-/** Stable 0..1 from a string, so each cluster's wash keeps its shape. */
-function nebulaHash(seed: string, salt: number) {
-  let h = (2166136261 ^ salt) >>> 0;
-  for (let i = 0; i < seed.length; i++) {
-    h = (h ^ seed.charCodeAt(i)) >>> 0;
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return (h % 10000) / 10000;
-}
+export type NebulaWashCluster = {
+  /** Seeds the lobes, so a cluster's cloud is the same shape here as on the dashboard card. */
+  seed: string;
+  color: string;
+  /** Centre, in layout px. */
+  x: number;
+  y: number;
+  radius: number;
+  /** The cluster's emphasis: 1, or dimmed because a search is pulling the eye elsewhere. */
+  opacity: number;
+};
 
-function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
-  const r = data.radius;
-  const color = data.color;
+export type NebulaWashData = {
+  kind: "nebulaWash";
+  clusters: NebulaWashCluster[];
+  /** World-space box the canvas covers. */
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+};
 
-  // Soft lobes only. The wash used to add two rotated conic "filament" layers under
-  // `mask-image`, and blur all three (one by 30% of the radius) inside a breathing
-  // animation. Each nebula is a box four radii across, so those filters were the most
-  // expensive surfaces in the sky, re-rastered at every zoom — and the spokes they drew were
-  // visual noise over the stars a reader is trying to pick out. Offset radial gradients
-  // already fade to nothing; they need no blur to read as a cloud.
-  const { size, lobes } = useMemo(() => {
-    const seed = data.company;
-    // Box runs well past the stars so the wash dissolves before any boundary
-    const size = r * 4;
-    const pct = (v: number) => 50 + (v / size) * 100;
+/**
+ * Longest side of the wash canvas's backing store.
+ *
+ * Coarser than it sounds. At 10,000 contacts the washes span ~33,000 world px, so this samples
+ * the sky at about one backing pixel per 16 world units, and past roughly 0.06 zoom the cap
+ * binds and every closer view is magnified from that same bitmap — at 2.4 zoom, by about 40x.
+ *
+ * That is affordable here in a way it would not be for text, because there is almost nothing
+ * to magnify: a lobe's whole tonal range is 7.5% alpha, about 19 levels of 8-bit colour spread
+ * over its full radius, and it is smooth everywhere, which is the case bilinear upscaling
+ * reconstructs best. Measured rather than assumed — against the boxes this replaces, a
+ * 1440x900 frame at 2.4 zoom differs by a mean of 0.45/255, and by more than 8/255 in 57
+ * pixels out of 1.3 million. Raising the cap costs real GPU memory — 2048 square is already
+ * 16MB — for sharpness the picture has no way to show.
+ */
+const NEBULA_WASH_MAX_BACKING_PX = 2048;
 
-    // Offset, unequal lobes — overlapping ellipses read as blown-out debris
-    const lobes = Array.from({ length: 5 }, (_, i) => {
-      const angle = nebulaHash(seed, i * 9 + 1) * Math.PI * 2;
-      const dist = (0.06 + nebulaHash(seed, i * 9 + 2) * 0.45) * r;
-      const rx = (0.5 + nebulaHash(seed, i * 9 + 3) * 0.65) * r;
-      const ry = rx * (0.5 + nebulaHash(seed, i * 9 + 4) * 0.6);
-      const alpha = 0.075 - i * 0.011;
-      return `radial-gradient(ellipse ${rx.toFixed(0)}px ${ry.toFixed(0)}px at ${pct(
-        Math.cos(angle) * dist
-      ).toFixed(1)}% ${pct(Math.sin(angle) * dist).toFixed(1)}%, ${withAlpha(
-        color,
-        alpha
-      )} 0%, ${withAlpha(color, alpha * 0.45)} 36%, transparent 72%)`;
-    }).join(", ");
+/**
+ * Every cluster's wash, as one canvas: the soft coloured clouds the constellations sit in.
+ *
+ * This used to be one absolutely-positioned box per cluster, each four cluster radii across —
+ * up to ~10,500 world px at 10,000 contacts — carrying five CSS radial gradients. The
+ * gradients were never the cost. Flattening all five to one changed nothing, and so did
+ * giving the boxes `background: none` and leaving them in place; hiding the boxes themselves
+ * took a full-range zoom at 10,000 contacts from 36fps to 57fps. 485 very large overlapping
+ * surfaces are simply more than the compositor will carry across a zoom, whatever is painted
+ * in them, and capping their count does not help because the big ones are the expensive ones.
+ *
+ * So the sky gets one element, drawn the way `StarDustNode` below draws the stars: world units
+ * at the camera's quantised zoom, held still while the camera moves, redrawn when it stops.
+ * The lobes come from `nebula-lobes.ts` — the same five ellipses the CSS drew and the dashboard
+ * preview paints — so the sky is the same sky it was, minus 485 layers.
+ */
+function NebulaWashNodeComponent({ data }: NodeProps & { data: NebulaWashData }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Quarter-octave steps, as the dust uses: a camera flight crosses a few of these, not one
+  // per frame.
+  const zoom = useStore((s) =>
+    Math.pow(2, Math.round(Math.log2(Math.max(s.transform[2], 0.01)) * 4) / 4)
+  );
+  const moving = useCameraMoving();
+  const drawnOnce = useRef(false);
 
-    return { size, lobes };
-  }, [data.company, color, r]);
+  // A layout effect, so the clouds are there on the frame the canvas first appears rather than
+  // one frame later — the same reason the dust draws in one.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    // Never skip the first draw: an empty canvas is a sky with no clusters in it.
+    if (moving && drawnOnce.current) return;
+    drawnOnce.current = true;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const scale = Math.min(
+      Math.max(zoom, 0.01) * dpr,
+      NEBULA_WASH_MAX_BACKING_PX / Math.max(data.width, data.height)
+    );
+    const w = Math.max(1, Math.ceil(data.width * scale));
+    const h = Math.max(1, Math.ceil(data.height * scale));
+    // Resizing reallocates and clears the backing store; do it only when the size changed.
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
+    ctx.clearRect(data.minX, data.minY, data.width, data.height);
+
+    for (const cluster of data.clusters) {
+      // The cluster's dim is applied to its five lobes together, as the element's `opacity`
+      // applied it to the five backgrounds together. Instant rather than the 200ms fade the
+      // boxes had: a canvas redraws, it does not transition. The stars above made the same
+      // trade for the same reason.
+      ctx.globalAlpha = cluster.opacity;
+      for (const lobe of nebulaLobes(cluster.seed, cluster.radius)) {
+        // Under half a backing pixel there is nothing to draw, and a zero-radius gradient throws.
+        if (lobe.rx * scale < 0.5 || lobe.ry * scale < 0.5) continue;
+        const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, lobe.rx);
+        fill.addColorStop(0, withAlpha(cluster.color, lobe.alpha));
+        fill.addColorStop(NEBULA_LOBE_MID, withAlpha(cluster.color, lobe.alpha * 0.45));
+        // The cluster's own colour at zero alpha, not `transparent`: that keyword is
+        // transparent BLACK, so a fade to it drags the hue toward black on the way out
+        // instead of simply thinning. The dashboard preview builds the same stops.
+        fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(cluster.color, 0));
+        fill.addColorStop(1, withAlpha(cluster.color, 0));
+        ctx.save();
+        // An ellipse rx by ry, as `radial-gradient(ellipse rx ry at …)` drew it: a circle of
+        // radius rx, squashed vertically. The gradient is built in this squashed space, so it
+        // stretches with the shape exactly as the CSS one did.
+        ctx.translate(cluster.x + lobe.x, cluster.y + lobe.y);
+        ctx.scale(1, lobe.ry / lobe.rx);
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.arc(0, 0, lobe.rx, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }, [data, zoom, moving]);
 
   return (
-    <div
-      className="nodrag cursor-pointer"
-      style={{ width: size, height: size }}
-      // No `title`: the haze spans the whole cluster, so a native tooltip followed the pointer
-      // over every star in it. The cluster's name label carries the "Zoom to" hint.
-      aria-label={`Zoom to ${data.company} cluster`}
-    >
-      <div
-        className="absolute inset-0"
-        style={{ width: size, height: size, background: lobes }}
-      />
-    </div>
+    <canvas
+      ref={canvasRef}
+      // Pointer-transparent, so a click on the haze reaches the pane, which names the cluster
+      // under it by hit-testing the cluster circles (see `clusterAt` in graph-canvas-flow.tsx).
+      // The cluster's own name node keeps the keyboard and screen-reader route to "Zoom to X".
+      aria-hidden
+      className="constellation-nebula-wash pointer-events-none block"
+      style={{ width: data.width, height: data.height }}
+    />
   );
 }
 
@@ -502,7 +606,7 @@ function ClusterNameText({ data, showCount }: { data: ClusterLabelData; showCoun
   const brand = data.nebulaColor;
   return (
     <>
-      <span className="relative inline-block whitespace-nowrap text-center text-[11px] font-semibold leading-[15px] tracking-[0.08em]">
+      <span className="relative inline-block whitespace-nowrap text-center text-[1em] font-semibold leading-[1.36] tracking-[0.08em]">
         {brand ? (
           <span
             aria-hidden
@@ -516,7 +620,7 @@ function ClusterNameText({ data, showCount }: { data: ClusterLabelData; showCoun
       </span>
       {/* In the summary view the cluster stands in for its people, so it says how many. */}
       {showCount && (
-        <span className="relative whitespace-nowrap text-[9px] font-medium leading-3 tabular-nums tracking-[0.06em] text-white/55">
+        <span className="relative whitespace-nowrap text-[0.82em] font-medium leading-[1.2] tabular-nums tracking-[0.06em] text-white/55">
           {count.toLocaleString()} {count === 1 ? "person" : "people"}
         </span>
       )}
@@ -549,12 +653,12 @@ function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }
    */
   return (
     <div
-      className="nopan nodrag flex cursor-pointer flex-col items-center px-2 py-0.5"
+      className="nopan nodrag flex cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
       title={`Zoom to ${data.label}`}
-      style={{
-        transform: `scale(${scale.toFixed(3)})`,
-        transformOrigin: "50% 100%",
-      }}
+      // Drawn at its size rather than scaled up: scaling magnifies glyphs the browser already
+      // rasterised, which is why names went soft as the camera came in. It also makes the node's
+      // measured box the box you see, so the name really does sit on its anchor.
+      style={{ fontSize: 11 * scale }}
     >
       <ClusterNameText data={data} showCount={showCount} />
     </div>
@@ -611,14 +715,15 @@ function PinnableClusterName({
   return (
     <div className="pointer-events-none relative" style={{ width: box.width, height: box.height }}>
       <div
-        className="nopan nodrag pointer-events-auto absolute flex w-max cursor-pointer flex-col items-center px-2 py-0.5"
+        className="nopan nodrag pointer-events-auto absolute flex w-max cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
         title={`Zoom to ${data.label}`}
         style={{
           left: anchor.x + dx,
           top: anchor.y + dy,
-          // Bottom-centre on the anchor, then scaled about that point, so the name grows upward.
-          transform: `translate(-50%, -100%) scale(${scale.toFixed(3)})`,
-          transformOrigin: "50% 100%",
+          // Bottom-centre on the anchor, so the name grows upward, away from the stars. Sized in
+          // px rather than scaled, so the glyphs are drawn at the size they are read at.
+          transform: "translate(-50%, -100%)",
+          fontSize: 11 * scale,
         }}
       >
         {/* Pinned over the stars, it needs a ground to stay legible. Solid, not blurred. */}
@@ -675,6 +780,15 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
     Math.pow(2, Math.round(Math.log2(Math.max(s.transform[2], 0.01)) * 4) / 4)
   );
 
+  /**
+   * Held still while the camera moves. Redrawing means filling thousands of dots and handing
+   * the whole backing store to the GPU again; at 10,000 contacts that was a 100ms frame at
+   * every zoom step of a pinch. The canvas rides the viewport's transform meanwhile, like the
+   * rest of the sky, and is redrawn at its proper scale the moment the camera stops.
+   */
+  const moving = useCameraMoving();
+  const drawnOnce = useRef(false);
+
   // A layout effect, so the dots are drawn before the frame that shows the canvas is painted.
   // As an ordinary effect the canvas painted empty first — a blank frame each time the summary
   // began, and at every zoom step on the way, where the redraw clears it.
@@ -682,6 +796,9 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
+    // Never skip the first draw: the canvas can appear mid-gesture, and an empty one is a hole.
+    if (moving && drawnOnce.current) return;
+    drawnOnce.current = true;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const scale = Math.min(
       Math.max(zoom, 0.01) * dpr,
@@ -717,7 +834,7 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-  }, [data, zoom]);
+  }, [data, zoom, moving]);
 
   return (
     <canvas
@@ -813,6 +930,6 @@ export const OrbitRingsNode = memo(OrbitRingsNodeComponent);
 export const SunNode = memo(SunNodeComponent);
 export const ContactNode = memo(ContactNodeComponent);
 export const ClusterLabelNode = memo(ClusterLabelNodeComponent);
-export const NebulaNode = memo(NebulaNodeComponent);
+export const NebulaWashNode = memo(NebulaWashNodeComponent);
 export const StarDustNode = memo(StarDustNodeComponent);
 export const LabeledEdge = memo(LabeledEdgeComponent);

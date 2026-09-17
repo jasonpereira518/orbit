@@ -80,6 +80,34 @@ sidebar's tiles drop and flash blank. Search is the weak spot left — each keys
 dots and flies the camera, with stalls of up to ~1.1s at 10,000 — and so is the first wheel into
 the close-up view at 10,000 (one ~1.4s commit as the visible stars mount).
 
+### The cluster washes, on one canvas (September 17, 2026)
+
+The standard `zoom` phase above swings about 2.2x either side of home and never reaches the
+close-up, so it reported 60fps while a full-range zoom still stuttered. Measured instead by
+wheeling from the home framing all the way to 2.4 and back, one tick a frame, three passes each
+(control 60fps throughout, M4 Pro, 1440x900):
+
+| Contacts | Zoom in | Zoom out | Frames over 33ms, per sweep |
+|---:|---:|---:|---|
+|    100 | 60 → 60 | 48 → 60 | in 0 → 0, out 4-5 → 0 |
+|  2,500 | 55-56 → 59-60 | 55-56 → 60 | in 2-3 → 0-1, out 2 → 0 |
+| 10,000 | 34 → 59-60 | 46 → 60 | in 13-14 → 0-1, out 9-12 → 0 |
+
+What it cost was the existence of the wash boxes, not the gradients in them: flattening all five
+lobes to one changed nothing, `background: none` with the boxes still in the DOM changed nothing,
+and capping their count did not help because the large ones (four cluster radii across, up to
+~10,500 world px) are the expensive ones. They are now one canvas node — see `NebulaWashNode` in
+`graph-nodes.tsx`, which draws them the way `StarDustNode` draws the stars.
+
+The structural numbers, from `constellation-browser.mjs` on the same two builds:
+
+| Contacts | Layers | DOM nodes | Heap MB |
+|---:|---:|---:|---:|
+|  2,500 |  94 → 41 | 1,210 → 636 | 12.5 → 10.6 |
+| 10,000 | 196 → 34 | 2,067 → 559 | 25.9 → 21.5 |
+
+`--ablate nonebula` now hides the canvas (`.constellation-nebula-wash`) rather than the boxes.
+
 ### The rest of the app
 
 Pressing the chart's Refresh and navigating away used to leave its loop running (Next issues a

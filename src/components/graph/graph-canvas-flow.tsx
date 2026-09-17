@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -28,12 +29,14 @@ import {
   ClusterLabelNode,
   ContactNode,
   LabeledEdge,
-  NebulaNode,
+  NebulaWashNode,
   OrbitRingsNode,
   StarDustNode,
   SunNode,
   CLUSTER_NAME_PIN_MIN_ZOOM,
   clusterNameSize,
+  type NebulaWashCluster,
+  type NebulaWashData,
   type StarDustData,
   type StarDustPoint,
 } from "@/components/graph/graph-nodes";
@@ -41,6 +44,7 @@ import type {
   GraphChartProps,
   GraphPayload,
 } from "@/components/graph/graph-chart-types";
+import { setCameraMoving } from "@/components/graph/camera-motion";
 import { useGraphLayout } from "@/components/graph/use-graph-layout";
 import {
   buildHybridGraphLayout,
@@ -54,6 +58,7 @@ import {
   computeSunExtents,
   zoomToFitSunCentered,
 } from "@/lib/graph/sky-camera";
+import { NEBULA_BOX_RADII } from "@/lib/graph/nebula-lobes";
 import { contactMatchesLocal } from "@/lib/graph/search-match";
 import {
   clusterEmphasis,
@@ -179,7 +184,7 @@ const nodeTypes = {
   user: SunNode,
   orbitRings: OrbitRingsNode,
   clusterLabel: ClusterLabelNode,
-  nebula: NebulaNode,
+  nebulaWash: NebulaWashNode,
   starDust: StarDustNode,
 };
 
@@ -221,8 +226,13 @@ const SUMMARY_MOUNT_HITS_MAX = 60;
  * to mount every star in view in one commit — 350 of them after searching a big company at 2,500
  * contacts, one 300ms frame, 650ms at 5,000 — so a smooth camera flight ended in a freeze. The
  * dust canvas stays underneath while they arrive, so nobody is missing in the meantime.
+ *
+ * Half that while the camera moves: a moving frame is already paying for the camera, and a full
+ * batch on top of it took 33ms — every other frame dropped on the way in from the whole sky.
+ * Arriving takes twice as many frames, which nobody sees, because the dots are drawn underneath.
  */
 const STAR_MOUNT_BATCH = 32;
+const STAR_MOUNT_BATCH_MOVING = 16;
 
 /**
  * Large skies hand React Flow only the stars in and around the view: the viewport grown by this
@@ -236,7 +246,17 @@ const STAR_WINDOW_SLACK = 0.25;
 /** The most real stars the window hands over; past this, window members stay dots. */
 const STAR_WINDOW_MAX = 450;
 /** Stars removed per frame when the window lets go of them, e.g. on the way back to the whole sky. */
-const STAR_UNMOUNT_BATCH = 80;
+const STAR_UNMOUNT_BATCH = 48;
+
+
+/**
+ * How far the camera may zoom out from the window's own zoom before the dots are needed.
+ *
+ * The window is the view grown by STAR_WINDOW_MARGIN on every side, so it still covers the
+ * screen after zooming out by half that again. Past it, the stars it chose no longer reach the
+ * edges of the view, and the dust canvas draws everyone underneath until the window catches up.
+ */
+const STAR_WINDOW_OUTRUN = 1 / (1 + STAR_WINDOW_MARGIN * 2);
 
 type WorldRect = { x0: number; y0: number; x1: number; y1: number; zoom: number };
 
@@ -260,11 +280,31 @@ const ENTRANCE_MAX = 400;
 const ENTRANCE_CLEAR_MS = 700;
 
 const STAR_DUST_ID = "star-dust";
+const NEBULA_WASH_ID = "nebula-wash";
 
 /** Below this zoom, cluster names keep much wider gaps between them (see `clusterNameWinners`). */
 const CLUSTER_NAME_SPARSE_BELOW_ZOOM = 0.2;
 /** Below that zoom, at most this many of the largest clusters are considered for a name. */
 const CLUSTER_NAME_SPARSE_MAX = 36;
+/**
+ * At the home framing itself, a few more names than that, with slightly tighter gaps.
+ *
+ * Home is the one view that is only ever read — the whole sky in the pane, nothing to aim at —
+ * so it can carry a longer legend. One step in from home the sky is something you are moving
+ * through, and names appearing and vanishing as you go reads worse than a shorter list, so the
+ * number above takes over again.
+ */
+const CLUSTER_NAME_HOME_MAX = 56;
+/** How far in from the home zoom still counts as home; `zoomStep`'s steps are about 1.19x. */
+const CLUSTER_NAME_HOME_SLACK = 1.12;
+
+/**
+ * How far from a cluster's centre still counts as pointing at it, in cluster radii.
+ *
+ * A shade past where its stars reach, so the name answers a pointer resting just off the edge
+ * of the group, and well short of the wash's own box, which is four radii across.
+ */
+const CLUSTER_HOVER_REACH = 1.15;
 
 /** A label's box in layout px, as graph-nodes.tsx draws it: `max-w-[104px]`, `mt-2`, 11px + 9px lines. */
 const LABEL_MAX_W = 104;
@@ -280,18 +320,26 @@ const LABEL_SUBTITLE_CHAR_W = 4.9;
  *
  * Names are drawn at a readable size however far out the camera is (see `clusterNameScale`),
  * and a zoomed-out sky has hundreds of clusters, so they cannot all fit. They are placed in
- * priority order — the highlighted cluster, then the largest — and a name that would overlap one
- * already placed is left off until zooming in makes room. Grid-bucketed, so linear.
+ * priority order — the one under the pointer, then the highlighted cluster, then the largest —
+ * and a name that would overlap one already placed is left off until zooming in makes room.
+ * Grid-bucketed, so linear.
  */
 function clusterNameWinners(
   labels: LayoutNodes,
   zoom: number,
   withCount: boolean,
-  highlighted: string | null
+  highlighted: string | null,
+  hovered: string | null,
+  atHome: boolean
 ): Set<string> {
   type Box = { x0: number; y0: number; x1: number; y1: number };
   const sparse = zoom < CLUSTER_NAME_SPARSE_BELOW_ZOOM;
-  const spacing = sparse ? { x: 1.9, y: 2.6 } : { x: 1.15, y: 1.15 };
+  const home = sparse && atHome;
+  const spacing = sparse
+    ? home
+      ? { x: 1.6, y: 2.2 }
+      : { x: 1.9, y: 2.6 }
+    : { x: 1.15, y: 1.15 };
   // Far out, only the largest clusters compete for a name at all: a gap on the far side of the
   // sky is no reason to label a two-person cluster while the view is about the big picture.
   const eligible = sparse
@@ -302,7 +350,7 @@ function clusterNameWinners(
               ((b.data as ClusterLabelData).count ?? 0) -
               ((a.data as ClusterLabelData).count ?? 0)
           )
-          .slice(0, CLUSTER_NAME_SPARSE_MAX)
+          .slice(0, home ? CLUSTER_NAME_HOME_MAX : CLUSTER_NAME_SPARSE_MAX)
           .map((n) => n.id)
       )
     : null;
@@ -311,7 +359,8 @@ function clusterNameWinners(
       (n) =>
         !eligible ||
         eligible.has(n.id) ||
-        (n.data as ClusterLabelData).label === highlighted
+        (n.data as ClusterLabelData).label === highlighted ||
+        (n.data as ClusterLabelData).label === hovered
     )
     .map((n) => {
       const d = n.data as ClusterLabelData;
@@ -360,6 +409,17 @@ function clusterNameWinners(
         const list = grid.get(key);
         if (list) list.push(c.box);
         else grid.set(key, [c.box]);
+      }
+    }
+  }
+  // Point at a cluster and you get its name whether or not it won a place — but added after
+  // the pass, not before it, so the names already on the sky stay where they are rather than
+  // blinking out as the pointer travels. It is drawn above them (see `nameRaised`).
+  if (hovered) {
+    for (const n of labels) {
+      if ((n.data as ClusterLabelData).label === hovered) {
+        shown.add(n.id);
+        break;
       }
     }
   }
@@ -594,7 +654,14 @@ function GraphCanvasInner({
   layoutKey: string;
 }) {
   const router = useRouter();
-  const { fitView, fitBounds, getNodes, getViewport, setViewport } = useReactFlow();
+  const {
+    fitView,
+    fitBounds,
+    getNodes,
+    getViewport,
+    setViewport,
+    screenToFlowPosition,
+  } = useReactFlow();
   const storeApi = useStoreApi();
   const prevClusterZoomKey = useRef("");
   const prevPeekZoomKey = useRef("");
@@ -699,7 +766,41 @@ function GraphCanvasInner({
    * per frame in both directions: STAR_MOUNT_BATCH added, STAR_UNMOUNT_BATCH removed. Removing
    * all at once was the lag on the way back out to the whole sky — a 183ms frame dropping 500
    * stars — and it is never reset, so crossing back and forth keeps what is already there.
+   *
+   * A zoom holds the window still until it stops (`movingRef`). Measured on a zoom from the
+   * whole sky to a close-up and back: every frame that mounted or dropped a star cost 22-26ms
+   * on average against a flat 17ms for the frames that did not, and re-choosing the window at
+   * each zoom step made 853 of them. A pan still moves the window as it goes — panning changes
+   * which stars are worth having, and is cheap enough to do live — but while the camera is
+   * scaling, the stars already up are simply carried along, and the dots cover the rest.
    */
+  /**
+   * The cluster under the pointer, which says its name for as long as you point at it — the one
+   * name a reader has asked for directly. It is only a name: pinning it in view, the way the
+   * picked cluster below is pinned, would leave a name sliding around under the cursor.
+   */
+  const [hoveredCluster, setHoveredCluster] = useState<string | null>(null);
+
+  /**
+   * Whether the camera is moving right now. Two things ride on it: the sky is worth its own
+   * compositor layer only while it moves (`.constellation-moving` in globals.css), and the star
+   * window holds still through a zoom. Held in a ref and written straight to the DOM, because a
+   * pan must not re-render the chart to toggle a class.
+   */
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const movingRef = useRef(false);
+  const placeWindowRef = useRef<(() => void) | null>(null);
+  const setMoving = useCallback((moving: boolean) => {
+    stageRef.current?.classList.toggle("constellation-moving", moving);
+    movingRef.current = moving;
+    setCameraMoving(moving);
+    // A name found before the camera moved is about a cluster that is no longer under the
+    // pointer; it comes back with the next move of the mouse.
+    if (moving) setHoveredCluster(null);
+    // Stopped: choose the window for where the camera actually landed.
+    if (!moving) placeWindowRef.current?.();
+  }, []);
+
   const windowing = summaryAllowed && !summary;
   const [starWindow, setStarWindow] = useState<WorldRect | null>(null);
   // A window left over from a previous close-up points somewhere else entirely.
@@ -717,10 +818,13 @@ function GraphCanvasInner({
         if (prev) {
           const inner = viewportWorldRect(transform, width, height, 0);
           const slackX = (inner.x1 - inner.x0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
+          const zoomed = Math.abs(Math.log2(transform[2] / prev.zoom));
+          // Mid-zoom, keep the stars that are up rather than choosing a new set every step.
+          // `setMoving` places the window again the moment the camera stops.
+          if (movingRef.current && zoomed > 0.01) return prev;
           const slackY = (inner.y1 - inner.y0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
-          const zoomStepped = Math.abs(Math.log2(transform[2] / prev.zoom)) >= 0.25;
           if (
-            !zoomStepped &&
+            zoomed < 0.25 &&
             inner.x0 >= prev.x0 + slackX &&
             inner.y0 >= prev.y0 + slackY &&
             inner.x1 <= prev.x1 - slackX &&
@@ -732,8 +836,13 @@ function GraphCanvasInner({
         return viewportWorldRect(transform, width, height, STAR_WINDOW_MARGIN);
       });
     };
+    placeWindowRef.current = place;
     place();
-    return storeApi.subscribe(place);
+    const unsubscribe = storeApi.subscribe(place);
+    return () => {
+      placeWindowRef.current = null;
+      unsubscribe();
+    };
   }, [windowing, viewportReady, storeApi]);
 
   /**
@@ -792,8 +901,11 @@ function GraphCanvasInner({
           else removed++;
         }
         let added = 0;
+        const batch = movingRef.current
+          ? STAR_MOUNT_BATCH_MOVING
+          : STAR_MOUNT_BATCH;
         for (const id of wanted ?? []) {
-          if (added >= STAR_MOUNT_BATCH || !target.has(id)) break;
+          if (added >= batch || !target.has(id)) break;
           if (next.has(id)) continue;
           next.add(id);
           added++;
@@ -853,10 +965,24 @@ function GraphCanvasInner({
   // Cluster names can pin in view from here in (see ClusterLabelNode in graph-nodes.tsx).
   const labelPinnable = useStore((s) => s.transform[2] >= CLUSTER_NAME_PIN_MIN_ZOOM);
 
+
+  /**
+   * Whether the camera is at the home framing — the zoom `DefaultViewFitter` picks — which is the
+   * only view that gets the longer legend of cluster names. Derived from the same pure function
+   * the fitter uses rather than remembered from the last flight, so it is still right after a
+   * resize, a filter, or a pinch back out to the edge of the zoom range.
+   */
+  const paneW = useStore((s) => s.width);
+  const paneH = useStore((s) => s.height);
+  const atHome = useMemo(() => {
+    const { maxAbsX, maxAbsY } = computeSunExtents(sky.layout.nodes, []);
+    const home = zoomToFitSunCentered(maxAbsX, maxAbsY, paneW, paneH);
+    return labelZoom <= home * CLUSTER_NAME_HOME_SLACK;
+  }, [sky.layout.nodes, paneW, paneH, labelZoom]);
+
   /**
    * The cluster the reader deliberately picked: clicked or searched (`focusCluster`), filtered
    * to, or holding the selected person. Its name always shows and, zoomed in, stays in view.
-   * Not hover — pointing across a sky must not make names appear and pin under the cursor.
    */
   const highlightedCluster = useMemo(() => {
     if (focusCluster) {
@@ -876,9 +1002,105 @@ function GraphCanvasInner({
     () => sky.layout.nodes.filter((n) => n.type === "clusterLabel"),
     [sky.layout.nodes]
   );
+
+  /**
+   * Every cluster as a circle to point at: its name, its centre and how far its stars reach.
+   *
+   * The pointer is tested against these rather than against the washes' own boxes, which are
+   * four radii across and overlap half the sky — hovering the gap between two clusters would
+   * otherwise name whichever box happened to be on top.
+   */
+  const clusterCircles = useMemo(() => {
+    const byClusterId = new Map<string, string>();
+    for (const n of clusterLabelNodes) {
+      const d = n.data as ClusterLabelData;
+      if (d.clusterId) byClusterId.set(d.clusterId, d.label);
+    }
+    const circles: Array<{
+      id: string;
+      name: string;
+      x: number;
+      y: number;
+      r2: number;
+    }> = [];
+    for (const n of sky.layout.nodes) {
+      if (n.type !== "nebula") continue;
+      const d = n.data as NebulaData;
+      const name = (d.clusterId && byClusterId.get(d.clusterId)) || d.company;
+      if (!name) continue;
+      const reach = d.radius * CLUSTER_HOVER_REACH;
+      circles.push({
+        id: clusterIdFromNodeId(n.id, d.clusterId),
+        name,
+        x: n.position.x,
+        y: n.position.y,
+        r2: reach * reach,
+      });
+    }
+    return circles;
+  }, [clusterLabelNodes, sky.layout.nodes]);
+
+  /**
+   * The cluster under a point on screen: nearest centre whose reach contains it, or null.
+   *
+   * The one place the sky answers "which cluster is that". Naming one under the pointer and
+   * flying to one on a click used to be different mechanisms — hover tested these circles,
+   * while a click hit whichever wash box React Flow reported — so the two could disagree about
+   * a point in the overlap between neighbours: the sky said one name and the camera flew to
+   * another. Now that the washes are one canvas there is no box to click, and both go through
+   * here.
+   */
+  const clusterAt = useCallback(
+    (clientX: number, clientY: number) => {
+      const { x, y } = screenToFlowPosition({ x: clientX, y: clientY });
+      let best: (typeof clusterCircles)[number] | null = null;
+      let bestD = Infinity;
+      for (const c of clusterCircles) {
+        const d = (x - c.x) ** 2 + (y - c.y) ** 2;
+        if (d <= c.r2 && d < bestD) {
+          bestD = d;
+          best = c;
+        }
+      }
+      return best;
+    },
+    [clusterCircles, screenToFlowPosition]
+  );
+
+  /**
+   * Name the cluster the pointer is inside, or nothing between them.
+   *
+   * Not while the camera moves. A pointer resting on the sky during a zoom has cluster after
+   * cluster pass underneath it, and the browser reports each one as a fresh hover: the sky was
+   * re-choosing its names on most frames of a zoom, which cost 58fps down to 38.
+   */
+  const hoverClusterAt = useCallback(
+    (clientX: number, clientY: number) => {
+      if (movingRef.current) return;
+      const hit = clusterAt(clientX, clientY);
+      const best = hit ? hit.name : null;
+      setHoveredCluster((prev) => (prev === best ? prev : best));
+    },
+    [clusterAt]
+  );
   const clusterNamesShown = useMemo(
-    () => clusterNameWinners(clusterLabelNodes, labelZoom, summary, highlightedCluster),
-    [clusterLabelNodes, labelZoom, summary, highlightedCluster]
+    () =>
+      clusterNameWinners(
+        clusterLabelNodes,
+        labelZoom,
+        summary,
+        highlightedCluster,
+        hoveredCluster,
+        atHome
+      ),
+    [
+      clusterLabelNodes,
+      labelZoom,
+      summary,
+      highlightedCluster,
+      hoveredCluster,
+      atHome,
+    ]
   );
   // Independent of hover on purpose: moving the pointer must not reshuffle which names show.
   // Only over stars that can be drawn: the summary's mounted hits, or the star window. Over the
@@ -905,7 +1127,13 @@ function GraphCanvasInner({
    * summary is on, and rebuilt only when the sky or the emphasis changes — never per frame.
    */
   // Only on/off: the per-frame fill must not rebuild or redraw the dots.
-  const rampActive = windowHasDots;
+  /**
+   * Zoomed out past what the window was chosen for — its stars no longer reach the edges of the
+   * view — so the dots stand in until the camera stops and the window is placed again.
+   */
+  const windowOutrun =
+    activeWindow !== null && labelZoom < activeWindow.zoom * STAR_WINDOW_OUTRUN;
+  const rampActive = windowHasDots || windowOutrun;
   // Search, but not hover or selection: the dots dim for a search, and a pointer moving over
   // the sky must not redraw every dot on the canvas.
   const dustFocus: SkyFocusState = useMemo(
@@ -989,9 +1217,77 @@ function GraphCanvasInner({
     };
   }, [starDust]);
 
+  /**
+   * Every cluster's wash, as one canvas payload: where each cloud is, how big, and how dimmed.
+   *
+   * Rebuilt only when the sky or the emphasis changes — a pan, a zoom or a hover leaves it
+   * alone, so the canvas is not asked to redraw for any of them.
+   */
+  const nebulaWash = useMemo((): NebulaWashData | null => {
+    const clusters: NebulaWashCluster[] = [];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const n of skyLayoutNodes) {
+      if (n.type !== "nebula") continue;
+      const d = n.data as NebulaData;
+      clusters.push({
+        seed: d.company,
+        color: d.color,
+        x: n.position.x,
+        y: n.position.y,
+        radius: d.radius,
+        opacity: clusterEmphasis(d.company, focusCompany, company, searchDimActive),
+      });
+      // The same box the wash used to have its own element for: four radii across, so the
+      // cloud dissolves well before the canvas ends and no cluster is clipped at the edge.
+      const reach = (d.radius * NEBULA_BOX_RADII) / 2;
+      minX = Math.min(minX, n.position.x - reach);
+      minY = Math.min(minY, n.position.y - reach);
+      maxX = Math.max(maxX, n.position.x + reach);
+      maxY = Math.max(maxY, n.position.y + reach);
+    }
+    if (clusters.length === 0) return null;
+    return {
+      kind: "nebulaWash",
+      clusters,
+      minX,
+      minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }, [skyLayoutNodes, focusCompany, company, searchDimActive]);
+
+  /** One node, carrying its own `measured` box for the same reason the dust node does. */
+  const nebulaWashNode = useMemo((): Node | null => {
+    if (!nebulaWash) return null;
+    return {
+      id: NEBULA_WASH_ID,
+      type: "nebulaWash",
+      // nodeOrigin is [0.5, 0.5], so the position is the canvas's centre.
+      position: {
+        x: nebulaWash.minX + nebulaWash.width / 2,
+        y: nebulaWash.minY + nebulaWash.height / 2,
+      },
+      width: nebulaWash.width,
+      height: nebulaWash.height,
+      measured: { width: nebulaWash.width, height: nebulaWash.height },
+      data: nebulaWash,
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      // Exactly where the 485 wash boxes sat: above the rings (-2) and the dust (-1), beneath
+      // the stars and the cluster names. Keeping the number keeps the sky's order unchanged.
+      zIndex: 0,
+      style: { pointerEvents: "none" },
+    };
+  }, [nebulaWash]);
+
   const nodes = useMemo(() => {
     const out: Node[] = [];
     if (starDustNode) out.push(starDustNode);
+    if (nebulaWashNode) out.push(nebulaWashNode);
 
     for (const n of orbitNodes) {
       if (n.type === "orbitRings") {
@@ -1003,50 +1299,49 @@ function GraphCanvasInner({
         out.push(withEmphasis(n, selected ? "sel" : "", () => ({ ...n, selected }) as Node));
         continue;
       }
-      if (n.type === "clusterLabel" || n.type === "nebula") {
-        const nebula = n.data as NebulaData | { company?: string };
-        const co =
-          "company" in nebula
-            ? nebula.company
-            : (n.data as { label?: string }).label;
-        const opacity = clusterEmphasis(co, focusCompany, company, searchDimActive);
-        const isLabel = n.type === "clusterLabel";
+      // The washes are drawn on `nebulaWashNode` above, not one box each.
+      if (n.type === "nebula") continue;
+      if (n.type === "clusterLabel") {
         const label = n.data as ClusterLabelData;
-        const highlighted = isLabel && label.label === highlightedCluster;
+        const opacity = clusterEmphasis(
+          label.label,
+          focusCompany,
+          company,
+          searchDimActive
+        );
         // Only the highlighted cluster's name pins in view; the rest stay above their clusters.
-        const pinnable = isLabel && labelPinnable && highlighted;
-        const nameHidden = isLabel && !clusterNamesShown.has(n.id);
+        const pinnable = labelPinnable && label.label === highlightedCluster;
+        const nameHidden = !clusterNamesShown.has(n.id);
+        // The name under the pointer sits above the rest, since it is the one being read.
+        const nameRaised = label.label === hoveredCluster;
         out.push(
           withEmphasis(
             n,
-            `${opacity}|${isLabel && summary}|${pinnable}|${nameHidden}`,
+            `${opacity}|${summary}|${pinnable}|${nameHidden}|${nameRaised}`,
             () =>
               ({
                 ...n,
                 hidden: nameHidden,
-                ...(isLabel
+                ...(nameRaised ? { zIndex: 60 } : null),
+                // Placed by the name's anchor: the cluster-sized box around it when the name
+                // can pin (see-through to pointers everywhere but the name, so the stars under
+                // it stay clickable), otherwise the name's own box on it.
+                ...(pinnable && label.box && label.anchor
                   ? {
-                      // Placed by the name's anchor: the cluster-sized box around it when the
-                      // name can pin (see-through to pointers everywhere but the name, so the
-                      // stars under it stay clickable), otherwise the name's own box on it.
-                      ...(pinnable && label.box && label.anchor
-                        ? {
-                            width: label.box.width,
-                            height: label.box.height,
-                            origin: [
-                              label.anchor.x / label.box.width,
-                              label.anchor.y / label.box.height,
-                            ] as [number, number],
-                          }
-                        : { origin: [0.5, 1] as [number, number] }),
-                      data: { ...label, summary, pinnable },
-                      ariaLabel: summary
-                        ? `${label.label}, ${label.count ?? 0} ${
-                            label.count === 1 ? "person" : "people"
-                          }. Zoom in`
-                        : `Zoom to ${label.label}`,
+                      width: label.box.width,
+                      height: label.box.height,
+                      origin: [
+                        label.anchor.x / label.box.width,
+                        label.anchor.y / label.box.height,
+                      ] as [number, number],
                     }
-                  : null),
+                  : { origin: [0.5, 1] as [number, number] }),
+                data: { ...label, summary, pinnable },
+                ariaLabel: summary
+                  ? `${label.label}, ${label.count ?? 0} ${
+                      label.count === 1 ? "person" : "people"
+                    }. Zoom in`
+                  : `Zoom to ${label.label}`,
                 // A handful of clusters, so their fade is affordable — unlike the stars below.
                 style: {
                   opacity,
@@ -1114,6 +1409,7 @@ function GraphCanvasInner({
   }, [
     orbitNodes,
     starDustNode,
+    nebulaWashNode,
     summary,
     hoveredId,
     peekPersonId,
@@ -1127,6 +1423,7 @@ function GraphCanvasInner({
     labelPinnable,
     highlightedCluster,
     clusterNamesShown,
+    hoveredCluster,
     searchHitIds,
     summaryAllowed,
     mounted,
@@ -1389,10 +1686,11 @@ function GraphCanvasInner({
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
       if (node.id === "rings" || node.id === STAR_DUST_ID) return;
+      if (node.id === NEBULA_WASH_ID) return;
 
-      if (node.type === "clusterLabel" || node.type === "nebula") {
+      if (node.type === "clusterLabel") {
         if (compact) return;
-        const d = node.data as ClusterLabelData | NebulaData;
+        const d = node.data as ClusterLabelData;
         const clusterId = clusterIdFromNodeId(node.id, d.clusterId);
         if (clusterId) onFocusCluster(clusterId);
         return;
@@ -1412,23 +1710,75 @@ function GraphCanvasInner({
   );
 
   const onNodeMouseEnter: NodeMouseHandler = useCallback(
-    (_, node) => {
+    (event, node) => {
+      // A cluster's own name, under the pointer, says its name. Over the haze around it there
+      // is no node any more — the pane's `onPaneMouseMove` answers instead, from the same
+      // circles, which is how the gaps between clusters were always handled.
+      if (node.type === "clusterLabel") {
+        hoverClusterAt(event.clientX, event.clientY);
+        onHover(null);
+        return;
+      }
+      setHoveredCluster(null);
       if (node.type !== "contact") {
         onHover(null);
         return;
       }
       onHover(node.id);
     },
-    [onHover]
+    [onHover, hoverClusterAt]
+  );
+
+  /**
+   * Which cluster is under the pointer changes as it travels, and the washes are wide enough
+   * that a pointer can cross a whole cluster without ever entering or leaving a node.
+   */
+  const onClusterPointerMove = useCallback(
+    (event: { clientX: number; clientY: number }) => {
+      hoverClusterAt(event.clientX, event.clientY);
+    },
+    [hoverClusterAt]
+  );
+
+  const onNodeMouseMove: NodeMouseHandler = useCallback(
+    (event, node) => {
+      if (node.type === "clusterLabel") {
+        hoverClusterAt(event.clientX, event.clientY);
+      }
+    },
+    [hoverClusterAt]
   );
 
   const onNodeMouseLeave = useCallback(() => {
+    setHoveredCluster(null);
     onHover(null);
   }, [onHover]);
 
   // Carries React Flow's measurements (and selection) into the nodes it is handed next. Only
   // changes that land on a stored node count: the star-dust node is derived, never stored, and
   // a no-op must not hand back a new array — that re-derives every node and re-renders the sky.
+  /**
+   * A click on the open sky: the cluster it lands in, or nothing.
+   *
+   * The wash boxes used to catch this — clicking a cluster's haze flew the camera to it — and
+   * they are gone, so the pane takes it over, against the same circles the hover uses. React
+   * Flow suppresses this click after a drag (`paneClickDistance`), so ending a pan inside a
+   * cluster does not fly to it.
+   */
+  const onPaneClick = useCallback(
+    (event: ReactMouseEvent) => {
+      const hit = clusterAt(event.clientX, event.clientY);
+      if (hit) {
+        // Compact ignored a tap on the haze before, and still does — including the deselect,
+        // since the tap did land on a cluster.
+        if (!compact) onFocusCluster(hit.id);
+        return;
+      }
+      onSelect(null);
+    },
+    [clusterAt, compact, onFocusCluster, onSelect]
+  );
+
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     setSky((s) => {
       const ids = new Set(s.nodes.map((n) => n.id));
@@ -1475,8 +1825,10 @@ function GraphCanvasInner({
         }}
         onNodeClick={onNodeClick}
         onNodeMouseEnter={onNodeMouseEnter}
+        onNodeMouseMove={onNodeMouseMove}
+        onPaneMouseMove={onClusterPointerMove}
         onNodeMouseLeave={onNodeMouseLeave}
-        onPaneClick={() => onSelect(null)}
+        onPaneClick={onPaneClick}
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{
           type: "straight",
@@ -1484,6 +1836,9 @@ function GraphCanvasInner({
           focusable: false,
         }}
         nodesDraggable={false}
+        ref={stageRef}
+        onMoveStart={() => setMoving(true)}
+        onMoveEnd={() => setMoving(false)}
         className="constellation-stage"
       >
         <DefaultViewFitter
