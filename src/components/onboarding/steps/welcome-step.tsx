@@ -79,7 +79,7 @@ export function WelcomeStep({ onStart }: { onStart: () => void }) {
 
       <StaggerItem className="mt-8">
         <Button type="button" size="lg" onClick={onStart} className="h-11 min-w-44 px-5 text-[15px]">
-          Let&apos;s start
+          Let’s start
           <ArrowRight className="size-4" aria-hidden />
         </Button>
       </StaggerItem>

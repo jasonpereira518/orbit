@@ -85,8 +85,8 @@ export function LinkedInStep({
             <NumberChip n={2} />
             <p className="pt-0.5 text-sm text-foreground">
               Within a day LinkedIn emails you{" "}
-              <span className="font-medium text-ink">“{LINKEDIN_ARCHIVE_EMAIL_SUBJECT}”</span> The
-              link lasts {LINKEDIN_ARCHIVE_LINK_HOURS} hours, so we&apos;ll remind you to look for it.
+              <span className="font-medium text-ink">“{LINKEDIN_ARCHIVE_EMAIL_SUBJECT}”</span>{" "}
+              {`The link lasts ${LINKEDIN_ARCHIVE_LINK_HOURS} hours, so we’ll remind you to look for it.`}
             </p>
           </StaggerItem>
         </Stagger>

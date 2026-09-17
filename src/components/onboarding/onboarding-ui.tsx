@@ -11,9 +11,10 @@ import { cn } from "@/lib/utils";
  * Shared building blocks for the onboarding steps, so every step arrives the same way.
  *
  * Children rise 8px and fade in 50ms apart. `y` stays a motion value rather than a
- * transform string on purpose: AppShell's `MotionConfig reducedMotion="user"` strips
- * transform values for reduced-motion users and keeps the fade, which is the app's single
- * reduced-motion mechanism — no per-animation branches here.
+ * transform string on purpose: AppShell's `MotionConfig reducedMotion="user"` makes transform
+ * animations instant, and an entrance that jumps its 8px while still at opacity 0 lands in
+ * place and only fades — so no branch is needed here. (Exits are different: see the step
+ * slide in onboarding-flow.tsx.)
  */
 
 const STAGGER: Variants = {

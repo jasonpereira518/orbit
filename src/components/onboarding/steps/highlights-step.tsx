@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, type PanInfo } from "motion/react";
+import { AnimatePresence, motion, useReducedMotionConfig, type PanInfo } from "motion/react";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,6 +49,9 @@ export function HighlightsStep({
   const chapter = chapters[Math.min(index, last)];
   // Swiping is for touch. With a mouse, a draggable card fights text selection and reads as
   // broken; the buttons and arrow keys cover it. Read once — this renders client-only.
+  // Zero travel for reduced motion — see the same note in onboarding-flow.tsx.
+  const travel = useReducedMotionConfig() ? 0 : 32;
+  const slide = useMemo(() => ({ dir: direction, travel }), [direction, travel]);
   const [coarsePointer] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches,
   );
@@ -117,7 +120,10 @@ export function HighlightsStep({
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-10">
-        <StaggerItem>
+        {/* min-w-0: on a phone the rail is one nowrap strip, and a grid item's default
+            min-width is its content — without this the strip widened the whole column and
+            pushed Next off the right edge of the screen. */}
+        <StaggerItem className="min-w-0">
           <ChapterRail chapters={chapters} index={index} planFlags={planFlags} onSelect={go} />
         </StaggerItem>
 
@@ -127,10 +133,10 @@ export function HighlightsStep({
             aria-label="Orbit features"
             className="relative overflow-hidden rounded-3xl border border-border/60 bg-card/60"
           >
-            <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+            <AnimatePresence mode="popLayout" initial={false} custom={slide}>
               <motion.div
                 key={chapter.id}
-                custom={direction}
+                custom={slide}
                 variants={SLIDE}
                 initial="enter"
                 animate="center"
@@ -188,13 +194,15 @@ export function HighlightsStep({
   );
 }
 
-/** Direction-aware slide. `x` (not a transform string) so reduced motion keeps only the fade. */
+type Slide = { dir: 1 | -1; travel: number };
+
+/** Direction-aware slide; `travel` is 0 for reduced motion, leaving a crossfade. */
 const SLIDE = {
-  enter: (dir: 1 | -1) => ({ opacity: 0, x: 32 * dir }),
+  enter: ({ dir, travel }: Slide) => ({ opacity: 0, x: travel * dir }),
   center: { opacity: 1, x: 0, transition: { duration: DUR.slow, ease: EASE_HOUSE } },
-  exit: (dir: 1 | -1) => ({
+  exit: ({ dir, travel }: Slide) => ({
     opacity: 0,
-    x: -32 * dir,
+    x: -travel * dir,
     transition: { duration: DUR.base, ease: EASE_HOUSE },
   }),
 };

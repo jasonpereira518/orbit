@@ -60,7 +60,7 @@ export function DoneStep({
 
       <StaggerItem>
         <h1 className="font-[family-name:var(--font-display)] text-4xl tracking-tight text-ink sm:text-5xl">
-          You&apos;re in orbit
+          You’re in orbit
         </h1>
       </StaggerItem>
       <StaggerItem>

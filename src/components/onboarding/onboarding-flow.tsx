@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { completeOnboarding, saveOnboardingStep } from "@/actions/onboarding";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { Button } from "@/components/ui/button";
@@ -68,6 +68,11 @@ export function OnboardingFlow({
   const [results, setResults] = useState<SetupResult[]>([]);
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
   const stageRef = useRef<HTMLDivElement>(null);
+  // Travel distance for the step slide: zero for reduced motion. MotionConfig alone makes the
+  // transform instant rather than absent, which snapped the OUTGOING step 40px sideways while
+  // it was still visible. This is client-only (`ssr: false`), so the hook has no server lag.
+  const travel = useReducedMotionConfig() ? 0 : 40;
+  const slide = useMemo(() => ({ dir: direction, travel }), [direction, travel]);
 
   const goTo = useCallback((next: OnboardingStep) => {
     setPosition(([current]) => [
@@ -116,10 +121,11 @@ export function OnboardingFlow({
 
   return (
     <div className="relative flex min-h-dvh flex-col overflow-x-clip">
-      {/* A faint orbit behind everything: static, so it costs nothing per frame. */}
+      {/* A faint glow behind everything: static, so it costs nothing per frame. No ring —
+          at this size its edge ran straight through the step content. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute top-[-30vmax] left-1/2 size-[80vmax] -translate-x-1/2 rounded-full border border-primary/[0.06] bg-[radial-gradient(circle,color-mix(in_oklab,var(--primary)_5%,transparent)_0%,transparent_60%)]"
+        className="pointer-events-none absolute top-[-30vmax] left-1/2 size-[80vmax] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--primary)_5%,transparent)_0%,transparent_60%)]"
       />
 
       <header className="relative z-10 mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
@@ -142,12 +148,12 @@ export function OnboardingFlow({
       </header>
 
       <main className="relative mx-auto w-full max-w-6xl flex-1 px-4 pt-8 pb-16 sm:px-8 sm:pt-12">
-        <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+        <AnimatePresence mode="popLayout" initial={false} custom={slide}>
           <motion.div
             key={step}
             ref={stageRef}
             tabIndex={-1}
-            custom={direction}
+            custom={slide}
             variants={STEP_MOTION}
             initial="enter"
             animate="center"
@@ -281,18 +287,19 @@ export function OnboardingFlow({
   );
 }
 
+type Slide = { dir: 1 | -1; travel: number };
+
 /**
  * Direction-aware: forward enters from the right and leaves to the left, Back reverses it.
- * `x` rather than a transform string so AppShell's `MotionConfig reducedMotion="user"`
- * turns it into a plain crossfade. Leaving is quicker than arriving, so the next step is
- * already readable while the last one clears.
+ * With reduced motion `travel` is 0 and it is a plain crossfade. Leaving is quicker than
+ * arriving, so the next step is already readable while the last one clears.
  */
 const STEP_MOTION = {
-  enter: (dir: 1 | -1) => ({ opacity: 0, x: 40 * dir }),
+  enter: ({ dir, travel }: Slide) => ({ opacity: 0, x: travel * dir }),
   center: { opacity: 1, x: 0, transition: { duration: DUR.slow, ease: EASE_HOUSE } },
-  exit: (dir: 1 | -1) => ({
+  exit: ({ dir, travel }: Slide) => ({
     opacity: 0,
-    x: -40 * dir,
+    x: -travel * dir,
     transition: { duration: DUR.base, ease: EASE_HOUSE },
   }),
 };

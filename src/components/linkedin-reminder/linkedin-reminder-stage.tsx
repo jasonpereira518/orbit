@@ -108,8 +108,7 @@ export function LinkedInReminderStage({
               <StaggerItem className="mx-auto mt-6 max-w-md">
                 <LinkedInScreenshot shot={LINKEDIN_SHOTS.email} priority className="shadow-lg" />
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Subject: “{LINKEDIN_ARCHIVE_EMAIL_SUBJECT}” · the download link expires{" "}
-                  {LINKEDIN_ARCHIVE_LINK_HOURS} hours after it arrives
+                  {`Subject: “${LINKEDIN_ARCHIVE_EMAIL_SUBJECT}” · the download link expires ${LINKEDIN_ARCHIVE_LINK_HOURS} hours after it arrives`}
                 </p>
               </StaggerItem>
 

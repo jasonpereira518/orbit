@@ -23,6 +23,11 @@ export type ScreenshotTarget = {
   h: number;
   shape: "circle" | "pill";
   label: string;
+  /**
+   * The source already circles this spot (LinkedIn's Request archive button carries a
+   * hand-drawn ellipse), so draw only the ping and the number, not a second ring.
+   */
+  annotated?: boolean;
 };
 
 type Shot = {
@@ -44,7 +49,7 @@ export const LINKEDIN_SHOTS = {
     crop: { x: 414, y: 50, w: 564, h: 376 },
     targets: [
       { x: 437, y: 150, w: 28, h: 28, shape: "circle", label: "1" },
-      { x: 428, y: 286, w: 148, h: 52, shape: "pill", label: "2" },
+      { x: 428, y: 286, w: 148, h: 52, shape: "pill", label: "2", annotated: true },
     ],
   },
   /** The email that says the archive is ready — subject and sender only. */
@@ -84,7 +89,10 @@ export function LinkedInScreenshot({
         height={shot.height}
         alt={shot.alt}
         priority={priority}
-        sizes="(min-width: 1024px) 40rem, 100vw"
+        // Served as-is. The crop scales the source up (a 564px-wide card fills a ~540px
+        // frame at 1024px wide), so a resized variant picked for the frame's width came out
+        // soft; the PNGs are small enough that the original is the right file.
+        unoptimized
         draggable={false}
         className="pointer-events-none absolute max-w-none select-none"
         style={{
@@ -112,12 +120,14 @@ export function LinkedInScreenshot({
               t.shape === "circle" ? "rounded-full" : "rounded-[999px]",
             )}
           />
-          <span
-            className={cn(
-              "absolute inset-0 border-2 border-primary/80",
-              t.shape === "circle" ? "rounded-full" : "rounded-[999px]",
-            )}
-          />
+          {!t.annotated && (
+            <span
+              className={cn(
+                "absolute inset-0 border-2 border-primary/80",
+                t.shape === "circle" ? "rounded-full" : "rounded-[999px]",
+              )}
+            />
+          )}
           <span className="absolute -top-2.5 -right-2.5 flex size-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground shadow-sm">
             {t.label}
           </span>
