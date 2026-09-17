@@ -66,6 +66,31 @@ export const ERROR_SOURCES = {
    * and without this there is no trace that someone tried to say something and could not.
    */
   feedbackSubmit: "feedback.submit",
+  /**
+   * A capture photo that could not be kept — the configured Blob store refused it, or the
+   * insert failed. The capture itself carries on (the text was already read out of the
+   * photo), so this row is the only trace that the history will be missing a picture.
+   */
+  capturePhotoStore: "capture.photo_store",
+  /**
+   * A provider health check that could not complete. Without it the status panel just
+   * shows a stale or unavailable row and nothing says why — and the volume is bounded by
+   * a four-provider poll sitting behind a sixty-second cache.
+   */
+  providerHealthCheck: "provider.health_check",
+  /**
+   * A provider refused or throttled one of ORBIT'S managed AI keys (`src/lib/ai-access.ts`).
+   * `kind` is the failure kind, the provider lives in context. Throttled to one row per
+   * (provider, kind) per process per hour, and the ops sweep pages on any row at all: a
+   * revoked or exhausted managed key takes AI away from every Lifetime account at once.
+   */
+  managedAi: "ai.managed",
+  /**
+   * A job feed could not be read (`src/lib/jobs/feed-fetch.ts`). Recorded only when the
+   * retry ladder was exhausted or the document did not parse — a 304 is the steady state
+   * and a few malformed listings are normal, so neither is an error.
+   */
+  jobFeedFetch: "jobs.feed_fetch",
 } as const;
 
 export type ErrorEventInput = {

@@ -1,8 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { cn } from "@/lib/utils";
+import { SectionTabs } from "@/components/admin/section-tabs";
 
 /**
  * Secondary navigation inside the Money section.
@@ -23,35 +21,5 @@ const TABS = [
 ];
 
 export function MoneyTabs() {
-  const pathname = usePathname();
-
-  return (
-    <nav
-      aria-label="Money views"
-      className="mb-6 flex flex-wrap gap-1 border-b border-border/60"
-    >
-      {TABS.map((tab) => {
-        // Exact match for the section root, or every deeper tab would light it too.
-        const active =
-          tab.href === "/admin/billing"
-            ? pathname === "/admin/billing"
-            : pathname.startsWith(tab.href);
-        return (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            aria-current={active ? "page" : undefined}
-            className={cn(
-              "-mb-px border-b-2 px-3 py-2 text-sm transition-colors",
-              active
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {tab.label}
-          </Link>
-        );
-      })}
-    </nav>
-  );
+  return <SectionTabs label="Money views" tabs={TABS} />;
 }

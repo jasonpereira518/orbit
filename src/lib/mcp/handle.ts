@@ -55,7 +55,7 @@ export async function handleMcpRequest(
     await consumeBucket("mcp", caller.userId, RATE_LIMITS.mcp);
   } catch (err) {
     if (err instanceof RateLimitedError) {
-      return jsonRpcError(-32000, "Too many requests.", 429);
+      return jsonRpcError(-32000, err.message, 429);
     }
     throw err;
   }

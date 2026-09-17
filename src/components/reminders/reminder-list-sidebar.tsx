@@ -12,6 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type ReminderListItem = {
   id: string;
@@ -43,13 +45,17 @@ export function ReminderListSidebar({
     if (!name) return;
     start(async () => {
       try {
-        const row = await createReminderList(name);
+        const res = await createReminderList(name);
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
         setNewName("");
         toast.success("List created");
-        onSelectList(row.id);
+        onSelectList(res.value.id);
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not create list");
+        toast.error(friendlyError(err, "Couldn’t create that list — try again?"));
       }
     });
   }
@@ -75,13 +81,17 @@ export function ReminderListSidebar({
                   e.preventDefault();
                   start(async () => {
                     try {
-                      await renameReminderList(list.id, editName);
+                      const res = await renameReminderList(list.id, editName);
+                      if (!res.ok) {
+                        toast.error(res.error);
+                        return;
+                      }
                       setEditingId(null);
-                      toast.success("Renamed");
+                      toast.success("List renamed");
                       router.refresh();
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not rename"
+                        friendlyError(err, "Couldn’t rename that list — try again?")
                       );
                     }
                   });
@@ -151,17 +161,19 @@ export function ReminderListSidebar({
                       }
                       start(async () => {
                         try {
-                          const result = await deleteReminderList(list.id);
+                          const res = await deleteReminderList(list.id);
+                          if (!res.ok) {
+                            toast.error(res.error);
+                            return;
+                          }
                           toast.success("List deleted");
                           if (selectedListId === list.id) {
-                            onSelectList(result.inboxId);
+                            onSelectList(res.value.inboxId);
                           }
                           router.refresh();
                         } catch (err) {
                           toast.error(
-                            err instanceof Error
-                              ? err.message
-                              : "Could not delete"
+                            friendlyError(err, TOAST_COPY.deleteFailed)
                           );
                         }
                       });

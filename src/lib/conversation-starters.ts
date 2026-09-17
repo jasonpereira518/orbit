@@ -25,7 +25,7 @@ import type {
   StarterMode,
   StartersResponse as StartersResult,
 } from "@/lib/extension/contract";
-import { completeJson, parseAiJson, userHasAiKey } from "@/lib/ai";
+import { completeJson, parseAiJson, userCanUseAi } from "@/lib/ai";
 import { daysAgo } from "@/lib/duplicates";
 import {
   buildConversationTranscript,
@@ -639,7 +639,7 @@ export async function generateConversationStarters(
   const fallback = heuristicStarters(ctx, limit);
   const lowSignal = startersAreLowSignal(fallback);
 
-  if (!(await userHasAiKey(userId))) {
+  if (!(await userCanUseAi(userId))) {
     return {
       mode: ctx.mode,
       starters: fallback,
@@ -651,6 +651,7 @@ export async function generateConversationStarters(
   let content: string;
   try {
     content = await completeJson(userId, {
+      operation: "extension.starters",
       system: systemPrompt(ctx.mode, limit),
       user: userPrompt(ctx, limit),
       temperature: 0.6,

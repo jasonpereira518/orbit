@@ -8,6 +8,7 @@ import { after } from "next/server";
 import { getDb } from "@/db";
 import { adminAuditLog, userSettings } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
+import { loadProviderStatuses } from "@/lib/admin-providers";
 import * as ops from "@/lib/admin-operations";
 import * as interestList from "@/lib/admin-interest-list";
 import * as adminFeedback from "@/lib/admin-feedback";
@@ -17,7 +18,9 @@ import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
+import { sendSlackDM } from "@/lib/slack-dm";
 import {
+  PREVIEW_UNRELEASED_COOKIE,
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
@@ -342,6 +345,47 @@ export async function setViewAsUserAction(input: {
 }
 
 /**
+ * Toggle whether the calling admin sees real pages behind a coming-soon screen.
+ *
+ * The mirror image of `setViewAsUserAction`: that one takes access AWAY from an operator's
+ * own session, this one GRANTS it. A coming-soon page (`comingSoon` in `src/lib/surfaces.ts`)
+ * is closed to admins by default — this is the explicit, audited opt-in past that default,
+ * not a general admin exemption, so a forgotten toggle cannot ship an unfinished feature to
+ * the operator's own eyes only by accident.
+ *
+ * No redirect on entry (unlike `setViewAsUserAction`): there is nowhere it needs to send the
+ * caller, since turning this on does not change what the caller could already reach, only
+ * what an unreleased page shows them once they are there.
+ */
+export async function setPreviewUnreleasedAction(input: {
+  on: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const store = await cookies();
+
+  if (input.on) {
+    store.set(PREVIEW_UNRELEASED_COOKIE, "1", {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+    });
+  } else {
+    store.delete(PREVIEW_UNRELEASED_COOKIE);
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: input.on
+      ? "product.preview_unreleased.enter"
+      : "product.preview_unreleased.exit",
+  });
+
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/**
  * Toggle YC Startup console mode for the calling admin.
  *
  * Purely a personal preference on the operator's own `userSettings` row — it never touches
@@ -660,6 +704,19 @@ export async function sendTestAlertAction(): Promise<{ ok: true }> {
   return { ok: true };
 }
 
+/** Prove the Slack bot can DM you specifically, from the console. */
+export async function sendTestSlackDMAction(): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_ALERT_USER_ID) {
+    throw new Error("SLACK_BOT_TOKEN / SLACK_ALERT_USER_ID is not set");
+  }
+  await sendSlackDM(
+    `:wave: Test DM from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, critical-error and feedback alerts will reach you here.`
+  );
+  await recordAdminAction({ adminUserId, action: "ops.test_dm" });
+  return { ok: true };
+}
+
 /**
  * Both paths the feedback console can change, plus the nav badge.
  *
@@ -757,5 +814,22 @@ export async function deleteFeedbackScreenshotAction(input: {
   });
 
   revalidateFeedback();
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------- provider status */
+
+/**
+ * Re-checks all four providers now, bypassing the snapshot cache.
+ *
+ * `/admin/health` reads the cached snapshot so a page load never fans out to four APIs;
+ * this is the "I am looking at it right now" path. Nothing is passed in, so there is
+ * nothing to validate — but the gate still comes first, because a route that hits four
+ * third-party APIs on demand is one an unauthenticated caller should not be able to ring.
+ */
+export async function refreshProvidersAction(): Promise<{ ok: true }> {
+  await requireAdminUserId();
+  await loadProviderStatuses({ force: true });
+  revalidatePath("/admin/health");
   return { ok: true };
 }

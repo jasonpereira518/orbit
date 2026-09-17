@@ -13,7 +13,7 @@
  * extra steps.
  */
 
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactIdentities, contacts } from "@/db/schema";
 import { identityKeysFor, type IdentityInput, type IdentityKey } from "@/lib/duplicates";
@@ -252,54 +252,4 @@ export async function backfillContactIdentities(options?: {
     contestedUserIds: [...contestedUserIds],
     more: pending.length === limit,
   };
-}
-
-/**
- * Contacts that could not claim an identifier because another contact holds it — i.e. the
- * duplicates that already existed before this table did.
- *
- * Computed rather than stored: a contact stops being contested the moment it is merged, and
- * a stored flag would have to be cleared by every merge path.
- */
-export async function findContestedContacts(userId: string, limit = 200) {
-  const db = await getDb();
-  const rows = await db
-    .select({
-      contactId: contacts.id,
-      ownerContactId: contactIdentities.contactId,
-      kind: contactIdentities.kind,
-      value: contactIdentities.value,
-    })
-    .from(contacts)
-    .innerJoin(
-      contactIdentities,
-      and(
-        eq(contactIdentities.userId, contacts.userId),
-        sql`${contactIdentities.contactId} <> ${contacts.id}`
-      )
-    )
-    .where(
-      and(
-        eq(contacts.userId, userId),
-        // The contact carries this exact identifier, but somebody else owns the row.
-        sql`(
-          (${contactIdentities.kind} = 'email' AND lower(btrim(${contacts.email})) = ${contactIdentities.value})
-          OR (${contactIdentities.kind} = 'linkedin_slug' AND ${contacts.linkedinSlug} = ${contactIdentities.value})
-          OR (${contactIdentities.kind} = 'x_handle' AND lower(btrim(${contacts.xHandle})) = ${contactIdentities.value})
-        )`
-      )
-    )
-    .limit(limit);
-
-  return rows.filter((r) => r.contactId !== r.ownerContactId);
-}
-
-/** Contacts whose ids appear in `ids`, restricted to one user. Small helper for previews. */
-export async function contactsByIds(userId: string, ids: string[]) {
-  if (!ids.length) return [];
-  const db = await getDb();
-  return db
-    .select()
-    .from(contacts)
-    .where(and(eq(contacts.userId, userId), inArray(contacts.id, ids)));
 }

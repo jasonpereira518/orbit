@@ -34,6 +34,7 @@ function toSearchable(c: RankedContact): SearchableContact {
     industry: c.industry,
     keyFacts: c.keyFacts,
     sharedInterests: null,
+    opportunities: c.opportunities,
     relationshipScore: c.relationshipScore,
     priorityLevel: c.priorityLevel,
     tags: c.tags,
