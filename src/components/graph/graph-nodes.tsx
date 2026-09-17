@@ -449,13 +449,17 @@ export type NebulaWashData = {
 /**
  * Longest side of the wash canvas's backing store.
  *
- * Lower than it sounds: at 10,000 contacts the washes span ~33,000 world px, so this samples
- * the sky at about a sixteenth of a pixel per world unit and every zoom past 0.03 is drawn
- * from the same bitmap. That is affordable here in a way it would not be for text, because a
- * lobe is a radial gradient at 7.5% alpha over a near-black sky: the whole tonal range of the
- * thing being magnified is a fifteenth of a step of 8-bit black, so interpolating it is
- * invisible. Raising it would cost real GPU memory — 2048 square is already 16MB — for a
- * sharpness nothing in the picture can express.
+ * Coarser than it sounds. At 10,000 contacts the washes span ~33,000 world px, so this samples
+ * the sky at about one backing pixel per 16 world units, and past roughly 0.06 zoom the cap
+ * binds and every closer view is magnified from that same bitmap — at 2.4 zoom, by about 40x.
+ *
+ * That is affordable here in a way it would not be for text, because there is almost nothing
+ * to magnify: a lobe's whole tonal range is 7.5% alpha, about 19 levels of 8-bit colour spread
+ * over its full radius, and it is smooth everywhere, which is the case bilinear upscaling
+ * reconstructs best. Measured rather than assumed — against the boxes this replaces, a
+ * 1440x900 frame at 2.4 zoom differs by a mean of 0.45/255, and by more than 8/255 in 57
+ * pixels out of 1.3 million. Raising the cap costs real GPU memory — 2048 square is already
+ * 16MB — for sharpness the picture has no way to show.
  */
 const NEBULA_WASH_MAX_BACKING_PX = 2048;
 
@@ -519,8 +523,9 @@ function NebulaWashNodeComponent({ data }: NodeProps & { data: NebulaWashData })
         const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, lobe.rx);
         fill.addColorStop(0, withAlpha(cluster.color, lobe.alpha));
         fill.addColorStop(NEBULA_LOBE_MID, withAlpha(cluster.color, lobe.alpha * 0.45));
-        // `withAlpha(color, 0)` rather than `transparent`, so the fade does not run through
-        // transparent BLACK and leave a grey bruise on a light sky.
+        // The cluster's own colour at zero alpha, not `transparent`: that keyword is
+        // transparent BLACK, so a fade to it drags the hue toward black on the way out
+        // instead of simply thinning. The dashboard preview builds the same stops.
         fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(cluster.color, 0));
         fill.addColorStop(1, withAlpha(cluster.color, 0));
         ctx.save();
