@@ -81,11 +81,25 @@ export const FOLLOW_UP_DAYS_BY_CLOSENESS: Readonly<Record<1 | 2 | 3 | 4 | 5, num
 const MAX_AI_FOLLOW_UP_DAYS = 365;
 
 /**
- * The follow-up window for one person: the model's suggestion when the notes implied a
- * timeframe ("call her next week" → 7), else the closeness table. The model's number wins
- * because it came from the notes; the table is what we assume when the notes said nothing.
+ * The follow-up window for one person, in order of what actually knows best:
+ *
+ *   1. a cadence the person STATED ("check in monthly") — they said the interval out loud
+ *   2. the model's suggestion when the notes implied a timeframe ("call her next week" → 7)
+ *   3. the closeness table, which is what we assume when the notes said nothing
+ *
+ * Cadence outranks the model deliberately. The model's number is an inference drawn from the
+ * same sentence the cadence was copied verbatim out of, so when the two disagree it is the
+ * inference that is wrong.
  */
-export function followUpDaysFor(closeness: number | null | undefined, aiDays: number | null | undefined): number {
+export function followUpDaysFor(
+  closeness: number | null | undefined,
+  aiDays: number | null | undefined,
+  cadenceDays?: number | null
+): number {
+  if (typeof cadenceDays === "number" && Number.isFinite(cadenceDays)) {
+    const days = Math.round(cadenceDays);
+    if (days >= 1 && days <= MAX_AI_FOLLOW_UP_DAYS) return days;
+  }
   if (typeof aiDays === "number" && Number.isFinite(aiDays)) {
     const days = Math.round(aiDays);
     if (days >= 1 && days <= MAX_AI_FOLLOW_UP_DAYS) return days;
@@ -144,6 +158,7 @@ export function emptyNoteBatchResult(): NoteBatchResult {
     unresolvedMentions: [],
     actionItems: [],
     reminders: [],
+    opportunities: [],
     skipped: { relative: 0, unverifiable: 0, past: 0, duplicate: 0 },
   };
 }

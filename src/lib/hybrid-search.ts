@@ -46,6 +46,8 @@ export type RankedContact = {
   notes: string | null;
   aiSummary: string | null;
   keyFacts: string[];
+  /** The `contacts.opportunities` mirror, so "who can refer me?" is answerable by keyword. */
+  opportunities: string[];
   relationshipScore: number;
   priorityLevel: number;
   closenessTier: string | null;
@@ -640,6 +642,7 @@ async function hydrate(
       notes: true,
       aiSummary: true,
       keyFacts: true,
+      opportunities: true,
       relationshipScore: true,
       priorityLevel: true,
       closenessTier: true,
@@ -665,6 +668,7 @@ async function hydrate(
       notes: row.notes,
       aiSummary: row.aiSummary,
       keyFacts: row.keyFacts ?? [],
+      opportunities: row.opportunities ?? [],
       relationshipScore: row.relationshipScore ?? 0,
       priorityLevel: row.priorityLevel ?? 0,
       closenessTier: row.closenessTier,

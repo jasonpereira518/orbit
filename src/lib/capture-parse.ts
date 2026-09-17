@@ -22,6 +22,7 @@ import {
 } from "@/lib/ai";
 import {
   fetchRawCommitments,
+  validateCadences,
   validateCommitments,
   emptyCommitmentResult,
   type RejectedCounts,
@@ -34,6 +35,10 @@ import { getMeetingTranscript, loadMeetingSelf } from "@/lib/meeting-sessions";
 import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
 import type { PreviewMention } from "@/lib/note-batches";
 import { hashSourceNote, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
+import { emptyOpportunityResult, validateOpportunities } from "@/lib/opportunity-extract";
+import { emptyImpliedResult, validateImpliedNextSteps } from "@/lib/implied-next-steps";
+import { inferReminderActionKind } from "@/lib/reminder-action-kind";
+import { DEFAULT_FOLLOW_UP_WINDOW_DAYS, windowDueDate } from "@/lib/note-batches";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import type {
   BulkNotePersonPreview,
@@ -144,7 +149,9 @@ export async function runCaptureParse(
     fetchRawCommitments(userId, corpus, {
       today,
       knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
-    }).catch(() => [] as Awaited<ReturnType<typeof fetchRawCommitments>>),
+    }).catch(
+      () => ({ commitments: [], cadences: [] }) as Awaited<ReturnType<typeof fetchRawCommitments>>
+    ),
     getDb().then((db) =>
       db.query.contacts.findMany({
         where: eq(contacts.userId, userId),
@@ -186,11 +193,29 @@ export async function runCaptureParse(
     try {
       // For a meeting, the corpus is AI-written, so "the phrase appears in the note"
       // would only prove the digest wrote it. The transcript is what was actually said.
-      return validateCommitments(rawCommitments, meeting ? meeting.text : corpus, { today, anchor });
+      return validateCommitments(rawCommitments.commitments, meeting ? meeting.text : corpus, { today, anchor });
     } catch {
       return emptyCommitmentResult();
     }
   })();
+
+  // Cadences ride the same pass. They are not reminders: a stated rhythm changes how long
+  // this person may go quiet before Orbit says anything, which is a property of the contact.
+  const cadences = (() => {
+    try {
+      return validateCadences(rawCommitments.cadences, meeting ? meeting.text : corpus, { today, anchor });
+    } catch {
+      return [];
+    }
+  })();
+  const cadenceByName = new Map(
+    cadences
+      .filter((c) => c.personName)
+      .map((c) => [c.personName!.trim().toLowerCase(), c])
+  );
+  // A cadence stated with nobody named belongs to the only person in the note; with several
+  // people it is ambiguous, and guessing would retune the wrong relationship.
+  const unnamedCadence = cadences.find((c) => !c.personName) ?? null;
 
   const defaultDate = interaction_date || mergedHints.eventDate || null;
   const interactionType = mergedHints.interactionType || "meeting_note";
@@ -221,10 +246,50 @@ export async function runCaptureParse(
     const top = duplicates[0];
     const suggestedMergeId = top && top.confidence >= 0.85 ? top.contact.id : null;
 
+    // Same haystack choice the commitments pass makes above, for the same reason: a
+    // meeting's corpus is AI-written, so containment in it would only prove the digest
+    // wrote it. The transcript is what was actually said.
+    const haystack = meeting ? meeting.text : corpus;
+    const opportunityResult = (() => {
+      try {
+        return validateOpportunities(parsed.opportunities, haystack, { today, anchor });
+      } catch {
+        return emptyOpportunityResult();
+      }
+    })();
+    const impliedResult = (() => {
+      try {
+        return validateImpliedNextSteps(parsed.implied_next_steps, haystack, {
+          explicitActionItems: parsed.action_items,
+          // Collides against every dated commitment in the note, not just this person's:
+          // the commitments pass does not always attribute one, and an inference that
+          // duplicates an unattributed commitment is just as redundant.
+          commitmentTitles: commitmentResult.commitments.map((c) => c.title),
+        });
+      } catch {
+        return emptyImpliedResult();
+      }
+    })();
+
     return {
       key: `${index}-${parsed.name || "person"}`,
       notes: composePersonNotes(source_excerpt, sharedForPerson, corpus),
       parsed,
+      opportunities: opportunityResult.opportunities.map((o) => ({
+        kind: o.kind,
+        label: o.label,
+        direction: o.direction,
+        sourceExcerpt: o.sourceExcerpt,
+        rawDatePhrase: o.rawDatePhrase,
+        confidenceScore: o.confidenceScore,
+        dueDateIso: o.dueDate ? isoDay(o.dueDate) : null,
+      })),
+      impliedSteps: impliedResult.steps,
+      cadence: (() => {
+        const named = parsed.name ? cadenceByName.get(parsed.name.trim().toLowerCase()) : undefined;
+        const c = named ?? (participants.length === 1 ? unnamedCadence : null);
+        return c ? { days: c.days, phrase: c.rawPhrase, sourceExcerpt: c.sourceExcerpt } : null;
+      })(),
       duplicates: duplicates.map((d) => ({
         id: d.contact.id,
         fullName: d.contact.fullName,
@@ -282,7 +347,38 @@ export async function runCaptureParse(
       sourceExcerpt: c.sourceExcerpt,
       dateBasis: c.dateBasis,
       anchorIso: c.anchorIso,
+      origin: "explicit" as const,
+      rationale: null,
     })
+  );
+
+  // Implied next steps ride the same review list as dated commitments, because they end up
+  // as the same kind of row — but they carry `origin: "implied"` and a rationale instead of
+  // a date phrase, and `defaultReminderKeys` only pre-ticks the ones above the auto-tick bar.
+  const impliedReminders: SuggestedReminderPreview[] = items.flatMap((item, personIndex) =>
+    item.impliedSteps.map((step, stepIndex) => ({
+      key: `implied-${personIndex}-${stepIndex}`,
+      title: step.text,
+      description: step.rationale,
+      // No date was said, so there is no phrase to quote. The review UI shows the rationale
+      // in this slot instead — see `SourceLine`.
+      rawDatePhrase: null,
+      dueDateIso: isoDay(windowDueDate(anchor, DEFAULT_FOLLOW_UP_WINDOW_DAYS)),
+      yearInferred: false,
+      personName: item.parsed.name,
+      actionKind: inferReminderActionKind({
+        title: step.text,
+        description: step.rationale,
+        reminderType: "ai_suggested",
+        contactId: item.suggestedMergeId,
+      }),
+      confidenceScore: step.confidenceScore,
+      sourceExcerpt: step.sourceExcerpt,
+      dateBasis: "vague" as const,
+      anchorIso: isoDay(anchor),
+      origin: "implied" as const,
+      rationale: step.rationale,
+    }))
   );
 
   return {
@@ -295,7 +391,7 @@ export async function runCaptureParse(
     hints: mergedHints,
     sourceText: corpus,
     sourceHash,
-    suggestedReminders,
+    suggestedReminders: [...suggestedReminders, ...impliedReminders],
     suggestionsSkipped: commitmentResult.rejected as RejectedCounts,
     mentions,
     mentionedOnly,

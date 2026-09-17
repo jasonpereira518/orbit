@@ -82,7 +82,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * the same bug class `scripts/smoke-purge.ts` exists to catch.
  *
  * Every table carrying a `user_id` must be handled by some step here, either by an explicit
- * delete or by a cascade from one. The seven covered by cascade, so deliberately absent:
+ * delete or by a cascade from one. The nine covered by cascade, so deliberately absent:
  *   - `chat_messages`        -> cascades from `chat_threads`
  *   - `import_job_rows`      -> cascades from `imports`
  *   - `action_items`         -> cascades from `contacts` and `interactions`
@@ -91,6 +91,13 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *   - `contact_profiles`     -> cascades from `contacts` (verified by `scripts/smoke-purge.ts`,
  *                               not assumed — see that script's header)
  *   - `contact_experiences`  -> cascades from `contacts` (same)
+ *   - `contact_opportunities`-> cascades from `contacts`. Its `source_interaction_id` is
+ *                               `on delete set null`, so the interaction FK is NOT what
+ *                               covers it — the contact one is.
+ *   - `job_posting_matches`  -> cascades from `contacts` (and from `job_postings`, which is
+ *                               global and never deleted with an account). The match is the
+ *                               only per-user row in the job-feed trio; the feed itself and
+ *                               its postings are global and carry no `user_id`.
  * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
  * `note_batches` and `extension_usage` both have one and neither has a foreign key to
  * anything, so both are deleted explicitly. `suggested_reminders` looks like it would cascade

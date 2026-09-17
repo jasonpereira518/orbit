@@ -20,7 +20,7 @@ function check(label: string, condition: boolean, detail?: string) {
 }
 
 const item = (key: string, over: Partial<BulkNotePersonPreview> = {}): BulkNotePersonPreview => ({
-  key, notes: "", parsed: {} as BulkNotePersonPreview["parsed"], duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: null, interactionType: null, ...over,
+  key, notes: "", parsed: {} as BulkNotePersonPreview["parsed"], duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: null, interactionType: null, opportunities: [], impliedSteps: [], cadence: null, ...over,
 });
 const items = [item("a"), item("b"), item("c")];
 const dec = (decision: "accept" | "reject" | "skip", index: number) => ({ decision, index, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: "" });

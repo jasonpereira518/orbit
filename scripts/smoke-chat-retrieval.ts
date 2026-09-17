@@ -67,7 +67,7 @@ async function main() {
   // ---- rerank ----
   const mkCandidate = (id: string, name: string): RankedContact => ({
     id, fullName: name, preferredName: null, company: null, school: null,
-    title: null, location: null, email: null, industry: null, notes: null,
+    title: null, location: null, email: null, industry: null, notes: null, opportunities: [],
     aiSummary: null, keyFacts: [], relationshipScore: 5, priorityLevel: 1,
     closenessTier: null, tags: [], rrfScore: 0.02, relevance: 0.9,
     matchedArms: ["fts"], filterMatched: true,
