@@ -9,9 +9,9 @@ test("Settings → Delete data empties the account", async ({ page }) => {
   await createContact(page, "Katherine Johnson");
 
   await page.goto("/settings");
-  const plan = page.getByText(/Unlimited contacts — \d+ in your orbit\./);
+  const plan = page.getByText(/Demo account — plan limits lifted on localhost\. \d+ in your orbit\./);
   await expect(plan).toBeVisible();
-  await expect(plan).not.toHaveText("Unlimited contacts — 0 in your orbit.");
+  await expect(plan).not.toHaveText("Demo account — plan limits lifted on localhost. 0 in your orbit.");
 
   const dialog = page.getByRole("dialog", { name: "Delete your Orbit data" });
   await untilHydrated(
@@ -25,7 +25,7 @@ test("Settings → Delete data empties the account", async ({ page }) => {
   await expect(page.getByText("All data deleted")).toBeVisible({ timeout: 60_000 });
 
   await page.reload();
-  await expect(page.getByText("Unlimited contacts — 0 in your orbit.")).toBeVisible();
+  await expect(page.getByText("Demo account — plan limits lifted on localhost. 0 in your orbit.")).toBeVisible();
   await untilHydrated(
     () => page.getByRole("button", { name: "Delete data…" }).click(),
     () => expect(dialog).toBeVisible({ timeout: 5_000 })
