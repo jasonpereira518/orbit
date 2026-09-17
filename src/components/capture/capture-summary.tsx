@@ -160,7 +160,7 @@ export function CaptureSummary({
                       variant="ghost"
                       size="icon-sm"
                       aria-label={`Set ${name} aside`}
-                      className="text-muted-foreground"
+                      className="tap-target relative text-muted-foreground"
                       disabled={saving}
                       onClick={() => onDecide(item.key, decisionFromDraft("reject", index, draft))}
                     >
