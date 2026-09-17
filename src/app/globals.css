@@ -970,18 +970,6 @@
 
 /* ── Constellation / solar system ── */
 
-@keyframes constellation-corona {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.45;
-  }
-  50% {
-    transform: scale(1.18);
-    opacity: 0.75;
-  }
-}
-
 @keyframes constellation-corona-outer {
   0%,
   100% {
@@ -1039,22 +1027,12 @@
   }
 }
 
-@keyframes constellation-comet-drift {
+/* The starfield's ambient life: two groups of ~25 stars breathing in counter-phase
+   (constellation-starfield.tsx). Two compositor layers in place of 220. */
+@keyframes constellation-twinkle-group {
   0%,
   100% {
-    transform: translateX(0);
-    opacity: 0.85;
-  }
-  50% {
-    transform: translateX(3px);
-    opacity: 1;
-  }
-}
-
-@keyframes constellation-nebula-breathe {
-  0%,
-  100% {
-    opacity: 0.75;
+    opacity: 0.3;
   }
   50% {
     opacity: 1;
@@ -1088,16 +1066,11 @@
   animation: constellation-twinkle 1.4s ease-in-out infinite;
 }
 
-.constellation-corona {
-  animation: constellation-corona 3.2s ease-in-out infinite;
-}
-
+/* The sun keeps one slow breath — the outer corona — as the chart's single standing
+   animation inside the viewport. Its inner corona and core used to pulse too; three
+   overlapping layers of the same glow read as one, at three times the cost. */
 .constellation-corona-outer {
   animation: constellation-corona-outer 4.8s ease-in-out infinite;
-}
-
-.constellation-sun-core {
-  animation: constellation-corona 2.6s ease-in-out infinite;
 }
 
 .constellation-spotlight-ring {
@@ -1114,51 +1087,41 @@
   }
 }
 
-/**
- * The sky's ambient drift: one compositor animation, 3 degrees a minute (a 2-hour turn).
+/*
+ * Only stars that just arrived carry this class (`data.entering`, set by graph-canvas-flow.tsx
+ * and cleared once it has played). It used to be on every star, so each one React Flow mounted
+ * replayed it — including every star a pan brought into view under `onlyRenderVisibleElements`,
+ * and all of them whenever the chart remounted — and a running animation is a compositor
+ * layer: a 1,000-star entrance doubled the layer count.
  *
- * It used to be driven from JavaScript — a per-frame write of a rotation angle, first onto
- * React Flow's root and then onto this element. Both cost the same thing for a different
- * reason: a transform that changes every frame forces Chrome to re-run layerisation over the
- * whole document, and this chart holds over a thousand layers. At 1,500 contacts that was 4.8
- * of every 5 seconds spent in PaintArtifactCompositor::Update while the page sat still. A CSS
- * animation of the same rotation is ticked by the compositor instead, and costs the main
- * thread nothing. The stars' own rotation is still committed periodically in JS
- * (graph-canvas-flow.tsx) — they move in steps, the rings glide, as before.
+ * `backwards`, not `both`: the animation ends on the star's resting state anyway, and an
+ * animation that stays in effect keeps its element composited.
  */
-@keyframes constellation-galaxy-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.constellation-galaxy-spin {
-  animation: constellation-galaxy-spin 7200s linear infinite;
-  will-change: transform;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .constellation-galaxy-spin {
-    animation: none;
-  }
-}
-
 .constellation-planet-enter {
-  /* `backwards`, not `both`: the animation ends on opacity 1 / scale 1, which is the star's
-     resting state anyway, so filling forwards changes nothing visible — but an animation that
-     stays in effect keeps its element composited. That left a 1,000-star sky holding 2,741
-     compositor layers instead of 1,376, and every one of them is re-rastered on a zoom. */
   animation: constellation-planet-enter 0.45s var(--ease-house) backwards;
 }
 
-.constellation-starfield span {
-  animation: constellation-twinkle var(--twinkle-dur, 4s) ease-in-out infinite;
-  animation-delay: var(--twinkle-delay, 0s);
+/* The summary view's dots fade in rather than cut, as the stars they replace unmount. */
+@keyframes constellation-star-dust-in {
+  from {
+    opacity: 0;
+  }
 }
 
-.constellation-nebula {
-  animation: constellation-nebula-breathe 7s ease-in-out infinite;
-  filter: blur(1px);
+.constellation-star-dust {
+  animation: constellation-star-dust-in 160ms ease-out backwards;
+}
+
+.constellation-twinkle-group {
+  animation: constellation-twinkle-group 7s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .constellation-twinkle-group,
+  .constellation-corona-outer,
+  .constellation-star-dust {
+    animation: none;
+  }
 }
 
 .constellation-comet {
@@ -1167,7 +1130,6 @@
   justify-content: flex-start;
   width: 42px;
   height: 14px;
-  animation: constellation-comet-drift 3.4s ease-in-out infinite;
 }
 
 .constellation-comet-head {
@@ -1245,7 +1207,6 @@
       rgba(40, 50, 80, 0.25) 0%,
       transparent 60%
     );
-  filter: blur(0.5px);
 }
 
 .constellation-stage .react-flow__controls {

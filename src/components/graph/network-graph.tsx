@@ -44,14 +44,6 @@ import {
   matchGraphContacts,
 } from "@/lib/graph/search-match";
 import {
-  loadPositions,
-  savePositions,
-} from "@/lib/graph/positions-storage";
-import {
-  mergePositionsForStorage,
-  prunePositionsForRender,
-} from "@/lib/graph-positions";
-import {
   getIntroRun,
   markGraphChunkLoaded,
   subscribe as subscribeIntro,
@@ -118,8 +110,6 @@ const GraphCanvasMobile = dynamic(
   { ssr: false, loading: () => null }
 );
 
-type PositionMap = import("@/lib/graph-positions").PositionMap;
-
 function introInFlight() {
   const status = getIntroRun().status;
   return status === "running" || status === "arriving";
@@ -139,33 +129,6 @@ function yieldToApp(): Promise<void> {
     }
     setTimeout(resolve, REFRESH_YIELD_TIMEOUT_MS);
   });
-}
-
-/**
- * No write-back here, deliberately.
- *
- * This used to persist the pruned map whenever its size differed from what was stored, to
- * garbage-collect positions for deleted contacts. But a payload is narrower than the network
- * for several reasons that have nothing to do with deletion — the dashboard preview caps at
- * `GRAPH_PREVIEW_CONTACT_CAP`, and the constellation filter narrows it further — and this
- * runs on every refetch, which fires on window focus. So the cleanup quietly deleted the
- * saved position of every contact the current view left out. A few hundred stale `{x,y}`
- * entries cost nothing; a user's lost layout is not recoverable.
- */
-function applyGraphPayload(
-  payload: GraphPayload,
-  setData: (payload: GraphPayload) => void,
-  setPositionOverrides: (next: PositionMap) => void
-) {
-  setData(payload);
-  setPositionOverrides(positionsFromPayload(payload));
-}
-
-function positionsFromPayload(payload: GraphPayload): PositionMap {
-  return prunePositionsForRender(
-    loadPositions(payload.userId),
-    payload.contacts.map((c) => c.id)
-  );
 }
 
 export function NetworkGraph({
@@ -227,10 +190,6 @@ export function NetworkGraph({
   const [homeToken, setHomeToken] = useState(1);
   const [peekPersonId, setPeekPersonId] = useState<string | null>(null);
   const [peekToken, setPeekToken] = useState(0);
-  const [positionOverrides, setPositionOverrides] = useState<PositionMap>(() =>
-    initialData ? positionsFromPayload(initialData) : {}
-  );
-  const [resetToken, setResetToken] = useState(0);
   const [selection, setSelection] = useState<InspectSelection>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -266,7 +225,6 @@ export function NetworkGraph({
   useEffect(() => {
     if (initialData) lastFetchAt.current = Date.now();
   }, [initialData]);
-  const positionsHydrated = useRef(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -391,7 +349,7 @@ export function NetworkGraph({
         // not loading it — drop it and let the next "show all" pay for a fresh one.
         scopeCache.current.all = null;
         if (!showAllStarsRef.current) {
-          applyGraphPayload(payload, setData, setPositionOverrides);
+          setData(payload);
         }
       })
       .catch(console.error);
@@ -419,7 +377,7 @@ export function NetworkGraph({
       if (!engaged) return;
       showAllStarsRef.current = false;
       setShowAllStars(false);
-      applyGraphPayload(engaged, setData, setPositionOverrides);
+      setData(engaged);
       return;
     }
     // Only non-null when this is already the view — asking for the scope you are on is a no-op
@@ -428,7 +386,7 @@ export function NetworkGraph({
     if (cached) {
       showAllStarsRef.current = true;
       setShowAllStars(true);
-      applyGraphPayload(cached, setData, setPositionOverrides);
+      setData(cached);
       return;
     }
     setLoadingAll(true);
@@ -437,7 +395,7 @@ export function NetworkGraph({
         scopeCache.current.all = payload;
         showAllStarsRef.current = true;
         setShowAllStars(true);
-        applyGraphPayload(payload, setData, setPositionOverrides);
+        setData(payload);
       })
       .catch((err) => {
         console.error(err);
@@ -475,11 +433,6 @@ export function NetworkGraph({
   }, [compact, data, showAllStars, loadingAll]);
 
   useEffect(() => {
-    if (initialData && !positionsHydrated.current) {
-      positionsHydrated.current = true;
-      applyGraphPayload(initialData, setData, setPositionOverrides);
-      return;
-    }
     if (!data) loadData(true);
   }, [initialData, data, loadData]);
 
@@ -628,21 +581,6 @@ export function NetworkGraph({
     };
   }, [search, data, compact, requestDefaultView, contactHaystackIndex]);
 
-  const userId = data?.userId;
-
-  const handlePositionOverridesChange = useCallback(
-    (next: PositionMap) => {
-      setPositionOverrides(next);
-      // Merge, don't replace: `next` is the render map, so it only mentions contacts this
-      // view can draw. Writing it straight would drop the saved position of everyone the
-      // current payload left out — one drag would flatten the rest of the network's layout.
-      if (userId && !compact) {
-        savePositions(userId, mergePositionsForStorage(loadPositions(userId), next));
-      }
-    },
-    [userId, compact]
-  );
-
   const focusClusterById = useCallback(
     (clusterId: string) => {
       if (search.trim()) {
@@ -708,25 +646,9 @@ export function NetworkGraph({
     setReengageOpen(false);
     setKeyOpen(false);
 
-    /**
-     * Home undoes a hand-arranged sky — but only on the renderer that can arrange one.
-     *
-     * The canvas has no drag: a two-pixel star is not something a finger can place, so
-     * the phone reads stored positions and never writes them. Clearing them here would
-     * make an innocuous Home tap permanently delete a layout the user built on a laptop,
-     * from the one device that cannot rebuild it. So on the canvas, Home resets the
-     * camera and the filters and leaves storage alone.
-     */
-    const hadOverrides = Object.keys(positionOverrides).length > 0;
-    if (hadOverrides && !smallSky) {
-      setPositionOverrides({});
-      if (userId && !compact) savePositions(userId, {});
-      setResetToken((t) => t + 1);
-    }
-
     // Always bump home after other state so the fitter runs on the settled map
     requestDefaultView();
-  }, [userId, compact, smallSky, search, positionOverrides, requestDefaultView]);
+  }, [search, requestDefaultView]);
 
   const runRefresh = useCallback(async () => {
     if (refreshing) return;
@@ -792,8 +714,10 @@ export function NetworkGraph({
         if (!done) await yieldToApp();
         if (result.graph) {
           lastFetchAt.current = Date.now();
-          applyGraphPayload(result.graph, setData, setPositionOverrides);
-          setResetToken((t) => t + 1);
+          // Updated in place: the chart keeps its camera and its mounted stars, and only the
+          // people this batch changed re-render. It used to remount the whole sky per batch,
+          // replaying every star's entrance and snapping the view home each time.
+          setData(result.graph);
         }
         if (result.total === 0) break;
       }
@@ -891,7 +815,7 @@ export function NetworkGraph({
                   type="button"
                   className={cn(
                     buttonVariants({ size: "sm" }),
-                    "rounded-full border border-white/15 bg-[#080b12]/80 text-white backdrop-blur-md hover:bg-[#0c1018]/90"
+                    "rounded-full border border-white/15 bg-[#080b12]/92 text-white hover:bg-[#0c1018]/90"
                   )}
                 >
                   <Sparkles className="mr-1.5 h-3.5 w-3.5" />
@@ -973,7 +897,7 @@ export function NetworkGraph({
                     setSearch(next);
                   }}
                   placeholder="Search name, role, school, keywords…"
-                  className="h-9 border-white/15 bg-[#080b12]/80 pl-9 text-white placeholder:text-white/35 backdrop-blur-md"
+                  className="h-9 border-white/15 bg-[#080b12]/92 pl-9 text-white placeholder:text-white/35"
                 />
               </div>
               <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
@@ -981,7 +905,7 @@ export function NetworkGraph({
                   type="button"
                   className={cn(
                     buttonVariants({ size: "sm", variant: "outline" }),
-                    "h-9 shrink-0 rounded-full border-white/15 bg-[#080b12]/80 text-white backdrop-blur-md"
+                    "h-9 shrink-0 rounded-full border-white/15 bg-[#080b12]/92 text-white"
                   )}
                 >
                   <Filter className="h-3.5 w-3.5" />
@@ -1086,7 +1010,7 @@ export function NetworkGraph({
                   type="button"
                   className={cn(
                     buttonVariants({ size: "sm" }),
-                    "rounded-full border border-[#ff6b4a]/35 bg-[#1a0c0a]/85 text-[#ffb4a0] backdrop-blur-md hover:bg-[#2a1210]/90"
+                    "rounded-full border border-[#ff6b4a]/35 bg-[#1a0c0a]/95 text-[#ffb4a0] hover:bg-[#2a1210]/90"
                   )}
                 >
                   Re-engage
@@ -1202,7 +1126,7 @@ export function NetworkGraph({
                 size="sm"
                 disabled={refreshing}
                 onClick={() => void runRefresh()}
-                className="rounded-full border border-white/15 bg-[#080b12]/80 text-white backdrop-blur-md hover:bg-[#0c1018]/90"
+                className="rounded-full border border-white/15 bg-[#080b12]/92 text-white hover:bg-[#0c1018]/90"
               >
                 {refreshing ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin sm:mr-1.5" />
@@ -1217,7 +1141,7 @@ export function NetworkGraph({
 
             {/* Refresh progress */}
             {refreshing && (
-              <div className="absolute left-1/2 top-14 z-30 w-[min(90vw,320px)] -translate-x-1/2 rounded-xl border border-white/10 bg-[#080b12]/95 px-3 py-2.5 backdrop-blur-md">
+              <div className="absolute left-1/2 top-14 z-30 w-[min(90vw,320px)] -translate-x-1/2 rounded-xl border border-white/10 bg-[#080b12]/95 px-3 py-2.5">
                 <div className="mb-1.5 flex items-center justify-between text-[11px] text-white/60">
                   <span>Refreshing constellation…</span>
                   <span>
@@ -1240,7 +1164,7 @@ export function NetworkGraph({
                   type="button"
                   className={cn(
                     buttonVariants({ size: "sm" }),
-                    "rounded-full border border-white/15 bg-[#080b12]/80 text-white backdrop-blur-md"
+                    "rounded-full border border-white/15 bg-[#080b12]/92 text-white"
                   )}
                 >
                   <KeyRound className="mr-1.5 h-3.5 w-3.5" />
@@ -1298,7 +1222,7 @@ export function NetworkGraph({
                 }
                 title={fullscreenActive ? "Exit full screen" : "Full screen"}
                 onClick={() => void toggleFullscreen()}
-                className="h-9 w-9 rounded-full border border-white/15 bg-[#080b12]/80 text-white backdrop-blur-md hover:bg-[#0c1018]/90"
+                className="h-9 w-9 rounded-full border border-white/15 bg-[#080b12]/92 text-white hover:bg-[#0c1018]/90"
               >
                 {fullscreenActive ? (
                   <Minimize2 className="h-4 w-4" />
@@ -1312,7 +1236,7 @@ export function NetworkGraph({
                 aria-label="Reset map to home"
                 title="Reset map"
                 onClick={goHome}
-                className="h-9 w-9 rounded-full border border-white/15 bg-[#080b12]/80 text-white backdrop-blur-md hover:bg-[#0c1018]/90"
+                className="h-9 w-9 rounded-full border border-white/15 bg-[#080b12]/92 text-white hover:bg-[#0c1018]/90"
               >
                 <Home className="h-4 w-4" />
               </Button>
@@ -1336,14 +1260,11 @@ export function NetworkGraph({
           homeToken={homeToken}
           peekPersonId={peekPersonId}
           peekToken={peekToken}
-          positionOverrides={positionOverrides}
-          onPositionOverridesChange={handlePositionOverridesChange}
           selection={selection}
           hoveredId={hoveredId}
           onSelect={setSelection}
           onHover={setHoveredId}
           onFocusCluster={focusClusterById}
-          resetToken={resetToken}
           compact={compact}
         />
       </div>

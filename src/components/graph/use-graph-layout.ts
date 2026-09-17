@@ -64,16 +64,14 @@ export function useGraphLayout(props: GraphChartProps) {
   }, [filteredContacts, props.data.summary.userName]);
 
   /**
-   * Only remount the chart subtree when the set of visible contacts (or an
-   * explicit reset) actually changes — `ids` already reflects any change in
-   * company/school/keyword/minScore, so those don't need to be in the key
-   * themselves. Keying on the raw, per-keystroke `keyword` value here was
-   * forcing a full remount (and rotation-loop restart) on every keystroke.
+   * Changes exactly when the set of people in the sky does. Both renderers re-frame the
+   * camera on it: a filter that swaps who is drawn deserves a fresh view, while a refresh
+   * that only updates the people already there keeps the one you are looking at.
    */
-  const layoutKey = useMemo(() => {
-    const ids = filteredContacts.map((c) => c.id).join(",");
-    return [props.resetToken, ids].join("|");
-  }, [filteredContacts, props.resetToken]);
+  const layoutKey = useMemo(
+    () => filteredContacts.map((c) => c.id).join(","),
+    [filteredContacts]
+  );
 
   return { filteredContacts, layout, layoutKey };
 }

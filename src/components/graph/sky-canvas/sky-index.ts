@@ -13,7 +13,6 @@ import type {
   LayoutNode,
   NebulaData,
 } from "@/lib/graph-layout";
-import type { PositionMap } from "@/lib/graph-positions";
 import { buildSkyGrid, type SkyGrid, type SkyTarget } from "@/lib/graph/hit-test";
 import { starVisual } from "@/lib/graph/star-style";
 
@@ -74,20 +73,10 @@ export type SkyIndex = {
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
 };
 
-/**
- * A star arranged on a laptop must sit in the same place on a phone, so overrides are
- * honoured for rendering on both. The canvas never *writes* them — dragging a 2px star
- * is not a gesture a finger can perform, and read-only means the phone can never corrupt
- * a layout it cannot recreate.
- */
-function positionOf(node: LayoutNode, overrides: PositionMap) {
-  return overrides[node.id] || node.position;
-}
-
-export function buildSkyIndex(
-  layout: { nodes: LayoutNode[]; edges: LayoutEdge[] },
-  overrides: PositionMap
-): SkyIndex {
+export function buildSkyIndex(layout: {
+  nodes: LayoutNode[];
+  edges: LayoutEdge[];
+}): SkyIndex {
   const stars: StarEntry[] = [];
   const nebulae: NebulaEntry[] = [];
   const clusterLabels: ClusterLabelEntry[] = [];
@@ -97,7 +86,7 @@ export function buildSkyIndex(
   let ringRadii: number[] = [];
 
   for (const node of layout.nodes) {
-    const p = positionOf(node, overrides);
+    const p = node.position;
     positions.set(node.id, p);
 
     if (node.type === "orbitRings") {

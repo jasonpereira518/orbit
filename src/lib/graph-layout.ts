@@ -110,15 +110,16 @@ export type GraphNodeData = {
   spotlightSolo?: boolean;
   /** Hovered, selected or a search hit: labelled at every zoom, not just close up. */
   labelPinned?: boolean;
-  motionPaused?: boolean;
+  /** Hovered or selected: drawn above its neighbours. Set per render by the chart. */
+  raised?: boolean;
+  /** Newly arrived in the sky: plays the entrance once. Set per render by the chart. */
+  entering?: boolean;
 };
 
 export type OrbitRingsData = {
   kind: "rings";
   radii: number[];
   showLabels?: boolean;
-  /** Whether the ambient drift is running; set per render by the chart, not by the layout. */
-  spinning?: boolean;
 };
 
 export type ClusterLabelData = {
@@ -128,6 +129,11 @@ export type ClusterLabelData = {
   nebulaColor?: string;
   clusterKind?: ClusterKind;
   clusterId?: string;
+  /**
+   * The zoomed-out summary view is on: the cluster stands in for its members, so its label
+   * carries their headcount. Set per render by the chart, not by the layout.
+   */
+  summary?: boolean;
 };
 
 export type NebulaData = {
@@ -256,6 +262,50 @@ function labelClear(
 }
 
 /**
+ * The placed stars, bucketed so a clearance test looks at neighbours rather than everyone.
+ *
+ * Cells are exactly one label-clearance box wide and tall. Two stars conflict only when they
+ * are closer than LABEL_CLEAR_X horizontally AND LABEL_CLEAR_Y vertically, so any conflict
+ * sits in the candidate's cell or one of its eight neighbours — the answer is the same as
+ * testing every placed star with `labelClear`, which is what this replaced. That linear scan
+ * ran for every candidate of every star, and all of a network's unclustered contacts share
+ * one field, so it grew with the square of the network.
+ */
+class ClearanceGrid {
+  private cells = new Map<string, Array<{ x: number; y: number }>>();
+
+  private static key(cx: number, cy: number) {
+    return `${cx},${cy}`;
+  }
+
+  add(p: { x: number; y: number }) {
+    const k = ClearanceGrid.key(
+      Math.floor(p.x / LABEL_CLEAR_X),
+      Math.floor(p.y / LABEL_CLEAR_Y)
+    );
+    const cell = this.cells.get(k);
+    if (cell) cell.push(p);
+    else this.cells.set(k, [p]);
+  }
+
+  /** True when `labelClear(candidate, p)` holds for every star added so far. */
+  clear(candidate: { x: number; y: number }) {
+    const cx = Math.floor(candidate.x / LABEL_CLEAR_X);
+    const cy = Math.floor(candidate.y / LABEL_CLEAR_Y);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const cell = this.cells.get(ClearanceGrid.key(cx + dx, cy + dy));
+        if (!cell) continue;
+        for (const p of cell) {
+          if (!labelClear(candidate, p)) return false;
+        }
+      }
+    }
+    return true;
+  }
+}
+
+/**
  * Scatter members organically through an annulus — no rings, no lattice.
  * Seeded rejection sampling: each member tries hash-driven spots until one
  * clears every already-placed star's label box; when an annulus fills up it
@@ -270,6 +320,8 @@ function scatterField(
   avoid: Array<{ x: number; y: number }>
 ): { placed: Array<{ id: string; x: number; y: number }>; outer: number } {
   const placed: Array<{ id: string; x: number; y: number }> = [];
+  const occupied = new ClearanceGrid();
+  for (const p of avoid) occupied.add(p);
   let outer = inner + initialWidth;
 
   for (const id of ids) {
@@ -289,10 +341,7 @@ function scatterField(
           x: Math.cos(angle) * radius,
           y: Math.sin(angle) * radius,
         };
-        if (
-          avoid.every((p) => labelClear(candidate, p)) &&
-          placed.every((p) => labelClear(candidate, p))
-        ) {
+        if (occupied.clear(candidate)) {
           spot = candidate;
         }
       }
@@ -307,6 +356,7 @@ function scatterField(
       spot = { x: outer, y: 0 };
     }
     placed.push({ id, ...spot });
+    occupied.add(spot);
   }
 
   const maxR = placed.reduce((m, p) => Math.max(m, Math.hypot(p.x, p.y)), inner);

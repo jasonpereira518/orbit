@@ -20,8 +20,8 @@ node scripts/bench/app-responsiveness.mjs http://localhost:3001 never,opened,ref
 npx tsx scripts/bench/constellation-layout.ts
 ```
 
-`--ablate` strips one visual layer at a time (`nolabels`, `nonebula`, `noglow`, `noanim`,
-`nobreathe`, `nocomet`, `notwinkle`, `vpwill`, …) to price it. It is a diagnostic, not a
+`--ablate` strips one visual layer at a time (`nolabels`, `nonebula`, `nodust`, `noanim`,
+`notwinkle`, `novpwill`, …) to price it. It is a diagnostic, not a
 measurement of the product: it answers "which part of the sky costs the frames".
 
 ## Why it is built this way
@@ -60,6 +60,25 @@ DOM nodes 9,358 → 9,181, listeners 3,900 → 3,830, frame rates flat. No leak.
 by 1,500–2,000 and unusable past ~2,500, where the chart still mounts thousands of DOM stars.
 Going higher is a renderer question, not a tuning one — `graph-canvas-mobile.tsx` already draws
 the same sky on one canvas for phones.
+
+### Summary view, still sky, in-place refresh (September 17, 2026)
+
+Main vs. this pass, back to back on the same machine and build flags. Control 60fps throughout.
+Every sky from 1,000 up opens at the minimum zoom (0.05), which is now the summary view: clusters
+with headcounts plus one canvas of dots. `@0.3` is after wheeling in to zoom 0.3 (80–140 real
+stars on screen); `zoomin` is the wheel-in itself, so it includes the crossing out of the summary.
+
+| Contacts | Opens in (ms) | Idle | Pan | Zoom | Hover | Search | zoomin | Pan @0.3 | Layers | DOM nodes | Heap MB |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+|  1,000 |   794 → 470 | 57 → 60 | 32 → 60  | 32 → 60  | 59 → 60  | 39 → 42  | 53 → 58  | 60 → 60 | 1,577 → 81  |  9,358 → 1,817 |  38 → 10 |
+|  2,500 | 1,276 → 509 | 43 → 60 | 8.7 → 60 | 12 → 60  | 31 → 60  | 14 → 20  | 36 → 54  | 60 → 60 | 3,002 → 121 | 18,842 → 2,970 |  73 → 14 |
+|  5,000 | 1,952 → 490 | 53 → 60 | 4.7 → 60 | 7.4 → 60 | 8.9 → 60 | 2.2 → 19 | 24 → 48  | 59 → 58 | 4,488 → 168 | 29,313 → 4,386 |  94 → 21 |
+| 10,000 | 3,226 → 600 | 37 → 60 | 1.8 → 59 | 4.8 → 60 | 6.1 → 60 | 1.4 → 15 | 6.7 → 35 | 60 → 53 | 5,655 → 281 | 34,743 → 6,506 | 121 → 31 |
+
+The layer count is the one to watch: GPU memory follows it, and running out is what made the
+sidebar's tiles drop and flash blank. Search is the weak spot left — each keystroke redraws the
+dots and flies the camera, with stalls of up to ~1.1s at 10,000 — and so is the first wheel into
+the close-up view at 10,000 (one ~1.4s commit as the visible stars mount).
 
 ### The rest of the app
 

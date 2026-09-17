@@ -130,8 +130,11 @@ export function AppShell({
             loop — 700 arcs a frame, some with `shadowBlur`, one of the most expensive
             Canvas2D operations on iOS — is exactly the pressure that was taking the tab
             down. It costs a flatter background around the stage card on those devices.
+            On a larger constellation it stays, but still: one painted frame, no loop.
           */}
-          {!(isConstellation && smallSky) && <AppStarfield />}
+          {!(isConstellation && smallSky) && (
+            <AppStarfield still={isConstellation} />
+          )}
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />

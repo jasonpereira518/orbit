@@ -183,9 +183,6 @@ export async function loadGraphData(
    * only when someone actually asks for it.
    *
    * What that costs, and why each is fine:
-   *   - Saved star positions: `positionsFromPayload` prunes to the payload for rendering, but
-   *     no longer writes that pruned map back (see `graph-positions.ts`), so a narrower view
-   *     cannot delete a layout.
    *   - `summary.total` and `scoreCounts`: computed over ALL rows below, not the visible set,
    *     so the numbers keep describing the network rather than the picture.
    *   - The comet list: now scoped to people you have actually engaged with, which is what

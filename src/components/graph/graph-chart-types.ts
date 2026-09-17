@@ -8,7 +8,6 @@
  */
 import type { getGraphData } from "@/actions/graph";
 import type { InspectSelection } from "@/components/graph/contact-inspect-panel";
-import type { PositionMap } from "@/lib/graph-positions";
 
 export type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
 export type GraphContact = GraphPayload["contacts"][number];
@@ -27,14 +26,11 @@ export type GraphChartProps = {
   homeToken: number;
   peekPersonId: string | null;
   peekToken: number;
-  positionOverrides: PositionMap;
-  onPositionOverridesChange: (next: PositionMap) => void;
   selection: InspectSelection;
   hoveredId: string | null;
   onSelect: (selection: InspectSelection) => void;
   onHover: (id: string | null) => void;
   onFocusCluster: (clusterId: string) => void;
-  resetToken: number;
   compact?: boolean;
   /** Whether this payload is the engaged-only scope (vs. the full network). */
   constellationFilterOn: boolean;

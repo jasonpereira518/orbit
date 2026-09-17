@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -66,14 +66,9 @@ function OrbitRingsNodeComponent({
   const max = Math.max(...data.radii, 1);
   const labels = [5, 4, 3, 2, 1] as const;
 
-  // Rings are pure background texture — faint dashes that give the sky some
-  // depth. The disk sweeps the dashes round as one body; labels stay put.
-  //
-  // The rotation is a CSS animation (`constellation-galaxy-spin`), ticked by the compositor,
-  // rather than an angle written from JavaScript each frame. Writing it per frame — whether
-  // onto React Flow's root or onto this element — made Chrome restyle or re-layerise the
-  // whole chart every frame, which at 1,000+ contacts was the single largest cost in the
-  // view, while the sky was standing still. See globals.css.
+  // Rings are pure background texture — faint dashes that give the sky some depth. They
+  // hold still: the slow spin they used to have was a standing compositor layer the size of
+  // the whole sky, re-rastered at every zoom step, for motion nobody could perceive.
   return (
     <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
       <div
@@ -85,33 +80,26 @@ function OrbitRingsNodeComponent({
           height: max * 2,
         }}
       >
-        <div
-          className={cn(
-            "absolute inset-0",
-            data.spinning && "constellation-galaxy-spin"
-          )}
+        <svg
+          width={max * 2}
+          height={max * 2}
+          className="absolute inset-0 overflow-visible"
+          aria-hidden
         >
-          <svg
-            width={max * 2}
-            height={max * 2}
-            className="overflow-visible"
-            aria-hidden
-          >
-            {data.radii.map((r, i) => (
-              <circle
-                key={r}
-                cx={max}
-                cy={max}
-                r={r}
-                fill="none"
-                stroke="rgba(255,255,255,0.08)"
-                strokeWidth={1}
-                strokeDasharray={i % 2 === 0 ? "2 16" : "1 12"}
-                opacity={0.7}
-              />
-            ))}
-          </svg>
-        </div>
+          {data.radii.map((r, i) => (
+            <circle
+              key={r}
+              cx={max}
+              cy={max}
+              r={r}
+              fill="none"
+              stroke="rgba(255,255,255,0.08)"
+              strokeWidth={1}
+              strokeDasharray={i % 2 === 0 ? "2 16" : "1 12"}
+              opacity={0.7}
+            />
+          ))}
+        </svg>
       </div>
       {data.showLabels &&
         data.radii.map((r, i) => {
@@ -156,15 +144,21 @@ function SunNodeComponent({
             "radial-gradient(circle, rgba(255,248,220,0.42) 0%, rgba(255,200,100,0.18) 35%, rgba(255,160,60,0.06) 55%, transparent 72%)",
         }}
       />
+      {/* A gradient rather than `blur-[3px]` on a solid disc: the same soft edge, painted
+          once instead of filtered on every raster. */}
       <div
         className={cn(
-          "constellation-corona absolute rounded-full bg-white/50 blur-[3px]",
+          "absolute rounded-full",
           selected ? "h-20 w-20" : "h-16 w-16"
         )}
+        style={{
+          background:
+            "radial-gradient(closest-side, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.35) 70%, transparent 100%)",
+        }}
       />
       <div
         className={cn(
-          "constellation-sun-core relative z-10 rounded-full",
+          "relative z-10 rounded-full",
           "bg-[radial-gradient(circle_at_35%_30%,_#ffffff_0%,_#fff6d6_28%,_#f5c86a_65%,_#e09030_100%)]",
           "shadow-[0_0_32px_10px_rgba(255,240,200,0.65),0_0_72px_22px_rgba(255,170,60,0.35),0_0_100px_40px_rgba(255,140,40,0.15)]",
           selected && "ring-2 ring-white/80"
@@ -230,8 +224,9 @@ function ContactNodeComponent({
     return (
       <div
         className={cn(
-          "constellation-planet-enter group relative cursor-pointer",
-          data.motionPaused && "z-20"
+          "group relative cursor-pointer",
+          data.entering && "constellation-planet-enter",
+          data.raised && "z-20"
         )}
         style={{ width: disc, height: disc }}
       >
@@ -282,6 +277,16 @@ function ContactNodeComponent({
 
   const disc = starDisc;
   /**
+   * The glow is a radial gradient on a wider span behind the disc rather than a blurred
+   * `box-shadow` on it. It draws the same falloff — the old shadow's inner blur at 0.32 and
+   * its wide spread at 0.1 — but a box-shadow blur is a Gaussian filter re-run over every
+   * star at every zoom raster, and at 1,000 stars that was among the largest paint costs of
+   * a frame. A gradient is a plain fill.
+   */
+  const reach = glow * spotlightBoost;
+  const halo = Math.round(disc + reach * 6);
+  const haloCore = Math.round((disc / halo) * 100);
+  /**
    * Applied as a transform on the disc only, so the node's measured box, the label
    * positions and the non-overlap proof in `scripts/smoke-graph-layout.ts` are all
    * untouched. See `zoomRelief` in `@/lib/graph/star-style` for the reasoning.
@@ -291,8 +296,9 @@ function ContactNodeComponent({
   return (
     <div
       className={cn(
-        "constellation-planet-enter group relative cursor-pointer",
-        data.motionPaused && "z-20",
+        "group relative cursor-pointer",
+        data.entering && "constellation-planet-enter",
+        data.raised && "z-20",
         data.spotlight && "z-30"
       )}
       style={{ width: disc, height: disc }}
@@ -311,6 +317,23 @@ function ContactNodeComponent({
             : undefined
         }
       >
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-1/2 rounded-full"
+          style={{
+            width: halo,
+            height: halo,
+            marginLeft: -halo / 2,
+            marginTop: -halo / 2,
+            background: `radial-gradient(closest-side, ${withAlpha(
+              fill,
+              0.32 * spotlightBoost * alphaScale
+            )} ${haloCore}%, ${withAlpha(fill, 0.1 * alphaScale)} ${Math.min(
+              92,
+              haloCore + 30
+            )}%, transparent 100%)`,
+          }}
+        />
         <div
           className={cn(
             "relative h-full w-full rounded-full transition-transform duration-200",
@@ -320,11 +343,6 @@ function ContactNodeComponent({
           )}
           style={{
             background: `radial-gradient(circle at 35% 30%, #fff 0%, ${core} 50%, transparent 78%)`,
-            boxShadow: `0 0 ${glow * spotlightBoost}px ${
-              (glow / 2) * spotlightBoost
-            }px ${withAlpha(fill, 0.32 * spotlightBoost * alphaScale)}, 0 0 ${
-              glow * 2 * spotlightBoost
-            }px ${glow * spotlightBoost}px ${withAlpha(fill, 0.1 * alphaScale)}`,
           }}
           title={`${data.label}${data.company ? ` · ${data.company}` : ""}${
             data.school ? ` · ${data.school}` : ""
@@ -376,43 +394,17 @@ function nebulaHash(seed: string, salt: number) {
   return (h % 10000) / 10000;
 }
 
-/** Ejecta spokes of uneven width and brightness. */
-function nebulaFilaments(
-  seed: string,
-  color: string,
-  count: number,
-  salt: number,
-  maxAlpha: number,
-  minWidth: number,
-  maxWidth: number
-) {
-  const stops: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const center =
-      (i / count) * 360 + nebulaHash(seed, i * 7 + salt) * (360 / count);
-    const width =
-      minWidth + nebulaHash(seed, i * 7 + salt + 1) * (maxWidth - minWidth);
-    const alpha = maxAlpha * (0.4 + nebulaHash(seed, i * 7 + salt + 2) * 0.6);
-    stops.push(
-      `transparent ${(center - width).toFixed(1)}deg`,
-      `${withAlpha(color, alpha)} ${center.toFixed(1)}deg`,
-      `transparent ${(center + width).toFixed(1)}deg`
-    );
-  }
-  return `conic-gradient(from 0deg, ${stops.join(", ")})`;
-}
-
-/** Fades spokes out well inside the box so no rim is ever drawn. */
-const INNER_FILAMENT_MASK =
-  "radial-gradient(closest-side, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.9) 15%, rgba(0,0,0,0.5) 38%, rgba(0,0,0,0.15) 58%, transparent 74%)";
-const OUTER_FILAMENT_MASK =
-  "radial-gradient(closest-side, transparent 20%, rgba(0,0,0,0.55) 42%, rgba(0,0,0,0.3) 62%, rgba(0,0,0,0.1) 80%, transparent 96%)";
-
 function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
   const r = data.radius;
   const color = data.color;
 
-  const { size, lobes, inner, outer, innerAngle, outerAngle } = useMemo(() => {
+  // Soft lobes only. The wash used to add two rotated conic "filament" layers under
+  // `mask-image`, and blur all three (one by 30% of the radius) inside a breathing
+  // animation. Each nebula is a box four radii across, so those filters were the most
+  // expensive surfaces in the sky, re-rastered at every zoom — and the spokes they drew were
+  // visual noise over the stars a reader is trying to pick out. Offset radial gradients
+  // already fade to nothing; they need no blur to read as a cloud.
+  const { size, lobes } = useMemo(() => {
     const seed = data.company;
     // Box runs well past the stars so the wash dissolves before any boundary
     const size = r * 4;
@@ -433,15 +425,7 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
       )} 0%, ${withAlpha(color, alpha * 0.45)} 36%, transparent 72%)`;
     }).join(", ");
 
-    return {
-      size,
-      lobes,
-      // Two layers with different reach so arms vary in length
-      inner: nebulaFilaments(seed, color, 11, 3, 0.1, 4, 15),
-      outer: nebulaFilaments(seed, color, 5, 41, 0.06, 2, 8),
-      innerAngle: nebulaHash(seed, 77) * 360,
-      outerAngle: nebulaHash(seed, 91) * 360,
-    };
+    return { size, lobes };
   }, [data.company, color, r]);
 
   return (
@@ -452,37 +436,9 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
       aria-label={`Zoom to ${data.company} cluster`}
     >
       <div
-        className="constellation-nebula absolute inset-0"
-        style={{ width: size, height: size }}
-      >
-        <div
-          className="absolute inset-0"
-          style={{
-            background: lobes,
-            filter: `blur(${(r * 0.3).toFixed(0)}px)`,
-          }}
-        />
-        <div
-          className="absolute inset-0"
-          style={{
-            background: inner,
-            transform: `rotate(${innerAngle.toFixed(1)}deg)`,
-            maskImage: INNER_FILAMENT_MASK,
-            WebkitMaskImage: INNER_FILAMENT_MASK,
-            filter: `blur(${(r * 0.05).toFixed(0)}px)`,
-          }}
-        />
-        <div
-          className="absolute inset-0"
-          style={{
-            background: outer,
-            transform: `rotate(${outerAngle.toFixed(1)}deg)`,
-            maskImage: OUTER_FILAMENT_MASK,
-            WebkitMaskImage: OUTER_FILAMENT_MASK,
-            filter: `blur(${(r * 0.07).toFixed(0)}px)`,
-          }}
-        />
-      </div>
+        className="absolute inset-0"
+        style={{ width: size, height: size, background: lobes }}
+      />
     </div>
   );
 }
@@ -497,12 +453,12 @@ function ClusterLabelNodeComponent({
   const inv = 1 / Math.max(zoom, 0.08);
   const scale = Math.min(2.8, Math.max(0.7, Math.pow(inv, 0.85)));
   const brand = data.nebulaColor;
+  const count = data.count ?? 0;
 
   return (
     <div
-      className="nopan nodrag cursor-pointer px-2 py-1"
+      className="nopan nodrag flex cursor-pointer flex-col items-center px-2 py-1"
       title={`Zoom to ${data.label}`}
-      aria-label={`Zoom to ${data.label} cluster`}
       style={{
         transform: `scale(${scale})`,
         transformOrigin: "center center",
@@ -520,7 +476,86 @@ function ClusterLabelNodeComponent({
         ) : null}
         <span className="relative text-white">{data.label}</span>
       </span>
+      {/* In the summary view the cluster stands in for its people, so it says how many. */}
+      {data.summary && count > 0 && (
+        <span className="whitespace-nowrap text-[9px] font-medium tabular-nums tracking-[0.06em] text-white/55">
+          {count.toLocaleString()} {count === 1 ? "person" : "people"}
+        </span>
+      )}
     </div>
+  );
+}
+
+export type StarDustPoint = {
+  id: string;
+  x: number;
+  y: number;
+  /** The star's drawn diameter in layout px (`starVisual().disc`). */
+  disc: number;
+  color: string;
+  alpha: number;
+};
+
+export type StarDustData = {
+  kind: "starDust";
+  points: StarDustPoint[];
+  /** World-space box the canvas covers. */
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+};
+
+/** Longest side of the dust canvas's backing store, whatever the sky's size. */
+const STAR_DUST_MAX_BACKING_PX = 2048;
+
+/**
+ * Everyone in the sky, as one canvas of dots: the summary view's stand-in for the stars.
+ *
+ * It is a node rather than an overlay so it rides React Flow's viewport transform exactly —
+ * a pan moves it in the same composited frame as the clusters over it — and so its `zIndex`
+ * can put it beneath them. It is drawn in world units at the camera's current zoom, and
+ * redrawn only when that zoom crosses a step or the sky changes: a pan costs it nothing.
+ * Each dot is the size the DOM star would have been on screen, relief included, so the
+ * switch between views reads as the stars simply losing their names.
+ */
+function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const zoom = useStore((s) => Math.round(s.transform[2] * 100) / 100);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const scale = Math.min(
+      Math.max(zoom, 0.01) * dpr,
+      STAR_DUST_MAX_BACKING_PX / Math.max(data.width, data.height)
+    );
+    canvas.width = Math.max(1, Math.ceil(data.width * scale));
+    canvas.height = Math.max(1, Math.ceil(data.height * scale));
+    ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
+    ctx.clearRect(data.minX, data.minY, data.width, data.height);
+    // At least a pixel and a half on screen, or a dim dot vanishes into the backing store.
+    const minRadius = 0.75 / Math.max(zoom, 0.01);
+    for (const p of data.points) {
+      const r = Math.max(minRadius, (p.disc * starZoomRelief(p.disc, zoom)) / 2);
+      ctx.globalAlpha = p.alpha;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }, [data, zoom]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      aria-hidden
+      className="constellation-star-dust pointer-events-none block"
+      style={{ width: data.width, height: data.height }}
+    />
   );
 }
 
@@ -609,4 +644,5 @@ export const SunNode = memo(SunNodeComponent);
 export const ContactNode = memo(ContactNodeComponent);
 export const ClusterLabelNode = memo(ClusterLabelNodeComponent);
 export const NebulaNode = memo(NebulaNodeComponent);
+export const StarDustNode = memo(StarDustNodeComponent);
 export const LabeledEdge = memo(LabeledEdgeComponent);
