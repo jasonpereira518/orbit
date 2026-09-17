@@ -9,7 +9,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ArrowUp,
   History,
@@ -26,9 +25,9 @@ import {
   deleteChatThread,
   getChatThread,
   listChatThreads,
+  updateChatThreadContext,
 } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
-import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -97,13 +96,14 @@ function formatThreadLabel(thread: ThreadSummary) {
 }
 
 export function ChatPanel() {
-  const router = useRouter();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
-  const [notesOpen, setNotesOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [contextNote, setContextNote] = useState("");
+  const [contextSaving, setContextSaving] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
@@ -182,6 +182,7 @@ export function ChatPanel() {
       const { thread, messages: rows } = await getChatThread(id);
       setThreadId(thread.id);
       setThreadTitle(thread.title);
+      setContextNote(thread.contextNote ?? "");
       stickToBottomRef.current = true;
       setMessages(
         rows.map((row) =>
@@ -210,6 +211,20 @@ export function ChatPanel() {
     }
   }, [scrollToBottom]);
 
+  const saveContext = useCallback(async () => {
+    setContextSaving(true);
+    try {
+      const id = await ensureThread();
+      await updateChatThreadContext(id, contextNote);
+      setContextOpen(false);
+      toast.success(contextNote.trim() ? "Context saved" : "Context cleared");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save context");
+    } finally {
+      setContextSaving(false);
+    }
+  }, [ensureThread, contextNote]);
+
   const startNewChat = useCallback(() => {
     start(async () => {
       try {
@@ -219,6 +234,7 @@ export function ChatPanel() {
         setMessages([]);
         setQuestion("");
         setLastUserQuery("");
+        setContextNote("");
         setThreads((prev) => [
           {
             id: created.id,
@@ -246,6 +262,7 @@ export function ChatPanel() {
             setThreadTitle(null);
             setMessages([]);
             setQuestion("");
+            setContextNote("");
           }
           toast.success("Chat deleted");
         } catch (err) {
@@ -469,10 +486,10 @@ export function ChatPanel() {
             variant="outline"
             size="sm"
             className="shrink-0"
-            onClick={() => setNotesOpen(true)}
+            onClick={() => setContextOpen(true)}
           >
             <NotebookPen className="size-4" />
-            <span className="hidden sm:inline">Notes</span>
+            <span className="hidden sm:inline">Context</span>
           </Button>
         </div>
 
@@ -600,35 +617,39 @@ export function ChatPanel() {
         </div>
       </div>
 
-      <Sheet open={notesOpen} onOpenChange={setNotesOpen}>
+      <Sheet open={contextOpen} onOpenChange={setContextOpen}>
         <SheetContent
           side="right"
           className="w-full gap-0 overflow-y-auto sm:max-w-md"
         >
           <SheetHeader className="border-b border-border/60">
-            <SheetTitle>Update from notes</SheetTitle>
+            <SheetTitle>Chat context</SheetTitle>
             <SheetDescription>
-              Paste notes to create or update many contacts.
+              Add context for Orbit to keep in mind during this conversation.
+              This won&apos;t create or update any contacts.
             </SheetDescription>
           </SheetHeader>
-          <div className="p-4">
-            <BulkNotesPanel
-              compact
-              onSaved={(res) => {
-                setNotesOpen(false);
-                router.refresh();
-                const peopleCount = res.created + res.updated;
-                toast.success(
-                  `Saved ${peopleCount} ${peopleCount === 1 ? "person" : "people"} and ${res.remindersCreated} ${res.remindersCreated === 1 ? "reminder" : "reminders"}`,
-                  {
-                    action: {
-                      label: "See what was created",
-                      onClick: () => router.push(`/capture/${res.batchId}`),
-                    },
-                  }
-                );
-              }}
+          <div className="flex flex-col gap-3 p-4">
+            <Textarea
+              rows={8}
+              placeholder="e.g. I'm prepping for a fundraise this quarter, so prioritize investor intros."
+              value={contextNote}
+              onChange={(e) => setContextNote(e.target.value)}
+              className="resize-none"
+              disabled={contextSaving}
             />
+            <Button
+              type="button"
+              className="self-end"
+              onClick={saveContext}
+              disabled={contextSaving}
+            >
+              {contextSaving ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                "Save"
+              )}
+            </Button>
           </div>
         </SheetContent>
       </Sheet>

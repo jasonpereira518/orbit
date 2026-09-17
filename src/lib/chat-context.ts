@@ -56,6 +56,8 @@ export type ChatContext = {
   retrieved: RankedContact[];
   snippets: Map<string, { recentMessages: string[] }>;
   scopedQuestion: string;
+  /** Freeform context the user typed for this conversation, if any — never extracted into contacts. */
+  userContext: string | null;
   orgRosters: OrgRoster[];
   attention: AttentionBrief | null;
   recruitersForChat: Recruiters;
@@ -281,7 +283,7 @@ export async function prepareChatContext(
       threadId
         ? db.query.chatThreads.findFirst({
             where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
-            columns: { id: true, title: true },
+            columns: { id: true, title: true, contextNote: true },
           })
         : Promise.resolve(null),
       threadId
@@ -378,9 +380,16 @@ export async function prepareChatContext(
     });
   }
 
-  const scopedQuestion = focusContactId
-    ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]\n\n${q}`
-    : q;
+  const userContext = thread?.contextNote?.trim() || null;
+  const scopedQuestion = [
+    focusContactId
+      ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]`
+      : null,
+    userContext ? `[Context provided by the user for this conversation: ${userContext}]` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .concat(q)
+    .join("\n\n");
 
   // Sized by rank under a total char budget — a later, cheaper contact must not be
   // appended out of rank order once the budget runs dry, so this can be a strict prefix
@@ -408,6 +417,7 @@ export async function prepareChatContext(
     retrieved,
     snippets,
     scopedQuestion,
+    userContext,
     orgRosters,
     attention,
     recruitersForChat,

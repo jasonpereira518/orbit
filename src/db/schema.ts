@@ -1737,6 +1737,8 @@ export const chatThreads = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
     title: text("title"),
+    /** Freeform context the user types for this conversation only — never extracted into contacts. */
+    contextNote: text("context_note"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
