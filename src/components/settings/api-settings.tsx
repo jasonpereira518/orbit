@@ -153,6 +153,7 @@ export function ApiSettings() {
             <Button
               size="sm"
               variant="secondary"
+              aria-label={created.mcpUrl ? "Copy MCP URL" : "Copy key"}
               onClick={() => copy(created.mcpUrl ?? created.token, "Key")}
             >
               <Copy className="size-4" />

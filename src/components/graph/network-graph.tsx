@@ -979,6 +979,7 @@ export function NetworkGraph({
               <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
                 <PopoverTrigger
                   type="button"
+                  aria-label="Filters"
                   className={cn(
                     buttonVariants({ size: "sm", variant: "outline" }),
                     "h-9 shrink-0 rounded-full border-white/15 bg-[#080b12]/80 text-white backdrop-blur-md"
