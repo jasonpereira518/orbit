@@ -25,6 +25,9 @@ import { CaptureResumeNotice } from "@/components/capture/capture-resume-notice"
 import { CaptureSaved } from "@/components/capture/capture-saved";
 import { CaptureSummary, choicesFromSuggestions, suggestionsFromChoices } from "@/components/capture/capture-summary";
 import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureMode } from "@/components/capture/capture-tabs";
+import { NotesLibraryUpload } from "@/components/capture/notes-library-upload";
+import { CaptureQueuePanel } from "@/components/capture/capture-queue-panel";
+import { discardCaptureBatch, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { ExtractingStage } from "@/components/capture/extracting-stage";
 import { IgnoredPeopleSection } from "@/components/capture/ignored-people-section";
 import { MeetingCaptureTab } from "@/components/capture/meeting-capture-tab";
@@ -59,6 +62,7 @@ const SOURCE_LABEL: Record<CaptureJobSource, string> = {
 
 export function CaptureFlow({
   initialJob,
+  initialJobs = [],
   initialContactId = null,
   initialContactName = null,
   defaultMode = "messy",
@@ -72,6 +76,8 @@ export function CaptureFlow({
   history = null,
 }: {
   initialJob: CaptureJobView | null;
+  /** Every reachable job, so a multi-file drop can render its queue. */
+  initialJobs?: CaptureJobView[];
   initialContactId?: string | null;
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
@@ -103,6 +109,34 @@ export function CaptureFlow({
   const [mode, setMode] = useState<CaptureMode>(() =>
     initialJob && (initialJob.status === "transcribed" || initialJob.status === "ingesting") ? tabForSource(initialJob.sourceKind) : defaultMode
   );
+  /**
+   * The queue over a multi-file drop.
+   *
+   * Polled separately from the single-job store rather than folded into it: that store holds
+   * exactly one job by design and has other subscribers, and widening it to a collection
+   * would change what every one of them reads. This is additive and disappears when there is
+   * only one job.
+   */
+  const [queue, setQueue] = useState<CaptureJobView[]>(initialJobs);
+  const queueBusy = queue.some((j) =>
+    ["ingesting", "transcribed", "queued", "extracting", "saving"].includes(j.status)
+  );
+  useEffect(() => {
+    if (queue.length <= 1 || !queueBusy) return;
+    let alive = true;
+    const t = setInterval(() => {
+      void getActiveCaptureJobs()
+        .then((rows) => {
+          if (alive) setQueue(rows);
+        })
+        .catch(() => null);
+    }, 2500);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [queue.length, queueBusy]);
+
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [pendingStart, setPendingStart] = useState(false);
   const [reviewOpened, setReviewOpened] = useState(false);
@@ -341,6 +375,39 @@ export function CaptureFlow({
                 onAnalyzed={onMeetingAnalyzed}
                 panelId={capturePanelId("meeting")}
                 tabId={captureTabId("meeting")}
+              />
+            )}
+            {queue.length > 1 && (
+              <div className="mb-4">
+                <CaptureQueuePanel
+                  jobs={queue}
+                  activeJobId={job?.id ?? null}
+                  onOpen={(jobId) => {
+                    const next = queue.find((j) => j.id === jobId);
+                    if (next) seedCaptureJob(next, { force: true });
+                  }}
+                  onDiscardAll={() => {
+                    const batchId = queue.find((j) => j.batchGroupId)?.batchGroupId;
+                    if (!batchId) return;
+                    void discardCaptureBatch(batchId).then(() => {
+                      setQueue([]);
+                      router.refresh();
+                    });
+                  }}
+                />
+              </div>
+            )}
+            {mode === "library" && (
+              <NotesLibraryUpload
+                hasApiKey={hasApiKey}
+                panelId={capturePanelId("library")}
+                tabId={captureTabId("library")}
+                onQueued={() => {
+                  void getActiveCaptureJobs()
+                    .then(setQueue)
+                    .catch(() => null);
+                  router.refresh();
+                }}
               />
             )}
             {mode === "structured" && (

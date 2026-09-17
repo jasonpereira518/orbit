@@ -79,6 +79,11 @@ export async function POST(request: Request) {
   const batchGroupId = typeof form.get("batchGroupId") === "string" ? String(form.get("batchGroupId")).trim().slice(0, 64) : "";
   const sourceLabel = typeof form.get("sourceLabel") === "string" ? String(form.get("sourceLabel")).trim().slice(0, 200) : "";
   const autoQueue = String(form.get("autoQueue") ?? "") === "1";
+  // A date read off the filename or the file's mtime. Offered as a HINT, never as the
+  // anchor itself: `runCaptureParse` only falls back to `hints.eventDate` when the notes
+  // carry no date of their own, so what the model reads in the file still wins.
+  const anchorRaw = typeof form.get("anchorDate") === "string" ? String(form.get("anchorDate")).trim() : "";
+  const anchorDate = /^\d{4}-\d{2}-\d{2}$/.test(anchorRaw) ? anchorRaw : "";
   let mentionPicks: MentionPick[] = [];
   if (typeof form.get("mentionPicks") === "string") {
     try {
@@ -163,15 +168,19 @@ export async function POST(request: Request) {
     // `autoQueue` collapses upload+Extract into one request, and it exists for arithmetic
     // rather than tidiness. Every file otherwise costs TWO `RATE_LIMITS.capture` tokens —
     // one here and one in `queueCaptureJob` — so a twelve-file drop needed 24 of the 30 a
-    // minute allows, and fifteen files stranded the batch mid-flight. One token per file
-    // puts a realistic folder of meeting notes comfortably inside the existing budget.
+    // minute allows, fifteen was exactly the ceiling, and the sixteenth file was refused
+    // mid-drop. One token per file puts a realistic folder of meeting notes comfortably
+    // inside the existing budget.
     //
     // Correct only for the fan-out path: "one file = one meeting" has no transcript-editing
     // step in between, because nobody is going to hand-edit twelve transcripts before
     // pressing Extract. The single-capture flow still queues separately, so its edit step
     // survives. `after` is valid in a Route Handler and inherits this route's maxDuration.
     if (autoQueue) {
-      const queued = await queueCaptureJobRow(userId, job.id, { inputText: null, inputHints: normalized.hints });
+      const hints = anchorDate && !normalized.hints.eventDate
+        ? { ...normalized.hints, eventDate: anchorDate }
+        : normalized.hints;
+      const queued = await queueCaptureJobRow(userId, job.id, { inputText: null, inputHints: hints });
       if (queued) after(() => runCaptureJobById(job.id).catch(() => null));
     }
 

@@ -4,7 +4,7 @@ import { motion } from "motion/react";
 import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
-export type CaptureMode = "messy" | "voice" | "meeting" | "structured";
+export type CaptureMode = "messy" | "voice" | "meeting" | "library" | "structured";
 
 export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureMode; label: string; blurb: string }> = [
   {
@@ -26,6 +26,12 @@ export const CAPTURE_MODES: ReadonlyArray<{ id: CaptureMode; label: string; blur
       "On a call? Orbit listens along, then summarizes it and pulls out the people, next steps, blockers and open questions.",
   },
   {
+    id: "library",
+    label: "Notes Library",
+    blurb:
+      "Backfilling? Drop a folder of meeting notes and each file becomes its own meeting — its own date, its own people, its own entry on their timeline.",
+  },
+  {
     id: "structured",
     label: "Structured Logging",
     blurb: "Fill in the fields yourself for a clean interaction log on a contact.",
@@ -41,8 +47,11 @@ export function capturePanelId(mode: CaptureMode) {
 }
 
 /**
- * The four ways in, as a pill tab bar. The same `layoutId` pill every segmented control
- * in the app uses, plus the tab/tabpanel wiring the old bar lacked.
+ * The ways in, as a pill tab bar. The same `layoutId` pill every segmented control in the
+ * app uses, plus the tab/tabpanel wiring the old bar lacked.
+ *
+ * Five tabs is tight on a narrow phone: the bar is `inline-flex w-full` with `flex-1`
+ * children, so the labels shrink rather than wrap. Verify at 360px before adding a sixth.
  */
 export function CaptureTabs({
   mode,
