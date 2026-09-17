@@ -61,7 +61,23 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) (or the port Next prints if 3000 is taken).
 
-Without Clerk keys, the app runs as `demo-user` in development only, and an empty account is filled with a demo network on its first request (set `ORBIT_DEMO_DATA=off` to start empty). Add a Gemini, OpenAI, or Anthropic API key in **Settings** (or the matching env var, honoured locally only) before using Capture / Chat.
+Add a Gemini, OpenAI, or Anthropic API key in **Settings → Integrations → AI provider** (or the matching env var, honoured locally only) before using Capture / Chat.
+
+### Three ways to run it locally
+
+| You want | Run | What you get |
+|---|---|---|
+| The product with data in it (default) | `npm run dev`, with `DATABASE_URL` and the Clerk keys unset | Signed in as `demo-user` on local PGlite; an empty account gets a full demo workspace on its first request; plan limits are lifted on localhost |
+| Empty states and onboarding | `ORBIT_DEMO_DATA=off npm run dev` | The same, with nothing seeded |
+| The real sign-in surface | put the `pk_test_…` / `sk_test_…` Clerk keys in `.env.local`, keep `DATABASE_URL` unset, `npm run dev` | Clerk sign-in against your test instance, your account on local PGlite (seeded on first request unless `ORBIT_DEMO_DATA=off`) |
+
+Things that catch people out:
+
+- **A git worktree has no `node_modules`.** Run `npm ci` inside it; symlinking the main checkout's breaks as soon as the branch's dependencies differ.
+- **`.data/pglite` outlives branches.** It may hold fixtures from another branch or an old smoke run. **Settings → Data and privacy → Delete data** clears your account’s data, and on localhost the demo workspace re-seeds on the next request.
+- **One writer per `.data/pglite`.** Stop the dev server before running any script that writes to the local database; two writers corrupt it. `ORBIT_PGLITE_DIR=$(mktemp -d)` gives a throwaway database instead.
+- **The port is part of Google OAuth.** Changing it breaks Gmail and Google Contacts until `GOOGLE_REDIRECT_URI` and the redirect URI in the Google Cloud console use the new port.
+- **Demo sign-in links** (`scripts/demo-signin-link.ts`) need the Clerk user to exist in that instance first: `CLERK_SECRET_KEY=sk_test_… npx tsx scripts/provision-demo-account.ts`.
 
 Optional demo contact:
 

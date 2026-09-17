@@ -185,6 +185,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-form-limit": "pglite",
   "smoke-contact-merge": "pglite",
   "smoke-contact-resolve": "pglite",
+  "smoke-demo-signin-message": "pure",
   "smoke-demo-data": "pglite",
   "smoke-duplicate-review": "pglite",
   "smoke-event-companies": "pglite",
