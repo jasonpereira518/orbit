@@ -293,6 +293,14 @@ const CLUSTER_NAME_HOME_MAX = 56;
 /** How far in from the home zoom still counts as home; `zoomStep`'s steps are about 1.19x. */
 const CLUSTER_NAME_HOME_SLACK = 1.12;
 
+/**
+ * How far from a cluster's centre still counts as pointing at it, in cluster radii.
+ *
+ * A shade past where its stars reach, so the name answers a pointer resting just off the edge
+ * of the group, and well short of the wash's own box, which is four radii across.
+ */
+const CLUSTER_HOVER_REACH = 1.15;
+
 /** A label's box in layout px, as graph-nodes.tsx draws it: `max-w-[104px]`, `mt-2`, 11px + 9px lines. */
 const LABEL_MAX_W = 104;
 const LABEL_GAP = 8;
@@ -307,14 +315,16 @@ const LABEL_SUBTITLE_CHAR_W = 4.9;
  *
  * Names are drawn at a readable size however far out the camera is (see `clusterNameScale`),
  * and a zoomed-out sky has hundreds of clusters, so they cannot all fit. They are placed in
- * priority order — the highlighted cluster, then the largest — and a name that would overlap one
- * already placed is left off until zooming in makes room. Grid-bucketed, so linear.
+ * priority order — the one under the pointer, then the highlighted cluster, then the largest —
+ * and a name that would overlap one already placed is left off until zooming in makes room.
+ * Grid-bucketed, so linear.
  */
 function clusterNameWinners(
   labels: LayoutNodes,
   zoom: number,
   withCount: boolean,
   highlighted: string | null,
+  hovered: string | null,
   atHome: boolean
 ): Set<string> {
   type Box = { x0: number; y0: number; x1: number; y1: number };
@@ -344,7 +354,8 @@ function clusterNameWinners(
       (n) =>
         !eligible ||
         eligible.has(n.id) ||
-        (n.data as ClusterLabelData).label === highlighted
+        (n.data as ClusterLabelData).label === highlighted ||
+        (n.data as ClusterLabelData).label === hovered
     )
     .map((n) => {
       const d = n.data as ClusterLabelData;
@@ -393,6 +404,17 @@ function clusterNameWinners(
         const list = grid.get(key);
         if (list) list.push(c.box);
         else grid.set(key, [c.box]);
+      }
+    }
+  }
+  // Point at a cluster and you get its name whether or not it won a place — but added after
+  // the pass, not before it, so the names already on the sky stay where they are rather than
+  // blinking out as the pointer travels. It is drawn above them (see `nameRaised`).
+  if (hovered) {
+    for (const n of labels) {
+      if ((n.data as ClusterLabelData).label === hovered) {
+        shown.add(n.id);
+        break;
       }
     }
   }
@@ -627,7 +649,14 @@ function GraphCanvasInner({
   layoutKey: string;
 }) {
   const router = useRouter();
-  const { fitView, fitBounds, getNodes, getViewport, setViewport } = useReactFlow();
+  const {
+    fitView,
+    fitBounds,
+    getNodes,
+    getViewport,
+    setViewport,
+    screenToFlowPosition,
+  } = useReactFlow();
   const storeApi = useStoreApi();
   const prevClusterZoomKey = useRef("");
   const prevPeekZoomKey = useRef("");
@@ -741,6 +770,13 @@ function GraphCanvasInner({
    * scaling, the stars already up are simply carried along, and the dots cover the rest.
    */
   /**
+   * The cluster under the pointer, which says its name for as long as you point at it — the one
+   * name a reader has asked for directly. It is only a name: pinning it in view, the way the
+   * picked cluster below is pinned, would leave a name sliding around under the cursor.
+   */
+  const [hoveredCluster, setHoveredCluster] = useState<string | null>(null);
+
+  /**
    * Whether the camera is moving right now. Two things ride on it: the sky is worth its own
    * compositor layer only while it moves (`.constellation-moving` in globals.css), and the star
    * window holds still through a zoom. Held in a ref and written straight to the DOM, because a
@@ -753,6 +789,9 @@ function GraphCanvasInner({
     stageRef.current?.classList.toggle("constellation-moving", moving);
     movingRef.current = moving;
     setCameraMoving(moving);
+    // A name found before the camera moved is about a cluster that is no longer under the
+    // pointer; it comes back with the next move of the mouse.
+    if (moving) setHoveredCluster(null);
     // Stopped: choose the window for where the camera actually landed.
     if (!moving) placeWindowRef.current?.();
   }, []);
@@ -939,7 +978,6 @@ function GraphCanvasInner({
   /**
    * The cluster the reader deliberately picked: clicked or searched (`focusCluster`), filtered
    * to, or holding the selected person. Its name always shows and, zoomed in, stays in view.
-   * Not hover — pointing across a sky must not make names appear and pin under the cursor.
    */
   const highlightedCluster = useMemo(() => {
     if (focusCluster) {
@@ -959,6 +997,56 @@ function GraphCanvasInner({
     () => sky.layout.nodes.filter((n) => n.type === "clusterLabel"),
     [sky.layout.nodes]
   );
+
+  /**
+   * Every cluster as a circle to point at: its name, its centre and how far its stars reach.
+   *
+   * The pointer is tested against these rather than against the washes' own boxes, which are
+   * four radii across and overlap half the sky — hovering the gap between two clusters would
+   * otherwise name whichever box happened to be on top.
+   */
+  const clusterCircles = useMemo(() => {
+    const byClusterId = new Map<string, string>();
+    for (const n of clusterLabelNodes) {
+      const d = n.data as ClusterLabelData;
+      if (d.clusterId) byClusterId.set(d.clusterId, d.label);
+    }
+    const circles: Array<{ name: string; x: number; y: number; r2: number }> = [];
+    for (const n of sky.layout.nodes) {
+      if (n.type !== "nebula") continue;
+      const d = n.data as NebulaData;
+      const name = (d.clusterId && byClusterId.get(d.clusterId)) || d.company;
+      if (!name) continue;
+      const reach = d.radius * CLUSTER_HOVER_REACH;
+      circles.push({ name, x: n.position.x, y: n.position.y, r2: reach * reach });
+    }
+    return circles;
+  }, [clusterLabelNodes, sky.layout.nodes]);
+
+  /**
+   * Name the cluster the pointer is inside, nearest centre first, or nothing between them.
+   *
+   * Not while the camera moves. A pointer resting on the sky during a zoom has cluster after
+   * cluster pass underneath it, and the browser reports each one as a fresh hover: the sky was
+   * re-choosing its names on most frames of a zoom, which cost 58fps down to 38.
+   */
+  const hoverClusterAt = useCallback(
+    (clientX: number, clientY: number) => {
+      if (movingRef.current) return;
+      const { x, y } = screenToFlowPosition({ x: clientX, y: clientY });
+      let best: string | null = null;
+      let bestD = Infinity;
+      for (const c of clusterCircles) {
+        const d = (x - c.x) ** 2 + (y - c.y) ** 2;
+        if (d <= c.r2 && d < bestD) {
+          bestD = d;
+          best = c.name;
+        }
+      }
+      setHoveredCluster((prev) => (prev === best ? prev : best));
+    },
+    [clusterCircles, screenToFlowPosition]
+  );
   const clusterNamesShown = useMemo(
     () =>
       clusterNameWinners(
@@ -966,9 +1054,17 @@ function GraphCanvasInner({
         labelZoom,
         summary,
         highlightedCluster,
+        hoveredCluster,
         atHome
       ),
-    [clusterLabelNodes, labelZoom, summary, highlightedCluster, atHome]
+    [
+      clusterLabelNodes,
+      labelZoom,
+      summary,
+      highlightedCluster,
+      hoveredCluster,
+      atHome,
+    ]
   );
   // Independent of hover on purpose: moving the pointer must not reshuffle which names show.
   // Only over stars that can be drawn: the summary's mounted hits, or the star window. Over the
@@ -1112,14 +1208,17 @@ function GraphCanvasInner({
         // Only the highlighted cluster's name pins in view; the rest stay above their clusters.
         const pinnable = isLabel && labelPinnable && highlighted;
         const nameHidden = isLabel && !clusterNamesShown.has(n.id);
+        // The name under the pointer sits above the rest, since it is the one being read.
+        const nameRaised = isLabel && label.label === hoveredCluster;
         out.push(
           withEmphasis(
             n,
-            `${opacity}|${isLabel && summary}|${pinnable}|${nameHidden}`,
+            `${opacity}|${isLabel && summary}|${pinnable}|${nameHidden}|${nameRaised}`,
             () =>
               ({
                 ...n,
                 hidden: nameHidden,
+                ...(nameRaised ? { zIndex: 60 } : null),
                 ...(isLabel
                   ? {
                       // Placed by the name's anchor: the cluster-sized box around it when the
@@ -1223,6 +1322,7 @@ function GraphCanvasInner({
     labelPinnable,
     highlightedCluster,
     clusterNamesShown,
+    hoveredCluster,
     searchHitIds,
     summaryAllowed,
     mounted,
@@ -1508,17 +1608,45 @@ function GraphCanvasInner({
   );
 
   const onNodeMouseEnter: NodeMouseHandler = useCallback(
-    (_, node) => {
+    (event, node) => {
+      // A cluster under the pointer says its name, whether it is the wash or the name itself.
+      if (node.type === "nebula" || node.type === "clusterLabel") {
+        hoverClusterAt(event.clientX, event.clientY);
+        onHover(null);
+        return;
+      }
+      setHoveredCluster(null);
       if (node.type !== "contact") {
         onHover(null);
         return;
       }
       onHover(node.id);
     },
-    [onHover]
+    [onHover, hoverClusterAt]
+  );
+
+  /**
+   * Which cluster is under the pointer changes as it travels, and the washes are wide enough
+   * that a pointer can cross a whole cluster without ever entering or leaving a node.
+   */
+  const onClusterPointerMove = useCallback(
+    (event: { clientX: number; clientY: number }) => {
+      hoverClusterAt(event.clientX, event.clientY);
+    },
+    [hoverClusterAt]
+  );
+
+  const onNodeMouseMove: NodeMouseHandler = useCallback(
+    (event, node) => {
+      if (node.type === "nebula" || node.type === "clusterLabel") {
+        hoverClusterAt(event.clientX, event.clientY);
+      }
+    },
+    [hoverClusterAt]
   );
 
   const onNodeMouseLeave = useCallback(() => {
+    setHoveredCluster(null);
     onHover(null);
   }, [onHover]);
 
@@ -1571,6 +1699,8 @@ function GraphCanvasInner({
         }}
         onNodeClick={onNodeClick}
         onNodeMouseEnter={onNodeMouseEnter}
+        onNodeMouseMove={onNodeMouseMove}
+        onPaneMouseMove={onClusterPointerMove}
         onNodeMouseLeave={onNodeMouseLeave}
         onPaneClick={() => onSelect(null)}
         proOptions={{ hideAttribution: true }}

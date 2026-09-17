@@ -23,6 +23,12 @@ import {
 } from "@/lib/graph-layout";
 import { withAlpha } from "@/lib/school-color";
 import {
+  NEBULA_BOX_RADII,
+  NEBULA_LOBE_EDGE,
+  NEBULA_LOBE_MID,
+  nebulaLobes,
+} from "@/lib/graph/nebula-lobes";
+import {
   STAR_HIT_PAD,
   starVisual,
   zoomRelief as starZoomRelief,
@@ -421,15 +427,6 @@ function ContactNodeComponent({
 }
 
 /** Stable 0..1 from a string, so each cluster's wash keeps its shape. */
-function nebulaHash(seed: string, salt: number) {
-  let h = (2166136261 ^ salt) >>> 0;
-  for (let i = 0; i < seed.length; i++) {
-    h = (h ^ seed.charCodeAt(i)) >>> 0;
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return (h % 10000) / 10000;
-}
-
 function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
   const r = data.radius;
   const color = data.color;
@@ -441,25 +438,23 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
   // visual noise over the stars a reader is trying to pick out. Offset radial gradients
   // already fade to nothing; they need no blur to read as a cloud.
   const { size, lobes } = useMemo(() => {
-    const seed = data.company;
-    // Box runs well past the stars so the wash dissolves before any boundary
-    const size = r * 4;
+    // Box runs well past the stars so the wash dissolves before any boundary. The lobes
+    // themselves come from `nebula-lobes.ts`, which the dashboard preview paints from too.
+    const size = r * NEBULA_BOX_RADII;
     const pct = (v: number) => 50 + (v / size) * 100;
-
-    // Offset, unequal lobes — overlapping ellipses read as blown-out debris
-    const lobes = Array.from({ length: 5 }, (_, i) => {
-      const angle = nebulaHash(seed, i * 9 + 1) * Math.PI * 2;
-      const dist = (0.06 + nebulaHash(seed, i * 9 + 2) * 0.45) * r;
-      const rx = (0.5 + nebulaHash(seed, i * 9 + 3) * 0.65) * r;
-      const ry = rx * (0.5 + nebulaHash(seed, i * 9 + 4) * 0.6);
-      const alpha = 0.075 - i * 0.011;
-      return `radial-gradient(ellipse ${rx.toFixed(0)}px ${ry.toFixed(0)}px at ${pct(
-        Math.cos(angle) * dist
-      ).toFixed(1)}% ${pct(Math.sin(angle) * dist).toFixed(1)}%, ${withAlpha(
-        color,
-        alpha
-      )} 0%, ${withAlpha(color, alpha * 0.45)} 36%, transparent 72%)`;
-    }).join(", ");
+    const lobes = nebulaLobes(data.company, r)
+      .map(
+        (lobe) =>
+          `radial-gradient(ellipse ${lobe.rx.toFixed(0)}px ${lobe.ry.toFixed(
+            0
+          )}px at ${pct(lobe.x).toFixed(1)}% ${pct(lobe.y).toFixed(1)}%, ${withAlpha(
+            color,
+            lobe.alpha
+          )} 0%, ${withAlpha(color, lobe.alpha * 0.45)} ${NEBULA_LOBE_MID * 100}%, transparent ${
+            NEBULA_LOBE_EDGE * 100
+          }%)`
+      )
+      .join(", ");
 
     return { size, lobes };
   }, [data.company, color, r]);
