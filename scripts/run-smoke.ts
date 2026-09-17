@@ -190,6 +190,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-job-company-match": "pure",
   "smoke-job-feed-fetch": "pure",
   "smoke-job-feed-sweep": "pglite",
+  "smoke-contact-job-matches": "pglite",
   "smoke-opportunity-extract": "pure",
   "smoke-opportunity-taxonomy": "pure",
   "smoke-interaction-detail": "pglite",
