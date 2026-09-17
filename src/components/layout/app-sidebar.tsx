@@ -202,7 +202,7 @@ export function AppSidebar({
           <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
             <div className="h-px flex-1 bg-border/60" />
             <span className="hidden text-[10px] font-medium uppercase tracking-wider text-muted-foreground/80 lg:inline">
-              Extras
+              Coming soon
             </span>
             <div className="hidden h-px flex-1 bg-border/60 lg:block" />
           </div>
@@ -217,7 +217,7 @@ export function AppSidebar({
           />
         ))}
 
-        {/* `mt-auto` drops Settings to the foot of the nav, clear of Extras.
+        {/* `mt-auto` drops Settings to the foot of the nav, clear of the Coming soon group.
             `py-2` keeps it off the account divider below and holds the same gap
             above when a short viewport leaves no slack for `mt-auto` to eat. */}
         <div className="mt-auto py-2">
