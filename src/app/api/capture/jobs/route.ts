@@ -21,7 +21,9 @@ import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-// Eight pages of OCR or a six-minute voice note, against whichever provider the user set.
+// A full note's worth of OCR (`MAX_SCAN_PAGES` pages, three at a time) or a six-minute
+// voice note, against whichever provider the user set — and, under `autoQueue`, the
+// extraction that follows it in the same invocation.
 export const maxDuration = 300;
 
 const SOURCE_KINDS: CaptureJobSource[] = ["messy", "voice", "scan"];
@@ -32,7 +34,14 @@ const SOURCE_KINDS: CaptureJobSource[] = ["messy", "voice", "scan"];
  *   POST /api/capture/jobs   multipart/form-data
  *     sourceKind   messy | voice | scan
  *     text         optional — what was already typed, kept with the job
- *     files        one or more; audio, images, PDF, .ics, .eml, .txt
+ *     files        one or more; audio, images, .ics, .eml, .txt
+ *
+ * NOT PDFs. Nothing here reads one — `normalizeCaptureInput` classifies by mime type and
+ * `application/pdf` matches no branch, so a PDF that reaches this route is rejected by
+ * name. They are rasterized to JPEG pages in the browser first, by
+ * `src/lib/capture/prepare-upload.ts`, which is also where the per-request page budget is
+ * spent. That is not an oversight to fix here: rasterizing client-side is what keeps ONE
+ * transcription path across all three providers (see `rasterizePdf`).
  *     batchGroupId optional — one multi-file drop; suspends the one-review-at-a-time rule
  *     sourceLabel  optional — the original filename, for the queue row
  *     mentionPicks optional — JSON [{id,name}] the person picked with `@`

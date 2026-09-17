@@ -24,7 +24,8 @@ import {
  */
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-// OCR of eight pages, three at a time, against whichever provider the user configured.
+// OCR of a full note (`MAX_SCAN_PAGES` pages), three at a time, against whichever
+// provider the user configured.
 export const maxDuration = 300;
 
 /** 404 for every refusal. A 401 would confirm the route gates by token. */
