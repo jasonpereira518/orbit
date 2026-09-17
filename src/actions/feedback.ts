@@ -38,7 +38,7 @@ export async function submitFeedback(
     await consumeBucket("feedback", userId, RATE_LIMITS.feedback);
   } catch (err) {
     if (isRateLimitedError(err)) {
-      return { ok: false, message: "You've sent a few already — give it a minute." };
+      return { ok: false, message: err.message };
     }
     throw err;
   }

@@ -16,12 +16,35 @@ import { rateLimitBuckets } from "@/db/schema";
  * serverless instance's memory is neither shared nor durable.
  */
 
+/** What a bucket scope means to the person hitting it, for the error message. */
+const BUCKET_LABELS: Record<string, string> = {
+  chat: "chat",
+  capture: "capture",
+  avatarResolve: "photo lookup",
+  feedback: "feedback",
+  apiRead: "API read",
+  apiWrite: "API write",
+  apiIngest: "event import",
+  mcp: "MCP tool call",
+  providerSync: "sync",
+  eventEnrich: "link lookup",
+};
+
+function formatRetryAfter(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const min = Math.round(sec / 60);
+  return `${min} minute${min === 1 ? "" : "s"}`;
+}
+
 export class RateLimitedError extends Error {
   readonly retryAfterSec: number;
+  readonly scope: string;
 
-  constructor(retryAfterSec: number, message = "Too many requests in a row. Give it a moment and try again.") {
-    super(message);
+  constructor(scope: string, retryAfterSec: number) {
+    const label = BUCKET_LABELS[scope] ?? scope;
+    super(`You've hit the ${label} limit. Try again in ${formatRetryAfter(retryAfterSec)}.`);
     this.name = "RateLimitedError";
+    this.scope = scope;
     this.retryAfterSec = retryAfterSec;
   }
 }
@@ -101,7 +124,7 @@ export async function consumeBucket(
     const elapsed = row?.windowStartedAt
       ? Math.floor((Date.now() - row.windowStartedAt.getTime()) / 1000)
       : 0;
-    throw new RateLimitedError(Math.max(1, policy.windowSec - elapsed));
+    throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
   }
   return { remaining: Math.max(0, policy.limit - count) };
 }
