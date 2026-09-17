@@ -187,6 +187,8 @@ export function buildSkyIndex(layout: {
   }
 
   const labelOrder = [...stars].sort((a, b) => b.score - a.score);
+  // Largest first: when names collide, the bigger cluster keeps its name.
+  clusterLabels.sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
 
   return {
     stars,

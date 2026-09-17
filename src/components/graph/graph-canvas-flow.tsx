@@ -33,6 +33,7 @@ import {
   StarDustNode,
   SunNode,
   CLUSTER_NAME_PIN_MIN_ZOOM,
+  clusterNameSize,
   type StarDustData,
   type StarDustPoint,
 } from "@/components/graph/graph-nodes";
@@ -264,6 +265,73 @@ const LABEL_SUBTITLE_H = 12;
 /** Rough glyph advances for the two label lines, to size a box without measuring DOM text. */
 const LABEL_NAME_CHAR_W = 6.1;
 const LABEL_SUBTITLE_CHAR_W = 4.9;
+
+/**
+ * Which cluster names are shown, so none overlap.
+ *
+ * Names are drawn at a readable size however far out the camera is (see `clusterNameScale`),
+ * and a zoomed-out sky has hundreds of clusters, so they cannot all fit. They are placed in
+ * priority order — the highlighted cluster, then the largest — and a name that would overlap one
+ * already placed is left off until zooming in makes room. Grid-bucketed, so linear.
+ */
+function clusterNameWinners(
+  labels: LayoutNodes,
+  zoom: number,
+  withCount: boolean,
+  highlighted: string | null
+): Set<string> {
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  const candidates = labels
+    .map((n) => {
+      const d = n.data as ClusterLabelData;
+      const { width, height } = clusterNameSize(d.label, withCount && Boolean(d.count), zoom);
+      // A little air between neighbours, and slack for zooms between two steps.
+      const w = width * 1.15;
+      const h = height * 1.15;
+      const box: Box = {
+        x0: n.position.x - w / 2,
+        x1: n.position.x + w / 2,
+        y0: n.position.y - h,
+        y1: n.position.y,
+      };
+      return { id: n.id, box, first: d.label === highlighted, count: d.count ?? 0 };
+    })
+    .sort(
+      (a, b) =>
+        Number(b.first) - Number(a.first) || b.count - a.count || (a.id < b.id ? -1 : 1)
+    );
+  const cell = Math.max(1, ...candidates.map((c) => c.box.x1 - c.box.x0));
+  const grid = new Map<string, Box[]>();
+  const shown = new Set<string>();
+  for (const c of candidates) {
+    const gx0 = Math.floor(c.box.x0 / cell);
+    const gx1 = Math.floor(c.box.x1 / cell);
+    const gy0 = Math.floor(c.box.y0 / cell);
+    const gy1 = Math.floor(c.box.y1 / cell);
+    let clear = true;
+    for (let gx = gx0; clear && gx <= gx1; gx++) {
+      for (let gy = gy0; clear && gy <= gy1; gy++) {
+        for (const o of grid.get(`${gx},${gy}`) ?? []) {
+          if (c.box.x0 < o.x1 && c.box.x1 > o.x0 && c.box.y0 < o.y1 && c.box.y1 > o.y0) {
+            clear = false;
+            break;
+          }
+        }
+      }
+    }
+    if (!clear && !c.first) continue;
+    shown.add(c.id);
+    for (let gx = gx0; gx <= gx1; gx++) {
+      for (let gy = gy0; gy <= gy1; gy++) {
+        const key = `${gx},${gy}`;
+        const list = grid.get(key);
+        if (list) list.push(c.box);
+        else grid.set(key, [c.box]);
+      }
+    }
+  }
+  return shown;
+}
 
 /**
  * The camera's zoom in quarter-octave steps. Label boxes scale with `zoomRelief`, so the
@@ -715,6 +783,34 @@ function GraphCanvasInner({
   const labelZoom = useStore((s) => zoomStep(s.transform[2]));
   // Cluster names can pin in view from here in (see ClusterLabelNode in graph-nodes.tsx).
   const labelPinnable = useStore((s) => s.transform[2] >= CLUSTER_NAME_PIN_MIN_ZOOM);
+
+  /**
+   * The cluster the reader deliberately picked: clicked or searched (`focusCluster`), filtered
+   * to, or holding the selected person. Its name always shows and, zoomed in, stays in view.
+   * Not hover — pointing across a sky must not make names appear and pin under the cursor.
+   */
+  const highlightedCluster = useMemo(() => {
+    if (focusCluster) {
+      const hit = data.clusters.find(
+        (c) => c.id === focusCluster || c.name === focusCluster || c.company === focusCluster
+      );
+      return hit?.name || focusCluster;
+    }
+    if (company !== "all") return company;
+    if (selection?.type === "contact") {
+      return selection.data.clusterName || selection.data.company || null;
+    }
+    return null;
+  }, [focusCluster, company, selection, data.clusters]);
+
+  const clusterLabelNodes = useMemo(
+    () => sky.layout.nodes.filter((n) => n.type === "clusterLabel"),
+    [sky.layout.nodes]
+  );
+  const clusterNamesShown = useMemo(
+    () => clusterNameWinners(clusterLabelNodes, labelZoom, summary, highlightedCluster),
+    [clusterLabelNodes, labelZoom, summary, highlightedCluster]
+  );
   // Independent of hover on purpose: moving the pointer must not reshuffle which names show.
   // Only over stars that can be drawn: the summary's mounted hits, or the star window. Over the
   // whole sky this ran on every keystroke of a search — 10,000 label boxes to name a handful.
@@ -847,22 +943,24 @@ function GraphCanvasInner({
         const opacity = clusterEmphasis(co, focusCompany, company, searchDimActive);
         const isLabel = n.type === "clusterLabel";
         const label = n.data as ClusterLabelData;
+        const highlighted = isLabel && label.label === highlightedCluster;
+        // Only the highlighted cluster's name pins in view; the rest stay above their clusters.
+        const pinnable = isLabel && labelPinnable && highlighted;
+        const nameHidden = isLabel && !clusterNamesShown.has(n.id);
         out.push(
           withEmphasis(
             n,
-            `${opacity}|${isLabel && summary}|${isLabel && labelPinnable}`,
+            `${opacity}|${isLabel && summary}|${pinnable}|${nameHidden}`,
             () =>
               ({
                 ...n,
-                hidden: false,
+                hidden: nameHidden,
                 ...(isLabel
                   ? {
-                      // Sized to the cluster (see ClusterLabelData.box), and see-through to
-                      // pointers everywhere but the name itself, so the stars under it stay
-                      // clickable.
                       // Placed by the name's anchor: the cluster-sized box around it when the
-                      // name can pin, otherwise the name's own box sitting on it.
-                      ...(labelPinnable && label.box && label.anchor
+                      // name can pin (see-through to pointers everywhere but the name, so the
+                      // stars under it stay clickable), otherwise the name's own box on it.
+                      ...(pinnable && label.box && label.anchor
                         ? {
                             width: label.box.width,
                             height: label.box.height,
@@ -872,7 +970,7 @@ function GraphCanvasInner({
                             ] as [number, number],
                           }
                         : { origin: [0.5, 1] as [number, number] }),
-                      data: { ...label, summary, pinnable: labelPinnable },
+                      data: { ...label, summary, pinnable },
                       ariaLabel: summary
                         ? `${label.label}, ${label.count ?? 0} ${
                             label.count === 1 ? "person" : "people"
@@ -884,7 +982,7 @@ function GraphCanvasInner({
                 style: {
                   opacity,
                   transition: "opacity 200ms ease",
-                  ...(isLabel ? { pointerEvents: "none" as const } : null),
+                  ...(pinnable ? { pointerEvents: "none" as const } : null),
                 },
               }) as Node
           )
@@ -949,6 +1047,8 @@ function GraphCanvasInner({
     sky.entering,
     labelled,
     labelPinnable,
+    highlightedCluster,
+    clusterNamesShown,
     searchHitIds,
     windowing,
     mounted,

@@ -299,11 +299,17 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
   ctx.lineWidth = 3;
 
   // Cluster names first: they are the map's coarse legend and must win any collision
-  // against an individual star's label.
-  if (camera.k >= LABEL_MIN_ZOOM * 0.5) {
+  // against an individual star's label. Readable at every zoom, so they collide with each
+  // other too: the focused cluster first, then the largest, and a name that would overlap one
+  // already drawn waits until zooming in makes room.
+  {
     // 13px against the stars' 11px: a cluster's name is the larger of the two, as on desktop.
     ctx.font = "600 13px system-ui, sans-serif";
-    for (const label of index.clusterLabels) {
+    const focused = index.clusterLabels.filter((l) => l.label === frame.focusCompany);
+    const ordered = focused.length
+      ? [...focused, ...index.clusterLabels.filter((l) => l.label !== frame.focusCompany)]
+      : index.clusterLabels;
+    for (const label of ordered) {
       if (
         label.x < world.minX ||
         label.x > world.maxX ||
@@ -316,7 +322,8 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
       // The anchor is the name's bottom edge, above the cluster's top star; text draws from its top.
       const p = { x: anchor.x, y: anchor.y - 16 };
       const fitted = fitText(ctx, label.label, LABEL_MAX_WIDTH);
-      const rect = { x: p.x - fitted.width / 2, y: p.y, w: fitted.width, h: 16 };
+      const rect = { x: p.x - fitted.width / 2 - 4, y: p.y, w: fitted.width + 8, h: 16 };
+      if (label.label !== frame.focusCompany && placed.some((r) => overlaps(rect, r))) continue;
       placed.push(rect);
       ctx.globalAlpha = clusterEmphasis(
         label.label,

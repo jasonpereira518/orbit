@@ -459,6 +459,31 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
  * (for a typical 12px star), so it stays the bigger of the two however far you zoom.
  */
 const CLUSTER_NAME_RATIO = 1.25;
+/**
+ * The smallest a cluster's name is ever drawn, in screen px. Scaling with the stars alone left
+ * the zoomed-out sky's names one or two pixels tall — unreadable, in the one view whose whole
+ * point is the clusters. The chart hides names that would overlap (see `clusterNameWinners`).
+ */
+const CLUSTER_NAME_MIN_SCREEN_PX = 12;
+const CLUSTER_NAME_FONT_PX = 11;
+
+/** How much a cluster name is scaled at a zoom: 1.25x a star's name, and never under 12px. */
+export function clusterNameScale(zoom: number) {
+  const k = Math.max(zoom, 0.01);
+  return Math.max(
+    CLUSTER_NAME_RATIO * starZoomRelief(TYPICAL_STAR_DISC, k),
+    CLUSTER_NAME_MIN_SCREEN_PX / (CLUSTER_NAME_FONT_PX * k)
+  );
+}
+
+/** A cluster name's box in layout px at a zoom, bottom-centred on its anchor. */
+export function clusterNameSize(label: string, withCount: boolean, zoom: number) {
+  const sc = clusterNameScale(zoom);
+  return {
+    width: (label.length * CLUSTER_NAME_CHAR_W + 16) * sc,
+    height: (CLUSTER_NAME_LINE_H + (withCount ? CLUSTER_COUNT_LINE_H : 0) + 4) * sc,
+  };
+}
 const TYPICAL_STAR_DISC = 12;
 /** The name's line box and the headcount line's, in unscaled px. */
 const CLUSTER_NAME_LINE_H = 15;
@@ -501,8 +526,12 @@ function ClusterNameText({ data, showCount }: { data: ClusterLabelData; showCoun
 
 function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }) {
   const { data } = props;
-  const zoom = useStore((s) => Math.round(s.transform[2] * 40) / 40);
-  const scale = CLUSTER_NAME_RATIO * starZoomRelief(TYPICAL_STAR_DISC, zoom);
+  // Sixteenth-of-an-octave steps: proportional, so a far-out zoom (where the 12px floor sets the
+  // size) does not jump by a quarter at a time the way a fixed 1/40 step did.
+  const zoom = useStore((s) =>
+    Math.pow(2, Math.round(Math.log2(Math.max(s.transform[2], 0.01)) * 16) / 16)
+  );
+  const scale = clusterNameScale(zoom);
   const showCount = Boolean(data.summary) && (data.count ?? 0) > 0;
 
   if (data.pinnable && data.box && data.anchor) {
@@ -557,7 +586,7 @@ function PinnableClusterName({
   // computes "0|0" frame after frame and stays put.
   const pin = useStore((s) => {
     const [tx, ty, k] = s.transform;
-    const sc = CLUSTER_NAME_RATIO * starZoomRelief(TYPICAL_STAR_DISC, k);
+    const sc = clusterNameScale(k);
     const nameH = (CLUSTER_NAME_LINE_H + (showCount ? CLUSTER_COUNT_LINE_H : 0)) * sc;
     const halfW = (data.label.length * CLUSTER_NAME_CHAR_W * sc) / 2;
 

@@ -9,7 +9,7 @@ import {
 import { isCometContact } from "@/lib/comet";
 import { scaleForStarCount } from "@/lib/constellation-shapes";
 import { type BuiltCluster, type ClusterKind } from "@/lib/constellation-clusters";
-import { companyFamilyKey } from "@/lib/company-family";
+import { companyFamilyKey, companyFamilyRoot } from "@/lib/company-family";
 import { peerEdgeToLayoutEdge, type PeerEdge } from "@/lib/network-metrics";
 import {
   clusterBrandColor,
@@ -385,6 +385,8 @@ function scatterField(
 /** One cluster's local geometry: undistorted figure plus a scatter field. */
 export type ClusterGeometry = {
   cluster: BuiltCluster;
+  /** The company family it packs beside (see `clusterFamily`); its own id when it has none. */
+  family?: string;
   fit: ClusterFit;
   /** Rotated, scaled shape stars in cluster-local space (index ↔ figureMemberIds). */
   figureLocal: Array<{ x: number; y: number }>;
@@ -403,7 +405,14 @@ export type ClusterGeometry = {
  * extent, which guarantees clearance from every figure star and line by
  * construction.
  */
-export function buildClusterGeometry(fit: ClusterFit): ClusterGeometry {
+export function buildClusterGeometry(
+  fit: ClusterFit,
+  /**
+   * People seated in this cluster's field without being members of it: loners from the same
+   * company family (see `familySatellites`). Placed after the members, so further out.
+   */
+  satelliteIds: string[] = []
+): ClusterGeometry {
   const { shape, figureMemberIds, scatterMemberIds, cluster } = fit;
   const count = figureMemberIds.length;
   const baseScale = scaleForStarCount(count);
@@ -440,7 +449,7 @@ export function buildClusterGeometry(fit: ClusterFit): ClusterGeometry {
   );
 
   const { placed: scatterLocal, outer } = scatterField(
-    scatterMemberIds,
+    [...scatterMemberIds, ...satelliteIds],
     cluster.id,
     figureExtent + SCATTER_CLEAR,
     SCATTER_FIELD_WIDTH,
@@ -458,14 +467,54 @@ export function buildClusterGeometry(fit: ClusterFit): ClusterGeometry {
   };
 }
 
+/** The family a cluster packs beside: related companies share one, schools stand alone. */
+function clusterFamily(cluster: BuiltCluster): string {
+  return cluster.kind === "company"
+    ? companyFamilyKey(cluster.name) || cluster.id
+    : cluster.id;
+}
+
+/**
+ * People who belong near a cluster they are not in.
+ *
+ * A company needs two people to become a constellation, so the one person at Google DeepMind
+ * was scattered across the rim of the sky with everyone unclustered — nowhere near Google. Any
+ * contact outside a constellation whose company is a known family (see `companyFamilyRoot`)
+ * is seated in the outer field of that family's largest cluster instead. They are placed there,
+ * not added to it: the cluster's name, headcount and search hits still mean its own members.
+ */
+function familySatellites(
+  contacts: GraphContactInput[],
+  eligible: BuiltCluster[]
+): Map<string, string[]> {
+  const inConstellation = new Set(eligible.flatMap((c) => c.contactIds));
+  const headByRoot = new Map<string, BuiltCluster>();
+  for (const cluster of eligible) {
+    if (cluster.kind !== "company") continue;
+    const root = companyFamilyRoot(cluster.name);
+    if (!root) continue;
+    const head = headByRoot.get(root);
+    if (!head || cluster.count > head.count) headByRoot.set(root, cluster);
+  }
+  const satellites = new Map<string, string[]>();
+  if (headByRoot.size === 0) return satellites;
+  for (const c of [...contacts].sort((a, b) => a.id.localeCompare(b.id))) {
+    if (inConstellation.has(c.id)) continue;
+    const root = companyFamilyRoot(c.company);
+    const head = root ? headByRoot.get(root) : undefined;
+    if (!head) continue;
+    const list = satellites.get(head.id);
+    if (list) list.push(c.id);
+    else satellites.set(head.id, [c.id]);
+  }
+  return satellites;
+}
+
 /** Family-adjacent cluster order: families by total size, members by size. */
 function orderClustersByFamily(eligible: BuiltCluster[]): BuiltCluster[] {
   const families = new Map<string, BuiltCluster[]>();
   for (const cluster of eligible) {
-    const key =
-      cluster.kind === "company"
-        ? companyFamilyKey(cluster.name) || cluster.id
-        : cluster.id;
+    const key = clusterFamily(cluster);
     const list = families.get(key);
     if (list) list.push(cluster);
     else families.set(key, [cluster]);
@@ -535,6 +584,22 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
       idx++;
     }
 
+    // Never split a family across two shells: a family member that did not fit went to the far
+    // side of the next shell, however closely related. If the family started partway through
+    // this shell, the whole family moves out to the next one — unless it alone fills a shell.
+    const next = geoms[idx];
+    const last = items[items.length - 1];
+    if (next && last?.family && next.family === last.family) {
+      let familyStart = items.length - 1;
+      while (familyStart > 0 && items[familyStart - 1].family === last.family) familyStart--;
+      if (familyStart > 0) {
+        idx -= items.length - familyStart;
+        items.splice(familyStart);
+        maxFoot = Math.max(...items.map((g) => g.foot));
+        R = prevOuter + maxFoot + (shellIndex > 0 ? CLUSTER_GAP : 0);
+      }
+    }
+
     // Place along the shell: exact pairwise increments plus even slack.
     const start = -Math.PI / 2 + shellIndex * 0.6;
     if (items.length === 1) {
@@ -547,13 +612,22 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
         pairArc(g, items[(i + 1) % items.length], R)
       );
       const used = increments.reduce((a, b) => a + b, 0);
-      const slack = Math.max(0, Math.PI * 2 - used) / items.length;
+      // Spare arc goes between families, not inside one: spread evenly, a sparse shell pushed
+      // Google DeepMind a quarter-turn away from the Google beside it.
+      const boundary = items.map(
+        (g, i) => !g.family || g.family !== items[(i + 1) % items.length].family
+      );
+      // One family filling the shell: keep it together and leave the gap after its last member.
+      if (!boundary.some(Boolean)) boundary[boundary.length - 1] = true;
+      const boundaries = boundary.filter(Boolean).length;
+      const spare = Math.max(0, Math.PI * 2 - used);
       let theta = start;
       items.forEach((g, i) => {
         centers.set(g.cluster.id, {
           x: Math.cos(theta) * R,
           y: Math.sin(theta) * R,
         });
+        const slack = boundary[i] ? spare / boundaries : 0;
         theta += increments[i] + slack;
       });
     }
@@ -582,9 +656,11 @@ export function buildHybridGraphLayout(
   const { byContactId, fits } = fit;
 
   const eligible = fit.clusters.filter((c) => fits.has(c.id));
-  const geoms = orderClustersByFamily(eligible).map((cluster) =>
-    buildClusterGeometry(fits.get(cluster.id)!)
-  );
+  const satellites = familySatellites(contacts, eligible);
+  const geoms = orderClustersByFamily(eligible).map((cluster) => ({
+    ...buildClusterGeometry(fits.get(cluster.id)!, satellites.get(cluster.id)),
+    family: clusterFamily(cluster),
+  }));
   const { centers, skyEdge } = packClusterShells(geoms);
 
   const positions = new Map<string, PolarPosition>();
