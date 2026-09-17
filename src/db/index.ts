@@ -1505,7 +1505,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // merging main, which had moved to 61: no database can ever have been stamped 62, so the
 // whole set arrives together and the split has nothing left to protect. Renumbered past
 // main's 61 and past the 56/58/59/60 claims its comment above records.
-export const SCHEMA_VERSION = 62;
+//
+// 63 = user_settings.linkedin_export_requested_at + linkedin_reminder_shown_at: the unified
+// onboarding flow's LinkedIn export step, and the once-per-account full-screen reminder that
+// asks whether the export has arrived (src/lib/linkedin-export.ts).
+export const SCHEMA_VERSION = 63;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2309,6 +2313,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "suspended_reason", "text");
   await ensureColumn(client, "user_settings", "suspended_by", "text");
 
+  // Schema v63: onboarding's LinkedIn export step and the 24h full-screen reminder.
+  await ensureColumn(client, "user_settings", "linkedin_export_requested_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "linkedin_reminder_shown_at", "timestamptz");
+
   // Same reasoning: a local database built by the version that first added
   // `interest_list_signups` has the table but neither of these columns.
   await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
@@ -2684,6 +2692,9 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
+  // Schema v63: onboarding's LinkedIn export step and the 24h full-screen reminder.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_export_requested_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_reminder_shown_at timestamptz`,
   // Schema v17: note processing provenance columns.
   `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS note_batch_id uuid`,

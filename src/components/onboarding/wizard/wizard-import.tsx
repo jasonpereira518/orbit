@@ -2,7 +2,7 @@
 
 import { LinkedInConnectionsImport } from "@/components/imports/linkedin-connections-import";
 import { LinkedInMessagesImport } from "@/components/imports/linkedin-messages-import";
-import { LINKEDIN_DATA_URL } from "@/components/imports/linkedin-export-guide";
+import { LINKEDIN_DATA_URL } from "@/lib/linkedin-export";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 

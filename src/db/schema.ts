@@ -106,7 +106,19 @@ export const userSettings = pgTable("user_settings", {
   wizardOfferedAt: timestamp("wizard_offered_at", { withTimezone: true }),
   wizardStep: text("wizard_step"),
   wizardCompletedAt: timestamp("wizard_completed_at", { withTimezone: true }),
-  theme: text("theme").$type<"light" | "dark" | "system">(),
+  /**
+   * When the user said they asked LinkedIn for their data archive — set by "I've requested
+   * it" in onboarding, never by merely opening LinkedIn's page. Write-once: re-requesting
+   * does not move it. Only changes the reminder's copy; eligibility does not depend on it.
+   */
+  linkedinExportRequestedAt: timestamp("linkedin_export_requested_at", { withTimezone: true }),
+  /**
+   * When the full-screen "Is your LinkedIn export ready?" reminder was claimed for display.
+   * Write-once, set by an atomic claim, which is what makes it one showing per account
+   * across tabs and devices. See `src/lib/linkedin-export.ts`.
+   */
+  linkedinReminderShownAt: timestamp("linkedin_reminder_shown_at", { withTimezone: true }),
+  theme:text("theme").$type<"light" | "dark" | "system">(),
   ycModeEnabled: boolean("yc_mode_enabled").default(false),
   /**
    * Manual estimate feeding the Unit Economics LTV calculation. Orbit's subscriber count

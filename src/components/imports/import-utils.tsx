@@ -24,30 +24,52 @@ export type ImportProgressState = {
   importedLabel?: string;
 };
 
-export async function readCsvOrZipMessages(file: File): Promise<{
-  text: string;
-  fileName: string;
-}> {
+/**
+ * Reads the CSV a LinkedIn upload is really about, whether the user picked the CSV itself or
+ * the ZIP LinkedIn emails. The full data archive only ever arrives as a ZIP, so asking people
+ * to unzip it first was a step onboarding could not afford.
+ *
+ * LinkedIn splits a large export across parts, so a ZIP without the file gets told to check
+ * the other email rather than that it uploaded the wrong thing.
+ */
+async function readCsvOrZip(
+  file: File,
+  target: { pattern: RegExp; fallbackName: string; missing: string },
+): Promise<{ text: string; fileName: string }> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".zip")) {
     const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(await file.arrayBuffer());
     const entry =
-      zip.file(/messages\.csv$/i)[0] ||
-      Object.values(zip.files).find(
-        (f) => !f.dir && /messages\.csv$/i.test(f.name)
-      );
+      zip.file(target.pattern)[0] ||
+      Object.values(zip.files).find((f) => !f.dir && target.pattern.test(f.name));
     if (!entry) {
       // Thrown in the browser, so it survives — but a plain Error still reaches the toast
       // as the generic fallback, which is why this is a `UserFacingError`.
-      throw new UserFacingError(
-        "No messages.csv in that ZIP — download Messages from LinkedIn’s data export and upload that"
-      );
+      throw new UserFacingError(target.missing);
     }
     const text = await entry.async("string");
-    return { text, fileName: entry.name.split("/").pop() || "messages.csv" };
+    return { text, fileName: entry.name.split("/").pop() || target.fallbackName };
   }
   return { text: await file.text(), fileName: file.name };
+}
+
+export function readCsvOrZipMessages(file: File) {
+  return readCsvOrZip(file, {
+    pattern: /(^|\/)messages\.csv$/i,
+    fallbackName: "messages.csv",
+    missing:
+      "No messages.csv in that ZIP — LinkedIn sends the archive in parts, so try the other download",
+  });
+}
+
+export function readCsvOrZipConnections(file: File) {
+  return readCsvOrZip(file, {
+    pattern: /(^|\/)connections\.csv$/i,
+    fallbackName: "Connections.csv",
+    missing:
+      "No Connections.csv in that ZIP — LinkedIn sends the archive in parts, so try the other download",
+  });
 }
 
 /** Styled file picker that matches Orbit buttons (hides native Choose File UI). */
