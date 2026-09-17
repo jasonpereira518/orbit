@@ -6,6 +6,8 @@ import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
 import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
 import { isClerkConfigured } from "@/lib/demo-account";
+import { sweepAbandonedMeetingSessions } from "@/lib/meeting-sessions";
+import { sweepExpiredHandoffs } from "@/lib/scan-handoff";
 import { clerkClient } from "@clerk/nextjs/server";
 import { resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { runCaptureJobById } from "@/lib/capture-job-runner";
@@ -128,6 +130,10 @@ export async function GET(request: Request) {
     errorEventsPruned: 0,
     /** Unsaved captures' photos past `UNATTACHED_PHOTO_TTL_MS`. */
     capturePhotosPruned: 0,
+    /** Meetings nobody finished, past `ABANDONED_SESSION_TTL_DAYS`. */
+    meetingSessionsSwept: 0,
+    /** Phone-scan grants past their expiry. */
+    handoffsSwept: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
     embeddingsGenerated: 0,
@@ -185,6 +191,11 @@ export async function GET(request: Request) {
       // history only lists saved captures — so keeping them would be holding pictures of
       // someone's notes for no one.
       stats.capturePhotosPruned = await pruneUnattachedCapturePhotos();
+      // Abandoned meeting transcripts. The per-user sweep only runs when that user records
+      // again; without this, one recording never finished is kept forever.
+      stats.meetingSessionsSwept = await sweepAbandonedMeetingSessions();
+      // Expired scan grants. Minting sweeps too, but only when someone mints.
+      stats.handoffsSwept = await sweepExpiredHandoffs();
     } catch (err) {
       // Housekeeping must never fail the job-resumption backstop this route exists for,
       // but a silent failure here is how a table grows unbounded — so it downgrades the

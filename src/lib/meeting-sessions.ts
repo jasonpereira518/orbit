@@ -290,25 +290,48 @@ export async function getResumableMeeting(userId: string): Promise<ResumableMeet
   };
 }
 
+/** Sessions deleted per global sweep, so a backlog cannot eat the cron's budget. */
+const GLOBAL_SWEEP_BATCH = 500;
+
+function abandonedSessionPredicate(now: Date) {
+  const cutoff = new Date(now.getTime() - ABANDONED_SESSION_TTL_DAYS * 86_400_000);
+  return or(
+    eq(meetingSessions.status, "discarded"),
+    and(inArray(meetingSessions.status, UNFINISHED), lt(meetingSessions.updatedAt, cutoff)),
+  );
+}
+
+async function deleteSessions(ids: string[]) {
+  const db = await getDb();
+  await db.delete(meetingTranscriptSegments).where(inArray(meetingTranscriptSegments.sessionId, ids));
+  await db.delete(meetingSessions).where(inArray(meetingSessions.id, ids));
+}
+
 async function sweepAbandonedSessions(userId: string, now: Date) {
   const db = await getDb();
-  const cutoff = new Date(now.getTime() - ABANDONED_SESSION_TTL_DAYS * 86_400_000);
   const stale = await db
     .select({ id: meetingSessions.id })
     .from(meetingSessions)
-    .where(
-      and(
-        eq(meetingSessions.userId, userId),
-        or(
-          eq(meetingSessions.status, "discarded"),
-          and(inArray(meetingSessions.status, UNFINISHED), lt(meetingSessions.updatedAt, cutoff)),
-        ),
-      ),
-    );
+    .where(and(eq(meetingSessions.userId, userId), abandonedSessionPredicate(now)));
   if (!stale.length) return;
-  const ids = stale.map((s) => s.id);
-  await db.delete(meetingTranscriptSegments).where(inArray(meetingTranscriptSegments.sessionId, ids));
-  await db.delete(meetingSessions).where(inArray(meetingSessions.id, ids));
+  await deleteSessions(stale.map((s) => s.id));
+}
+
+/**
+ * Every user's abandoned sessions, from the daily cron. The per-user sweep above only runs
+ * when that user starts another meeting, so someone who recorded once and never again kept
+ * the transcript forever. Returns how many sessions it deleted.
+ */
+export async function sweepAbandonedMeetingSessions(now: Date = new Date(), limit = GLOBAL_SWEEP_BATCH): Promise<number> {
+  const db = await getDb();
+  const stale = await db
+    .select({ id: meetingSessions.id })
+    .from(meetingSessions)
+    .where(abandonedSessionPredicate(now))
+    .limit(limit);
+  if (!stale.length) return 0;
+  await deleteSessions(stale.map((s) => s.id));
+  return stale.length;
 }
 
 // ── Segments ──────────────────────────────────────────────────────────────────────────
