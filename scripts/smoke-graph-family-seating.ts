@@ -50,6 +50,11 @@ function seat(unrelated: number) {
   add("gdm", "Google DeepMind", 3);
   // Not "DeepMind": that is an exact alias of Google DeepMind and would join its cluster.
   add("gcloud", "Google Cloud", 1);
+  // A second family, with the alias pair inside it: "AWS" and "Amazon Web Services" are one
+  // cluster, which in turn belongs beside Amazon.
+  add("amazon", "Amazon", 9);
+  add("aws", "Amazon Web Services", 4);
+  add("aws-alias", "AWS", 1);
   add("bank", "Bank of Nowhere", 1);
   add("loose", null, 40);
 
@@ -72,6 +77,22 @@ function seat(unrelated: number) {
   );
 
   console.log(`\n${unrelated} unrelated companies`);
+  const amazon = centroid("amazon");
+  const nearestToAmazon = Math.min(
+    ...Array.from({ length: unrelated }, (_, i) => dist(amazon, centroid(`co${i}`)))
+  );
+  const aws = dist(amazon, centroid("aws"));
+  check(
+    "Amazon Web Services sits beside Amazon",
+    aws < nearestToAmazon,
+    `AWS ${aws.toFixed(0)} vs nearest unrelated ${nearestToAmazon.toFixed(0)}`
+  );
+  check(
+    'and an "AWS" contact joins that same cluster rather than one of its own',
+    dist(centroid("aws"), pos.get("aws-alias-0")!) < 400,
+    `${dist(centroid("aws"), pos.get("aws-alias-0")!).toFixed(0)} from the AWS cluster centre`
+  );
+
   const gdm = dist(google, centroid("gdm"));
   check(
     "the Google DeepMind cluster is Google's nearest neighbour",

@@ -401,6 +401,12 @@ function ContactPanelBody({
    * view, so it is also the right place to resolve a missing photo on demand.
    */
   const canResolvePhoto = Boolean(data.linkedinUrl?.trim() || data.email?.trim());
+  /** Their profile when we have it; otherwise the LinkedIn search you would have typed. */
+  const linkedinHref =
+    data.linkedinUrl?.trim() ||
+    `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(
+      [data.fullName || data.label, data.company].filter(Boolean).join(" ")
+    )}`;
   const photoSrc =
     !photoFailed && (Boolean(data.profileImageUrl?.trim()) || canResolvePhoto)
       ? `/api/avatars/${id}`
@@ -531,46 +537,51 @@ function ContactPanelBody({
           )}
         </div>
 
-        {(data.email || data.phone || data.linkedinUrl || data.website) && (
-          <div className="flex flex-wrap gap-2">
-            {data.email && (
-              <a
-                href={`mailto:${data.email}`}
-                className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-              >
-                Email
-              </a>
+        <div className="flex flex-wrap gap-2">
+          {/*
+            LinkedIn is always here, because it is the thing people reach for after opening
+            somebody on the map. With a saved profile it opens that; without one it opens a
+            LinkedIn search for their name and company, which is what you would type anyway.
+          */}
+          <a
+            href={linkedinHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              buttonVariants({ variant: "outline", size: "sm" }),
+              "gap-1.5"
             )}
-            {data.phone && (
-              <a
-                href={`tel:${data.phone}`}
-                className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-              >
-                Call
-              </a>
-            )}
-            {data.linkedinUrl && (
-              <a
-                href={data.linkedinUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-              >
-                LinkedIn
-              </a>
-            )}
-            {data.website && (
-              <a
-                href={data.website}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-              >
-                Website
-              </a>
-            )}
-          </div>
-        )}
+          >
+            <LinkedInGlyph className="size-3.5" />
+            {data.linkedinUrl ? "LinkedIn" : "Find on LinkedIn"}
+          </a>
+          {data.email && (
+            <a
+              href={`mailto:${data.email}`}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              Email
+            </a>
+          )}
+          {data.phone && (
+            <a
+              href={`tel:${data.phone}`}
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              Call
+            </a>
+          )}
+          {data.website && (
+            <a
+              href={data.website}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              Website
+            </a>
+          )}
+        </div>
 
         <div>
           <div className="mb-1.5 flex items-center justify-between gap-2">

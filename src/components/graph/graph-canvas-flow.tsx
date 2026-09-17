@@ -261,10 +261,18 @@ const ENTRANCE_CLEAR_MS = 700;
 
 const STAR_DUST_ID = "star-dust";
 
-/** Below this zoom, cluster names keep much wider gaps between them (see `clusterNameWinners`). */
-const CLUSTER_NAME_SPARSE_BELOW_ZOOM = 0.2;
-/** Below that zoom, at most this many of the largest clusters are considered for a name. */
-const CLUSTER_NAME_SPARSE_MAX = 36;
+/**
+ * How much room a name keeps around it, and how many clusters compete for one, by zoom.
+ *
+ * Pulled all the way back, a name is a legend entry — it wants air, and only the larger groups
+ * earn one. Zooming in, the sky has room for many more, and by the time constellations are
+ * individually readable every cluster can have its name.
+ */
+const CLUSTER_NAME_TIERS = [
+  { below: 0.1, perPatch: true, spacing: { x: 1.6, y: 2.1 } },
+  { below: 0.2, perPatch: true, spacing: { x: 1.35, y: 1.7 } },
+  { below: Infinity, perPatch: false, spacing: { x: 1.15, y: 1.15 } },
+] as const;
 
 /** A label's box in layout px, as graph-nodes.tsx draws it: `max-w-[104px]`, `mt-2`, 11px + 9px lines. */
 const LABEL_MAX_W = 104;
@@ -290,22 +298,33 @@ function clusterNameWinners(
   highlighted: string | null
 ): Set<string> {
   type Box = { x0: number; y0: number; x1: number; y1: number };
-  const sparse = zoom < CLUSTER_NAME_SPARSE_BELOW_ZOOM;
-  const spacing = sparse ? { x: 1.9, y: 2.6 } : { x: 1.15, y: 1.15 };
-  // Far out, only the largest clusters compete for a name at all: a gap on the far side of the
-  // sky is no reason to label a two-person cluster while the view is about the big picture.
-  const eligible = sparse
-    ? new Set(
-        [...labels]
-          .sort(
-            (a, b) =>
-              ((b.data as ClusterLabelData).count ?? 0) -
-              ((a.data as ClusterLabelData).count ?? 0)
-          )
-          .slice(0, CLUSTER_NAME_SPARSE_MAX)
-          .map((n) => n.id)
-      )
-    : null;
+  const tier = CLUSTER_NAME_TIERS.find((t) => zoom < t.below) ?? CLUSTER_NAME_TIERS[2];
+  const spacing = tier.spacing;
+
+  /**
+   * Pulled back, one name per patch of sky: the biggest cluster in it.
+   *
+   * Taking the biggest clusters overall instead bunched every name into one arc, because the
+   * shells are filled in size order and the largest land side by side. Choosing per patch keeps
+   * "the bigger group wins" where it matters — against its neighbours — and spreads the names
+   * across the view.
+   */
+  // Patches the size of a name and its gap: about one name per box the collision pass would
+  // have allowed anyway, but chosen by headcount rather than by who was tested first.
+  const typical = clusterNameSize("A cluster name", withCount, zoom);
+  const cellW = typical.width * spacing.x;
+  const cellH = typical.height * spacing.y * 2;
+  let eligible: Set<string> | null = null;
+  if (tier.perPatch) {
+    const best = new Map<string, { id: string; count: number }>();
+    for (const n of labels) {
+      const count = (n.data as ClusterLabelData).count ?? 0;
+      const key = `${Math.floor(n.position.x / cellW)},${Math.floor(n.position.y / cellH)}`;
+      const held = best.get(key);
+      if (!held || count > held.count) best.set(key, { id: n.id, count });
+    }
+    eligible = new Set([...best.values()].map((b) => b.id));
+  }
   const candidates = labels
     .filter(
       (n) =>
