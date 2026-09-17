@@ -14,7 +14,7 @@ import "./smoke/_env";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import {
   billingEvents,
@@ -274,7 +274,34 @@ async function main() {
   console.log("\naggregates");
 
   const db = await getDb();
-  const now = new Date();
+
+  /**
+   * The fixture clock, nudged clear of the database's midnight.
+   *
+   * Every row below is `now` minus 0-40 minutes, and `date_trunc('day', created_at)` buckets
+   * in the DATABASE SESSION's timezone — not UTC, and not Node's. So a run inside the first
+   * three quarters of an hour of that day puts one visitor's two sessions on two different
+   * days, and every visitor-DAY count reads one too many.
+   *
+   * This is not hypothetical: CI hit it at 00:04 UTC, and the fix at the time moved the two
+   * rows that had been noticed rather than the clock they all hang off. It came back on a
+   * machine whose PGlite session runs at UTC-5, where the window is 05:00-05:45 UTC.
+   *
+   * Moving the whole fixture forward past the boundary keeps every row on one day while
+   * staying within an hour of real time — which the 30-day retention edges further down
+   * still depend on. Nothing filters on an upper time bound, so a fixture slightly in the
+   * future is not observable.
+   */
+  const FIXTURE_SPAN_MS = 45 * 60_000;
+  const dayStart = rowsOf<{ day_start: Date }>(
+    await db.execute(sql`SELECT date_trunc('day', now()) AS day_start`)
+  )[0]?.day_start;
+  const realNow = new Date();
+  const sinceDayStart = dayStart ? realNow.getTime() - new Date(dayStart).getTime() : Infinity;
+  const now =
+    sinceDayStart < FIXTURE_SPAN_MS
+      ? new Date(new Date(dayStart!).getTime() + FIXTURE_SPAN_MS)
+      : realNow;
   const ago = (mins: number) => new Date(now.getTime() - mins * 60_000);
 
   // `scripts/run-smoke.ts` gives the WHOLE SUITE one shared PGlite directory, so this
@@ -463,10 +490,11 @@ async function main() {
     `got ${raced?.dwellMs}`
   );
 
-  // Back onto the fixture's clock. `recordPageView` stamps the database's `now()`, and every
-  // other visitor-A row is `ago(…)` minutes old — so a run in the first quarter hour after
-  // UTC midnight put visitor A's /pricing views on two different days, and the funnel below
-  // (which counts visitor-DAYS) read 2 where it means 1. CI hit it at 00:04 UTC.
+  // Back onto the fixture's clock. `recordPageView` stamps the database's real `now()`,
+  // which is not the fixture's `now` — so without this the rows it wrote would sit apart
+  // from every other visitor-A row and, near the database's midnight, on a different day.
+  // The clock itself is nudged clear of that boundary where it is defined above; this is
+  // the separate matter of rows the library timestamped rather than the test.
   await db
     .update(pageViews)
     .set({ createdAt: ago(10) })
