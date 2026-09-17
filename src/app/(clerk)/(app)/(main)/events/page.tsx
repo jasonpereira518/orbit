@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { EventsHeader } from "@/components/events/events-header";
 import { EventCard } from "@/components/events/event-card";
 import { AddEventDialog } from "@/components/events/add-event-dialog";
@@ -112,7 +113,12 @@ async function EventsList() {
   );
 }
 
-export default function EventsPage() {
+export default async function EventsPage() {
+  // See `pageVisibilityGate`'s doc comment: the layout-level check does not catch a click
+  // straight from a sibling route, so this page re-checks itself.
+  const gate = await pageVisibilityGate("page.events");
+  if (gate) return gate;
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-2">

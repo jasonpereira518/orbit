@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { listCampaigns } from "@/actions/outreach";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
 import { buttonVariants } from "@/components/ui/button";
@@ -10,6 +11,13 @@ import { formatReplyRate } from "@/lib/outreach-metrics";
 import { cn } from "@/lib/utils";
 
 export default async function OutreachPage() {
+  // Before the paywall on purpose: coming-soon is a stronger fact than "buy a plan to
+  // unlock this" — nobody can unlock a page that is not out yet. See `pageVisibilityGate`'s
+  // doc comment for why the layout-level check alone does not catch a click straight from a
+  // sibling route.
+  const gate = await pageVisibilityGate("page.outreach");
+  if (gate) return gate;
+
   const { canUseOutreach } = await getEntitlements(await requireUserId());
 
   if (!canUseOutreach) {

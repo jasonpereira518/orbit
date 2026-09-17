@@ -20,6 +20,7 @@ import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
 import { sendSlackDM } from "@/lib/slack-dm";
 import {
+  PREVIEW_UNRELEASED_COOKIE,
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
@@ -340,6 +341,47 @@ export async function setViewAsUserAction(input: {
   if (input.on) {
     redirect("/dashboard");
   }
+  return { ok: true };
+}
+
+/**
+ * Toggle whether the calling admin sees real pages behind a coming-soon screen.
+ *
+ * The mirror image of `setViewAsUserAction`: that one takes access AWAY from an operator's
+ * own session, this one GRANTS it. A coming-soon page (`comingSoon` in `src/lib/surfaces.ts`)
+ * is closed to admins by default — this is the explicit, audited opt-in past that default,
+ * not a general admin exemption, so a forgotten toggle cannot ship an unfinished feature to
+ * the operator's own eyes only by accident.
+ *
+ * No redirect on entry (unlike `setViewAsUserAction`): there is nowhere it needs to send the
+ * caller, since turning this on does not change what the caller could already reach, only
+ * what an unreleased page shows them once they are there.
+ */
+export async function setPreviewUnreleasedAction(input: {
+  on: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const store = await cookies();
+
+  if (input.on) {
+    store.set(PREVIEW_UNRELEASED_COOKIE, "1", {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+    });
+  } else {
+    store.delete(PREVIEW_UNRELEASED_COOKIE);
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: input.on
+      ? "product.preview_unreleased.enter"
+      : "product.preview_unreleased.exit",
+  });
+
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 

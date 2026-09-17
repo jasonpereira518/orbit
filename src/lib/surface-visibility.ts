@@ -5,7 +5,12 @@ import { getDb } from "@/db";
 import { appSurfaceFlags } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-operations";
-import { getSurface, isAlwaysVisible } from "@/lib/surfaces";
+import {
+  COMING_SOON_COMPANIONS,
+  COMING_SOON_KEYS,
+  getSurface,
+  isAlwaysVisible,
+} from "@/lib/surfaces";
 
 /**
  * The server half of surface visibility: which surfaces are hidden, and for whom.
@@ -29,6 +34,18 @@ import { getSurface, isAlwaysVisible } from "@/lib/surfaces";
  * from ever rendering for someone who could not use it.
  */
 export const VIEW_AS_USER_COOKIE = "orbit_view_as_user";
+
+/**
+ * Set on an operator's own browser by `setPreviewUnreleasedAction`.
+ *
+ * Coming-soon pages default to closed for admins too — an operator building `/events` sees
+ * the same dry-dock screen as everyone else unless they turn this on. That is the opposite
+ * direction from `VIEW_AS_USER_COOKIE` (which starts an admin exempt and asks them to opt
+ * INTO what a user sees): a released feature defaults open for an operator and a toggle can
+ * narrow it, but an unreleased one must default closed or shipping the flag *is* shipping
+ * the feature to whichever operator forgets to flip it back.
+ */
+export const PREVIEW_UNRELEASED_COOKIE = "orbit_preview_unreleased";
 
 export class SurfaceHiddenError extends Error {
   readonly surfaceKey: string;
@@ -80,6 +97,17 @@ export const isViewingAsUser = cache(async (userId: string): Promise<boolean> =>
   }
 });
 
+/** True when this request is an operator deliberately reaching past a coming-soon page. */
+export const isPreviewingUnreleased = cache(async (userId: string): Promise<boolean> => {
+  if (!isAdminUser(userId)) return false;
+  try {
+    const store = await cookies();
+    return store.get(PREVIEW_UNRELEASED_COOKIE)?.value === "1";
+  } catch {
+    return false;
+  }
+});
+
 export type SurfaceVisibility = {
   /** Keys hidden from THIS viewer. Empty for an exempt admin. */
   hidden: Set<string>;
@@ -88,7 +116,12 @@ export type SurfaceVisibility = {
   /** True when the viewer is an admin currently exempt from hiding. */
   exempt: boolean;
   viewingAsUser: boolean;
+  /** Page keys THIS viewer gets the coming-soon screen for. Non-empty by default even for an admin — see `previewingUnreleased`. */
+  comingSoon: Set<string>;
+  /** True when an admin has opted into seeing real pages behind `comingSoon`. Always false for a non-admin. */
+  previewingUnreleased: boolean;
 };
+
 
 /**
  * THE admin exemption, in one place. Every layer calls this and nothing else decides it.
@@ -105,11 +138,27 @@ export async function resolveSurfaceVisibility(
   const admin = isAdminUser(userId);
   const viewingAsUser = admin && (await isViewingAsUser(userId));
   const exempt = admin && !viewingAsUser;
+  const hidden = exempt ? new Set<string>() : new Set(hiddenForUsers);
+  // Coming-soon is its OWN toggle, deliberately not tied to `exempt`: an operator is
+  // exempt from hiding by default (so a released-but-hidden page is never a surprise 404
+  // while they work on it), but an unreleased page must default CLOSED for everyone,
+  // operators included, or merely being an admin ships the feature early. Reaching past it
+  // takes the separate, explicit `previewingUnreleased` opt-in.
+  const previewingUnreleased = admin && (await isPreviewingUnreleased(userId));
+  const comingSoon = new Set<string>();
+  if (!previewingUnreleased) {
+    for (const key of COMING_SOON_KEYS) {
+      comingSoon.add(key);
+      for (const companion of COMING_SOON_COMPANIONS[key] ?? []) hidden.add(companion);
+    }
+  }
   return {
-    hidden: exempt ? new Set<string>() : hiddenForUsers,
+    hidden,
     hiddenForUsers,
     exempt,
     viewingAsUser,
+    comingSoon,
+    previewingUnreleased,
   };
 }
 

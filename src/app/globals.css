@@ -1349,6 +1349,60 @@
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
 }
 
+/* ── Coming soon (`components/coming-soon`) ──
+ * Ambient loops for the dry-dock scene. Every loop ends on the frame it starts on, so the
+ * global reduced-motion clamp at the bottom of this file leaves a composed still rather
+ * than a crane frozen mid-swing. `view-box` + a user-unit origin, not `fill-box`: the ring
+ * groups carry a moon that sticks out of the ring's box, and a fill-box centre would sit
+ * off the planet by that much and make the orbit visibly precess. */
+@keyframes coming-soon-sway {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(5deg);
+  }
+  75% {
+    transform: rotate(-5deg);
+  }
+}
+@keyframes coming-soon-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes coming-soon-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+.coming-soon-ring,
+.coming-soon-ring-reverse {
+  animation: interest-orbit 48s linear infinite;
+  transform-box: view-box;
+  transform-origin: 160px 160px;
+}
+.coming-soon-ring-reverse {
+  animation-duration: 32s;
+  animation-direction: reverse;
+}
+.coming-soon-sway {
+  animation: coming-soon-sway 6s ease-in-out infinite;
+  transform-box: view-box;
+  transform-origin: 118px 34px;
+}
+.coming-soon-blink {
+  animation: coming-soon-blink 1.6s ease-in-out infinite;
+}
+.coming-soon-marquee {
+  animation: coming-soon-marquee 28s linear infinite;
+}
+
 /* ── Interest list (/interest) ──
  * Two ambient loops. Linear, not the house curve: these are orbits, and an
  * orbit that eases would read as a wobble. The global reduced-motion clamp at
