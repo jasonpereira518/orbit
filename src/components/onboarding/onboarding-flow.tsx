@@ -1,418 +1,334 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronLeft, ChevronRight, Pause, Play, Sparkles } from "lucide-react";
-import { completeOnboarding, saveOnboardingStep, skipOnboarding } from "@/actions/onboarding";
-import { markWizardOffered } from "@/actions/onboarding-wizard";
-import { TourSidebar } from "@/components/onboarding/tour-sidebar";
-import { TourCursor } from "@/components/onboarding/tour-cursor";
-import {
-  TOUR_INTERVAL_MS,
-  TOUR_STEPS,
-  type TourNavKey,
-} from "@/components/onboarding/tour-config";
-import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import { WelcomePreview } from "@/components/onboarding/previews/welcome-preview";
-import { ContactsPreview } from "@/components/onboarding/previews/contacts-preview";
-import { CapturePreview } from "@/components/onboarding/previews/capture-preview";
-import { ImportsPreview } from "@/components/onboarding/previews/imports-preview";
-import { RemindersPreview } from "@/components/onboarding/previews/reminders-preview";
-import { ChatPreview } from "@/components/onboarding/previews/chat-preview";
-import { GraphPreview } from "@/components/onboarding/previews/graph-preview";
-import { DashboardPreview } from "@/components/onboarding/previews/dashboard-preview";
-import { RecruitersPreview } from "@/components/onboarding/previews/recruiters-preview";
-import { OutreachPreview } from "@/components/onboarding/previews/outreach-preview";
+import { completeOnboarding, saveOnboardingStep } from "@/actions/onboarding";
+import { OrbitLogo } from "@/components/orbit-logo";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { OnboardingProgress } from "@/components/onboarding/onboarding-progress";
+import {
+  BackButton,
+  Stagger,
+  StaggerItem,
+  StepHeading,
+} from "@/components/onboarding/onboarding-ui";
+import { WelcomeStep } from "@/components/onboarding/steps/welcome-step";
+import { LinkedInStep } from "@/components/onboarding/steps/linkedin-step";
+import { HighlightsStep, type PlanFlags } from "@/components/onboarding/steps/highlights-step";
+import { PeopleStep } from "@/components/onboarding/steps/people-step";
+import { DoneStep, type SetupResult } from "@/components/onboarding/steps/done-step";
+import { WizardAiKey } from "@/components/onboarding/wizard/wizard-ai-key";
+import { WizardAddManual } from "@/components/onboarding/wizard/wizard-add-manual";
+import { WizardCapture } from "@/components/onboarding/wizard/wizard-capture";
+import { WizardImport } from "@/components/onboarding/wizard/wizard-import";
+import { WizardTriage } from "@/components/onboarding/wizard/wizard-triage";
+import { DUR, EASE_HOUSE } from "@/lib/motion";
+import {
+  ONBOARDING_STEPS,
+  resumeStep,
+  stageOf,
+  type OnboardingStep,
+} from "@/lib/onboarding-steps";
 
-const PREVIEWS: Record<TourNavKey, typeof WelcomePreview> = {
-  welcome: WelcomePreview,
-  contacts: ContactsPreview,
-  capture: CapturePreview,
-  imports: ImportsPreview,
-  reminders: RemindersPreview,
-  chat: ChatPreview,
-  graph: GraphPreview,
-  dashboard: DashboardPreview,
-  recruiters: RecruitersPreview,
-  outreach: OutreachPreview,
+export type OnboardingFlowProps = {
+  initialStepId: string | null;
+  hasApiKey: boolean;
+  linkedinRequested: boolean;
+  /** Surface keys hidden from this viewer; their highlight chapters are skipped. */
+  hidden: string[];
+  planFlags: PlanFlags;
 };
 
-const LAST_INDEX = TOUR_STEPS.length - 1;
-
-function indexForStep(stepId: string | null | undefined) {
-  if (!stepId) return 0;
-  const idx = TOUR_STEPS.findIndex((s) => s.id === stepId);
-  return idx >= 0 ? idx : 0;
-}
-
+/**
+ * The first run, as one flow: welcome → LinkedIn export → what Orbit does → add people →
+ * done. It replaced a 10-step auto-advancing tour and a separate setup wizard that most
+ * people never reached.
+ *
+ * Steps slide in the direction of travel with `mode="popLayout"`, so the outgoing step
+ * leaves while the next arrives rather than after it (the old `mode="wait"` spent ~0.7s of
+ * dead air per step). The stage is the full viewport, not a card that resizes between
+ * steps, so nothing reflows mid-transition.
+ */
 export function OnboardingFlow({
-  initialStepId = null,
-}: {
-  initialStepId?: string | null;
-}) {
+  initialStepId,
+  hasApiKey,
+  linkedinRequested,
+  hidden,
+  planFlags,
+}: OnboardingFlowProps) {
   const router = useRouter();
-  const reducedMotion = usePrefersReducedMotion();
-  const previewRef = useRef<HTMLDivElement>(null);
-  const [stepIndex, setStepIndex] = useState(() => indexForStep(initialStepId));
-  const [playing, setPlaying] = useState(() => {
-    const idx = indexForStep(initialStepId);
-    return idx !== LAST_INDEX;
-  });
-  const [progress, setProgress] = useState(0);
   const [pending, start] = useTransition();
-  const [offerFor, setOfferFor] = useState<"skip" | null>(null);
+  const [[step, direction], setPosition] = useState<[OnboardingStep, 1 | -1]>(() => [
+    resumeStep(initialStepId),
+    1,
+  ]);
+  const [apiKey, setApiKey] = useState(hasApiKey);
+  const [requested, setRequested] = useState(linkedinRequested);
+  const [results, setResults] = useState<SetupResult[]>([]);
+  const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
+  const stageRef = useRef<HTMLDivElement>(null);
 
-  const finishSkip = useCallback(() => {
-    start(async () => {
-      const res = await skipOnboarding();
-      router.replace(res.redirectTo);
-      router.refresh();
-    });
-  }, [router]);
-
-  const offerWizard = useCallback(() => {
-    setOfferFor("skip");
-    void markWizardOffered();
+  const goTo = useCallback((next: OnboardingStep) => {
+    setPosition(([current]) => [
+      next,
+      ONBOARDING_STEPS.indexOf(next) >= ONBOARDING_STEPS.indexOf(current) ? 1 : -1,
+    ]);
+    if (window.scrollY > 0) window.scrollTo({ top: 0 });
+    // Fire-and-forget: a failed save only costs resuming at the previous step after a
+    // refresh, which is not worth blocking a transition the user already made.
+    void saveOnboardingStep(next)
+      .then((res) => {
+        if (!res.ok) console.error(`Onboarding step "${next}" was rejected by the server.`);
+      })
+      .catch((err) => console.error(`Failed to persist onboarding step "${next}"`, err));
   }, []);
 
-  const startWizard = useCallback(() => {
-    start(async () => {
-      await completeOnboarding("/onboarding/wizard");
-      router.push("/onboarding/wizard");
-      router.refresh();
-    });
-  }, [router]);
-
-  const declineWizard = useCallback(() => {
-    finishSkip();
-  }, [finishSkip]);
-
-  const step = TOUR_STEPS[stepIndex]!;
-  const isFirst = stepIndex === 0;
-  const isLast = stepIndex === LAST_INDEX;
-  const autoAdvance = playing && !reducedMotion;
-  const hotspots = step.hotspots ?? [];
-  const showCursor = !reducedMotion && !offerFor && hotspots.length > 0;
-
-  const goTo = useCallback((index: number) => {
-    const next = Math.max(0, Math.min(LAST_INDEX, index));
-    setStepIndex(next);
-    setProgress(0);
-    if (next === LAST_INDEX) {
-      setPlaying(false);
+  // The control the user pressed has just been unmounted with the old step, which drops
+  // focus to <body>. Hand it to the new step so keyboard and screen-reader users land at
+  // its start instead of the top of the document.
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
     }
-    const nextStep = TOUR_STEPS[next];
-    if (nextStep) {
-      void saveOnboardingStep(nextStep.id);
+    const active = document.activeElement;
+    if (!active || active === document.body || !active.isConnected) {
+      stageRef.current?.focus({ preventScroll: true });
     }
-  }, []);
+  }, [step]);
 
-  const goNext = useCallback(() => {
-    if (stepIndex < LAST_INDEX) goTo(stepIndex + 1);
-  }, [goTo, stepIndex]);
+  const addResult = useCallback((r: SetupResult) => setResults((all) => [...all, r]), []);
 
-  const goBack = useCallback(() => {
-    if (stepIndex > 0) {
-      setPlaying(true);
-      goTo(stepIndex - 1);
-    }
-  }, [goTo, stepIndex]);
-
-  // Backgrounded tabs throttle requestAnimationFrame but not the wall clock, so
-  // resuming from a stale `startedAt` would fast-forward progress by however long the
-  // tab was hidden. Tracking visibility separately lets the effect below bail out
-  // while hidden and re-anchor `startedAt` to `progress` once the tab is visible again.
-  const [tabHidden, setTabHidden] = useState(
-    () => typeof document !== "undefined" && document.hidden
+  const leave = useCallback(
+    (finished: boolean) => {
+      start(async () => {
+        const res = await completeOnboarding({ finished });
+        router.replace(res.redirectTo);
+        router.refresh();
+      });
+    },
+    [router],
   );
-  useEffect(() => {
-    const onVisibility = () => setTabHidden(document.hidden);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, []);
 
-  // Auto-advance with freezable progress
-  useEffect(() => {
-    if (!autoAdvance || tabHidden) return;
-
-    const startedAt = performance.now() - progress * TOUR_INTERVAL_MS;
-    let raf = 0;
-
-    const tick = (now: number) => {
-      const next = Math.min(1, (now - startedAt) / TOUR_INTERVAL_MS);
-      setProgress(next);
-      if (next >= 1) {
-        goNext();
-        return;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- resume from frozen `progress` only when autoAdvance/tabHidden flips
-  }, [autoAdvance, tabHidden, goNext, stepIndex]);
-
-  // Keyboard: ←/→, Space = pause/play
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-
-      if (e.key === "ArrowRight") {
-        e.preventDefault();
-        goNext();
-      } else if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        goBack();
-      } else if (e.key === " " || e.code === "Space") {
-        e.preventDefault();
-        setPlaying((p) => !p);
-      }
-    };
-
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [goBack, goNext]);
-
-  const Preview = PREVIEWS[step.id];
+  const stage = stageOf(step);
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col justify-center gap-6 py-6">
-      <div className="flex gap-4">
-        <TourSidebar activeKey={step.navKey} />
+    <div className="relative flex min-h-dvh flex-col overflow-x-clip">
+      {/* A faint orbit behind everything: static, so it costs nothing per frame. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute top-[-30vmax] left-1/2 size-[80vmax] -translate-x-1/2 rounded-full border border-primary/[0.06] bg-[radial-gradient(circle,color-mix(in_oklab,var(--primary)_5%,transparent)_0%,transparent_60%)]"
+      />
 
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
-          <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
-            <div className="border-b border-border/60 px-5 py-4 sm:px-6">
-              <p
-                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                aria-live="polite"
-              >
-                {offerFor ? "One more thing" : `Step ${stepIndex + 1} of ${LAST_INDEX + 1}`}
-              </p>
-              <h1
-                className="mt-1 font-[family-name:var(--font-display)] text-2xl tracking-tight text-ink sm:text-3xl"
-                aria-live="polite"
-              >
-                {offerFor ? "Want a 2-minute guided setup?" : step.title}
-              </h1>
-              <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
-                {offerFor
-                  ? "We'll walk you through adding your first people step by step."
-                  : step.body}
-              </p>
-            </div>
-
-            <div
-              ref={previewRef}
-              className="relative h-[260px] overflow-y-auto p-4 sm:p-6"
+      <header className="relative z-10 mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
+        <OrbitLogo size="sm" className="justify-self-start" />
+        <OnboardingProgress stage={stage} />
+        <div className="justify-self-end">
+          {step !== "done" && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              disabled={pending}
+              onClick={() => leave(false)}
             >
-              <AnimatePresence mode="wait">
-                {offerFor ? (
-                  <motion.div
-                    key="offer"
-                    initial={reducedMotion ? false : { opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={reducedMotion ? undefined : { opacity: 0, y: -8 }}
-                    transition={{ duration: reducedMotion ? 0 : 0.3 }}
-                  >
-                    <OfferStep
-                      pending={pending}
-                      onStartWizard={startWizard}
-                      onDecline={declineWizard}
-                    />
-                  </motion.div>
-                ) : Preview ? (
-                  <motion.div
-                    key={step.id}
-                    initial={reducedMotion ? false : { opacity: 0, y: 14 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={reducedMotion ? undefined : { opacity: 0, y: -10 }}
-                    transition={{ duration: reducedMotion ? 0 : 0.35 }}
-                  >
-                    <Preview reducedMotion={reducedMotion} />
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
-
-              {showCursor && (
-                <TourCursor
-                  containerRef={previewRef}
-                  hotspots={hotspots}
-                  progress={progress}
-                  playing={playing}
-                  reducedMotion={reducedMotion}
-                />
-              )}
-            </div>
-
-            <div className="h-1 w-full bg-muted">
-              <div
-                className="h-full bg-primary transition-none"
-                style={{
-                  width: `${(reducedMotion ? 0 : progress) * 100}%`,
-                }}
-              />
-            </div>
-          </div>
-
-          {!offerFor && (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5">
-              {TOUR_STEPS.map((s, i) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  aria-label={`Go to ${s.title}`}
-                  aria-current={i === stepIndex ? "step" : undefined}
-                  onClick={() => {
-                    if (i === LAST_INDEX) setPlaying(false);
-                    else setPlaying(true);
-                    goTo(i);
-                  }}
-                  className={cn(
-                    "h-1.5 rounded-full transition-[width,background-color]",
-                    i === stepIndex
-                      ? "w-6 bg-primary"
-                      : "w-1.5 bg-muted-foreground/35 hover:bg-muted-foreground/60"
-                  )}
-                />
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={pending}
-                className="text-muted-foreground"
-                onClick={finishSkip}
-              >
-                Skip tour
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isFirst || pending}
-                onClick={goBack}
-                aria-label="Previous step"
-              >
-                <ChevronLeft className="h-4 w-4" />
-                Back
-              </Button>
-
-              {!reducedMotion && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={pending}
-                  onClick={() => setPlaying((p) => !p)}
-                  aria-label={playing ? "Pause tour" : "Play tour"}
-                >
-                  {playing ? (
-                    <Pause className="h-4 w-4" />
-                  ) : (
-                    <Play className="h-4 w-4" />
-                  )}
-                  {playing ? "Pause" : "Play"}
-                </Button>
-              )}
-
-              {!isLast ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                  disabled={pending}
-                  onClick={goNext}
-                  aria-label="Next step"
-                >
-                  Next
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                  disabled={pending}
-                  onClick={offerWizard}
-                >
-                  Finish
-                </Button>
-              )}
-            </div>
-          </div>
+              Skip setup
+            </Button>
           )}
-
-          <p className="text-center text-[11px] text-muted-foreground sm:text-left">
-            {offerFor
-              ? "You can also run guided setup later from Settings."
-              : reducedMotion
-                ? "Use Next / Back to move through the tour."
-                : "Auto-advances — pause anytime, or use arrow keys and space."}
-          </p>
         </div>
-      </div>
+      </header>
+
+      <main className="relative mx-auto w-full max-w-6xl flex-1 px-4 pt-8 pb-16 sm:px-8 sm:pt-12">
+        <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+          <motion.div
+            key={step}
+            ref={stageRef}
+            tabIndex={-1}
+            custom={direction}
+            variants={STEP_MOTION}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            className="w-full outline-none"
+          >
+            {step === "welcome" && (
+              <Centered>
+                <WelcomeStep onStart={() => goTo("linkedin")} />
+              </Centered>
+            )}
+
+            {step === "linkedin" && (
+              <LinkedInStep
+                alreadyRequested={requested}
+                onRequested={() => setRequested(true)}
+                onContinue={() => goTo("highlights")}
+                onHaveExport={() => goTo("import")}
+                onBack={() => goTo("welcome")}
+              />
+            )}
+
+            {step === "highlights" && (
+              <HighlightsStep
+                hidden={hiddenSet}
+                planFlags={planFlags}
+                onBack={() => goTo("linkedin")}
+                onDone={() => goTo("add-people")}
+              />
+            )}
+
+            {step === "add-people" && (
+              <PeopleStep
+                onBack={() => goTo("highlights")}
+                onLater={() => goTo("done")}
+                // Capture needs a working AI key; without one it would open on an error, so
+                // detour through the key step first. Import and manual need no key.
+                onChoose={(path) => goTo(path === "capture" && !apiKey ? "ai-key" : path)}
+              />
+            )}
+
+            {step === "ai-key" && (
+              <BranchStep
+                eyebrow="Before you capture"
+                title="Connect your AI key"
+                onBack={() => goTo("add-people")}
+              >
+                <WizardAiKey
+                  onSaved={() => {
+                    setApiKey(true);
+                    goTo("capture");
+                  }}
+                  onSkip={() => goTo("capture")}
+                />
+              </BranchStep>
+            )}
+
+            {step === "capture" && (
+              <BranchStep
+                eyebrow="Your people"
+                title="Capture from notes"
+                description="Paste anything: meeting notes, a list of names, a brain dump after an event."
+                onBack={() => goTo("add-people")}
+              >
+                <WizardCapture
+                  hasApiKey={apiKey}
+                  onSaved={(count) => {
+                    addResult({ kind: "capture", count });
+                    goTo("triage");
+                  }}
+                />
+              </BranchStep>
+            )}
+
+            {step === "manual" && (
+              <BranchStep
+                eyebrow="Your people"
+                title="Add someone by hand"
+                onBack={() => goTo("add-people")}
+              >
+                <WizardAddManual
+                  onCreated={() => {
+                    addResult({ kind: "manual" });
+                    goTo("triage");
+                  }}
+                />
+              </BranchStep>
+            )}
+
+            {step === "import" && (
+              <BranchStep
+                eyebrow="Your people"
+                title="Upload your LinkedIn export"
+                onBack={() => goTo("add-people")}
+              >
+                <WizardImport
+                  onContinue={(started) => {
+                    if (!started) return goTo("add-people");
+                    addResult({ kind: "import" });
+                    goTo("triage");
+                  }}
+                />
+              </BranchStep>
+            )}
+
+            {step === "triage" && (
+              <BranchStep
+                eyebrow="Almost done"
+                title="How close are you?"
+                description="A quick rating tells Orbit who matters most, so your follow-ups start in the right place."
+              >
+                <WizardTriage onDone={() => goTo("done")} />
+              </BranchStep>
+            )}
+
+            {step === "done" && (
+              <Centered>
+                <DoneStep
+                  results={results}
+                  linkedinRequested={requested}
+                  pending={pending}
+                  onFinish={() => leave(true)}
+                  onAddMore={() => goTo("add-people")}
+                />
+              </Centered>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </main>
     </div>
   );
 }
 
-function OfferStep({
-  pending,
-  onStartWizard,
-  onDecline,
+/**
+ * Direction-aware: forward enters from the right and leaves to the left, Back reverses it.
+ * `x` rather than a transform string so AppShell's `MotionConfig reducedMotion="user"`
+ * turns it into a plain crossfade. Leaving is quicker than arriving, so the next step is
+ * already readable while the last one clears.
+ */
+const STEP_MOTION = {
+  enter: (dir: 1 | -1) => ({ opacity: 0, x: 40 * dir }),
+  center: { opacity: 1, x: 0, transition: { duration: DUR.slow, ease: EASE_HOUSE } },
+  exit: (dir: 1 | -1) => ({
+    opacity: 0,
+    x: -40 * dir,
+    transition: { duration: DUR.base, ease: EASE_HOUSE },
+  }),
+};
+
+function Centered({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-[calc(100dvh-12rem)] items-center justify-center">{children}</div>
+  );
+}
+
+function BranchStep({
+  eyebrow,
+  title,
+  description,
+  onBack,
+  children,
 }: {
-  pending: boolean;
-  onStartWizard: () => void;
-  onDecline: () => void;
+  eyebrow: string;
+  title: string;
+  description?: string;
+  onBack?: () => void;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-4">
-      <div className="flex items-start gap-4 rounded-2xl border border-primary/25 bg-accent/60 p-5">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-primary">
-          <Sparkles className="h-5 w-5" />
-        </span>
-        <span>
-          <span className="block font-medium text-ink">
-            Guided setup walks you through it
-          </span>
-          <span className="mt-1 block text-sm text-muted-foreground">
-            Instead of figuring it out on your own, we&apos;ll take you
-            step by step through adding your first people.
-          </span>
-        </span>
+    <Stagger className="mx-auto max-w-2xl space-y-6">
+      <div className="space-y-4">
+        {onBack && (
+          <StaggerItem>
+            <BackButton onClick={onBack} />
+          </StaggerItem>
+        )}
+        <StepHeading eyebrow={eyebrow} title={title}>
+          {description}
+        </StepHeading>
       </div>
-
-      <div className="flex flex-wrap justify-start gap-2 pt-1">
-        <Button
-          type="button"
-          size="sm"
-          disabled={pending}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-          onClick={onStartWizard}
-        >
-          Start guided setup
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={pending}
-          className="text-muted-foreground"
-          onClick={onDecline}
-        >
-          I&apos;ll do it myself
-        </Button>
-      </div>
-    </div>
+      <StaggerItem>{children}</StaggerItem>
+    </Stagger>
   );
 }

@@ -4,6 +4,7 @@ import { fetchDashboard } from "@/actions/reminders";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
+  LinkedInExportNudgeSection,
   OutreachPerformanceSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
@@ -43,6 +44,11 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-8">
       <DashboardHeader />
+
+      {/* Streams in on its own and renders nothing unless a LinkedIn export is outstanding. */}
+      <Suspense fallback={null}>
+        <LinkedInExportNudgeSection />
+      </Suspense>
 
       {show("dashboard.stats") && (
         <Suspense fallback={<DashboardStatRowSkeleton />}>

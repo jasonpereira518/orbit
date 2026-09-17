@@ -18,6 +18,7 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
+import { LinkedInReminderWatcher } from "@/components/linkedin-reminder/linkedin-reminder-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { CaptureJobWatcher } from "@/components/capture/capture-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
@@ -51,6 +52,7 @@ export function AppShell({
   hidden,
   hiddenForUsers,
   viewingAsUser,
+  linkedinReminder,
 }: {
   children: React.ReactNode;
   clerkOn: boolean;
@@ -62,6 +64,8 @@ export function AppShell({
   /** Surface keys hidden from ordinary users, for the operator's "Hidden" tags. */
   hiddenForUsers: string[];
   viewingAsUser: boolean;
+  /** The full-screen LinkedIn export reminder — see `LinkedInReminderWatcher`. */
+  linkedinReminder: { due: boolean; requested: boolean; email: string | null };
 }) {
   const pathname = usePathname();
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
@@ -135,6 +139,7 @@ export function AppShell({
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />
+          <LinkedInReminderWatcher {...linkedinReminder} />
           <ImportJobWatcher />
           <CaptureJobWatcher />
           <GlobalJobProgressBar />

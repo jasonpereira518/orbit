@@ -1,25 +1,33 @@
 "use client";
 
+import { useState } from "react";
 import { LinkedInConnectionsImport } from "@/components/imports/linkedin-connections-import";
 import { LinkedInMessagesImport } from "@/components/imports/linkedin-messages-import";
-import { LINKEDIN_DATA_URL } from "@/lib/linkedin-export";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useImportJob } from "@/lib/import-job-runner";
 
-export function WizardImport({ onContinue }: { onContinue: () => void }) {
+/**
+ * The "upload your LinkedIn export" branch of onboarding.
+ *
+ * `onContinue(started)` reports whether a LinkedIn import actually began here. It used to
+ * record "Imported your LinkedIn connections" for anyone who pressed Continue, including
+ * people who uploaded nothing — the done step now only says so when a job ran.
+ */
+export function WizardImport({ onContinue }: { onContinue: (started: boolean) => void }) {
+  const job = useImportJob();
+  // Latches: the job snapshot clears when an import finishes, and a finished import still
+  // counts. Set during render (React's derived-state pattern) rather than in an effect.
+  const [started, setStarted] = useState(false);
+  if (!started && job && (job.kind === "connections" || job.kind === "messages")) {
+    setStarted(true);
+  }
+
   return (
     <div className="space-y-4">
-      <p className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
-        LinkedIn exports usually take about 24 hours.{" "}
-        <a
-          href={LINKEDIN_DATA_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium text-primary underline-offset-2 hover:underline"
-        >
-          Request your export now
-        </a>
-        , then come back and upload it here once LinkedIn emails you.
+      <p className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+        Upload the ZIP LinkedIn emailed you as it arrived. Orbit finds Connections.csv and
+        messages.csv inside it, so there&apos;s no need to unzip anything.
       </p>
       <LinkedInConnectionsImport />
 
@@ -36,12 +44,8 @@ export function WizardImport({ onContinue }: { onContinue: () => void }) {
       <LinkedInMessagesImport />
 
       <div className="flex justify-end border-t border-border/60 pt-4">
-        <Button
-          type="button"
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-          onClick={onContinue}
-        >
-          Continue
+        <Button type="button" size="lg" className="h-10 px-4" onClick={() => onContinue(started)}>
+          {started ? "Continue" : "Skip for now"}
         </Button>
       </div>
     </div>

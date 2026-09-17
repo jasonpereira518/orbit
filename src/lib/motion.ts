@@ -33,7 +33,7 @@ export const SPRING_PILL = {
   damping: 34,
 } as const;
 
-/** Soft spring for decorative glides (onboarding tour cursor). */
+/** Soft spring for decorative glides (voice capture, the boarding pass). */
 export const SPRING_SOFT = {
   type: "spring",
   stiffness: 170,

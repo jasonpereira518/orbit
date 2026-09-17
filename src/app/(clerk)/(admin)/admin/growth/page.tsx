@@ -323,7 +323,7 @@ export default async function AdminGrowthPage({
                 {parking.onboardingParking.length > 0 && (
                   <MiniBars
                     rows={parking.onboardingParking.map((x) => ({
-                      label: `tour \u00b7 ${x.step}`,
+                      label: `onboarding \u00b7 ${x.step}`,
                       count: x.count,
                     }))}
                   />
@@ -341,9 +341,9 @@ export default async function AdminGrowthPage({
               </>
             )}
             <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-              The tour auto-advances every 7 seconds, so its step records where the tab was
-              closed rather than what held attention. Wizard steps are validated on write,
-              so those reflect a real choice — the branch taken is the signal worth acting on.
+              Onboarding is one self-paced flow, so its step is where someone actually
+              stopped. Wizard rows only come from accounts that were mid-wizard before the
+              two were merged, and will drain away.
             </p>
           </AdminPanel>
 

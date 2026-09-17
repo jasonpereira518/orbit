@@ -1,0 +1,305 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, type PanInfo } from "motion/react";
+import { ArrowLeft, ArrowRight, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  BackButton,
+  ProTag,
+  Stagger,
+  StaggerItem,
+  StepHeading,
+} from "@/components/onboarding/onboarding-ui";
+import {
+  visibleChapters,
+  type HighlightChapter,
+  type PlanFlag,
+} from "@/components/onboarding/highlights/chapters";
+import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
+import { cn } from "@/lib/utils";
+
+export type PlanFlags = Record<PlanFlag, boolean>;
+
+const SWIPE_DISTANCE = 60;
+const SWIPE_VELOCITY = 400;
+
+/**
+ * "While LinkedIn works, here's Orbit." Self-paced on purpose: the old tour advanced every
+ * seven seconds, which re-rendered the whole tree each frame to drive its progress bar and
+ * took the choice of reading speed away from the reader.
+ *
+ * Chapter changes slide in the direction of travel. On a phone the preview is swipeable;
+ * everywhere, ← and → move between chapters.
+ */
+export function HighlightsStep({
+  hidden,
+  planFlags,
+  onBack,
+  onDone,
+}: {
+  hidden: ReadonlySet<string>;
+  planFlags: PlanFlags;
+  onBack: () => void;
+  onDone: () => void;
+}) {
+  const chapters = useMemo(() => visibleChapters(hidden), [hidden]);
+  const [[index, direction], setPage] = useState<[number, 1 | -1]>([0, 1]);
+  const last = chapters.length - 1;
+  const chapter = chapters[Math.min(index, last)];
+  // Swiping is for touch. With a mouse, a draggable card fights text selection and reads as
+  // broken; the buttons and arrow keys cover it. Read once — this renders client-only.
+  const [coarsePointer] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches,
+  );
+
+  const go = useCallback(
+    (next: number) => {
+      if (next < 0 || next > last) return;
+      setPage(([current]) => [next, next > current ? 1 : -1]);
+    },
+    [last],
+  );
+  const next = useCallback(() => (index >= last ? onDone() : go(index + 1)), [go, index, last, onDone]);
+  const prev = useCallback(() => go(index - 1), [go, index]);
+
+  // ← / → between chapters, unless someone is typing (the feedback widget lives on this page).
+  const nextRef = useRef(next);
+  const prevRef = useRef(prev);
+  useEffect(() => {
+    nextRef.current = next;
+    prevRef.current = prev;
+  }, [next, prev]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el?.closest("input, textarea, select, [contenteditable='true'], [role='dialog']")) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        nextRef.current();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        prevRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const onDragEnd = (_: unknown, info: PanInfo) => {
+    if (info.offset.x < -SWIPE_DISTANCE || info.velocity.x < -SWIPE_VELOCITY) next();
+    else if (info.offset.x > SWIPE_DISTANCE || info.velocity.x > SWIPE_VELOCITY) prev();
+  };
+
+  if (!chapter) {
+    // Every chapter hidden by an operator — nothing to show, so do not strand the user.
+    return (
+      <div className="mx-auto max-w-xl space-y-6">
+        <BackButton onClick={onBack} />
+        <Button type="button" onClick={onDone}>
+          Continue
+          <ArrowRight className="size-4" aria-hidden />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Stagger className="space-y-8">
+      <div className="space-y-4">
+        <StaggerItem>
+          <BackButton onClick={onBack} />
+        </StaggerItem>
+        <StepHeading eyebrow="While LinkedIn works" title="Here’s what Orbit does">
+          {chapters.length} things worth knowing before you start. Take them at your own pace.
+        </StepHeading>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-10">
+        <StaggerItem>
+          <ChapterRail chapters={chapters} index={index} planFlags={planFlags} onSelect={go} />
+        </StaggerItem>
+
+        <StaggerItem className="min-w-0">
+          <section
+            aria-roledescription="carousel"
+            aria-label="Orbit features"
+            className="relative overflow-hidden rounded-3xl border border-border/60 bg-card/60"
+          >
+            <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+              <motion.div
+                key={chapter.id}
+                custom={direction}
+                variants={SLIDE}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                drag={coarsePointer ? "x" : false}
+                dragConstraints={{ left: 0, right: 0 }}
+                dragElastic={0.18}
+                dragSnapToOrigin
+                onDragEnd={onDragEnd}
+                className="grid touch-pan-y gap-0 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]"
+                aria-roledescription="slide"
+                aria-label={`${index + 1} of ${chapters.length}: ${chapter.title}`}
+              >
+                <div className="h-[19rem] border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent p-4 sm:p-5 md:h-[22rem] md:border-r md:border-b-0">
+                  <chapter.Preview />
+                </div>
+                <ChapterCopy chapter={chapter} planFlags={planFlags} />
+              </motion.div>
+            </AnimatePresence>
+          </section>
+
+          <div className="mt-5 flex items-center justify-between gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              className="h-10"
+              disabled={index === 0}
+              onClick={prev}
+              aria-label="Previous feature"
+            >
+              <ArrowLeft className="size-4" aria-hidden />
+              <span className="hidden sm:inline">Previous</span>
+            </Button>
+            <p className="text-xs tabular-nums text-muted-foreground" aria-live="polite">
+              {index + 1} / {chapters.length}
+            </p>
+            <Button type="button" size="lg" className="h-10 px-4" onClick={next}>
+              {index >= last ? "Add your first people" : "Next"}
+              <ArrowRight className="size-4" aria-hidden />
+            </Button>
+          </div>
+          <p className="mt-3 text-center text-xs text-muted-foreground lg:text-right">
+            <button
+              type="button"
+              onClick={onDone}
+              className="underline-offset-4 hover:text-foreground hover:underline"
+            >
+              Skip ahead to adding people
+            </button>
+          </p>
+        </StaggerItem>
+      </div>
+    </Stagger>
+  );
+}
+
+/** Direction-aware slide. `x` (not a transform string) so reduced motion keeps only the fade. */
+const SLIDE = {
+  enter: (dir: 1 | -1) => ({ opacity: 0, x: 32 * dir }),
+  center: { opacity: 1, x: 0, transition: { duration: DUR.slow, ease: EASE_HOUSE } },
+  exit: (dir: 1 | -1) => ({
+    opacity: 0,
+    x: -32 * dir,
+    transition: { duration: DUR.base, ease: EASE_HOUSE },
+  }),
+};
+
+function ChapterRail({
+  chapters,
+  index,
+  planFlags,
+  onSelect,
+}: {
+  chapters: HighlightChapter[];
+  index: number;
+  planFlags: PlanFlags;
+  onSelect: (i: number) => void;
+}) {
+  const railRef = useRef<HTMLOListElement>(null);
+  // On a phone the rail is a horizontal strip; keep the current chapter in view as the
+  // user swipes. Scrolls the strip only — `scrollIntoView` would also nudge the page.
+  useEffect(() => {
+    const rail = railRef.current;
+    const item = rail?.children[index] as HTMLElement | undefined;
+    if (!rail || !item || rail.scrollWidth <= rail.clientWidth) return;
+    rail.scrollTo({ left: item.offsetLeft - 16, behavior: "smooth" });
+  }, [index]);
+
+  return (
+    <ol
+      ref={railRef}
+      className="-mx-4 flex snap-x gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0"
+      aria-label="Features"
+    >
+      {chapters.map((c, i) => {
+        const Icon = c.icon;
+        const active = i === index;
+        const seen = i < index;
+        const locked = c.entitlement && !planFlags[c.entitlement];
+        return (
+          <li key={c.id} className="shrink-0 snap-start">
+            <button
+              type="button"
+              onClick={() => onSelect(i)}
+              aria-current={active ? "step" : undefined}
+              className={cn(
+                "relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm transition-colors",
+                active ? "text-ink" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {active && (
+                <motion.span
+                  layoutId="onboarding-chapter-pill"
+                  transition={SPRING_PILL}
+                  aria-hidden
+                  className="absolute inset-0 rounded-xl border border-border/70 bg-card shadow-sm"
+                />
+              )}
+              <span
+                className={cn(
+                  "relative flex size-7 shrink-0 items-center justify-center rounded-lg transition-colors",
+                  active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+                )}
+              >
+                {seen ? <Check className="size-3.5" aria-hidden /> : <Icon className="size-3.5" aria-hidden />}
+              </span>
+              <span className="relative whitespace-nowrap font-medium">{c.label}</span>
+              {locked && <ProTag className="relative ml-auto" />}
+            </button>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function ChapterCopy({ chapter, planFlags }: { chapter: HighlightChapter; planFlags: PlanFlags }) {
+  const Icon = chapter.icon;
+  const chapterLocked = chapter.entitlement && !planFlags[chapter.entitlement];
+  return (
+    // The min-height keeps the card from resizing between chapters on a phone, where the
+    // copy stacks under the preview and differs in length chapter to chapter.
+    <Stagger className="flex min-h-[17rem] flex-col gap-4 p-5 sm:p-6 md:min-h-0">
+      <StaggerItem className="flex items-center gap-2">
+        <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-primary">
+          <Icon className="size-4.5" aria-hidden />
+        </span>
+        {chapterLocked && <ProTag />}
+      </StaggerItem>
+      <StaggerItem>
+        <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight text-ink text-balance">
+          {chapter.title}
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground text-pretty">{chapter.blurb}</p>
+      </StaggerItem>
+      <Stagger as="ul" className="space-y-2">
+        {chapter.bullets.map((b) => (
+          <StaggerItem as="li" key={b.label} className="flex items-start gap-2 text-sm text-foreground">
+            <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+            <span className="min-w-0">
+              {b.label}
+              {b.entitlement && !chapterLocked && !planFlags[b.entitlement] && (
+                <ProTag className="ml-1.5 align-[1px]" />
+              )}
+            </span>
+          </StaggerItem>
+        ))}
+      </Stagger>
+    </Stagger>
+  );
+}

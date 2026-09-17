@@ -180,10 +180,10 @@ export async function getArtifacts(): Promise<ArtifactRow[]> {
  * Where incomplete accounts are parked RIGHT NOW.
  *
  * Deliberately not a second copy of `buildFunnel` — the Overview owns the cumulative
- * funnel. This answers a different question, and comes with a caveat the UI must print:
- * the tour auto-advances on a 7-second timer, so `onboarding_step` records where the tab
- * was closed, not what the person engaged with. `wizard_step` is validated on write and
- * does reflect a real choice.
+ * funnel. This answers a different question. Onboarding is one self-paced flow (the tour and
+ * the setup wizard were merged), so `onboarding_step` is where a person actually stopped.
+ * Nothing writes `wizard_step` any more; its rows are accounts parked mid-wizard before the
+ * merge.
  */
 export async function getFunnelParking() {
   const db = await getDb();

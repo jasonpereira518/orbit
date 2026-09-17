@@ -1,21 +1,9 @@
 import { redirect } from "next/navigation";
-import { getSettings } from "@/actions/settings";
-import { getWizardStatus } from "@/actions/onboarding-wizard";
-import { SetupWizardLazy } from "@/components/onboarding/wizard/setup-wizard-lazy";
 
-export default async function OnboardingWizardPage() {
-  const [status, settings] = await Promise.all([
-    getWizardStatus(),
-    getSettings(),
-  ]);
-
-  // Gated only on wizard completion — independent of tour state, so it's
-  // reachable from Settings ("Run guided setup") even after the tour is done.
-  if (status.completed) {
-    redirect("/dashboard");
-  }
-
-  return (
-    <SetupWizardLazy initialStepId={status.step} hasApiKey={settings.hasApiKey} />
-  );
+/**
+ * The setup wizard was folded into the one onboarding flow. Kept as a redirect so an old
+ * bookmark, or a tab left open mid-wizard when this shipped, still lands somewhere real.
+ */
+export default function OnboardingWizardPage() {
+  redirect("/onboarding");
 }
