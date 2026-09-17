@@ -18,9 +18,12 @@ import { adminAuditLog, appSurfaceFlags } from "../src/db/schema";
 import {
   isSurfaceHiddenError,
   requireVisibleSurface,
+  resolveSurfaceVisibility,
   setSurfaceHidden,
 } from "../src/lib/surface-visibility";
 import {
+  COMING_SOON_COMPANIONS,
+  COMING_SOON_KEYS,
   FEEDBACK_SURFACE_KEY,
   SURFACES,
   getSurface,
@@ -205,6 +208,32 @@ async function main() {
         adminOk = false;
       }
       check("an operator is exempt from hiding", adminOk);
+
+      // Coming-soon pages ride the same exemption: the operator building the page keeps it,
+      // and everyone else loses the page AND the surfaces elsewhere that point into it.
+      const forAdmin = await resolveSurfaceVisibility(ADMIN);
+      check("an operator still reaches coming-soon pages", forAdmin.comingSoon.size === 0);
+      const forUser = await resolveSurfaceVisibility(USER);
+      check(
+        "an ordinary user gets the coming-soon screen for every marked page",
+        COMING_SOON_KEYS.size > 0 &&
+          [...COMING_SOON_KEYS].every((k) => forUser.comingSoon.has(k))
+      );
+      const companions = Object.values(COMING_SOON_COMPANIONS).flat();
+      check(
+        "a coming-soon page hides its companion surfaces from that user",
+        companions.every((k) => forUser.hidden.has(k)) &&
+          companions.every((k) => !forAdmin.hidden.has(k))
+      );
+      check(
+        "every coming-soon companion is a real surface hung off a coming-soon page",
+        companions.every((k) => getSurface(k) !== undefined) &&
+          Object.keys(COMING_SOON_COMPANIONS).every((k) => COMING_SOON_KEYS.has(k))
+      );
+      check(
+        "coming-soon never leaks into what the admin console reports as hidden",
+        companions.every((k) => !forUser.hiddenForUsers.has(k) || before.has(k))
+      );
     } finally {
       if (priorAdmins === undefined) delete process.env.ADMIN_USER_IDS;
       else process.env.ADMIN_USER_IDS = priorAdmins;

@@ -22,7 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
+import { FEEDBACK_SURFACE_KEY, isHrefComingSoon, isHrefHidden } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { MobileCaptureButton } from "@/components/layout/mobile-capture-button";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
@@ -599,6 +599,11 @@ export function MobileNav({
                 >
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}
+                  {isHrefComingSoon(item.href) && (
+                    <span className="rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning">
+                      Soon
+                    </span>
+                  )}
                   <NavPendingDot className="top-1/2 right-3 -translate-y-1/2" />
                 </Link>
               );

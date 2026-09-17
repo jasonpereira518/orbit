@@ -12,7 +12,7 @@ import {
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
-import { isHrefHidden, surfaceKeyForHref } from "@/lib/surfaces";
+import { isHrefComingSoon, isHrefHidden, surfaceKeyForHref } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
@@ -39,10 +39,19 @@ function SidebarNavLink({
 }) {
   const active = isNavActive(pathname, item.href);
   const Icon = item.icon;
+  // Shown to operators too, who still reach the real page: the tag is how they know what
+  // everyone else gets. "Hidden" outranks it, because a hidden page is not even announced.
+  const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href);
   return (
     <Link
       href={item.href}
-      title={hiddenFromUsers ? `${item.label} — hidden from users` : item.label}
+      title={
+        hiddenFromUsers
+          ? `${item.label} — hidden from users`
+          : comingSoon
+            ? `${item.label} — coming soon`
+            : item.label
+      }
       className={cn(
         "relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm transition-colors lg:justify-start lg:px-3 lg:py-2",
         active
@@ -66,6 +75,18 @@ function SidebarNavLink({
         <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground lg:inline">
           Hidden
         </span>
+      )}
+      {comingSoon && (
+        <>
+          <span className="relative z-10 ml-auto hidden rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning lg:inline">
+            Soon
+          </span>
+          {/* The icon rail has no room for a word, so the tag collapses to its colour. */}
+          <span
+            aria-hidden
+            className="absolute top-1.5 right-2.5 z-10 size-1.5 rounded-full bg-warning lg:hidden"
+          />
+        </>
       )}
       <NavPendingDot />
     </Link>

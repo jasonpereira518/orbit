@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { ComingSoon } from "@/components/coming-soon/coming-soon";
 import { SurfaceUnavailable } from "@/components/surface-unavailable";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
@@ -46,9 +47,13 @@ export default async function MainAppLayout({
   const pathname = (await headers()).get("x-pathname") ?? "";
   const surface = surfaceForPathname(pathname);
   if (surface) {
-    const { hidden } = await resolveSurfaceVisibility(userId);
+    const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
     if (hidden.has(surface.key)) {
       return <SurfaceUnavailable label={surface.label} />;
+    }
+    // After `hidden` on purpose: a page an operator switched off is off, announced or not.
+    if (comingSoon.has(surface.key)) {
+      return <ComingSoon surfaceKey={surface.key} label={surface.label} />;
     }
   }
 
