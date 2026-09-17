@@ -41,6 +41,7 @@ import { acceptedPeople, countDecisions, firstPendingIndex, initialPhaseFor, typ
 import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
+import { activePicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { MISSING_AI_API_KEY_MESSAGE, isMissingAiApiKeyError } from "@/lib/errors";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
@@ -168,7 +169,7 @@ export function CaptureFlow({
 
   // ── Actions ─────────────────────────────────────────────────────────────────────────
   const startExtraction = useCallback(
-    async (input: { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null }) => {
+    async (input: { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null; mentionPicks?: MentionPick[] }) => {
       if (!input.text.trim() && !input.jobId) return;
       setPendingStart(true);
       setReviewOpened(false);
@@ -180,6 +181,10 @@ export function CaptureFlow({
         entryPoint: initialContactId ? "profile" : "capture",
         seedContactId: initialContactId,
         meetingSessionId: input.meetingSessionId ?? null,
+        // Only the picks whose token is still in the text. The registry is append-only, so
+        // a name the user typed and then deleted is still in it — and sending that would
+        // link a note to somebody they took back out on purpose.
+        mentionPicks: activePicks(input.text, input.mentionPicks ?? []),
       });
       if (!res.ok) {
         setPendingStart(false);
@@ -318,7 +323,7 @@ export function CaptureFlow({
                 tabId={captureTabId("messy")}
                 draftKey={userId ? captureDraftKey(userId, initialContactId) : null}
                 acceptsHandoff={!initialContactId}
-                onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy" })}
+                onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy", mentionPicks: messy.mentionPicks })}
               />
             )}
             {mode === "voice" && (

@@ -18,7 +18,7 @@
 import { useEffect, useRef } from "react";
 
 import { findMentions } from "@/lib/chat-mentions";
-import { COMPOSER_TEXT_BOX } from "@/components/chat/composer-mirror";
+import { COMPOSER_TEXT_BOX } from "@/components/composer/composer-mirror";
 import { cn } from "@/lib/utils";
 
 /**
@@ -35,12 +35,22 @@ export function ComposerHighlights({
   value,
   names,
   textareaRef,
+  boxClassName = COMPOSER_TEXT_BOX,
 }: {
   /** The whole field value, so wrapping matches the textarea exactly. */
   value: string;
   /** Attached people's display names. Only these are painted — see `findMentions`. */
   names: readonly string[];
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  /**
+   * The padding and type scale of the field this sits behind. A prop rather than a
+   * constant because the two composers are not the same shape: chat's field is bare inside
+   * a pill, and the notes box is an ordinary bordered `Textarea` with its own padding. The
+   * layers still have to agree — a single character of disagreement wraps one line early —
+   * so whoever owns the field owns this too, and `MentionComposer` passes the same string
+   * to both.
+   */
+  boxClassName?: string;
 }) {
   const layerRef = useRef<HTMLDivElement>(null);
 
@@ -81,7 +91,7 @@ export function ComposerHighlights({
       data-slot="composer-highlights"
       className={cn(
         "pointer-events-none absolute inset-0 z-0 overflow-hidden border-0",
-        COMPOSER_TEXT_BOX,
+        boxClassName,
         "whitespace-pre-wrap break-words",
         // The glyphs are the textarea's job; this layer contributes only the marks. Drawing
         // them here as well would double-strike every character against the real text.

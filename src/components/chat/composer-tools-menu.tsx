@@ -20,7 +20,7 @@ import { searchEventsForPicker, type EventPickerOption } from "@/actions/chat";
 import { searchContactsForPicker } from "@/actions/contacts";
 import type { ContactPickerOption } from "@/lib/contacts-page";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
-import { EventAvatar } from "@/components/chat/event-avatar";
+import { EventAvatar } from "@/components/composer/event-avatar";
 import { Button } from "@/components/ui/button";
 import { interactionTypeLabel, interactionTypeNoun } from "@/lib/interaction-types";
 import { Input } from "@/components/ui/input";

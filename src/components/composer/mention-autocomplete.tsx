@@ -12,7 +12,7 @@
 import { useEffect, useRef } from "react";
 
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
-import { EventAvatar } from "@/components/chat/event-avatar";
+import { EventAvatar } from "@/components/composer/event-avatar";
 import { cn } from "@/lib/utils";
 
 /** One row, flattened from either source so the list can be one keyboard sequence. */
@@ -52,6 +52,8 @@ export type MentionOption =
       nameCandidates: string[];
     };
 
+export type MentionMenuPlacement = "above" | "below";
+
 export function MentionAutocomplete({
   options,
   activeIndex,
@@ -59,6 +61,7 @@ export function MentionAutocomplete({
   listboxId,
   optionId,
   onPick,
+  placement = "above",
 }: {
   options: readonly MentionOption[];
   activeIndex: number;
@@ -67,6 +70,14 @@ export function MentionAutocomplete({
   /** Builds the id the textarea's `aria-activedescendant` points at. */
   optionId: (index: number) => string;
   onPick: (option: MentionOption) => void;
+  /**
+   * Which side of the anchor to open on.
+   *
+   * Above suits a chat composer, where the field is one line and everything above it is the
+   * conversation. A page-high notes box is the other way round: you are typing at the
+   * bottom of it, so a menu above the box opens a screen away from the caret.
+   */
+  placement?: MentionMenuPlacement;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -79,7 +90,7 @@ export function MentionAutocomplete({
 
   if (!options.length) {
     return (
-      <Shell>
+      <Shell placement={placement}>
         <p className="px-3 py-2.5 text-xs text-muted-foreground">
           {loading ? "Searching…" : "No one matches that."}
         </p>
@@ -88,7 +99,7 @@ export function MentionAutocomplete({
   }
 
   return (
-    <Shell>
+    <Shell placement={placement}>
       <div ref={listRef} id={listboxId} role="listbox" className="max-h-56 overflow-y-auto p-1">
         {options.map((option, i) => (
           <button
@@ -146,12 +157,19 @@ export function MentionAutocomplete({
  * textarea needs a mirror layer, and the composer already runs two of those. Left-aligned
  * is what Notion and Linear do, and it cannot drift out of the pill.
  */
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({
+  children,
+  placement,
+}: {
+  children: React.ReactNode;
+  placement: MentionMenuPlacement;
+}) {
   return (
     <div
       data-slot="mention-autocomplete"
       className={cn(
-        "absolute bottom-full left-0 z-30 mb-2 w-full max-w-sm overflow-hidden",
+        "absolute left-0 z-30 w-full max-w-sm overflow-hidden",
+        placement === "above" ? "bottom-full mb-2" : "top-full mt-2",
         "rounded-xl border border-border/70 bg-popover shadow-lg",
       )}
     >

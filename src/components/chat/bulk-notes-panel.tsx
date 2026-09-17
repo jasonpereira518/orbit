@@ -28,6 +28,7 @@ import {
   writeCaptureDraft,
   type CaptureDraft,
 } from "@/lib/capture-draft";
+import type { MentionPick } from "@/lib/mentions/mention-picks";
 import {
   CAPTURE_HANDOFF_EVENT,
   appendHandoff,
@@ -242,6 +243,8 @@ export function BulkNotesPanel({
    */
   const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
   const latestDraftRef = useRef<Omit<CaptureDraft, "savedAt"> | null>(null);
+  /** See the read below: picks this panel cannot make, but must not throw away either. */
+  const restoredPicksRef = useRef<MentionPick[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [captureHints, setCaptureHints] = useState<CaptureParseHints | null>(
     initialHints ?? null
@@ -348,6 +351,10 @@ export function BulkNotesPanel({
       if (cancelled) return;
       const draft = readCaptureDraft(window.localStorage, draftKey);
       const handed = acceptsHandoff ? takeCaptureHandoff(window.sessionStorage) : null;
+      // This panel has no `@` of its own, but it shares a draft key with the capture page,
+      // which does. Carried through rather than dropped: writing `[]` here would silently
+      // un-link every person the capture box had named.
+      restoredPicksRef.current = draft?.mentionPicks ?? [];
       setNotes(handed ? appendHandoff(draft?.notes ?? "", handed) : (draft?.notes ?? ""));
       setCaptureSources(draft?.sources ?? []);
       setPhotoIds(draft?.photoIds ?? []);
@@ -380,7 +387,7 @@ export function BulkNotesPanel({
   // tab closes mid-review.
   useEffect(() => {
     if (!draftKey || loadedDraftKey !== draftKey || step !== "paste") return;
-    const draft = { notes, sources: captureSources, photoIds };
+    const draft = { notes, sources: captureSources, photoIds, mentionPicks: restoredPicksRef.current };
     latestDraftRef.current = draft;
     const timer = window.setTimeout(() => {
       writeCaptureDraft(window.localStorage, draftKey, draft);

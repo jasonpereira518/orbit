@@ -4,6 +4,11 @@
  * The Messy Notes tab: a box for the notes, and under it the three other ways they can
  * arrive — a file, the webcam, or your phone. Whatever comes in lands in the box; Extract
  * is the one button.
+ *
+ * The box is a `MentionComposer`, so `@` names somebody already in the orbit. That earns its
+ * place here and not only in chat: extraction otherwise works out who a note is about from
+ * the prose, and a guess is exactly what you do not want for the person whose name you were
+ * about to type anyway. A pick skips the guessing — see `resolveMentionsWithPicks`.
  */
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -13,7 +18,11 @@ import { CAPTURE_HANDOFF_EVENT, appendHandoff, takeCaptureHandoff } from "@/lib/
 import { ScanControls, useScanDropZone, sortAndNormalizeScanFiles } from "@/components/scan/scan-controls";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  FIELD_BARE,
+  FIELD_SHELL,
+  MentionComposer,
+} from "@/components/composer/mention-composer";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import type { CaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { cn } from "@/lib/utils";
@@ -44,7 +53,7 @@ export function MessyNotesCapture({
   acceptsHandoff?: boolean;
 }) {
   const busy = ingest.busy || extracting;
-  const { notes, setNotes } = ingest;
+  const { notes, setNotes, mentionPicks, setMentionPicks } = ingest;
   const [restored, setRestored] = useState(false);
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const loadedKeyRef = useRef<string | null>(null);
@@ -63,7 +72,13 @@ export function MessyNotesCapture({
       const base = current.trim() ? current : (draft?.notes ?? "");
       const next = handed ? appendHandoff(base, handed) : base;
       if (next !== current) setNotes(next);
-      if (draft?.notes && !current.trim()) setRestored(true);
+      // Picks come back only alongside the draft's own text. Restored over something the
+      // user has already typed they would claim tokens that are not in the box — inert
+      // while that is true, and wrong the moment one of those names gets typed.
+      if (draft?.notes && !current.trim()) {
+        setMentionPicks(draft.mentionPicks);
+        setRestored(true);
+      }
       loadedKeyRef.current = draftKey;
       if (handed) notesRef.current?.focus();
     });
@@ -90,7 +105,7 @@ export function MessyNotesCapture({
   // right after typing — the case the draft exists for — loses nothing.
   useEffect(() => {
     if (!draftKey || loadedKeyRef.current !== draftKey) return;
-    const draft = { notes, sources: ingest.sources, photoIds: [] as string[] };
+    const draft = { notes, sources: ingest.sources, photoIds: [] as string[], mentionPicks };
     const timer = window.setTimeout(() => writeCaptureDraft(window.localStorage, draftKey, draft), DRAFT_SAVE_DELAY_MS);
     const flush = () => writeCaptureDraft(window.localStorage, draftKey, draft);
     window.addEventListener("pagehide", flush);
@@ -98,7 +113,7 @@ export function MessyNotesCapture({
       window.clearTimeout(timer);
       window.removeEventListener("pagehide", flush);
     };
-  }, [draftKey, notes, ingest.sources]);
+  }, [draftKey, notes, ingest.sources, mentionPicks]);
 
   const { dragging, dropProps } = useScanDropZone({
     onFiles: (files) => void acceptDropped(files),
@@ -138,6 +153,7 @@ export function MessyNotesCapture({
               className="text-xs text-muted-foreground underline-offset-2 hover:underline"
               onClick={() => {
                 setNotes("");
+                setMentionPicks([]);
                 setRestored(false);
                 if (draftKey) clearCaptureDraft(window.localStorage, draftKey);
               }}
@@ -146,15 +162,33 @@ export function MessyNotesCapture({
             </button>
           )}
         </div>
-        <Textarea
-          ref={notesRef}
-          id="capture-notes"
-          className="mt-2 min-h-[220px]"
-          placeholder={`AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...`}
-          value={ingest.notes}
-          onChange={(e) => ingest.setNotes(e.target.value)}
-          disabled={extracting}
-        />
+        {/* `relative` so the `@` menu — which `MentionComposer` renders as a sibling of the
+            field box — anchors to the notes box rather than to the whole card. Below it
+            rather than above: this box is most of a screen tall and you type at the bottom
+            of it, so a menu above the box would open a long way from the caret. */}
+        <div className="relative mt-2">
+          <MentionComposer
+            className={FIELD_SHELL}
+            textareaRef={notesRef}
+            value={ingest.notes}
+            onValueChange={ingest.setNotes}
+            picks={ingest.mentionPicks}
+            onPicksChange={ingest.setMentionPicks}
+            menuPlacement="below"
+            // People only — `events` stays off. An event row splices a sentence about a past
+            // conversation, which is something you do when asking a question, not when
+            // writing one up.
+            menuEnabled={!extracting}
+            id="capture-notes"
+            placeholder={`AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...`}
+            textareaClassName={cn("min-h-[220px]", FIELD_BARE)}
+            disabled={extracting}
+          />
+        </div>
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          Type <span className="font-medium text-foreground">@</span> to name someone already
+          in your orbit — the note links to them instead of the name being guessed at.
+        </p>
       </div>
 
       <div className="space-y-2">

@@ -85,7 +85,7 @@ export type NoteBatchCommitmentInput = Omit<
   origin?: ReminderOrigin;
 };
 
-export type NoteBatchMentionInput = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | "user_pick" | null };
+export type NoteBatchMentionInput = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | null };
 
 /**
  * A digest item from a recorded meeting that the user ticked "make a reminder" on: an
@@ -340,13 +340,29 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     //     no interaction to hang them on, so they stay in the result as unresolved.
     const participantIds = new Set(contactIds);
     const firstInteraction = result.participants[0]?.interactionId ?? null;
+    // Every mention's contact id is confirmed to be this user's before anything is written.
+    // The ids reach here from a browser — `confirmBulkCapture` takes them straight off the
+    // request — so without this, a forged id writes a row into `interaction_mentions`
+    // pointing at somebody else's contact. It also covers the honest case: a contact deleted
+    // between the parse and the save, which reads here as exactly what it is, a name in the
+    // note that no longer links to anyone.
+    const claimedIds = [...new Set((input.mentions ?? []).map((m) => m.contactId).filter((id): id is string => Boolean(id)))];
+    const ownedIds = new Set<string>(
+      claimedIds.length
+        ? (await db
+            .select({ id: contacts.id })
+            .from(contacts)
+            .where(and(eq(contacts.userId, userId), inArray(contacts.id, claimedIds)))
+          ).map((r) => r.id)
+        : []
+    );
     const mentionRows: (typeof interactionMentions.$inferInsert)[] = [];
     for (const m of input.mentions ?? []) {
       // A mention that resolved to somebody already IN this batch is not unresolved — the
       // person is right there on the results page as a participant. Drop it silently
       // rather than offering "add as a contact" for someone just created.
       if (m.contactId && participantIds.has(m.contactId)) continue;
-      if (!m.contactId) {
+      if (!m.contactId || !ownedIds.has(m.contactId)) {
         result.unresolvedMentions.push({ text: m.text, context: m.context });
         continue;
       }

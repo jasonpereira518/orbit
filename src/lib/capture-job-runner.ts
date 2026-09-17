@@ -91,6 +91,9 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     if (!corpus) throw new Error("Nothing to read yet");
     const parsed = await parse(row.userId, corpus, row.inputHints, {
       meetingSessionId: row.meetingSessionId,
+      // Stored on the job rather than folded into `inputHints`, because a contact id is not
+      // a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
+      mentionPicks: row.mentionPicks ?? [],
       now: deps.now,
     });
     await heartbeatCaptureJob(id, token);

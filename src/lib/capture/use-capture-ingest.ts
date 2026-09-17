@@ -28,6 +28,7 @@ import {
   uploadCaptureMedia,
 } from "@/lib/capture/ingest-client";
 import type { CaptureJobSource } from "@/lib/capture/types";
+import type { MentionPick } from "@/lib/mentions/mention-picks";
 import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { MISSING_AI_API_KEY_MESSAGE, friendlyError, isMissingAiApiKeyError } from "@/lib/errors";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
@@ -46,6 +47,7 @@ export function useCaptureIngest({
   hasApiKey: hasApiKeyProp,
   aiReason: aiReasonProp = null,
   initialNotes = "",
+  initialMentionPicks = [],
   initialHints = null,
   initialJobId = null,
   onAutoExtract,
@@ -55,6 +57,8 @@ export function useCaptureIngest({
   /** The AI gate's reason when `hasApiKey` is false — picks the notice's wording. */
   aiReason?: AiAccessDenial | null;
   initialNotes?: string;
+  /** Picks restored alongside a saved draft, so its `@Name` tokens stay green. */
+  initialMentionPicks?: MentionPick[];
   initialHints?: CaptureParseHints | null;
   /** A `transcribed` job the page reloaded onto; Extract queues it instead of a new row. */
   initialJobId?: string | null;
@@ -62,6 +66,15 @@ export function useCaptureIngest({
   onAutoExtract?: (text: string, hints: CaptureParseHints | null, jobId: string | null) => void;
 }) {
   const [notes, setNotes] = useState(initialNotes);
+  /**
+   * Contacts named with `@` in the box.
+   *
+   * Here rather than in the tab component because this hook already owns the text, and the
+   * two have to travel together: the picks are meaningless without the tokens they stand
+   * for, and Extract sends both. A pick whose token was deleted is inert — `activePicks`
+   * re-reads the text — so this list is only ever appended to.
+   */
+  const [mentionPicks, setMentionPicks] = useState<MentionPick[]>(initialMentionPicks);
   const [hints, setHints] = useState<CaptureParseHints | null>(initialHints);
   const [sources, setSources] = useState<string[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -271,6 +284,7 @@ export function useCaptureIngest({
 
   const reset = useCallback(() => {
     setNotes("");
+    setMentionPicks([]);
     setHints(null);
     setSources([]);
     setFileName(null);
@@ -280,6 +294,8 @@ export function useCaptureIngest({
   return {
     notes,
     setNotes,
+    mentionPicks,
+    setMentionPicks,
     hints,
     setHints,
     sources,
