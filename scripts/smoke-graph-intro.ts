@@ -316,6 +316,33 @@ async function runChecks() {
   check("no run is started by a ready signal alone", getIntroRun().status === "idle");
   release();
 
+  /**
+   * The canvas renderer suppresses the intro outright, and suppression has to hold for
+   * the whole life of the page — not just against the two predictive triggers.
+   *
+   * This is the same shape as the `?warp=off` bug the file already guards: "off" blocked
+   * both predictions and then the safety net fired 1.2s later anyway. On a phone that
+   * would put a 520-star warp canvas on screen alongside the chart canvas, in the exact
+   * window this whole renderer exists to keep clear.
+   */
+  console.log("\nThe canvas renderer never warps…");
+  __resetIntroForTests();
+  const releaseCanvas = registerIntroHost();
+  suppressIntro();
+  check(
+    "a suppressed intro refuses every reason",
+    !beginIntro("layout-cost") && !beginIntro("cold-chunk") && !beginIntro("forced")
+  );
+  markGraphViewportReady();
+  check("...and starts nothing on the ready signal", getIntroRun().status === "idle");
+  await sleep(INTRO_LATE_MS + 60);
+  check(
+    "...and the late fallback stays dead too",
+    getIntroRun().status === "idle",
+    "suppression must cancel the safety net, not just the predictions"
+  );
+  releaseCanvas();
+
   console.log("\nThe minimum beat…");
   __resetIntroForTests();
   const release2 = registerIntroHost();

@@ -15,8 +15,11 @@ import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
-export function OutlookContactsImport() {
+/** `returnTo`: see `GoogleContactsImport`. */
+export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
   const router = useRouter();
   const job = useImportJob();
   const [pending, start] = useTransition();
@@ -63,15 +66,33 @@ export function OutlookContactsImport() {
       params.delete("outlook");
       params.delete("reason");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
       router.refresh();
       getOutlookConnectionStatus().then(setStatus).catch(() => {});
     } else if (outlook === "error") {
-      toast.error(params.get("reason") || "Outlook connection failed");
+      {
+        const oauth = describeOAuthReason(params.get("reason"), "Outlook");
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
       params.delete("outlook");
       params.delete("reason");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
+      // Re-read the status: a Next router "restore" (which `replaceState` is) drops any
+      // server action still queued — here, the status fetch this card fired a moment ago
+      // on mount — without settling it, which would leave the card rendering nothing.
+      getOutlookConnectionStatus().then(setStatus).catch(() => {});
     }
   }, [router]);
 
@@ -84,7 +105,7 @@ export function OutlookContactsImport() {
       <IntegrationUnavailable
         id="import-outlook-contacts"
         title="Outlook Contacts"
-        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        blurb="Not connected yet. Export your Outlook contacts as a CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
           "MICROSOFT_CLIENT_ID",
           "MICROSOFT_CLIENT_SECRET",
@@ -112,10 +133,10 @@ export function OutlookContactsImport() {
               onClick={() =>
                 start(async () => {
                   try {
-                    const { url } = await startOutlookOAuth("/imports");
+                    const { url } = await startOutlookOAuth(returnTo);
                     window.location.href = url;
                   } catch (err) {
-                    toast.error(err instanceof Error ? err.message : "OAuth failed");
+                    toast.error(friendlyError(err, TOAST_COPY.connectFailed));
                   }
                 })
               }
@@ -138,7 +159,7 @@ export function OutlookContactsImport() {
                       toast.success(`Loaded ${res.people.length} contacts`);
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not load contacts"
+                        friendlyError(err, TOAST_COPY.loadContactsFailed)
                       );
                     }
                   })
@@ -204,7 +225,7 @@ export function OutlookContactsImport() {
                 setSelected(new Set());
                 setLoaded(false);
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Import failed");
+                toast.error(friendlyError(err, TOAST_COPY.importFailed));
               }
             }}
           >

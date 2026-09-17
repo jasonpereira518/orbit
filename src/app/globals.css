@@ -27,6 +27,7 @@
   --color-import-connections: var(--import-connections);
   --color-import-messages: var(--import-messages);
   --color-import-calendar: var(--import-calendar);
+  --color-import-scan: var(--import-scan);
   --color-interaction-together: var(--interaction-together);
   --color-interaction-live: var(--interaction-live);
   --color-interaction-written: var(--interaction-written);
@@ -80,6 +81,10 @@
   --transition-duration-celestial: 700ms; /* landing + constellation set-pieces */
 
   --ease-house: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Strong ease-in-out, for something travelling across the screen rather than arriving
+   * (the mobile nav's pill). Not named `--ease-in-out`: Tailwind v4 owns that variable,
+   * and overriding it would retune every `ease-in-out` utility in the app. */
+  --ease-glide: cubic-bezier(0.77, 0, 0.175, 1);
 
   /* Retime every bare `transition-*` utility (~100 call sites) onto the
    * interaction tier in one place. */
@@ -133,6 +138,7 @@
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  --import-scan: #3f8a63;
   /* Timeline interaction families. Four groups over the ten interaction types, ordered by
      how much of the person was actually present: together (met them) -> live (spoke to them)
      -> written (exchanged text) -> yours (your own record, nothing confirmed). See
@@ -256,6 +262,7 @@
   --import-connections: #9b9ff5;
   --import-messages: #f0956f;
   --import-calendar: #e2b45f;
+  --import-scan: #6fd39d;
   /* Same ladder inverted: brighter means more present on a dark card. */
   --interaction-together: #f5cd7a;
   --interaction-live: #f5a3c0;
@@ -288,8 +295,8 @@
  * so a toast painted straight over a running job card.
  *
  * The mobile baseline clears the fixed nav pill: `layout/mobile-nav.tsx` is
- * `bottom-0` with `pb-[calc(0.75rem+env(safe-area-inset-bottom))]` around a
- * ~60px pill, so ~5.25rem is the occupied band.
+ * `bottom-0` with `pb-[calc(0.5rem+env(safe-area-inset-bottom))]` around a
+ * ~55px pill, so ~4.25rem is the occupied band.
  *
  * The breakpoint is 48rem (Tailwind's `md`, where `md:hidden` takes the nav
  * away) and NOT sonner's own 600px mobile breakpoint — otherwise toasts in the
@@ -304,7 +311,7 @@
  * to go in the block above, and `check:tokens` will not tell you otherwise. */
 :root {
   --orbit-corner-bottom: calc(
-    5.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
+    4.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
   );
   --orbit-corner-right: 0.75rem;
 
@@ -351,19 +358,9 @@
      orange; behind 13px nav labels any alpha of it reads burnt rather than light. This is
      that same hue mixed toward white, so it stays unmistakably YC orange while going pale,
      and carries a higher alpha to keep the hover as *present* as the saturated version was.
-     `--accent` is not reusable here: it is a pale peach in light mode but a dark brown in
-     dark mode, so it would invert the intent on one of the two themes. */
+     No `.dark .yc-theme` counterpart: the admin console is always light
+     (`src/components/theme-provider.tsx` forces it on /admin). */
   --admin-nav-hover: rgb(255 178 127 / 0.45);
-}
-
-.dark .yc-theme {
-  --primary: #ff9152;
-  --primary-foreground: #2a1000;
-  --accent: #47280f;
-  --accent-foreground: #ff9152;
-  /* Dark mode needs no lightening — `--primary` is already a pale-bright orange here, so
-     this is that value at the alpha the wash wants. */
-  --admin-nav-hover: rgb(255 145 82 / 0.20);
 }
 
 @layer base {
@@ -425,7 +422,6 @@
     0 8px 32px -8px rgba(26, 28, 26, 0.18),
     0 2px 8px -2px rgba(26, 28, 26, 0.08);
   backdrop-filter: blur(28px) saturate(1.65);
-  -webkit-backdrop-filter: blur(28px) saturate(1.65);
   /* backdrop-filter is intentionally NOT transitioned — animating a re-blur
    * of the largest persistent surface is one of the most expensive effects
    * a browser can run. */
@@ -591,11 +587,18 @@
  * floating surfaces that detach from screen edges (mobile bottom nav).
  * Same sheen/blur/border as .liquid-glass, but with a lighter fill than
  * the base panel — leans toward see-through glass rather than a fully
- * frosted tinted panel, without going fully transparent — and no outer
- * drop-shadow: against a light fill the blurred shadow read as a
- * dark haze floating under the bar rather than a grounded shadow, so only
- * the hairline inset highlights (top sheen + bottom edge) are kept for
- * definition. Combined selector (not a bare class) so specificity (0,2,0)
+ * frosted tinted panel, without going fully transparent.
+ *
+ * The outer shadow is short and tinted, not the base panel's wide grey one.
+ * The pill once had no drop shadow at all: back when its blur was dead, the wide
+ * shadow read as a dark haze floating under the bar. Now that the pill really frosts
+ * the page, it needs something to lift it off that page, or the glass reads as a flat
+ * translucent band. A tight contact shadow plus a soft, low falloff (negative spread,
+ * so nothing spills past the ends) gives it a place to sit, and tinting it with the
+ * brand's deep teal keeps it from going grey against the light fill. The outer
+ * hairline gives the white rim an edge on a white page.
+ *
+ * Combined selector (not a bare class) so specificity (0,2,0)
  * reliably beats both .liquid-glass (0,1,0) and .dark .liquid-glass
  * (0,2,0, but declared earlier so loses the source-order tiebreak),
  * independent of Tailwind's layered utilities. */
@@ -605,14 +608,17 @@
   border-radius: 9999px;
   background: linear-gradient(
     165deg,
-    rgba(255, 255, 255, 0.5) 0%,
-    rgba(255, 255, 255, 0.32) 42%,
-    rgba(247, 248, 246, 0.28) 100%
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.2) 42%,
+    rgba(247, 248, 246, 0.16) 100%
   );
   border-color: rgba(255, 255, 255, 0.45);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
-    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset;
+    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset,
+    0 0 0 0.5px rgba(15, 61, 62, 0.1),
+    0 3px 8px -3px rgba(15, 61, 62, 0.16),
+    0 12px 24px -12px rgba(15, 61, 62, 0.3);
 }
 
 .liquid-glass.liquid-glass-pill::before {
@@ -622,14 +628,16 @@
 .dark .liquid-glass.liquid-glass-pill {
   background: linear-gradient(
     165deg,
-    rgba(43, 57, 86, 0.5) 0%,
-    rgba(26, 36, 56, 0.38) 45%,
-    rgba(14, 21, 36, 0.32) 100%
+    rgba(43, 57, 86, 0.36) 0%,
+    rgba(26, 36, 56, 0.26) 45%,
+    rgba(14, 21, 36, 0.2) 100%
   );
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
-    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset;
+    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset,
+    0 3px 8px -2px rgba(0, 0, 0, 0.4),
+    0 14px 28px -12px rgba(0, 0, 0, 0.65);
 }
 
 .dark .liquid-glass.liquid-glass-pill::before {
@@ -701,7 +709,6 @@
    * the panel makes the browser resample it every frame. Switched off rather than left to
    * burn frames for an effect nobody can see. */
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   /* `.liquid-glass` declares `transition` as a SHORTHAND, and being unlayered it beats
    * Tailwind's `transition`/`duration-*` utilities outright — which silently reduces the
    * open/close to background+border+shadow and makes the window snap into place instead
@@ -1107,8 +1114,41 @@
   }
 }
 
+/**
+ * The sky's ambient drift: one compositor animation, 3 degrees a minute (a 2-hour turn).
+ *
+ * It used to be driven from JavaScript — a per-frame write of a rotation angle, first onto
+ * React Flow's root and then onto this element. Both cost the same thing for a different
+ * reason: a transform that changes every frame forces Chrome to re-run layerisation over the
+ * whole document, and this chart holds over a thousand layers. At 1,500 contacts that was 4.8
+ * of every 5 seconds spent in PaintArtifactCompositor::Update while the page sat still. A CSS
+ * animation of the same rotation is ticked by the compositor instead, and costs the main
+ * thread nothing. The stars' own rotation is still committed periodically in JS
+ * (graph-canvas-flow.tsx) — they move in steps, the rings glide, as before.
+ */
+@keyframes constellation-galaxy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.constellation-galaxy-spin {
+  animation: constellation-galaxy-spin 7200s linear infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .constellation-galaxy-spin {
+    animation: none;
+  }
+}
+
 .constellation-planet-enter {
-  animation: constellation-planet-enter 0.45s var(--ease-house) both;
+  /* `backwards`, not `both`: the animation ends on opacity 1 / scale 1, which is the star's
+     resting state anyway, so filling forwards changes nothing visible — but an animation that
+     stays in effect keeps its element composited. That left a 1,000-star sky holding 2,741
+     compositor layers instead of 1,376, and every one of them is re-rastered on a zoom. */
+  animation: constellation-planet-enter 0.45s var(--ease-house) backwards;
 }
 
 .constellation-starfield span {
@@ -1157,6 +1197,23 @@
     rgba(255, 80, 50, 0.55) 100%
   );
   box-shadow: 0 0 8px 1px rgba(255, 80, 50, 0.35);
+}
+
+/**
+ * Give the sky's viewport a compositor layer of its own.
+ *
+ * React Flow pans and zooms by writing a transform on this element. Without a layer, every
+ * frame of a drag repaints the whole sky — a thousand blurred glows, gradients and labels —
+ * and every wheel tick re-rasterises it at the new scale, which is why the main thread sat in
+ * `LayerTreeHost::WaitForCommitCompletion` for most of a zoom. With one, a pan is the
+ * compositor moving an existing raster and a zoom scales it, at 1,000 contacts taking zoom
+ * from 9fps to 27 and pan from 16 to 28.
+ *
+ * Scoped to the constellation: `will-change` is a real cost (a layer, and memory for its
+ * tiles), and it is earned only here, where the transform changes on most frames.
+ */
+.constellation-stage .react-flow__viewport {
+  will-change: transform;
 }
 
 .constellation-edge-label {
@@ -1234,7 +1291,6 @@
     rgba(232, 243, 241, 0.015) 100%
   );
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 /* Sticky nav pill — more opaque than .dark .liquid-glass so the starfield
@@ -1257,7 +1313,6 @@
     0 16px 48px -12px rgba(0, 0, 0, 0.65),
     0 4px 14px -4px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(24px) saturate(1.4);
-  -webkit-backdrop-filter: blur(24px) saturate(1.4);
 }
 
 .landing-header-glass::before {
@@ -1285,11 +1340,13 @@
   z-index: 1;
 }
 
-#landing-groups,
-#landing-reminders,
-#landing-how,
-#landing-features,
-#landing-cta {
+/* Scoped to .landing-root: the dashboard's reminders card also carries id="reminders"
+ * with its own, smaller scroll margin, and a bare id selector would override it. */
+.landing-root #groups,
+.landing-root #reminders,
+.landing-root #how,
+.landing-root #features,
+.landing-root #cta {
   scroll-margin-top: 6rem;
 }
 
@@ -1352,6 +1409,36 @@
   transform-origin: 50% 50%;
   transform-box: fill-box;
   will-change: transform;
+}
+
+/* The /interest card's Y-axis flip (form → boarding pass). The wrapper supplies the
+ * perspective; the face is what motion rotates. `transform-style` keeps the glass's
+ * backdrop-filter composited during the turn. */
+.interest-flip-stage {
+  perspective: 1400px;
+}
+.interest-flip-face {
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+
+/* Referral moons drift around the planet once they have dropped in. Slow enough to read
+ * as an orbit, not a spinner. Paused, not removed, under reduced motion so the moons
+ * still sit on their ring. */
+@keyframes interest-moon-drift {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.interest-moons-drift {
+  animation: interest-moon-drift 40s linear infinite;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .interest-moons-drift {
+    animation-play-state: paused;
+  }
 }
 
 /* Orbit Lifetime's badge is the one place the brand gold appears as a surface
@@ -1613,8 +1700,10 @@
 .scene-features {
   --scene-size: 2000px;
 }
+/* Includes the closing wordmark, which grows with the column until max-w-6xl caps it:
+ * measured 841 at 1024 and 891 from 1232 up. */
 .scene-finale {
-  --scene-size: 560px;
+  --scene-size: 900px;
 }
 
 /* Measured at 500x667 and biased up slightly, since narrower viewports wrap
@@ -1631,7 +1720,7 @@
     --scene-size: 2900px;
   }
   .scene-finale {
-    --scene-size: 820px;
+    --scene-size: 1140px;
   }
 }
 
@@ -1652,7 +1741,7 @@
     --scene-size: 3500px;
   }
   .scene-finale {
-    --scene-size: 1200px;
+    --scene-size: 1300px;
   }
 }
 
@@ -2082,7 +2171,12 @@ html [data-sonner-toaster] {
    travel reads; the box-shadow tier is the interaction one, for the hover lift. */
 [data-sonner-toaster] li.orbit-toast {
   transition:
-    transform var(--transition-duration-slow) var(--ease-house),
+    /* Arrival settles rather than snaps. `--ease-house` (0.22, 1, 0.36, 1) has y1 = 1,
+       so it leaves at full speed and then drifts — right for a panel you asked for,
+       abrupt for something that arrives unasked. This drawer curve starts gentler and
+       decelerates into place, at the same duration. The exit, below, stays brisk:
+       leaving fast reads as responsive; arriving fast reads as urgent. */
+    transform var(--transition-duration-slow) cubic-bezier(0.32, 0.72, 0, 1),
     opacity var(--transition-duration-base) ease,
     height var(--transition-duration-base) var(--ease-house),
     box-shadow var(--transition-duration-fast) ease,
@@ -2360,4 +2454,28 @@ html[data-celebration-handoff] [data-app-logo] {
     color-mix(in oklab, black 28%, transparent) 45%,
     transparent 100%
   );
+}
+
+/* How much room the contacts A-Z rail reserves beside the content column. The rail
+ * is thinner below `md` (28px on phones) than on desktop (36px), so the gutter follows
+ * it: the rail publishes `var(--content-rail-gutter-size)` rather than a number, and
+ * this picks the size per breakpoint. Each value stops the content 0.5rem (phone) /
+ * 1.5rem (desktop) clear of the rail; the arithmetic is in contacts-list.tsx. */
+:root {
+  --content-rail-gutter-size: 1.625rem;
+}
+@media (min-width: 48rem) {
+  :root {
+    --content-rail-gutter-size: 2.25rem;
+  }
+}
+
+/* The contacts A-Z rail hides itself on short viewports (a landscape phone), so the
+ * page must stop reserving room for it at the same height. The rail publishes the
+ * gutter as an inline style on the root element, which only an important declaration
+ * can override. Keep the 500px threshold in step with the rail's own. */
+@media (max-height: 500px) {
+  :root {
+    --content-rail-gutter: 0px !important;
+  }
 }

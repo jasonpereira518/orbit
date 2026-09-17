@@ -25,8 +25,11 @@ import {
 } from "@/lib/interaction-types";
 import { requestInteractionFlight } from "@/components/contacts/interaction-flight";
 import { pickLockedParticipant, withLockedSeedPerson } from "@/lib/note-batches";
-import { isMissingAiApiKeyError } from "@/lib/errors";
+import { friendlyError, isMissingAiApiKeyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { AI_HINT_COPY, aiDenialFromMessage } from "@/lib/ai-access-copy";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 function todayYmd() {
   return format(new Date(), "yyyy-MM-dd");
@@ -51,16 +54,27 @@ function yesterdayYmd() {
  * Undo in the success toast is the safety net. Everything one save creates belongs to one
  * `note_batches` row, and `undoNoteBatch` reverses it.
  */
+/** Why a note was saved without a summary, completing "…, so it was saved as written". */
+const PLAIN_SAVE_REASON: Record<AiAccessDenial, string> = {
+  key_required: "no AI key",
+  managed_limit: "this month’s included AI is used",
+  managed_unavailable: "Orbit’s AI is unavailable right now",
+  upgrade_pending: "your Lifetime payment is still clearing",
+};
+
 export function LogInteractionSheet({
   contactId,
   contactName,
   hasApiKey,
+  aiReason = null,
   open,
   onOpenChange,
 }: {
   contactId: string;
   contactName: string;
   hasApiKey: boolean;
+  /** The AI gate's reason when `hasApiKey` is false — worded into the hint and the toast. */
+  aiReason?: AiAccessDenial | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -101,7 +115,7 @@ export function LogInteractionSheet({
       // summarized.
       parseDateFromNotes: !date,
     });
-    toast.success(reason ? `Logged — ${reason}` : "Interaction logged");
+    toast.success(reason ? `Logged — ${reason}` : "Logged");
     onOpenChange(false);
     reset();
     router.refresh();
@@ -121,7 +135,11 @@ export function LogInteractionSheet({
     start(async () => {
       try {
         if (!hasApiKey) {
-          await savePlain("add an AI key in Settings to pull out summaries");
+          await savePlain(
+            aiReason && aiReason !== "key_required"
+              ? `${PLAIN_SAVE_REASON[aiReason]}, so it was saved as written`
+              : "add an AI key in Settings to pull out summaries"
+          );
           return;
         }
 
@@ -137,10 +155,13 @@ export function LogInteractionSheet({
         if (!res.ok) {
           // A missing key is a configuration fact, not a failed save; anything else is a
           // genuine extraction failure. Either way the note itself still gets logged.
+          const denial = aiDenialFromMessage(res.error);
           await savePlain(
-            isMissingAiApiKeyError(res.error)
-              ? "no AI key, so it was saved as written"
-              : "couldn't summarize it, so it was saved as written"
+            denial
+              ? `${PLAIN_SAVE_REASON[denial]}, so it was saved as written`
+              : isMissingAiApiKeyError(res.error)
+                ? "no AI key, so it was saved as written"
+                : "couldn't summarize it, so it was saved as written"
           );
           return;
         }
@@ -226,7 +247,7 @@ export function LogInteractionSheet({
                     toast.success("Undone");
                     router.refresh();
                   })
-                  .catch(() => toast.error("Could not undo"));
+                  .catch(() => toast.error(TOAST_COPY.undoFailed));
               },
             },
           }
@@ -239,7 +260,7 @@ export function LogInteractionSheet({
         }
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not log interaction"
+          friendlyError(err, "Couldn’t log that — try again?")
         );
       } finally {
         setStage("idle");
@@ -348,7 +369,7 @@ export function LogInteractionSheet({
               <Sparkles className="mt-px size-3 shrink-0" />
               {hasApiKey
                 ? "Write it however you like — the summary, action items and any dates get pulled out for you."
-                : "Saved as written. Add an AI key in Settings to get summaries and action items."}
+                : `Saved as written. ${AI_HINT_COPY[aiReason ?? "key_required"]}.`}
             </p>
           </div>
 

@@ -109,8 +109,12 @@ async function pickWinner(userId: string, a: string, b: string): Promise<[string
  * that matter here (name+company, name+title, bare name), which all require an exact name
  * match anyway. The fuzzy near-miss tiers need a wider net and are left to the bulk paths,
  * which already hold a full `DuplicateIndex`, and to the review page's own scan.
+ *
+ * Exported so single-write callers outside this module (the public API, MCP) can run the
+ * same bounded name check `resolveOrCreateContact` does, instead of each re-implementing
+ * duplicate detection against a full unbounded `findMany` of the account.
  */
-async function nameMatchesFor(
+export async function nameMatchesFor(
   userId: string,
   contactId: string | null,
   input: ContactInput
@@ -174,6 +178,66 @@ async function recordNameSuggestions(
     reason: m.reason,
     confidence: m.confidence,
   }));
+}
+
+export type DuplicateCheckResult = {
+  contact: DuplicateSubject;
+  confidence: number;
+  reason: string;
+};
+
+/**
+ * A read-only duplicate check for callers that decide for themselves what to do with a
+ * confident match rather than going through the create-or-merge flow below — the public API
+ * and MCP `create_contact`, where `force: false` must report a match without silently
+ * updating an existing contact with unreviewed data from an external caller.
+ *
+ * Bounded the same way `resolveOrCreateContact` is: identifier tiers are an indexed
+ * `contact_identities` lookup (`findIdentityOwners`), and the name tiers are
+ * `nameMatchesFor`'s narrow by-name scan — never a `findMany` of the whole account, which is
+ * what both of these callers did before this existed.
+ */
+export async function findConfidentDuplicate(
+  userId: string,
+  input: ContactInput
+): Promise<DuplicateCheckResult | null> {
+  const keys = identityKeysFor(input);
+  if (keys.length) {
+    const owners = await findIdentityOwners(userId, keys);
+    if (owners.length) {
+      const db = await getDb();
+      const contact = (await db.query.contacts.findFirst({
+        where: and(eq(contacts.userId, userId), eq(contacts.id, owners[0].contactId)),
+        columns: {
+          id: true,
+          fullName: true,
+          email: true,
+          linkedinUrl: true,
+          xHandle: true,
+          company: true,
+          title: true,
+        },
+      })) as DuplicateSubject | undefined;
+      if (contact) {
+        const kind = owners[0].key.kind;
+        const confidence =
+          kind === "linkedin_slug" ? 0.98 : kind === "x_handle" ? 0.97 : 0.95;
+        const reason =
+          kind === "linkedin_slug"
+            ? "Same LinkedIn URL"
+            : kind === "x_handle"
+              ? "Same X handle"
+              : kind === "phone_e164"
+                ? "Same phone number"
+                : "Same email";
+        return { contact, confidence, reason };
+      }
+    }
+  }
+
+  const nameMatches = await nameMatchesFor(userId, null, input);
+  const confident = nameMatches.find((m) => m.confidence >= DUPLICATE_MERGE_CONFIDENCE);
+  return confident ? { contact: confident.contact, confidence: confident.confidence, reason: confident.reason } : null;
 }
 
 /**

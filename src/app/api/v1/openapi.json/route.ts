@@ -78,10 +78,13 @@ export async function GET() {
           summary: "Search or list contacts",
           description:
             "With `q`, runs Orbit's hybrid search. Without it, returns the most recently " +
-            "created contacts — the polling shape a 'new contact' trigger needs.",
+            "created contacts — the polling shape a 'new contact' trigger needs. The " +
+            "response's `nextCursor` (null once exhausted) feeds the next call's `cursor` " +
+            "to page through an account past the first `limit` contacts.",
           parameters: [
             { name: "q", in: "query", schema: { type: "string" } },
             { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100 } },
+            { name: "cursor", in: "query", schema: { type: "string" } },
           ],
           responses: { "200": OK },
         },

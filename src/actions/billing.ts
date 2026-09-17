@@ -21,7 +21,7 @@ import { getAppBaseUrl } from "@/lib/app-url";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import type { BillingPeriod } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
-import { setCompedPlan } from "@/lib/user-settings";
+import { setCompedPlan, setPendingLifetimeCheckout } from "@/lib/user-settings";
 
 export type CheckoutResult = { url: string } | { error: string };
 
@@ -64,12 +64,16 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
       customer_email: profile?.email || undefined,
       // The plan card here already reads "Orbit Lifetime" once the webhook lands, so this
       // page confirms the purchase without needing a bespoke success screen. `upgraded`
-      // arms the celebration watcher's fast poll — the webhook may not have landed yet.
-      success_url: `${baseUrl}/settings?upgraded=lifetime#settings-plan`,
+      // arms the celebration watcher's fast poll; `session_id` (Stripe fills the template)
+      // lets it confirm the payment with Stripe directly, before the webhook lands.
+      success_url: `${baseUrl}/settings?upgraded=lifetime&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
+    // Remembered so the AI gate can recognise this payment if the webhook is slow — see
+    // `src/lib/lifetime-checkout.ts`. Never an entitlement on its own.
+    await setPendingLifetimeCheckout(userId, session.id);
     return { url: session.url };
   } catch (err) {
     console.error("Stripe checkout session failed:", err);
@@ -180,6 +184,30 @@ export async function getCurrentPlan(): Promise<Plan> {
   const userId = await requireUserId();
   const { plan } = await getEntitlements(userId);
   return plan;
+}
+
+/**
+ * Confirm a Lifetime checkout the moment the buyer is back, instead of waiting on the
+ * webhook. Called once by the celebration watcher with the `session_id` Stripe put in the
+ * success URL.
+ *
+ * Grants only when Stripe says this caller's Lifetime session is paid (and not refunded or
+ * disputed), through the same decision and idempotent writers as the webhook — see
+ * `src/lib/lifetime-checkout.ts`. Anything else changes nothing. `processing` means an
+ * asynchronous payment method has not settled; the watcher says so rather than stay silent.
+ */
+export async function confirmCheckoutSession(
+  sessionId: string
+): Promise<{ status: "granted" | "processing" | "unconfirmed" }> {
+  const userId = await requireUserId();
+  if (typeof sessionId !== "string" || !sessionId.startsWith("cs_")) {
+    return { status: "unconfirmed" };
+  }
+  const { confirmLifetimeCheckout } = await import("@/lib/lifetime-checkout");
+  const verdict = await confirmLifetimeCheckout(userId, sessionId);
+  if (verdict.kind === "paid") return { status: "granted" };
+  if (verdict.kind === "processing") return { status: "processing" };
+  return { status: "unconfirmed" };
 }
 
 /**

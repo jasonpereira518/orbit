@@ -20,7 +20,7 @@
  */
 
 import { z } from "zod";
-import { completeJson, parseAiJson, userHasAiKey } from "@/lib/ai";
+import { completeJson, parseAiJson, userCanUseAi } from "@/lib/ai";
 import { untrustedPageBlock } from "@/lib/conversation-starters";
 import type { PageContext, ParsedProfileFields } from "./contract";
 
@@ -84,13 +84,14 @@ export async function parseProfileFields(
 
   const blob = untrustedPageBlock(page);
   if (!blob) return { ...empty, degradedReason: "no_text" };
-  if (!(await userHasAiKey(userId))) {
+  if (!(await userCanUseAi(userId))) {
     return { ...empty, degradedReason: "no_api_key" };
   }
 
   let content: string;
   try {
     content = await completeJson(userId, {
+      operation: "extension.parse",
       system: SYSTEM,
       user: [
         // What the adapter already knows, so the model corroborates rather than

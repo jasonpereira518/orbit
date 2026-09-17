@@ -20,7 +20,25 @@ import {
   type NebulaData,
   type OrbitRingsData,
 } from "@/lib/graph-layout";
-import { mixWithWhite, withAlpha } from "@/lib/school-color";
+import { withAlpha } from "@/lib/school-color";
+import {
+  STAR_HIT_PAD,
+  starVisual,
+  zoomRelief as starZoomRelief,
+} from "@/lib/graph/star-style";
+
+/**
+ * Below this zoom a star's label is not mounted, unless it is pinned (hovered, selected or
+ * a search hit).
+ *
+ * Labels are drawn in world units, so they shrink with the camera: at 0.1 an 11px name is
+ * about 3 screen px even after `zoomRelief` enlarges it, and every network of more than
+ * ~200 people opens below that. Those specks carried no information and were the largest
+ * single raster cost of a zoom frame — a thousand runs of text re-rasterised at every scale
+ * step. Above 0.1 nothing changes: a small network's opening view (0.157 at 100 people)
+ * labels exactly as it always did.
+ */
+const LABEL_HIDE_BELOW_ZOOM = 0.1;
 
 /** Invisible handles pinned to the star center so edges meet the nodes. */
 function StarHandles() {
@@ -49,8 +67,13 @@ function OrbitRingsNodeComponent({
   const labels = [5, 4, 3, 2, 1] as const;
 
   // Rings are pure background texture — faint dashes that give the sky some
-  // depth. The inner rotation (--galaxy-rot, driven by the ambient-motion
-  // loop) sweeps the dashes along the disk as one body; labels stay put.
+  // depth. The disk sweeps the dashes round as one body; labels stay put.
+  //
+  // The rotation is a CSS animation (`constellation-galaxy-spin`), ticked by the compositor,
+  // rather than an angle written from JavaScript each frame. Writing it per frame — whether
+  // onto React Flow's root or onto this element — made Chrome restyle or re-layerise the
+  // whole chart every frame, which at 1,000+ contacts was the single largest cost in the
+  // view, while the sky was standing still. See globals.css.
   return (
     <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
       <div
@@ -63,8 +86,10 @@ function OrbitRingsNodeComponent({
         }}
       >
         <div
-          className="absolute inset-0"
-          style={{ transform: "rotate(var(--galaxy-rot, 0rad))" }}
+          className={cn(
+            "absolute inset-0",
+            data.spinning && "constellation-galaxy-spin"
+          )}
         >
           <svg
             width={max * 2}
@@ -154,23 +179,11 @@ function SunNodeComponent({
   );
 }
 
-function starSize(score: number) {
-  return 5 + score * 2.2;
-}
-
 /**
- * Diameter of the invisible disc that actually catches the click.
- *
- * A star is 7–16px in *node* space, which at the default fit view (zoom ≈ 0.11 for a
- * 114-person network) is under two screen pixels — the person is visible and, in
- * practice, unclickable. The pad extends 8px past the star's edge in every direction,
- * which is exactly half of the 18px minimum star separation that
- * `scripts/smoke-graph-layout.ts` guarantees, so no two pads can ever overlap and a
- * click still resolves to the nearest star. It is absolutely positioned, so it does not
- * change the node's measured box or the layout React Flow derives from it.
+ * The invisible disc that actually catches the click. It is absolutely positioned, so
+ * it does not change the node's measured box or the layout React Flow derives from it.
+ * See `STAR_HIT_PAD` in `@/lib/graph/star-style` for why it is sized the way it is.
  */
-const STAR_HIT_PAD = 16;
-
 function StarHitTarget({ disc }: { disc: number }) {
   const hit = disc + STAR_HIT_PAD;
   return (
@@ -182,14 +195,6 @@ function StarHitTarget({ disc }: { disc: number }) {
   );
 }
 
-/**
- * The line under a person's name: their role, or their company when we don't
- * know what they do. Never both — one quiet line keeps the sky readable.
- */
-function starSubtitle(data: GraphNodeData) {
-  return (data.title || "").trim() || (data.company || "").trim() || null;
-}
-
 function ContactNodeComponent({
   data,
   selected,
@@ -197,15 +202,27 @@ function ContactNodeComponent({
   // Rounded so a pan/zoom gesture does not re-render every star on every frame — the
   // same trick ClusterLabelNodeComponent uses.
   const zoom = useStore((s) => Math.round(s.transform[2] * 20) / 20);
-  const score = data.score || 2;
-  const size = starSize(score);
-  const glow = Math.max(3, score * 2.2);
+  const {
+    isComet,
+    dimmedScatter,
+    size,
+    disc: starDisc,
+    glow,
+    spotlightBoost,
+    alphaScale,
+    fill,
+    core,
+    subtitle,
+  } = starVisual(data, Boolean(selected));
   const bright = selected || Boolean(data.spotlight);
-  const isComet = Boolean(data.comet);
-  const isScatter = data.figureRole === "scatter";
-  // Scatter stars stay faint until hovered/selected/spotlit, then pop to full.
-  const dimmedScatter = isScatter && !selected && !data.spotlight;
-  const subtitle = starSubtitle(data);
+  // Unmounted rather than hidden: an invisible label still costs its DOM, style and raster.
+  const showLabel = Boolean(data.labelPinned) || zoom >= LABEL_HIDE_BELOW_ZOOM;
+  /**
+   * Handles only where a figure line ends. React Flow needs them to anchor an edge and
+   * measures every one on mount; a scatter star has no edges, so its pair was two DOM
+   * nodes and two layout reads apiece for nothing.
+   */
+  const anchorsLines = data.figureRole === "figure";
 
   if (isComet) {
     const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
@@ -218,7 +235,7 @@ function ContactNodeComponent({
         )}
         style={{ width: disc, height: disc }}
       >
-        <StarHandles />
+        {anchorsLines && <StarHandles />}
         <StarHitTarget disc={disc} />
         <div
           className={cn(
@@ -242,52 +259,34 @@ function ContactNodeComponent({
             }}
           />
         </div>
-        <div
-          className={cn(
-            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
-            bright ? "opacity-100" : "opacity-75 group-hover:opacity-100"
-          )}
-        >
-          <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
-            {data.label}
-          </p>
-          {subtitle && (
-            <p className="truncate text-[9px] leading-tight text-[#ff8a70]/70">
-              {subtitle}
+        {showLabel && (
+          <div
+            className={cn(
+              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+              bright ? "opacity-100" : "opacity-75 group-hover:opacity-100"
+            )}
+          >
+            <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
+              {data.label}
             </p>
-          )}
-        </div>
+            {subtitle && (
+              <p className="truncate text-[9px] leading-tight text-[#ff8a70]/70">
+                {subtitle}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     );
   }
 
-  // Figure stars carry a pastel wash of their cluster's brand color; scatter
-  // stars stay white and quiet until emphasized. Glow is deliberately soft —
-  // the sky should read as a chart, not a light show.
-  const tint = !isScatter ? data.clusterColor : undefined;
-  const fill = tint ? mixWithWhite(tint, 0.35) : "#ffffff";
-  const core = tint ? mixWithWhite(tint, 0.85) : "#ffffff";
-  const spotlightBoost = data.spotlight ? 1.9 : 1;
-  const alphaScale = dimmedScatter ? 0.55 : 1;
-  const baseDisc = dimmedScatter ? Math.max(4, size * 0.6) : size;
-  const disc = baseDisc * (data.spotlight ? 1.3 : 1);
+  const disc = starDisc;
   /**
-   * Counteract the camera a little as it pulls back.
-   *
-   * A star is 7–16 layout px. At the default framing of a 24-person network that is
-   * 1–3 screen px, so the map opens on what looks like an empty sky — the one view a
-   * first-time visitor is guaranteed to see. Growing the disc as zoom falls keeps the
-   * sky legible, and the cap (+STAR_HIT_PAD, half the 18px minimum star separation the
-   * layout guarantees) means two stars can never grow into each other.
-   *
    * Applied as a transform on the disc only, so the node's measured box, the label
    * positions and the non-overlap proof in `scripts/smoke-graph-layout.ts` are all
-   * untouched.
+   * untouched. See `zoomRelief` in `@/lib/graph/star-style` for the reasoning.
    */
-  const zoomRelief = Math.max(
-    1,
-    Math.min((disc + STAR_HIT_PAD) / disc, 1 / Math.max(zoom, 0.08))
-  );
+  const zoomRelief = starZoomRelief(disc, zoom);
 
   return (
     <div
@@ -298,7 +297,7 @@ function ContactNodeComponent({
       )}
       style={{ width: disc, height: disc }}
     >
-      <StarHandles />
+      {anchorsLines && <StarHandles />}
       <StarHitTarget disc={disc} />
       {/* Bob wrapper: the sole search hit hovers gently up and down. */}
       <div
@@ -331,35 +330,37 @@ function ContactNodeComponent({
             data.school ? ` · ${data.school}` : ""
           }`}
         />
-        <div
-          className={cn(
-            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
-            bright
-              ? "opacity-100"
-              : dimmedScatter
-                ? "opacity-65 group-hover:opacity-100"
-                : "opacity-85 group-hover:opacity-100"
-          )}
-        >
-          <p
+        {showLabel && (
+          <div
             className={cn(
-              "truncate text-[11px] font-medium leading-tight text-white/95",
-              data.spotlight && "font-semibold text-white"
+              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+              bright
+                ? "opacity-100"
+                : dimmedScatter
+                  ? "opacity-65 group-hover:opacity-100"
+                  : "opacity-85 group-hover:opacity-100"
             )}
           >
-            {data.label}
-          </p>
-          {subtitle && (
             <p
               className={cn(
-                "truncate text-[9px] leading-tight text-white/45",
-                data.spotlight && "text-white/70"
+                "truncate text-[11px] font-medium leading-tight text-white/95",
+                data.spotlight && "font-semibold text-white"
               )}
             >
-              {subtitle}
+              {data.label}
             </p>
-          )}
-        </div>
+            {subtitle && (
+              <p
+                className={cn(
+                  "truncate text-[9px] leading-tight text-white/45",
+                  data.spotlight && "text-white/70"
+                )}
+              >
+                {subtitle}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

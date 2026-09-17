@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contacts, noteBatches, reminders } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { listCapturePhotosForBatches } from "@/lib/capture-photos";
 import { dismissNoteReminderForUser, undoNoteBatchForUser } from "@/lib/note-batch-save";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
 
@@ -27,7 +28,7 @@ export async function getNoteBatch(batchId: string) {
   // `description`, `actionKind` and `listId` are not in the result snapshot but the inline
   // edit dialog needs them: seeding it from the snapshot alone would blank the reminder's
   // notes and reset its action kind the moment the user hit Save.
-  const [reminderRows, contactRows] = await Promise.all([
+  const [reminderRows, contactRows, photos] = await Promise.all([
     reminderIds.length
       ? db
           .select({ id: reminders.id, status: reminders.status, description: reminders.description, actionKind: reminders.actionKind, listId: reminders.listId })
@@ -37,9 +38,12 @@ export async function getNoteBatch(batchId: string) {
     contactIds.length
       ? db.select({ id: contacts.id, fullName: contacts.fullName }).from(contacts).where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)))
       : Promise.resolve([]),
+    // Metadata only; the page renders each through `/api/capture/photos/[id]`.
+    listCapturePhotosForBatches(userId, [batch.id]),
   ]);
   return {
     ...batch,
+    photos,
     reminderStatus: Object.fromEntries(reminderRows.map((r) => [r.id, r.status])),
     reminderDetails: Object.fromEntries(
       reminderRows.map((r) => [r.id, { description: r.description, actionKind: r.actionKind, listId: r.listId }])

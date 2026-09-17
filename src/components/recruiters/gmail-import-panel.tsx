@@ -19,6 +19,8 @@ import {
 } from "@/lib/background-jobs";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -44,9 +46,12 @@ function phaseLabel(scan: GmailScanStatus) {
 export function GmailImportPanel({
   connection,
   initialScan,
+  returnTo,
 }: {
   connection: GmailConnectionStatus;
   initialScan: GmailScanStatus | null;
+  /** Where Google sends the user back to. Omitted, the callback defaults to /recruiters. */
+  returnTo?: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -102,12 +107,24 @@ export function GmailImportPanel({
       toast.success("Gmail connected");
       router.refresh();
     } else if (gmail === "error") {
-      toast.error(params.get("reason") || "Gmail connection failed");
+      {
+        const oauth = describeOAuthReason(params.get("reason"), "Gmail");
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
     }
     params.delete("gmail");
+    // The callback sets both; left behind, the Google Contacts card would toast the same
+    // connect again the next time it mounts (it shares this page in Settings).
+    params.delete("google");
     params.delete("reason");
     const next = params.toString();
-    window.history.replaceState(null, "", `/recruiters${next ? `?${next}` : ""}`);
+    // The current path, not a hardcoded one: this panel also lives in Settings.
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+    );
   }, [router]);
 
   useEffect(() => {
@@ -128,7 +145,8 @@ export function GmailImportPanel({
                 : "No recruiters found in your mailbox"
             );
           } else if (next.status === "failed") {
-            toast.error(next.errorMessage || "Scan failed");
+            // The stored scan error can be a raw Gmail API body.
+            toast.error(friendlyError(next.errorMessage, "The scan didn’t finish — try again?"));
           }
           router.refresh();
         }
@@ -189,11 +207,11 @@ export function GmailImportPanel({
               onClick={() =>
                 start(async () => {
                   try {
-                    const { url } = await startGmailOAuth();
+                    const { url } = await startGmailOAuth(returnTo);
                     window.location.href = url;
                   } catch (err) {
                     toast.error(
-                      err instanceof Error ? err.message : "OAuth failed"
+                      friendlyError(err, TOAST_COPY.connectFailed)
                     );
                   }
                 })
@@ -208,7 +226,12 @@ export function GmailImportPanel({
                 onClick={() =>
                   start(async () => {
                     try {
-                      const { importId } = await startGmailRecruiterScan();
+                      const started = await startGmailRecruiterScan();
+                      if (!started.ok) {
+                        toast.error(started.error);
+                        return;
+                      }
+                      const { importId } = started.value;
                       const next = await getGmailScanStatus(importId);
                       if (next) {
                         setScan(next);
@@ -217,7 +240,7 @@ export function GmailImportPanel({
                       toast.success("Scan started — this can take a few minutes");
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not start scan"
+                        friendlyError(err, "Couldn’t start the scan — try again?")
                       );
                     }
                   })
@@ -257,7 +280,7 @@ export function GmailImportPanel({
               onClick={() =>
                 start(async () => {
                   await cancelGmailRecruiterScan(scan.importId);
-                  toast.success("Scan cancelled");
+                  toast.success("Scan stopped");
                   const next = await getGmailScanStatus(scan.importId);
                   if (next) {
                     setScan(next);
