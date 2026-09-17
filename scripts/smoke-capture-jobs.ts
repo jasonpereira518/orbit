@@ -40,7 +40,7 @@ function person(name: string, over: Partial<CaptureParseResult["items"][number][
   return {
     name, company: "Acme", role: "Engineer", presence: "participant" as const, location: null, email: null, linkedin_url: null,
     met_at: "Demo day", topics: [], action_items: [], follow_up_recommendation: null, follow_up_days: null,
-    relationship_score_suggestion: 3, relevance: null, tags: [], summary: `Met ${name}`, key_facts: [], opportunities: [],
+    relationship_score_suggestion: 3, relevance: null, tags: [], summary: `Met ${name}`, key_facts: [], opportunities: [], implied_next_steps: [],
     shared_interests: [], suggested_next_message: null, confidence: 0.9, interaction_date: "2026-09-01", low_confidence_fields: [],
     ...over,
   };
@@ -49,9 +49,9 @@ function person(name: string, over: Partial<CaptureParseResult["items"][number][
 function fakeParse(corpus: string): CaptureParseResult {
   return {
     items: [
-      { key: "0-Ada Lovelace", notes: "Met Ada", parsed: person("Ada Lovelace"), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-01", interactionType: "meeting_note" },
-      { key: "1-Grace Hopper", notes: "Met Grace", parsed: person("Grace Hopper", { relationship_score_suggestion: 5 }), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-01", interactionType: "meeting_note" },
-      { key: "2-Alan Turing", notes: "Met Alan", parsed: person("Alan Turing"), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-01", interactionType: "meeting_note" },
+      { key: "0-Ada Lovelace", notes: "Met Ada", parsed: person("Ada Lovelace"), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-01", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
+      { key: "1-Grace Hopper", notes: "Met Grace", parsed: person("Grace Hopper", { relationship_score_suggestion: 5 }), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-01", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
+      { key: "2-Alan Turing", notes: "Met Alan", parsed: person("Alan Turing"), duplicates: [], suggestedMergeId: null, sharedNoteTexts: [], interactionDate: "2026-09-01", interactionType: "meeting_note", opportunities: [], impliedSteps: [], cadence: null },
     ],
     sharedNotes: [],
     interactionDate: "2026-09-01",

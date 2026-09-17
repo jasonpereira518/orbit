@@ -163,7 +163,10 @@ export function HealthLiveBody({
         ]}
       />
       <div className="-mt-4 mb-6 flex justify-end">
-        <OpsButtons slackConfigured={Boolean(ops?.slackConfigured)} />
+        <OpsButtons
+          slackConfigured={Boolean(ops?.slackConfigured)}
+          slackDmConfigured={Boolean(ops?.slackDmConfigured)}
+        />
       </div>
 
       <SystemStrip
@@ -543,7 +546,7 @@ export function HealthLiveBody({
                 No runs recorded yet. The ledger starts at the next midnight run.
               </EmptyState>
             ) : (
-              <AdminTable
+              <AdminTable minWidth="sm"
                 head={
                   <>
                     <Th>Started</Th>

@@ -140,11 +140,37 @@ export function initialPhaseFor(
   }
 }
 
-/** Default ticks for the dated commitments: the confident ones, as the old panel did. */
+/** The bar an EXPLICIT dated commitment clears to arrive pre-ticked, as the old panel did. */
+export const EXPLICIT_AUTO_TICK_CONFIDENCE = 60;
+
+/**
+ * The bar an IMPLIED next step clears to arrive pre-ticked.
+ *
+ * Deliberately a separate, higher number. An implied item is Orbit's inference, and the
+ * defining property of one is that there is no sentence to point at when the user asks why
+ * it appeared — so a wrong pre-ticked inference costs more trust than a missed one costs
+ * convenience. Everything between the extraction floor (60, in `implied-next-steps.ts`) and
+ * this is still shown, just unticked: offered, never assumed.
+ *
+ * Do NOT collapse this into the explicit bar, and do NOT score implied items below 60 to
+ * make them fall under it — that couples two unrelated meanings, and the next tweak to
+ * confidence scoring would silently start auto-creating inferences.
+ */
+export const IMPLIED_AUTO_TICK_SCORE = 80;
+
+/** Default ticks for the review list. */
 export function defaultReminderKeys(
-  suggestions: readonly { key: string; confidenceScore: number }[]
+  suggestions: readonly { key: string; confidenceScore: number; origin?: "explicit" | "implied" }[]
 ): string[] {
-  return suggestions.filter((s) => s.confidenceScore >= 60).map((s) => s.key);
+  return suggestions
+    .filter((s) =>
+      // `origin` is optional so a `CaptureReminderChoices` written before implied steps
+      // existed still reads as explicit rather than falling off the list.
+      s.origin === "implied"
+        ? s.confidenceScore >= IMPLIED_AUTO_TICK_SCORE
+        : s.confidenceScore >= EXPLICIT_AUTO_TICK_CONFIDENCE
+    )
+    .map((s) => s.key);
 }
 
 /** Comma string ↔ list, the one place tags are split so the card and the dialog agree. */
@@ -171,7 +197,8 @@ export function reminderFactsFor(
     name: decision.edits?.name?.trim() || item.parsed.name,
     actionItems: item.parsed.action_items,
     createReminder: shouldCreateFollowUp(closeness, item.parsed.relevance, Boolean(item.parsed.follow_up_recommendation)),
-    followUpDays: followUpDaysFor(closeness, item.parsed.follow_up_days),
+    // A stated rhythm ("every two weeks") outranks the model and the closeness table.
+    followUpDays: followUpDaysFor(closeness, item.parsed.follow_up_days, item.cadence?.days),
     followUpTitle: item.parsed.follow_up_recommendation,
     closeness,
   };

@@ -1,5 +1,6 @@
 import { desc, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { managedKeysConfigured } from "@/lib/ai-access";
 import {
   chatMessages,
   contacts,
@@ -450,9 +451,20 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Ordered warnings first, then upgrade opportunities. Every entry names a person and a
  * reason, and links into their inspector.
  */
+/**
+ * Whether AI will run for this account: its own key for the selected provider, or Orbit's
+ * managed key on Lifetime (`src/lib/managed-ai-policy.ts`). `hasProviderKey` alone is the
+ * displayable fact; this is the question the alerts are really asking.
+ */
+function aiWillRun(row: Pick<AdminUserRow, "hasProviderKey" | "plan">, managedAi: boolean) {
+  return row.hasProviderKey || (row.plan === "lifetime" && managedAi);
+}
+
 export function buildAlerts(
   rows: AdminUserRow[],
-  now = new Date()
+  now = new Date(),
+  /** Whether this deployment holds a managed AI key, so Lifetime accounts run without one. */
+  managedAi = Object.values(managedKeysConfigured()).some(Boolean)
 ): AdminAlert[] {
   const alerts: AdminAlert[] = [];
   const ts = now.getTime();
@@ -482,10 +494,10 @@ export function buildAlerts(
       });
     }
 
-    // The highest-value signal in the console. Production is strictly BYOK, so an account
-    // with no key for its selected provider hits a hard error on its first capture. This
-    // is a conversion bug, surfaced as a metric.
-    if (!row.hasProviderKey && isOnboarded(row)) {
+    // The highest-value signal in the console. AI is BYOK on every plan but Lifetime, so an
+    // account with no key for its selected provider — and no managed key to fall back on —
+    // hits a hard error on its first capture. This is a conversion bug, surfaced as a metric.
+    if (!aiWillRun(row, managedAi) && isOnboarded(row)) {
       alerts.push({
         ...who,
         severity: "warn",
@@ -599,13 +611,14 @@ export async function getAdminOverview(
 
   const sum = (pick: (r: AdminUserRow) => number) =>
     rows.reduce((acc, r) => acc + pick(r), 0);
+  const managedAi = Object.values(managedKeysConfigured()).some(Boolean);
 
   return {
     rows,
     totalUsers: rows.length,
     plans: buildPlanBreakdown(rows),
     funnel: buildFunnel(rows),
-    alerts: buildAlerts(rows, now),
+    alerts: buildAlerts(rows, now, managedAi),
     signups: windowCount(
       rows.map((r) => r.signupAt),
       30,
@@ -620,7 +633,7 @@ export async function getAdminOverview(
       chatMessages: sum((r) => r.counts.chatMessages),
       aiCalls: sum((r) => r.counts.aiCalls),
     },
-    missingKeyCount: rows.filter((r) => !r.hasProviderKey).length,
+    missingKeyCount: rows.filter((r) => !aiWillRun(r, managedAi)).length,
   };
 }
 

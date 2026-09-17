@@ -120,7 +120,18 @@ export type ContactInput = {
   aiSummary?: string;
   keyFacts?: string[];
   sharedInterests?: string[];
+  /**
+   * LEGACY. `contacts.opportunities` is now a mirror derived from `contact_opportunities`
+   * by `syncContactOpportunityMirror`, which is its only writer. This field has no caller
+   * left; it is kept so the removal is its own change rather than noise in this one, and
+   * so an out-of-tree caller fails loudly at review rather than silently overwriting.
+   */
   opportunities?: string[];
+  /** A rhythm the notes stated ("check in monthly"), resolved to days. */
+  cadenceDays?: number | null;
+  cadencePhrase?: string | null;
+  cadenceSource?: "note" | "user" | null;
+  cadenceSetAt?: Date | null;
   nextFollowUpAt?: string | null;
   tagNames?: string[];
 };
@@ -295,6 +306,10 @@ function contactInsertValues(
     keyFacts: input.keyFacts ?? [],
     sharedInterests: input.sharedInterests ?? [],
     opportunities: input.opportunities ?? [],
+    cadenceDays: input.cadenceDays ?? null,
+    cadencePhrase: input.cadencePhrase ?? null,
+    cadenceSource: input.cadenceSource ?? null,
+    cadenceSetAt: input.cadenceSetAt ?? null,
     firstInteractionAt: firstInteractionAt ?? now,
     lastInteractionAt: metAt ?? now,
     nextFollowUpAt: safeTimestamp(input.nextFollowUpAt),
@@ -793,6 +808,10 @@ export async function updateContactForUser(
       ...(input.opportunities !== undefined
         ? { opportunities: input.opportunities }
         : {}),
+      ...(input.cadenceDays !== undefined ? { cadenceDays: input.cadenceDays } : {}),
+      ...(input.cadencePhrase !== undefined ? { cadencePhrase: input.cadencePhrase } : {}),
+      ...(input.cadenceSource !== undefined ? { cadenceSource: input.cadenceSource } : {}),
+      ...(input.cadenceSetAt !== undefined ? { cadenceSetAt: input.cadenceSetAt } : {}),
       ...(input.nextFollowUpAt !== undefined
         ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
         : {}),

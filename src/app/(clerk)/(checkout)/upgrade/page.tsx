@@ -41,7 +41,7 @@ const TRUST = [
   {
     icon: KeyRound,
     title: "No markup on AI",
-    body: "Every plan runs on your own provider key, billed to you at cost. We never resell tokens.",
+    body: "Free and Pro run on your own provider key, billed to you at cost. Lifetime includes AI on Orbit's keys. We never resell tokens.",
   },
 ];
 

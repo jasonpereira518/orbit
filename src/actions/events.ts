@@ -44,7 +44,9 @@ import { parseCompanyList } from "@/lib/events/company-list-parse";
 import { addTargetCompany } from "@/lib/events/target-companies";
 import { whoToTalkTo, type WhoToTalkTo } from "@/lib/events/who-to-talk-to";
 import { explainAttendeeForUser } from "@/lib/events/explain";
-import { userHasAiKey } from "@/lib/ai";
+import { userCanUseAi } from "@/lib/ai";
+import { getAiAccessStatus } from "@/lib/ai-access";
+import { AI_ACCESS_COPY } from "@/lib/ai-access-copy";
 import { diffEventAgainstPage, type EventFieldChange } from "@/lib/events/resync";
 import { resolveThemeColor } from "@/lib/events/theme";
 import { parseRosterCsv, parseRosterText } from "@/lib/events/parse-roster";
@@ -609,7 +611,7 @@ export async function getWhoToTalkTo(
   if (!event) return null;
   const [result, aiAvailable] = await Promise.all([
     whoToTalkTo(userId, event, { limit: 5 }),
-    userHasAiKey(userId).catch(() => false),
+    userCanUseAi(userId).catch(() => false),
   ]);
   return { ...result, aiAvailable };
 }
@@ -629,8 +631,10 @@ export async function explainAttendee(
   attendeeId: string
 ): Promise<{ ok: boolean; why?: string; opener?: string; error?: string }> {
   const userId = await requireUserForSurface(SURFACE);
-  if (!(await userHasAiKey(userId))) {
-    return { ok: false, error: "Add an AI key in Settings to use this." };
+  const ai = await getAiAccessStatus(userId);
+  if (!ai.ready) {
+    // The gate's own words: "add a key", "this month's included AI is used", "still clearing".
+    return { ok: false, error: AI_ACCESS_COPY[ai.reason ?? "key_required"] };
   }
 
   try {

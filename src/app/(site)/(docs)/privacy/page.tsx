@@ -26,7 +26,7 @@ const LAST_UPDATED = LEGAL_LAST_UPDATED;
 
 const HIGHLIGHTS: readonly Highlight[] = [
   { icon: ShieldCheck, title: "Your network isn't a product", body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies." },
-  { icon: Sparkles, title: "AI runs on your key", body: "AI features are opt-in, you choose the provider, every call bills to a key you supply, and Settings shows what the last 30 days cost." },
+  { icon: Sparkles, title: "AI runs on your key", body: "AI features are opt-in and you choose the provider. Calls bill to a key you supply — except on Orbit Lifetime without one, where they run on Orbit's, up to a monthly allowance. Settings shows what the last 30 days cost." },
   { icon: Download, title: "Export on demand", body: "One control in Settings produces a JSON download of your core Orbit data, on every plan including Free." },
   { icon: Trash2, title: "Deletion is real deletion", body: "Delete some or all of your data from Settings, or delete your account — which erases your data, keys and sign-in and cancels any subscription." },
 ];
@@ -63,7 +63,7 @@ const PROCESSORS = [
   { name: "Microlink", badge: "Automatic", body: "When unavatar.io has no photo, fetches the public preview image of the contact's LinkedIn profile URL." },
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro and Orbit Lifetime payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features, on the provider and key you choose in Settings: notes, chat, drafts, search indexing, transcription and reading pages you scan." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider and key you choose in Settings — or, on Orbit Lifetime without a key of your own, the provider Orbit's own keys run on." },
   { name: "Wispr Flow", badge: "Optional", body: "Meeting transcription, only if you add a Wispr key." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Microsoft", badge: "Optional", body: "Outlook contacts import, read-only. Orbit does not read Outlook mail." },
@@ -147,8 +147,10 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Usage records</strong> — for each AI call: the feature, provider, model, token
-              counts, an estimated cost, duration and whether it succeeded. Never the prompt or the
-              reply. You can see your last 30 days in Settings under Integrations → AI provider.
+              counts, an estimated cost, duration, whether it succeeded and whether it ran on your key
+              or Orbit&rsquo;s. Never the prompt or the reply. This powers your cost view and measures
+              Orbit Lifetime&rsquo;s monthly AI allowance; you can see your last 30 days in Settings
+              under Integrations → AI provider.
             </li>
             <li>
               <strong>Page views</strong> — which pages are opened, when and for how long; device type;
@@ -297,10 +299,26 @@ export default function PrivacyPage() {
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
             meeting audio, photos of pages you scan, recruiter emails when you run the scan — is sent
-            to the provider you configured. In production every call runs on an API key you supply,
-            so the request lands on your own account with that vendor, under the retention terms you
-            agreed with them.
+            to an AI provider: Google Gemini, OpenAI or Anthropic. Whose account the request lands on
+            depends on your plan:
           </p>
+          <ul>
+            <li>
+              <strong>With an API key you supply</strong>{" "}
+              — required on the Free
+              Plan and Orbit Pro, optional on Orbit Lifetime — the request lands
+              on your own account with the provider you chose in Settings, and
+              is governed by the retention settings you have agreed with them.
+            </li>
+            <li>
+              <strong>On Orbit Lifetime without a key of your own</strong>, the
+              request runs on Orbit&apos;s account with the provider and is
+              governed by Orbit&apos;s agreement with them. Orbit picks the
+              provider and model: the provider you selected where Orbit holds a
+              key for it, otherwise another of the three. Adding your own key
+              moves your requests back to your own account.
+            </li>
+          </ul>
           <p>
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
@@ -312,8 +330,7 @@ export default function PrivacyPage() {
           </p>
           <p>
             <strong>
-              Don&rsquo;t store anything in Orbit you would be unwilling to send to your chosen AI
-              provider
+              Don&rsquo;t store anything in Orbit you would be unwilling to send to an AI provider
             </strong>
             . AI output can be wrong or invented — review anything before you act on it or send it
             to a real person.
@@ -503,7 +520,7 @@ export default function PrivacyPage() {
             Orbit&rsquo;s hosting, database, payment and AI providers operate globally, so your data
             may be processed outside the country you live in — most often the United States. Where
             you supply your own API keys, the processing location follows what you configured with
-            that vendor.
+            that vendor; AI that runs on Orbit&rsquo;s keys follows Orbit&rsquo;s configuration with it.
           </p>
         </DocSection>
 

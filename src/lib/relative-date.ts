@@ -23,7 +23,12 @@ export type ResolvedRelativeDate = {
 
 export const DEFAULT_VAGUE_WINDOW_DAYS = 14;
 
-const NUMBER_WORDS: Record<string, number> = {
+/**
+ * Shared with `src/lib/cadence-phrase.ts`, which reads counts out of "every two weeks".
+ * Exported rather than copied: a second number-word table is how "a couple" comes to mean 2
+ * in one file and 3 in another.
+ */
+export const NUMBER_WORDS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
   ten: 10, eleven: 11, twelve: 12, a: 1, an: 1, "a couple of": 2, "a couple": 2,
   couple: 2, "a few": 3, few: 3, several: 3,

@@ -4,13 +4,10 @@ import {
   memo,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   useTransition,
-  type ChangeEvent,
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
@@ -33,22 +30,21 @@ import {
 } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
-import { ComposerHighlights } from "@/components/chat/composer-highlights";
 import {
   COMPOSER_TEXT_BOX,
   ComposerMirror,
   useCoarsePointer,
-} from "@/components/chat/composer-mirror";
+} from "@/components/composer/composer-mirror";
+import {
+  FIELD_BARE,
+  MentionComposer,
+  type MentionComposerHandle,
+} from "@/components/composer/mention-composer";
 import {
   ComposerToolsMenu,
   type ComposerInsert,
 } from "@/components/chat/composer-tools-menu";
 import { MentionText } from "@/components/chat/mention-text";
-import {
-  MentionAutocomplete,
-  type MentionOption,
-} from "@/components/chat/mention-autocomplete";
-import { useMentionAutocomplete } from "@/components/chat/use-mention-autocomplete";
 import {
   SuggestionCards,
   SuggestionCardsSkeleton,
@@ -58,7 +54,6 @@ import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -78,15 +73,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
 import { streamChat } from "@/lib/chat-stream-client";
-import {
-  activeMentions,
-  mentionAfterCaret,
-  mentionBeforeCaret,
-  mentionDeletionRange,
-  mentionToken,
-  snapCaretOutOfMention,
-  uniqueMentionName,
-} from "@/lib/chat-mentions";
+import { activeMentions } from "@/lib/chat-mentions";
+import { addMentionPick } from "@/lib/mentions/mention-picks";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { useDictation } from "@/lib/use-dictation";
@@ -167,7 +155,16 @@ export function ChatPanel() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
-  /** People attached with `+`, kept in step with the tokens actually in the box. */
+  /**
+   * People attached with `+` or `@` — a registry of what has been picked, never the live
+   * set.
+   *
+   * Which of them the text still refers to is re-derived from the box on every render, by
+   * `MentionComposer` for the green marks and by `sendQuestion` for what actually reaches
+   * the model. Both ask `activeMentions`, so deleting `@Marcus Webb` drops Marcus with
+   * nothing watching for it, and a stale entry here is inert because it appears in neither.
+   * `clearComposer` sweeps them.
+   */
   const [attached, setAttached] = useState<ContextPerson[]>([]);
   const [pending, start] = useTransition();
   // Streaming is deliberately NOT a transition: updates inside `startTransition` are
@@ -181,6 +178,8 @@ export function ChatPanel() {
   const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** The `+` menu is outside the field, so it reaches the splice through here. */
+  const composerRef = useRef<MentionComposerHandle | null>(null);
   const stickToBottomRef = useRef(true);
 
   // ── Dictation ───────────────────────────────────────────────────────────────────────
@@ -204,12 +203,6 @@ export function ChatPanel() {
   /** The value as of the last change, to tell the user's edits from our own. */
   const lastValueRef = useRef(question);
   const pendingCaretRef = useRef<number | null>(null);
-  /**
-   * Where the caret was last time, so a snap out of a mention knows which way it was
-   * going. Without the direction, arrowing left out of a token bounces off its own
-   * trailing edge and the caret looks stuck.
-   */
-  const lastCaretRef = useRef<number | null>(null);
   /**
    * Breaks the declaration cycle: `resetQuestion` must be able to cancel dictation, but
    * the hook's callbacks need `resetQuestion`'s siblings.
@@ -332,19 +325,6 @@ export function ChatPanel() {
   useEffect(() => {
     if (busy || loadingThread) dictation.cancel();
   }, [busy, loadingThread, dictation]);
-
-  /**
-   * The text decides who is attached, not the other way round.
-   *
-   * `attached` is only a registry of what has been picked; this is the live set, derived
-   * from the box on every render. So deleting `@Marcus Webb` drops Marcus with no effect
-   * watching for it, whether the deletion came from typing, dictating or a programmatic
-   * clear. A stale registry entry is inert — it fails to appear here — and is swept by
-   * `clearComposer`.
-   */
-  const context = useMemo(() => activeMentions(question, attached), [question, attached]);
-  /** Only attached people are painted green: the mark means "this is context", not "@". */
-  const attachedNames = useMemo(() => context.map((p) => p.name), [context]);
 
   // Mirrors the empty state's own condition, so the prompt above ("try a suggestion below")
   // and the row it points at appear and disappear together.
@@ -637,12 +617,15 @@ export function ChatPanel() {
   }
 
   /**
-   * The user's own typing. An edit before the dictated span slides the anchor along; an
-   * edit after it changes nothing; an edit through it ends the session, because carrying
-   * on would overwrite what they just wrote.
+   * Every edit the composer makes, typed or spliced.
+   *
+   * One funnel because dictation has to see all of them: an edit before the dictated span
+   * slides the anchor along, an edit after it changes nothing, and an edit through it ends
+   * the session, because carrying on would overwrite what the user just wrote. The `@` menu
+   * and the `+` menu splice through here for the same reason — a splice is a user edit as
+   * far as an in-flight dictation is concerned.
    */
-  function onComposerChange(e: ChangeEvent<HTMLTextAreaElement>) {
-    const next = e.target.value;
+  const onComposerValueChange = useCallback((next: string) => {
     if (anchorRef.current !== null) {
       const shifted = shiftAnchor(
         lastValueRef.current,
@@ -652,89 +635,27 @@ export function ChatPanel() {
       );
       if (shifted === ANCHOR_INTERFERENCE) {
         anchorRef.current = null;
-        dictation.cancel();
+        cancelDictationRef.current();
       } else {
         anchorRef.current = shifted;
       }
     }
     lastValueRef.current = next;
     setQuestion(next);
-    // The caret has already moved by the time this fires, so `selectionStart` is where the
-    // user is — which is what decides whether they are inside an `@`. `onSelect` alone is
-    // not enough: it does not fire for every keystroke.
-    const caret = e.target.selectionStart ?? next.length;
-    lastCaretRef.current = caret;
-    mention.refresh(next, caret);
-  }
-
-  /**
-   * Splice text from the `+` menu in at the caret.
-   *
-   * Goes through the same anchor bookkeeping as typing: it is a user edit as far as an
-   * in-flight dictation is concerned, so `onComposerChange`'s logic has to see it or the
-   * dictated span would drift out of alignment with the field.
-   */
-  const spliceComposer = useCallback(
-    (from: number, to: number, text: string) => {
-      const el = textareaRef.current;
-      const value = el?.value ?? "";
-      // Padding is for inserting; a deletion passes "" and must not gain a space for it.
-      const pad = text.length > 0;
-      const needsLeading = pad && from > 0 && !/\s$/.test(value.slice(0, from));
-      const needsTrailing = pad && !/^\s/.test(value.slice(to));
-      const insert = `${needsLeading ? " " : ""}${text}${needsTrailing ? " " : ""}`;
-      const next = value.slice(0, from) + insert + value.slice(to);
-      const caret = from + insert.length;
-
-      if (anchorRef.current !== null) {
-        const shifted = shiftAnchor(
-          lastValueRef.current,
-          next,
-          anchorRef.current,
-          spanRef.current.length,
-        );
-        if (shifted === ANCHOR_INTERFERENCE) {
-          anchorRef.current = null;
-          cancelDictationRef.current();
-        } else {
-          anchorRef.current = shifted;
-        }
-      }
-      lastValueRef.current = next;
-      pendingCaretRef.current = caret;
-      setQuestion(next);
-      requestAnimationFrame(() => textareaRef.current?.focus());
-    },
-    [],
-  );
-
-  /** The caret case: `+` menu picks, which have no range of their own to replace. */
-  const insertAtCaret = useCallback(
-    (text: string) => {
-      const el = textareaRef.current;
-      const value = el?.value ?? "";
-      const from = el?.selectionStart ?? value.length;
-      const to = el?.selectionEnd ?? from;
-      spliceComposer(from, to, text);
-    },
-    [spliceComposer],
-  );
+  }, []);
 
   /**
    * Register a person and hand back the token that stands for them.
    *
-   * Shared by the `+` menu and the `@` type-ahead so the two cannot mint different tokens
-   * for the same contact — which would leave one of them grey and unattached.
+   * The `+` menu's copy of what `MentionComposer` does for an accepted `@` row. Both go
+   * through `addMentionPick`, so the two cannot mint different tokens for the same contact
+   * — which would leave one of them grey and unattached.
    */
   const tokenForPerson = useCallback(
     (contactId: string, nameCandidates: string[]) => {
-      const already = attached.find((p) => p.id === contactId);
-      // Re-picking someone reuses their token; a namesake gets a longer one, or the two
-      // would share a token and `activeMentions` could only ever resolve it to one of them.
-      const name =
-        already?.name ?? uniqueMentionName(nameCandidates, attached.map((p) => p.name));
-      if (!already) setAttached((prev) => [...prev, { id: contactId, name }]);
-      return mentionToken(name);
+      const { picks, token } = addMentionPick(attached, contactId, nameCandidates);
+      setAttached(picks);
+      return token;
     },
     [attached],
   );
@@ -748,18 +669,20 @@ export function ChatPanel() {
    */
   const onToolInsert = useCallback(
     (item: ComposerInsert) => {
+      const insert = composerRef.current?.insertAtCaret;
+      if (!insert) return;
       if (item.kind === "text") {
-        insertAtCaret(item.text);
+        insert(item.text);
         return;
       }
       if (item.kind === "event") {
         const token = tokenForPerson(item.contactId, item.nameCandidates);
-        insertAtCaret(`${item.before}${token}${item.after}`);
+        insert(`${item.before}${token}${item.after}`);
         return;
       }
-      insertAtCaret(tokenForPerson(item.contactId, item.nameCandidates));
+      insert(tokenForPerson(item.contactId, item.nameCandidates));
     },
-    [insertAtCaret, tokenForPerson],
+    [tokenForPerson],
   );
 
   /**
@@ -774,82 +697,13 @@ export function ChatPanel() {
     !composing &&
     !coarsePointer;
 
-  // Off while the recogniser owns the box — an accepted row splices text the dictated span
-  // is anchored against — and off mid-IME, where `.value` is not yet what the user sees.
-  const mention = useMentionAutocomplete(
-    !dictation.listening && !composing && !busy && !loadingThread,
-  );
-  const mentionListboxId = useId();
-  const mentionOptionId = (index: number) => `${mentionListboxId}-${index}`;
-
   /**
-   * Take a row from the `@` menu, replacing the half-typed token rather than the caret.
+   * The keys `MentionComposer` did not claim.
    *
-   * A person becomes their `@Name` token and is attached; an event becomes prose, because
-   * an event is not someone the model can be handed a timeline for. Either way the `@` and
-   * everything typed after it goes — the fragment was scaffolding, not text the user meant.
+   * It takes the type-ahead's own keys and the atomic `@Name` delete first, and only what
+   * is left reaches here — so Enter still sends, but not while a row is highlighted.
    */
-  const acceptMention = useCallback(
-    (option: MentionOption) => {
-      const el = textareaRef.current;
-      if (!el || mention.start === null) return;
-      const to = el.selectionStart ?? el.value.length;
-      // Both kinds mint a token; an event just wraps it in a sentence. That is what makes
-      // a picked meeting as well-grounded as a picked person — the same attachment, the
-      // same green mark, the same atomic delete.
-      const token = tokenForPerson(option.contactId, option.nameCandidates);
-      const text = option.kind === "person" ? token : `${option.before}${token}${option.after}`;
-      spliceComposer(mention.start, to, text);
-      // Dismiss rather than reset: the completed token still parses as a query, so a plain
-      // reset would reopen the menu on the name that was just accepted.
-      mention.dismiss();
-    },
-    [mention, spliceComposer, tokenForPerson],
-  );
-
   function onComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // First refusal, before Enter sends and before ArrowUp recalls: while the type-ahead is
-    // up those keys belong to it, and the caret never leaves the textarea to say so.
-    if (mention.open) {
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        mention.move(e.key === "ArrowDown" ? 1 : -1);
-        return;
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        const option = mention.active();
-        if (option) {
-          e.preventDefault();
-          acceptMention(option);
-          return;
-        }
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        mention.dismiss();
-        return;
-      }
-    }
-
-    // An attached `@Name` reads as one object, so it deletes as one. Only when the caret is
-    // flush against it and nothing is selected — a Backspace anywhere else is ordinary, and
-    // a name that is not attached is just words.
-    if (e.key === "Backspace" || e.key === "Delete") {
-      const el = e.currentTarget;
-      if (el.selectionStart === el.selectionEnd) {
-        const caret = el.selectionStart;
-        const whole =
-          e.key === "Backspace"
-            ? mentionBeforeCaret(el.value, caret, attachedNames)
-            : mentionAfterCaret(el.value, caret, attachedNames);
-        if (whole) {
-          e.preventDefault();
-          const { from, to } = mentionDeletionRange(el.value, whole);
-          spliceComposer(from, to, "");
-          return;
-        }
-      }
-    }
     if (e.key === "Escape" && dictation.listening) {
       e.preventDefault();
       dictation.stop();
@@ -1039,16 +893,6 @@ export function ChatPanel() {
             {/* `relative`: the `@` type-ahead anchors to this box's top edge, which is the
                 top of the composer pill. */}
             <div className="relative mx-auto max-w-3xl space-y-2.5">
-              {mention.open && (
-                <MentionAutocomplete
-                  options={mention.options}
-                  activeIndex={mention.activeIndex}
-                  loading={mention.loading}
-                  listboxId={mentionListboxId}
-                  optionId={mentionOptionId}
-                  onPick={acceptMention}
-                />
-              )}
               {/* One pill holding every control, rather than a field with satellites.
                   `items-end` keeps the buttons on the last line as the field grows. */}
               <div
@@ -1066,93 +910,53 @@ export function ChatPanel() {
                   disabled={busy || loadingThread}
                   onInsert={onToolInsert}
                 />
-                {/* No vertical padding here: the mirror is `inset-0` of this box, so any
-                    padding on it would offset the field from its ghost layer. The field and
-                    the mirror each carry their own py instead. */}
-                <div className="relative flex-1">
-                  {/* The green marks. They show through because the field's own background
-                      is transparent — the pill owns it — and they stay behind the glyphs
-                      because of the z ladder, not this DOM order. */}
-                  <ComposerHighlights
-                    value={question}
-                    names={attachedNames}
-                    textareaRef={textareaRef}
-                  />
-                  <Textarea
-                    ref={textareaRef}
-                    rows={1}
-                    placeholder="Ask about your network…"
-                    value={question}
-                    onChange={onComposerChange}
-                    onKeyDown={onComposerKeyDown}
-                    onSelect={(e) => {
-                      const el = e.currentTarget;
-                      const collapsed = el.selectionStart === el.selectionEnd;
-                      setSelectionCollapsed(collapsed);
-                      if (!collapsed) {
-                        lastCaretRef.current = null;
-                        mention.reset();
-                        return;
-                      }
-                      // The caret may not come to rest inside a token. Re-setting the
-                      // range fires `select` again, which terminates because an edge is a
-                      // legal position and snaps to null.
-                      const prev = lastCaretRef.current;
-                      const prefer =
-                        prev === null || prev === el.selectionStart
-                          ? "nearest"
-                          : el.selectionStart < prev
-                            ? "left"
-                            : "right";
-                      const snapped = composing
-                        ? null
-                        : snapCaretOutOfMention(
-                            el.value,
-                            el.selectionStart,
-                            prefer,
-                            attachedNames,
-                          );
-                      const caret = snapped ?? el.selectionStart;
-                      if (snapped !== null) el.setSelectionRange(snapped, snapped);
-                      lastCaretRef.current = caret;
-                      // Arrowing into an existing `@Marcus` should offer it again.
-                      mention.refresh(el.value, caret);
-                    }}
-                    onCompositionStart={() => setComposing(true)}
-                    onCompositionEnd={() => setComposing(false)}
-                    onBlur={() => mention.reset()}
-                    role="combobox"
-                    aria-autocomplete="list"
-                    aria-expanded={mention.open}
-                    aria-controls={mention.open ? mentionListboxId : undefined}
-                    aria-activedescendant={
-                      mention.open ? mentionOptionId(mention.activeIndex) : undefined
-                    }
-                    data-dictating={dictation.listening || undefined}
-                    className={cn(
-                      // Bare field: the pill around it owns the border, background, focus
-                      // ring and padding. `field-sizing-content` has no ceiling of its own
-                      // and this sits in a fixed-height card, so the cap stays.
-                      // `min-h-9` matches the 36px control buttons exactly, and py-2 centres
-                      // a single 20px line inside it — so with `items-end` the text sits on
-                      // the same axis as the mic and send. Growing past one line just adds
-                      // height downwards and the buttons stay on the last line.
-                      // `relative z-[1]` is load-bearing: it lifts the field above the
-                      // mention marks, which are positioned and would otherwise paint over
-                      // the glyphs whatever the DOM order.
-                      "relative z-[1] min-h-9 max-h-40 w-full resize-none overflow-y-auto",
-                      COMPOSER_TEXT_BOX,
-                      "rounded-none border-0 bg-transparent shadow-none",
-                      "focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent",
-                      // The mirror paints the glyphs while it is up. The caret is left
-                      // visible so the field still reads as focused and editable.
-                      showMirror && "text-transparent caret-ink selection:text-foreground",
-                    )}
-                    style={
-                      dictation.listening ? { scrollbarGutter: "stable" } : undefined
-                    }
-                    disabled={busy || loadingThread}
-                  />
+                {/* No vertical padding on the field box: the mirror is `inset-0` of it, so
+                    any padding there would offset the field from its ghost layer. The field
+                    and the mirror each carry their own py instead.
+
+                    `MentionComposer` renders the `@` menu as a sibling of this box. It is
+                    absolutely positioned, so it stays out of the pill's flex flow and
+                    anchors to the nearest positioned ancestor — the `relative` wrapper
+                    above, which is why the menu sits above the WHOLE composer rather than
+                    inside the pill. */}
+                <MentionComposer
+                  className="flex-1"
+                  textareaRef={textareaRef}
+                  handleRef={composerRef}
+                  value={question}
+                  onValueChange={onComposerValueChange}
+                  picks={attached}
+                  onPicksChange={setAttached}
+                  // Chat is the surface where a past conversation is worth naming.
+                  events
+                  // Off while the recogniser owns the box — an accepted row splices text
+                  // the dictated span is anchored against. (Mid-IME is the composer's own
+                  // business and it shuts itself.)
+                  menuEnabled={!dictation.listening && !busy && !loadingThread}
+                  boxClassName={COMPOSER_TEXT_BOX}
+                  onKeyDown={onComposerKeyDown}
+                  onSelectionCollapsedChange={setSelectionCollapsed}
+                  onCompositionChange={setComposing}
+                  rows={1}
+                  placeholder="Ask about your network…"
+                  data-dictating={dictation.listening || undefined}
+                  textareaClassName={cn(
+                    // Bare field: the pill around it owns the border, background, focus
+                    // ring and padding. `field-sizing-content` has no ceiling of its own
+                    // and this sits in a fixed-height card, so the cap stays.
+                    // `min-h-9` matches the 36px control buttons exactly, and py-2 centres
+                    // a single 20px line inside it — so with `items-end` the text sits on
+                    // the same axis as the mic and send. Growing past one line just adds
+                    // height downwards and the buttons stay on the last line.
+                    "min-h-9 max-h-40 w-full resize-none overflow-y-auto",
+                    FIELD_BARE,
+                    // The mirror paints the glyphs while it is up. The caret is left
+                    // visible so the field still reads as focused and editable.
+                    showMirror && "text-transparent caret-ink selection:text-foreground",
+                  )}
+                  style={dictation.listening ? { scrollbarGutter: "stable" } : undefined}
+                  disabled={busy || loadingThread}
+                >
                   {showMirror && interimRange && (
                     <ComposerMirror
                       value={question}
@@ -1161,7 +965,7 @@ export function ChatPanel() {
                       textareaRef={textareaRef}
                     />
                   )}
-                </div>
+                </MentionComposer>
                 <DictationButton
                   state={dictation.state}
                   level={dictation.level}

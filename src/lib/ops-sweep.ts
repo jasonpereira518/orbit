@@ -22,6 +22,7 @@ import {
   type OpsCondition,
   type OpsSnapshot,
 } from "@/lib/ops-alerts";
+import { loadManagedAiOpsFacts } from "@/lib/managed-ai-ops";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
 import { prunePageViews } from "@/lib/page-views";
 import { reportError } from "@/lib/report-error";
@@ -65,6 +66,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     refusalRes,
     disarmedRes,
     budgetAgg,
+    managedAi,
   ] = await Promise.all([
       db
         .select()
@@ -140,6 +142,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
             gt(rateLimitBuckets.windowStartedAt, dayAgo)
           )
         ),
+      loadManagedAiOpsFacts(now),
     ]);
 
   const [stuckPurgeRow] = await db
@@ -240,6 +243,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     wedgedSyncs: issues.syncWedged,
     failingSyncs: issues.syncFailing,
     stuckPurges: stuckPurgeRow?.n ?? 0,
+    managedAi,
   };
 }
 

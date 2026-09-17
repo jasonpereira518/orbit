@@ -5,7 +5,13 @@
 import type { CaptureParseHints, ParsedNote, SharedNoteContext } from "@/lib/ai";
 import type { RejectedCounts } from "@/lib/date-commitment-extract";
 import type { DateBasis } from "@/lib/relative-date";
-import type { ReminderActionKind } from "@/db/schema";
+import type {
+  OpportunityDirection,
+  OpportunityKind,
+  ReminderActionKind,
+  ReminderOrigin,
+} from "@/db/schema";
+import type { ImpliedNextStep } from "@/lib/implied-next-steps";
 import type { PreviewMention } from "@/lib/note-batches";
 
 export type BulkNoteDuplicate = {
@@ -21,6 +27,15 @@ export type BulkNotePersonPreview = {
   key: string;
   notes: string;
   parsed: ParsedNote;
+  /** Typed opportunities this person's slice of the note surfaced, already validated. */
+  opportunities: CaptureOpportunityPreview[];
+  /**
+   * Next steps the discussion implied. Offered as reminders and never as action items — an
+   * action item is something that was said, and these were not.
+   */
+  impliedSteps: ImpliedNextStep[];
+  /** A rhythm the notes stated for this person ("check in monthly"), resolved to days. */
+  cadence: { days: number; phrase: string; sourceExcerpt: string } | null;
   duplicates: BulkNoteDuplicate[];
   suggestedMergeId: string | null;
   /** Shared group/event notes folded into this person's save payload. */
@@ -29,12 +44,25 @@ export type BulkNotePersonPreview = {
   interactionType: string | null;
 };
 
+/** One typed opportunity awaiting review, shaped for the client. */
+export type CaptureOpportunityPreview = {
+  kind: OpportunityKind;
+  label: string;
+  direction: OpportunityDirection | null;
+  sourceExcerpt: string;
+  rawDatePhrase: string | null;
+  confidenceScore: number;
+  /** YYYY-MM-DD, so a date input round-trips without timezone drift. */
+  dueDateIso: string | null;
+};
+
 /** A dated commitment awaiting the user's review, shaped for the client. */
 export type SuggestedReminderPreview = {
   key: string;
   title: string;
   description: string | null;
-  rawDatePhrase: string;
+  /** Null for an implied step: nobody named a date, so there is no phrase to quote. */
+  rawDatePhrase: string | null;
   /** YYYY-MM-DD, so the date input round-trips without timezone drift. */
   dueDateIso: string;
   yearInferred: boolean;
@@ -44,6 +72,13 @@ export type SuggestedReminderPreview = {
   sourceExcerpt: string;
   dateBasis: DateBasis;
   anchorIso: string;
+  /**
+   * Whether the notes SAID this, or Orbit inferred it from what was discussed. Drives both
+   * the grouping in the review UI and whether `defaultReminderKeys` pre-ticks it.
+   */
+  origin: ReminderOrigin;
+  /** Why Orbit thinks this follows. Only set for implied items, which have no date phrase. */
+  rationale: string | null;
 };
 
 /** A person the note only referred to, with enough detail to offer as a contact later. */
@@ -177,6 +212,19 @@ export type CaptureDecisions = {
   /** Which meeting digest items become reminders; absent = the defaults. Titles may be edited. */
   meeting?: { extraReminderKeys: string[]; titles?: Record<string, string> };
   reminders?: CaptureReminderChoices;
+  /**
+   * Which extracted opportunities become rows. Keys are `<personKey>:<index>`.
+   *
+   * Absent means "the defaults" — keep everything the parse found — so a job whose decisions
+   * were written before this section existed does not silently save none of them.
+   */
+  opportunities?: CaptureOpportunityChoices;
+};
+
+export type CaptureOpportunityChoices = {
+  checked: string[];
+  /** Kind corrections, by the same `<personKey>:<index>` key. */
+  kinds?: Record<string, OpportunityKind>;
 };
 
 /** What the save wrote, kept on the job so the saved state can render after a reload. */

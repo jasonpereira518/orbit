@@ -4,8 +4,13 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getCurrentPlan, triggerDemoCelebration, confirmCheckoutSession } from "@/actions/billing";
+import {
+  confirmCheckoutSession,
+  getCurrentPlan,
+  triggerDemoCelebration,
+} from "@/actions/billing";
 import { useAppPulse } from "@/lib/app-pulse-store";
+import { toast } from "@/lib/toast";
 import type { Plan } from "@/lib/plan-limits";
 import {
   PLAN_RANK,
@@ -138,8 +143,13 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
               // Only now: a claim that resolved is a decision, either way.
               writeLastSeenPlan(next);
               claimingRef.current = false;
-              // null = another device already celebrated this transition.
-              if (!claimed) return;
+              // null = another device already celebrated this transition. No show here,
+              // but the pages in this tab still describe the old plan (AI notices, gates),
+              // so re-render them.
+              if (!claimed) {
+                router.refresh();
+                return;
+              }
               pendingRef.current = next;
               tryStartPending();
             })
@@ -152,7 +162,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
         }
       }
     },
-    [start, tryStartPending],
+    [start, tryStartPending, router],
   );
 
   // Deferred starts fire the moment the tab is visible and no warp is flying.
@@ -193,7 +203,10 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     void (async () => {
       if (sessionId) {
         try {
-          await confirmCheckoutSession(sessionId);
+          const { status } = await confirmCheckoutSession(sessionId);
+          if (status === "processing") {
+            toast.info("Your payment is still clearing — Lifetime switches on the moment it does");
+          }
         } catch {
           // The webhook is still the guarantee; polling below picks it up.
         }
@@ -239,6 +252,19 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   useEffect(() => {
     if (pulsePlan) maybeCelebrate(pulsePlan);
   }, [pulsePlan, maybeCelebrate]);
+
+  // A plan change that no celebration will follow — a downgrade, a refund, a revoked comp,
+  // an upgrade another tab already celebrated — still changes what this tab's pages should
+  // say: the AI gate re-resolves the plan on every call, so a page rendered on the old plan
+  // would keep offering (or refusing) AI it no longer matches. Re-render the server tree
+  // when the pulse disagrees with the plan it was rendered with. Runs after Feed 3, so an
+  // upgrade that is being claimed or is waiting to play is left to the celebration, which
+  // refreshes at handoff.
+  useEffect(() => {
+    if (!pulsePlan || pulsePlan === plan) return;
+    if (activeRef.current || claimingRef.current || pendingRef.current) return;
+    router.refresh();
+  }, [pulsePlan, plan, router]);
 
   // Dev preview — fakes the animation only, never touches billing. `NODE_ENV`
   // is inlined at build time, so this half doesn't exist in production bundles.

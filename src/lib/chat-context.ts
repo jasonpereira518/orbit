@@ -417,6 +417,7 @@ export async function prepareChatContext(
         notes: focused.notes,
         aiSummary: focused.aiSummary,
         keyFacts: focused.keyFacts || [],
+        opportunities: focused.opportunities || [],
         relationshipScore: focused.relationshipScore,
         priorityLevel: focused.priorityLevel,
         closenessTier: focused.closenessTier,

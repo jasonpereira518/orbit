@@ -1,17 +1,15 @@
-import { Skeleton } from "@/components/ui/skeleton";
+import { AdminLoading } from "@/components/admin/loading-shells";
 
-export default function Loading() {
+export default function AdminRunwayLoading() {
   return (
-    <div className="space-y-6">
-      <Skeleton className="h-9 w-48" />
-      <div className="grid gap-3 sm:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-20" />
-        ))}
-      </div>
-      <Skeleton className="h-40" />
-      <Skeleton className="h-32" />
-      <Skeleton className="h-48" />
-    </div>
+    <AdminLoading
+      title="Runway"
+      blocks={[
+        { tiles: 3 },
+        { panel: true, title: "What burn is made of", height: "h-32" },
+        { panel: true, title: "Update", height: "h-28" },
+        { panel: true, title: "Recent expenses (30d)", height: "h-16" },
+      ]}
+    />
   );
 }

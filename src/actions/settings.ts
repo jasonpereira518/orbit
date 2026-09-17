@@ -29,10 +29,16 @@ import {
   AI_PROVIDERS,
   resolveAiModel,
   resolveAiProvider,
-  usingEnvKey,
   type AiProvider,
 } from "@/lib/ai";
 import { checkAiKey, keyCheckOutcome } from "@/lib/ai-key-check";
+import { getAiAccessStatus, managedKeysConfigured } from "@/lib/ai-access";
+import {
+  chooseEmbeddingKey,
+  managedEligibility,
+  type ManagedEligibility,
+} from "@/lib/managed-ai-policy";
+import { isDemoAccount } from "@/lib/demo-account";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -46,9 +52,10 @@ export async function getSettings() {
   // `userHasApolloKey` already re-derives entitlements internally for its own hosted-key
   // check, so serializing them would only add latency.
   const wisprKey = decryptOrNull(settings?.wisprApiKeyEncrypted);
-  const [entitlements, hasApolloKey, wisprKeyRejected] = await Promise.all([
+  const [entitlements, hasApolloKey, ai, wisprKeyRejected] = await Promise.all([
     getEntitlements(userId),
     userHasApolloKey(userId),
+    getAiAccessStatus(userId),
     wisprKey ? wisprKeyWasRejected(userId, wisprKey).catch(() => false) : Promise.resolve(false),
   ]);
   // Mirrors the two runtime resolvers so this card states what would actually be used:
@@ -66,7 +73,11 @@ export async function getSettings() {
       openai: Boolean(settings?.openaiApiKeyEncrypted),
       anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
     },
-    usingEnvKey: usingEnvKey(provider, settings),
+    /**
+     * The AI gate's view of this account — plan-aware, allowance-aware. Everything that says
+     * "add your key" or "Orbit covers AI" renders from this, never from key presence alone.
+     */
+    ai,
     // Whether "Fill from Apollo" on the contact page has anything to call — computed via
     // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
     hasApolloKey,
@@ -80,26 +91,25 @@ export async function getSettings() {
     hasWisprKey: Boolean(settings?.wisprApiKeyEncrypted),
     /** Wispr refused the saved key on its latest try; clears when the key changes. */
     wisprKeyRejected,
-    hasApiKey:
-      provider === "gemini"
-        ? Boolean(settings?.geminiApiKeyEncrypted) ||
-          usingEnvKey("gemini", settings)
-        : provider === "openai"
-          ? Boolean(settings?.openaiApiKeyEncrypted) ||
-            usingEnvKey("openai", settings)
-          : Boolean(settings?.anthropicApiKeyEncrypted) ||
-            usingEnvKey("anthropic", settings),
+    /**
+     * Whether AI features will run — NOT whether a key is saved. A Lifetime account on
+     * Orbit's managed key is `true` with no key at all; a Lifetime account that has used its
+     * month's allowance is `false` even with none missing. The name predates plans; ~20
+     * components read it to decide between the feature and the "add your key" notice, and
+     * that is exactly the question `ai.ready` answers.
+     */
+    hasApiKey: ai.ready,
     providers: AI_PROVIDERS.map((p) => ({
       id: p.id,
       label: p.label,
-      envVar: p.envVar,
       hasPersonalKey:
         p.id === "gemini"
           ? Boolean(settings?.geminiApiKeyEncrypted)
           : p.id === "openai"
             ? Boolean(settings?.openaiApiKeyEncrypted)
             : Boolean(settings?.anthropicApiKeyEncrypted),
-      usingEnv: usingEnvKey(p.id, settings),
+      /** Orbit holds a managed key for this provider AND this account may use it. */
+      managedAvailable: Boolean(ai.eligibility) && managedKeysConfigured()[p.id],
     })),
     // Mirrors the plan gate in `getOutreachSendConfig` / `getApolloApiKey`: Orbit's shared
     // keys only count as configured when the plan actually permits hosted sends, so the
@@ -160,33 +170,38 @@ export async function saveThemePreference(theme: ThemePreference) {
     });
 }
 
-async function embeddingBackendFor(
+/**
+ * Which embedding backend a given key state would land on — the same policy function the
+ * gate runs (`chooseEmbeddingKey`), so a provider switch that moves search onto a different
+ * embedding space (including onto or off Orbit's managed key) is detected and the stale
+ * vectors cleared.
+ */
+function embeddingBackendFor(
   provider: AiProvider,
   settings: {
     geminiApiKeyEncrypted: string | null;
     openaiApiKeyEncrypted: string | null;
     anthropicApiKeyEncrypted: string | null;
-  } | null
+  } | null,
+  eligibility: ManagedEligibility
 ) {
-  if (provider === "openai") {
-    if (settings?.openaiApiKeyEncrypted || usingEnvKey("openai", settings)) {
-      return "openai";
-    }
-    return null;
-  }
-  if (provider === "gemini") {
-    if (settings?.geminiApiKeyEncrypted || usingEnvKey("gemini", settings)) {
-      return "gemini";
-    }
-    return null;
-  }
-  if (settings?.openaiApiKeyEncrypted || usingEnvKey("openai", settings)) {
-    return "openai";
-  }
-  if (settings?.geminiApiKeyEncrypted || usingEnvKey("gemini", settings)) {
-    return "gemini";
-  }
-  return null;
+  const choice = chooseEmbeddingKey({
+    eligibility,
+    selectedProvider: provider,
+    selectedModel: "",
+    personal: {
+      gemini: Boolean(settings?.geminiApiKeyEncrypted),
+      openai: Boolean(settings?.openaiApiKeyEncrypted),
+      anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
+    },
+    managed: managedKeysConfigured(),
+  });
+  return choice.ok ? choice.provider : null;
+}
+
+async function managedEligibilityFor(userId: string): Promise<ManagedEligibility> {
+  const { plan } = await getEntitlements(userId);
+  return managedEligibility(plan, isDemoAccount(userId));
 }
 
 export async function saveAiSettings(input: {
@@ -214,8 +229,9 @@ export async function saveAiSettings(input: {
   }
   const encrypted = newKey ? encrypt(newKey) : null;
 
+  const eligibility = await managedEligibilityFor(userId);
   const previousBackend = existing
-    ? await embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing)
+    ? embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing, eligibility)
     : null;
 
   const nextKeyState = {
@@ -252,7 +268,7 @@ export async function saveAiSettings(input: {
     });
   }
 
-  const nextBackend = await embeddingBackendFor(provider, nextKeyState);
+  const nextBackend = embeddingBackendFor(provider, nextKeyState, eligibility);
   if (
     previousBackend &&
     nextBackend &&
@@ -299,8 +315,10 @@ export async function clearApiKey(provider?: AiProvider) {
   let embeddingReset = false;
   if (existing) {
     const selected = resolveAiProvider(existing.aiProvider);
-    const previousBackend = await embeddingBackendFor(selected, existing);
-    const nextBackend = await embeddingBackendFor(selected, { ...existing, ...patch });
+    // Eligibility matters: on Lifetime, clearing a key can move search onto Orbit's managed key.
+    const eligibility = await managedEligibilityFor(userId);
+    const previousBackend = embeddingBackendFor(selected, existing, eligibility);
+    const nextBackend = embeddingBackendFor(selected, { ...existing, ...patch }, eligibility);
     embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);
     if (embeddingReset) {
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));

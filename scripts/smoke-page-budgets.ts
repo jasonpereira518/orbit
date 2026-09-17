@@ -133,7 +133,8 @@ async function seed() {
     { key: "blob", profileImageUrl: "https://xyz.public.blob.vercel-storage.com/avatars/a.jpg", linkedinUrl: "https://www.linkedin.com/in/blob-person/", email: null },
     { key: "inline", profileImageUrl: `data:image/jpeg;base64,${"A".repeat(400)}`, linkedinUrl: "https://www.linkedin.com/in/inline-person/", email: null },
     { key: "unavatar", profileImageUrl: "https://unavatar.io/linkedin/someone", linkedinUrl: "https://www.linkedin.com/in/unavatar-person/", email: null },
-    // No LinkedIn, but an email — Gravatar can still resolve this one.
+    // No LinkedIn, but an email — Gravatar and a connected Google/Outlook account can still
+    // resolve this one.
     { key: "emailOnly", profileImageUrl: null, linkedinUrl: null, email: "gravatar-person@example.com" },
     { key: "nothing", profileImageUrl: null, linkedinUrl: null, email: null },
     // Tried recently and found nothing: inside the cooldown, so not worth re-asking.
@@ -159,7 +160,14 @@ async function seed() {
     // partial-shape overload does not resolve across both.
     const [row] = await db
       .insert(contacts)
-      .values({ userId: USER, fullName: `Special ${s.key}`, profileImageUrl: s.profileImageUrl, linkedinUrl: s.linkedinUrl, email: s.email, profileImageCheckedAt: s.profileImageCheckedAt ?? null })
+      .values({
+        userId: USER,
+        fullName: `Special ${s.key}`,
+        profileImageUrl: s.profileImageUrl,
+        linkedinUrl: s.linkedinUrl,
+        email: s.email,
+        profileImageCheckedAt: s.profileImageCheckedAt ?? null,
+      })
       .returning();
     ids[s.key] = row.id;
   }
@@ -436,16 +444,16 @@ async function main() {
     "a contact with no photo, no LinkedIn and no email is not a candidate",
     !ids.has(specialIds.nothing)
   );
-  // Gravatar tier: an email alone is enough to be worth a (free) lookup. Checked over the
-  // whole backlog rather than the first 25 — the scaled fixtures have emails too, so this
-  // contact sorts well past any small limit.
+  // Email tier (Gravatar, or a connected Google/Outlook account): an email alone is enough
+  // to be worth a (free) lookup. Checked over the whole backlog rather than the first 25 —
+  // the scaled fixtures have emails too, so this contact sorts well past any small limit.
   const allCandidates = await findAvatarBackfillCandidates(db, USER, {
     limit: N + SPECIAL_ROWS,
     skipIds: [],
   });
   const allIds = new Set(allCandidates.map((c) => c.id));
   check(
-    "a contact with only an email is a candidate (Gravatar tier)",
+    "a contact with only an email is a candidate (Gravatar / connected-account tier)",
     allIds.has(specialIds.emailOnly)
   );
   check(
@@ -462,7 +470,7 @@ async function main() {
     allIds.has(specialIds.checkedLongAgo)
   );
   check(
-    "candidates carry the email needed for the Gravatar lookup",
+    "candidates carry the email needed for the Gravatar/connected-account lookup",
     allCandidates.find((c) => c.id === specialIds.emailOnly)?.email ===
       "gravatar-person@example.com"
   );
@@ -497,6 +505,80 @@ async function main() {
     result.pending === 10 - resolved,
     `pending ${result.pending}, resolved ${resolved}`
   );
+
+  // ---- Avatar backfill resolver ordering ----------------------------------------------
+  console.log("\nAvatar backfill (resolver ordering: connected account > LinkedIn > Gravatar > Apollo)…");
+  {
+    const calls: string[] = [];
+    const savedPhotos: Record<string, string> = {};
+    const oneContact = [
+      { id: "c1", linkedinUrl: "https://www.linkedin.com/in/c1/", email: "c1@example.com", remoteUrl: null },
+    ];
+    const r1 = await runAvatarBackfillBatch(oneContact, {
+      deadline: Date.now() + 5_000,
+      persistRemote: async () => null,
+      resolveConnectedAccount: async () => {
+        calls.push("connected");
+        return "https://connected.example.com/photo.jpg";
+      },
+      resolveLinkedIn: async () => {
+        calls.push("linkedin");
+        return "https://linkedin.example.com/photo.jpg";
+      },
+      resolveGravatar: async () => {
+        calls.push("gravatar");
+        return "https://gravatar.example.com/photo.jpg";
+      },
+      resolveApollo: async () => {
+        calls.push("apollo");
+        return "https://apollo.example.com/photo.jpg";
+      },
+      save: async (id, url) => {
+        savedPhotos[id] = url;
+      },
+      markChecked: async () => {},
+    });
+    check(
+      "a connected-account match short-circuits LinkedIn, Gravatar and Apollo",
+      calls.length === 1 && calls[0] === "connected",
+      calls.join(",")
+    );
+    check("the connected-account photo is what gets saved", savedPhotos.c1 === "https://connected.example.com/photo.jpg");
+    check("resolver-ordering batch reports one save", r1.saved === 1);
+  }
+  {
+    const calls: string[] = [];
+    const twoContacts = [
+      { id: "c2", linkedinUrl: "https://www.linkedin.com/in/c2/", email: "c2@example.com", remoteUrl: null },
+    ];
+    await runAvatarBackfillBatch(twoContacts, {
+      deadline: Date.now() + 5_000,
+      persistRemote: async () => null,
+      resolveConnectedAccount: async () => {
+        calls.push("connected");
+        return null;
+      },
+      resolveLinkedIn: async () => {
+        calls.push("linkedin");
+        return null;
+      },
+      resolveGravatar: async () => {
+        calls.push("gravatar");
+        return null;
+      },
+      resolveApollo: async () => {
+        calls.push("apollo");
+        return "https://apollo.example.com/photo.jpg";
+      },
+      save: async () => {},
+      markChecked: async () => {},
+    });
+    check(
+      "Apollo only runs after connected-account, LinkedIn and Gravatar all miss",
+      calls.join(",") === "connected,linkedin,gravatar,apollo",
+      calls.join(",")
+    );
+  }
 
   // ---- perf trace ------------------------------------------------------------------
   console.log("\nperf trace (traced)…");

@@ -1,9 +1,14 @@
 /**
- * `@Name` mentions in a chat question.
+ * `@Name` mentions in a text box.
+ *
+ * Named for chat because that is where it started, and kept there on purpose: renaming it
+ * would churn four importers and a smoke suite for no change in behaviour. Nothing in here
+ * is chat-specific — `MentionComposer` uses it for the notes box and the log-interaction
+ * sheet too, and `mentions/mention-picks.ts` is built on it.
  *
  * Two surfaces have to agree on exactly which characters belong to a mention: the composer
- * paints them green, and the send path turns them back into contact ids. A single parser
- * means the highlight can never claim a span the send path does not send.
+ * paints them green, and the save path turns them back into contact ids. A single parser
+ * means the highlight can never claim a span the save path does not send.
  *
  * Pure — no React, no DOM, no DB — so `scripts/smoke-chat-mentions.ts` drives it directly.
  */

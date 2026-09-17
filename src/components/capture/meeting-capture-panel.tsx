@@ -61,6 +61,8 @@ import {
   type RecordedMeetingChunk,
 } from "@/lib/use-meeting-recorder";
 import { cn } from "@/lib/utils";
+import { AiKeyNotice } from "@/components/ai-key-notice";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 type Phase = "setup" | "live" | "finishing" | "analyzing" | "review";
 
@@ -119,6 +121,7 @@ const SURFACE_LABEL: Record<Exclude<MeetingSurface, null>, string> = {
 export function MeetingCapturePanel({
   resumable: resumableProp,
   hasApiKey,
+  aiReason = null,
   canTranscribe,
   captureSupported,
   micSupported = false,
@@ -126,8 +129,10 @@ export function MeetingCapturePanel({
   onAnalyzed,
 }: {
   resumable: ResumableMeeting | null;
-  /** A completion key, for the analysis. */
+  /** AI will run for the analysis — the user's own key, or Orbit's on Lifetime. */
   hasApiKey: boolean;
+  /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
+  aiReason?: AiAccessDenial | null;
   /** An OpenAI, Gemini or Wispr key, for transcription. Anthropic cannot transcribe. */
   canTranscribe: boolean;
   /**
@@ -815,23 +820,23 @@ export function MeetingCapturePanel({
             </p>
           </div>
         )}
-        {blocked && (
-          <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
-            <p className="font-medium text-foreground">
-              {!canTranscribe ? "Add a key that can transcribe audio" : "Add an AI key to summarize meetings"}
-            </p>
-            <p className="mt-1 text-muted-foreground">
-              {!canTranscribe
-                ? "Meeting capture transcribes with OpenAI, Gemini or Wispr — Anthropic can't hear audio. "
-                : "Orbit needs your Gemini, OpenAI or Anthropic key to summarize. "}
-              Add one in{" "}
-              <Link href="/settings" className="font-medium text-primary underline-offset-2 hover:underline">
-                Settings
-              </Link>
-              .
-            </p>
-          </div>
-        )}
+        {blocked &&
+          (!hasApiKey ? (
+            // The gate's verdict first: no key, allowance spent, payment still clearing.
+            <AiKeyNotice feature="meeting" reason={aiReason} />
+          ) : (
+            <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
+              <p className="font-medium text-foreground">Add a key that can transcribe audio</p>
+              <p className="mt-1 text-muted-foreground">
+                Meeting capture transcribes with OpenAI, Gemini or Wispr — Anthropic can&apos;t hear
+                audio. Add one in{" "}
+                <Link href="/settings" className="font-medium text-primary underline-offset-2 hover:underline">
+                  Settings
+                </Link>
+                .
+              </p>
+            </div>
+          ))}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
@@ -930,8 +935,8 @@ export function MeetingCapturePanel({
           )}
           <p className="text-xs text-muted-foreground">
             Let everyone on the call know you&apos;re taking notes — some places require everyone&apos;s
-            consent. Orbit keeps the transcript, never the audio. Transcription runs on your own key
-            (about $0.36 an hour with OpenAI).
+            consent. Orbit keeps the transcript, never the audio. Transcription runs on your AI key — or
+            Orbit&apos;s, on Lifetime (about $0.36 an hour on your own OpenAI key).
           </p>
         </div>
       </div>

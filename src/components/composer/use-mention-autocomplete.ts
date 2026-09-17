@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { searchEventsForPicker, type EventPickerOption } from "@/actions/chat";
 import { searchContactsForPicker } from "@/actions/contacts";
-import type { MentionOption } from "@/components/chat/mention-autocomplete";
+import type { MentionOption } from "@/components/composer/mention-autocomplete";
 import { interactionTypeLabel, interactionTypeNoun } from "@/lib/interaction-types";
 import { mentionQueryAt, rankMentionCandidates } from "@/lib/chat-mentions";
 import type { ContactPickerOption } from "@/lib/contacts-page";
@@ -59,7 +59,18 @@ export type MentionAutocompleteState = {
   active: () => MentionOption | null;
 };
 
-export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteState {
+/**
+ * `events` is off by default, and the default is the honest one: an event row splices a
+ * sentence about a past conversation, which is a thing you do when asking a question and
+ * not a thing you do when writing up a meeting. Off, the events query is never issued at
+ * all — the menu is on the keystroke path, so a request nobody can act on is not worth
+ * making — and the people list takes the rows the events would have had.
+ */
+export function useMentionAutocomplete(
+  enabled: boolean,
+  opts?: { events?: boolean },
+): MentionAutocompleteState {
+  const withEvents = opts?.events ?? false;
   const [start, setStart] = useState<number | null>(null);
   const [term, setTerm] = useState("");
   /** The `@` position the user dismissed, so Escape sticks until they start another. */
@@ -96,7 +107,9 @@ export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteSta
           searchContactsForPicker(searchTerm, 12, "recent").catch(
             () => [] as ContactPickerOption[]
           ),
-          searchEventsForPicker(searchTerm, 8).catch(() => [] as EventPickerOption[]),
+          withEvents
+            ? searchEventsForPicker(searchTerm, 8).catch(() => [] as EventPickerOption[])
+            : Promise.resolve([] as EventPickerOption[]),
         ]);
         // Only the newest search may write: a slow early query must not overwrite a fast
         // later one and offer rows for a prefix the user has already typed past.
@@ -109,7 +122,7 @@ export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteSta
       }
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [live, searchTerm]);
+  }, [live, searchTerm, withEvents]);
 
   const options = useMemo<MentionOption[]>(() => {
     if (!live) return [];
@@ -117,7 +130,7 @@ export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteSta
       p.preferredName,
       p.fullName,
       p.company,
-    ]).slice(0, MAX_PEOPLE);
+    ]).slice(0, withEvents ? MAX_PEOPLE : MAX_PEOPLE + MAX_EVENTS);
     const rankedEvents = rankMentionCandidates(term, events, (e) => [
       e.contactName,
       e.summary,
@@ -159,7 +172,7 @@ export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteSta
         };
       }),
     ];
-  }, [live, term, people, events]);
+  }, [live, term, people, events, withEvents]);
 
   const token = `${start ?? -1}:${term}`;
   const activeIndex =

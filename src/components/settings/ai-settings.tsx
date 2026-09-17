@@ -27,6 +27,12 @@ import {
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import {
+  AI_NOTICE_COPY,
+  allowancePercentUsed,
+  formatAllowanceReset,
+} from "@/lib/ai-access-copy";
+import { managedModel } from "@/lib/managed-ai-policy";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
@@ -34,8 +40,19 @@ const CUSTOM_MODEL = "__custom__";
 
 const PROVIDER_ITEMS = AI_PROVIDERS.map((p) => ({ value: p.id, label: p.label }));
 
+function modelLabel(provider: AiProvider, id: string) {
+  return PROVIDER_MODELS[provider].find((m) => m.value === id)?.label ?? id;
+}
+
 export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const [settings, setSettings] = useState<Settings>(initialSettings);
+  // A router refresh (the plan changed — Lifetime bought or revoked) hands down fresh
+  // settings; adopt them rather than keep describing the old plan.
+  const [seenInitial, setSeenInitial] = useState(initialSettings);
+  if (seenInitial !== initialSettings) {
+    setSeenInitial(initialSettings);
+    setSettings(initialSettings);
+  }
   const [provider, setProvider] = useState<AiProvider>(initialSettings.aiProvider);
   const [apiKey, setApiKey] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -56,11 +73,23 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
     { value: CUSTOM_MODEL, label: "Custom model ID…" },
   ];
   const activeProviderStatus = settings.providers.find((p) => p.id === provider);
+  const { ai } = settings;
+  // Lifetime, or a demo account that actually has a (local) managed key to run on.
+  const onLifetime =
+    ai.eligibility === "lifetime" || (ai.eligibility === "demo" && ai.managedConfigured);
+  // What Orbit's key would run for the provider on screen, when it is the one paying.
+  const managedRuns = activeProviderStatus?.managedAvailable
+    ? managedModel(provider, model)
+    : null;
 
   return (
     <SettingsSection
       title="AI provider"
-      description="Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys are encrypted at rest and only used for your account."
+      description={
+        onLifetime
+          ? "Orbit Lifetime includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key: whenever one is saved, Orbit uses yours instead. Keys are encrypted at rest and only used for your account."
+          : `Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Orbit Lifetime includes AI, so no key is needed there." : ""}`
+      }
     >
       <div className="space-y-1.5">
         <Label id="provider-label">Provider</Label>
@@ -91,14 +120,35 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       </div>
 
       {activeProviderStatus && (
-        <p className="text-sm text-muted-foreground">
-          Status:{" "}
-          {activeProviderStatus.hasPersonalKey
-            ? "Your key is saved"
-            : activeProviderStatus.usingEnv
-              ? `Using local ${activeProviderStatus.envVar} (dev only)`
-              : "No key yet — paste one below to enable AI features"}
-        </p>
+        <div className="space-y-1 text-sm text-muted-foreground" role="status">
+          <p>
+            Status:{" "}
+            {activeProviderStatus.hasPersonalKey
+              ? onLifetime
+                ? `Your ${providerMeta.label} key is saved, so Orbit uses it — clear it to switch to Orbit’s included AI`
+                : `Your ${providerMeta.label} key is saved`
+              : provider === ai.selectedProvider && ai.reason
+                ? AI_NOTICE_COPY[ai.reason].title("use AI")
+                : managedRuns
+                  ? `Using Orbit’s included AI — ${modelLabel(provider, managedRuns)} on Orbit’s key`
+                  : onLifetime && ai.source === "managed"
+                    ? `No ${providerMeta.label} key — Orbit’s included AI runs on ${modelLabel(ai.provider, ai.model)} instead`
+                    : "No key yet — paste one below to turn on AI features"}
+          </p>
+          {onLifetime && ai.allowance && (
+            <p>
+              Included AI this month: {allowancePercentUsed(ai.allowance)}% used · resets{" "}
+              {formatAllowanceReset(ai.allowance.resetsAt)}
+              {activeProviderStatus.hasPersonalKey ? " · not in use while your key is saved" : ""}
+            </p>
+          )}
+          {managedRuns && !activeProviderStatus.hasPersonalKey && managedRuns !== model && (
+            <p>
+              On Orbit’s key, AI runs on {modelLabel(provider, managedRuns)}; the model you
+              pick below applies once you add your own key.
+            </p>
+          )}
+        </div>
       )}
 
       {provider === "anthropic" && (
@@ -189,7 +239,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             pending ||
             (!apiKey.trim() &&
               !activeProviderStatus?.hasPersonalKey &&
-              !activeProviderStatus?.usingEnv)
+              !activeProviderStatus?.managedAvailable)
           }
           className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() =>
@@ -309,7 +359,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           {settings.providers.map((p) => (
             <li key={p.id} className="flex min-h-9 items-center justify-between gap-3">
               <span>
-                {p.label}: {p.hasPersonalKey ? "saved" : p.usingEnv ? "local env" : "none"}
+                {p.label}: {p.hasPersonalKey ? "saved" : p.managedAvailable ? "none — Orbit’s key" : "none"}
               </span>
               {/* Per key, not per selected provider: switching provider used to leave the
                   old key live for embeddings and transcription with no way to remove it. */}

@@ -18,6 +18,7 @@ import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { notifySlack } from "@/lib/ops-notify";
+import { sendSlackDM } from "@/lib/slack-dm";
 import {
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
@@ -659,6 +660,19 @@ export async function sendTestAlertAction(): Promise<{ ok: true }> {
     `:mega: Test alert from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, ops alerts reach Slack.`
   );
   await recordAdminAction({ adminUserId, action: "ops.test_alert" });
+  return { ok: true };
+}
+
+/** Prove the Slack bot can DM you specifically, from the console. */
+export async function sendTestSlackDMAction(): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_ALERT_USER_ID) {
+    throw new Error("SLACK_BOT_TOKEN / SLACK_ALERT_USER_ID is not set");
+  }
+  await sendSlackDM(
+    `:wave: Test DM from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, critical-error and feedback alerts will reach you here.`
+  );
+  await recordAdminAction({ adminUserId, action: "ops.test_dm" });
   return { ok: true };
 }
 

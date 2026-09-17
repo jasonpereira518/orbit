@@ -90,6 +90,9 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     if (!corpus) throw new Error("Nothing to read yet");
     const parsed = await parse(row.userId, corpus, row.inputHints, {
       meetingSessionId: row.meetingSessionId,
+      // Stored on the job rather than folded into `inputHints`, because a contact id is not
+      // a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
+      mentionPicks: row.mentionPicks ?? [],
       now: deps.now,
     });
     await heartbeatCaptureJob(id, token);
@@ -228,6 +231,13 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
     index = buildDuplicateIndex(existing);
   }
 
+  // Absent means "the defaults", exactly like the reminder ticks below: a job whose
+  // decisions predate opportunities must keep everything the parse found, not silently
+  // drop it all because the section is missing.
+  const opportunityChoices = decisions.opportunities;
+  const opportunityChecked = (itemKey: string, index: number) =>
+    opportunityChoices ? opportunityChoices.checked.includes(`${itemKey}:${index}`) : true;
+
   const participants: NoteBatchParticipantInput[] = accepted.map(({ item, decision }) => {
     const edits = decision.edits ?? {};
     const parsed = {
@@ -257,9 +267,28 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
       createReminder: facts.createReminder,
       relationshipScore: facts.closeness,
       tagNames: decision.tagNames?.length ? decision.tagNames : parsed.tags,
+      // A rhythm the person stated outranks both the model's inference and the closeness
+      // table — they said the interval out loud. `reminderFactsFor` applies it, so the
+      // Save button's reminder count uses the same interval.
       followUpDays: facts.followUpDays,
+      cadenceDays: item.cadence?.days ?? null,
+      cadencePhrase: item.cadence?.phrase ?? null,
       interactionDate: item.interactionDate,
       interactionType: item.interactionType,
+      // Opportunities belong to the card that produced them, so rejecting a person drops
+      // theirs with them — `accepted` is already the filter. A per-opportunity untick from
+      // the summary narrows it further.
+      opportunities: (item.opportunities ?? [])
+        .filter((_, i) => opportunityChecked(item.key, i))
+        .map((o) => ({
+          kind: o.kind,
+          label: o.label,
+          direction: o.direction,
+          sourceExcerpt: o.sourceExcerpt,
+          rawDatePhrase: o.rawDatePhrase,
+          confidenceScore: o.confidenceScore,
+          dueDateIso: o.dueDateIso,
+        })),
     };
   });
 
@@ -281,6 +310,7 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
         dateBasis: s.dateBasis,
         anchorIso: s.anchorIso,
         dueDateIso: o.dueDateIso ?? s.dueDateIso,
+        origin: s.origin ?? "explicit",
       };
     });
 

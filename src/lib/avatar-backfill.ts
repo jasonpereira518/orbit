@@ -50,9 +50,10 @@ function needsWorkPredicate(userId: string, skipIds: string[]) {
     eq(contacts.userId, userId),
     skipIds.length > 0 ? notInArray(contacts.id, skipIds) : undefined,
     or(
-      // Something to look up — a LinkedIn profile or an email for Gravatar — and
-      // nothing usable stored. Email alone qualifies, so the backlog counter is
-      // larger than it was before Gravatar existed.
+      // Something to look up — a LinkedIn profile, or an email for a connected
+      // Google/Outlook account or Gravatar — and nothing usable stored. Email alone
+      // qualifies, so the backlog counter is larger than it was before those sources
+      // existed.
       //
       // A contact we already tried and failed is left alone until the cooldown
       // expires; otherwise the backlog never shrinks and every visit re-pays for it.
@@ -122,10 +123,22 @@ export type AvatarBatchDeps = {
   now?: () => number;
   /** Cache a remote photo durably; null when it cannot be fetched or decoded. */
   persistRemote: (contactId: string, url: string) => Promise<string | null>;
-  /** Resolve a LinkedIn profile photo; null when none is findable. */
+  /**
+   * A connected Google/Outlook account's own address book, matched by email — free,
+   * and preferred over LinkedIn sources since it's the user's own contact, not a
+   * public-profile guess. Optional so callers without either connection can omit it.
+   */
+  resolveConnectedAccount?: (contactId: string, email: string) => Promise<string | null>;
+  /** Resolve a LinkedIn profile photo (Microlink/Unavatar); null when none is findable. */
   resolveLinkedIn: (contactId: string, linkedinUrl: string) => Promise<string | null>;
   /** Resolve a photo from Gravatar by email; null when the address has none. */
   resolveGravatar: (contactId: string, email: string) => Promise<string | null>;
+  /**
+   * Apollo people/match as the last resort for a LinkedIn headshot — it costs a credit,
+   * so it only runs once every free source above has already come up empty. Optional
+   * so callers without Apollo access can omit it.
+   */
+  resolveApollo?: (contactId: string, linkedinUrl: string) => Promise<string | null>;
   save: (contactId: string, photoUrl: string) => Promise<void>;
   /** Record that a contact was tried and yielded nothing, starting its cooldown. */
   markChecked: (contactId: string) => Promise<void>;
@@ -169,14 +182,19 @@ export async function runAvatarBackfillBatch(
         photoUrl = await deps.persistRemote(contact.id, contact.remoteUrl);
       }
 
+      if (!photoUrl && contact.email && deps.resolveConnectedAccount) {
+        photoUrl = await deps.resolveConnectedAccount(contact.id, contact.email);
+      }
+
       if (!photoUrl && contact.linkedinUrl) {
         try {
           photoUrl = await deps.resolveLinkedIn(contact.id, contact.linkedinUrl);
         } catch (err) {
           if (err instanceof AvatarSourceRateLimitError) {
             rateLimitedUntil = err.resetAt;
-            // A quota'd tier (Unavatar or Microlink) never got a real look. Gravatar is a
-            // different service, so still try it — but keep the contact retryable.
+            // A quota'd tier (Unavatar or Microlink) never got a real look. Gravatar and
+            // Apollo are different services, so still try them — but keep the contact
+            // retryable rather than starting its cooldown.
             quotaDeferred = true;
           } else {
             throw err;
@@ -186,6 +204,10 @@ export async function runAvatarBackfillBatch(
 
       if (!photoUrl && contact.email) {
         photoUrl = await deps.resolveGravatar(contact.id, contact.email);
+      }
+
+      if (!photoUrl && contact.linkedinUrl && deps.resolveApollo) {
+        photoUrl = await deps.resolveApollo(contact.id, contact.linkedinUrl);
       }
 
       if (!photoUrl) {

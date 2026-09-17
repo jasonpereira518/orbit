@@ -28,6 +28,7 @@ import {
   writeCaptureDraft,
   type CaptureDraft,
 } from "@/lib/capture-draft";
+import type { MentionPick } from "@/lib/mentions/mention-picks";
 import {
   CAPTURE_HANDOFF_EVENT,
   appendHandoff,
@@ -67,6 +68,9 @@ import { Badge } from "@/components/ui/badge";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { AiKeyNotice } from "@/components/ai-key-notice";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 type Decision = "pending" | "accepted" | "discarded";
 
@@ -239,6 +243,8 @@ export function BulkNotesPanel({
    */
   const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
   const latestDraftRef = useRef<Omit<CaptureDraft, "savedAt"> | null>(null);
+  /** See the read below: picks this panel cannot make, but must not throw away either. */
+  const restoredPicksRef = useRef<MentionPick[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [captureHints, setCaptureHints] = useState<CaptureParseHints | null>(
     initialHints ?? null
@@ -276,6 +282,8 @@ export function BulkNotesPanel({
   } | null>(null);
   const [mentions, setMentions] = useState<PreviewMention[]>([]);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
+  /** Why AI can't run, when it can't — which notice to show. See `AiKeyNotice`. */
+  const [aiReason, setAiReason] = useState<AiAccessDenial | null>(null);
   /** Whether to mention a fallback at all — see `ingestPayloads`. */
   const [wisprConfigured, setWisprConfigured] = useState(false);
   const [pending, start] = useTransition();
@@ -288,6 +296,7 @@ export function BulkNotesPanel({
         // `hasApiKeyProp` is the server's answer and stays authoritative when given; only
         // the Wispr flag needs this round-trip.
         if (hasApiKeyProp === undefined) setHasApiKey(settings.hasApiKey);
+        setAiReason(settings.ai.reason);
         setWisprConfigured(Boolean(settings.hasWisprKey));
       })
       .catch(() => {
@@ -301,6 +310,21 @@ export function BulkNotesPanel({
   useEffect(() => {
     if (hasApiKeyProp !== undefined) setHasApiKey(hasApiKeyProp);
   }, [hasApiKeyProp]);
+
+  /**
+   * A refusal from the server: switch into the notice it describes, and return the toast to
+   * show. The gate's own words (allowance spent, payment clearing) say more than the generic
+   * key message; any other key-shaped error reads as the plain missing-key case.
+   */
+  function refusalMessage(error: string): string {
+    const denial = aiDenialFromMessage(error);
+    if (denial) {
+      setHasApiKey(false);
+      setAiReason(denial);
+    }
+    if (denial && denial !== "key_required") return error;
+    return isMissingAiApiKeyError(error) ? MISSING_AI_API_KEY_MESSAGE : error;
+  }
 
   function focusNotesAtEnd() {
     requestAnimationFrame(() => {
@@ -327,6 +351,10 @@ export function BulkNotesPanel({
       if (cancelled) return;
       const draft = readCaptureDraft(window.localStorage, draftKey);
       const handed = acceptsHandoff ? takeCaptureHandoff(window.sessionStorage) : null;
+      // This panel has no `@` of its own, but it shares a draft key with the capture page,
+      // which does. Carried through rather than dropped: writing `[]` here would silently
+      // un-link every person the capture box had named.
+      restoredPicksRef.current = draft?.mentionPicks ?? [];
       setNotes(handed ? appendHandoff(draft?.notes ?? "", handed) : (draft?.notes ?? ""));
       setCaptureSources(draft?.sources ?? []);
       setPhotoIds(draft?.photoIds ?? []);
@@ -359,7 +387,7 @@ export function BulkNotesPanel({
   // tab closes mid-review.
   useEffect(() => {
     if (!draftKey || loadedDraftKey !== draftKey || step !== "paste") return;
-    const draft = { notes, sources: captureSources, photoIds };
+    const draft = { notes, sources: captureSources, photoIds, mentionPicks: restoredPicksRef.current };
     latestDraftRef.current = draft;
     const timer = window.setTimeout(() => {
       writeCaptureDraft(window.localStorage, draftKey, draft);
@@ -608,10 +636,9 @@ export function BulkNotesPanel({
           })),
         });
         if (!res.ok) {
-          const missingKey = isMissingAiApiKeyError(res.error);
-          if (missingKey) setHasApiKey(false);
+          const message = refusalMessage(res.error);
           finishBackgroundJob(jobId, { status: "failed", error: res.error });
-          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+          toast.error(message);
           return;
         }
         finishBackgroundJob(jobId, {
@@ -731,9 +758,7 @@ export function BulkNotesPanel({
   ) {
     const res = await ingestCaptureMedia({ text: notes, files: payloads });
     if (!res.ok) {
-      const missingKey = isMissingAiApiKeyError(res.error);
-      if (missingKey) setHasApiKey(false);
-      toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+      toast.error(refusalMessage(res.error));
       return;
     }
     setNotes(res.text);
@@ -786,9 +811,7 @@ export function BulkNotesPanel({
           : baseHints;
       const res = await parseBulkCaptureNotes(text, hints, parseOptions ?? {});
       if (!res.ok) {
-        const missingKey = isMissingAiApiKeyError(res.error);
-        if (missingKey) setHasApiKey(false);
-        toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+        toast.error(refusalMessage(res.error));
         return;
       }
       setSharedNotes(res.sharedNotes || []);
@@ -860,7 +883,7 @@ export function BulkNotesPanel({
       // `res.ok === false` above — so the key message is no longer the
       // fallback. `friendlyError` still names a genuine missing key.
       const message = friendlyError(err, TOAST_COPY.notesReadFailed);
-      if (message === MISSING_AI_API_KEY_MESSAGE) setHasApiKey(false);
+      if (aiDenialFromMessage(message)) refusalMessage(message);
       toast.error(message);
     }
   }
@@ -923,23 +946,7 @@ export function BulkNotesPanel({
             !compact && dragging && "border-dashed border-import-scan bg-import-scan/5"
           )}
         >
-          {!hasApiKey && (
-            <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
-              <p className="font-medium text-foreground">
-                Add an AI API key to extract people from notes
-              </p>
-              <p className="mt-1 text-muted-foreground">
-                Orbit needs your Gemini, OpenAI, or Anthropic key — add one in{" "}
-                <Link
-                  href="/settings"
-                  className="font-medium text-primary underline-offset-2 hover:underline"
-                >
-                  Settings
-                </Link>
-                , then come back here.
-              </p>
-            </div>
-          )}
+          {!hasApiKey && <AiKeyNotice feature="capture" reason={aiReason} />}
           {restoredAt !== null && (
             <div
               role="status"

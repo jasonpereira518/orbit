@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { captureImageFiles, normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
 import { discardCapturePhotos, storeCapturePhotos, type StoredCapturePhoto } from "@/lib/capture-photos";
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
@@ -7,9 +7,12 @@ import {
   createCaptureJob,
   failCaptureJob,
   markCaptureJobTranscribed,
+  queueCaptureJobRow,
   toCaptureJobView,
   getCaptureJobRow,
 } from "@/lib/capture-jobs";
+import { runCaptureJobById } from "@/lib/capture-job-runner";
+import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import type { CaptureJobSource } from "@/lib/capture/types";
 import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
 import { isPaywallError } from "@/lib/entitlements";
@@ -31,6 +34,10 @@ const SOURCE_KINDS: CaptureJobSource[] = ["messy", "voice", "scan"];
  *     sourceKind   messy | voice | scan
  *     text         optional — what was already typed, kept with the job
  *     files        one or more; audio, images, PDF, .ics, .eml, .txt
+ *     batchGroupId optional — one multi-file drop; suspends the one-review-at-a-time rule
+ *     sourceLabel  optional — the original filename, for the queue row
+ *     mentionPicks optional — JSON [{id,name}] the person picked with `@`
+ *     autoQueue    optional — "1" to queue and start extraction in this same request
  *   x-orbit-capture: 1
  *
  * A route rather than a server action for the same two reasons the meeting chunk route
@@ -70,6 +77,20 @@ export async function POST(request: Request) {
   const sourceKindRaw = String(form.get("sourceKind") ?? "messy");
   const sourceKind = (SOURCE_KINDS as string[]).includes(sourceKindRaw) ? (sourceKindRaw as CaptureJobSource) : "messy";
   const text = typeof form.get("text") === "string" ? String(form.get("text")) : "";
+  const batchGroupId = typeof form.get("batchGroupId") === "string" ? String(form.get("batchGroupId")).trim().slice(0, 64) : "";
+  const sourceLabel = typeof form.get("sourceLabel") === "string" ? String(form.get("sourceLabel")).trim().slice(0, 200) : "";
+  const autoQueue = String(form.get("autoQueue") ?? "") === "1";
+  let mentionPicks: MentionPick[] = [];
+  if (typeof form.get("mentionPicks") === "string") {
+    try {
+      mentionPicks = sanitizeMentionPicks(JSON.parse(String(form.get("mentionPicks"))));
+    } catch {
+      // A malformed picks blob loses the links, not the upload. The note itself is what
+      // the person spent effort on; refusing the whole capture over a JSON slip would
+      // throw that away to protect an optional convenience.
+      mentionPicks = [];
+    }
+  }
   const uploads = form.getAll("files").filter((f): f is File => f instanceof File);
   if (!uploads.length) {
     return NextResponse.json({ error: "Add a file first" }, { status: 400 });
@@ -108,7 +129,14 @@ export async function POST(request: Request) {
     });
   }
 
-  const job = await createCaptureJob(userId, { sourceKind, status: "ingesting", inputText: text });
+  const job = await createCaptureJob(userId, {
+    sourceKind,
+    status: "ingesting",
+    inputText: text,
+    batchGroupId: batchGroupId || null,
+    sourceLabel: sourceLabel || null,
+    mentionPicks,
+  });
 
   // Photos are kept (shrunk, stripped of metadata) so the capture history can show the page
   // next to what was pulled out of it — the same lifecycle `ingestCaptureMedia` gives them:
@@ -132,6 +160,22 @@ export async function POST(request: Request) {
       { sources: normalized.sources, transcriptionEngine: normalized.transcriptionEngine ?? null, photoIds: photos.map((p) => p.id) }
     );
     await markCaptureJobTranscribed(job.id);
+
+    // `autoQueue` collapses upload+Extract into one request, and it exists for arithmetic
+    // rather than tidiness. Every file otherwise costs TWO `RATE_LIMITS.capture` tokens —
+    // one here and one in `queueCaptureJob` — so a twelve-file drop needed 24 of the 30 a
+    // minute allows, and fifteen files stranded the batch mid-flight. One token per file
+    // puts a realistic folder of meeting notes comfortably inside the existing budget.
+    //
+    // Correct only for the fan-out path: "one file = one meeting" has no transcript-editing
+    // step in between, because nobody is going to hand-edit twelve transcripts before
+    // pressing Extract. The single-capture flow still queues separately, so its edit step
+    // survives. `after` is valid in a Route Handler and inherits this route's maxDuration.
+    if (autoQueue) {
+      const queued = await queueCaptureJobRow(userId, job.id, { inputText: null, inputHints: normalized.hints });
+      if (queued) after(() => runCaptureJobById(job.id).catch(() => null));
+    }
+
     const fresh = await getCaptureJobRow(userId, job.id);
     return NextResponse.json({
       ok: true,

@@ -32,6 +32,8 @@ export const EXPECTED_IN_PRODUCTION = [
   "STRIPE_SECRET_KEY",
   "BLOB_READ_WRITE_TOKEN",
   "SLACK_OPS_WEBHOOK_URL",
+  "SLACK_BOT_TOKEN",
+  "SLACK_ALERT_USER_ID",
   "HEALTH_TOKEN",
   "SENTRY_DSN",
   "NEXT_PUBLIC_SENTRY_DSN",
@@ -66,6 +68,16 @@ const STRIPE_PRICE_IDS = [
   "STRIPE_LIFETIME_STANDARD_PRICE_ID",
   "STRIPE_PRO_MONTHLY_PRICE_ID",
   "STRIPE_PRO_ANNUAL_PRICE_ID",
+] as const;
+
+/**
+ * Orbit's managed AI keys, which Lifetime accounts run on when they bring none
+ * (`src/lib/ai-access.ts`). Checked by presence only, here as everywhere.
+ */
+const MANAGED_AI_KEYS = [
+  "ORBIT_MANAGED_GEMINI_API_KEY",
+  "ORBIT_MANAGED_OPENAI_API_KEY",
+  "ORBIT_MANAGED_ANTHROPIC_API_KEY",
 ] as const;
 
 /** Must never be set in production: each one hands out access on a keypress or a header. */
@@ -135,6 +147,13 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       }
     }
 
+    if (has(env, "SLACK_BOT_TOKEN") && !env.SLACK_BOT_TOKEN!.startsWith("xoxb-")) {
+      errors.push("SLACK_BOT_TOKEN must be a bot token (xoxb-...)");
+    }
+    if (has(env, "SLACK_BOT_TOKEN") !== has(env, "SLACK_ALERT_USER_ID")) {
+      errors.push("SLACK_BOT_TOKEN and SLACK_ALERT_USER_ID must be set together");
+    }
+
     for (const name of FORBIDDEN_IN_PRODUCTION) {
       if (has(env, name)) errors.push(`${name} must not be set in production`);
     }
@@ -144,6 +163,18 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
         warnings.push(`${name} is unset; the feature it enables is off`);
         missingExpected.push(name);
       }
+    }
+    // Lifetime is sold as including AI. Selling it with no managed key means every buyer
+    // without a key of their own is refused — a warning rather than a failed build, since
+    // the ops sweep pages on it (`ai.managed_unconfigured`) and a key must never block a deploy.
+    if (
+      has(env, "STRIPE_SECRET_KEY") &&
+      !MANAGED_AI_KEYS.some((name) => has(env, name)) &&
+      env.ORBIT_MANAGED_AI?.trim().toLowerCase() !== "off"
+    ) {
+      warnings.push(
+        "No ORBIT_MANAGED_*_API_KEY is set; Lifetime is on sale but its included AI has no key to run on"
+      );
     }
     return { errors, warnings, missingRequired, missingExpected };
   }

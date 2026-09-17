@@ -13,6 +13,7 @@ import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
 import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
+import { ContactOpportunitiesSection } from "@/components/contacts/contact-opportunities-section";
 import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
 import { Reveal } from "@/components/motion/reveal";
@@ -31,11 +32,13 @@ import {
   isBriefStale,
 } from "@/lib/contact-brief";
 import { listContactMentions } from "@/lib/contact-mentions";
+import { listOpportunitiesForContact } from "@/lib/contact-opportunities";
 import { getContactProfile } from "@/lib/contact-profile";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 export default async function ContactDetailPage({
   params,
@@ -75,6 +78,12 @@ export default async function ContactDetailPage({
     .catch(() => ({ mentionedIn: [], mentions: [] }));
   const nextStepsPromise = userIdPromise
     .then((u) => listOpenActionItems(u, id))
+    .catch(() => []);
+  // `.catch` is mandatory, not defensive: this promise is started before the first `await`,
+  // and an eagerly-started rejection races `notFound()` into the error boundary. See the
+  // comment at the top of this file.
+  const opportunitiesPromise = userIdPromise
+    .then((u) => listOpportunitiesForContact(u, id))
     .catch(() => []);
   const briefPromise = userIdPromise
     .then((u) => getContactBrief(u, id))
@@ -288,6 +297,7 @@ export default async function ContactDetailPage({
         <ContactBriefCard
           contactId={contact.id}
           standing={brief?.standing ?? null}
+          nextStep={brief?.nextStep ?? null}
           recentDiscussions={brief?.recentDiscussions ?? []}
           nextSteps={nextSteps.map((item) => ({
             ...item,
@@ -363,6 +373,17 @@ export default async function ContactDetailPage({
         <ContactRemindersSection reminders={contact.reminders ?? []} />
       </Reveal>
 
+      {/* After Reminders and before Mentions: an opportunity is a commitment, like a
+          reminder, rather than provenance, like a mention. Unlike mentions this section
+          renders when empty — it carries an Add button, so the space earns itself. */}
+      <Suspense fallback={<Skeleton className="h-28 w-full rounded-2xl" />}>
+        <StreamedOpportunities
+          data={opportunitiesPromise}
+          contactId={contact.id}
+          contactName={displayName}
+        />
+      </Suspense>
+
       {/* No fallback here: this section renders nothing when empty, and a
           skeleton that can collapse into nothing reads as a glitch. */}
       <Suspense fallback={null}>
@@ -408,7 +429,7 @@ async function StreamedTimeline({
   settings,
   ...rest
 }: {
-  settings: Promise<{ hasApiKey: boolean }>;
+  settings: Promise<{ hasApiKey: boolean; ai?: { reason: AiAccessDenial | null } }>;
   contactId: string;
   contactName: string;
   interactions: React.ComponentProps<typeof ContactTimeline>["interactions"];
@@ -416,10 +437,10 @@ async function StreamedTimeline({
     typeof ContactTimeline
   >["openActionItems"];
 }) {
-  const { hasApiKey } = await settings;
+  const { hasApiKey, ai } = await settings;
   return (
     <div className="reveal-mount">
-      <ContactTimeline {...rest} hasApiKey={hasApiKey} />
+      <ContactTimeline {...rest} hasApiKey={hasApiKey} aiReason={ai?.reason ?? null} />
     </div>
   );
 }
@@ -461,6 +482,37 @@ async function StreamedExperience({
             experiences: profile.experiences,
           }
         }
+      />
+    </div>
+  );
+}
+
+async function StreamedOpportunities({
+  data,
+  contactId,
+  contactName,
+}: {
+  data: Promise<Awaited<ReturnType<typeof listOpportunitiesForContact>>>;
+  contactId: string;
+  contactName: string;
+}) {
+  const rows = await data;
+  return (
+    <div className="reveal-mount">
+      <ContactOpportunitiesSection
+        contactId={contactId}
+        contactName={contactName}
+        opportunities={rows.map((o) => ({
+          id: o.id,
+          kind: o.kind,
+          label: o.label,
+          status: o.status,
+          direction: o.direction,
+          dueDate: o.dueDate,
+          sourceExcerpt: o.sourceExcerpt,
+          sourceInteractionId: o.sourceInteractionId,
+          createdBy: o.createdBy,
+        }))}
       />
     </div>
   );

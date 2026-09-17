@@ -57,11 +57,10 @@ export default async function CapturePage({
   // so it opens on the Meeting tab unless the link asked for something specific.
   const defaultMode: CaptureMode =
     modeParam || (contactId ? "structured" : resumableMeeting ? "meeting" : "messy");
-  // Mirrors the engine chain in `transcribeAudioWithAI`: Wispr, Whisper, Gemini. Anthropic
-  // has no speech-to-text, so an Anthropic-only account can summarize but not transcribe.
-  const canTranscribe =
-    settings.hasWisprKey ||
-    settings.providers.some((p) => (p.id === "openai" || p.id === "gemini") && (p.hasPersonalKey || p.usingEnv));
+  // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Wispr, Whisper,
+  // Gemini — or Orbit's on Lifetime). Anthropic has no speech-to-text, so an Anthropic-only
+  // BYOK account can summarize but not transcribe.
+  const canTranscribe = settings.ai.canTranscribe;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -79,6 +78,7 @@ export default async function CapturePage({
         initialContactName={contactName}
         defaultMode={defaultMode}
         hasApiKey={settings.hasApiKey}
+        aiReason={settings.ai.reason}
         canTranscribe={canTranscribe}
         resumableMeeting={resumableMeeting}
         ignoredCount={ignoredCount}

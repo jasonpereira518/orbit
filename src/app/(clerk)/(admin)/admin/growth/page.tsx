@@ -148,7 +148,7 @@ export default async function AdminGrowthPage({
           {activation.every((p) => p.signed === 0) ? (
             <EmptyState>No signups in this window.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable minWidth="sm"
               head={
                 <>
                   <Th>Joined</Th>
@@ -178,7 +178,7 @@ export default async function AdminGrowthPage({
         {/* Three integers per cohort, never a percentage grid: at this scale a retention
             percentage has one or two people behind it. */}
         <AdminPanel title="Did each month's intake stick?">
-          <AdminTable
+          <AdminTable minWidth="sm"
             head={
               <>
                 <Th>Cohort</Th>
@@ -252,7 +252,7 @@ export default async function AdminGrowthPage({
             {aiOps.adoption.length === 0 ? (
               <EmptyState>No AI operations recorded in the last 30 days.</EmptyState>
             ) : (
-              <AdminTable
+              <AdminTable minWidth="sm"
                 head={
                   <>
                     <Th>Operation</Th>
@@ -292,7 +292,7 @@ export default async function AdminGrowthPage({
           <AdminPanel title="Durable artifacts">
             {/* What usage_events structurally cannot show: reminders, tags and goals leave
                 no AI call behind, so a usage-only view reports them as unused. */}
-            <AdminTable
+            <AdminTable minWidth="none"
               head={
                 <>
                   <Th>Table</Th>
@@ -384,7 +384,7 @@ export default async function AdminGrowthPage({
           {/* A section rather than a screen: at this scale it is eight integers and most
               are zero. Split it out when two rows stay non-zero for a week — at that point
               they have stopped being checks and become work. */}
-          <AdminTable
+          <AdminTable minWidth="none"
             head={
               <>
                 <Th>Check</Th>

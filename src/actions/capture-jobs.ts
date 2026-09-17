@@ -3,15 +3,18 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireUserId } from "@/lib/auth";
+import { friendlyError } from "@/lib/errors";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import type { CaptureParseHints } from "@/lib/ai";
 import {
   bumpCaptureStallResumes,
   captureJobLooksStuck,
   createCaptureJob,
+  discardCaptureBatchRows,
   discardCaptureJobRow,
   failCaptureJob,
   findActiveCaptureJob,
+  findActiveCaptureJobs,
   getCaptureJobRow,
   MAX_CAPTURE_STALL_RESUMES,
   queueCaptureJobRow,
@@ -24,6 +27,7 @@ import { runCaptureJobById } from "@/lib/capture-job-runner";
 import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
+import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type {
   CaptureDecision,
   CaptureDecisions,
@@ -56,6 +60,38 @@ export async function getActiveCaptureJob(): Promise<CaptureJobView | null> {
   const userId = await requireUserId();
   const row = await findActiveCaptureJob(userId);
   return row ? toCaptureJobView(row) : null;
+}
+
+/**
+ * Every job still reachable, for the multi-file queue. Bounded, because a page that renders
+ * one row per job must not be handed an unbounded list.
+ */
+export async function getActiveCaptureJobs(limit = 25): Promise<CaptureJobView[]> {
+  const userId = await requireUserId();
+  const rows = await findActiveCaptureJobs(userId, Math.min(Math.max(1, limit), 50));
+  return rows.map(toCaptureJobView);
+}
+
+/**
+ * Discard a whole multi-file drop.
+ *
+ * Takes the batch id rather than "everything open" so Start over on one queue cannot throw
+ * away a single capture the person left in another tab.
+ */
+export async function discardCaptureBatch(
+  batchGroupId: string
+): Promise<{ ok: true; discarded: number } | Fail> {
+  try {
+    const userId = await requireUserId();
+    if (typeof batchGroupId !== "string" || !batchGroupId.trim()) {
+      return { ok: false, error: "That batch is no longer open" };
+    }
+    const discarded = await discardCaptureBatchRows(userId, batchGroupId.trim());
+    revalidatePath("/capture");
+    return { ok: true, discarded };
+  } catch (err) {
+    return { ok: false, error: friendlyError(err, "Couldn’t discard those captures — try again?") };
+  }
 }
 
 /**
@@ -102,6 +138,10 @@ export async function queueCaptureJob(input: {
   entryPoint?: "capture" | "profile";
   seedContactId?: string | null;
   meetingSessionId?: string | null;
+  /** Set when this job is one file of a multi-file drop. Suspends the discard rule below. */
+  batchGroupId?: string | null;
+  sourceLabel?: string | null;
+  mentionPicks?: MentionPick[] | null;
 }): Promise<Ok | Fail> {
   try {
     const userId = await requireUserId();
@@ -115,6 +155,7 @@ export async function queueCaptureJob(input: {
           // text as the person left it, not the text plus what it was edited from.
           inputText: text || null,
           inputHints: input.hints ?? undefined,
+          mentionPicks: input.mentionPicks ?? undefined,
         })
       : null;
     if (input.jobId && row) {
@@ -129,11 +170,19 @@ export async function queueCaptureJob(input: {
       if (!text) return { ok: false, error: "Notes are required" };
       // Only one capture is in review at a time: a second Extract while one is waiting
       // would leave orphaned cards nobody can get back to.
-      const db = await getDb();
-      await db
-        .update(captureJobs)
-        .set({ status: "discarded", updatedAt: new Date() })
-        .where(and(eq(captureJobs.userId, userId), inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"])));
+      //
+      // Suspended for a multi-file drop, and ONLY for one. The rule exists because a lone
+      // Extract has no way back to the cards it displaced — there is no list of them. A
+      // batch does: `CaptureQueuePanel` renders every job in the group and can open any of
+      // them, so the twelve meeting notes somebody just uploaded are exactly what this
+      // would otherwise delete eleven of.
+      if (!input.batchGroupId) {
+        const db = await getDb();
+        await db
+          .update(captureJobs)
+          .set({ status: "discarded", updatedAt: new Date() })
+          .where(and(eq(captureJobs.userId, userId), inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"])));
+      }
       row = await createCaptureJob(userId, {
         sourceKind: input.sourceKind,
         status: "queued",
@@ -142,6 +191,9 @@ export async function queueCaptureJob(input: {
         entryPoint: input.entryPoint,
         seedContactId: input.seedContactId,
         meetingSessionId: input.meetingSessionId,
+        batchGroupId: input.batchGroupId ?? null,
+        sourceLabel: input.sourceLabel ?? null,
+        mentionPicks: input.mentionPicks ?? null,
       });
     }
     kick(row.id);

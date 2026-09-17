@@ -23,7 +23,7 @@ import { getAppBaseUrl } from "@/lib/app-url";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import type { BillingPeriod } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
-import { setCompedPlan } from "@/lib/user-settings";
+import { setCompedPlan, setPendingLifetimeCheckout } from "@/lib/user-settings";
 import { reportError } from "@/lib/report-error";
 import { withReference } from "@/lib/errors";
 
@@ -68,12 +68,16 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
       customer_email: profile?.email || undefined,
       // The plan card here already reads "Orbit Lifetime" once the webhook lands, so this
       // page confirms the purchase without needing a bespoke success screen. `upgraded`
-      // arms the celebration watcher's fast poll — the webhook may not have landed yet.
+      // arms the celebration watcher's fast poll; `session_id` (Stripe fills the template)
+      // lets it confirm the payment with Stripe directly, before the webhook lands.
       success_url: `${baseUrl}/settings?upgraded=lifetime&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
+    // Remembered so the AI gate can recognise this payment if the webhook is slow — see
+    // `src/lib/lifetime-checkout.ts`. Never an entitlement on its own.
+    await setPendingLifetimeCheckout(userId, session.id);
     return { url: session.url };
   } catch (err) {
     // Reported with the Stripe error code, and the person gets a reference to quote. This
@@ -201,16 +205,22 @@ export async function openBillingPortal(): Promise<BillingPortalResult> {
 }
 
 /**
- * Verify-on-return. The webhook stays the guarantee; this only shortens the wait, so every
- * failure is swallowed into a status and the caller carries on polling.
+ * Confirm a checkout the moment the buyer is back, instead of waiting on the webhook. Called
+ * once by the celebration watcher with the `session_id` Stripe put in the success URL.
+ *
+ * Two checks, both through the same idempotent writers as the webhook. First the general
+ * one (`confirmCheckoutForUser`), which applies a paid Pro or Lifetime session for this
+ * caller. When that applies nothing, the Lifetime check the AI gate also uses
+ * (`confirmLifetimeCheckout`) says whether the payment is merely still clearing, so the
+ * watcher can tell the buyer rather than stay silent. Anything else changes nothing.
  */
 export async function confirmCheckoutSession(
   sessionId: string
-): Promise<{ status: "applied" | "skipped" | "unavailable" }> {
+): Promise<{ status: "granted" | "processing" | "unconfirmed" }> {
   const userId = await requireUserId();
-  if (!isStripeConfigured()) return { status: "unavailable" };
+  if (!isStripeConfigured()) return { status: "unconfirmed" };
   if (typeof sessionId !== "string" || !/^cs_[A-Za-z0-9_]{8,250}$/.test(sessionId)) {
-    return { status: "skipped" };
+    return { status: "unconfirmed" };
   }
   try {
     const result = await confirmCheckoutForUser(userId, sessionId, {
@@ -219,12 +229,20 @@ export async function confirmCheckoutSession(
           expand: ["payment_intent.latest_charge", "subscription"],
         }),
     });
-    return { status: result.status };
+    if (result.status === "applied") return { status: "granted" };
   } catch (err) {
     // Not recorded as a stripeCheckout error event: that source pages "nobody can pay".
     console.error("Checkout confirmation on return did not complete:", err);
-    return { status: "unavailable" };
   }
+  try {
+    const { confirmLifetimeCheckout } = await import("@/lib/lifetime-checkout");
+    const verdict = await confirmLifetimeCheckout(userId, sessionId);
+    if (verdict.kind === "paid") return { status: "granted" };
+    if (verdict.kind === "processing") return { status: "processing" };
+  } catch (err) {
+    console.error("Lifetime checkout check on return did not complete:", err);
+  }
+  return { status: "unconfirmed" };
 }
 
 /**

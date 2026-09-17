@@ -1,4 +1,5 @@
 import { isGooglePurpose, missingScopeMessage } from "@/lib/google-scopes";
+import { AI_ACCESS_COPY, AI_ACCESS_MESSAGES, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
 
 /**
  * Shown whenever AI features fail because the user has NO provider key.
@@ -42,15 +43,31 @@ const MISSING_KEY_PATTERNS = [
 ];
 
 /**
- * Whether `message` means "this account has no AI key". It used to be `/api key/i`, which
- * also matched every provider that REFUSED a key — and Stripe's "Invalid API Key provided",
- * Apollo's and Resend's — so a checkout failure could tell a buyer to add an AI key.
+ * The AI gate's refusals whose remedy is "add your own key" (`src/lib/ai-access-copy.ts`).
+ * Listed by exact text: `upgrade_pending` is deliberately absent — a key is not what someone
+ * whose Lifetime payment is still clearing is missing.
+ */
+const KEY_REMEDY_DENIALS: ReadonlySet<string> = new Set([
+  AI_ACCESS_COPY.key_required,
+  AI_ACCESS_COPY.managed_limit,
+  AI_ACCESS_COPY.managed_unavailable,
+  MANAGED_PROVIDER_FAILURE_MESSAGE,
+]);
+
+/**
+ * Whether `message` means "this account has no usable AI key", so the UI should show the
+ * "add a key" state. It used to be `/api key/i`, which also matched every provider that
+ * REFUSED a key — and Stripe's "Invalid API Key provided", Apollo's and Resend's — so a
+ * checkout failure could tell a buyer to add an AI key. The AI gate's own refusals are
+ * matched by their exact copy instead of by the words "API key".
  */
 export function isMissingAiApiKeyError(message: string | null | undefined) {
   if (!message) return false;
   const text = message.trim();
   return (
-    text === MISSING_AI_API_KEY_MESSAGE || MISSING_KEY_PATTERNS.some((re) => re.test(text))
+    text === MISSING_AI_API_KEY_MESSAGE ||
+    KEY_REMEDY_DENIALS.has(text) ||
+    MISSING_KEY_PATTERNS.some((re) => re.test(text))
   );
 }
 
@@ -284,6 +301,9 @@ const OWN_WORDS = new Set<string>([
   ...AI_PROVIDER_LABELS.flatMap((label) =>
     Object.values(AI_FAILURE_COPY).map((template) => template(label))
   ),
+  // The AI gate's refusals (`src/lib/ai-access.ts`). Listed here so a Lifetime user who has
+  // run out of allowance reads that, rather than the generic "add your key".
+  ...AI_ACCESS_MESSAGES,
 ]);
 
 /**

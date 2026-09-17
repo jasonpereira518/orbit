@@ -13,6 +13,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-embedding-backfill";
 
 import { and, count, eq, inArray, isNotNull, isNull, notInArray } from "drizzle-orm";
 import type { createEmbeddingsBatch } from "../src/lib/ai";
+import { isAiAccessError } from "../src/lib/ai-access";
 import { getDb } from "../src/db";
 import { contactEmbeddings, contacts, embeddingFailures, interactions, userSettings } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
@@ -34,18 +35,17 @@ function check(label: string, condition: boolean, detail?: string) {
 /**
  * The runner is required NOT to catch a provider failure — that is what leaves
  * `embedding_stale_at` set for the next pass to retry (see `embedding-backfill.ts`). With
- * no AI key configured anywhere in this environment, `createEmbeddingsBatch` always
- * rejects, so that rejection is expected to reach here on every local run. This is the
- * same shape as the `revalidatePath` invariant `smoke-import-engine.ts` tolerates: a real
- * environment gap, not a mock, and anything other than the specific expected message
- * still escapes and fails the run.
+ * no AI key configured anywhere in this environment, the AI gate refuses this account
+ * before any network call, so that refusal is expected to reach here on every local run.
+ * This is the same shape as the `revalidatePath` invariant `smoke-import-engine.ts`
+ * tolerates: a real environment gap, not a mock, and anything other than the gate's typed
+ * "no key" refusal still escapes and fails the run.
  */
 async function attemptBackfill(userId: string) {
   try {
     return await runEmbeddingBackfill(userId);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (/API key configured for embeddings|Anthropic has no embeddings API/.test(message)) {
+    if (isAiAccessError(err) && err.reason === "key_required") {
       return { embedded: 0, remaining: -1 };
     }
     throw err;

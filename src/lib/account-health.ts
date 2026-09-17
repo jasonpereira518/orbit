@@ -8,7 +8,7 @@ import {
   outlookConnections,
   userSettings,
 } from "@/db/schema";
-import { hasAiKeyFor } from "@/lib/ai";
+import { aiReadyFromSettings } from "@/lib/ai-access";
 import { resolveAiProvider } from "@/lib/ai-providers";
 import {
   IMPORT_ALERT_WINDOW_MS,
@@ -247,7 +247,8 @@ export async function loadAccountHealthInput(
 
   return {
     aiProvider: provider,
-    hasAiKey: hasAiKeyFor(provider, settings),
+    // The gate's own policy, presence-only: a Lifetime account on Orbit's key is not missing one.
+    hasAiKey: aiReadyFromSettings(userId, settings),
     onboardingCompletedAt: toDate(settings.onboardingCompletedAt),
 
     gmail: connectionFacts(

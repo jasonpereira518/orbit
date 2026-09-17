@@ -479,6 +479,7 @@ export type OpsStatus = {
   builtAt: string | null;
   sentryUrl: string | null;
   slackConfigured: boolean;
+  slackDmConfigured: boolean;
 };
 
 /** What the admin "System status" strip shows: is anyone watching, and what did they see. */
@@ -506,5 +507,6 @@ export async function getOpsStatus(now = new Date()): Promise<OpsStatus> {
     builtAt: process.env.BUILD_TIME ?? null,
     sentryUrl: process.env.SENTRY_PROJECT_URL ?? null,
     slackConfigured: Boolean(process.env.SLACK_OPS_WEBHOOK_URL),
+    slackDmConfigured: Boolean(process.env.SLACK_BOT_TOKEN && process.env.SLACK_ALERT_USER_ID),
   };
 }

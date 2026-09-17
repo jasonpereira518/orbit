@@ -26,6 +26,7 @@ import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { completeJson } from "@/lib/ai";
+import { friendlyError } from "@/lib/errors";
 import { companyMatchKeys } from "@/lib/events/company-list-parse";
 import { loadTargetKeys } from "@/lib/events/companies";
 import { eventsTogetherForRoster } from "@/lib/events/people-store";
@@ -162,8 +163,10 @@ export async function explainAttendeeForUser(
       maxOutputTokens: 300,
     });
     parsed = JSON.parse(raw) as { why?: unknown; opener?: unknown };
-  } catch {
-    return { ok: false, error: "Couldn't write that just now — try again?" };
+  } catch (err) {
+    // `friendlyError` so an AI-gate refusal (allowance spent, key removed mid-session) says
+    // so, instead of inviting a retry that will be refused the same way.
+    return { ok: false, error: friendlyError(err, "Couldn't write that just now — try again?") };
   }
 
   const why = typeof parsed.why === "string" ? parsed.why.trim().slice(0, 200) : "";

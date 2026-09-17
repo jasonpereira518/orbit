@@ -7,9 +7,10 @@ import type { AiProvider } from "@/lib/ai-providers";
  * that goes stale) and not in `plan-copy.ts` (those are Orbit's prices; these are other
  * companies').
  *
- * Production is strictly BYOK, so these figures almost always describe the *user's* spend,
- * not Orbit's. They exist to spot a default model quietly burning someone's money, and to
- * ground a "you're a heavy user, here's Lifetime" conversation — not as a P&L line.
+ * Mostly these figures describe the *user's* spend — AI is BYOK on every plan but Lifetime.
+ * They exist to spot a default model quietly burning someone's money, to ground a "you're a
+ * heavy user, here's Lifetime" conversation, and — for Lifetime accounts on Orbit's managed
+ * keys — to meter the monthly allowance, which is why every managed model must be priced.
  */
 export type ModelPrice = {
   input: number;

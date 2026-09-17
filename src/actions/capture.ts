@@ -38,6 +38,7 @@ import {
   type NoteBatchParticipantInput,
 } from "@/lib/note-batch-save";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
+import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import {
   getMeetingSession,
@@ -139,6 +140,8 @@ export async function ingestCaptureMedia(input: {
 export type BulkParseOptions = {
   /** See `CaptureParseOptions.meetingSessionId` in `src/lib/capture-parse.ts`. */
   meetingSessionId?: string | null;
+  /** Contacts named with `@`. Re-sanitised here: this is a server action, so it is a boundary. */
+  mentionPicks?: MentionPick[] | null;
 };
 
 /**
@@ -159,6 +162,7 @@ export async function parseBulkCaptureNotes(
     }
     const result = await runCaptureParse(userId, notes, hints, {
       meetingSessionId: opts.meetingSessionId,
+      mentionPicks: sanitizeMentionPicks(opts.mentionPicks ?? []),
     });
     return { ok: true as const, ...result };
   } catch (err) {

@@ -41,7 +41,10 @@ import { acceptedPeople, countDecisions, firstPendingIndex, initialPhaseFor, typ
 import type { CaptureDecision, CaptureDecisions, CaptureJobSource } from "@/lib/capture/types";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { captureDraftKey, clearCaptureDraft } from "@/lib/capture-draft";
+import { activePicks, type MentionPick } from "@/lib/mentions/mention-picks";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { MISSING_AI_API_KEY_MESSAGE, isMissingAiApiKeyError } from "@/lib/errors";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { meetingExtrasFromDigest } from "@/lib/meeting-extras";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { DUR, DUR_MS, EASE_HOUSE } from "@/lib/motion";
@@ -61,6 +64,7 @@ export function CaptureFlow({
   initialContactName = null,
   defaultMode = "messy",
   hasApiKey = true,
+  aiReason = null,
   canTranscribe = false,
   resumableMeeting = null,
   ignoredCount = 0,
@@ -73,6 +77,8 @@ export function CaptureFlow({
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
+  /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
+  aiReason?: AiAccessDenial | null;
   canTranscribe?: boolean;
   resumableMeeting?: ResumableMeeting | null;
   ignoredCount?: number;
@@ -110,6 +116,7 @@ export function CaptureFlow({
   const messy = useCaptureIngest({
     sourceKind: "messy",
     hasApiKey,
+    aiReason,
     initialNotes: prefill && prefill.sourceKind !== "voice" ? prefillText : "",
     initialJobId: prefill && prefill.sourceKind !== "voice" ? prefill.id : null,
     onAutoExtract: (text, hints, jobId) => void startExtraction({ text, hints, jobId, sourceKind: "messy" }),
@@ -117,6 +124,7 @@ export function CaptureFlow({
   const voice = useCaptureIngest({
     sourceKind: "voice",
     hasApiKey,
+    aiReason,
     initialNotes: prefill && prefill.sourceKind === "voice" ? prefillText : "",
     initialJobId: prefill && prefill.sourceKind === "voice" ? prefill.id : null,
   });
@@ -161,7 +169,7 @@ export function CaptureFlow({
 
   // ── Actions ─────────────────────────────────────────────────────────────────────────
   const startExtraction = useCallback(
-    async (input: { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null }) => {
+    async (input: { text: string; hints: Parameters<typeof queueCaptureJob>[0]["hints"]; jobId: string | null; sourceKind: CaptureJobSource; meetingSessionId?: string | null; mentionPicks?: MentionPick[] }) => {
       if (!input.text.trim() && !input.jobId) return;
       setPendingStart(true);
       setReviewOpened(false);
@@ -173,15 +181,27 @@ export function CaptureFlow({
         entryPoint: initialContactId ? "profile" : "capture",
         seedContactId: initialContactId,
         meetingSessionId: input.meetingSessionId ?? null,
+        // Only the picks whose token is still in the text. The registry is append-only, so
+        // a name the user typed and then deleted is still in it — and sending that would
+        // link a note to somebody they took back out on purpose.
+        mentionPicks: activePicks(input.text, input.mentionPicks ?? []),
       });
       if (!res.ok) {
         setPendingStart(false);
-        const missingKey = isMissingAiApiKeyError(res.error);
-        if (missingKey) {
-          messy.setHasApiKey(false);
-          voice.setHasApiKey(false);
+        const denial = aiDenialFromMessage(res.error);
+        if (denial) {
+          messy.noteAiRefusal(res.error);
+          voice.noteAiRefusal(res.error);
         }
-        toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+        // The gate's own words (allowance spent, payment clearing) say more than the generic
+        // key message; any other key-shaped error reads as the plain missing-key case.
+        toast.error(
+          denial && denial !== "key_required"
+            ? res.error
+            : isMissingAiApiKeyError(res.error)
+              ? MISSING_AI_API_KEY_MESSAGE
+              : res.error
+        );
         return;
       }
       seedCaptureJob(res.job, { force: true });
@@ -303,7 +323,7 @@ export function CaptureFlow({
                 tabId={captureTabId("messy")}
                 draftKey={userId ? captureDraftKey(userId, initialContactId) : null}
                 acceptsHandoff={!initialContactId}
-                onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy" })}
+                onExtract={() => void startExtraction({ text: messy.notes, hints: messy.hints, jobId: messy.jobId, sourceKind: "messy", mentionPicks: messy.mentionPicks })}
               />
             )}
             {mode === "voice" && (
@@ -320,6 +340,7 @@ export function CaptureFlow({
               <MeetingCaptureTab
                 resumable={resumableMeeting}
                 hasApiKey={hasApiKey}
+                aiReason={aiReason}
                 canTranscribe={canTranscribe}
                 onBusyChange={setMeetingBusy}
                 onAnalyzed={onMeetingAnalyzed}

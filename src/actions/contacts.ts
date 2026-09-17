@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
 import { deleteReplacedAvatar } from "@/lib/avatar-blob";
 import { deleteContactForUser } from "@/lib/contact-delete";
@@ -16,6 +16,8 @@ import {
   tags,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { getRankedContacts } from "@/actions/search";
+import type { RankedContact } from "@/lib/hybrid-search";
 import {
   CONTACTS_PAGE_SIZE,
   type ContactPickerOption,
@@ -43,6 +45,7 @@ import {
 } from "@/lib/triage-candidates";
 import {
   enrichPeopleFromLinkedIn,
+  fetchApolloLinkedInPhoto,
   getApolloApiKey,
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
@@ -59,6 +62,11 @@ import {
   AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
 import { clientAvatarUrlSql, contactsListSelection } from "@/lib/contact-avatar-sql";
+import {
+  buildGooglePhotoIndex,
+  buildOutlookContactIndex,
+  fetchOutlookContactPhoto,
+} from "@/lib/contact-avatar-connectors";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   countAvatarBackfillCandidates,
@@ -131,12 +139,34 @@ export async function listContactsPage(
 
   const sort: ContactSort = filters?.sort ?? "name";
   const limit = Math.min(Math.max(filters?.limit ?? CONTACTS_PAGE_SIZE, 1), 200);
-  const cursor = decodeCursor(filters?.cursor, sort);
+  // "relevance" has no stable keyset — see `orderFor` — so it never accepts a cursor and
+  // always returns its first (only) page.
+  const cursor = sort === "relevance" ? null : decodeCursor(filters?.cursor, sort);
 
   const conditions = [eq(contacts.userId, userId)];
 
   const q = filters?.q?.trim();
-  if (q) conditions.push(contactSearchCondition(q));
+  // Reused below by `orderFor` (relevance ranking) and by the match-reason map — one
+  // hybrid-search call serves widening, ranking, and explaining, instead of asking thrice.
+  let semanticIds: string[] = [];
+  let matchReasons = new Map<string, string>();
+  if (q) {
+    // Short queries are prefix lookups ("mar" -> Marcus) that `contactSearchCondition` alone
+    // already serves well; below this length a semantic round trip only adds latency.
+    // At 3+ chars, OR in contacts whose title/company/experience is a semantic match
+    // even when no literal keyword overlaps ("Full-time SWE at Google" finding someone
+    // whose stored role is "Software Engineer" at Google, full time). Request the max
+    // hybridSearchContacts will give (80) rather than its default 12, since this list
+    // also drives relevance ordering, not just widening the match.
+    const ranked = q.length >= 3 ? await getRankedContacts(userId, q, 80) : [];
+    semanticIds = ranked.map((r) => r.id);
+    matchReasons = matchReasonsFor(ranked);
+    conditions.push(
+      semanticIds.length
+        ? or(contactSearchCondition(q), inArray(contacts.id, semanticIds))!
+        : contactSearchCondition(q)
+    );
+  }
 
   const company = filters?.company?.trim();
   if (company) {
@@ -173,12 +203,15 @@ export async function listContactsPage(
     .select(contactsListSelection)
     .from(contacts)
     .where(and(...conditions))
-    .orderBy(...orderFor(sort))
+    .orderBy(...orderFor(sort, semanticIds))
     // One extra row answers "is there more" without a second count.
     .limit(limit + 1);
 
-  const hasMore = rows.length > limit;
-  const page = hasMore ? rows.slice(0, limit) : rows;
+  const fetchedExtra = rows.length > limit;
+  const page = fetchedExtra ? rows.slice(0, limit) : rows;
+  // Relevance has no keyset to resume from, so it never claims there's more — the caller
+  // gets one ranked page and the "Showing X of Y" footer if that page is short of `total`.
+  const hasMore = sort !== "relevance" && fetchedExtra;
 
   const [tagsByContact, total] = await Promise.all([
     tagsForContacts(page.map((r) => r.id)),
@@ -207,10 +240,30 @@ export async function listContactsPage(
       nextFollowUpAt: row.nextFollowUpAt,
       lastInteractionAt: row.lastInteractionAt,
       tags: tagsByContact.get(row.id) ?? [],
+      matchReason: matchReasons.get(row.id) ?? null,
     })),
     nextCursor: hasMore ? encodeCursor(cursorFor(sort, page[page.length - 1])) : null,
     total,
   };
+}
+
+/**
+ * Why a contact showed up, for the ones where that isn't obvious from the row itself.
+ *
+ * A contact only gets a reason when it matched via the `experience` or `semantic` arm and
+ * *neither* `fts` nor `trigram` — i.e. only when nothing already visible on the row (name,
+ * company, title) would explain the match. A contact whose company field literally says
+ * "Google" doesn't need a label telling the user it matched "Google"; one who matches only
+ * because a past role or an unrelated-looking bio was semantically similar does.
+ */
+function matchReasonsFor(ranked: RankedContact[]): Map<string, string> {
+  const reasons = new Map<string, string>();
+  for (const r of ranked) {
+    if (r.matchedArms.includes("fts") || r.matchedArms.includes("trigram")) continue;
+    if (r.matchedArms.includes("experience")) reasons.set(r.id, "Matched via work history");
+    else if (r.matchedArms.includes("semantic")) reasons.set(r.id, "Matched by meaning");
+  }
+  return reasons;
 }
 
 /**
@@ -224,14 +277,34 @@ export async function listContactsPage(
  * same way. Pairing a descending sort with an ascending id silently produces a condition
  * that skips rows on one side of each tie and repeats them on the other.
  */
-function orderFor(sort: ContactSort) {
+function orderFor(sort: ContactSort, rankedIds: string[] = []) {
   if (sort === "closeness") {
     return [desc(contacts.closeness), desc(contacts.id)];
   }
   if (sort === "recent") {
     return [desc(contacts.updatedAt), desc(contacts.id)];
   }
+  if (sort === "relevance") {
+    // Rank first, name as the tiebreak — both for genuine ties and for rows `array_position`
+    // can't place at all: a contact that matched only the literal `searchCondition`, never
+    // the hybrid-search arms, falls through to name order after every ranked hit.
+    return [relevanceRank(rankedIds), asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
+  }
   return [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
+}
+
+/**
+ * Position within `rankedIds`, ascending so the best hybrid-search match (index 0) sorts
+ * first; `array_position` returns null for a contact the ranking never produced, and null
+ * sorts last under ascending order by default — hence the explicit `nulls last` rather than
+ * relying on that default holding.
+ */
+function relevanceRank(rankedIds: string[]) {
+  if (rankedIds.length === 0) return sql`0`;
+  return sql`array_position(array[${sql.join(
+    rankedIds.map((id) => sql`${id}::uuid`),
+    sql`, `
+  )}]::uuid[], ${contacts.id}) nulls last`;
 }
 
 function cursorCondition(cursor: Cursor) {
@@ -591,6 +664,9 @@ export async function getContact(id: string) {
           interactionType: true,
           interactionDate: true,
           sameDayOrder: true,
+          // Which captured batch produced this row, so the timeline can say the summary came
+          // from a meeting capture rather than a hand-typed note.
+          noteBatchId: true,
           aiSummary: true,
         },
         extras: {
@@ -936,8 +1012,15 @@ export async function listLinkedInRefreshTargets(): Promise<{
   const db = await getDb();
   const apiKey = await getApolloApiKey(userId);
 
+  // Filtered in SQL rather than fetched-then-filtered: this used to pull every contact on
+  // the account (indexed only by userId) just to throw away everyone without a LinkedIn
+  // URL. `contacts_user_linkedin_idx` covers `(userId, linkedinUrl)`, so the predicate below
+  // is served by the same index instead of a full account scan.
   const rows = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
+    where: and(
+      eq(contacts.userId, userId),
+      sql`${contacts.linkedinUrl} is not null and btrim(${contacts.linkedinUrl}) <> ''`
+    ),
     columns: {
       id: true,
       fullName: true,
@@ -946,16 +1029,12 @@ export async function listLinkedInRefreshTargets(): Promise<{
     },
   });
 
-  const targets = rows
-    .filter((r): r is typeof r & { linkedinUrl: string } =>
-      Boolean(r.linkedinUrl?.trim())
-    )
-    .map((r) => ({
-      id: r.id,
-      fullName: r.fullName,
-      email: r.email,
-      linkedinUrl: r.linkedinUrl.trim(),
-    }));
+  const targets = rows.map((r) => ({
+    id: r.id,
+    fullName: r.fullName,
+    email: r.email,
+    linkedinUrl: r.linkedinUrl!.trim(),
+  }));
 
   return { targets, hasApollo: Boolean(apiKey) };
 }
@@ -1016,14 +1095,60 @@ export async function backfillContactAvatars(
     };
   }
 
+  // Only worth hitting Google/Outlook/Apollo when this batch could actually use them —
+  // most ticks are pure LinkedIn resolution and shouldn't pay for an unused lookup.
+  const needsConnectedAccount = candidates.some((c) => c.email);
+  const needsApollo = candidates.some((c) => c.linkedinUrl);
+
+  const [googlePhotoByEmail, outlookContactIdByEmail, apolloApiKey] = await Promise.all([
+    needsConnectedAccount ? buildGooglePhotoIndex(userId) : Promise.resolve(new Map<string, string>()),
+    needsConnectedAccount
+      ? buildOutlookContactIndex(userId)
+      : Promise.resolve(new Map<string, string>()),
+    needsApollo ? getApolloApiKey(userId) : Promise.resolve(null),
+  ]);
+
+  const resolveConnectedAccount = needsConnectedAccount
+    ? async (contactId: string, email: string): Promise<string | null> => {
+        const key = email.trim().toLowerCase();
+
+        const googlePhoto = googlePhotoByEmail.get(key);
+        if (googlePhoto) {
+          const persisted = await downloadAndPersistAvatar(contactId, googlePhoto);
+          if (persisted) return persisted;
+        }
+
+        const outlookContactId = outlookContactIdByEmail.get(key);
+        if (outlookContactId) {
+          const photoDataUrl = await fetchOutlookContactPhoto(userId, outlookContactId);
+          if (photoDataUrl) {
+            const persisted = await downloadAndPersistAvatar(contactId, photoDataUrl);
+            if (persisted) return persisted;
+          }
+        }
+
+        return null;
+      }
+    : undefined;
+
+  const resolveApollo = apolloApiKey
+    ? async (contactId: string, linkedinUrl: string): Promise<string | null> => {
+        const photoUrl = await fetchApolloLinkedInPhoto(userId, linkedinUrl);
+        if (!photoUrl) return null;
+        return downloadAndPersistAvatar(contactId, photoUrl);
+      }
+    : undefined;
+
   const result = await traced(
     "contacts.backfillAvatars",
     () =>
       runAvatarBackfillBatch(candidates, {
         deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
         persistRemote: downloadAndPersistAvatar,
+        resolveConnectedAccount,
         resolveLinkedIn: (contactId, url) => fetchLinkedInPhotoUrl(contactId, url, userId),
         resolveGravatar: fetchGravatarPhotoUrl,
+        resolveApollo,
         save: async (contactId, photoUrl) => {
           await db
             .update(contacts)
@@ -1367,7 +1492,27 @@ export async function sendContactFollowUpEmail(
   return { ok: true as const };
 }
 
-/** Contacts related by company, school, howMet, mentions, tags, or interests. */
+/**
+ * Contacts related by company, school, howMet, mentions, tags, or interests.
+ *
+ * This used to `findMany` the user's whole contact table plus every contact's tags, on
+ * every single contact-profile view — the widest, most frequently-hit full-network scan
+ * in the app (it pulled `notes` and `aiSummary` for every contact just to score six).
+ *
+ * `bestReason()` in `findRelatedContacts` only needs two things per candidate: the narrow
+ * fields it compares directly (name, company, companyId, school, howMet, sharedInterests,
+ * relationshipScore, and the mention corpus), and — only for `sharedTags` — whether the
+ * candidate shares at least two tags with the source. The first group is fetched here as
+ * one narrow, joinless scan (drops firstName/title/location/profileImageUrl/linkedinUrl/
+ * email/phone, and the per-contact tags relation, none of which `bestReason` reads); the
+ * tags share is answered by a bounded, indexed `GROUP BY … HAVING count(*) >= 2` instead
+ * of hydrating every contact's tag list to count overlaps in JS. Both together are still
+ * O(contacts) in row count — mention detection over free text is a whole-network question
+ * like the dashboard's clustering, and is named as such rather than hidden — but the row
+ * WIDTH drops from 19 columns plus a tags join to 12 narrow columns plus a small aggregate.
+ * Only the winning six get the wide display columns this function used to fetch for
+ * everyone.
+ */
 export async function listRelatedContacts(
   contactId: string,
   limit = 6
@@ -1376,24 +1521,16 @@ export async function listRelatedContacts(
   const db = await getDb();
   const goals = await listActiveGoalTexts();
 
-  const rows = await db.query.contacts.findMany({
+  const narrowRows = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
-    with: { contactTags: { with: { tag: true } } },
     columns: {
       id: true,
       fullName: true,
       preferredName: true,
-      firstName: true,
-      title: true,
       company: true,
       companyId: true,
       school: true,
-      location: true,
       howMet: true,
-      profileImageUrl: true,
-      linkedinUrl: true,
-      email: true,
-      phone: true,
       notes: true,
       aiSummary: true,
       keyFacts: true,
@@ -1401,16 +1538,80 @@ export async function listRelatedContacts(
       relationshipScore: true,
     },
   });
+  if (!narrowRows.some((r) => r.id === contactId)) return [];
 
-  return findRelatedContacts(
+  // Tags share is the one reason findRelatedContacts needs that isn't in the narrow scan
+  // above. Answered as a bounded aggregate over the join table rather than hydrating every
+  // contact's tag list: only contacts sharing >=2 tags with the source can ever produce a
+  // "sharedTags" match, and HAVING keeps the result set to that size, not the account size.
+  const sourceTagIds = (
+    await db
+      .select({ tagId: contactTags.tagId })
+      .from(contactTags)
+      .where(eq(contactTags.contactId, contactId))
+  ).map((r) => r.tagId);
+
+  const sharedTagCounts = sourceTagIds.length
+    ? await db
+        .select({ contactId: contactTags.contactId, shared: sql<number>`count(*)` })
+        .from(contactTags)
+        .where(
+          and(
+            inArray(contactTags.tagId, sourceTagIds),
+            sql`${contactTags.contactId} <> ${contactId}::uuid`
+          )
+        )
+        .groupBy(contactTags.contactId)
+        .having(sql`count(*) >= 2`)
+    : [];
+  const sharesTwoTags = new Set(sharedTagCounts.map((r) => r.contactId));
+
+  const ranked = findRelatedContacts(
     contactId,
-    rows.map((r) => ({
+    narrowRows.map((r) => ({
       ...r,
-      tags: r.contactTags.map((ct) => ct.tag.name),
+      // A placeholder, not a real tag list: `bestReason` only ever compares the source's
+      // own `tags` against a candidate's `tagSet` (never the reverse), via
+      // `sharedCountFromSignals(...) >= 2`. So the source needs a two-element placeholder
+      // whenever it has any tags at all, and each *other* contact needs the same
+      // placeholder exactly when the aggregate above found it shares >= 2 real tags with
+      // the source — `sharesTwoTags` excludes the source's own id, which is why it is
+      // special-cased rather than checked directly.
+      tags:
+        r.id === contactId
+          ? sourceTagIds.length > 0
+            ? ["__shared__", "__shared__"]
+            : []
+          : sharesTwoTags.has(r.id)
+            ? ["__shared__", "__shared__"]
+            : [],
     })),
     limit,
     goals
   );
+  if (ranked.length === 0) return ranked;
+
+  // The narrow scan above never selected the display columns the card actually renders
+  // (avatar, title, location, contact links) — fetch those only for the handful that won,
+  // by id, rather than for every contact that was scored.
+  const displayRows = await db.query.contacts.findMany({
+    where: inArray(
+      contacts.id,
+      ranked.map((r) => r.id)
+    ),
+    columns: {
+      id: true,
+      firstName: true,
+      title: true,
+      location: true,
+      profileImageUrl: true,
+      linkedinUrl: true,
+      email: true,
+      phone: true,
+    },
+  });
+  const displayById = new Map(displayRows.map((r) => [r.id, r]));
+  return ranked.map((r) => ({ ...r, ...(displayById.get(r.id) ?? {}) }));
 }
 
 /** Lightweight contact payload for the floating ask bar person chip. */

@@ -139,6 +139,12 @@ export const RATE_LIMITS = {
    * than 24 hours after the first call; the window only guarantees no reset mid-day.
    */
   timelineBackfillDaily: { limit: TIMELINE_DAILY_CONTACT_CAP, windowSec: 86_400 },
+  /**
+   * The AI gate asking Stripe whether a just-opened Lifetime checkout has been paid
+   * (`src/lib/lifetime-checkout.ts`). One Stripe round trip each, and only ever on a refusal
+   * path, so this is a ceiling on an abandoned checkout costing a lookup per AI click.
+   */
+  lifetimeConfirm: { limit: 6, windowSec: 60 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

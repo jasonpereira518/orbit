@@ -101,6 +101,13 @@ export const ERROR_SOURCES = {
    * here — it would page Orbit about someone else's configuration.
    */
   resendRejected: "resend.rejected",
+  /**
+   * A provider refused or throttled one of ORBIT'S managed AI keys (`src/lib/ai-access.ts`).
+   * `kind` is the failure kind, the provider lives in context. Throttled to one row per
+   * (provider, kind) per process per hour, and the ops sweep pages on any row at all: a
+   * revoked or exhausted managed key takes AI away from every Lifetime account at once.
+   */
+  managedAi: "ai.managed",
 } as const;
 
 export type ErrorEventInput = {

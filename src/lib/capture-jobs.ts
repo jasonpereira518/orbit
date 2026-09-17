@@ -13,6 +13,7 @@ import { randomBytes } from "node:crypto";
 import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
 import type { CaptureParseHints } from "@/lib/ai";
+import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import {
   ACTIVE_CAPTURE_JOB_STATUSES,
   type CaptureDecision,
@@ -61,6 +62,12 @@ export type CaptureJobView = {
   photoIds: string[];
   transcriptionEngine: string | null;
   meetingSessionId: string | null;
+  /** Shared by every job from one multi-file drop; null for a single capture. */
+  batchGroupId: string | null;
+  /** The uploaded filename, for the queue row. `sources` holds provenance, not names. */
+  sourceLabel: string | null;
+  /** Contacts the person named with `@` while writing. */
+  mentionPicks: MentionPick[];
   result: CaptureJobResult | null;
   decisions: CaptureDecisions;
   noteBatchId: string | null;
@@ -82,6 +89,9 @@ export function toCaptureJobView(row: CaptureJobRow): CaptureJobView {
     photoIds: row.photoIds ?? [],
     transcriptionEngine: row.transcriptionEngine,
     meetingSessionId: row.meetingSessionId,
+    batchGroupId: row.batchGroupId,
+    sourceLabel: row.sourceLabel,
+    mentionPicks: row.mentionPicks ?? [],
     result: row.result ?? null,
     decisions: row.decisions ?? {},
     noteBatchId: row.noteBatchId,
@@ -128,6 +138,54 @@ export async function findActiveCaptureJob(userId: string, now = new Date()): Pr
   return row ?? null;
 }
 
+/**
+ * Every job the /capture page should still be able to reach, newest first.
+ *
+ * The plural of `findActiveCaptureJob`, for the multi-file queue. Same predicate on
+ * purpose: a queue that showed a different set of jobs than the single-job resume would
+ * strand rows in exactly the gap between the two definitions.
+ */
+export async function findActiveCaptureJobs(
+  userId: string,
+  limit = 25,
+  now = new Date()
+): Promise<CaptureJobRow[]> {
+  const db = await getDb();
+  return db.query.captureJobs.findMany({
+    where: and(
+      eq(captureJobs.userId, userId),
+      or(
+        inArray(captureJobs.status, [...ACTIVE_CAPTURE_JOB_STATUSES]),
+        and(eq(captureJobs.status, "failed"), gt(captureJobs.updatedAt, new Date(now.getTime() - FAILED_VISIBLE_MS)))
+      )
+    ),
+    orderBy: [desc(captureJobs.updatedAt)],
+    limit,
+  });
+}
+
+/**
+ * Discard every job in one multi-file drop.
+ *
+ * Scoped to the batch, never to the user: "start over" on one queue must not throw away a
+ * single capture the person left open in another tab.
+ */
+export async function discardCaptureBatchRows(userId: string, batchGroupId: string): Promise<number> {
+  const db = await getDb();
+  const rows = await db
+    .update(captureJobs)
+    .set({ status: "discarded", updatedAt: new Date() })
+    .where(
+      and(
+        eq(captureJobs.userId, userId),
+        eq(captureJobs.batchGroupId, batchGroupId),
+        inArray(captureJobs.status, [...ACTIVE_CAPTURE_JOB_STATUSES])
+      )
+    )
+    .returning();
+  return rows.length;
+}
+
 // ---------------------------------------------------------------------------------------
 // Creating and feeding
 
@@ -139,6 +197,9 @@ export type CreateCaptureJobInput = {
   entryPoint?: "capture" | "profile";
   seedContactId?: string | null;
   meetingSessionId?: string | null;
+  batchGroupId?: string | null;
+  sourceLabel?: string | null;
+  mentionPicks?: MentionPick[] | null;
   result?: CaptureJobResult | null;
 };
 
@@ -155,6 +216,11 @@ export async function createCaptureJob(userId: string, input: CreateCaptureJobIn
       entryPoint: input.entryPoint ?? "capture",
       seedContactId: input.seedContactId ?? null,
       meetingSessionId: input.meetingSessionId ?? null,
+      batchGroupId: input.batchGroupId ?? null,
+      sourceLabel: input.sourceLabel?.slice(0, 200) ?? null,
+      // Sanitised here rather than at the caller: this is the only door into the column,
+      // and both doors into this function carry a browser-supplied payload.
+      mentionPicks: sanitizeMentionPicks(input.mentionPicks ?? []),
       result: input.result ?? null,
     })
     .returning();
@@ -203,7 +269,11 @@ export async function markCaptureJobTranscribed(id: string): Promise<void> {
 export async function queueCaptureJobRow(
   userId: string,
   id: string,
-  input: { inputText?: string | null; inputHints?: CaptureParseHints | null }
+  input: {
+    inputText?: string | null;
+    inputHints?: CaptureParseHints | null;
+    mentionPicks?: MentionPick[] | null;
+  }
 ): Promise<CaptureJobRow | null> {
   const db = await getDb();
   const [row] = await db
@@ -212,6 +282,7 @@ export async function queueCaptureJobRow(
       status: "queued",
       ...(input.inputText !== undefined ? { inputText: clipInput(input.inputText) } : {}),
       ...(input.inputHints ? { inputHints: input.inputHints } : {}),
+      ...(input.mentionPicks ? { mentionPicks: sanitizeMentionPicks(input.mentionPicks) } : {}),
       error: null,
       claimToken: null,
       claimedAt: null,

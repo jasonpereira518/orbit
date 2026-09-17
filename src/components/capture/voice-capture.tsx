@@ -5,7 +5,7 @@
  * a short "transcribing" beat, then the words appear underneath where you can fix a name
  * before Extract. No paste box — that is the Messy Notes tab, one click away.
  */
-import { useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { motion } from "motion/react";
 import { Loader2, Upload } from "lucide-react";
 import { VoiceRecorder } from "@/components/capture/voice-recorder";
@@ -17,6 +17,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { AUDIO_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import type { CaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { DUR, EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
+import {
+  subscribePendingVoiceRecording,
+  takePendingVoiceRecording,
+} from "@/lib/pending-voice-note";
 import { toast } from "@/lib/toast";
 import { MAX_RECORDING_MS, formatElapsed } from "@/lib/voice-recording";
 
@@ -39,9 +43,26 @@ export function VoiceCapture({
   const hasTranscript = ingest.notes.trim().length > 0;
   const busy = ingest.busy || extracting;
 
+  // A note recorded by holding the phone nav's Capture button arrives here, already
+  // finished — the tab remounts on navigation, so this can't rely on ever having been
+  // mounted when the recording landed. Read through a live ref so the subscription
+  // never transcribes against a stale `ingest`.
+  const handleRecordingRef = useRef(ingest.handleRecording);
+  useLayoutEffect(() => {
+    handleRecordingRef.current = ingest.handleRecording;
+  });
+  useEffect(() => {
+    const consume = () => {
+      const recording = takePendingVoiceRecording();
+      if (recording) handleRecordingRef.current(recording);
+    };
+    consume();
+    return subscribePendingVoiceRecording(consume);
+  }, []);
+
   return (
     <div id={panelId} role="tabpanel" aria-labelledby={tabId} className="space-y-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6">
-      {!ingest.hasApiKey && <MissingKeyNotice />}
+      {!ingest.hasApiKey && <MissingKeyNotice reason={ingest.aiReason} />}
       {!canTranscribe && ingest.hasApiKey && (
         <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
           <p className="font-medium text-foreground">Add a key that can transcribe audio</p>

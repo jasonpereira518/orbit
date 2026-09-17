@@ -28,7 +28,10 @@ import {
   uploadCaptureMedia,
 } from "@/lib/capture/ingest-client";
 import type { CaptureJobSource } from "@/lib/capture/types";
+import type { MentionPick } from "@/lib/mentions/mention-picks";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { MISSING_AI_API_KEY_MESSAGE, friendlyError, isMissingAiApiKeyError } from "@/lib/errors";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { releaseScanPage, type ScanPage } from "@/lib/scan-capture";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -42,14 +45,20 @@ export type CaptureIngest = ReturnType<typeof useCaptureIngest>;
 export function useCaptureIngest({
   sourceKind,
   hasApiKey: hasApiKeyProp,
+  aiReason: aiReasonProp = null,
   initialNotes = "",
+  initialMentionPicks = [],
   initialHints = null,
   initialJobId = null,
   onAutoExtract,
 }: {
   sourceKind: CaptureJobSource;
   hasApiKey?: boolean;
+  /** The AI gate's reason when `hasApiKey` is false — picks the notice's wording. */
+  aiReason?: AiAccessDenial | null;
   initialNotes?: string;
+  /** Picks restored alongside a saved draft, so its `@Name` tokens stay green. */
+  initialMentionPicks?: MentionPick[];
   initialHints?: CaptureParseHints | null;
   /** A `transcribed` job the page reloaded onto; Extract queues it instead of a new row. */
   initialJobId?: string | null;
@@ -57,13 +66,39 @@ export function useCaptureIngest({
   onAutoExtract?: (text: string, hints: CaptureParseHints | null, jobId: string | null) => void;
 }) {
   const [notes, setNotes] = useState(initialNotes);
+  /**
+   * Contacts named with `@` in the box.
+   *
+   * Here rather than in the tab component because this hook already owns the text, and the
+   * two have to travel together: the picks are meaningless without the tokens they stand
+   * for, and Extract sends both. A pick whose token was deleted is inert — `activePicks`
+   * re-reads the text — so this list is only ever appended to.
+   */
+  const [mentionPicks, setMentionPicks] = useState<MentionPick[]>(initialMentionPicks);
   const [hints, setHints] = useState<CaptureParseHints | null>(initialHints);
   const [sources, setSources] = useState<string[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(initialJobId);
   const [busy, setBusy] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
+  const [aiReason, setAiReason] = useState<AiAccessDenial | null>(aiReasonProp);
   const [wisprConfigured, setWisprConfigured] = useState(false);
+
+  // A server re-render (the plan changed in another tab, or this one just bought Lifetime)
+  // hands down a fresh answer; adopt it. Adjusted during render, not in an effect, so the
+  // stale notice never paints for a frame.
+  const [seenProps, setSeenProps] = useState({ hasApiKeyProp, aiReasonProp });
+  if (seenProps.hasApiKeyProp !== hasApiKeyProp || seenProps.aiReasonProp !== aiReasonProp) {
+    setSeenProps({ hasApiKeyProp, aiReasonProp });
+    if (hasApiKeyProp !== undefined) setHasApiKey(hasApiKeyProp);
+    setAiReason(aiReasonProp);
+  }
+
+  /** A refusal came back from the server: switch into the notice it describes. */
+  const noteAiRefusal = useCallback((message: string) => {
+    setHasApiKey(false);
+    setAiReason(aiDenialFromMessage(message) ?? "key_required");
+  }, []);
 
   // The box is read at the moment a transcript lands, not at the moment the upload
   // started — the person may have typed in the meantime.
@@ -79,7 +114,10 @@ export function useCaptureIngest({
     getSettings()
       .then((settings) => {
         if (cancelled) return;
-        if (hasApiKeyProp === undefined) setHasApiKey(settings.hasApiKey);
+        if (hasApiKeyProp === undefined) {
+          setHasApiKey(settings.hasApiKey);
+          setAiReason(settings.ai.reason);
+        }
         setWisprConfigured(Boolean(settings.hasWisprKey));
       })
       .catch(() => {
@@ -130,9 +168,16 @@ export function useCaptureIngest({
       try {
         const res = await uploadCaptureMedia({ sourceKind, files });
         if (!res.ok) {
-          const missingKey = isMissingAiApiKeyError(res.error);
-          if (missingKey) setHasApiKey(false);
-          const message = missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error;
+          const denial = aiDenialFromMessage(res.error);
+          if (denial) noteAiRefusal(res.error);
+          // The gate's own words say more than the generic key message (allowance spent,
+          // payment clearing); anything else about a key reads as the plain missing-key case.
+          const message =
+            denial && denial !== "key_required"
+              ? res.error
+              : isMissingAiApiKeyError(res.error)
+                ? MISSING_AI_API_KEY_MESSAGE
+                : res.error;
           if (bgId) finishBackgroundJob(bgId, { status: "failed", error: message });
           toast.error(message);
           return;
@@ -157,7 +202,7 @@ export function useCaptureIngest({
         setBusy(false);
       }
     },
-    [sourceKind, landTranscript, wisprConfigured]
+    [sourceKind, landTranscript, wisprConfigured, noteAiRefusal]
   );
 
   /** Text, calendar, email, audio and other raw files from a picker or a drop. */
@@ -239,6 +284,7 @@ export function useCaptureIngest({
 
   const reset = useCallback(() => {
     setNotes("");
+    setMentionPicks([]);
     setHints(null);
     setSources([]);
     setFileName(null);
@@ -248,6 +294,8 @@ export function useCaptureIngest({
   return {
     notes,
     setNotes,
+    mentionPicks,
+    setMentionPicks,
     hints,
     setHints,
     sources,
@@ -257,6 +305,8 @@ export function useCaptureIngest({
     busy,
     hasApiKey,
     setHasApiKey,
+    aiReason,
+    noteAiRefusal,
     scannedPhotos,
     handleFilesSelected,
     ingestScanPages,

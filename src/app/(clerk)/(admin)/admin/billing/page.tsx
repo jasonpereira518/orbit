@@ -231,7 +231,7 @@ export default async function AdminMoneyPage() {
           {needsAttention.length === 0 ? (
             <EmptyState>Every subscription is current.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable minWidth="sm"
               head={
                 <>
                   <Th>Account</Th>
