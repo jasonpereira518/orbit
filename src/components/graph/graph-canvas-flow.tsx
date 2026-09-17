@@ -2,7 +2,6 @@
 
 import {
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -205,6 +204,49 @@ const edgeTypes: EdgeTypes = {
 const SUMMARY_ENTER_ZOOM = 0.1;
 const SUMMARY_EXIT_ZOOM = 0.13;
 const SUMMARY_MIN_CONTACTS = 400;
+/**
+ * In the summary view, search hits become real stars only when there are this few of them.
+ * A search matches broadly while it is being typed — "a" matched 1,953 of 2,500 people — and
+ * mounting every hit meant each keystroke built or tore down thousands of stars, a 300–450ms
+ * stall apiece. Past this, hits stay dots, drawn brighter while the rest of the sky dims.
+ */
+const SUMMARY_MOUNT_HITS_MAX = 60;
+
+/**
+ * Stars handed to React Flow per frame, nearest the middle of the view first.
+ *
+ * Mounting a star costs about a millisecond of style, layout and paint. Leaving the summary used
+ * to mount every star in view in one commit — 350 of them after searching a big company at 2,500
+ * contacts, one 300ms frame, 650ms at 5,000 — so a smooth camera flight ended in a freeze. The
+ * dust canvas stays underneath while they arrive, so nobody is missing in the meantime.
+ */
+const STAR_MOUNT_BATCH = 32;
+
+/**
+ * Large skies hand React Flow only the stars in and around the view: the viewport grown by this
+ * fraction of its size on every side. `onlyRenderVisibleElements` cannot do this alone — React
+ * Flow renders every node it has never measured once, to measure it, so giving it the whole sky
+ * mounted thousands of far-off stars in a single frame just to unmount them again.
+ */
+const STAR_WINDOW_MARGIN = 0.25;
+/** The window moves once the view strays past this much of that margin, or zooms a step. */
+const STAR_WINDOW_SLACK = 0.25;
+
+type WorldRect = { x0: number; y0: number; x1: number; y1: number; zoom: number };
+
+function viewportWorldRect(
+  transform: [number, number, number],
+  width: number,
+  height: number,
+  grow: number
+): WorldRect {
+  const [tx, ty, k] = transform;
+  const w = width / k;
+  const h = height / k;
+  const x = -tx / k;
+  const y = -ty / k;
+  return { x0: x - w * grow, y0: y - h * grow, x1: x + w * (1 + grow), y1: y + h * (1 + grow), zoom: k };
+}
 
 /** A refresh or filter that brings in more people than this skips the entrance animation. */
 const ENTRANCE_MAX = 400;
@@ -532,9 +574,7 @@ function GraphCanvasInner({
     check(storeApi.getState().transform[2]);
     return storeApi.subscribe((s) => check(s.transform[2]));
   }, [summaryAllowed, viewportReady, storeApi]);
-  // Crossing into the detail view mounts every visible star at once. Deferred, that commit
-  // yields to the zoom gesture that caused it instead of stalling it.
-  const summary = useDeferredValue(summaryAllowed && summaryWanted);
+  const summary = summaryAllowed && summaryWanted;
 
   // From the layout rather than `orbitNodes`: positions and data are the same, and this way
   // React Flow reporting a measurement does not rebuild it.
@@ -544,6 +584,90 @@ function GraphCanvasInner({
     for (const n of skyLayoutNodes) if (n.type === "contact") map.set(n.id, n);
     return map;
   }, [skyLayoutNodes]);
+
+  /**
+   * The star window (see STAR_WINDOW_MARGIN): large skies, outside the summary view.
+   *
+   * `starWindow` is the world rect React Flow may draw stars from; it moves only when the camera
+   * strays out of its slack or zooms a quarter-octave, so a pan is not a re-render. `mounted` is
+   * what has actually been handed over: it catches up with the window STAR_MOUNT_BATCH at a time,
+   * nearest the centre first, and lets go of what the window left behind at once.
+   */
+  const windowing = summaryAllowed && !summary;
+  const [starWindow, setStarWindow] = useState<WorldRect | null>(null);
+  useEffect(() => {
+    if (!windowing || !viewportReady) return;
+    const place = () => {
+      const { transform, width, height } = storeApi.getState();
+      if (width < 2 || height < 2) return;
+      setStarWindow((prev) => {
+        if (prev) {
+          const inner = viewportWorldRect(transform, width, height, 0);
+          const slackX = (inner.x1 - inner.x0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
+          const slackY = (inner.y1 - inner.y0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
+          const zoomStepped = Math.abs(Math.log2(transform[2] / prev.zoom)) >= 0.25;
+          if (
+            !zoomStepped &&
+            inner.x0 >= prev.x0 + slackX &&
+            inner.y0 >= prev.y0 + slackY &&
+            inner.x1 <= prev.x1 - slackX &&
+            inner.y1 <= prev.y1 - slackY
+          ) {
+            return prev;
+          }
+        }
+        return viewportWorldRect(transform, width, height, STAR_WINDOW_MARGIN);
+      });
+    };
+    place();
+    return storeApi.subscribe(place);
+  }, [windowing, viewportReady, storeApi]);
+
+  /** Window members, nearest its centre first. */
+  const wanted = useMemo(() => {
+    if (!windowing || !starWindow) return null;
+    const cx = (starWindow.x0 + starWindow.x1) / 2;
+    const cy = (starWindow.y0 + starWindow.y1) / 2;
+    const inside: Array<{ id: string; d: number }> = [];
+    for (const n of contactById.values()) {
+      const { x, y } = n.position;
+      if (x < starWindow.x0 || x > starWindow.x1 || y < starWindow.y0 || y > starWindow.y1) continue;
+      inside.push({ id: n.id, d: (x - cx) ** 2 + (y - cy) ** 2 });
+    }
+    inside.sort((a, b) => a.d - b.d);
+    return inside.map((c) => c.id);
+  }, [windowing, starWindow, contactById]);
+
+  const [mounted, setMounted] = useState<ReadonlySet<string>>(NO_IDS);
+  // Leaving the window mode (into the summary, or a sky too small for it) forgets what was
+  // mounted, so the next way out ramps in again rather than landing all at once.
+  const [mountedFor, setMountedFor] = useState(windowing);
+  if (mountedFor !== windowing) {
+    setMountedFor(windowing);
+    setMounted(NO_IDS);
+  }
+  const filling = wanted !== null && wanted.some((id) => !mounted.has(id));
+  useEffect(() => {
+    if (!wanted) return;
+    const wantedSet = new Set(wanted);
+    const stale = [...mounted].some((id) => !wantedSet.has(id));
+    if (!filling && !stale) return;
+    const raf = requestAnimationFrame(() => {
+      setMounted((prev) => {
+        const next = new Set<string>();
+        for (const id of prev) if (wantedSet.has(id)) next.add(id);
+        let added = 0;
+        for (const id of wanted) {
+          if (added >= STAR_MOUNT_BATCH) break;
+          if (next.has(id)) continue;
+          next.add(id);
+          added++;
+        }
+        return next;
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [wanted, mounted, filling]);
 
   const focusCompany = useMemo(() => {
     if (focusCluster) {
@@ -589,22 +713,40 @@ function GraphCanvasInner({
 
   const labelZoom = useStore((s) => zoomStep(s.transform[2]));
   // Independent of hover on purpose: moving the pointer must not reshuffle which names show.
-  const labelled = useMemo(
-    () =>
-      labelWinners(
-        contactById.values(),
-        labelZoom,
-        (id) => searchDimActive && searchHitIds.has(id)
-      ),
-    [contactById, labelZoom, searchDimActive, searchHitIds]
-  );
+  // Only over stars that can be drawn: the summary's mounted hits, or the star window. Over the
+  // whole sky this ran on every keystroke of a search — 10,000 label boxes to name a handful.
+  const labelled = useMemo(() => {
+    let candidates: Iterable<LayoutNodes[number]> = contactById.values();
+    if (summary) {
+      candidates =
+        searchDimActive && searchHitIds.size <= SUMMARY_MOUNT_HITS_MAX
+          ? [...searchHitIds].flatMap((id) => contactById.get(id) ?? [])
+          : [];
+    } else if (wanted) {
+      candidates = wanted.flatMap((id) => contactById.get(id) ?? []);
+    }
+    return labelWinners(
+      candidates,
+      labelZoom,
+      (id) => searchDimActive && searchHitIds.has(id)
+    );
+  }, [contactById, labelZoom, searchDimActive, searchHitIds, summary, wanted]);
 
   /**
    * Every contact, as the dots the summary view draws in place of stars. Built only while the
    * summary is on, and rebuilt only when the sky or the emphasis changes — never per frame.
    */
+  // Only on/off: the per-frame fill must not rebuild or redraw the dots.
+  const rampActive = filling;
+  // Search, but not hover or selection: the dots dim for a search, and a pointer moving over
+  // the sky must not redraw every dot on the canvas.
+  const dustFocus: SkyFocusState = useMemo(
+    () => ({ hoveredId: null, selectedContactId: null, searchHitIds, searchDimActive }),
+    [searchHitIds, searchDimActive]
+  );
   const starDust = useMemo((): StarDustData | null => {
-    if (!summary) return null;
+    // Kept while the window fills: stars land on top of their own dots.
+    if (!summary && !rampActive) return null;
     const points: StarDustPoint[] = [];
     let minX = Infinity;
     let minY = Infinity;
@@ -614,14 +756,15 @@ function GraphCanvasInner({
       if (n.type !== "contact") continue;
       const d = n.data as GraphNodeData;
       const { disc, fill, alphaScale } = starVisual(d, false);
-      const opacity = starEmphasis(n.id, focusState).opacity;
+      const { opacity, spotlight } = starEmphasis(n.id, dustFocus);
       points.push({
         id: n.id,
         x: n.position.x,
         y: n.position.y,
-        disc,
+        // A hit that stays a dot is drawn the way a spotlit star is: larger, and at full strength.
+        disc: spotlight ? disc * 1.3 : disc,
         color: d.comet ? "#ff6b4a" : fill,
-        alpha: Math.min(1, 0.9 * alphaScale * opacity),
+        alpha: spotlight ? 1 : Math.min(1, 0.9 * alphaScale * opacity),
       });
       minX = Math.min(minX, n.position.x);
       minY = Math.min(minY, n.position.y);
@@ -639,7 +782,7 @@ function GraphCanvasInner({
       width: maxX - minX + pad * 2,
       height: maxY - minY + pad * 2,
     };
-  }, [summary, skyLayoutNodes, focusState]);
+  }, [summary, rampActive, skyLayoutNodes, dustFocus]);
 
   /**
    * The nodes React Flow draws: each structural node with this moment's emphasis applied.
@@ -734,7 +877,11 @@ function GraphCanvasInner({
       // Search hits stay real stars through the summary view, labelled if they win a place.
       const labelPinned = isHovered || emphasis.selected || emphasis.spotlightSolo;
       const labelHidden = !labelled.has(n.id);
-      if (summary && !labelPinned && !emphasis.spotlight && n.id !== peekPersonId) continue;
+      const mountHit =
+        emphasis.spotlight && searchHitIds.size <= SUMMARY_MOUNT_HITS_MAX;
+      if (summary && !labelPinned && !mountHit && n.id !== peekPersonId) continue;
+      // Hits already mounted in the summary stay put; everyone else waits for the window.
+      if (windowing && !labelPinned && !mountHit && !mounted.has(n.id)) continue;
       const raised = isHovered || emphasis.selected;
       const entering = sky.entering.has(n.id);
 
@@ -779,13 +926,23 @@ function GraphCanvasInner({
     company,
     sky.entering,
     labelled,
+    searchHitIds,
+    windowing,
+    mounted,
   ]);
+
+  const drawnIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const n of nodes) if (n.type === "contact") ids.add(n.id);
+    return ids;
+  }, [nodes]);
 
   const edges = useMemo(() => {
     // The summary view draws clusters, not people, and a figure line needs both its stars.
     if (summary) return [];
     return layout.edges
       .filter((e) => {
+        if (!drawnIds.has(e.source) || !drawnIds.has(e.target)) return false;
         const kind = e.data?.kind;
         // Peer constellation / knows links only — sun rays are injected below
         return kind === "constellation" || kind === "knows";
@@ -818,7 +975,7 @@ function GraphCanvasInner({
             }) as Edge
         );
       });
-  }, [summary, layout.edges, focusCluster, focusState]);
+  }, [summary, layout.edges, focusCluster, focusState, drawnIds]);
 
   /**
    * Frame a set of people, whether or not they are mounted.
@@ -1020,8 +1177,12 @@ function GraphCanvasInner({
       cancelled = true;
       window.clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- zoomToken owns reframes
-  }, [focusCluster, zoomToken, hasSearch]);
+    // zoomToken owns reframes. Not `hasSearch`: it flips on the first keystroke, and flying to
+    // what one letter matches — then again on every letter after — was the camera lurching
+    // between the whole sky and a close-up while someone typed. `network-graph.tsx` bumps the
+    // token once typing pauses.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusCluster, zoomToken]);
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {

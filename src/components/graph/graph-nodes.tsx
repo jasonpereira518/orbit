@@ -531,7 +531,11 @@ const STAR_DUST_MAX_BACKING_PX = 2048;
  */
 function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const zoom = useStore((s) => Math.round(s.transform[2] * 100) / 100);
+  // Quarter-octave steps: a camera flight crosses a few of these, not one per frame. Redrawing
+  // at every 0.01 of zoom repainted thousands of dots on most frames of a search's flight in.
+  const zoom = useStore((s) =>
+    Math.pow(2, Math.round(Math.log2(Math.max(s.transform[2], 0.01)) * 4) / 4)
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -548,12 +552,24 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
     ctx.clearRect(data.minX, data.minY, data.width, data.height);
     // At least a pixel and a half on screen, or a dim dot vanishes into the backing store.
     const minRadius = 0.75 / Math.max(zoom, 0.01);
+    // One path and one fill per colour and strength rather than per dot: a sky has a handful of
+    // those and thousands of dots, and a search redraws all of them on each keystroke.
+    const batches = new Map<string, StarDustPoint[]>();
     for (const p of data.points) {
-      const r = Math.max(minRadius, (p.disc * starZoomRelief(p.disc, zoom)) / 2);
-      ctx.globalAlpha = p.alpha;
-      ctx.fillStyle = p.color;
+      const key = `${p.color}|${p.alpha.toFixed(2)}`;
+      const batch = batches.get(key);
+      if (batch) batch.push(p);
+      else batches.set(key, [p]);
+    }
+    for (const batch of batches.values()) {
+      ctx.globalAlpha = batch[0].alpha;
+      ctx.fillStyle = batch[0].color;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      for (const p of batch) {
+        const r = Math.max(minRadius, (p.disc * starZoomRelief(p.disc, zoom)) / 2);
+        ctx.moveTo(p.x + r, p.y);
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      }
       ctx.fill();
     }
     ctx.globalAlpha = 1;

@@ -117,6 +117,9 @@ function introInFlight() {
 
 const GRAPH_REFETCH_MIN_MS = 60_000;
 
+/** How long typing must pause before the camera flies to what the search matches. */
+const SEARCH_REFRAME_DELAY_MS = 260;
+
 /** At most this long between refresh batches, even on a completely idle app. */
 const REFRESH_YIELD_TIMEOUT_MS = 300;
 
@@ -226,6 +229,13 @@ export function NetworkGraph({
     if (initialData) lastFetchAt.current = Date.now();
   }, [initialData]);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reframeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (reframeTimer.current) clearTimeout(reframeTimer.current);
+    },
+    []
+  );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const operationsStoppedRef = useRef(false);
@@ -481,8 +491,31 @@ export function NetworkGraph({
 
     const q = search.trim();
 
+    /**
+     * Move the camera once typing pauses, not per keystroke.
+     *
+     * Highlights still update on every key. The camera used to follow each one too, and a query
+     * narrows as it is typed — "a" matches most of a network, "am" a little less, "amazon" one
+     * company — so every letter flew somewhere new, swinging between the whole sky and a
+     * close-up and mounting or unmounting hundreds of stars on each swing. Now it flies once, to
+     * what the finished word matches.
+     */
+    const scheduleReframe = (clusterId: string | null) => {
+      if (reframeTimer.current) clearTimeout(reframeTimer.current);
+      reframeTimer.current = setTimeout(() => {
+        reframeTimer.current = null;
+        setFocusCluster(clusterId);
+        setZoomToken((t) => t + 1);
+      }, SEARCH_REFRAME_DELAY_MS);
+    };
+    const cancelReframe = () => {
+      if (reframeTimer.current) clearTimeout(reframeTimer.current);
+      reframeTimer.current = null;
+    };
+
     // Empty search → clear highlights and return to the default full-map view
     if (!q) {
+      cancelReframe();
       const wasSearching = lastSearchQuery.current.length > 0;
       lastSearchQuery.current = "";
       searchRequestId.current += 1;
@@ -524,20 +557,14 @@ export function NetworkGraph({
       // Searching a cluster name → highlight everyone in it
       if (isExactClusterName && clusterByName) {
         setSearchHitIds(new Set(clusterByName.contactIds));
-        if (reframe) {
-          setFocusCluster(clusterByName.id);
-          setZoomToken((t) => t + 1);
-        }
+        if (reframe) scheduleReframe(clusterByName.id);
         return;
       }
 
       // Cluster name with no person hits (partial cluster match)
       if (clusterByName && personIds.size === 0) {
         setSearchHitIds(new Set(clusterByName.contactIds));
-        if (reframe) {
-          setFocusCluster(clusterByName.id);
-          setZoomToken((t) => t + 1);
-        }
+        if (reframe) scheduleReframe(clusterByName.id);
         return;
       }
 
@@ -548,9 +575,12 @@ export function NetworkGraph({
 
       // Frame the matches themselves: every hit in view, or a single hit up
       // close. No hits — keep the current camera; don't snap home mid-typing.
-      setFocusCluster(null);
-      if (personIds.size === 0) return;
-      setZoomToken((t) => t + 1);
+      if (personIds.size === 0) {
+        cancelReframe();
+        setFocusCluster(null);
+        return;
+      }
+      scheduleReframe(null);
     };
 
     applySearchResults([], true);
