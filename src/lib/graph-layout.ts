@@ -700,7 +700,9 @@ export function buildHybridGraphLayout(
     ...contacts.map((c) => {
       const pos = positions.get(c.id) || toPosition(0, 320);
       const score = placementScore(c);
-      const dormant = c.dormant === true || isCometContact(c.lastInteractionAt);
+      // The payload's own decision when it made one (graph-data.ts caps comets per cluster);
+      // the raw day threshold only for callers that never set it.
+      const dormant = c.dormant ?? isCometContact(c.lastInteractionAt);
       const name = displayName(c);
       const cluster = byContactId.get(c.id);
       return {
