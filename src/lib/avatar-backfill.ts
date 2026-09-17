@@ -36,12 +36,14 @@ END`;
 /** Mirrors the JS predicate the action used to apply after loading every row. */
 function needsWorkPredicate(userId: string, skipIds: string[]) {
   const hasLinkedIn = sql`${contacts.linkedinUrl} IS NOT NULL AND btrim(${contacts.linkedinUrl}) <> ''`;
+  const hasEmail = sql`${contacts.email} IS NOT NULL AND btrim(${contacts.email}) <> ''`;
   return and(
     eq(contacts.userId, userId),
     skipIds.length > 0 ? notInArray(contacts.id, skipIds) : undefined,
     or(
-      // Needs LinkedIn resolution: a profile to look up, and nothing usable stored.
-      sql`(${hasLinkedIn}) AND ${storedKind} IN ('none', 'unusable')`,
+      // Needs a lookup — by LinkedIn URL (Microlink/Unavatar/Apollo) or by email
+      // (a connected Google/Outlook account) — and nothing usable stored yet.
+      sql`(${hasLinkedIn} OR ${hasEmail}) AND ${storedKind} IN ('none', 'unusable')`,
       // A usable remote photo that is not yet in durable storage.
       sql`${storedKind} = 'remote'`
     )
@@ -51,6 +53,7 @@ function needsWorkPredicate(userId: string, skipIds: string[]) {
 export type AvatarCandidate = {
   id: string;
   linkedinUrl: string | null;
+  email: string | null;
   /** The stored URL, only when it is a remote photo worth caching. Never a data: URL. */
   remoteUrl: string | null;
 };
@@ -68,6 +71,7 @@ export async function findAvatarBackfillCandidates(
     .select({
       id: contacts.id,
       linkedinUrl: contacts.linkedinUrl,
+      email: contacts.email,
       remoteUrl: sql<string | null>`CASE WHEN ${storedKind} = 'remote' THEN ${contacts.profileImageUrl} ELSE NULL END`,
     })
     .from(contacts)
@@ -77,6 +81,7 @@ export async function findAvatarBackfillCandidates(
   return rows.map((r) => ({
     id: r.id,
     linkedinUrl: r.linkedinUrl?.trim() || null,
+    email: r.email?.trim() || null,
     remoteUrl: r.remoteUrl?.trim() || null,
   }));
 }
@@ -100,8 +105,20 @@ export type AvatarBatchDeps = {
   now?: () => number;
   /** Cache a remote photo durably; null when it cannot be fetched or decoded. */
   persistRemote: (contactId: string, url: string) => Promise<string | null>;
-  /** Resolve a LinkedIn profile photo; null when none is findable. */
+  /**
+   * A connected Google/Outlook account's own address book, matched by email — free,
+   * and preferred over LinkedIn sources since it's the user's own contact, not a
+   * public-profile guess. Optional so callers without either connection can omit it.
+   */
+  resolveConnectedAccount?: (contactId: string, email: string) => Promise<string | null>;
+  /** Resolve a LinkedIn profile photo (Microlink/Unavatar); null when none is findable. */
   resolveLinkedIn: (contactId: string, linkedinUrl: string) => Promise<string | null>;
+  /**
+   * Apollo people/match as the last resort for a LinkedIn headshot — it costs a credit,
+   * so it only runs once the free LinkedIn sources above have already come up empty.
+   * Optional so callers without Apollo access can omit it.
+   */
+  resolveApollo?: (contactId: string, linkedinUrl: string) => Promise<string | null>;
   save: (contactId: string, photoUrl: string) => Promise<void>;
 };
 
@@ -139,18 +156,26 @@ export async function runAvatarBackfillBatch(
         photoUrl = await deps.persistRemote(contact.id, contact.remoteUrl);
       }
 
+      if (!photoUrl && contact.email && deps.resolveConnectedAccount) {
+        photoUrl = await deps.resolveConnectedAccount(contact.id, contact.email);
+      }
+
       if (!photoUrl && contact.linkedinUrl) {
         try {
           photoUrl = await deps.resolveLinkedIn(contact.id, contact.linkedinUrl);
         } catch (err) {
           if (err instanceof MicrolinkRateLimitError) {
             rateLimitedUntil = err.resetAt;
-            // Unavatar was already tried inside the resolver; retry after the cooldown.
-            failed += 1;
-            continue;
+            // Unavatar was already tried inside the resolver; retry after the cooldown,
+            // but still worth a shot at Apollo below before giving up on this contact.
+          } else {
+            throw err;
           }
-          throw err;
         }
+      }
+
+      if (!photoUrl && contact.linkedinUrl && deps.resolveApollo) {
+        photoUrl = await deps.resolveApollo(contact.id, contact.linkedinUrl);
       }
 
       if (!photoUrl) {

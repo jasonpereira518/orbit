@@ -75,11 +75,12 @@ async function seed() {
   }
   // A handful of hand-shaped avatar states for the backfill candidate query.
   const special = [
-    { key: "remote", profileImageUrl: "https://media.licdn.com/dms/image/abc/photo.jpg", linkedinUrl: null },
-    { key: "blob", profileImageUrl: "https://xyz.public.blob.vercel-storage.com/avatars/a.jpg", linkedinUrl: "https://www.linkedin.com/in/blob-person/" },
-    { key: "inline", profileImageUrl: `data:image/jpeg;base64,${"A".repeat(400)}`, linkedinUrl: "https://www.linkedin.com/in/inline-person/" },
-    { key: "unavatar", profileImageUrl: "https://unavatar.io/linkedin/someone", linkedinUrl: "https://www.linkedin.com/in/unavatar-person/" },
-    { key: "nothing", profileImageUrl: null, linkedinUrl: null },
+    { key: "remote", profileImageUrl: "https://media.licdn.com/dms/image/abc/photo.jpg", linkedinUrl: null, email: null },
+    { key: "blob", profileImageUrl: "https://xyz.public.blob.vercel-storage.com/avatars/a.jpg", linkedinUrl: "https://www.linkedin.com/in/blob-person/", email: null },
+    { key: "inline", profileImageUrl: `data:image/jpeg;base64,${"A".repeat(400)}`, linkedinUrl: "https://www.linkedin.com/in/inline-person/", email: null },
+    { key: "unavatar", profileImageUrl: "https://unavatar.io/linkedin/someone", linkedinUrl: "https://www.linkedin.com/in/unavatar-person/", email: null },
+    { key: "nothing", profileImageUrl: null, linkedinUrl: null, email: null },
+    { key: "emailOnly", profileImageUrl: null, linkedinUrl: null, email: "email-only@example.com" },
   ];
   const ids: Record<string, string> = {};
   for (const s of special) {
@@ -87,7 +88,13 @@ async function seed() {
     // partial-shape overload does not resolve across both.
     const [row] = await db
       .insert(contacts)
-      .values({ userId: USER, fullName: `Special ${s.key}`, profileImageUrl: s.profileImageUrl, linkedinUrl: s.linkedinUrl })
+      .values({
+        userId: USER,
+        fullName: `Special ${s.key}`,
+        profileImageUrl: s.profileImageUrl,
+        linkedinUrl: s.linkedinUrl,
+        email: s.email,
+      })
       .returning();
     ids[s.key] = row.id;
   }
@@ -174,7 +181,7 @@ async function main() {
   check("graph payload under 3 MB", graphJson.length < 3_000_000, `${(graphJson.length / 1024).toFixed(0)} KB`);
   // Unfiltered on purpose, and now load-bearing: the constellation filter hides stars but
   // must never change what Orbit says the network *is*. This is the guard on that.
-  check("graph reports every contact", graph.summary.total === N + 5, `got ${graph.summary.total}`);
+  check("graph reports every contact", graph.summary.total === N + 6, `got ${graph.summary.total}`);
   // The whole point of filtering server-side: the default view must not carry the people it
   // is not drawing. At ~741 bytes a contact, shipping them anyway is megabytes per visit.
   check(
@@ -199,7 +206,7 @@ async function main() {
   check("show-all issues ≤ 9 statements", graphAllCount <= 9, `got ${graphAllCount}`);
   check(
     "show-all carries the whole network",
-    graphAll.contacts.length === N + 5,
+    graphAll.contacts.length === N + 6,
     `${graphAll.contacts.length}`
   );
   const engagedBytes = JSON.stringify(graph.contacts).length;
@@ -271,6 +278,17 @@ async function main() {
   check("a Blob-hosted photo is not a candidate", !ids.has(specialIds.blob));
   check("an inline photo is not a candidate", !ids.has(specialIds.inline));
   check("a contact with no photo and no LinkedIn is not a candidate", !ids.has(specialIds.nothing));
+  // Broadening candidacy to "has an email" makes most of the 3,000 seeded contacts
+  // candidates too, so a small limit's id-ascending order won't reliably surface this one
+  // specific row — check with a limit wide enough to cover the whole candidate pool instead.
+  const wideCandidates = await findAvatarBackfillCandidates(db, USER, {
+    limit: N + Object.keys(specialIds).length,
+    skipIds: [],
+  });
+  check(
+    "a contact with an email but no LinkedIn URL is still a candidate (Google/Outlook can match on email)",
+    wideCandidates.some((c) => c.id === specialIds.emailOnly)
+  );
   const skipped = await findAvatarBackfillCandidates(db, USER, { limit: 25, skipIds: [specialIds.remote] });
   check("skipIds removes a candidate", !skipped.some((c) => c.id === specialIds.remote));
 
@@ -285,6 +303,7 @@ async function main() {
   const fake = Array.from({ length: 10 }, (_, i) => ({
     id: `fake-${i}`,
     linkedinUrl: `https://www.linkedin.com/in/fake-${i}/`,
+    email: null,
     remoteUrl: null,
   }));
   const result = await runAvatarBackfillBatch(fake, {
@@ -299,6 +318,70 @@ async function main() {
     result.pending === 10 - resolved,
     `pending ${result.pending}, resolved ${resolved}`
   );
+
+  // ---- Avatar backfill resolver ordering ----------------------------------------------
+  console.log("\nAvatar backfill (resolver ordering: connected account > LinkedIn > Apollo)…");
+  {
+    const calls: string[] = [];
+    const savedPhotos: Record<string, string> = {};
+    const oneContact = [
+      { id: "c1", linkedinUrl: "https://www.linkedin.com/in/c1/", email: "c1@example.com", remoteUrl: null },
+    ];
+    const r1 = await runAvatarBackfillBatch(oneContact, {
+      deadline: Date.now() + 5_000,
+      persistRemote: async () => null,
+      resolveConnectedAccount: async () => {
+        calls.push("connected");
+        return "https://connected.example.com/photo.jpg";
+      },
+      resolveLinkedIn: async () => {
+        calls.push("linkedin");
+        return "https://linkedin.example.com/photo.jpg";
+      },
+      resolveApollo: async () => {
+        calls.push("apollo");
+        return "https://apollo.example.com/photo.jpg";
+      },
+      save: async (id, url) => {
+        savedPhotos[id] = url;
+      },
+    });
+    check(
+      "a connected-account match short-circuits LinkedIn and Apollo",
+      calls.length === 1 && calls[0] === "connected",
+      calls.join(",")
+    );
+    check("the connected-account photo is what gets saved", savedPhotos.c1 === "https://connected.example.com/photo.jpg");
+    check("resolver-ordering batch reports one save", r1.saved === 1);
+  }
+  {
+    const calls: string[] = [];
+    const twoContacts = [
+      { id: "c2", linkedinUrl: "https://www.linkedin.com/in/c2/", email: "c2@example.com", remoteUrl: null },
+    ];
+    await runAvatarBackfillBatch(twoContacts, {
+      deadline: Date.now() + 5_000,
+      persistRemote: async () => null,
+      resolveConnectedAccount: async () => {
+        calls.push("connected");
+        return null;
+      },
+      resolveLinkedIn: async () => {
+        calls.push("linkedin");
+        return null;
+      },
+      resolveApollo: async () => {
+        calls.push("apollo");
+        return "https://apollo.example.com/photo.jpg";
+      },
+      save: async () => {},
+    });
+    check(
+      "Apollo only runs after connected-account and LinkedIn both miss",
+      calls.join(",") === "connected,linkedin,apollo",
+      calls.join(",")
+    );
+  }
 
   // ---- perf trace ------------------------------------------------------------------
   console.log("\nperf trace (traced)…");

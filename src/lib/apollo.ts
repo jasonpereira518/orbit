@@ -451,6 +451,31 @@ export async function searchPeople(
   };
 }
 
+/**
+ * Look up a LinkedIn headshot via Apollo's people/match, for the avatar backfill's
+ * last-resort source (paid, so it only runs for contacts a free lookup already
+ * couldn't photo). Returns null on any failure or no-key/no-match — never throws,
+ * so one contact's Apollo miss doesn't stop the rest of a backfill batch.
+ */
+export async function fetchApolloLinkedInPhoto(
+  userId: string,
+  linkedinUrl: string
+): Promise<string | null> {
+  const apiKey = await getApolloApiKey(userId);
+  if (!apiKey) return null;
+
+  try {
+    const response = await apolloFetch(APOLLO_MATCH_URL, apiKey, {
+      linkedin_url: linkedinUrl,
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { person?: ApolloPerson | null };
+    return data.person?.photo_url?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function enrichPerson(
   userId: string,
   externalId: string,
