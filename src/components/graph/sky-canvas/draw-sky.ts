@@ -322,7 +322,8 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
       // The anchor is the name's bottom edge, above the cluster's top star; text draws from its top.
       const p = { x: anchor.x, y: anchor.y - 16 };
       const fitted = fitText(ctx, label.label, LABEL_MAX_WIDTH);
-      const rect = { x: p.x - fitted.width / 2 - 4, y: p.y, w: fitted.width + 8, h: 16 };
+      // Wide gaps between cluster names, as on desktop: a few well-spaced names, not a wall.
+      const rect = { x: p.x - fitted.width / 2 - 20, y: p.y - 8, w: fitted.width + 40, h: 32 };
       if (label.label !== frame.focusCompany && placed.some((r) => overlaps(rect, r))) continue;
       placed.push(rect);
       ctx.globalAlpha = clusterEmphasis(

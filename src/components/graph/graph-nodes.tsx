@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useLayoutEffect, useMemo, useRef } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -675,7 +675,10 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
     Math.pow(2, Math.round(Math.log2(Math.max(s.transform[2], 0.01)) * 4) / 4)
   );
 
-  useEffect(() => {
+  // A layout effect, so the dots are drawn before the frame that shows the canvas is painted.
+  // As an ordinary effect the canvas painted empty first — a blank frame each time the summary
+  // began, and at every zoom step on the way, where the redraw clears it.
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
@@ -684,8 +687,11 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
       Math.max(zoom, 0.01) * dpr,
       STAR_DUST_MAX_BACKING_PX / Math.max(data.width, data.height)
     );
-    canvas.width = Math.max(1, Math.ceil(data.width * scale));
-    canvas.height = Math.max(1, Math.ceil(data.height * scale));
+    const w = Math.max(1, Math.ceil(data.width * scale));
+    const h = Math.max(1, Math.ceil(data.height * scale));
+    // Resizing reallocates and clears the backing store; do it only when the size changed.
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
     ctx.setTransform(scale, 0, 0, scale, -data.minX * scale, -data.minY * scale);
     ctx.clearRect(data.minX, data.minY, data.width, data.height);
     // At least a pixel and a half on screen, or a dim dot vanishes into the backing store.

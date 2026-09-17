@@ -37,8 +37,11 @@ function send(res, file) {
 
 createServer((req, res) => {
   const url = new URL(req.url, "http://x");
-  if (url.pathname === "/bench/constellation") {
-    return send(res, join(root, "server/app/bench/constellation.html"));
+  // Any prerendered bench page: /bench/constellation, /bench/preview, /bench/preview-old.
+  const bench = url.pathname.match(/^\/bench\/([a-z0-9-]+)$/);
+  if (bench) {
+    const page = join(root, "server/app/bench", `${bench[1]}.html`);
+    if (existsSync(page)) return send(res, page);
   }
   if (url.pathname.startsWith("/_next/static/")) {
     const rel = normalize(decodeURIComponent(url.pathname.slice("/_next/static/".length)));

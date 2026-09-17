@@ -233,6 +233,10 @@ const STAR_MOUNT_BATCH = 32;
 const STAR_WINDOW_MARGIN = 0.25;
 /** The window moves once the view strays past this much of that margin, or zooms a step. */
 const STAR_WINDOW_SLACK = 0.25;
+/** The most real stars the window hands over; past this, window members stay dots. */
+const STAR_WINDOW_MAX = 450;
+/** Stars removed per frame when the window lets go of them, e.g. on the way back to the whole sky. */
+const STAR_UNMOUNT_BATCH = 80;
 
 type WorldRect = { x0: number; y0: number; x1: number; y1: number; zoom: number };
 
@@ -256,6 +260,11 @@ const ENTRANCE_MAX = 400;
 const ENTRANCE_CLEAR_MS = 700;
 
 const STAR_DUST_ID = "star-dust";
+
+/** Below this zoom, cluster names keep much wider gaps between them (see `clusterNameWinners`). */
+const CLUSTER_NAME_SPARSE_BELOW_ZOOM = 0.2;
+/** Below that zoom, at most this many of the largest clusters are considered for a name. */
+const CLUSTER_NAME_SPARSE_MAX = 36;
 
 /** A label's box in layout px, as graph-nodes.tsx draws it: `max-w-[104px]`, `mt-2`, 11px + 9px lines. */
 const LABEL_MAX_W = 104;
@@ -281,13 +290,37 @@ function clusterNameWinners(
   highlighted: string | null
 ): Set<string> {
   type Box = { x0: number; y0: number; x1: number; y1: number };
+  const sparse = zoom < CLUSTER_NAME_SPARSE_BELOW_ZOOM;
+  const spacing = sparse ? { x: 1.9, y: 2.6 } : { x: 1.15, y: 1.15 };
+  // Far out, only the largest clusters compete for a name at all: a gap on the far side of the
+  // sky is no reason to label a two-person cluster while the view is about the big picture.
+  const eligible = sparse
+    ? new Set(
+        [...labels]
+          .sort(
+            (a, b) =>
+              ((b.data as ClusterLabelData).count ?? 0) -
+              ((a.data as ClusterLabelData).count ?? 0)
+          )
+          .slice(0, CLUSTER_NAME_SPARSE_MAX)
+          .map((n) => n.id)
+      )
+    : null;
   const candidates = labels
+    .filter(
+      (n) =>
+        !eligible ||
+        eligible.has(n.id) ||
+        (n.data as ClusterLabelData).label === highlighted
+    )
     .map((n) => {
       const d = n.data as ClusterLabelData;
       const { width, height } = clusterNameSize(d.label, withCount && Boolean(d.count), zoom);
-      // A little air between neighbours, and slack for zooms between two steps.
-      const w = width * 1.15;
-      const h = height * 1.15;
+      // Air between neighbours, and slack for zooms between two steps. Far out, where a whole
+      // sky of clusters competes for the space, much more of it: a legend of a few well-spaced
+      // names reads, a wall of them does not.
+      const w = width * spacing.x;
+      const h = height * spacing.y;
       const box: Box = {
         x0: n.position.x - w / 2,
         x1: n.position.x + w / 2,
@@ -658,12 +691,23 @@ function GraphCanvasInner({
    * The star window (see STAR_WINDOW_MARGIN): large skies, outside the summary view.
    *
    * `starWindow` is the world rect React Flow may draw stars from; it moves only when the camera
-   * strays out of its slack or zooms a quarter-octave, so a pan is not a re-render. `mounted` is
-   * what has actually been handed over: it catches up with the window STAR_MOUNT_BATCH at a time,
-   * nearest the centre first, and lets go of what the window left behind at once.
+   * strays out of its slack or zooms a quarter-octave, so a pan is not a re-render. At most
+   * STAR_WINDOW_MAX of its stars — nearest the centre — become real stars; the rest stay dots on
+   * the dust canvas, which at the zooms where a window holds that many look the same.
+   *
+   * `mounted` is what has actually been handed to React Flow. It moves toward the target a batch
+   * per frame in both directions: STAR_MOUNT_BATCH added, STAR_UNMOUNT_BATCH removed. Removing
+   * all at once was the lag on the way back out to the whole sky — a 183ms frame dropping 500
+   * stars — and it is never reset, so crossing back and forth keeps what is already there.
    */
   const windowing = summaryAllowed && !summary;
   const [starWindow, setStarWindow] = useState<WorldRect | null>(null);
+  // A window left over from a previous close-up points somewhere else entirely.
+  const [windowFor, setWindowFor] = useState(windowing);
+  if (windowFor !== windowing) {
+    setWindowFor(windowing);
+    setStarWindow(null);
+  }
   useEffect(() => {
     if (!windowing || !viewportReady) return;
     const place = () => {
@@ -692,42 +736,64 @@ function GraphCanvasInner({
     return storeApi.subscribe(place);
   }, [windowing, viewportReady, storeApi]);
 
+  /**
+   * The window in effect this render. On the frame the summary ends, the effect above has not
+   * run yet, and waiting for it left one frame with neither dots nor stars — the blink when
+   * flying into a cluster. So the first window is read from the camera right here.
+   */
+  let activeWindow = starWindow;
+  if (windowing && !activeWindow) {
+    const { transform, width, height } = storeApi.getState();
+    if (width >= 2 && height >= 2) {
+      activeWindow = viewportWorldRect(transform, width, height, STAR_WINDOW_MARGIN);
+    }
+  }
+
   /** Window members, nearest its centre first. */
   const wanted = useMemo(() => {
-    if (!windowing || !starWindow) return null;
-    const cx = (starWindow.x0 + starWindow.x1) / 2;
-    const cy = (starWindow.y0 + starWindow.y1) / 2;
+    if (!windowing || !activeWindow) return null;
+    const w = activeWindow;
+    const cx = (w.x0 + w.x1) / 2;
+    const cy = (w.y0 + w.y1) / 2;
     const inside: Array<{ id: string; d: number }> = [];
     for (const n of contactById.values()) {
       const { x, y } = n.position;
-      if (x < starWindow.x0 || x > starWindow.x1 || y < starWindow.y0 || y > starWindow.y1) continue;
+      if (x < w.x0 || x > w.x1 || y < w.y0 || y > w.y1) continue;
       inside.push({ id: n.id, d: (x - cx) ** 2 + (y - cy) ** 2 });
     }
     inside.sort((a, b) => a.d - b.d);
     return inside.map((c) => c.id);
-  }, [windowing, starWindow, contactById]);
+    // `activeWindow` is a fresh object only when `starWindow` is null; its bounds are the key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    windowing,
+    contactById,
+    activeWindow?.x0,
+    activeWindow?.y0,
+    activeWindow?.x1,
+    activeWindow?.y1,
+  ]);
+  const target = useMemo(
+    () => (wanted ? new Set(wanted.slice(0, STAR_WINDOW_MAX)) : NO_IDS),
+    [wanted]
+  );
 
   const [mounted, setMounted] = useState<ReadonlySet<string>>(NO_IDS);
-  // Leaving the window mode (into the summary, or a sky too small for it) forgets what was
-  // mounted, so the next way out ramps in again rather than landing all at once.
-  const [mountedFor, setMountedFor] = useState(windowing);
-  if (mountedFor !== windowing) {
-    setMountedFor(windowing);
-    setMounted(NO_IDS);
-  }
-  const filling = wanted !== null && wanted.some((id) => !mounted.has(id));
+  const adding = wanted !== null && wanted.slice(0, STAR_WINDOW_MAX).some((id) => !mounted.has(id));
+  const removing = mounted.size > 0 && [...mounted].some((id) => !target.has(id));
   useEffect(() => {
-    if (!wanted) return;
-    const wantedSet = new Set(wanted);
-    const stale = [...mounted].some((id) => !wantedSet.has(id));
-    if (!filling && !stale) return;
+    if (!adding && !removing) return;
     const raf = requestAnimationFrame(() => {
       setMounted((prev) => {
         const next = new Set<string>();
-        for (const id of prev) if (wantedSet.has(id)) next.add(id);
+        let removed = 0;
+        for (const id of prev) {
+          if (target.has(id) || removed >= STAR_UNMOUNT_BATCH) next.add(id);
+          else removed++;
+        }
         let added = 0;
-        for (const id of wanted) {
-          if (added >= STAR_MOUNT_BATCH) break;
+        for (const id of wanted ?? []) {
+          if (added >= STAR_MOUNT_BATCH || !target.has(id)) break;
           if (next.has(id)) continue;
           next.add(id);
           added++;
@@ -736,7 +802,10 @@ function GraphCanvasInner({
       });
     });
     return () => cancelAnimationFrame(raf);
-  }, [wanted, mounted, filling]);
+  }, [wanted, target, mounted, adding, removing]);
+  /** Stars in the window that are not real stars (yet, or at all): the dots must cover them. */
+  const windowHasDots =
+    wanted !== null && (wanted.length > mounted.size || adding);
 
   const focusCompany = useMemo(() => {
     if (focusCluster) {
@@ -822,21 +891,21 @@ function GraphCanvasInner({
           ? [...searchHitIds].flatMap((id) => contactById.get(id) ?? [])
           : [];
     } else if (wanted) {
-      candidates = wanted.flatMap((id) => contactById.get(id) ?? []);
+      candidates = [...target].flatMap((id) => contactById.get(id) ?? []);
     }
     return labelWinners(
       candidates,
       labelZoom,
       (id) => searchDimActive && searchHitIds.has(id)
     );
-  }, [contactById, labelZoom, searchDimActive, searchHitIds, summary, wanted]);
+  }, [contactById, labelZoom, searchDimActive, searchHitIds, summary, wanted, target]);
 
   /**
    * Every contact, as the dots the summary view draws in place of stars. Built only while the
    * summary is on, and rebuilt only when the sky or the emphasis changes — never per frame.
    */
   // Only on/off: the per-frame fill must not rebuild or redraw the dots.
-  const rampActive = filling;
+  const rampActive = windowHasDots;
   // Search, but not hover or selection: the dots dim for a search, and a pointer moving over
   // the sky must not redraw every dot on the canvas.
   const dustFocus: SkyFocusState = useMemo(
@@ -999,9 +1068,18 @@ function GraphCanvasInner({
       const labelHidden = !labelled.has(n.id);
       const mountHit =
         emphasis.spotlight && searchHitIds.size <= SUMMARY_MOUNT_HITS_MAX;
-      if (summary && !labelPinned && !mountHit && n.id !== peekPersonId) continue;
-      // Hits already mounted in the summary stay put; everyone else waits for the window.
-      if (windowing && !labelPinned && !mountHit && !mounted.has(n.id)) continue;
+      // Large skies draw a star only when something asks for it: the reader (pinned, a mountable
+      // search hit, a peek) or the window, via `mounted` — which in the summary view drains a
+      // batch a frame rather than dropping every star at once.
+      if (
+        summaryAllowed &&
+        !labelPinned &&
+        !mountHit &&
+        n.id !== peekPersonId &&
+        !mounted.has(n.id)
+      ) {
+        continue;
+      }
       const raised = isHovered || emphasis.selected;
       const entering = sky.entering.has(n.id);
 
@@ -1050,7 +1128,7 @@ function GraphCanvasInner({
     highlightedCluster,
     clusterNamesShown,
     searchHitIds,
-    windowing,
+    summaryAllowed,
     mounted,
   ]);
 
@@ -1061,8 +1139,9 @@ function GraphCanvasInner({
   }, [nodes]);
 
   const edges = useMemo(() => {
-    // The summary view draws clusters, not people, and a figure line needs both its stars.
-    if (summary) return [];
+    // A figure line needs both its stars drawn (`drawnIds`). Not cleared outright for the
+    // summary view: the stars leave a batch a frame, and their lines go with them rather than
+    // all in the one frame the summary begins.
     return layout.edges
       .filter((e) => {
         if (!drawnIds.has(e.source) || !drawnIds.has(e.target)) return false;
@@ -1098,7 +1177,7 @@ function GraphCanvasInner({
             }) as Edge
         );
       });
-  }, [summary, layout.edges, focusCluster, focusState, drawnIds]);
+  }, [layout.edges, focusCluster, focusState, drawnIds]);
 
   /**
    * Frame a set of people, whether or not they are mounted.

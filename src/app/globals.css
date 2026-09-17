@@ -1096,25 +1096,13 @@
   animation: constellation-planet-enter 0.45s var(--ease-house) backwards;
 }
 
-/* The summary view's dots fade in rather than cut, as the stars they replace unmount. */
-@keyframes constellation-star-dust-in {
-  from {
-    opacity: 0;
-  }
-}
-
-.constellation-star-dust {
-  animation: constellation-star-dust-in 160ms ease-out backwards;
-}
-
 .constellation-twinkle-group {
   animation: constellation-twinkle-group 7s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .constellation-twinkle-group,
-  .constellation-corona-outer,
-  .constellation-star-dust {
+  .constellation-corona-outer {
     animation: none;
   }
 }
