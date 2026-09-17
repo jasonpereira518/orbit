@@ -64,6 +64,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { interactions, userSettings } from "@/db/schema";
+import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { internalFetch } from "@/lib/internal-auth";
 import {
   extractLinkedInTimelineEvents,
@@ -340,7 +341,7 @@ export async function runLinkedInTimelineBackfill(
             contactId,
             interactionType: ev.interactionType,
             interactionDate: ev.interactionDate,
-            source: "linkedin_messages",
+            source: AI_DERIVED_SOURCE,
             externalId: ev.externalId,
             rawNotes: ev.rawNotes,
             aiSummary: ev.summary,

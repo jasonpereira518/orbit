@@ -222,6 +222,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-interest-ticket-image": "pglite",
   "smoke-internal-auth": "pglite", // imports route handlers that reach @/db
   "smoke-launch-p2-schema": "pglite",
+  "smoke-ai-derived-interactions": "pglite",
   "smoke-calendar-feed-token": "pglite",
   "smoke-housekeeping-sweeps": "pglite",
   "smoke-linkedin-direction": "pglite",

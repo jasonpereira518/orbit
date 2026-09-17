@@ -580,6 +580,8 @@ export async function getContact(id: string) {
           // from a meeting capture rather than a hand-typed note.
           noteBatchId: true,
           aiSummary: true,
+          // Provenance: the profile's "last touch" skips AI-derived timeline events.
+          source: true,
         },
         extras: {
           notesPreview: sql<

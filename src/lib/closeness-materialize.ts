@@ -1,6 +1,7 @@
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { closenessCohorts, contacts, interactions, userGoals } from "@/db/schema";
+import { countsAsTouch } from "@/lib/interaction-provenance";
 import type {
   ClosenessCohortSnapshot,
   StoredClosenessBreakdown,
@@ -332,7 +333,8 @@ export async function rescoreContact(
       .where(
         and(
           eq(interactions.userId, userId),
-          eq(interactions.contactId, contactId)
+          eq(interactions.contactId, contactId),
+          countsAsTouch()
         )
       ),
     // Concentration for this contact's employer only — not a scan of the network to

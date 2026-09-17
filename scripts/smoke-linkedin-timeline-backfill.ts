@@ -344,8 +344,8 @@ async function testRealExtractorEndToEnd() {
     String(reachOut?.interactionDate)
   );
   check(
-    "derived events are written under the engine's source string",
-    rows.every((r) => r.source === "linkedin_messages"),
+    "derived events are tagged as AI-derived, not as the engine's messages",
+    rows.every((r) => r.source === "ai_derived"),
     JSON.stringify(rows.map((r) => r.source))
   );
 

@@ -36,6 +36,7 @@ import { listOpportunitiesForContact } from "@/lib/contact-opportunities";
 import { getContactProfile } from "@/lib/contact-profile";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
+import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
@@ -157,10 +158,10 @@ export default async function ContactDetailPage({
         statedCloseness: contact.statedCloseness,
         lastInteractionAt: contact.lastInteractionAt,
         // `getContact` loads this contact's interaction rows unfiltered, so
-        // this is the same has-ever-interacted fact the cohort builder derives
-        // from the interactions table — not the `lastInteractionAt` stamp,
-        // which every create path writes.
-        hasLoggedInteraction: contact.interactions.length > 0,
+        // skipping AI-derived rows gives the same has-ever-interacted fact the
+        // cohort builder derives from the interactions table — not the
+        // `lastInteractionAt` stamp, which every create path writes.
+        hasLoggedInteraction: contact.interactions.some(isLoggedTouch),
         firstInteractionAt: contact.firstInteractionAt,
         dateMet: contact.dateMet,
         createdAt: contact.createdAt,
@@ -187,15 +188,17 @@ export default async function ContactDetailPage({
   });
 
   const displayName = contact.preferredName || contact.fullName;
-  const latestInteraction = contact.interactions[0] ?? null;
+  const latestInteraction = latestLoggedTouch(contact.interactions);
   const lastTouchAt =
     latestInteraction?.interactionDate || contact.lastInteractionAt;
   // Same distinction the closeness model already makes: `lastInteractionAt` is stamped on
   // every create/import, so only an actual interactions row proves a touch happened.
-  const hasLoggedInteraction = contact.interactions.length > 0;
+  // AI-derived timeline events restate messages that are rows of their own, so they are
+  // not touches here either.
+  const hasLoggedInteraction = contact.interactions.some(isLoggedTouch);
 
   const frequencyLabel = formatInteractionFrequency(
-    contact.interactions.map((i) => i.interactionDate)
+    contact.interactions.filter(isLoggedTouch).map((i) => i.interactionDate)
   );
 
   // Awaited once here rather than inline: both the brief card's next-steps list and the
