@@ -75,6 +75,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-embedding-cache": "pure",
   "smoke-embedding-rate-limit-backoff": "pure",
   "smoke-env": "pure",
+  "smoke-provider-keys-stripped": "pure",
   "smoke-fast-model": "pure",
   "smoke-feedback-image": "pure",
   "smoke-follow-up-cadence": "pure",
