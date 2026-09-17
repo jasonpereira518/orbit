@@ -12,6 +12,7 @@ import {
   type EdgeProps,
   type NodeProps,
 } from "@xyflow/react";
+import { useCameraMoving } from "@/components/graph/camera-motion";
 import { cn } from "@/lib/utils";
 import {
   RING_LABELS,
@@ -702,6 +703,15 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
     Math.pow(2, Math.round(Math.log2(Math.max(s.transform[2], 0.01)) * 4) / 4)
   );
 
+  /**
+   * Held still while the camera moves. Redrawing means filling thousands of dots and handing
+   * the whole backing store to the GPU again; at 10,000 contacts that was a 100ms frame at
+   * every zoom step of a pinch. The canvas rides the viewport's transform meanwhile, like the
+   * rest of the sky, and is redrawn at its proper scale the moment the camera stops.
+   */
+  const moving = useCameraMoving();
+  const drawnOnce = useRef(false);
+
   // A layout effect, so the dots are drawn before the frame that shows the canvas is painted.
   // As an ordinary effect the canvas painted empty first — a blank frame each time the summary
   // began, and at every zoom step on the way, where the redraw clears it.
@@ -709,6 +719,9 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
+    // Never skip the first draw: the canvas can appear mid-gesture, and an empty one is a hole.
+    if (moving && drawnOnce.current) return;
+    drawnOnce.current = true;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const scale = Math.min(
       Math.max(zoom, 0.01) * dpr,
@@ -744,7 +757,7 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-  }, [data, zoom]);
+  }, [data, zoom, moving]);
 
   return (
     <canvas

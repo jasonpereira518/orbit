@@ -41,6 +41,7 @@ import type {
   GraphChartProps,
   GraphPayload,
 } from "@/components/graph/graph-chart-types";
+import { setCameraMoving } from "@/components/graph/camera-motion";
 import { useGraphLayout } from "@/components/graph/use-graph-layout";
 import {
   buildHybridGraphLayout,
@@ -221,8 +222,13 @@ const SUMMARY_MOUNT_HITS_MAX = 60;
  * to mount every star in view in one commit — 350 of them after searching a big company at 2,500
  * contacts, one 300ms frame, 650ms at 5,000 — so a smooth camera flight ended in a freeze. The
  * dust canvas stays underneath while they arrive, so nobody is missing in the meantime.
+ *
+ * Half that while the camera moves: a moving frame is already paying for the camera, and a full
+ * batch on top of it took 33ms — every other frame dropped on the way in from the whole sky.
+ * Arriving takes twice as many frames, which nobody sees, because the dots are drawn underneath.
  */
 const STAR_MOUNT_BATCH = 32;
+const STAR_MOUNT_BATCH_MOVING = 16;
 
 /**
  * Large skies hand React Flow only the stars in and around the view: the viewport grown by this
@@ -236,7 +242,17 @@ const STAR_WINDOW_SLACK = 0.25;
 /** The most real stars the window hands over; past this, window members stay dots. */
 const STAR_WINDOW_MAX = 450;
 /** Stars removed per frame when the window lets go of them, e.g. on the way back to the whole sky. */
-const STAR_UNMOUNT_BATCH = 80;
+const STAR_UNMOUNT_BATCH = 48;
+
+
+/**
+ * How far the camera may zoom out from the window's own zoom before the dots are needed.
+ *
+ * The window is the view grown by STAR_WINDOW_MARGIN on every side, so it still covers the
+ * screen after zooming out by half that again. Past it, the stars it chose no longer reach the
+ * edges of the view, and the dust canvas draws everyone underneath until the window catches up.
+ */
+const STAR_WINDOW_OUTRUN = 1 / (1 + STAR_WINDOW_MARGIN * 2);
 
 type WorldRect = { x0: number; y0: number; x1: number; y1: number; zoom: number };
 
@@ -716,7 +732,31 @@ function GraphCanvasInner({
    * per frame in both directions: STAR_MOUNT_BATCH added, STAR_UNMOUNT_BATCH removed. Removing
    * all at once was the lag on the way back out to the whole sky — a 183ms frame dropping 500
    * stars — and it is never reset, so crossing back and forth keeps what is already there.
+   *
+   * A zoom holds the window still until it stops (`movingRef`). Measured on a zoom from the
+   * whole sky to a close-up and back: every frame that mounted or dropped a star cost 22-26ms
+   * on average against a flat 17ms for the frames that did not, and re-choosing the window at
+   * each zoom step made 853 of them. A pan still moves the window as it goes — panning changes
+   * which stars are worth having, and is cheap enough to do live — but while the camera is
+   * scaling, the stars already up are simply carried along, and the dots cover the rest.
    */
+  /**
+   * Whether the camera is moving right now. Two things ride on it: the sky is worth its own
+   * compositor layer only while it moves (`.constellation-moving` in globals.css), and the star
+   * window holds still through a zoom. Held in a ref and written straight to the DOM, because a
+   * pan must not re-render the chart to toggle a class.
+   */
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const movingRef = useRef(false);
+  const placeWindowRef = useRef<(() => void) | null>(null);
+  const setMoving = useCallback((moving: boolean) => {
+    stageRef.current?.classList.toggle("constellation-moving", moving);
+    movingRef.current = moving;
+    setCameraMoving(moving);
+    // Stopped: choose the window for where the camera actually landed.
+    if (!moving) placeWindowRef.current?.();
+  }, []);
+
   const windowing = summaryAllowed && !summary;
   const [starWindow, setStarWindow] = useState<WorldRect | null>(null);
   // A window left over from a previous close-up points somewhere else entirely.
@@ -734,10 +774,13 @@ function GraphCanvasInner({
         if (prev) {
           const inner = viewportWorldRect(transform, width, height, 0);
           const slackX = (inner.x1 - inner.x0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
+          const zoomed = Math.abs(Math.log2(transform[2] / prev.zoom));
+          // Mid-zoom, keep the stars that are up rather than choosing a new set every step.
+          // `setMoving` places the window again the moment the camera stops.
+          if (movingRef.current && zoomed > 0.01) return prev;
           const slackY = (inner.y1 - inner.y0) * STAR_WINDOW_MARGIN * STAR_WINDOW_SLACK;
-          const zoomStepped = Math.abs(Math.log2(transform[2] / prev.zoom)) >= 0.25;
           if (
-            !zoomStepped &&
+            zoomed < 0.25 &&
             inner.x0 >= prev.x0 + slackX &&
             inner.y0 >= prev.y0 + slackY &&
             inner.x1 <= prev.x1 - slackX &&
@@ -749,8 +792,13 @@ function GraphCanvasInner({
         return viewportWorldRect(transform, width, height, STAR_WINDOW_MARGIN);
       });
     };
+    placeWindowRef.current = place;
     place();
-    return storeApi.subscribe(place);
+    const unsubscribe = storeApi.subscribe(place);
+    return () => {
+      placeWindowRef.current = null;
+      unsubscribe();
+    };
   }, [windowing, viewportReady, storeApi]);
 
   /**
@@ -809,8 +857,11 @@ function GraphCanvasInner({
           else removed++;
         }
         let added = 0;
+        const batch = movingRef.current
+          ? STAR_MOUNT_BATCH_MOVING
+          : STAR_MOUNT_BATCH;
         for (const id of wanted ?? []) {
-          if (added >= STAR_MOUNT_BATCH || !target.has(id)) break;
+          if (added >= batch || !target.has(id)) break;
           if (next.has(id)) continue;
           next.add(id);
           added++;
@@ -869,6 +920,7 @@ function GraphCanvasInner({
   const labelZoom = useStore((s) => zoomStep(s.transform[2]));
   // Cluster names can pin in view from here in (see ClusterLabelNode in graph-nodes.tsx).
   const labelPinnable = useStore((s) => s.transform[2] >= CLUSTER_NAME_PIN_MIN_ZOOM);
+
 
   /**
    * Whether the camera is at the home framing — the zoom `DefaultViewFitter` picks — which is the
@@ -943,7 +995,13 @@ function GraphCanvasInner({
    * summary is on, and rebuilt only when the sky or the emphasis changes — never per frame.
    */
   // Only on/off: the per-frame fill must not rebuild or redraw the dots.
-  const rampActive = windowHasDots;
+  /**
+   * Zoomed out past what the window was chosen for — its stars no longer reach the edges of the
+   * view — so the dots stand in until the camera stops and the window is placed again.
+   */
+  const windowOutrun =
+    activeWindow !== null && labelZoom < activeWindow.zoom * STAR_WINDOW_OUTRUN;
+  const rampActive = windowHasDots || windowOutrun;
   // Search, but not hover or selection: the dots dim for a search, and a pointer moving over
   // the sky must not redraw every dot on the canvas.
   const dustFocus: SkyFocusState = useMemo(
@@ -1467,16 +1525,6 @@ function GraphCanvasInner({
   // Carries React Flow's measurements (and selection) into the nodes it is handed next. Only
   // changes that land on a stored node count: the star-dust node is derived, never stored, and
   // a no-op must not hand back a new array — that re-derives every node and re-renders the sky.
-  /**
-   * Whether the camera is moving right now, which is the only time the sky is worth promoting to
-   * its own compositor layer (see `.constellation-moving` in globals.css). Held in a ref and
-   * written straight to the DOM: a pan must not re-render the chart to toggle a class.
-   */
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const setMoving = useCallback((moving: boolean) => {
-    stageRef.current?.classList.toggle("constellation-moving", moving);
-  }, []);
-
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     setSky((s) => {
       const ids = new Set(s.nodes.map((n) => n.id));
