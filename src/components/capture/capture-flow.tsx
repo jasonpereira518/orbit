@@ -25,6 +25,9 @@ import { CaptureResumeNotice } from "@/components/capture/capture-resume-notice"
 import { CaptureSaved } from "@/components/capture/capture-saved";
 import { CaptureSummary, choicesFromSuggestions, suggestionsFromChoices } from "@/components/capture/capture-summary";
 import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureMode } from "@/components/capture/capture-tabs";
+import { NotesLibraryUpload } from "@/components/capture/notes-library-upload";
+import { CaptureQueuePanel } from "@/components/capture/capture-queue-panel";
+import { discardCaptureBatch, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { ExtractingStage } from "@/components/capture/extracting-stage";
 import { IgnoredPeopleSection } from "@/components/capture/ignored-people-section";
 import { MeetingCaptureTab } from "@/components/capture/meeting-capture-tab";
@@ -60,6 +63,7 @@ const SOURCE_LABEL: Record<CaptureJobSource, string> = {
 
 export function CaptureFlow({
   initialJob,
+  initialJobs = [],
   initialContactId = null,
   initialContactName = null,
   defaultMode = "messy",
@@ -73,6 +77,8 @@ export function CaptureFlow({
   history = null,
 }: {
   initialJob: CaptureJobView | null;
+  /** Every reachable job, so a multi-file drop can render its queue. */
+  initialJobs?: CaptureJobView[];
   initialContactId?: string | null;
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
@@ -104,6 +110,54 @@ export function CaptureFlow({
   const [mode, setMode] = useState<CaptureMode>(() =>
     initialJob && (initialJob.status === "transcribed" || initialJob.status === "ingesting") ? tabForSource(initialJob.sourceKind) : defaultMode
   );
+  /**
+   * The queue over a multi-file drop.
+   *
+   * Polled separately from the single-job store rather than folded into it: that store holds
+   * exactly one job by design and has other subscribers, and widening it to a collection
+   * would change what every one of them reads. This is additive and disappears when there is
+   * only one job.
+   */
+  const [queue, setQueue] = useState<CaptureJobView[]>(initialJobs);
+  /**
+   * ONE upload's jobs, not every job that is still open.
+   *
+   * `getActiveCaptureJobs` returns everything reachable, which can span two folder drops and
+   * a lone Extract — the batch rule in `queueCaptureJob` stops a batch discarding its
+   * siblings, so several can be open at once. The panel is headed "This upload" and its
+   * Discard all is deliberately scoped to one `batchGroupId`, so rendering the others would
+   * make both of those statements false: it would name somebody else's drop as part of this
+   * one, and then discard only a third of what it had just listed.
+   *
+   * The active job's batch wins, so opening a row from an older drop switches the panel to
+   * that drop rather than leaving it pointing at the newest.
+   */
+  const activeBatchId =
+    queue.find((j) => j.id === job?.id)?.batchGroupId ??
+    queue.find((j) => j.batchGroupId)?.batchGroupId ??
+    null;
+  const batchJobs = activeBatchId
+    ? queue.filter((j) => j.batchGroupId === activeBatchId)
+    : [];
+  const queueBusy = batchJobs.some((j) =>
+    ["ingesting", "transcribed", "queued", "extracting", "saving"].includes(j.status)
+  );
+  useEffect(() => {
+    if (batchJobs.length <= 1 || !queueBusy) return;
+    let alive = true;
+    const t = setInterval(() => {
+      void getActiveCaptureJobs()
+        .then((rows) => {
+          if (alive) setQueue(rows);
+        })
+        .catch(() => null);
+    }, 2500);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [batchJobs.length, queueBusy]);
+
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [pendingStart, setPendingStart] = useState(false);
   const [reviewOpened, setReviewOpened] = useState(false);
@@ -346,6 +400,39 @@ export function CaptureFlow({
                 onAnalyzed={onMeetingAnalyzed}
                 panelId={capturePanelId("meeting")}
                 tabId={captureTabId("meeting")}
+              />
+            )}
+            {batchJobs.length > 1 && activeBatchId && (
+              <div className="mb-4">
+                <CaptureQueuePanel
+                  jobs={batchJobs}
+                  activeJobId={job?.id ?? null}
+                  onOpen={(jobId) => {
+                    const next = batchJobs.find((j) => j.id === jobId);
+                    if (next) seedCaptureJob(next, { force: true });
+                  }}
+                  onDiscardAll={() => {
+                    void discardCaptureBatch(activeBatchId).then(() => {
+                      // Only this batch leaves the list. Clearing the whole thing would hide
+                      // any other drop still open until the next poll brought it back.
+                      setQueue((prev) => prev.filter((j) => j.batchGroupId !== activeBatchId));
+                      router.refresh();
+                    });
+                  }}
+                />
+              </div>
+            )}
+            {mode === "library" && (
+              <NotesLibraryUpload
+                hasApiKey={hasApiKey}
+                panelId={capturePanelId("library")}
+                tabId={captureTabId("library")}
+                onQueued={() => {
+                  void getActiveCaptureJobs()
+                    .then(setQueue)
+                    .catch(() => null);
+                  router.refresh();
+                }}
               />
             )}
             {mode === "structured" && (
