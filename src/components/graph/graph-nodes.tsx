@@ -230,7 +230,6 @@ function ContactNodeComponent({
   if (isComet) {
     const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
     const disc = size + 2;
-    const cometRelief = starZoomRelief(disc, zoom);
     return (
       <div
         className={cn(
@@ -267,26 +266,15 @@ function ContactNodeComponent({
         {showLabel && (
           <div
             className={cn(
-              "pointer-events-none absolute left-1/2 z-10 w-max -translate-x-1/2 text-center group-hover:z-30",
+              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center group-hover:z-30",
               bright ? "opacity-100" : "opacity-75 group-hover:opacity-100"
             )}
-            // Sized like a star's name (see `labelScale` below): comets used to keep an 11px
-            // name whatever the camera did, so a drifting contact read smaller than the star
-            // beside it.
-            style={{
-              top: (disc * (1 + cometRelief)) / 2 + 8 * cometRelief,
-              fontSize: 11 * cometRelief,
-              maxWidth: 104 * cometRelief,
-            }}
           >
-            <p className="truncate font-medium leading-tight text-[#ffb4a0]">
+            <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
               {data.label}
             </p>
             {subtitle && (
-              <p
-                className="truncate leading-tight text-[#ff8a70]/70"
-                style={{ fontSize: 9 * cometRelief }}
-              >
+              <p className="truncate text-[9px] leading-tight text-[#ff8a70]/70">
                 {subtitle}
               </p>
             )}
@@ -313,14 +301,6 @@ function ContactNodeComponent({
    * untouched. See `zoomRelief` in `@/lib/graph/star-style` for the reasoning.
    */
   const zoomRelief = starZoomRelief(disc, zoom);
-  /**
-   * The name is sized in px and placed under the enlarged disc, rather than riding a scaled
-   * wrapper. `transform: scale()` magnifies the glyphs the browser already drew — inside the
-   * chart's composited viewport that is what made names look soft as you zoomed — where a
-   * font-size draws them at the size they are shown at.
-   */
-  const labelScale = zoomRelief;
-  const labelTop = (disc * (1 + labelScale)) / 2 + 8 * labelScale;
 
   return (
     <div
@@ -377,44 +357,38 @@ function ContactNodeComponent({
             data.school ? ` · ${data.school}` : ""
           }`}
         />
-      </div>
-      {showLabel && (
-        <div
-          className={cn(
-            "pointer-events-none absolute left-1/2 z-10 w-max -translate-x-1/2 text-center group-hover:z-30",
-            bright
-              ? "opacity-100"
-              : dimmedScatter
-                ? "opacity-65 group-hover:opacity-100"
-                : "opacity-85 group-hover:opacity-100"
-          )}
-          style={{
-            top: labelTop,
-            fontSize: 11 * labelScale,
-            maxWidth: 104 * labelScale,
-          }}
-        >
-          <p
+        {showLabel && (
+          <div
             className={cn(
-              "truncate font-medium leading-tight text-white/95",
-              data.spotlight && "font-semibold text-white"
+              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center group-hover:z-30",
+              bright
+                ? "opacity-100"
+                : dimmedScatter
+                  ? "opacity-65 group-hover:opacity-100"
+                  : "opacity-85 group-hover:opacity-100"
             )}
           >
-            {data.label}
-          </p>
-          {subtitle && (
             <p
               className={cn(
-                "truncate leading-tight text-white/45",
-                data.spotlight && "text-white/70"
+                "truncate text-[11px] font-medium leading-tight text-white/95",
+                data.spotlight && "font-semibold text-white"
               )}
-              style={{ fontSize: 9 * labelScale }}
             >
-              {subtitle}
+              {data.label}
             </p>
-          )}
-        </div>
-      )}
+            {subtitle && (
+              <p
+                className={cn(
+                  "truncate text-[9px] leading-tight text-white/45",
+                  data.spotlight && "text-white/70"
+                )}
+              >
+                {subtitle}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -528,7 +502,7 @@ function ClusterNameText({ data, showCount }: { data: ClusterLabelData; showCoun
   const brand = data.nebulaColor;
   return (
     <>
-      <span className="relative inline-block whitespace-nowrap text-center text-[1em] font-semibold leading-[1.36] tracking-[0.08em]">
+      <span className="relative inline-block whitespace-nowrap text-center text-[11px] font-semibold leading-[15px] tracking-[0.08em]">
         {brand ? (
           <span
             aria-hidden
@@ -542,7 +516,7 @@ function ClusterNameText({ data, showCount }: { data: ClusterLabelData; showCoun
       </span>
       {/* In the summary view the cluster stands in for its people, so it says how many. */}
       {showCount && (
-        <span className="relative whitespace-nowrap text-[0.82em] font-medium leading-[1.2] tabular-nums tracking-[0.06em] text-white/55">
+        <span className="relative whitespace-nowrap text-[9px] font-medium leading-3 tabular-nums tracking-[0.06em] text-white/55">
           {count.toLocaleString()} {count === 1 ? "person" : "people"}
         </span>
       )}
@@ -575,12 +549,12 @@ function ClusterLabelNodeComponent(props: NodeProps & { data: ClusterLabelData }
    */
   return (
     <div
-      className="nopan nodrag flex cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
+      className="nopan nodrag flex cursor-pointer flex-col items-center px-2 py-0.5"
       title={`Zoom to ${data.label}`}
-      // Drawn at its size rather than scaled up: scaling magnifies glyphs the browser already
-      // rasterised, which is why names went soft as the camera came in. It also makes the node's
-      // measured box the box you see, so the name really does sit on its anchor.
-      style={{ fontSize: 11 * scale }}
+      style={{
+        transform: `scale(${scale.toFixed(3)})`,
+        transformOrigin: "50% 100%",
+      }}
     >
       <ClusterNameText data={data} showCount={showCount} />
     </div>
@@ -637,15 +611,14 @@ function PinnableClusterName({
   return (
     <div className="pointer-events-none relative" style={{ width: box.width, height: box.height }}>
       <div
-        className="nopan nodrag pointer-events-auto absolute flex w-max cursor-pointer flex-col items-center px-[0.7em] py-[0.05em]"
+        className="nopan nodrag pointer-events-auto absolute flex w-max cursor-pointer flex-col items-center px-2 py-0.5"
         title={`Zoom to ${data.label}`}
         style={{
           left: anchor.x + dx,
           top: anchor.y + dy,
-          // Bottom-centre on the anchor, so the name grows upward, away from the stars. Sized in
-          // px rather than scaled, so the glyphs are drawn at the size they are read at.
-          transform: "translate(-50%, -100%)",
-          fontSize: 11 * scale,
+          // Bottom-centre on the anchor, then scaled about that point, so the name grows upward.
+          transform: `translate(-50%, -100%) scale(${scale.toFixed(3)})`,
+          transformOrigin: "50% 100%",
         }}
       >
         {/* Pinned over the stars, it needs a ground to stay legible. Solid, not blurred. */}

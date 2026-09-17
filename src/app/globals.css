@@ -1145,13 +1145,7 @@
 }
 
 /**
- * Give the sky's viewport a compositor layer of its own — WHILE IT MOVES.
- *
- * Only while it moves, because a promoted layer is rasterised once and then transformed: hold it
- * through a zoom and the browser stretches the picture it already has, which is what made the
- * names look soft as the camera came in. `graph-canvas-flow.tsx` adds this class on
- * `onMoveStart` and drops it on `onMoveEnd`, so every resting view is drawn at its own scale.
- *
+ * Give the sky's viewport a compositor layer of its own.
  *
  * React Flow pans and zooms by writing a transform on this element. Without a layer, every
  * frame of a drag repaints the whole sky — a thousand blurred glows, gradients and labels —
@@ -1163,7 +1157,7 @@
  * Scoped to the constellation: `will-change` is a real cost (a layer, and memory for its
  * tiles), and it is earned only here, where the transform changes on most frames.
  */
-.constellation-stage.constellation-moving .react-flow__viewport {
+.constellation-stage .react-flow__viewport {
   will-change: transform;
 }
 
@@ -1179,7 +1173,7 @@
  * lines. It adds no layer count to speak of — there is one edge container — where giving each
  * nebula a layer instead fixed the same frames at the cost of hundreds of layers.
  */
-.constellation-stage.constellation-moving .react-flow__edges {
+.constellation-stage .react-flow__edges {
   will-change: transform;
 }
 
