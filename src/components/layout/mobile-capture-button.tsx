@@ -56,7 +56,7 @@ export function MobileCaptureButton({
 }: {
   label: string;
   icon: LucideIcon;
-  reducedMotion: boolean | null;
+  reducedMotion: boolean;
 }) {
   const router = useRouter();
   const recorder = useVoiceRecorder({
