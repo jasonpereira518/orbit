@@ -50,25 +50,46 @@ jobs:
           fetch-depth: 1
           ref: main
 
-      # WHY THIS EXISTS. Every gated step below has been skipping. A scan of the last 60
-      # scheduled runs (2026-09-14 to 2026-09-17) found not one of them executing: no ops
-      # sweep, no webhook drain, no connector sync, no job-feed sweep. Only the health probe
-      # ran, so the workflow looked green the whole time.
+      # THE BUG THIS EXISTS FOR: this workflow reported green for days while doing nothing
+      # at all. A scan of 60 scheduled runs (2026-09-14 to 2026-09-17) found not one gated
+      # step executing — no ops sweep, no webhook drain, no connector sync, no job-feed
+      # sweep — and every one of those runs is a green tick in the Actions tab.
       #
-      # Two clauses gate those steps and either could be the cause, so this prints both
-      # before anything depends on them. The square brackets are load-bearing: they are how
-      # an empty string and a string with stray whitespace tell themselves apart, and an
-      # empty `github.event.schedule` is the leading theory. Until #200 these conditions
-      # were written `!= '*/15 * * * *'`, which is TRUE for an empty value — so an unset
-      # context would have gone unnoticed for as long as it has been unset, and the
-      # allow-list rewrite would have converted a silent pass into a silent skip.
+      # The cause is that the repository has no Actions secrets configured. `APP_URL` is
+      # empty, so the probe below curls "/api/health" with no host, fails to connect, and
+      # reports `HTTP 000000` (curl's own `-w` output and the `|| echo` fallback, run
+      # together). Every step downstream is gated on `steps.health.outcome == 'success'`,
+      # so all of them skip — correctly, and silently.
       #
-      # Costs nothing and calls nothing. Delete it once the answer is in the log.
-      - name: What triggered this run
+      # The alert that exists for precisely this moment could not fire either:
+      # `SLACK_OPS_CRITICAL_WEBHOOK_URL` is also unset, and that step exits 0 when it is. So
+      # the one path designed to say "production is unreachable" was disabled by the same
+      # missing configuration, and said nothing.
+      #
+      # Hence this step. A scheduler that cannot reach the thing it schedules is BROKEN, not
+      # idle, and it must go red. Failing every ten minutes until somebody sets a secret is
+      # the intended behaviour: noisy is the point, and the alternative is what happened
+      # here — an unconfigured cron reporting success for as long as nobody looked.
+      - name: Check this workflow is configured at all
         run: |
-          echo "event_name = [${{ github.event_name }}]"
-          echo "schedule    = [${{ github.event.schedule }}]"
-          echo "utc now     = $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "event=[${{ github.event_name }}] schedule=[${{ github.event.schedule }}]"
+          missing=""
+          [ -n "$APP_URL" ] || missing="$missing APP_URL"
+          [ -n "$CRON_SECRET" ] || missing="$missing CRON_SECRET"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing - every scheduled step below will skip. Set them in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          # A warning, not an error: without it a down probe cannot page anyone, but the
+          # sweeps still work, and refusing to sweep because the alerting is unconfigured
+          # would be the tail wagging the dog.
+          if [ -z "$SLACK_OPS_CRITICAL_WEBHOOK_URL" ]; then
+            echo "::warning::SLACK_OPS_CRITICAL_WEBHOOK_URL is unset - a failed health probe will be recorded here but will not page anyone."
+          fi
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SLACK_OPS_CRITICAL_WEBHOOK_URL: ${{ secrets.SLACK_OPS_CRITICAL_WEBHOOK_URL }}
 
       - name: Health probe
         id: health
@@ -77,10 +98,12 @@ jobs:
           code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "health: HTTP $code"; cat /tmp/health.json 2>/dev/null; echo
-          # Named in the log because `continue-on-error` makes the step's own conclusion
-          # always `success`, so a red probe is invisible in the run summary — which is half
-          # of why three days of gated steps skipping looked like a healthy workflow.
-          test "$code" = "200" || echo "health probe FAILED — every gated step below will skip"
+          # Surfaced as an annotation because `continue-on-error: true` makes this step's own
+          # conclusion always `success`. A red probe is otherwise invisible in the run
+          # summary, and every gated step below skips with nothing on screen to explain why.
+          if [ "$code" != "200" ]; then
+            echo "::error::health probe returned $code - every scheduled step below will skip"
+          fi
           test "$code" = "200"
         env:
           APP_URL: ${{ secrets.APP_URL }}
