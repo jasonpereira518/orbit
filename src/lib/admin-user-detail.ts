@@ -45,7 +45,7 @@ import { assertRevealable } from "@/lib/admin-redaction";
  * never sent. That list is enforced at runtime by `assertRevealable()` against
  * `NEVER_REVEALABLE` in `src/lib/admin-redaction.ts`:
  *   - *_api_key_encrypted, twilio_auth_token_encrypted  (never decrypt a foreign user's key)
- *   - calendar_feed_token                               (a live plaintext bearer credential)
+ *   - calendar_feed_token                               (the SHA-256 of a bearer credential)
  *   - gmail/outlook access + refresh tokens             (same class)
  *   - chat_messages.content                             (the most private data in the app,
  *                                                        and no support question needs it)
