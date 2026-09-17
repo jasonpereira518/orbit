@@ -27,6 +27,19 @@ import {
   zoomRelief as starZoomRelief,
 } from "@/lib/graph/star-style";
 
+/**
+ * Below this zoom a star's label is not mounted, unless it is pinned (hovered, selected or
+ * a search hit).
+ *
+ * Labels are drawn in world units, so they shrink with the camera: at 0.1 an 11px name is
+ * about 3 screen px even after `zoomRelief` enlarges it, and every network of more than
+ * ~200 people opens below that. Those specks carried no information and were the largest
+ * single raster cost of a zoom frame — a thousand runs of text re-rasterised at every scale
+ * step. Above 0.1 nothing changes: a small network's opening view (0.157 at 100 people)
+ * labels exactly as it always did.
+ */
+const LABEL_HIDE_BELOW_ZOOM = 0.1;
+
 /** Invisible handles pinned to the star center so edges meet the nodes. */
 function StarHandles() {
   return (
@@ -54,8 +67,13 @@ function OrbitRingsNodeComponent({
   const labels = [5, 4, 3, 2, 1] as const;
 
   // Rings are pure background texture — faint dashes that give the sky some
-  // depth. The inner rotation (--galaxy-rot, driven by the ambient-motion
-  // loop) sweeps the dashes along the disk as one body; labels stay put.
+  // depth. The disk sweeps the dashes round as one body; labels stay put.
+  //
+  // The rotation is a CSS animation (`constellation-galaxy-spin`), ticked by the compositor,
+  // rather than an angle written from JavaScript each frame. Writing it per frame — whether
+  // onto React Flow's root or onto this element — made Chrome restyle or re-layerise the
+  // whole chart every frame, which at 1,000+ contacts was the single largest cost in the
+  // view, while the sky was standing still. See globals.css.
   return (
     <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
       <div
@@ -68,8 +86,10 @@ function OrbitRingsNodeComponent({
         }}
       >
         <div
-          className="absolute inset-0"
-          style={{ transform: "rotate(var(--galaxy-rot, 0rad))" }}
+          className={cn(
+            "absolute inset-0",
+            data.spinning && "constellation-galaxy-spin"
+          )}
         >
           <svg
             width={max * 2}
@@ -195,6 +215,14 @@ function ContactNodeComponent({
     subtitle,
   } = starVisual(data, Boolean(selected));
   const bright = selected || Boolean(data.spotlight);
+  // Unmounted rather than hidden: an invisible label still costs its DOM, style and raster.
+  const showLabel = Boolean(data.labelPinned) || zoom >= LABEL_HIDE_BELOW_ZOOM;
+  /**
+   * Handles only where a figure line ends. React Flow needs them to anchor an edge and
+   * measures every one on mount; a scatter star has no edges, so its pair was two DOM
+   * nodes and two layout reads apiece for nothing.
+   */
+  const anchorsLines = data.figureRole === "figure";
 
   if (isComet) {
     const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
@@ -207,7 +235,7 @@ function ContactNodeComponent({
         )}
         style={{ width: disc, height: disc }}
       >
-        <StarHandles />
+        {anchorsLines && <StarHandles />}
         <StarHitTarget disc={disc} />
         <div
           className={cn(
@@ -231,21 +259,23 @@ function ContactNodeComponent({
             }}
           />
         </div>
-        <div
-          className={cn(
-            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
-            bright ? "opacity-100" : "opacity-75 group-hover:opacity-100"
-          )}
-        >
-          <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
-            {data.label}
-          </p>
-          {subtitle && (
-            <p className="truncate text-[9px] leading-tight text-[#ff8a70]/70">
-              {subtitle}
+        {showLabel && (
+          <div
+            className={cn(
+              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+              bright ? "opacity-100" : "opacity-75 group-hover:opacity-100"
+            )}
+          >
+            <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
+              {data.label}
             </p>
-          )}
-        </div>
+            {subtitle && (
+              <p className="truncate text-[9px] leading-tight text-[#ff8a70]/70">
+                {subtitle}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -267,7 +297,7 @@ function ContactNodeComponent({
       )}
       style={{ width: disc, height: disc }}
     >
-      <StarHandles />
+      {anchorsLines && <StarHandles />}
       <StarHitTarget disc={disc} />
       {/* Bob wrapper: the sole search hit hovers gently up and down. */}
       <div
@@ -300,35 +330,37 @@ function ContactNodeComponent({
             data.school ? ` · ${data.school}` : ""
           }`}
         />
-        <div
-          className={cn(
-            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
-            bright
-              ? "opacity-100"
-              : dimmedScatter
-                ? "opacity-65 group-hover:opacity-100"
-                : "opacity-85 group-hover:opacity-100"
-          )}
-        >
-          <p
+        {showLabel && (
+          <div
             className={cn(
-              "truncate text-[11px] font-medium leading-tight text-white/95",
-              data.spotlight && "font-semibold text-white"
+              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+              bright
+                ? "opacity-100"
+                : dimmedScatter
+                  ? "opacity-65 group-hover:opacity-100"
+                  : "opacity-85 group-hover:opacity-100"
             )}
           >
-            {data.label}
-          </p>
-          {subtitle && (
             <p
               className={cn(
-                "truncate text-[9px] leading-tight text-white/45",
-                data.spotlight && "text-white/70"
+                "truncate text-[11px] font-medium leading-tight text-white/95",
+                data.spotlight && "font-semibold text-white"
               )}
             >
-              {subtitle}
+              {data.label}
             </p>
-          )}
-        </div>
+            {subtitle && (
+              <p
+                className={cn(
+                  "truncate text-[9px] leading-tight text-white/45",
+                  data.spotlight && "text-white/70"
+                )}
+              >
+                {subtitle}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

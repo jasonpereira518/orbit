@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   signup_attributed_at timestamptz,
   comped_plan text,
   lifetime_purchased_at timestamptz,
+  lifetime_checkout_session_id text,
+  lifetime_checkout_started_at timestamptz,
   stripe_customer_id text,
   subscription_plan text,
   subscription_status text,
@@ -1482,22 +1484,28 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // either branch still needs this table's two columns, hence one more bump rather than
 // reusing the number either side shipped it under.
 //
-// v56 = the meeting-notes workflow, in ONE bump because later slices of it need none:
-// contact_opportunities (typed opportunity capture, replacing the untyped
-// contacts.opportunities array, which survives as a derived mirror); job_feed_sources /
-// job_postings / job_posting_matches (the internship feed that turns a posting at a watched
-// company into a suggestion); contacts.cadence_days/_phrase/_source/_set_at (a rhythm the
-// notes stated); reminders.origin/confidence_score (explicit vs. inferred next steps);
-// contact_briefs.next_step; and capture_jobs.batch_group_id/source_label/mention_picks
-// (one uploaded file = one meeting, plus the contacts an @-pick named).
+// 61 = user_settings.lifetime_checkout_session_id + lifetime_checkout_started_at, the pending
+// Lifetime checkout the AI gate asks Stripe about before refusing a just-paid account. Built
+// as 57; renumbered past every open claim at PR time — 56 (calendar-contact-enrichment,
+// outreach-redesign ×2) and 58/59/60 (the launch-p1/p2/p3 stack). A database stamped by any
+// of those must still pick these columns up, which only a higher number guarantees.
 //
-// v57 = `contacts.search_tsv` rebuilt to include `opportunities` at weight C, so a referral
-// is findable by keyword and not only by the semantic arm. A separate bump rather than
-// folding it into 56 because 56 may already be stamped on a developer's database from an
-// earlier run of this branch, and such a database skips the sweep — the redefined generated
-// column would never be applied there. The DDL guard in `scripts/smoke-schema-ddl.ts`
-// refuses the fold for exactly that reason.
-export const SCHEMA_VERSION = 57;
+// 62 = the meeting-notes workflow, in ONE bump: contact_opportunities (typed opportunity
+// capture, replacing the untyped contacts.opportunities array, which survives as a derived
+// mirror); job_feed_sources / job_postings / job_posting_matches (the internship feed that
+// turns a posting at a watched company into a suggestion); contacts.cadence_days/_phrase/
+// _source/_set_at (a rhythm the notes stated); reminders.origin/confidence_score (explicit
+// vs. inferred next steps); contact_briefs.next_step; capture_jobs.batch_group_id/
+// source_label/mention_picks (one uploaded file = one meeting, plus the contacts an @-pick
+// named); and contacts.search_tsv REBUILT to include opportunities at weight C, so a
+// referral is findable by keyword and not only by the semantic arm.
+//
+// Built as 56 and 57 — two bumps, because the search_tsv rebuild redefines a generated
+// column and a database already stamped 56 would have skipped it. Collapsed back to one on
+// merging main, which had moved to 61: no database can ever have been stamped 62, so the
+// whole set arrives together and the split has nothing left to protect. Renumbered past
+// main's 61 and past the 56/58/59/60 claims its comment above records.
+export const SCHEMA_VERSION = 62;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1509,7 +1517,7 @@ export const SCHEMA_VERSION = 57;
  * Ordering matters: generated columns before the indexes that read them.
  */
 export const SCALE_DDL: string[] = [
-  // --- v56: meeting-notes workflow ---------------------------------------------------
+  // --- v62: meeting-notes workflow ---------------------------------------------------
   //
   // A cadence the notes actually stated ("check in monthly"). Days, because every consumer
   // already works in days. Only the NEXT occurrence is ever scheduled off it — see the
@@ -2211,6 +2219,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
   await ensureColumn(client, "user_settings", "comped_by", "text");
   await ensureColumn(client, "user_settings", "last_active_at", "timestamptz");
+  // v61: the pending Lifetime checkout the AI gate verifies with Stripe before refusing.
+  await ensureColumn(client, "user_settings", "lifetime_checkout_session_id", "text");
+  await ensureColumn(client, "user_settings", "lifetime_checkout_started_at", "timestamptz");
 
   // Clerk identity mirror. Columns rather than a new table, so they ride along on every
   // query that already reads `user_settings` — the admin roster gets a display name and an
@@ -2553,6 +2564,9 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
+  // v61: the pending Lifetime checkout the AI gate verifies with Stripe before refusing.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_checkout_session_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_checkout_started_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS yc_mode_enabled boolean DEFAULT false`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS estimated_monthly_churn_pct real`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stripe_customer_id text`,

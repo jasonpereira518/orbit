@@ -11,9 +11,10 @@ import "./smoke/_env";
 /**
  * One more env fact this test depends on, set BEFORE any module that reads it is imported.
  *
- *  - `VERCEL` set makes `allowEnvProviderKeys()` false, which is what production does. Any
- *    `GEMINI_API_KEY` lying around in the environment would otherwise satisfy the AI-key
- *    predicate and the `ai.no_key` cases below would silently pass for the wrong reason.
+ *  - `VERCEL` set makes the AI gate ignore the local-dev key names (`managedKey` in
+ *    `src/lib/ai-access.ts`), which is what production does. A `GEMINI_API_KEY` lying around
+ *    in the environment would otherwise count as a managed key and the `ai.no_key` cases
+ *    below could pass or fail for the wrong reason.
  */
 process.env.VERCEL = "1";
 

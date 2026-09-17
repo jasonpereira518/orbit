@@ -161,7 +161,7 @@ export default async function AdminContactDetailPage({
           {interactions.length === 0 ? (
             <EmptyState>Nothing logged against this contact.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable minWidth="sm"
               head={
                 <>
                   <Th>Type</Th>

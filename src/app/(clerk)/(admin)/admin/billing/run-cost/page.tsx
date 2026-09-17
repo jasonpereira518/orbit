@@ -26,8 +26,9 @@ const MONTH = new Intl.DateTimeFormat("en", {
 /**
  * What Orbit costs the people who use it.
  *
- * NOT ORBIT'S MONEY. Production is strictly bring-your-own-key, so every figure here is
- * spend on a user's own provider account. It still belongs in the Money section, because
+ * MOSTLY NOT ORBIT'S MONEY. AI is bring-your-own-key on every plan but Lifetime, so nearly
+ * every figure here is spend on a user's own provider account (Lifetime accounts on Orbit's
+ * managed keys are the exception, capped per account — see the costs page). It still belongs in the Money section, because
  * it is the number that decides whether BYOK stays viable: a product that quietly costs
  * its users more per month than it charges has a pricing problem it cannot see from the
  * revenue side.
@@ -142,7 +143,7 @@ export default async function MoneyRunCostPage() {
           {breakdown.topSpenders.length === 0 ? (
             <EmptyState>No AI usage recorded in the last 30 days.</EmptyState>
           ) : (
-            <AdminTable
+            <AdminTable minWidth="none"
               head={
                 <>
                   <Th>Account</Th>

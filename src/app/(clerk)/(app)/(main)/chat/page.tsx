@@ -6,8 +6,8 @@ import { ChatPanelLazy } from "@/components/chat/chat-panel-lazy";
 export const maxDuration = 60;
 
 export default async function ChatPage() {
-  // Production is strictly bring-your-own-key: say so here, before the first question
-  // fails, rather than in a toast after it.
+  // AI runs on the user's own key, or on Orbit's for Lifetime: when neither applies, say so
+  // here, before the first question fails, rather than in a toast after it.
   const settings = await getSettings();
 
   return (
@@ -42,7 +42,7 @@ export default async function ChatPage() {
       </div>
       {!settings.hasApiKey && (
         <div className="shrink-0">
-          <AiKeyNotice feature="chat" compact />
+          <AiKeyNotice feature="chat" reason={settings.ai.reason} compact />
         </div>
       )}
       <ChatPanelLazy />

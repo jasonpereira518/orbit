@@ -1,12 +1,20 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
-import OpenAI from "openai";
+// Types only. The SDK constructors live in `@/lib/ai-access` and nowhere else: a client is
+// built from a grant that module issued, never from a key read here.
+import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import { randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { userSettings } from "@/db/schema";
-import { decryptOrNull } from "@/lib/crypto";
-import { buildWisprContext, transcribeWithWispr } from "@/lib/wispr";
+import { buildWisprContext } from "@/lib/wispr";
+import { nothingUsable } from "@/lib/managed-ai-policy";
+import {
+  anthropicClient,
+  geminiClient,
+  getAiAccessStatus,
+  openaiClient,
+  resolveAiAccess,
+  runOnGrant,
+  transcribeWithWisprGrant,
+  type AiGrant,
+} from "@/lib/ai-access";
 import {
   loadNetworkVocabulary,
   vocabularyToPromptLine,
@@ -30,6 +38,7 @@ import {
   AI_INCOMPLETE_MESSAGE,
   aiProviderErrorMessage,
   aiProviderLabel,
+  classifyAiError,
   friendlyError,
 } from "@/lib/errors";
 import {
@@ -37,13 +46,7 @@ import {
   createAnswerSplitter,
   type SplitResult,
 } from "@/lib/chat-stream-protocol";
-import {
-  AI_PROVIDERS,
-  resolveAiModel,
-  resolveAiProvider,
-  type AiProvider,
-  type EmbeddingBackend,
-} from "@/lib/ai-providers";
+import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
 
 export type { AiProvider, EmbeddingBackend };
 export {
@@ -66,6 +69,37 @@ export const AI_CALL_TIMEOUT_MS = 45_000;
 /** A fresh signal per call; a shared one would abort every later call once it fired. */
 export function aiSignal(ms = AI_CALL_TIMEOUT_MS): AbortSignal {
   return AbortSignal.timeout(ms);
+}
+
+/**
+ * Retries the embedding backfill (and only the embedding backfill — see call sites) sends
+ * against a BYOK provider without any backoff: a 429 on batch 3 of 15,000 contacts aborted
+ * the whole pass immediately, and the next attempt — the next cron tick or self-kick — fired
+ * the identical request at the identical cadence, so a low-RPM free-tier key could spin
+ * without ever making progress while still burning background-job invocations.
+ *
+ * Bounded and short-lived on purpose: this smooths over a brief burst within the SAME pass,
+ * it does not replace the outer retry (`embedding_stale_at` staying set so the next pass
+ * retries) for a rate limit that does not clear in a few seconds — that contract is
+ * deliberate (see `embedding-backfill.ts`) and this must not swallow a sustained outage.
+ */
+const RATE_LIMIT_MAX_RETRIES = 3;
+const RATE_LIMIT_BASE_DELAY_MS = 500;
+
+/** Exported for `smoke-embedding-rate-limit-backoff.ts`; every real caller is in this file. */
+export async function withRateLimitBackoff<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= RATE_LIMIT_MAX_RETRIES || classifyAiError(err) !== "rate_limit") {
+        throw err;
+      }
+      const backoff = RATE_LIMIT_BASE_DELAY_MS * 2 ** attempt;
+      const jitter = backoff * (0.5 + Math.random() * 0.5);
+      await new Promise((resolve) => setTimeout(resolve, jitter));
+    }
+  }
 }
 
 const nullStr = z
@@ -262,193 +296,55 @@ export const VISION_MODELS: Record<AiProvider, string> = {
   anthropic: "claude-sonnet-4-5",
 };
 
-type ProviderKeySettings = {
-  geminiApiKeyEncrypted?: string | null;
-  openaiApiKeyEncrypted?: string | null;
-  anthropicApiKeyEncrypted?: string | null;
-};
-
-async function loadSettings(userId: string) {
-  const db = await getDb();
-  return db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
-}
-
-/** Local-dev env fallback only. On Vercel, every user must bring their own key. */
-function allowEnvProviderKeys() {
-  return !process.env.VERCEL;
-}
-
-function getEnvProviderKey(provider: AiProvider): string | null {
-  if (!allowEnvProviderKeys()) return null;
-  if (provider === "gemini") return process.env.GEMINI_API_KEY || null;
-  if (provider === "openai") return process.env.OPENAI_API_KEY || null;
-  return process.env.ANTHROPIC_API_KEY || null;
-}
-
-function hasPersonalProviderKey(
-  provider: AiProvider,
-  settings?: ProviderKeySettings | null,
-) {
-  if (provider === "gemini") return Boolean(settings?.geminiApiKeyEncrypted);
-  if (provider === "openai") return Boolean(settings?.openaiApiKeyEncrypted);
-  return Boolean(settings?.anthropicApiKeyEncrypted);
-}
-
 /**
- * Whether a key EXISTS for this provider, without decrypting it.
+ * The grant for "the user's model", resolved through the AI gate.
  *
- * The notifications panel asks this every 120 seconds to decide whether to show the
- * "add your API key" alert. `getProviderApiKey` would answer the same question, but it
- * runs `decryptOrNull` — pulling a live secret into memory on a polling path, purely to
- * test presence. Presence is all the alert needs.
- *
- * The difference is one edge case: a key that is stored but no longer decryptable (a
- * rotated `ENCRYPTION_KEY`) reads as present here and as absent to `getProviderApiKey`.
- * `getAiCapability` deliberately keeps the stricter, decrypting check — the extension
- * degrades to heuristics off it and must not be told a key works when it does not. The
- * alert accepts the weaker check because that failure mode is an ops incident that breaks
- * every account at once and is loud on its own, not something one user can act on.
+ * Throws `AiAccessError` when the account may not run AI — no key and not on Lifetime, or on
+ * Lifetime with this month's allowance spent. Call sites that only need to know whether AI
+ * would run (and must not throw) use `getAiCapability` instead.
  */
-export function hasAiKeyFor(
-  provider: AiProvider,
-  settings?: ProviderKeySettings | null,
-): boolean {
-  return (
-    hasPersonalProviderKey(provider, settings) ||
-    Boolean(getEnvProviderKey(provider))
-  );
-}
-
-export function getProviderApiKey(
-  provider: AiProvider,
-  settings?: ProviderKeySettings | null,
-): string | null {
-  const personal =
-    provider === "gemini"
-      ? decryptOrNull(settings?.geminiApiKeyEncrypted)
-      : provider === "openai"
-        ? decryptOrNull(settings?.openaiApiKeyEncrypted)
-        : decryptOrNull(settings?.anthropicApiKeyEncrypted);
-
-  if (personal) return personal;
-  return getEnvProviderKey(provider);
-}
-
-/**
- * The Wispr transcription key: the user's own, else an env key in local dev.
- *
- * Separate from `getProviderApiKey` because Wispr is not an `AiProvider` — it transcribes
- * and never completes, so it takes no part in provider or model selection.
- */
-export function getWisprApiKey(
-  settings?: { wisprApiKeyEncrypted?: string | null } | null,
-): string | null {
-  const personal = decryptOrNull(settings?.wisprApiKeyEncrypted);
-  if (personal) return personal;
-  if (!allowEnvProviderKeys()) return null;
-  return process.env.WISPR_API_KEY || null;
-}
-
-export function usingEnvKey(
-  provider: AiProvider,
-  settings?: ProviderKeySettings | null,
-) {
-  if (hasPersonalProviderKey(provider, settings)) return false;
-  return Boolean(getEnvProviderKey(provider));
-}
-
-export async function getAiConfig(userId: string) {
-  const settings = await loadSettings(userId);
-  const provider = resolveAiProvider(settings?.aiProvider);
-  const model = resolveAiModel(provider, settings?.aiModel);
-  const apiKey = getProviderApiKey(provider, settings);
-
-  if (!apiKey) {
-    const meta = AI_PROVIDERS.find((p) => p.id === provider)!;
-    throw new Error(
-      `No ${meta.label} API key configured. Add your own key in Settings.`,
-    );
-  }
-
-  // Whose key pays. On Vercel `getEnvProviderKey` always returns null, so this is "user"
-  // in production by construction; "orbit" only happens in local development.
-  const keyOwner: "user" | "orbit" = usingEnvKey(provider, settings)
-    ? "orbit"
-    : "user";
-
-  return { provider, model, apiKey, settings, keyOwner };
+export async function getAiConfig(userId: string, operation = "completeJson") {
+  const access = await resolveAiAccess(userId);
+  const grant = await access.completion(operation);
+  return {
+    provider: grant.provider,
+    model: grant.model,
+    grant,
+    keyOwner: grant.keyOwner,
+    settings: access.settings,
+  };
 }
 
 /**
  * Whether this user can make AI calls at all, without throwing.
  *
- * `getAiConfig` throws when no key is configured, which is the right shape for
- * call sites that need the key but wrong for ones that need to *decide* — the
- * extension has to degrade to heuristics rather than surface an error, since
- * having no key is a normal state (env keys are ignored on Vercel).
+ * `getAiConfig` throws when AI is unavailable, which is the right shape for call sites that
+ * need the grant but wrong for ones that need to *decide* — the extension has to degrade to
+ * heuristics rather than surface an error, since having no key is a normal state. "Has a
+ * key" here means "AI will run": a Lifetime account on Orbit's managed key counts.
  */
 export async function getAiCapability(userId: string): Promise<{
   hasKey: boolean;
   provider: AiProvider;
 }> {
-  const settings = await loadSettings(userId);
-  const provider = resolveAiProvider(settings?.aiProvider);
-  return { hasKey: Boolean(getProviderApiKey(provider, settings)), provider };
+  const status = await getAiAccessStatus(userId);
+  return { hasKey: status.ready, provider: status.provider };
 }
 
-export async function userHasAiKey(userId: string): Promise<boolean> {
+/** Whether AI would run for this user right now — their own key, or Orbit's on Lifetime. */
+export async function userCanUseAi(userId: string): Promise<boolean> {
   return (await getAiCapability(userId)).hasKey;
 }
 
-/** Resolve which embedding API to use for semantic search. */
+/**
+ * Which embedding API semantic search would use. Throws `AiAccessError` when none — an
+ * Anthropic-only account with no OpenAI/Gemini key and no Lifetime, for instance.
+ */
 export async function resolveEmbeddingBackend(userId: string): Promise<{
   backend: EmbeddingBackend;
-  apiKey: string;
-  keyOwner: "user" | "orbit";
 }> {
-  const settings = await loadSettings(userId);
-  const provider = resolveAiProvider(settings?.aiProvider);
-  // Whose key pays, resolved per backend since the fallback chain below can land on a
-  // different provider than the user's configured one.
-  const owner = (p: AiProvider): "user" | "orbit" =>
-    usingEnvKey(p, settings) ? "orbit" : "user";
-
-  if (provider === "openai") {
-    const apiKey = getProviderApiKey("openai", settings);
-    if (!apiKey) {
-      throw new Error(
-        "No OpenAI API key configured for embeddings. Add your own key in Settings.",
-      );
-    }
-    return { backend: "openai", apiKey, keyOwner: owner("openai") };
-  }
-
-  if (provider === "gemini") {
-    const apiKey = getProviderApiKey("gemini", settings);
-    if (!apiKey) {
-      throw new Error(
-        "No Gemini API key configured for embeddings. Add your own key in Settings.",
-      );
-    }
-    return { backend: "gemini", apiKey, keyOwner: owner("gemini") };
-  }
-
-  // Anthropic has no embeddings API — prefer OpenAI, then Gemini.
-  const openaiKey = getProviderApiKey("openai", settings);
-  if (openaiKey) {
-    return { backend: "openai", apiKey: openaiKey, keyOwner: owner("openai") };
-  }
-
-  const geminiKey = getProviderApiKey("gemini", settings);
-  if (geminiKey) {
-    return { backend: "gemini", apiKey: geminiKey, keyOwner: owner("gemini") };
-  }
-
-  throw new Error(
-    "Anthropic has no embeddings API. Add an OpenAI or Gemini key in Settings for search embeddings.",
-  );
+  const access = await resolveAiAccess(userId);
+  return { backend: access.requireEmbeddingBackend() };
 }
 
 function extractJsonText(raw: string) {
@@ -598,16 +494,18 @@ export async function completeJson(
     speed?: "fast";
   },
 ): Promise<string> {
-  const { provider, model: configuredModel, apiKey, keyOwner } = await getAiConfig(userId);
-  const model = input.speed === "fast" ? FAST_MODELS[provider] : configuredModel;
+  const operation = input.operation ?? "completeJson";
+  const grant = await (await resolveAiAccess(userId)).completion(operation);
+  const { provider, keyOwner } = grant;
+  const model = input.speed === "fast" ? FAST_MODELS[provider] : grant.model;
   const temperature = input.temperature ?? 0.2;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
 
-  return withUsage(
+  return runOnGrant(grant, withUsage(
     {
       userId,
-      operation: input.operation ?? "completeJson",
+      operation,
       provider,
       model,
       kind: "completion",
@@ -616,7 +514,7 @@ export async function completeJson(
     async (report) => {
       try {
         if (provider === "gemini") {
-          const client = new GoogleGenAI({ apiKey });
+          const client = geminiClient(grant);
           const response = await client.models.generateContent({
             model,
             contents: input.user,
@@ -634,7 +532,7 @@ export async function completeJson(
         }
 
         if (provider === "openai") {
-          const client = new OpenAI({ apiKey });
+          const client = openaiClient(grant);
           const response = await client.chat.completions.create({
             model,
             temperature,
@@ -651,7 +549,7 @@ export async function completeJson(
           return normalizeJsonResponse(content);
         }
 
-        const client = new Anthropic({ apiKey });
+        const client = anthropicClient(grant);
         const response = await client.messages.create({
           model,
           max_tokens: maxOutputTokens,
@@ -677,7 +575,7 @@ export async function completeJson(
         throw new Error(aiProviderErrorMessage(err, aiProviderLabel(provider)));
       }
     },
-  );
+  ));
 }
 
 /** Multimodal JSON completion for vision OCR / image+text prompts. */
@@ -685,20 +583,21 @@ export async function completeMultimodalJson(
   userId: string,
   input: MultimodalInput,
 ): Promise<string> {
-  const cfg = await getAiConfig(userId);
+  const operation = input.operation ?? "completeMultimodalJson";
+  const grant = await (await resolveAiAccess(userId)).completion(operation);
   // Resolved out here, not inside, so usage telemetry records the model that actually ran.
-  const model = input.speed === "vision" ? VISION_MODELS[cfg.provider] : cfg.model;
-  return withUsage(
+  const model = input.speed === "vision" ? VISION_MODELS[grant.provider] : grant.model;
+  return runOnGrant(grant, withUsage(
     {
       userId,
-      operation: input.operation ?? "completeMultimodalJson",
-      provider: cfg.provider,
+      operation,
+      provider: grant.provider,
       model,
       kind: "multimodal",
-      keyOwner: cfg.keyOwner,
+      keyOwner: grant.keyOwner,
     },
-    (report) => completeMultimodalJsonInner({ ...cfg, model }, input, report),
-  );
+    (report) => completeMultimodalJsonInner(grant, model, input, report),
+  ));
 }
 
 type MultimodalInput = {
@@ -714,11 +613,12 @@ type MultimodalInput = {
 
 /** Body split out so `completeMultimodalJson` stays a thin instrumented wrapper. */
 async function completeMultimodalJsonInner(
-  cfg: Awaited<ReturnType<typeof getAiConfig>>,
+  grant: AiGrant,
+  model: string,
   input: MultimodalInput,
   report: (tokens: TokenCounts) => void,
 ): Promise<string> {
-  const { provider, model, apiKey } = cfg;
+  const { provider } = grant;
   const temperature = input.temperature ?? 0.2;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
@@ -730,7 +630,7 @@ async function completeMultimodalJsonInner(
 
   try {
     if (provider === "gemini") {
-      const client = new GoogleGenAI({ apiKey });
+      const client = geminiClient(grant);
       const contents = [
         ...textParts.map((p) => ({ text: p.text })),
         ...mediaParts.map((p) => ({
@@ -757,7 +657,7 @@ async function completeMultimodalJsonInner(
     }
 
     if (provider === "openai") {
-      const client = new OpenAI({ apiKey });
+      const client = openaiClient(grant);
       const content: OpenAI.Chat.ChatCompletionContentPart[] = [
         ...textParts.map((p): OpenAI.Chat.ChatCompletionContentPart => ({
           type: "text",
@@ -796,7 +696,7 @@ async function completeMultimodalJsonInner(
       return normalizeJsonResponse(out);
     }
 
-    const client = new Anthropic({ apiKey });
+    const client = anthropicClient(grant);
     type AnthropicContent = Exclude<
       Anthropic.MessageCreateParams["messages"][0]["content"],
       string
@@ -903,7 +803,8 @@ export async function transcribeAudioWithAI(
   input: { mimeType: string; base64: string; filename?: string },
   opts: TranscribeOptions = {},
 ): Promise<TranscriptionResult> {
-  const settings = await loadSettings(userId);
+  const access = await resolveAiAccess(userId);
+  const settings = access.settings;
   const operation = opts.operation ?? "capture.transcribe.audio";
   // Only the tail matters: it is there so a word cut at a chunk boundary is decoded as the
   // continuation of the sentence it belongs to, not as the start of a new one.
@@ -919,8 +820,8 @@ export async function transcribeAudioWithAI(
   // transcript with misspelled names beats no transcript.
   const vocabulary = await loadNetworkVocabulary(userId);
 
-  const wisprKey = getWisprApiKey(settings);
-  if (wisprKey) {
+  const wispr = await access.wispr(operation);
+  if (wispr) {
     const text = await withUsage(
       {
         userId,
@@ -928,14 +829,14 @@ export async function transcribeAudioWithAI(
         provider: "wispr",
         model: "flow",
         kind: "transcription",
-        keyOwner: settings?.wisprApiKeyEncrypted ? "user" : "orbit",
+        keyOwner: wispr.keyOwner,
       },
       async () =>
         // `transcribeWithWispr` never throws: a bad key, an outage or an unrecognised
         // response shape all return null. `withUsage` therefore records this as a
         // successful call with a null result, which is the honest reading — we reached the
         // provider and got nothing usable, and the row exists to show the volume.
-        transcribeWithWispr(wisprKey, {
+        transcribeWithWisprGrant(wispr, {
           audioBase64: input.base64,
           context: await buildWisprContext(userId, {
             firstName: settings?.firstName,
@@ -949,23 +850,35 @@ export async function transcribeAudioWithAI(
     // failing a capture over.
   }
 
-  const openaiKey = getProviderApiKey("openai", settings);
-  if (openaiKey) {
-    const client = new OpenAI({ apiKey: openaiKey });
+  // After Wispr, one engine: the gate picks the user's own Whisper, then their own Gemini,
+  // then — Lifetime only — Orbit's Gemini before Orbit's Whisper (see `AiAccess.transcription`).
+  const grant = await access.transcription(operation);
+  if (!grant) {
+    const { reason } = nothingUsable(access.eligibility);
+    throw access.refusal(
+      reason,
+      reason === "key_required"
+        ? "Voice capture needs an OpenAI, Gemini, or Wispr API key in Settings for transcription."
+        : undefined,
+    );
+  }
+
+  if (grant.provider === "openai") {
+    const client = openaiClient(grant);
     const bytes = Buffer.from(input.base64, "base64");
     const file = new File(
       [bytes],
       input.filename || guessAudioFilename(input.mimeType),
       { type: input.mimeType || "audio/webm" },
     );
-    return withUsage(
+    return runOnGrant(grant, withUsage(
       {
         userId,
         operation,
         provider: "openai",
         model: "whisper-1",
         kind: "transcription",
-        keyOwner: usingEnvKey("openai", settings) ? "orbit" : "user",
+        keyOwner: grant.keyOwner,
       },
       async () => {
         // Whisper reads its prompt as the transcript that came before, so the previous
@@ -995,21 +908,21 @@ export async function transcribeAudioWithAI(
         if (!text) return empty("whisper");
         return { text, engine: "whisper" as const };
       },
-    );
+    ));
   }
 
-  const geminiKey = getProviderApiKey("gemini", settings);
-  if (geminiKey) {
-    const client = new GoogleGenAI({ apiKey: geminiKey });
-    const model = resolveAiModel("gemini", settings?.aiModel);
-    return withUsage(
+  {
+    const client = geminiClient(grant);
+    // The user's configured Gemini model on their own key; a managed model on Orbit's.
+    const model = grant.model;
+    return runOnGrant(grant, withUsage(
       {
         userId,
         operation,
         provider: "gemini",
         model,
         kind: "transcription",
-        keyOwner: usingEnvKey("gemini", settings) ? "orbit" : "user",
+        keyOwner: grant.keyOwner,
       },
       async (report) => {
         const response = await client.models.generateContent({
@@ -1052,12 +965,8 @@ export async function transcribeAudioWithAI(
         if (!text) return empty("gemini");
         return { text, engine: "gemini" as const };
       },
-    );
+    ));
   }
-
-  throw new Error(
-    "Voice capture needs an OpenAI, Gemini, or Wispr API key in Settings for transcription.",
-  );
 }
 
 function guessAudioFilename(mimeType: string) {
@@ -1556,12 +1465,13 @@ export async function parseMultiPersonNotesWithAI(
 }
 
 export async function createEmbedding(userId: string, text: string) {
-  const { backend, apiKey, keyOwner } = await resolveEmbeddingBackend(userId);
+  const grant = await (await resolveAiAccess(userId)).embedding("search.embed");
+  const { provider: backend, keyOwner } = grant;
   const input = text.slice(0, 8000);
   const model =
     backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
 
-  return withUsage(
+  return runOnGrant(grant, withUsage(
     {
       userId,
       operation: "search.embed",
@@ -1570,32 +1480,33 @@ export async function createEmbedding(userId: string, text: string) {
       kind: "embedding",
       keyOwner,
     },
-    async (report) => {
-      if (backend === "openai") {
-        const client = new OpenAI({ apiKey });
-        const res = await client.embeddings.create({
-          model: OPENAI_EMBEDDING_MODEL,
-          input,
-        }, { signal: aiSignal() });
-        report(tokensFromOpenAi(res));
-        const values = res.data[0]?.embedding;
+    (report) =>
+      withRateLimitBackoff(async () => {
+        if (backend === "openai") {
+          const client = openaiClient(grant);
+          const res = await client.embeddings.create({
+            model: OPENAI_EMBEDDING_MODEL,
+            input,
+          }, { signal: aiSignal() });
+          report(tokensFromOpenAi(res));
+          const values = res.data[0]?.embedding;
+          if (!values?.length) throw new Error("Empty embedding response");
+          return values;
+        }
+
+        const client = geminiClient(grant);
+        const res = await client.models.embedContent({
+          model: GEMINI_EMBEDDING_MODEL,
+          contents: input,
+          config: { abortSignal: aiSignal() },
+        });
+        // Gemini's embed endpoint reports no usage metadata — the row stores null tokens
+        // rather than a fabricated zero, and counts as volume.
+        const values = res.embeddings?.[0]?.values;
         if (!values?.length) throw new Error("Empty embedding response");
         return values;
-      }
-
-      const client = new GoogleGenAI({ apiKey });
-      const res = await client.models.embedContent({
-        model: GEMINI_EMBEDDING_MODEL,
-        contents: input,
-        config: { abortSignal: aiSignal() },
-      });
-      // Gemini's embed endpoint reports no usage metadata — the row stores null tokens
-      // rather than a fabricated zero, and counts as volume.
-      const values = res.embeddings?.[0]?.values;
-      if (!values?.length) throw new Error("Empty embedding response");
-      return values;
-    },
-  );
+      }),
+  ));
 }
 
 /** Embed many texts in as few network round trips as possible, preserving input order. */
@@ -1604,12 +1515,13 @@ export async function createEmbeddingsBatch(
   texts: string[],
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const { backend, apiKey, keyOwner } = await resolveEmbeddingBackend(userId);
+  const grant = await (await resolveAiAccess(userId)).embedding("search.embed.batch");
+  const { provider: backend, keyOwner } = grant;
   const inputs = texts.map((text) => text.slice(0, 8000));
   const model =
     backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
 
-  return withUsage(
+  return runOnGrant(grant, withUsage(
     {
       userId,
       operation: "search.embed.batch",
@@ -1618,38 +1530,39 @@ export async function createEmbeddingsBatch(
       kind: "embedding",
       keyOwner,
     },
-    async (report) => {
-      if (backend === "openai") {
-        const client = new OpenAI({ apiKey });
-        const res = await client.embeddings.create({
-          model: OPENAI_EMBEDDING_MODEL,
-          input: inputs,
-        }, { signal: aiSignal() });
-        report(tokensFromOpenAi(res));
-        const values = res.data
-          .slice()
-          .sort((a, b) => a.index - b.index)
-          .map((d) => d.embedding);
-        if (values.length !== inputs.length || values.some((v) => !v?.length)) {
+    (report) =>
+      withRateLimitBackoff(async () => {
+        if (backend === "openai") {
+          const client = openaiClient(grant);
+          const res = await client.embeddings.create({
+            model: OPENAI_EMBEDDING_MODEL,
+            input: inputs,
+          }, { signal: aiSignal() });
+          report(tokensFromOpenAi(res));
+          const values = res.data
+            .slice()
+            .sort((a, b) => a.index - b.index)
+            .map((d) => d.embedding);
+          if (values.length !== inputs.length || values.some((v) => !v?.length)) {
+            throw new Error("Incomplete embedding batch response");
+          }
+          return values;
+        }
+
+        const client = geminiClient(grant);
+        const res = await client.models.embedContent({
+          model: GEMINI_EMBEDDING_MODEL,
+          contents: inputs,
+          config: { abortSignal: aiSignal() },
+        });
+        // No usage metadata from Gemini embeddings; see createEmbedding.
+        const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
+        if (values.length !== inputs.length || values.some((v) => !v.length)) {
           throw new Error("Incomplete embedding batch response");
         }
         return values;
-      }
-
-      const client = new GoogleGenAI({ apiKey });
-      const res = await client.models.embedContent({
-        model: GEMINI_EMBEDDING_MODEL,
-        contents: inputs,
-        config: { abortSignal: aiSignal() },
-      });
-      // No usage metadata from Gemini embeddings; see createEmbedding.
-      const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
-      if (values.length !== inputs.length || values.some((v) => !v.length)) {
-        throw new Error("Incomplete embedding batch response");
-      }
-      return values;
-    },
-  );
+      }),
+  ));
 }
 
 export function cosineSimilarity(a: number[], b: number[]) {
@@ -1881,11 +1794,12 @@ async function streamText(
   },
   onDelta: (delta: string) => void
 ): Promise<string> {
-  const { provider, model, apiKey, keyOwner } = await getAiConfig(userId);
+  const grant = await (await resolveAiAccess(userId)).completion(input.operation);
+  const { provider, model, keyOwner } = grant;
   const temperature = input.temperature ?? 0.3;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
 
-  return withUsage(
+  return runOnGrant(grant, withUsage(
     { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
     async (report) => {
       let full = "";
@@ -1896,7 +1810,7 @@ async function streamText(
       };
 
       if (provider === "gemini") {
-        const client = new GoogleGenAI({ apiKey });
+        const client = geminiClient(grant);
         const stream = await client.models.generateContentStream({
           model,
           contents: input.user,
@@ -1914,7 +1828,7 @@ async function streamText(
         }
         if (last) report(tokensFromGemini(last));
       } else if (provider === "openai") {
-        const client = new OpenAI({ apiKey });
+        const client = openaiClient(grant);
         const stream = await client.chat.completions.create(
           {
             model,
@@ -1936,7 +1850,7 @@ async function streamText(
         }
         if (usage) report(tokensFromOpenAi({ usage }));
       } else {
-        const client = new Anthropic({ apiKey });
+        const client = anthropicClient(grant);
         const stream = client.messages.stream(
           {
             model,
@@ -1958,7 +1872,7 @@ async function streamText(
       if (!full.trim()) throw new Error("Empty AI response");
       return full;
     }
-  );
+  ));
 }
 
 const CHAT_STREAM_TAIL = `

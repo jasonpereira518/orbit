@@ -101,7 +101,10 @@ export type ConnectionFacts = {
  */
 export type HealthInput = {
   aiProvider: AiProvider;
-  /** Personal key for the selected provider, OR a usable env key. Never a decrypted secret. */
+  /**
+   * Whether AI would run: a personal key for the selected provider, or — on Orbit Lifetime —
+   * Orbit's managed key (`aiReadyFromSettings`). Never a decrypted secret.
+   */
   hasAiKey: boolean;
   onboardingCompletedAt: Date | null;
 

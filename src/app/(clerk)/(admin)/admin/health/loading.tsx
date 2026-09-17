@@ -1,22 +1,17 @@
-import { AdminPageHeader, AdminPanel } from "@/components/admin/primitives";
-import { Skeleton } from "@/components/ui/skeleton";
+import { AdminLoading } from "@/components/admin/loading-shells";
 
 export default function AdminHealthLoading() {
   return (
-    <>
-      <AdminPageHeader title="Health" subtitle="Checking every account…" />
-      <div className="space-y-6">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-20 rounded-xl" />
-          ))}
-        </div>
-        {Array.from({ length: 3 }).map((_, i) => (
-          <AdminPanel key={i}>
-            <Skeleton className="h-24 w-full" />
-          </AdminPanel>
-        ))}
-      </div>
-    </>
+    <AdminLoading
+      title="Health"
+      subtitle="Checking every account…"
+      blocks={[
+        { panel: true, title: "Provider status", height: "h-40" },
+        { panel: true, title: "Open alerts", height: "h-16" },
+        { tiles: 4 },
+        { panel: true, title: "Accounts that cannot use AI at all", height: "h-10" },
+        { panel: true, title: "Failed and stalled imports", height: "h-16" },
+      ]}
+    />
   );
 }

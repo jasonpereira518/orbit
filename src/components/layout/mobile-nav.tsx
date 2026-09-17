@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { motion, useReducedMotion } from "motion/react";
+import { useReducedMotion } from "motion/react";
 import { MessageSquarePlus, Sparkles } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import {
@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
-import { SPRING_TAP } from "@/lib/motion";
+import { MobileCaptureButton } from "@/components/layout/mobile-capture-button";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 
@@ -447,25 +447,12 @@ export function MobileNav({
               if (isCapture) {
                 return (
                   <li key={navItem.href} className="flex-1">
-                    <Link
-                      // Voice, not the paste box. On a phone the capture moment is
-                      // "walking out of the building", where typing is the one thing you
-                      // cannot do; the Messy Notes tab is still one tap away on arrival.
-                      href={`${navItem.href}?mode=voice`}
-                      draggable={false}
-                      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1.5 text-[10.5px] font-medium text-primary"
-                    >
-                      <span className="size-[18px]" aria-hidden />
-                      <motion.span
-                        aria-hidden
-                        className="absolute -top-5 left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
-                        whileTap={reducedMotion ? undefined : { scale: 0.88 }}
-                        transition={reducedMotion ? { duration: 0 } : SPRING_TAP}
-                      >
-                        <Icon className="size-[18px]" aria-hidden />
-                      </motion.span>
-                      <span>{navItem.label}</span>
-                    </Link>
+                    {/* Tap opens the Voice tab; hold records a note straight from here. */}
+                    <MobileCaptureButton
+                      label={navItem.label}
+                      icon={Icon}
+                      reducedMotion={reducedMotion}
+                    />
                   </li>
                 );
               }

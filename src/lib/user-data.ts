@@ -467,6 +467,10 @@ const PRESERVED_SETTINGS_COLUMNS = {
   signupAttributedAt: true,
   compedPlan: true,
   lifetimePurchasedAt: true,
+  // A deletion made while a Lifetime payment is still clearing must not strand it: the AI
+  // gate reads this to recognise the payment before the webhook lands.
+  lifetimeCheckoutSessionId: true,
+  lifetimeCheckoutStartedAt: true,
   stripeCustomerId: true,
   subscriptionPlan: true,
   subscriptionStatus: true,

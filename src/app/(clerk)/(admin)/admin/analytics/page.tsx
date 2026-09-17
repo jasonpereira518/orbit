@@ -188,7 +188,7 @@ export default async function AdminTrafficPage({
             {routes.length === 0 ? (
               <EmptyState>Nothing recorded yet.</EmptyState>
             ) : (
-              <AdminTable
+              <AdminTable minWidth="sm"
                 head={
                   <>
                     <Th>Route</Th>

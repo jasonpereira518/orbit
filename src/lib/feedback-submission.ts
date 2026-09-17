@@ -18,6 +18,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { feedback, feedbackScreenshots } from "@/db/schema";
 import { hasBlobStorage } from "@/lib/contact-avatar";
+import { notifyFeedbackSubmitted } from "@/lib/feedback-notify";
 import {
   FEEDBACK_AREAS,
   FEEDBACK_CATEGORIES,
@@ -251,6 +252,13 @@ export async function createFeedbackSubmission(input: {
     // overload resolution in this TS version, the same way it does in `interest-list.ts`
     // and `import-engine.ts`.
     .returning();
+
+  notifyFeedbackSubmitted({
+    id: entry.id,
+    category: entry.category,
+    area: entry.area,
+    text: entry.text,
+  }).catch(() => {});
 
   if (input.screenshots.length === 0) return { id: entry.id, screenshotCount: 0 };
 

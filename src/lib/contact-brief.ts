@@ -311,7 +311,7 @@ export async function generateAndStoreContactBrief(
   let model: string | null = null;
 
   try {
-    const config = await getAiConfig(userId);
+    const config = await getAiConfig(userId, "contact.brief");
     const content = await completeJson(userId, {
       operation: "contact.brief",
       temperature: 0.3,

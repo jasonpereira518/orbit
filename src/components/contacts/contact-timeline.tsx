@@ -46,6 +46,7 @@ import { timelineDayLabel, timelineGapLabel } from "@/lib/timeline-date";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 export type TimelineInteraction = {
   id: string;
@@ -95,6 +96,7 @@ export function ContactTimeline({
   interactions,
   openActionItems,
   hasApiKey,
+  aiReason = null,
 }: {
   contactId: string;
   contactName: string;
@@ -102,6 +104,8 @@ export function ContactTimeline({
   /** Open items for this contact, from the same query the brief card's next steps use. */
   openActionItems: { id: string; interactionId: string }[];
   hasApiKey: boolean;
+  /** The AI gate's reason when `hasApiKey` is false. */
+  aiReason?: AiAccessDenial | null;
 }) {
   const router = useRouter();
   useRefreshOnVisible();
@@ -878,6 +882,7 @@ export function ContactTimeline({
         contactId={contactId}
         contactName={contactName}
         hasApiKey={hasApiKey}
+        aiReason={aiReason}
         open={logOpen}
         onOpenChange={setLogOpen}
       />

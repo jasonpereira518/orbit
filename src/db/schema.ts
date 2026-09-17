@@ -211,6 +211,20 @@ export const userSettings = pgTable("user_settings", {
    */
   compedPlan: text("comped_plan").$type<"orbit" | "lifetime">(),
   lifetimePurchasedAt: timestamp("lifetime_purchased_at", { withTimezone: true }),
+  /**
+   * The Lifetime Checkout Session this account most recently opened, until it resolves.
+   *
+   * Not an entitlement and never read by `resolvePlan`. It exists for the gap between paying
+   * and the webhook landing: when the AI gate is about to refuse a non-Lifetime account, a
+   * session id here lets it ask Stripe whether that payment has in fact gone through — and
+   * grant on the spot (paid), say "still clearing" (async payment), or refuse as usual
+   * (abandoned). Set by `startLifetimeCheckout`; cleared by `setLifetimePurchase` and by the
+   * gate once Stripe says the session is over. See `src/lib/lifetime-checkout.ts`.
+   */
+  lifetimeCheckoutSessionId: text("lifetime_checkout_session_id"),
+  lifetimeCheckoutStartedAt: timestamp("lifetime_checkout_started_at", {
+    withTimezone: true,
+  }),
   stripeCustomerId: text("stripe_customer_id"),
   subscriptionPlan: text("subscription_plan").$type<"orbit">(),
   subscriptionStatus: text("subscription_status").$type<
@@ -2185,9 +2199,11 @@ export const chatMessages = pgTable(
 /**
  * One row per AI provider call, written fire-and-forget from `src/lib/ai.ts`.
  *
- * Production is strictly BYOK (`allowEnvProviderKeys()` returns `!process.env.VERCEL`), so
- * this is not primarily a cost ledger — the spend is the user's. Its real jobs are showing
- * which accounts are actually using the product, and which ones are failing.
+ * Mostly not a cost ledger — AI is BYOK on every plan but Lifetime, so most spend is the
+ * user's. Its jobs are showing which accounts are actually using the product and which are
+ * failing, and — for `key_owner = 'orbit'` rows, the calls the AI gate ran on a managed key
+ * for a Lifetime account — being the meter the managed allowance is enforced against
+ * (`managedUsageThisMonth` in `src/lib/ai-access.ts`).
  *
  * Booleans are integers to match the house convention (`enabled`, `active`, `year_inferred`).
  * There is no FK on `user_id`: nothing in this schema has one, because it is a Clerk id.
@@ -2218,7 +2234,11 @@ export const usageEvents = pgTable(
      * blank cell beats a confidently wrong dollar figure.
      */
     estimatedCostMicros: integer("estimated_cost_micros"),
-    /** Whose key paid for it. "orbit" only ever happens off-Vercel (local dev). */
+    /**
+     * Whose key paid for it. "orbit" = one of Orbit's managed keys, which the AI gate issues
+     * only to Lifetime and demo accounts; every row of it counts against the account's
+     * monthly managed allowance.
+     */
     keyOwner: text("key_owner").$type<"user" | "orbit">().notNull(),
     success: integer("success").notNull().default(1),
     /** Stable machine code, not the user-facing message — that is unqueryably high-cardinality. */

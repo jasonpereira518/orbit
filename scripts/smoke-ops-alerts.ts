@@ -48,6 +48,16 @@ const HEALTHY: OpsSnapshot = {
   reauthNeeded: 0,
   wedgedSyncs: 0,
   failingSyncs: 0,
+  managedAi: {
+    configured: true,
+    switchedOff: false,
+    lifetimeAccounts: 3,
+    spentLast24hMicros: 40_000,
+    spentLast30dMicros: 600_000,
+    lifetimeCashCents: 7_500,
+    accountsAtCap: 0,
+    failingProviders: [],
+  },
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -56,6 +66,32 @@ const find = (s: OpsSnapshot, id: string) => evaluateOpsConditions(s, NOW).find(
 function main() {
   console.log("Condition catalogue...");
   check("a healthy snapshot raises nothing", ids(HEALTHY).length === 0, ids(HEALTHY).join(","));
+
+  // Orbit's managed AI keys — the Lifetime cost exposure.
+  const managed = (over: Partial<OpsSnapshot["managedAi"]>): OpsSnapshot => ({
+    ...HEALTHY,
+    managedAi: { ...HEALTHY.managedAi, ...over },
+  });
+  check("a refused managed key → critical, per provider",
+    find(managed({ failingProviders: ["gemini"] }), "ai.managed_failing:gemini")?.severity === "critical");
+  check("Lifetime accounts but no managed key → warning",
+    find(managed({ configured: false }), "ai.managed_unconfigured")?.severity === "warning");
+  check("…says so differently when the kill switch did it",
+    /ORBIT_MANAGED_AI=off/.test(find(managed({ configured: false, switchedOff: true }), "ai.managed_unconfigured")?.detail ?? ""));
+  check("no Lifetime accounts, no key → nothing to say",
+    !find(managed({ configured: false, lifetimeAccounts: 0 }), "ai.managed_unconfigured"));
+  check("$5 in a day → ai.managed_spend_spike",
+    Boolean(find(managed({ spentLast24hMicros: 5_000_000 }), "ai.managed_spend_spike")));
+  check("a pace that eats Lifetime revenue in under four years → ai.managed_runway",
+    // $10 in 30 days ≈ $122/yr against $75 booked ≈ 0.6 years.
+    Boolean(find(managed({ spentLast30dMicros: 10_000_000, lifetimeCashCents: 7_500 }), "ai.managed_runway")));
+  check("…a sustainable pace is quiet",
+    // $1.20 in 30 days ≈ $14.60/yr against $750 booked ≈ 51 years.
+    !find(managed({ spentLast30dMicros: 1_200_000, lifetimeCashCents: 75_000 }), "ai.managed_runway"));
+  check("…spend with no Lifetime revenue behind it is flagged",
+    /no Lifetime revenue/.test(find(managed({ spentLast30dMicros: 2_000_000, lifetimeCashCents: 0 }), "ai.managed_runway")?.detail ?? ""));
+  check("accounts at the cap → info (the cap may be too tight)",
+    find(managed({ accountsAtCap: 2 }), "ai.managed_cap_hit")?.severity === "info");
 
   check("cron never ran → cron.missed (warning)",
     find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: null, lastState: null } } }, "cron.missed")?.severity === "warning");

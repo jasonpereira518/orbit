@@ -73,6 +73,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-duplicate-index": "pure",
   "smoke-earth-camera": "pure",
   "smoke-embedding-cache": "pure",
+  "smoke-embedding-rate-limit-backoff": "pure",
   "smoke-env": "pure",
   "smoke-fast-model": "pure",
   "smoke-feedback-image": "pure",
@@ -121,6 +122,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
   "smoke-account-alerts": "pglite",
+  "smoke-ai-access": "pglite",
   "smoke-api-keys": "pglite",
   "smoke-api-routes": "pglite",
   "smoke-action-items": "pglite",
@@ -202,6 +204,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-purge-selective": "pglite",
   "smoke-rate-limit": "pglite",
   "smoke-recruiter-sharing": "pglite",
+  "smoke-related-contacts-scale": "pglite",
   "smoke-schema-upgrade": "pglite",
   "smoke-stripe-webhook": "pglite",
   "smoke-surface-visibility": "pglite",

@@ -424,27 +424,6 @@ export function GraphPageSkeleton() {
   );
 }
 
-/**
- * Shared by the admin billing subpages (costs, run-cost, movement, demand): a title,
- * a search bar, a 4-up stat grid, and two chart/table blocks. The four pages were
- * copy-pasting this same shape.
- */
-export function AdminBillingSubpageSkeleton() {
-  return (
-    <div className="space-y-6">
-      <Skeleton className="h-9 w-48" />
-      <Skeleton className="h-10 w-full max-w-md" />
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-20" />
-        ))}
-      </div>
-      <Skeleton className="h-64" />
-      <Skeleton className="h-48" />
-    </div>
-  );
-}
-
 export function ImportsPageSkeleton() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
