@@ -143,6 +143,7 @@ export default async function SettingsPage() {
           <PlanSettings
             entitlements={planOverview.entitlements}
             usage={planOverview.usage}
+            demoAccount={planOverview.demoAccount}
           />
         </Section>
       </Group>

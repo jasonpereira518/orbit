@@ -38,7 +38,7 @@ import {
   managedEligibility,
   type ManagedEligibility,
 } from "@/lib/managed-ai-policy";
-import { isDemoAccount } from "@/lib/demo-account";
+import { demoAccountReason, isDemoAccount } from "@/lib/demo-account";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -487,5 +487,5 @@ export async function getPlanOverview() {
     contactUsageForUser(userId),
   ]);
 
-  return { entitlements, usage };
+  return { entitlements, usage, demoAccount: demoAccountReason(userId) };
 }

@@ -3,8 +3,9 @@ import { buttonVariants } from "@/components/ui/button";
 import { ManageBillingButton } from "@/components/settings/manage-billing-button";
 import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
-import { planCopy } from "@/lib/plan-copy";
+import { planCopy, unlimitedContactsLine } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
+import type { DemoAccountReason } from "@/lib/demo-account";
 import type { Entitlements, PlanSource } from "@/lib/entitlements";
 
 const SOURCE_NOTE: Record<PlanSource, string | null> = {
@@ -83,9 +84,12 @@ const TIER_ACCENT: Record<
 export function PlanSettings({
   entitlements,
   usage,
+  demoAccount,
 }: {
   entitlements: Entitlements;
   usage: { used: number; limit: number | null; remaining: number | null };
+  /** Set when plan limits are lifted because this is a demo account, not because of the plan. */
+  demoAccount: DemoAccountReason | null;
 }) {
   const copy = planCopy(entitlements.plan);
   const note = SOURCE_NOTE[entitlements.source];
@@ -180,7 +184,7 @@ export function PlanSettings({
         ) : (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Check className={cn("size-4", accent.ink)} aria-hidden="true" />
-            Unlimited contacts — {usage.used} in your orbit.
+            {unlimitedContactsLine(usage.used, demoAccount)}
           </p>
         )}
 
