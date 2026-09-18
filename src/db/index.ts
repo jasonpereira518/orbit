@@ -522,6 +522,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   title text,
+  context_note text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1586,7 +1587,12 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 69 = merging main (66, 67) into #222 (68). No DDL of its own. #222's preview builds stamped
 // the shared preview database 68 WITHOUT 67's reminder_lists columns, so a merged build at
 // 68 would skip them there; only a number above both makes every database pick up both.
-export const SCHEMA_VERSION = 69;
+//
+// 70 = chat_threads.context_note: freeform context the user types for one chat conversation
+// (never extracted into contacts). Built as 34, then 63, before this branch merged main's DDL
+// through 69; renumbered past every claim (checked against all remote branches and local
+// worktrees on Sep 18 2026: none above 69).
+export const SCHEMA_VERSION = 70;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3057,6 +3063,8 @@ const alters = [
   // v68: page-load timing on the traffic pipeline (src/lib/nav-timing.ts).
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS load_ms integer`,
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
+  // Schema v70: chat context note.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS context_note text`,
 ];
 
 /**

@@ -83,6 +83,19 @@ export async function createChatThread() {
   }
 }
 
+export async function updateChatThreadContext(threadId: string, note: string | null) {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+  const trimmed = note?.trim() || null;
+  const [row] = await db
+    .update(chatThreads)
+    .set({ contextNote: trimmed, updatedAt: new Date() })
+    .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)))
+    .returning();
+  if (!row) throw new Error("Chat not found");
+  return { contextNote: row.contextNote };
+}
+
 export async function deleteChatThread(threadId: string) {
   const userId = await requireUserForSurface("page.chat");
   const db = await getDb();

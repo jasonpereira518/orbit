@@ -11,7 +11,6 @@ import {
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   History,
   Loader2,
@@ -27,9 +26,12 @@ import {
   deleteChatThread,
   getChatThread,
   listChatThreads,
+  updateChatThreadContext,
 } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
-import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
+import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
+import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
+import { ScanControls } from "@/components/scan/scan-controls";
 import {
   COMPOSER_TEXT_BOX,
   ComposerMirror,
@@ -55,6 +57,7 @@ import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -145,13 +148,23 @@ function initialQuestionFromUrl() {
 }
 
 export function ChatPanel() {
-  const router = useRouter();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
   const [question, setQuestion] = useState(initialQuestionFromUrl);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
-  const [notesOpen, setNotesOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [contextSaving, setContextSaving] = useState(false);
+  /**
+   * Photo/webcam/phone-QR OCR for the context box, reusing the same media-to-text pipeline
+   * as Capture's Messy Notes tab (`ScanControls` + `useCaptureIngest`) — server-side OCR
+   * only, never the contact-extraction step, since nothing here ever calls Extract.
+   */
+  const contextIngest = useCaptureIngest({ sourceKind: "messy" });
+  // Destructured for stable `useCallback` deps: `contextIngest` itself is a fresh object
+  // every render, but `setNotes` (a `useState` setter) and `reset` (its own `useCallback`)
+  // are not.
+  const { setNotes: setContextNotes, reset: resetContext } = contextIngest;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
@@ -181,6 +194,9 @@ export function ChatPanel() {
   /** The `+` menu is outside the field, so it reaches the splice through here. */
   const composerRef = useRef<MentionComposerHandle | null>(null);
   const stickToBottomRef = useRef(true);
+  /** The context box's text when the current dictation session started. */
+  const contextDictationBaseRef = useRef("");
+  const contextTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Dictation ───────────────────────────────────────────────────────────────────────
   // Dictated words occupy a span anchored at wherever the caret was when you started, so
@@ -311,6 +327,36 @@ export function ChatPanel() {
   }, [dictation.cancel]);
 
   /**
+   * Dictation for the context box — the simple case `useDictation`'s own doc comment
+   * anticipates. No caret anchoring: the box is a plain, one-at-a-time `<Textarea>` in a
+   * sheet with nothing else focused while it's open, so a session can just replace
+   * "everything after what was there when it started" on every transcript.
+   */
+  const contextDictation = useDictation({
+    onSessionStart: () => {
+      contextDictationBaseRef.current = contextIngest.notes;
+    },
+    onTranscript: (span) => {
+      const base = contextDictationBaseRef.current;
+      contextIngest.setNotes(base && span ? `${base} ${span}` : base || span);
+    },
+    onEffect: (effect) => {
+      if (effect === "toast-denied") {
+        toast.error(
+          "Orbit needs microphone access to dictate — allow it in your browser’s site settings",
+          { id: "dictation-denied" },
+        );
+      } else if (effect === "toast-no-microphone") {
+        toast.error("No microphone found", { id: "dictation-no-mic" });
+      } else if (effect === "toast-network") {
+        toast.error("Dictation needs a connection right now", {
+          id: "dictation-network",
+        });
+      }
+    },
+  });
+
+  /**
    * Caret restoration, before paint. The rAF idiom used elsewhere in this file visibly
    * lags when results land five times a second.
    */
@@ -419,6 +465,7 @@ export function ChatPanel() {
       const { thread, messages: rows } = await getChatThread(id);
       setThreadId(thread.id);
       setThreadTitle(thread.title);
+      setContextNotes(thread.contextNote ?? "");
       stickToBottomRef.current = true;
       setMessages(
         rows.map((row) =>
@@ -448,7 +495,21 @@ export function ChatPanel() {
     } finally {
       setLoadingThread(false);
     }
-  }, [clearComposer, scrollToBottom]);
+  }, [clearComposer, scrollToBottom, setContextNotes]);
+
+  const saveContext = useCallback(async () => {
+    setContextSaving(true);
+    try {
+      const id = await ensureThread();
+      await updateChatThreadContext(id, contextIngest.notes);
+      setContextOpen(false);
+      toast.success(contextIngest.notes.trim() ? "Context saved" : "Context cleared");
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t save that context — try again?"));
+    } finally {
+      setContextSaving(false);
+    }
+  }, [ensureThread, contextIngest.notes]);
 
   const startNewChat = useCallback(() => {
     start(async () => {
@@ -459,6 +520,7 @@ export function ChatPanel() {
         setMessages([]);
         clearComposer();
         setLastUserQuery("");
+        resetContext();
         setThreads((prev) => [
           {
             id: created.id,
@@ -473,7 +535,7 @@ export function ChatPanel() {
         toast.error(friendlyError(err, "Couldn’t start a chat — try again?"));
       }
     });
-  }, [clearComposer]);
+  }, [clearComposer, resetContext]);
 
   const removeThread = useCallback(
     (id: string) => {
@@ -486,6 +548,7 @@ export function ChatPanel() {
             setThreadTitle(null);
             setMessages([]);
             clearComposer();
+            resetContext();
           }
           toast.success("Chat deleted");
         } catch (err) {
@@ -493,7 +556,7 @@ export function ChatPanel() {
         }
       });
     },
-    [clearComposer, threadId]
+    [clearComposer, threadId, resetContext]
   );
 
   const sendQuestion = useCallback(
@@ -826,10 +889,10 @@ export function ChatPanel() {
             variant="outline"
             size="sm"
             className="shrink-0"
-            onClick={() => setNotesOpen(true)}
+            onClick={() => setContextOpen(true)}
           >
             <NotebookPen className="size-4" />
-            <span className="hidden sm:inline">Notes</span>
+            <span className="hidden sm:inline">Context</span>
           </Button>
         </div>
 
@@ -1026,35 +1089,82 @@ export function ChatPanel() {
         </div>
       </div>
 
-      <Sheet open={notesOpen} onOpenChange={setNotesOpen}>
+      <Sheet open={contextOpen} onOpenChange={setContextOpen}>
         <SheetContent
           side="right"
-          className="w-full gap-0 overflow-y-auto sm:max-w-md"
+          // 26rem (416px) instead of the Sheet's `data-[side=right]:sm:max-w-sm` (384px):
+          // the three compact scan buttons need ~370px side by side and the sheet leaves
+          // 382px inside its border and padding at this width, at 384px only 350px.
+          // `data-[side=right]:` matches the built-in rule's selector shape so this wins the
+          // cascade; a plain `sm:max-w-*` loses to it.
+          className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-[26rem]"
         >
           <SheetHeader className="border-b border-border/60">
-            <SheetTitle>Update from notes</SheetTitle>
+            <SheetTitle>Chat context</SheetTitle>
             <SheetDescription>
-              Paste notes to create or update many contacts.
+              Add context for Orbit to keep in mind during this conversation.
+              This won&apos;t create or update any contacts.
             </SheetDescription>
           </SheetHeader>
-          <div className="p-4">
-            <BulkNotesPanel
-              compact
-              onSaved={(res) => {
-                setNotesOpen(false);
-                router.refresh();
-                const peopleCount = res.created + res.updated;
-                toast.success(
-                  `Saved ${peopleCount} ${peopleCount === 1 ? "person" : "people"} and ${res.remindersCreated} ${res.remindersCreated === 1 ? "reminder" : "reminders"}`,
-                  {
-                    action: {
-                      label: "See what was created",
-                      onClick: () => router.push(`/capture/${res.batchId}`),
-                    },
-                  }
-                );
-              }}
+          <div className="flex flex-col gap-3 p-4">
+            <Textarea
+              ref={contextTextareaRef}
+              rows={8}
+              placeholder="e.g. I'm prepping for a fundraise this quarter, so prioritize investor intros."
+              value={contextIngest.notes}
+              onChange={(e) => contextIngest.setNotes(e.target.value)}
+              // `field-sizing-content` (the shared Textarea's default) sizes off the typed
+              // content alone, so `rows` never gave this its starting height — an explicit
+              // floor does. Matches Capture's own notes box (`messy-notes-capture.tsx`).
+              className="min-h-[220px] resize-none"
+              disabled={contextSaving}
             />
+
+            {/* Same media-to-text pipeline as Capture's Messy Notes tab: a photo, the
+                webcam, or a phone QR handoff all just OCR into the box above — nothing
+                here ever queues extraction. */}
+            <ScanControls
+              accept={CAPTURE_FILE_ACCEPT}
+              disabled={contextSaving || contextIngest.busy || contextDictation.listening}
+              onRawFiles={contextIngest.handleFilesSelected}
+              onPages={contextIngest.ingestScanPages}
+              onTranscript={(text, sources, jobId) =>
+                contextIngest.onPhoneTranscript(text, sources, jobId ?? null)
+              }
+              compact
+            />
+            {contextIngest.busy && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" /> Reading…
+              </span>
+            )}
+
+            <div className="flex items-center justify-between gap-2">
+              <DictationButton
+                state={contextDictation.state}
+                level={contextDictation.level}
+                disabled={contextSaving || contextIngest.busy}
+                onToggle={(source) => {
+                  contextDictation.toggle();
+                  if (source === "pointer") contextTextareaRef.current?.focus();
+                }}
+                // Unlike the main composer's mic, which sits inline right next to the
+                // field it dictates into, this one is alone in the footer — an outline
+                // gives it the same "this is a control" weight the Save button has.
+                className="border border-border/70"
+              />
+              <Button
+                type="button"
+                onClick={saveContext}
+                disabled={contextSaving || contextIngest.busy}
+              >
+                {contextSaving ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  "Save"
+                )}
+              </Button>
+            </div>
           </div>
         </SheetContent>
       </Sheet>
