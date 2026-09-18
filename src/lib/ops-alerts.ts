@@ -1,5 +1,6 @@
 import type { CronRunState } from "@/lib/cron-runs";
 import { hasMissedRun } from "@/lib/cron-runs";
+import { MANAGED_AI_ALERTS } from "@/lib/managed-ai-policy";
 
 /**
  * Known-condition alerting: the catalogue, and the state machine that keeps it quiet.
@@ -39,6 +40,12 @@ export type OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: Date | null; lastState: CronRunState | null };
     syncRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /**
+     * The hourly job feed. Alerted on here rather than shown on `/admin/health`, because
+     * that page reads two named jobs and this is not one of them — so without a condition,
+     * a feed that stopped being read is indistinguishable from a quiet hiring season.
+     */
+    jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** Most recent delivery outcomes per source, newest first. */
   webhooks: { clerk: WebhookOutcome[]; stripe: WebhookOutcome[]; resend: WebhookOutcome[] };
@@ -57,6 +64,24 @@ export type OpsSnapshot = {
   wedgedSyncs: number;
   /** Connections the scheduler gave up on and disarmed. */
   failingSyncs: number;
+  /** Orbit's managed AI keys — the Lifetime cost exposure. See `managed-ai-ops.ts`. */
+  managedAi: ManagedAiOpsFacts;
+};
+
+export type ManagedAiOpsFacts = {
+  /** At least one managed key is set and `ORBIT_MANAGED_AI` is not "off". */
+  configured: boolean;
+  switchedOff: boolean;
+  /** Accounts that resolve to Lifetime (purchase or comp). */
+  lifetimeAccounts: number;
+  spentLast24hMicros: number;
+  spentLast30dMicros: number;
+  /** Every Lifetime dollar ever booked (`billing_events.kind = 'lifetime'`), gross. */
+  lifetimeCashCents: number;
+  /** Accounts that have used their whole allowance this month. */
+  accountsAtCap: number;
+  /** Providers whose managed key was refused or throttled in the last hour. */
+  failingProviders: string[];
 };
 
 /** How often a persisting condition is repeated. Info is said once. */
@@ -83,6 +108,17 @@ const isRejected = (o: WebhookOutcome) => o === "invalid" || o === "error";
  * without a commit on a public repo, and it is the second failure this needs to catch.
  */
 const SYNC_SCHEDULE_SILENT_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * How long the job-feed sweep may be silent before it is treated as dead.
+ *
+ * The schedule is hourly and this is six times that — the same loose multiple the connector
+ * sync gets, for the same reason: GitHub Actions schedules lag under load and are disabled
+ * outright after 60 days without a commit on a public repository.
+ *
+ * `warning`, never `critical`: nobody is paged because an internship notification is late.
+ */
+const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -181,6 +217,37 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
     });
   }
 
+  // The same pair for the job feed. A `partial` is deliberately NOT alerted on: it is the
+  // ordinary shape of a first run against an empty cursor, and of any run where one of
+  // several feeds was briefly unreachable. Only silence and outright failure mean nobody is
+  // going to find out about an opening.
+  const jobFeed = s.cron.jobFeed;
+  const jobFeedSilentFor = jobFeed.lastStartedAt
+    ? now.getTime() - jobFeed.lastStartedAt.getTime()
+    : null;
+  // Null counts as missed, exactly as it does for the connector sync above: "the cron line
+  // was never added" is the likeliest way this feature quietly does nothing, and it is
+  // indistinguishable from a quiet hiring season from any other angle.
+  if (jobFeedSilentFor === null || jobFeedSilentFor > JOB_FEED_SILENT_MS) {
+    out.push({
+      id: "jobfeed.schedule_missed",
+      severity: "warning",
+      title: "Job feed sweep has stopped running",
+      detail: jobFeed.lastStartedAt
+        ? `Last started ${jobFeed.lastStartedAt.toISOString()}; nobody is being told when a role opens at a company they know somebody at.`
+        : "No run has ever been recorded; nobody is being told when a role opens at a company they know somebody at.",
+      href: "/admin/health",
+    });
+  } else if (jobFeed.lastState === "failed" || jobFeed.lastState === "stale") {
+    out.push({
+      id: "jobfeed.run_failed",
+      severity: "warning",
+      title: `Job feed sweep ${jobFeed.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${jobFeed.lastStartedAt?.toISOString() ?? "unknown"} ended ${jobFeed.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
   // The sync equivalents of the two import conditions above. A wedged sync is invisible
   // otherwise: the connection simply stops updating, and no error is raised anywhere, because
   // the invocation that held the lease was killed rather than failing.
@@ -266,6 +333,8 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
     });
   }
 
+  out.push(...managedAiConditions(s.managedAi));
+
   if (s.reauthNeeded > 0) {
     out.push({
       id: "reauth.needed",
@@ -273,6 +342,78 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       title: "Accounts need to reconnect a mailbox",
       detail: `${s.reauthNeeded} Gmail/Outlook connection(s) need the user to re-authorize.`,
       href: "/admin/health",
+    });
+  }
+
+  return out;
+}
+
+const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(2)}`;
+
+/**
+ * Orbit's own AI keys, which Lifetime accounts run on when they bring none. A one-time
+ * payment funding ongoing inference is the one open-ended cost in the product, so it gets
+ * its own catalogue entries: the key breaking, the key missing, a spike, a pace that
+ * outruns the revenue behind it, and accounts hitting the cap.
+ */
+function managedAiConditions(m: ManagedAiOpsFacts): OpsCondition[] {
+  const out: OpsCondition[] = [];
+
+  for (const provider of m.failingProviders) {
+    out.push({
+      id: `ai.managed_failing:${provider}`,
+      severity: "critical",
+      title: `Orbit's managed ${provider} key is being refused`,
+      detail: `The provider rejected or throttled Orbit's own ${provider} key in the last hour — every Lifetime account without a key of its own has lost AI. Check the key and its quota.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (m.lifetimeAccounts > 0 && !m.configured) {
+    out.push({
+      id: "ai.managed_unconfigured",
+      severity: "warning",
+      title: m.switchedOff ? "Managed AI is switched off" : "No managed AI key is configured",
+      detail: m.switchedOff
+        ? `ORBIT_MANAGED_AI=off, so ${m.lifetimeAccounts} Lifetime account(s) can only use AI with a key of their own.`
+        : `${m.lifetimeAccounts} Lifetime account(s) were promised AI on Orbit's keys, but no ORBIT_MANAGED_*_API_KEY is set.`,
+    });
+  }
+
+  if (m.spentLast24hMicros >= MANAGED_AI_ALERTS.dailySpikeMicros) {
+    out.push({
+      id: "ai.managed_spend_spike",
+      severity: "warning",
+      title: "Managed AI spend is spiking",
+      detail: `${usd(m.spentLast24hMicros)} on Orbit's AI keys in the last 24 hours (threshold ${usd(MANAGED_AI_ALERTS.dailySpikeMicros)}).`,
+      href: "/admin/billing/costs",
+    });
+  }
+
+  if (m.spentLast30dMicros >= MANAGED_AI_ALERTS.runwayMinSpendMicros) {
+    const annualMicros = (m.spentLast30dMicros * 365) / 30;
+    const years = (m.lifetimeCashCents * 10_000) / annualMicros;
+    if (years < MANAGED_AI_ALERTS.runwayYears) {
+      out.push({
+        id: "ai.managed_runway",
+        severity: "warning",
+        title: "Managed AI is outpacing Lifetime revenue",
+        detail:
+          m.lifetimeCashCents > 0
+            ? `At the last 30 days' pace (${usd(m.spentLast30dMicros)}), managed AI costs ${usd(annualMicros)} a year — every Lifetime dollar booked so far covers ${years.toFixed(1)} year(s) of it. Revisit the cap or the price.`
+            : `${usd(m.spentLast30dMicros)} of managed AI in the last 30 days with no Lifetime revenue booked behind it (comps or demo accounts).`,
+        href: "/admin/billing/costs",
+      });
+    }
+  }
+
+  if (m.accountsAtCap > 0) {
+    out.push({
+      id: "ai.managed_cap_hit",
+      severity: "info",
+      title: "Lifetime accounts are hitting the AI cap",
+      detail: `${m.accountsAtCap} account(s) have used this month's whole managed-AI allowance and are back to bring-your-own-key until the 1st. A rising count says the cap is too tight for real use.`,
+      href: "/admin/billing/costs",
     });
   }
 

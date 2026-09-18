@@ -4,16 +4,23 @@ import { cn } from "@/lib/utils";
  * The canvas box's height, shared by every stand-in and by the real stage.
  *
  * These had drifted: the loaders used `100dvh-15rem` while the stage itself uses
- * `100dvh-19.5rem`, so below `md` the box grew 4.5rem taller the moment the graph appeared —
- * a visible jump at the end of every load. 19.5rem is the correct one: the app's floating
- * bottom nav is a fixed ~5rem pill below `md`, and the shorter box ran the canvas and its
- * Key / fullscreen / home buttons underneath it, where they could not be tapped.
+ * a taller offset, so below `md` the box grew 4.5rem taller the moment the graph appeared —
+ * a visible jump at the end of every load. The stage's offset is the correct one: the app's
+ * floating bottom nav is a fixed ~4rem pill below `md`, and the shorter box ran the canvas
+ * and its Key / fullscreen / home buttons underneath it, where they could not be tapped.
+ *
+ * Below `md` it is 14.75rem, not the 18.5rem it was: the page's description is hidden on
+ * phones (three lines on a 402px screen), and the height it freed went to the chart. The
+ * header above the canvas is now just the kicker and title, so its height no longer depends
+ * on how the description wraps, and the canvas's bottom edge sits where it always did —
+ * clear of the nav. `network-graph.tsx` repeats this value on the real stage; keep the two
+ * in step.
  *
  * It also has to be one value because the warp intro is `absolute inset-0` inside this box —
  * if the children disagreed about height, the animation would resize mid-run.
  */
 export const CONSTELLATION_STAGE_HEIGHT =
-  "h-[calc(100dvh-19.5rem)] md:h-[calc(100dvh-10.5rem)]";
+  "h-[calc(100dvh-14.75rem)] md:h-[calc(100dvh-10.5rem)]";
 
 /**
  * Stand-in for the star chart while its (large) chunk and data load.

@@ -10,10 +10,11 @@ import {
   syncCalendarSubscription,
   syncDueCalendarSubscriptions,
 } from "@/lib/calendar-sync";
+import { asActionResult, friendlyError, UserFacingError } from "@/lib/errors";
 
 function normalizeIcsUrl(raw: string) {
   let url = raw.trim();
-  if (!url) throw new Error("ICS URL is required");
+  if (!url) throw new UserFacingError("Paste the calendar’s ICS link first");
 
   // Apple / Outlook often copy webcal:// links
   if (url.startsWith("webcal://")) {
@@ -24,10 +25,10 @@ function normalizeIcsUrl(raw: string) {
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error("Enter a valid calendar URL");
+    throw new UserFacingError("That doesn’t look like a calendar link — check it and try again");
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error("Calendar URL must start with https://");
+    throw new UserFacingError("Calendar links need to start with https://");
   }
 
   const host = parsed.hostname.toLowerCase();
@@ -37,8 +38,10 @@ function normalizeIcsUrl(raw: string) {
     /\/calendar\/ical\//i.test(path) &&
     /\/public\/basic\.ics$/i.test(path)
   ) {
-    throw new Error(
-      "That Google Calendar link is the public address. Use the Secret address in iCal format instead (Calendar settings → Integrate calendar → Secret address in iCal format). It looks like …/private-…/basic.ics."
+    // The most useful message in this flow, and the one production used to hide: it
+    // arrived as a digest, so the person never learned which link to paste instead.
+    throw new UserFacingError(
+      "That’s your calendar’s public address — use the Secret address in iCal format instead (Calendar settings → Integrate calendar). It looks like …/private-…/basic.ics"
     );
   }
 
@@ -59,40 +62,44 @@ export async function addCalendarSubscription(input: {
   label?: string;
   selfEmail?: string;
 }) {
-  const userId = await requireSyncUser();
-  const db = await getDb();
-  const icsUrl = normalizeIcsUrl(input.icsUrl);
+  return asActionResult(async () => {
+    const userId = await requireSyncUser();
+    const db = await getDb();
+    const icsUrl = normalizeIcsUrl(input.icsUrl);
 
-  const [row] = await db
-    .insert(calendarSubscriptions)
-    .values({
-      userId,
-      icsUrl,
-      label: input.label?.trim() || "Calendar",
-      selfEmail: input.selfEmail?.trim().toLowerCase() || null,
-      enabled: 1,
-    })
-    .returning();
+    const [row] = await db
+      .insert(calendarSubscriptions)
+      .values({
+        userId,
+        icsUrl,
+        label: input.label?.trim() || "Calendar",
+        selfEmail: input.selfEmail?.trim().toLowerCase() || null,
+        enabled: 1,
+      })
+      .returning();
 
-  // First sync immediately so the user sees results
-  let syncError: string | null = null;
-  let stats = null;
-  try {
-    stats = await syncCalendarSubscription(userId, row.id);
-  } catch (err) {
-    syncError = err instanceof Error ? err.message : "Initial sync failed";
-  }
+    // First sync immediately so the user sees results
+    let syncError: string | null = null;
+    let stats = null;
+    try {
+      stats = await syncCalendarSubscription(userId, row.id);
+    } catch (err) {
+      // Returned as data, so never stripped — and a sync failure can carry a provider's
+      // raw response body (`Google Calendar 403: {…}`). Sanitise it here.
+      syncError = friendlyError(err, "the first sync didn’t finish");
+    }
 
-  const subscription =
-    (await db.query.calendarSubscriptions.findFirst({
-      where: eq(calendarSubscriptions.id, row.id),
-    })) || row;
+    const subscription =
+      (await db.query.calendarSubscriptions.findFirst({
+        where: eq(calendarSubscriptions.id, row.id),
+      })) || row;
 
-  revalidatePath("/imports");
-  revalidatePath("/");
-  revalidatePath("/contacts");
+    revalidatePath("/imports");
+    revalidatePath("/");
+    revalidatePath("/contacts");
 
-  return { subscription, stats, syncError };
+    return { subscription, stats, syncError };
+  });
 }
 
 export async function updateCalendarSubscription(

@@ -18,7 +18,9 @@ import {
   type OpsCondition,
   type OpsSnapshot,
 } from "@/lib/ops-alerts";
+import { loadManagedAiOpsFacts } from "@/lib/managed-ai-ops";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
+import { prunePageViews } from "@/lib/page-views";
 
 export type { OpsDelivery } from "@/lib/ops-notify";
 
@@ -46,12 +48,14 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const [
     lastNightly,
     lastSyncRun,
+    lastJobFeedRun,
     webhooks,
     issues,
     outreach,
     aiGroups,
     errorsLastHour,
     failedImports,
+    managedAi,
   ] = await Promise.all([
       db
         .select()
@@ -63,6 +67,12 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "sync.run"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "jobs.feed-sweep"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
       recentWebhookOutcomes(5, now),
@@ -78,6 +88,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select({ n: sql<number>`count(*)::int` })
         .from(imports)
         .where(and(eq(imports.status, "failed"), gt(imports.updatedAt, dayAgo))),
+      loadManagedAiOpsFacts(now),
     ]);
 
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
@@ -99,6 +110,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
 
   const nightly = lastNightly[0];
   const syncRun = lastSyncRun[0];
+  const jobFeedRun = lastJobFeedRun[0];
   return {
     cron: {
       processStalled: {
@@ -108,6 +120,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       syncRun: {
         lastStartedAt: syncRun?.startedAt ?? null,
         lastState: syncRun ? deriveCronRunState(syncRun, now) : null,
+      },
+      jobFeed: {
+        lastStartedAt: jobFeedRun?.startedAt ?? null,
+        lastState: jobFeedRun ? deriveCronRunState(jobFeedRun, now) : null,
       },
     },
     webhooks,
@@ -125,6 +141,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     reauthNeeded: issues.needsReauth,
     wedgedSyncs: issues.syncWedged,
     failingSyncs: issues.syncFailing,
+    managedAi,
   };
 }
 
@@ -303,6 +320,13 @@ export async function runOpsSweep(options: {
     }
 
     if (result.deliveryFailures > 0) result.status = "partial";
+
+    // Retention for `page_views`, the one table that grows with traffic rather than with
+    // the customer base. It rides along here because this is the only thing that already
+    // runs on a schedule; a failed prune must not turn an alert sweep into a failed run,
+    // so it is caught and reported as a count of zero.
+    const prunedViews = await prunePageViews(now).catch(() => 0);
+
     await finishCronRun(run, {
       status: result.status,
       stats: {
@@ -312,6 +336,7 @@ export async function runOpsSweep(options: {
         reminded: result.reminded.length,
         recovered: result.recovered.length,
         deliveryFailures: result.deliveryFailures,
+        prunedPageViews: prunedViews,
       },
     });
     await heartbeat();

@@ -13,6 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-purge.ts
  */
+import { randomUUID } from "node:crypto";
 import "./smoke/_env";
 
 import { eq, getTableColumns, getTableName, sql } from "drizzle-orm";
@@ -148,12 +149,52 @@ async function seed() {
   // The pasted text a note was parsed out of. Nothing cascades this — both
   // `note_batch_id` columns are plain uuids with no foreign key — so it only leaves with
   // the explicit delete in `purgeUserData`.
-  await db.insert(schema.noteBatches).values({
+  const [noteBatch] = await db
+    .insert(schema.noteBatches)
+    .values({
+      userId: USER,
+      sourceHash: "note-batch-hash",
+      sourceText: "the raw notes the user pasted, about named people",
+      anchorDate: now,
+      result: {} as never,
+    })
+    .returning();
+
+  // A photo of the user's notes, one attached and one from a capture never saved. The
+  // unattached one is the case a cascade from `note_batches` cannot reach.
+  await db.insert(schema.capturePhotos).values([
+    {
+      userId: USER,
+      noteBatchId: noteBatch.id,
+      storage: "inline",
+      inlineData: "aGVsbG8=",
+      contentType: "image/jpeg",
+      byteSize: 5,
+    },
+    {
+      userId: USER,
+      noteBatchId: null,
+      storage: "inline",
+      inlineData: "aGVsbG8=",
+      contentType: "image/jpeg",
+      byteSize: 5,
+    },
+  ]);
+
+  // A recorded call and one line of it. The segment carries its own `user_id` and is
+  // deleted explicitly, though it would also cascade from the session.
+  const [meetingRow] = await db
+    .insert(schema.meetingSessions)
+    .values({ userId: USER, title: "Weekly sync" })
+    .returning();
+  await db.insert(schema.meetingTranscriptSegments).values({
+    sessionId: meetingRow.id,
     userId: USER,
-    sourceHash: "note-batch-hash",
-    sourceText: "the raw notes the user pasted, about named people",
-    anchorDate: now,
-    result: {} as never,
+    seq: 0,
+    startMs: 0,
+    endMs: 60_000,
+    text: "what everyone on the call said, verbatim",
+    engine: "whisper",
   });
 
   // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
@@ -200,6 +241,56 @@ async function seed() {
     mentionText: "Ada",
     confidence: 0.9,
     matchedBy: "exact_name",
+  });
+
+  // Cascade-covered (from `contacts`), seeded anyway, same reasoning as `contactBriefs`.
+  // A typed opportunity carries a verbatim sentence out of someone's notes, so it is at
+  // least as sensitive as the interaction it came from and must leave with the account.
+  await db.insert(schema.contactOpportunities).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "internship",
+    label: "summer internship on the infra team",
+    sourceInteractionId: interaction.id,
+    sourceExcerpt: "she said they open summer internship applications in October",
+    createdBy: "ai",
+    itemHash: "opportunity-hash",
+  });
+
+  // `job_feed_sources` and `job_postings` are global, so `userScopedTables()` skips them —
+  // but a MATCH names one of this user's contacts, carries a `user_id`, and is therefore
+  // account data. Seeded from a real posting row so the cascade from `contacts` is what is
+  // actually under test, not an orphan insert.
+  const [feedSource] = await db
+    .insert(schema.jobFeedSources)
+    .values({
+      id: "smoke.purge.feed",
+      label: "Smoke feed",
+      url: "https://example.com/listings.json",
+      season: "Summer 2027",
+    })
+    .returning();
+  const [posting] = await db
+    .insert(schema.jobPostings)
+    .values({
+      sourceId: feedSource.id,
+      externalId: "smoke-posting-1",
+      companyName: "Acme",
+      companyKey: "acme",
+      title: "Software Engineer Intern",
+      url: "https://example.com/jobs/1",
+      terms: ["Summer 2027"],
+      locations: ["Remote"],
+      datePosted: new Date(),
+      dateUpdated: new Date(),
+    })
+    .returning();
+  await db.insert(schema.jobPostingMatches).values({
+    userId: USER,
+    postingId: posting.id,
+    contactId: contact.id,
+    companyKey: "acme",
+    matchKind: "internship",
   });
 
   const [list] = await db
@@ -249,6 +340,29 @@ async function seed() {
     icsUrl: "https://example.test/feed.ics",
   });
 
+  // A scan handoff in flight when the account is deleted: a live grant, and a transcript
+  // of the user's notes sitting behind it.
+  await db.insert(schema.captureHandoffs).values({
+    userId: USER,
+    tokenHash: "0".repeat(64),
+    expiresAt: new Date(Date.now() + 600_000),
+    transcript: "Ada Lovelace — Analytical Engines",
+  });
+
+  // A capture mid-review, and the name it set aside.
+  await db.insert(schema.captureJobs).values({
+    userId: USER,
+    sourceKind: "messy",
+    status: "reviewing",
+    inputText: "Met Ada Lovelace at the engine demo",
+  });
+  await db.insert(schema.ignoredPeople).values({
+    userId: USER,
+    nameKey: "charles babbage",
+    displayName: "Charles Babbage",
+    reason: "mentioned",
+  });
+
   await db.insert(schema.aiSuggestions).values({
     userId: USER,
     suggestionType: "reconnect",
@@ -282,6 +396,10 @@ async function seed() {
     subject: "Following up on the role",
     body: "prose the user wrote about a real person",
   });
+
+  // The recruiter scan's watermark, kept separate from `gmail_connections` on purpose but
+  // no less user data than anything else here.
+  await db.insert(schema.recruiterScanState).values({ userId: USER });
 
   // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
   // no foreign key to either contact (the losing contact's row is deleted by design), so
@@ -326,6 +444,37 @@ async function seed() {
     email: "ada@analytical.io",
     contactId: contact.id,
     identityKey: "em:ada@analytical.io",
+  });
+  // Two aliases: one live, one a TOMBSTONE (`event_id` null), which is the row that would
+  // outlive the account if purge left it to the `ON DELETE SET NULL` cascade. It holds the
+  // user's calendar UIDs and event links.
+  await db.insert(schema.eventAliases).values([
+    {
+      userId: USER,
+      kind: "url",
+      value: "luma.com/deep-learning-summit",
+      eventId: eventRow.id,
+      source: "gcal",
+    },
+    { userId: USER, kind: "source_ref", value: "gcal:dismissed-uid", eventId: null, source: "gcal" },
+  ]);
+  // A company at the event, and the same company on the user's target list — a statement
+  // about where they want to work, which must not outlive the account.
+  const [exhibitor] = await db
+    .insert(schema.companies)
+    .values({ userId: USER, name: "Stripe", nameNormalized: "stripe" })
+    .returning();
+  await db.insert(schema.eventCompanies).values({
+    userId: USER,
+    eventId: eventRow.id,
+    companyId: exhibitor.id,
+    role: "exhibitor",
+    source: "paste",
+  });
+  await db.insert(schema.targetCompanies).values({
+    userId: USER,
+    companyId: exhibitor.id,
+    priority: 1,
   });
   // Same class of secret as the Gmail/Outlook rows below.
   await db.insert(schema.eventProviderConnections).values({
@@ -375,6 +524,14 @@ async function seed() {
   // else, so it is easy to forget it is personal data at all — which is how it became the
   // fourth user-scoped table to ship unpurged (found the first time this suite ran on a
   // fresh database instead of one that happened to hold a leftover row).
+  // The account's own upgrade-celebration queue — deleted outright on purge.
+  await db.insert(schema.planUpgradeEvents).values({
+    userId: USER,
+    plan: "orbit",
+    source: "subscription",
+    eventKey: `${USER}-upgrade`,
+  });
+
   await db.insert(schema.extensionUsage).values({ userId: USER, requestCount: 3, aiCount: 1 });
 
   // The connector platform. `api_keys` is the one that would matter most if it survived a
@@ -409,6 +566,17 @@ async function seed() {
     eventId: "evt_purge_fixture",
     eventType: "contact.created",
     payload: {},
+  });
+
+  // A page view from a signed-in session. Purge ANONYMISES this rather than deleting it,
+  // the same way it treats billing_events — so like that row, it survives its own cleanup.
+  await db.insert(schema.pageViews).values({
+    id: randomUUID(),
+    visitorHash: "purge-fixture-visitor",
+    sessionId: randomUUID(),
+    userId: USER,
+    route: "/dashboard",
+    device: "desktop",
   });
 
   return { recruiterId: recruiter.id };

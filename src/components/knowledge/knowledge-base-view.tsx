@@ -115,7 +115,7 @@ export function KnowledgeBaseView({
         <Link href="/chat" className="underline-offset-2 hover:underline">
           Chat
         </Link>{" "}
-        or ⌘K.
+        or ⌘J.
       </p>
 
       {empty ? (

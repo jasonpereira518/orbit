@@ -75,6 +75,17 @@ export type StoredClosenessBreakdown = {
   tier: ClosenessTier;
 };
 
+import type {
+  CaptureDecisions,
+  CaptureIngestedBlock,
+  CaptureJobResult,
+  CaptureJobSource,
+  CaptureJobStatus,
+  IgnoredPersonReason,
+} from "@/lib/capture/types";
+import type { CaptureParseHints } from "@/lib/ai";
+import type { MentionPick } from "@/lib/mentions/mention-picks";
+
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: text("user_id").notNull().unique(),
@@ -82,6 +93,11 @@ export const userSettings = pgTable("user_settings", {
   geminiApiKeyEncrypted: text("gemini_api_key_encrypted"),
   openaiApiKeyEncrypted: text("openai_api_key_encrypted"),
   anthropicApiKeyEncrypted: text("anthropic_api_key_encrypted"),
+  /**
+   * Wispr Flow transcription. Not an `AiProvider`: Wispr transcribes and does not
+   * complete, so it never participates in provider/model selection. See `src/lib/wispr.ts`.
+   */
+  wisprApiKeyEncrypted: text("wispr_api_key_encrypted"),
   aiModel: text("ai_model").default("gemini-3.5-flash"),
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
@@ -106,6 +122,23 @@ export const userSettings = pgTable("user_settings", {
   desktopNotifiedIds: jsonb("desktop_notified_ids")
     .$type<string[]>()
     .default([]),
+  /**
+   * Whether this account wants desktop notifications — the account half of the setting; the
+   * browser's own permission is per device and lives in the browser.
+   *
+   * Nullable on purpose, with no default. Before this column the preference lived only in
+   * localStorage, so null means "never recorded": the first device to load adopts its local
+   * value and writes it up, rather than a `false` default silently switching off everyone
+   * who had turned notifications on.
+   */
+  desktopNotificationsEnabled: boolean("desktop_notifications_enabled"),
+  /**
+   * Schools the user attended, for the shared-alma-mater signal when ranking a roster.
+   *
+   * A plain list on this row rather than a table: nothing joins on it, it is read whole
+   * every time, and it is three strings.
+   */
+  schools: jsonb("schools").$type<string[]>().default([]),
   socialLinks: jsonb("social_links")
     .$type<{
       linkedin?: string;
@@ -186,6 +219,20 @@ export const userSettings = pgTable("user_settings", {
    */
   compedPlan: text("comped_plan").$type<"orbit" | "lifetime">(),
   lifetimePurchasedAt: timestamp("lifetime_purchased_at", { withTimezone: true }),
+  /**
+   * The Lifetime Checkout Session this account most recently opened, until it resolves.
+   *
+   * Not an entitlement and never read by `resolvePlan`. It exists for the gap between paying
+   * and the webhook landing: when the AI gate is about to refuse a non-Lifetime account, a
+   * session id here lets it ask Stripe whether that payment has in fact gone through — and
+   * grant on the spot (paid), say "still clearing" (async payment), or refuse as usual
+   * (abandoned). Set by `startLifetimeCheckout`; cleared by `setLifetimePurchase` and by the
+   * gate once Stripe says the session is over. See `src/lib/lifetime-checkout.ts`.
+   */
+  lifetimeCheckoutSessionId: text("lifetime_checkout_session_id"),
+  lifetimeCheckoutStartedAt: timestamp("lifetime_checkout_started_at", {
+    withTimezone: true,
+  }),
   stripeCustomerId: text("stripe_customer_id"),
   subscriptionPlan: text("subscription_plan").$type<"orbit">(),
   subscriptionStatus: text("subscription_status").$type<
@@ -313,6 +360,15 @@ export const contacts = pgTable(
     xHandle: text("x_handle"),
     website: text("website"),
     profileImageUrl: text("profile_image_url"),
+    /**
+     * When we last tried, and failed, to find a photo for this contact.
+     *
+     * Without it the only memory of a failed lookup was the client's in-page `skipIds`,
+     * so every page load re-attempted every unresolvable contact against every free
+     * tier — thousands of pointless requests per visit on a large network. The backfill
+     * skips a contact whose last attempt is inside AVATAR_RECHECK_DAYS.
+     */
+    profileImageCheckedAt: timestamp("profile_image_checked_at"),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     /**
      * Closeness the user actually asserted, 1–5. NULL means never rated —
@@ -344,6 +400,28 @@ export const contacts = pgTable(
     lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
     nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
     followUpStatus: text("follow_up_status").default("none"),
+
+    /**
+     * A recurring rhythm the notes actually stated — "check in monthly", "ping me every two
+     * weeks". Written by the capture save when the model found the phrase and
+     * `parseCadencePhrase` could resolve it; null otherwise, which means "nobody said".
+     *
+     * Days rather than a unit+count pair or an RRULE because every consumer already works in
+     * days (`windowDueDate`, the idle thresholds in `src/lib/reminders.ts`), and "every two
+     * weeks" and "biweekly" collapse to 14 with no ambiguity. "Monthly" is 30, which drifts
+     * about five days a year — fine for a nudge, and exactly why this never creates a
+     * recurring series. Only the NEXT occurrence is ever scheduled.
+     *
+     * Nothing to do with `cadence` in `src/lib/closeness.ts`, which is a touch-COUNT score
+     * component. Same word, different noun — do not unify them.
+     */
+    cadenceDays: integer("cadence_days"),
+    /** The phrase verbatim, so a suggestion can say: you said "check in monthly". */
+    cadencePhrase: text("cadence_phrase"),
+    cadenceSource: text("cadence_source").$type<"note" | "user">(),
+    /** When it was last stated, so a newer note supersedes an older one rather than racing it. */
+    cadenceSetAt: timestamp("cadence_set_at", { withTimezone: true }),
+
     aiSummary: text("ai_summary"),
     notes: text("notes"),
 
@@ -745,6 +823,19 @@ export const reminders = pgTable(
     sourceExcerpt: text("source_excerpt"),
     rawDatePhrase: text("raw_date_phrase"),
     dateBasis: text("date_basis").$type<ReminderDateBasis>(),
+    /**
+     * Whether the notes SAID this ("explicit") or Orbit inferred it from what was discussed
+     * ("implied").
+     *
+     * Deliberately not another `reminder_type` value: that column encodes DATE provenance
+     * (manual / extracted_date / ai_suggested) and is read by `TYPE_LABELS` in
+     * `reminder-card.tsx` and by the collision rule in `note-batch-save.ts`. Overloading it
+     * would break both, and the two facts are orthogonal — an implied step can still carry
+     * an extracted date.
+     */
+    origin: text("origin").$type<ReminderOrigin>().default("explicit").notNull(),
+    /** 0-100, matching `suggested_reminders`. Only ever set on AI-produced rows. */
+    confidenceScore: integer("confidence_score"),
     /** `buildSuggestionItemHash(sourceHash, dueIso, title)`; soft-unique per user (NULLs allowed) so a re-paste cannot recreate a reminder. */
     itemHash: text("item_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -817,6 +908,15 @@ export const suggestedReminders = pgTable(
 export type ReminderDateBasis = "absolute" | "relative" | "vague" | "window";
 
 /**
+ * Where a reminder's *content* came from: the notes said it, or Orbit inferred it from what
+ * was discussed. Orthogonal to `reminderType`, which says where its DATE came from.
+ *
+ * Every row written before this shipped reads as `"explicit"`, which is correct — implied
+ * items did not exist, so nothing pre-existing can be one.
+ */
+export type ReminderOrigin = "explicit" | "implied";
+
+/**
  * What one confirmed note paste produced, rendered by `/capture/[batchId]`. Stored as a
  * snapshot: the rows it points at may later be edited or dismissed, and the page shows
  * live status alongside this record of what was created.
@@ -827,7 +927,31 @@ export type NoteBatchResult = {
   unresolvedMentions: { text: string; context: string | null }[];
   actionItems: { id: string; contactId: string; text: string; reminderId: string | null }[];
   reminders: { id: string; contactId: string | null; title: string; dueIso: string; dateBasis: ReminderDateBasis; rawDatePhrase: string | null; sourceExcerpt: string | null }[];
+  /**
+   * Typed opportunities the batch opened.
+   *
+   * OPTIONAL, and it has to stay that way: every batch saved before this shipped has a
+   * `result` jsonb with no such key, and `/capture/[batchId]` renders straight off this
+   * snapshot. A required field would make those pages throw on `undefined.map`.
+   */
+  opportunities?: { id: string; contactId: string; kind: string; label: string; dueIso: string | null }[];
   skipped: { relative: number; unverifiable: number; past: number; duplicate: number };
+  /** Present only when the batch came from a recorded meeting (`/capture?mode=meeting`). */
+  meeting?: NoteBatchMeeting;
+};
+
+/** The call-level half of a meeting batch — what no per-person card can carry. */
+export type NoteBatchMeeting = {
+  sessionId: string;
+  title: string;
+  summary: string;
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: { text: string; owner: string | null }[];
+  blockers: { text: string; owner: string | null }[];
+  openQuestions: { text: string; askedBy: string | null }[];
+  durationMs: number;
+  startedAtIso: string;
 };
 
 /** One confirmed paste of notes — the unit the results page and Undo operate on. */
@@ -845,12 +969,64 @@ export const noteBatches = pgTable(
     anchorBasis: text("anchor_basis").$type<"note" | "hint" | "upload">().default("upload").notNull(),
     status: text("status").$type<"saved" | "undone">().default("saved").notNull(),
     result: jsonb("result").$type<NoteBatchResult>().notNull(),
+    /**
+     * How the notes got in — typed, voice, photos, a calendar invite, an email. Only ever a
+     * label for the capture history (so "that voice note from Tuesday" is findable by its
+     * icon); nothing branches on it. Empty on batches saved before it existed, which the
+     * history renders as plain notes rather than guessing.
+     */
+    inputSources: jsonb("input_sources").$type<CaptureSourceKind[]>().default([]).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     undoneAt: timestamp("undone_at", { withTimezone: true }),
   },
   (t) => [
     index("note_batches_user_created_idx").on(t.userId, t.createdAt),
     index("note_batches_user_source_idx").on(t.userId, t.sourceHash),
+  ]
+);
+
+export type CaptureSourceKind = "text" | "voice" | "photo" | "calendar" | "email" | "file";
+
+/**
+ * A photo attached to a capture — a whiteboard, a business card, a page of handwritten
+ * notes — kept so the capture history can show the original next to what was extracted.
+ *
+ * Written at UPLOAD time, not at save time, with `note_batch_id` null until the capture is
+ * saved. Re-sending the bytes with the save would double every upload and push the save
+ * over the server-action body limit that `src/lib/capture-limits.ts` exists to police. The
+ * cost is orphans: a photo whose capture was never saved. The daily cron prunes those (see
+ * `pruneUnattachedCapturePhotos`), and nothing reads an unattached row except its owner's
+ * own paste step.
+ *
+ * Same storage discipline as `feedback_screenshots`: `storage` is a real discriminator,
+ * Blob objects get a random suffix and are only ever served through the owner-checked
+ * `/api/capture/photos/[photoId]` route, and the bytes are re-encoded server-side (which
+ * also strips EXIF, GPS included) so `content_type` is always one Orbit produced.
+ */
+export const capturePhotos = pgTable(
+  "capture_photos",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Carried directly: the serving route's owner check and `smoke-purge` both key on it. */
+    userId: text("user_id").notNull(),
+    noteBatchId: uuid("note_batch_id").references(() => noteBatches.id, { onDelete: "cascade" }),
+    /** Order within the upload it arrived in. */
+    position: integer("position").notNull().default(0),
+    /** The name the file had on the user's device, for the alt text and the download. */
+    fileName: text("file_name"),
+    storage: text("storage").$type<"blob" | "inline">().notNull(),
+    blobUrl: text("blob_url"),
+    /** Raw base64, no `data:` prefix — see `feedback_screenshots.inline_data`. */
+    inlineData: text("inline_data"),
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("capture_photos_batch_idx").on(t.noteBatchId, t.position),
+    index("capture_photos_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -900,6 +1076,161 @@ export const actionItems = pgTable(
   ]
 );
 
+/**
+ * What kind of possibility an opportunity is. Plain `text` with no CHECK and no `pgEnum`,
+ * like every other enum in this file, so widening it needs no DDL and no version bump.
+ * Labels, hints and the alias table that repairs model output live in
+ * `src/lib/opportunity-kinds.ts`, which imports these unions rather than restating them.
+ */
+export type OpportunityKind =
+  | "internship"
+  | "job"
+  | "referral"
+  | "introduction"
+  | "startup_lead"
+  | "mentor"
+  | "investor"
+  | "speaker"
+  | "customer"
+  | "collaboration"
+  | "advice"
+  | "other";
+
+export type OpportunityStatus = "open" | "in_progress" | "landed" | "passed" | "dismissed";
+
+/** Which side is offering. Null is common and correct — most notes do not say. */
+export type OpportunityDirection = "they_offer" | "you_ask";
+
+/**
+ * A concrete possibility a conversation surfaced: an internship, a referral someone offered,
+ * an intro they promised, a company worth chasing.
+ *
+ * Replaces the untyped `contacts.opportunities` string array, which had no UI, no status and
+ * no way to hang a reminder off it — and which `updateContactForUser` overwrote wholesale, so
+ * a second note about the same person silently deleted the first note's opportunities. That
+ * column survives as a DERIVED mirror with exactly one writer
+ * (`syncContactOpportunityMirror`), because four readers predate this table.
+ */
+export const contactOpportunities = pgTable(
+  "contact_opportunities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<OpportunityKind>().notNull(),
+    /** 3-10 words in the note's own vocabulary. Never a sentence, never the date. */
+    label: text("label").notNull(),
+    status: text("status").$type<OpportunityStatus>().default("open").notNull(),
+    direction: text("direction").$type<OpportunityDirection>(),
+    /**
+     * `set null`, not cascade: deleting an interaction corrects the record of a conversation,
+     * it does not assert the opportunity never existed.
+     */
+    sourceInteractionId: uuid("source_interaction_id").references(() => interactions.id, { onDelete: "set null" }),
+    noteBatchId: uuid("note_batch_id"),
+    /** The verbatim sentence it came from — the same auditability contract as `reminders.source_excerpt`. */
+    sourceExcerpt: text("source_excerpt"),
+    dueDate: timestamp("due_date", { withTimezone: true }),
+    rawDatePhrase: text("raw_date_phrase"),
+    /** 0-100, matching `ai_suggestions` and `suggested_reminders`. */
+    confidenceScore: integer("confidence_score"),
+    createdBy: text("created_by").$type<"ai" | "user">().default("user").notNull(),
+    /**
+     * `buildOpportunityItemHash(sourceHash, contactId, kind, label)`. Soft-unique per user
+     * with NULLs allowed, exactly like `reminders.item_hash`: re-pasting a note to fix a typo
+     * must not duplicate somebody's pipeline, and a hand-added row (hash null) can never
+     * collide with anything.
+     */
+    itemHash: text("item_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("contact_opportunities_user_contact_idx").on(t.userId, t.contactId, t.status),
+    index("contact_opportunities_user_status_due_idx").on(t.userId, t.status, t.dueDate),
+    /** The job-feed matcher's only read: every open internship/referral, across all users. */
+    index("contact_opportunities_status_kind_idx").on(t.status, t.kind),
+    uniqueIndex("contact_opportunities_user_item_hash_uidx").on(t.userId, t.itemHash),
+  ]
+);
+
+export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
+export type MeetingSegmentEngine = "wispr" | "whisper" | "gemini" | "silent";
+
+/**
+ * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
+ * still happening, so a crashed or closed tab can pick up where it left off — audio is
+ * never stored, only what it was transcribed to. `digest` is the analysis
+ * (`src/lib/meeting-digest.ts`), written once the call ends.
+ */
+export const meetingSessions = pgTable(
+  "meeting_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    title: text("title"),
+    attendees: jsonb("attendees").$type<{ name: string; email?: string | null }[]>().default([]).notNull(),
+    /** `displaySurface` of the shared track: "browser" (a tab) or "monitor"/"window". */
+    captureSurface: text("capture_surface"),
+    includesMic: integer("includes_mic").default(1).notNull(),
+    /**
+     * A random id minted per recorder instance. A second tab that tries to push chunks into a
+     * session another tab is recording gets a 409 instead of interleaving its audio.
+     */
+    recorderId: text("recorder_id"),
+    status: text("status").$type<MeetingSessionStatus>().default("recording").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    durationMs: integer("duration_ms").default(0).notNull(),
+    /** Highest segment seq stored, so a resumed recorder continues numbering after it. */
+    lastSeq: integer("last_seq").default(-1).notNull(),
+    digest: jsonb("digest").$type<MeetingDigest>(),
+    digestError: text("digest_error"),
+    noteBatchId: uuid("note_batch_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("meeting_sessions_user_status_idx").on(t.userId, t.status)]
+);
+
+/** One transcribed chunk (~60s) of a meeting. `(session_id, seq)` makes a re-upload a no-op. */
+export const meetingTranscriptSegments = pgTable(
+  "meeting_transcript_segments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => meetingSessions.id, { onDelete: "cascade" }),
+    /** Denormalised so `scripts/smoke-purge.ts` discovers the table — see `feedbackScreenshots`. */
+    userId: text("user_id").notNull(),
+    seq: integer("seq").notNull(),
+    startMs: integer("start_ms").notNull(),
+    endMs: integer("end_ms").notNull(),
+    text: text("text").notNull(),
+    engine: text("engine").$type<MeetingSegmentEngine>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("meeting_segments_session_seq_uidx").on(t.sessionId, t.seq),
+    index("meeting_segments_user_idx").on(t.userId),
+  ]
+);
+
+/** The stored analysis of a meeting. Mirrors `meetingDigestSchema` in `src/lib/meeting-digest.ts`. */
+export type MeetingDigest = {
+  title: string;
+  summary: string;
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: { text: string; owner: string | null; duePhrase: string | null; sourceExcerpt: string | null }[];
+  blockers: { text: string; owner: string | null; sourceExcerpt: string | null }[];
+  openQuestions: { text: string; askedBy: string | null; sourceExcerpt: string | null }[];
+  participants: { name: string; present: boolean; context: string | null }[];
+  datedQuotes: string[];
+  notes: string;
+};
+
 /** The structured profile brief. 1:1 with contacts; kept off `contacts` because that table is scanned whole on hot paths. */
 export const contactBriefs = pgTable("contact_briefs", {
   contactId: uuid("contact_id").primaryKey().references(() => contacts.id, { onDelete: "cascade" }),
@@ -908,6 +1239,13 @@ export const contactBriefs = pgTable("contact_briefs", {
   recentDiscussions: jsonb("recent_discussions").$type<{ interactionId: string; dateIso: string; line: string }[]>().default([]).notNull(),
   generatedAt: timestamp("generated_at", { withTimezone: true }).defaultNow().notNull(),
   basisInteractionId: uuid("basis_interaction_id"),
+  /**
+   * One imperative clause naming the most useful thing to do next, or null when nothing is
+   * open. Distinct from `standing`, which says where things are; this says what to do about
+   * it, and it is the only part of the brief written with the contact's open commitments and
+   * opportunities in front of the model.
+   */
+  nextStep: text("next_step"),
   model: text("model"),
 });
 
@@ -1064,6 +1402,19 @@ export type ImportStats = {
   recruitersFound?: number;
   /** Senders the classifier rejected or scored below the confidence floor. */
   sendersRejected?: number;
+  /**
+   * Window this job resolved at its first invocation, as an ISO string, plus whether it
+   * ignored the watermark. Frozen into the job rather than recomputed per invocation: a
+   * continuation that re-derived "24 months ago" would use a slightly different boundary
+   * than the pages already walked, leaving a seam of unread mail.
+   */
+  scanAfter?: string;
+  scanIsFull?: boolean;
+  /**
+   * Job start, used to advance the watermark on completion. Deliberately the start and not
+   * the finish — mail that arrived mid-scan was never in this job's result set.
+   */
+  scanStartedAt?: string;
 
   /** Wall-clock milliseconds across every invocation of this job. */
   durationMs?: number;
@@ -1152,6 +1503,28 @@ export type OutlookContactRowPayload = {
 };
 
 /**
+ * One contact from an uploaded address-book file — a vCard or a Google/Outlook contacts CSV —
+ * already normalized by `parseContactsFile` (`src/lib/contacts-file.ts`), so this shape is the
+ * same whichever of those formats it came from and the adapter never needs to know.
+ *
+ * No `photoUrl`, unlike Google: a vCard carries its photo inline as base64, and that is
+ * stripped before upload rather than stored. `notes` is the card's NOTE (or the CSV's Notes
+ * column) and is written on create only — see `contactsFileAdapter`.
+ */
+export type ContactsFileRowPayload = {
+  kind: "contacts_file_contact";
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  linkedinUrl: string;
+  notes: string;
+};
+
+/**
  * One resolved conversation from a LinkedIn Messages export, snapshotted once at parse
  * time so the engine never re-parses the CSV or re-fetches contacts per conversation.
  * `messages[].id` is a hash of (conversationId, date, content) computed at parse time —
@@ -1228,6 +1601,7 @@ export type ImportJobRowPayload =
   | GmailSenderRowPayload
   | GoogleContactRowPayload
   | OutlookContactRowPayload
+  | ContactsFileRowPayload
   | LinkedInMessageThreadRowPayload
   | CalendarEventRowPayload;
 
@@ -1613,6 +1987,15 @@ export type CalendarSyncCursor = {
 export type EventProviderSyncCursor = {
   cursor?: string | null;
   syncedThrough?: string | null;
+  /**
+   * The mailbox scan's own position: how far back has been covered, and Gmail's page token
+   * mid-listing.
+   *
+   * It lives here rather than on `gmail_connections.sync_cursor` because that column belongs
+   * to the calendar sync, which writes `{ calendar }` over the whole jsonb on every run — a
+   * second consumer there would have its position silently erased twice an hour.
+   */
+  gmail?: { after?: number; pageToken?: string | null } | null;
 };
 
 export type ProviderSyncCursor = {
@@ -1661,6 +2044,39 @@ function syncStateColumns() {
     syncFailures: integer("sync_failures").notNull().default(0),
   };
 }
+
+/**
+ * Per-user watermark for the Gmail recruiter scan.
+ *
+ * Separate from `gmail_connections` on purpose: disconnecting and reconnecting Gmail must
+ * not silently reset the watermark and trigger a surprise full re-scan on the user's own
+ * API key. The connection is a credential; this is scan history.
+ */
+export const recruiterScanState = pgTable(
+  "recruiter_scan_state",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull().unique(),
+    /**
+     * Start of the next incremental window. Advanced only when a scan reaches `completed`,
+     * so a job that fails or is cancelled half-way re-reads its window rather than skipping
+     * the messages it never got to.
+     */
+    lastScanAt: timestamp("last_scan_at", { withTimezone: true }),
+    lastFullScanAt: timestamp("last_full_scan_at", { withTimezone: true }),
+    /**
+     * Classifier generation that produced the cached verdicts. Bumping
+     * `RECRUITER_PROMPT_VERSION` in code invalidates every cache entry — that is the
+     * mechanism behind the manual "re-scan everything" action.
+     */
+    promptVersion: integer("prompt_version").default(1).notNull(),
+    /** How far back a full scan reaches. User-adjustable; 24 months by default. */
+    windowMonths: integer("window_months").default(24).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("recruiter_scan_state_user_idx").on(t.userId)]
+);
 
 export const gmailConnections = pgTable(
   "gmail_connections",
@@ -1765,6 +2181,21 @@ export const chatMessages = pgTable(
     role: text("role").$type<"user" | "assistant">().notNull(),
     content: text("content").notNull(),
     recommendations: jsonb("recommendations").$type<ChatRecommendation[]>(),
+    /**
+     * People the user attached to this question with the composer's `+` or `@`.
+     *
+     * Stored so a reloaded thread can mark the same `@Name` spans it marked when the
+     * message was sent. Without it the mark had to be re-derived from the text alone by a
+     * shape heuristic, which over-reaches on "@Marcus Webb Who else" — capitalised words
+     * after a name look like part of it.
+     *
+     * The name is kept alongside the id deliberately: the message text is frozen, so the
+     * name that appears in it is a fact about this message, not about who the contact is
+     * now. Renaming a contact must not unmark a question that used their old name.
+     */
+    attachedContacts: jsonb("attached_contacts")
+      .$type<Array<{ id: string; name: string }>>()
+      .default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -1776,9 +2207,11 @@ export const chatMessages = pgTable(
 /**
  * One row per AI provider call, written fire-and-forget from `src/lib/ai.ts`.
  *
- * Production is strictly BYOK (`allowEnvProviderKeys()` returns `!process.env.VERCEL`), so
- * this is not primarily a cost ledger — the spend is the user's. Its real jobs are showing
- * which accounts are actually using the product, and which ones are failing.
+ * Mostly not a cost ledger — AI is BYOK on every plan but Lifetime, so most spend is the
+ * user's. Its jobs are showing which accounts are actually using the product and which are
+ * failing, and — for `key_owner = 'orbit'` rows, the calls the AI gate ran on a managed key
+ * for a Lifetime account — being the meter the managed allowance is enforced against
+ * (`managedUsageThisMonth` in `src/lib/ai-access.ts`).
  *
  * Booleans are integers to match the house convention (`enabled`, `active`, `year_inferred`).
  * There is no FK on `user_id`: nothing in this schema has one, because it is a Clerk id.
@@ -1790,7 +2223,7 @@ export const usageEvents = pgTable(
     userId: text("user_id").notNull(),
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic">().notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "wispr">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
       .$type<"completion" | "multimodal" | "embedding" | "transcription">()
@@ -1809,7 +2242,11 @@ export const usageEvents = pgTable(
      * blank cell beats a confidently wrong dollar figure.
      */
     estimatedCostMicros: integer("estimated_cost_micros"),
-    /** Whose key paid for it. "orbit" only ever happens off-Vercel (local dev). */
+    /**
+     * Whose key paid for it. "orbit" = one of Orbit's managed keys, which the AI gate issues
+     * only to Lifetime and demo accounts; every row of it counts against the account's
+     * monthly managed allowance.
+     */
     keyOwner: text("key_owner").$type<"user" | "orbit">().notNull(),
     success: integer("success").notNull().default(1),
     /** Stable machine code, not the user-facing message — that is unqueryably high-cardinality. */
@@ -1919,6 +2356,145 @@ export const apiKeys = pgTable(
     uniqueIndex("api_keys_hash_uidx").on(t.keyHash),
     index("api_keys_user_idx").on(t.userId),
   ]
+);
+
+/**
+ * One scanning session, handed from a signed-in desktop to a phone that is not signed in.
+ *
+ * WHY A TABLE AND NOT A SIGNED TOKEN. A stateless JWT would carry the grant without
+ * storage, but the phone has to hand something BACK, and the desktop has to notice — so
+ * there has to be a row for the transcript to land in and for polling to read. Given a row
+ * exists anyway, storing the hash buys single-use and revocation for free.
+ *
+ * `transcript` holds text only. The photos are transcribed inside the request that carries
+ * them and are never written anywhere — going via a phone must not silently upgrade
+ * ephemeral capture media into stored user imagery.
+ */
+export const captureHandoffs = pgTable(
+  "capture_handoffs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** SHA-256 of the token. The token itself exists only in the QR code. */
+    tokenHash: text("token_hash").notNull(),
+    status: text("status")
+      .$type<"pending" | "uploading" | "ready" | "claimed">()
+      .default("pending")
+      .notNull(),
+    transcript: text("transcript"),
+    pageCount: integer("page_count").default(0).notNull(),
+    /** The `photos:7/8` label, so the desktop can report partial success too. */
+    sources: text("sources"),
+    error: text("error"),
+    /** The capture job the phone's pages append to; the desktop polls that job, not this row. */
+    captureJobId: uuid("capture_job_id"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // Every request on the phone path is this one lookup.
+    uniqueIndex("capture_handoffs_token_uidx").on(t.tokenHash),
+    index("capture_handoffs_expiry_idx").on(t.expiresAt),
+  ]
+);
+
+/**
+ * A durable capture: one paste, recording, scan or meeting on its way to becoming
+ * contacts. The /capture page is a view over this row, so navigating away, reloading or
+ * closing the tab loses nothing — extraction and saving run server-side, and every card
+ * decision is written here as it is made.
+ *
+ * Text only. Media (audio, photos) is transcribed inside the upload request and dropped,
+ * the same promise `meeting_sessions` and `capture_handoffs` make; `ingested_blocks` holds
+ * what the transcription produced, in arrival order.
+ *
+ * No transactions on neon-http, so every state change is one guarded UPDATE: the runner
+ * claims a row by writing `claim_token` and only the holder may write the outcome.
+ */
+export const captureJobs = pgTable(
+  "capture_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceKind: text("source_kind").$type<CaptureJobSource>().notNull(),
+    status: text("status").$type<CaptureJobStatus>().default("queued").notNull(),
+    entryPoint: text("entry_point").$type<"capture" | "profile">().default("capture").notNull(),
+    seedContactId: uuid("seed_contact_id"),
+    /** Typed or pasted text as the person gave it. Null for media-only jobs. */
+    inputText: text("input_text"),
+    inputHints: jsonb("input_hints").$type<CaptureParseHints>().default({}).notNull(),
+    /** Transcribed media, in arrival order. */
+    ingestedBlocks: jsonb("ingested_blocks").$type<CaptureIngestedBlock[]>().default([]).notNull(),
+    sources: jsonb("sources").$type<string[]>().default([]).notNull(),
+    /**
+     * Shared by every job from one multi-file drop; null for an ordinary single capture.
+     *
+     * Load-bearing beyond grouping: `queueCaptureJob` discards every other reviewable job
+     * when a new one starts, because a second Extract would otherwise orphan cards nobody
+     * can get back to. A batch has a queue UI that CAN get back to all of them, so that rule
+     * is skipped exactly when this is set.
+     */
+    batchGroupId: uuid("batch_group_id"),
+    /** The original filename, for the queue row. `sources` holds provenance ("photos:3"), not names. */
+    sourceLabel: text("source_label"),
+    /**
+     * Contacts the person picked with `@` while writing, carried to the save so an explicit
+     * choice never goes back through fuzzy name resolution.
+     *
+     * Deliberately NOT folded into `input_hints`: a contact id is not a parse hint, and
+     * anything on an AI-facing type eventually finds its way into a prompt.
+     */
+    mentionPicks: jsonb("mention_picks").$type<MentionPick[]>().default([]).notNull(),
+    /** `capture_photos` ids stored at upload, attached to the batch when the job saves. */
+    photoIds: jsonb("photo_ids").$type<string[]>().default([]).notNull(),
+    transcriptionEngine: text("transcription_engine"),
+    /** The assembled corpus the model read, and its dedupe hash. Written by the runner only. */
+    sourceText: text("source_text"),
+    sourceHash: text("source_hash"),
+    meetingSessionId: uuid("meeting_session_id"),
+    result: jsonb("result").$type<CaptureJobResult>(),
+    decisions: jsonb("decisions").$type<CaptureDecisions>().default({}).notNull(),
+    claimToken: text("claim_token"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    noteBatchId: uuid("note_batch_id"),
+    error: text("error"),
+    /** Backstop resumes by the stall sweep; past a small cap the job is failed instead. */
+    stallResumes: integer("stall_resumes").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("capture_jobs_user_status_idx").on(t.userId, t.status, t.updatedAt),
+    index("capture_jobs_stall_idx").on(t.status, t.updatedAt),
+    index("capture_jobs_user_batch_idx").on(t.userId, t.batchGroupId),
+  ]
+);
+
+/**
+ * People a capture set aside: cards swiped away, skipped for later, or names the notes
+ * only mentioned. One row per (user, normalized name) — the latest capture's context wins —
+ * and the row disappears the moment a contact with that name exists, so "Add as contact"
+ * from the list and adding them anywhere else both clear it.
+ */
+export const ignoredPeople = pgTable(
+  "ignored_people",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** `normalizePersonKey(displayName)` — lowercased, trimmed, whitespace collapsed. */
+    nameKey: text("name_key").notNull(),
+    displayName: text("display_name").notNull(),
+    reason: text("reason").$type<IgnoredPersonReason>().notNull(),
+    /** The note's words about them, capped, so the list can say why they came up. */
+    context: text("context"),
+    company: text("company"),
+    captureJobId: uuid("capture_job_id"),
+    noteBatchId: uuid("note_batch_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("ignored_people_user_name_uidx").on(t.userId, t.nameKey)]
 );
 
 /**
@@ -2077,6 +2653,139 @@ export const opsAlertState = pgTable("ops_alert_state", {
   detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * The internship/job feeds Orbit watches, and the state that makes re-reading them cheap.
+ *
+ * GLOBAL, not per-user — one feed serves everybody, the same way `cron_runs` and
+ * `ops_alert_state` are global. Nothing user-specific is ever sent to the source: the
+ * request is an unauthenticated GET of a public file. The obvious "optimisation" — asking
+ * the source only about the companies we care about — would leak every user's
+ * target-company list to a third party, and must not be built.
+ */
+export const jobFeedSources = pgTable("job_feed_sources", {
+  /** Stable, chosen id (e.g. "simplify.summer2027"), not generated — see `src/lib/jobs/feed-sources.ts`. */
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  url: text("url").notNull(),
+  /** Matched against each listing's `terms`, e.g. "Summer 2027". */
+  season: text("season").notNull(),
+  /** The operator kill switch. A deploy re-seeds rows but never re-enables a disabled one. */
+  enabled: boolean("enabled").default(true).notNull(),
+  /** Conditional-GET state. A 304 is a header exchange and costs nothing, which is the steady state. */
+  etag: text("etag"),
+  lastModified: text("last_modified"),
+  lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true }),
+  /** Last 200 (not 304). A season that has ended stops changing, which is how rot is detected. */
+  lastChangedAt: timestamp("last_changed_at", { withTimezone: true }),
+  /**
+   * Unix SECONDS, matching the feed's own units — the incremental cursor.
+   *
+   * Keyed on each listing's `date_updated`, never `date_posted`: a posting can be flipped
+   * inactive or have its URL corrected without `date_posted` moving, and those are exactly
+   * the changes worth re-reading.
+   */
+  lastMaxDateUpdated: integer("last_max_date_updated").default(0).notNull(),
+  lastStatus: text("last_status").$type<JobFeedStatus>(),
+  lastError: text("last_error"),
+  consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
+  bytesLastFetched: integer("bytes_last_fetched"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type JobFeedStatus =
+  | "ok"
+  | "not_modified"
+  | "too_large"
+  | "http_error"
+  | "schema_drift"
+  | "unreachable";
+
+/**
+ * One normalised posting from a feed. Global, like its source.
+ *
+ * Every string here is third-party text that ends up in something a user reads, so it is
+ * sanitized at ingest (`src/lib/jobs/listing-schema.ts`) and never written into
+ * `contacts.notes`, `interactions.raw_notes` or `contacts.ai_summary` — those are read
+ * verbatim into the chat prompt and the contact embedding.
+ */
+export const jobPostings = pgTable(
+  "job_postings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceId: text("source_id").notNull().references(() => jobFeedSources.id, { onDelete: "cascade" }),
+    /**
+     * The feed's own id. `text`, NOT `uuid`, even though the source documents it as one: it
+     * is third-party input, and typing the column turns a single malformed row into a failed
+     * batch insert. The same call `interactions.external_id` already makes.
+     */
+    externalId: text("external_id").notNull(),
+    companyName: text("company_name").notNull(),
+    /** `jobCompanyKeys().primary` — what the matcher joins on. */
+    companyKey: text("company_key").notNull(),
+    /** Stored, but never rendered as a link by anything in the notification path. */
+    companyUrl: text("company_url"),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    terms: jsonb("terms").$type<string[]>().default([]).notNull(),
+    locations: jsonb("locations").$type<string[]>().default([]).notNull(),
+    active: boolean("active").default(true).notNull(),
+    isVisible: boolean("is_visible").default(true).notNull(),
+    /** Absent in some forks of the feed. Parsed defensively; null is a normal value. */
+    sponsorship: text("sponsorship"),
+    datePosted: timestamp("date_posted", { withTimezone: true }).notNull(),
+    dateUpdated: timestamp("date_updated", { withTimezone: true }).notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    /** The ingest idempotency key, and the upsert target. */
+    uniqueIndex("job_postings_source_external_uidx").on(t.sourceId, t.externalId),
+    /** The matcher's read, and the backfill read when a company becomes newly watched. */
+    index("job_postings_company_key_idx").on(t.companyKey, t.datePosted),
+    /** Retention pruning, whenever it is added. Cheap to declare now. */
+    index("job_postings_date_updated_idx").on(t.dateUpdated),
+  ]
+);
+
+/**
+ * One posting, one contact, one notification — forever.
+ *
+ * Not keyed on (user, posting): two contacts at the same company are two genuinely different
+ * reasons to reach out, and collapsing them would silently pick one. Volume is controlled by
+ * aggregating into a single suggestion per contact per run, not by throwing matches away.
+ *
+ * A match the volume guard suppressed is still WRITTEN, with `status: "suppressed"` and no
+ * suggestion. The unique index then permanently blocks a re-notification — which is the
+ * right answer, because "we already decided this one was noise" is a decision worth keeping —
+ * and the row is the only record of why the user was never told.
+ */
+export const jobPostingMatches = pgTable(
+  "job_posting_matches",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    postingId: uuid("posting_id").notNull().references(() => jobPostings.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    /**
+     * The `contact_opportunities` row that made this company watched. Deliberately not a
+     * foreign key: closing or deleting an opportunity should not erase the record of why the
+     * user was told something.
+     */
+    opportunityId: uuid("opportunity_id"),
+    companyKey: text("company_key").notNull(),
+    matchKind: text("match_kind").$type<"internship" | "referral">().notNull(),
+    /** The `ai_suggestions` row this fed. Null when the volume guard suppressed it. */
+    suggestionId: uuid("suggestion_id"),
+    status: text("status").$type<"notified" | "suppressed" | "dismissed">().default("notified").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("job_posting_matches_user_posting_contact_uidx").on(t.userId, t.postingId, t.contactId),
+    index("job_posting_matches_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
 
 /**
  * One row per inbound webhook delivery, including the ones that are rejected or ignored.
@@ -2320,12 +3029,27 @@ export const interestListSignups = pgTable(
      * row by stamping this before it sends, so a crash mid-batch cannot double-send.
      */
     followUpSentAt: timestamp("follow_up_sent_at", { withTimezone: true }),
+    /**
+     * Opaque token behind the public share link (`/interest?ref=…`) and the personal ticket
+     * page (`/interest?me=…`). Separate from `unsubscribeToken` on purpose: this one is
+     * designed to be pasted into public places, that one must never be. Nullable because
+     * rows predate it; `joinInterestListCore` mints one the next time the address is
+     * submitted.
+     */
+    shareToken: text("share_token"),
+    /**
+     * The row whose share link brought this signup in — the referrer's `id`. Written once,
+     * on insert, never on a rejoin. No FK, like every other cross-row reference here.
+     */
+    referredById: uuid("referred_by_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     uniqueIndex("interest_list_signups_email_uidx").on(t.email),
     uniqueIndex("interest_list_signups_token_uidx").on(t.unsubscribeToken),
     index("interest_list_signups_created_idx").on(t.createdAt),
+    uniqueIndex("interest_list_signups_share_token_uidx").on(t.shareToken),
+    index("interest_list_signups_referred_by_idx").on(t.referredById),
   ]
 );
 
@@ -2706,6 +3430,7 @@ export const contactsRelations = relations(contacts, ({ one, many }) => ({
     references: [contactProfiles.contactId],
   }),
   experiences: many(contactExperiences),
+  opportunities: many(contactOpportunities),
 }));
 
 export const tagsRelations = relations(tags, ({ many }) => ({
@@ -2745,6 +3470,10 @@ export const actionItemsRelations = relations(actionItems, ({ one }) => ({
 }));
 export const contactBriefsRelations = relations(contactBriefs, ({ one }) => ({
   contact: one(contacts, { fields: [contactBriefs.contactId], references: [contacts.id] }),
+}));
+export const contactOpportunitiesRelations = relations(contactOpportunities, ({ one }) => ({
+  contact: one(contacts, { fields: [contactOpportunities.contactId], references: [contacts.id] }),
+  interaction: one(interactions, { fields: [contactOpportunities.sourceInteractionId], references: [interactions.id] }),
 }));
 
 export const reminderListsRelations = relations(reminderLists, ({ many }) => ({
@@ -2930,6 +3659,18 @@ export const events = pgTable(
     provider: text("provider").$type<"luma" | "eventbrite">(),
     providerEventId: text("provider_event_id"),
     description: text("description"),
+    /**
+     * Who ran it, from the page's `organizer`. Inert by design: displayed on the event and
+     * never folded into contacts, so reading a page still creates no people.
+     */
+    organizerName: text("organizer_name"),
+    organizerUrl: text("organizer_url"),
+    /**
+     * `eventAttendanceMode`. Earns a column because it changes what an interaction MEANS —
+     * "met them there" reads differently for a Zoom room — and because it explains a blank
+     * venue on an online event instead of leaving it looking like failed enrichment.
+     */
+    attendanceMode: text("attendance_mode").$type<"offline" | "online" | "mixed">(),
     /** Durable Blob URL once persisted; falls back to the remote URL without Blob storage. */
     coverImageUrl: text("cover_image_url"),
     coverSourceUrl: text("cover_source_url"),
@@ -2941,6 +3682,48 @@ export const events = pgTable(
     /** As the host reports it. May legitimately exceed the number of roster rows we hold. */
     attendeeCount: integer("attendee_count"),
     notes: text("notes"),
+    /**
+     * Which discovery source put this event here, or null when the user added it themselves.
+     *
+     * Separate from `source` because enrichment overwrites that with `'page'` the moment it
+     * reads the event's own link. `source` therefore answers "what was this row last read
+     * from"; this answers "how did it get here", which is what the card's badge shows and
+     * what makes an auto-added event explainable rather than mysterious.
+     */
+    discoveredVia: text("discovered_via").$type<
+      "gcal" | "ics" | "luma_ics" | "partiful_ics" | "gmail"
+    >(),
+    /** What the user said they would do, where the source reported it. */
+    rsvpStatus: text("rsvp_status").$type<
+      "going" | "maybe" | "waitlist" | "invited" | "cancelled"
+    >(),
+    /**
+     * Whether `role` is the user's own statement or something we worked out.
+     *
+     * Discovery has to guess — a calendar invite does not say whether you are running the
+     * event — and a later signal (the host API listing it) is allowed to correct a guess.
+     * It is never allowed to correct the user, so an edit sets this to `'user'` and the
+     * promotion path skips those rows.
+     */
+    roleSource: text("role_source").$type<"user" | "inferred">(),
+    /**
+     * "Not mine" — a soft hide, so the undo is one click and the row keeps its roster.
+     *
+     * Hiding also has to be REMEMBERED, or the next sync of the same feed adds it straight
+     * back. That part is `event_aliases`: the keys stay, pointing at this dismissed row.
+     */
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    /**
+     * What kind of event this is, where we can tell.
+     *
+     * Earns a column because it changes who is worth talking to: a recruiter at a career
+     * fair is the single most useful person in the room, and the same recruiter at a party
+     * is just another guest.
+     */
+    kind: text("kind").$type<"career_fair" | "conference" | "meetup" | "party" | "other">(),
+    /** Queue + lease for background enrichment. Null means nothing is owed. */
+    enrichDueAt: timestamp("enrich_due_at", { withTimezone: true }),
+    enrichAttempts: integer("enrich_attempts").default(0).notNull(),
     enrichedAt: timestamp("enriched_at", { withTimezone: true }),
     enrichError: text("enrich_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -2954,10 +3737,67 @@ export const events = pgTable(
      * or repeat a row when two events share a start time.
      */
     index("events_user_starts_idx").on(t.userId, t.startsAt, t.id),
+    /** The enrichment queue's claim. Partial: almost no event is ever waiting to be read. */
+    index("events_enrich_due_idx").on(t.enrichDueAt).where(sql`enrich_due_at is not null`),
     /** Connector idempotency: re-syncing a provider updates the row rather than adding one. */
     uniqueIndex("events_provider_uidx")
       .on(t.userId, t.provider, t.providerEventId)
       .where(sql`provider_event_id is not null`),
+  ]
+);
+
+/**
+ * Every key any source has ever used to name an event, and what it resolved to.
+ *
+ * Three discovery sources can report the same event in one pass and none of them agrees with
+ * the others about its name: a Google Calendar invite knows an `iCalUID`, a Luma feed knows
+ * `evt-abc`, a confirmation email knows a message id and a link. Deduping on the event's URL
+ * alone fails on the first of those and on any link with a personal token in it.
+ *
+ * So every key is written here against one unique index, and the index — not application
+ * logic — decides the winner when two sources race inside the same pass.
+ *
+ * ## A null `event_id` is a tombstone, and that is the point
+ *
+ * "Not mine" would otherwise be the most frustrating button in the product: the next sync of
+ * the same calendar feed adds the event straight back, every fifteen minutes, forever. The
+ * keys survive the dismissal, so discovery can recognise a re-report and drop it.
+ *
+ * `ON DELETE SET NULL` rather than CASCADE is what extends that to a hard delete: deleting an
+ * event leaves its keys behind with nothing to point at, which reads as "this was deliberately
+ * removed" instead of "never seen". A user who pastes the link again by hand overrides it —
+ * that is an explicit statement, and it re-points the alias.
+ */
+export const eventAliases = pgTable(
+  "event_aliases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /**
+     * `provider` — `luma:evt-abc`, the platform's own id, the strongest key there is.
+     * `url` — the canonical event URL, for sources that only ever saw a link.
+     * `source_ref` — the source's OWN id (`gcal:<iCalUID>`, `gmail:<messageId>`,
+     *   `ics:<UID>`), which is what makes re-reading the same feed idempotent even when the
+     *   event's public identity is still unknown.
+     */
+    kind: text("kind").$type<"provider" | "url" | "source_ref">().notNull(),
+    value: text("value").notNull(),
+    /** Null = tombstone: dismissed or deleted, and never to be re-added by a sync. */
+    eventId: uuid("event_id").references(() => events.id, { onDelete: "set null" }),
+    source: text("source").notNull(),
+    /**
+     * Why we believe this key names this event — a subject line, a sender domain, a calendar
+     * summary. Shown when the user asks "why is this here?", and deliberately never a message
+     * body: this table must not become a copy of the user's mail.
+     */
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().default({}).notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("event_aliases_user_kind_value_uidx").on(t.userId, t.kind, t.value),
+    /** An index on the FK, for the same reason `event_attendees_contact_idx` exists. */
+    index("event_aliases_event_idx").on(t.eventId).where(sql`event_id is not null`),
   ]
 );
 
@@ -2980,11 +3820,39 @@ export const eventAttendees = pgTable(
     attendeeRole: text("attendee_role").$type<"attendee" | "host" | "speaker">(),
     /** Which acquisition path produced this row. Rendered as a badge, so it must be honest. */
     source: text("source")
-      .$type<"paste" | "csv" | "screenshot" | "luma" | "eventbrite">()
+      .$type<"paste" | "csv" | "screenshot" | "page" | "calendar" | "luma" | "eventbrite">()
       .default("paste")
       .notNull(),
     /** The provider's own guest id, where there is one. */
     externalRef: text("external_ref"),
+    /**
+     * The same person, across DIFFERENT events.
+     *
+     * `identityKey` below cannot do this: it keys on the string it was given, so two
+     * spellings of one LinkedIn URL are two keys. That is right for its job — making a
+     * re-paste idempotent against a unique index, where renormalising would break every
+     * stored row — and useless for "have I met them before".
+     *
+     * The kinds match `contact_identities.kind`, so the aggregate can join a roster row to a
+     * contact through that table's unique index rather than reimplementing the matching.
+     */
+    /**
+     * The optional AI line: why this person is worth finding, and an opener.
+     *
+     * Cached with `inputsHash` — a fingerprint of the facts it was written from — so it is
+     * regenerated when those change and never on a re-render. Without that, every page load
+     * of a 200-person roster would be 200 model calls against the user's own key.
+     */
+    aiNote: jsonb("ai_note").$type<{
+      why: string;
+      opener: string;
+      inputsHash: string;
+      generatedAt: string;
+    }>(),
+    personKeyKind: text("person_key_kind").$type<
+      "linkedin_slug" | "email" | "x_handle" | "platform_user" | "name"
+    >(),
+    personKeyValue: text("person_key_value"),
     /** 0/1. Set by the human, never by a sync — see `contactId`. */
     spokeTo: integer("spoke_to").default(0).notNull(),
     /**
@@ -3016,7 +3884,79 @@ export const eventAttendees = pgTable(
      * added to fix exactly this omission — without it, deleting a contact scans this table.
      */
     index("event_attendees_contact_idx").on(t.contactId).where(sql`contact_id is not null`),
+    /** What "people you keep seeing" groups on, across a whole roster history. */
+    index("event_attendees_person_idx")
+      .on(t.userId, t.personKeyKind, t.personKeyValue)
+      .where(sql`person_key_value is not null`),
   ]
+);
+
+/**
+ * Which companies were at an event, and in what capacity.
+ *
+ * The question a career fair makes obvious: "Stripe was there" is more useful than thirty
+ * names, because it connects to everything Orbit already knows — who you know there, who used
+ * to work there, and whether it is somewhere you are trying to get.
+ *
+ * Only CURATED companies get rows here: hosts, sponsors, exhibitors, and the employer lists a
+ * user pastes from a fair. Attendee employers are NOT written — a 900-person conference would
+ * otherwise create hundreds of `companies` rows nobody asked for, one per typo'd job title.
+ * Those are grouped live from `event_attendees.company_key` instead.
+ */
+export const eventCompanies = pgTable(
+  "event_companies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    /**
+     * `employer` is the career-fair case — the company was there to recruit — which reads
+     * very differently from sponsoring a conference, and changes who is worth talking to.
+     */
+    role: text("role").$type<"host" | "sponsor" | "exhibitor" | "employer">().notNull(),
+    source: text("source")
+      .$type<"page" | "paste" | "screenshot" | "ai" | "manual">()
+      .notNull(),
+    /** Where this came from, in the user's terms: "booth 12", "from the event page". */
+    evidence: text("evidence"),
+    /** Wrong ones are hidden rather than deleted, so an AI mistake is one click undone. */
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("event_companies_event_company_role_uidx").on(t.eventId, t.companyId, t.role),
+    /** "Where else have I seen this company" — and an index on the FK, as ever. */
+    index("event_companies_user_company_idx").on(t.userId, t.companyId),
+  ]
+);
+
+/**
+ * The companies the user is actually trying to reach.
+ *
+ * A table rather than a jsonb list on `user_settings` because relevance scoring and the event
+ * company panel both JOIN on it — jsonb cannot be indexed for that, and the alternative is
+ * loading every target into memory on every scored roster row.
+ */
+export const targetCompanies = pgTable(
+  "target_companies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    /** 1 dream, 2 target, 3 curious. Weighted differently when ranking who to talk to. */
+    priority: integer("priority").default(2).notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("target_companies_user_company_uidx").on(t.userId, t.companyId)]
 );
 
 export const eventProviderConnections = pgTable(
@@ -3024,14 +3964,29 @@ export const eventProviderConnections = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
-    provider: text("provider").$type<"luma" | "eventbrite">().notNull(),
+    /**
+     * Which SOURCE this row connects to, not merely which company.
+     *
+     * `luma` is a host API key; `luma_ics` is the user's personal feed of everything they
+     * registered for. Same platform, different data, and a user can have both — which is why
+     * they are separate values under the `(user_id, provider)` unique index rather than one
+     * row with a mode flag.
+     */
+    provider: text("provider")
+      .$type<"luma" | "eventbrite" | "luma_ics" | "partiful_ics" | "gmail">()
+      .notNull(),
     /**
      * Luma authenticates with a user-supplied API key scoped to one calendar; Eventbrite
      * uses OAuth. One table with a discriminator rather than two near-identical ones —
      * unlike Gmail/Outlook, these two genuinely differ in their credential shape, so the
      * difference is worth naming instead of hiding behind duplicate columns.
+     *
+     * `ics` is a secret URL and nothing else. `google_grant` stores no secret at all: the
+     * row's existence IS the opt-in, and the token comes from `gmail_connections`.
      */
-    authKind: text("auth_kind").$type<"api_key" | "oauth">().notNull(),
+    authKind: text("auth_kind")
+      .$type<"api_key" | "oauth" | "ics" | "google_grant">()
+      .notNull(),
     /** Calendar or organisation name, shown so the user can tell two connections apart. */
     label: text("label"),
     /** Luma calendar api id / Eventbrite organization_id. */
@@ -3060,6 +4015,86 @@ export const eventProviderConnections = pgTable(
   ]
 );
 
+/**
+ * One row per page view, written by `POST /api/track` from the client beacon in
+ * `src/components/analytics/pageview-beacon.tsx`.
+ *
+ * NOT `events` — that name is taken, three tables up, by the conferences-you-attended
+ * feature. The two meanings collided once already; this one is named for what it holds.
+ *
+ * COOKIELESS BY CONSTRUCTION. `visitor_hash` is sha256(daily rotating salt + ip + user
+ * agent), so nothing here identifies a browser across midnight UTC and no cookie is set —
+ * which is why the product needs no consent banner. The salt is derived from
+ * `ANALYTICS_SALT` and never stored, so a dump of this table cannot be reversed without
+ * both that secret and a candidate IP. The IP itself is hashed in the route handler and
+ * discarded; it is never written anywhere.
+ *
+ * The cost of that choice, which every reader of these numbers has to know: over a range
+ * longer than a day, distinct `visitor_hash` values are VISITOR-DAYS, not people. One
+ * person visiting on three days is three hashes. `src/lib/admin-analytics.ts` labels this
+ * honestly rather than passing the sum off as a headcount.
+ *
+ * `route` is a normalized PATTERN from `normalizeRoute()` ("/contacts/[id]"), never the
+ * raw path. That bounds cardinality and, more importantly, keeps contact ids out of a
+ * table whose whole purpose is aggregate reporting.
+ *
+ * Sessions are DERIVED, not stored: group by `session_id` and read the first and last
+ * `created_at`. `session_id` lives in sessionStorage, so it is per-tab and dies with it.
+ */
+export const pageViews = pgTable(
+  "page_views",
+  {
+    /**
+     * Generated by the client, not the database. The dwell patch that fires on `pagehide`
+     * has to name the row it is updating, and a `sendBeacon` cannot read a response — so
+     * the id has to exist before the insert.
+     */
+    id: uuid("id").primaryKey(),
+    /** sha256(daily salt + ip + user agent). See this table's note on visitor-days. */
+    visitorHash: text("visitor_hash").notNull(),
+    /** Per-tab, from sessionStorage. Not a cookie: it does not survive closing the tab. */
+    sessionId: text("session_id").notNull(),
+    /** Null for anonymous marketing traffic — the majority of rows, by design. */
+    userId: text("user_id"),
+    /** A pattern from `ROUTE_PATTERNS`, or "/unknown". Never a raw pathname. */
+    route: text("route").notNull(),
+    /**
+     * External referrers only, and only on a document's first view — `/api/track` drops
+     * Orbit's own host, and the beacon stops sending `document.referrer` after the landing
+     * view because client-side navigation never changes it.
+     */
+    referrerHost: text("referrer_host"),
+    utmSource: text("utm_source"),
+    utmMedium: text("utm_medium"),
+    utmCampaign: text("utm_campaign"),
+    /** ISO-3166-1 alpha-2, from `x-vercel-ip-country`. Null off Vercel (local dev). */
+    country: text("country"),
+    region: text("region"),
+    city: text("city"),
+    device: text("device").$type<"desktop" | "mobile" | "tablet">().notNull(),
+    /**
+     * Kept rather than rejected at the door. How much traffic was filtered is itself a
+     * number worth having; deleting it would make a crawler wave look like a quiet week.
+     * Every aggregate in `admin-analytics.ts` filters these out.
+     */
+    isBot: boolean("is_bot").notNull().default(false),
+    /**
+     * Milliseconds on the page, patched best-effort by the `pagehide` beacon. NULL means
+     * the beacon never landed — a tab killed, a crashed browser, a blocked request. That
+     * is not zero, and summing it as zero would understate every average on the page.
+     */
+    dwellMs: integer("dwell_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("page_views_created_idx").on(t.createdAt),
+    index("page_views_route_created_idx").on(t.route, t.createdAt),
+    index("page_views_session_idx").on(t.sessionId, t.createdAt),
+    index("page_views_visitor_idx").on(t.visitorHash, t.createdAt),
+    index("page_views_country_created_idx").on(t.country, t.createdAt),
+  ]
+);
+
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
 export type ExtensionUsage = typeof extensionUsage.$inferSelect;
@@ -3071,6 +4106,10 @@ export type NoteBatch = typeof noteBatches.$inferSelect;
 export type InteractionMention = typeof interactionMentions.$inferSelect;
 export type ActionItem = typeof actionItems.$inferSelect;
 export type ContactBrief = typeof contactBriefs.$inferSelect;
+export type ContactOpportunity = typeof contactOpportunities.$inferSelect;
+export type JobFeedSource = typeof jobFeedSources.$inferSelect;
+export type JobPosting = typeof jobPostings.$inferSelect;
+export type JobPostingMatch = typeof jobPostingMatches.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type AiSuggestion = typeof aiSuggestions.$inferSelect;
 export type ImportRecord = typeof imports.$inferSelect;
@@ -3085,6 +4124,7 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type Recruiter = typeof recruiters.$inferSelect;
 export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
 export type RecruiterMessage = typeof recruiterMessages.$inferSelect;
+export type RecruiterScanState = typeof recruiterScanState.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;
@@ -3104,9 +4144,71 @@ export type NewEventRecord = typeof events.$inferInsert;
 export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
 export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
 export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
+export type EventAlias = typeof eventAliases.$inferSelect;
+export type EventCompany = typeof eventCompanies.$inferSelect;
+export type TargetCompany = typeof targetCompanies.$inferSelect;
 export type ContactIdentity = typeof contactIdentities.$inferSelect;
 export type NewContactIdentity = typeof contactIdentities.$inferInsert;
 export type ContactMerge = typeof contactMerges.$inferSelect;
 export type NewContactMerge = typeof contactMerges.$inferInsert;
 export type DuplicateSuggestion = typeof duplicateSuggestions.$inferSelect;
 export type NewDuplicateSuggestion = typeof duplicateSuggestions.$inferInsert;
+export type PageView = typeof pageViews.$inferSelect;
+export type NewPageView = typeof pageViews.$inferInsert;
+
+/* ------------------------------------------------------------------------------------
+ * Provider status and upgrade celebrations
+ *
+ * Two standalone tables, no foreign keys. `admin_provider_snapshots` caches the last
+ * health check per provider so the admin surface reads a row instead of fanning out to
+ * four APIs on every render. `plan_upgrade_events` is the durable, once-only record that
+ * an account's plan moved upward — the celebration watcher's localStorage key cannot be
+ * that, because it is per-device and per-browser-profile.
+ * --------------------------------------------------------------------------------- */
+
+/**
+ * Durable, one-shot celebrations created only when the resolved plan moves upward.
+ *
+ * `event_key` makes provider retries idempotent. The partial pending index prevents two
+ * concurrent webhook deliveries from queuing duplicate celebrations for the same plan,
+ * while still allowing a later downgrade and re-upgrade after the first row is claimed.
+ */
+export const planUpgradeEvents = pgTable(
+  "plan_upgrade_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    plan: text("plan").$type<"orbit" | "lifetime">().notNull(),
+    source: text("source")
+      .$type<"subscription" | "lifetime" | "comp">()
+      .notNull(),
+    eventKey: text("event_key").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("plan_upgrade_events_claim_idx").on(t.userId, t.claimedAt, t.createdAt),
+    uniqueIndex("plan_upgrade_events_pending_uidx")
+      .on(t.userId, t.plan)
+      .where(sql`${t.claimedAt} is null`),
+  ]
+);
+
+/** Last safe summary from each external provider, used when a live check times out. */
+export const adminProviderSnapshots = pgTable(
+  "admin_provider_snapshots",
+  {
+    provider: text("provider").primaryKey(),
+    status: text("status")
+      .$type<"healthy" | "degraded" | "unavailable" | "unconfigured">()
+      .notNull(),
+    summary: jsonb("summary").$type<Record<string, string | number | boolean | null>>().default({}),
+    errorKind: text("error_kind"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [index("admin_provider_snapshots_expires_idx").on(t.expiresAt)]
+);
+
+export type PlanUpgradeEventRow = typeof planUpgradeEvents.$inferSelect;
+export type AdminProviderSnapshotRow = typeof adminProviderSnapshots.$inferSelect;

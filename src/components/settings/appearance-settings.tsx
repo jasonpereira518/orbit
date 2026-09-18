@@ -5,6 +5,7 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { saveThemePreference } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
+import { SettingsRow } from "@/components/settings/settings-section";
 import type { ThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -56,14 +57,11 @@ export function AppearanceSettings({
   }
 
   return (
-    <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Appearance</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Choose light, dark, or match your system. Saved to your account and
-          syncs across devices.
-        </p>
-      </div>
+    <SettingsRow
+      id="settings-appearance"
+      title="Theme"
+      description="Light, dark, or match your system. Saved to your account, so it follows you across devices."
+    >
       <div className="flex flex-wrap gap-2">
         {OPTIONS.map(({ value, label, icon: Icon }) => (
           <Button
@@ -83,6 +81,6 @@ export function AppearanceSettings({
           </Button>
         ))}
       </div>
-    </section>
+    </SettingsRow>
   );
 }

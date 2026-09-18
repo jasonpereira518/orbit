@@ -126,6 +126,7 @@ export const PLAN_COPY: PlanCopy[] = [
       "Gmail, Outlook, and calendar sync",
       "Chrome extension",
     ],
+    caveat: "AI runs on your own provider key, billed to you at cost.",
   },
   {
     id: "lifetime",
@@ -138,15 +139,21 @@ export const PLAN_COPY: PlanCopy[] = [
       monthly: LIFETIME_INTRO_PRICE_COPY,
       annual: LIFETIME_INTRO_PRICE_COPY,
     },
+    // Also the celebration's perk list (`tier-theme.ts` takes the first six), so the
+    // headline Lifetime difference — included AI — sits near the top.
     features: [
       "Unlimited contacts, forever",
+      "AI included — no API key needed",
       "Outreach campaigns with email and SMS sending",
       "Recruiter tracking",
       "Gmail, Outlook, and calendar sync",
       "Chrome extension",
     ],
+    // Both halves are the ceilings that let a one-time price carry ongoing costs: included AI
+    // has a monthly allowance (MANAGED_AI_BUDGET), and enrichment has no ceiling at all, so it
+    // stays on the buyer's own Apollo key.
     caveat:
-      "Contact enrichment runs on your own Apollo key instead of Orbit's credits. Enrichment is the one cost with no ceiling, and that is what keeps a one-time price honest.",
+      "Included AI has a monthly allowance — add your own AI key any time and Orbit uses it instead, with no allowance. Contact enrichment runs on your own Apollo key rather than Orbit's credits, because enrichment has no ceiling at all.",
   },
 ];
 

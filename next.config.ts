@@ -4,6 +4,15 @@ import { buildSecurityHeaders } from "./src/lib/security-headers";
 import { CAPTURE_BODY_SIZE_LIMIT } from "./src/lib/capture-limits";
 
 const nextConfig: NextConfig = {
+  // `*.bench.tsx` routes (the constellation benchmark, src/app/bench) exist only in a build
+  // made with ORBIT_BENCH=1, so no deployed build ever contains them.
+  pageExtensions: [
+    "tsx",
+    "ts",
+    "jsx",
+    "js",
+    ...(process.env.ORBIT_BENCH === "1" ? ["bench.tsx"] : []),
+  ],
   // HSTS, nosniff, referrer and frame policies, and a Content-Security-Policy that starts
   // report-only (CSP_ENFORCE=1 to enforce). See src/lib/security-headers.ts.
   async headers() {
@@ -30,6 +39,14 @@ const nextConfig: NextConfig = {
     "drizzle-orm",
     "sharp",
   ],
+  // The ticket-image route reads its fonts and the planet art from disk at request time;
+  // without this the deploy bundle omits them and the route 500s only in production.
+  outputFileTracingIncludes: {
+    "/api/interest-list/ticket-image": [
+      "./src/app/api/interest-list/ticket-image/fonts/*",
+      "./public/landing/planets/*.png",
+    ],
+  },
   experimental: {
     // Route navigations animate via React's <ViewTransition> (route-transition.tsx).
     viewTransition: true,

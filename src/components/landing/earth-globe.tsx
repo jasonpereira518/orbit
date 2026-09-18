@@ -27,6 +27,7 @@ import {
 import {
   centreY,
   earthAt,
+  earthCameraStandoff,
   RING_RATIO,
   stageSize,
   type Geom,
@@ -173,8 +174,9 @@ export function EarthGlobe({
     renderer.outputColorSpace = SRGBColorSpace;
 
     const scene = new Scene();
-    const camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
-    camera.position.z = 1000;
+    // Every plane of this camera is set from the frame in `measure()`, which runs
+    // before the first draw — the placeholders are only here to construct it.
+    const camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 1);
 
     // Unit sphere; the root group's scale carries the real radius, so one
     // geometry serves both the 30px orbit pose and the full-bleed finale.
@@ -354,6 +356,18 @@ export function EarthGlobe({
       camera.right = geom.w / 2;
       camera.top = geom.h / 2;
       camera.bottom = -geom.h / 2;
+
+      // The depth range is measured too, not fixed. World units here are the frame's
+      // CSS pixels, so the globe's half-depth IS the radius the choreography hands
+      // out — and the finale grows that past 1000px on any large window, which a
+      // fixed camera distance cannot hold. `earthCameraStandoff` owns the arithmetic
+      // and the story of what it cost. Pulling the camera back is free: an
+      // orthographic projection has no perspective for the distance to change.
+      const standoff = earthCameraStandoff(geom.w, geom.h);
+      camera.position.z = standoff;
+      // Far plane the same distance beyond the scene plane as the camera is in front
+      // of it, so the globe's back half is inside the frustum too.
+      camera.far = standoff * 2;
       camera.updateProjectionMatrix();
     };
 
