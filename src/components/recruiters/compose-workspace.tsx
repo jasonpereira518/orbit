@@ -410,7 +410,7 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
             onClick={() =>
               start(async () => {
                 try {
-                  const { url } = await startGmailOAuth("/recruiters/compose");
+                  const { url } = await startGmailOAuth({ purpose: "send", returnTo: "/recruiters/compose" });
                   window.location.href = url;
                 } catch (err) {
                   toast.error(friendlyError(err, TOAST_COPY.connectFailed));
@@ -426,7 +426,7 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
   );
 }
 
-/** Shown when the Gmail connection predates the send scope. */
+/** Shown when the Gmail grant does not include gmail.send. */
 function ReconnectBanner() {
   const [pending, start] = useTransition();
   return (
@@ -434,12 +434,10 @@ function ReconnectBanner() {
       <div className="flex gap-3">
         <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
         <div>
-          <p className="font-medium text-foreground">
-            Reconnect Gmail to send
-          </p>
+          <p className="font-medium text-foreground">Allow Gmail to send</p>
           <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-            Your Gmail connection was made before Orbit could send on your behalf. You
-            can draft now, but sending needs permission you haven&apos;t granted yet.
+            You can draft now. Sending from your own address needs Google’s permission to
+            send as you, which Orbit asks for only when you want it.
           </p>
         </div>
       </div>
@@ -449,7 +447,7 @@ function ReconnectBanner() {
         onClick={() =>
           start(async () => {
             try {
-              const { url } = await startGmailOAuth("/recruiters/compose");
+              const { url } = await startGmailOAuth({ purpose: "send", returnTo: "/recruiters/compose" });
               window.location.href = url;
             } catch (err) {
               toast.error(friendlyError(err, TOAST_COPY.connectFailed));

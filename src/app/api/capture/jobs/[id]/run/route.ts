@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { runCaptureJobById } from "@/lib/capture-job-runner";
+import { reportAndContinue } from "@/lib/report-error";
 
 // A two-pass parse over a long note, or a save that writes a contact per person.
 export const maxDuration = 300;
@@ -18,6 +19,6 @@ export async function POST(request: Request, { params }: Params) {
     return new NextResponse(null, { status: 401 });
   }
   const { id } = await params;
-  after(() => runCaptureJobById(id).catch(() => {}));
+  after(() => runCaptureJobById(id).catch(reportAndContinue({ where: "job.capture.kick", extra: { jobId: id } }, undefined)));
   return NextResponse.json({ ok: true });
 }

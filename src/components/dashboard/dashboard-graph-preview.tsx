@@ -28,24 +28,33 @@ export function DashboardGraphPreview({
         </p>
       </CardHeader>
       <CardContent className="min-h-0 flex-1 overflow-hidden p-0 px-4 pb-2">
-        <Link
-          href="/graph"
-          aria-label={`Open the full constellation: ${sky.count.toLocaleString()} ${
-            sky.count === 1 ? "person" : "people"
-          }`}
+        {/*
+          Not a link: the sky moves under a drag, and a drag that ended over a link would open it.
+          A tap still opens the chart, and the footer link is the keyboard's way there.
+        */}
+        <div
           className={cn(
-            "block h-[300px] overflow-hidden rounded-2xl border border-white/10",
+            "h-[300px] overflow-hidden rounded-2xl border border-white/10",
             STAGE_GROUND
           )}
         >
           {sky.count > 0 ? (
-            <ConstellationPreviewCanvas sky={sky} />
+            <ConstellationPreviewCanvas
+              sky={sky}
+              href="/graph"
+              label={`Your constellation: ${sky.count.toLocaleString()} ${
+                sky.count === 1 ? "person" : "people"
+              }. Drag to move around, pinch to zoom, tap to open the full chart.`}
+            />
           ) : (
-            <span className="flex h-full items-center justify-center text-sm text-white/50">
+            <Link
+              href="/graph"
+              className="flex h-full items-center justify-center text-sm text-white/50"
+            >
               Your sky is empty
-            </span>
+            </Link>
           )}
-        </Link>
+        </div>
       </CardContent>
       <CardFooter className="border-t border-border/60 pt-4">
         <Link

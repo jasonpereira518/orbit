@@ -94,13 +94,14 @@ export type ScanHandoff = {
 /**
  * Delete grants that are past their expiry.
  *
- * Called opportunistically when minting rather than on a cron: the table only ever grows
- * when someone starts a scan, so the act of starting one is exactly when it is worth
- * tidying, and it keeps this feature from needing a scheduled job of its own.
+ * Called opportunistically when minting: the table only ever grows when someone starts a
+ * scan, so starting one is a good moment to tidy. The daily cron runs it too, so grants
+ * from someone who never scans again do not linger. Returns how many it deleted.
  */
-export async function sweepExpiredHandoffs(): Promise<void> {
+export async function sweepExpiredHandoffs(now: Date = new Date()): Promise<number> {
   const db = await getDb();
-  await db.delete(captureHandoffs).where(lt(captureHandoffs.expiresAt, new Date()));
+  const removed = await db.delete(captureHandoffs).where(lt(captureHandoffs.expiresAt, now)).returning();
+  return removed.length;
 }
 
 export type MintedHandoff = { token: string; url: string; expiresAt: Date; captureJobId: string };

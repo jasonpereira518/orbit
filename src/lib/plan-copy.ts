@@ -5,6 +5,7 @@ import {
   LIFETIME_STANDARD_PRICE,
   type Plan,
 } from "@/lib/plan-limits";
+import type { DemoAccountReason } from "@/lib/demo-account";
 
 /**
  * Single source of truth for how the tiers are described, so the marketing pricing
@@ -189,4 +190,15 @@ export function planCopyWithOffer(offer: {
       ? { ...plan, price: { monthly: price, annual: price } }
       : plan
   );
+}
+
+/**
+ * The plan card's line when contacts are uncapped. A demo account's limits are lifted by
+ * `getEntitlements`, not bought, so it says so — otherwise a free plan on localhost read
+ * "Unlimited contacts" right beside its own "Up to 500 contacts".
+ */
+export function unlimitedContactsLine(used: number, demo: DemoAccountReason | null): string {
+  if (demo === "localhost") return `Demo account — plan limits lifted on localhost. ${used} in your orbit.`;
+  if (demo === "showcase") return `Showcase account — plan limits lifted. ${used} in your orbit.`;
+  return `Unlimited contacts — ${used} in your orbit.`;
 }

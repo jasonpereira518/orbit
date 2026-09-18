@@ -16,7 +16,7 @@ import type {
   KnowledgeEntry,
   KnowledgeKind,
   KnowledgeStats,
-} from "@/actions/knowledge";
+} from "@/lib/knowledge-base-types";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";

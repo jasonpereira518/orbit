@@ -5,10 +5,21 @@
 # Project → Settings; it has been 6 hours). This keeps 90 days of daily `pg_dump`s as
 # encrypted workflow artifacts — encrypted with `age` to a public key, so the artifact
 # store never holds readable customer data and the private key never leaves the password
-# manager. Restore steps are in docs/RUNBOOK.md.
+# manager. Restore steps and the drill log are in docs/RUNBOOK.md.
 #
-# Secrets: DATABASE_URL (the production Neon URL), BACKUP_AGE_PUBLIC_KEY (an age recipient,
-# `age1...`; keep the matching private key somewhere safe and OFF GitHub).
+# Secrets: DATABASE_URL (the production Neon URL, direct host, not -pooler),
+# BACKUP_AGE_PUBLIC_KEY (an age recipient, `age1...`; keep the matching private key
+# somewhere safe and OFF GitHub), SLACK_OPS_CRITICAL_WEBHOOK_URL (optional; pages on failure),
+# BETTERSTACK_BACKUP_HEARTBEAT_URL (optional; pinged after each stored dump — Better Stack pages
+# when none arrives for 36 h).
+#
+# It fails LOUDLY. Every run from Sep 6 to Sep 15 2026 failed and nobody heard: both secrets
+# were empty (an empty key read as `age: unknown recipient type ""`), and behind that the
+# install silently fell back to Ubuntu's pg_dump 16, which refuses to dump the Postgres 18
+# server. Now a guard names a missing secret before anything runs, the client is pinned to
+# the server's major with no fallback, the dump runs under pipefail (a failed pg_dump used
+# to be piped into age as an empty, "successful" file), and any failure pages
+# #orbit-ops-critical.
 name: backup
 
 on:
@@ -28,15 +39,51 @@ jobs:
   dump:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # The production server's major version (`SHOW server_version` said 18.6 on Sep 15
+      # 2026). pg_dump refuses a server newer than itself, so raise this when Neon upgrades
+      # the project — the dump step fails with "server version mismatch" until you do.
+      PG_MAJOR: "18"
     steps:
-      - name: Install pg_dump (Postgres 17 client) and age
+      - name: Refuse to run without the backup secrets
         run: |
+          missing=""
+          [ -n "$DATABASE_URL" ] || missing="$missing DATABASE_URL"
+          [ -n "$BACKUP_AGE_PUBLIC_KEY" ] || missing="$missing BACKUP_AGE_PUBLIC_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error title=Backup secrets missing::Set the repository secret(s)$missing under Settings > Secrets and variables > Actions. No backup was taken."
+            exit 1
+          fi
+          case "$BACKUP_AGE_PUBLIC_KEY" in
+            age1*) ;;
+            *)
+              echo "::error title=Backup key malformed::BACKUP_AGE_PUBLIC_KEY must be an age recipient starting with age1. No backup was taken."
+              exit 1
+              ;;
+          esac
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_AGE_PUBLIC_KEY: ${{ secrets.BACKUP_AGE_PUBLIC_KEY }}
+      - name: Install pg_dump (pinned Postgres client) and age
+        run: |
+          # From the PostgreSQL apt repository, not Ubuntu's: 24.04 ships client 16. No
+          # fallback — an older client cannot dump a newer server, and the old
+          # `|| postgresql-client` fallback is exactly what hid that.
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-17 age >/dev/null 2>&1 || \
-            sudo apt-get install -y -qq postgresql-client age
-          pg_dump --version; age --version
+          sudo apt-get install -y -qq postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null
+          sudo apt-get install -y -qq postgresql-client-"$PG_MAJOR"
+          # The runner image carries a Postgres 16 cluster, and Debian's pg_wrapper may pick
+          # its version over the newer client; name the pinned binaries directly.
+          echo "/usr/lib/postgresql/$PG_MAJOR/bin" >> "$GITHUB_PATH"
+          age --version
       - name: Dump and encrypt
         run: |
+          set -o pipefail
+          pg_dump --version | grep -q "(PostgreSQL) $PG_MAJOR\." || {
+            echo "::error title=Wrong pg_dump::Expected a Postgres $PG_MAJOR client, got: $(pg_dump --version)"
+            exit 1
+          }
           stamp=$(date -u +%F-%H%M)
           pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" \
             | age -r "$BACKUP_AGE_PUBLIC_KEY" > "orbit-$stamp.pgc.age"
@@ -51,3 +98,28 @@ jobs:
           path: orbit-*.pgc.age
           retention-days: 90
           if-no-files-found: error
+      # Only reached when every step above succeeded, so a ping means a dump was stored.
+      # Better Stack alerts when none arrives for 36 h: that is `backup.stale`, and it is the
+      # one signal that still works when this workflow stops running altogether.
+      - name: Tell Better Stack the backup landed
+        run: |
+          if [ -z "$BETTERSTACK_BACKUP_HEARTBEAT_URL" ]; then
+            echo "BETTERSTACK_BACKUP_HEARTBEAT_URL not set, skipping"
+            exit 0
+          fi
+          curl -sS --max-time 10 "$BETTERSTACK_BACKUP_HEARTBEAT_URL" > /dev/null || echo "heartbeat ping did not go through; Better Stack will notice the gap"
+        env:
+          BETTERSTACK_BACKUP_HEARTBEAT_URL: ${{ secrets.BETTERSTACK_BACKUP_HEARTBEAT_URL }}
+      - name: Page on a failed backup
+        if: failure()
+        run: |
+          if [ -z "$SLACK_OPS_CRITICAL_WEBHOOK_URL" ]; then
+            echo "SLACK_OPS_CRITICAL_WEBHOOK_URL not set, skipping"
+            exit 0
+          fi
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          curl -sS --max-time 10 -X POST -H 'content-type: application/json' \
+            --data "{\"text\":\":rotating_light: *[critical] The database backup failed* and no dump was stored. $run_url\"}" \
+            "$SLACK_OPS_CRITICAL_WEBHOOK_URL"
+        env:
+          SLACK_OPS_CRITICAL_WEBHOOK_URL: ${{ secrets.SLACK_OPS_CRITICAL_WEBHOOK_URL }}

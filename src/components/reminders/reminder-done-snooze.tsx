@@ -30,12 +30,13 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
   const [pending, start] = useTransition();
 
   return (
-    <div className="flex gap-1">
+    <div className="flex gap-1 pointer-coarse:gap-4">
       <Button
         size="icon-sm"
         variant="ghost"
         disabled={pending}
         aria-label="Mark done"
+        className="tap-target relative"
         title="Mark done"
         onClick={() =>
           start(() =>
@@ -56,6 +57,7 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
         variant="ghost"
         disabled={pending}
         aria-label="Snooze for a week"
+        className="tap-target relative"
         title="Snooze for a week"
         onClick={() =>
           start(() =>

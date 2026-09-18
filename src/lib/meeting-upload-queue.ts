@@ -38,6 +38,8 @@ export type ChunkResult = { seq: number; text: string; engine: string; duplicate
 export type QueueFatal =
   /** The server has no key to transcribe with — every chunk would fail the same way. */
   | "no-transcription-key"
+  /** A key the provider refused, an empty balance, or a model it does not have. */
+  | "transcription-refused"
   /** Another tab took this meeting over. */
   | "taken-over"
   /** The meeting was saved or discarded elsewhere, or no longer exists. */
@@ -281,7 +283,7 @@ export class MeetingUploadQueue {
         this.fail("taken-over", message);
         return;
       case 422:
-        this.fail("no-transcription-key", message);
+        this.fail(body?.code === "no-transcription-key" ? "no-transcription-key" : "transcription-refused", message);
         return;
       case 400:
       case 413:

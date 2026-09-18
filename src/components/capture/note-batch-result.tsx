@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 
 export type NoteBatchReminderDetail = {
   description: string | null;
@@ -91,7 +92,7 @@ export function NoteBatchResultView({
   }
 
   function removeContact(contactId: string) {
-    if (!confirm("Delete this contact and its notes?")) return;
+    if (!confirm(`Delete this contact? ${CONTACT_DELETE_EXPLAINER}`)) return;
     start(async () => {
       try {
         await deleteContact(contactId);

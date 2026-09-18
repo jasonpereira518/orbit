@@ -4,124 +4,116 @@
  * Pure, and run on the server. The preview used to ship up to 150 full contact records (summaries,
  * key facts, emails) to the browser and mount the whole interactive chart — React Flow, its
  * toolbars and starfield — in a 300px card nobody can pan. Now the server lays the sky out once
- * and sends only what the picture is made of — dot positions, line ends, cluster circles and a
- * colour palette — and the browser paints one canvas.
+ * and sends only what the picture is made of, as flat numbers against small palettes. The browser
+ * expands that back into the chart's own layout shape (`preview-sky-shape.ts`) and hands it to
+ * the chart's canvas renderer (`sky-canvas/draw-sky.ts`), so the card is the constellation tab's
+ * sky rather than an approximation of it.
+ *
+ * Nobody's id, name, role or contact details are in it, and the card draws no names at all. The
+ * only words are the cluster names, and they are there as seeds: each cluster's wash takes its
+ * shape from its name, so the card's clouds match the tab's.
  */
 import {
   buildHybridGraphLayout,
-  type ClusterLabelData,
   type GraphContactInput,
   type GraphNodeData,
   type NebulaData,
+  type OrbitRingsData,
 } from "@/lib/graph-layout";
-import { starVisual } from "@/lib/graph/star-style";
+import {
+  STAR_COMET,
+  STAR_SCATTER,
+  type PreviewLineStyle,
+  type PreviewSky,
+} from "@/lib/graph/preview-sky-shape";
 
-export type PreviewCluster = {
-  /** The company or school, as the chart's own label says it. */
-  name: string;
-  x: number;
-  y: number;
-  /** How far its stars reach, in layout px: the wash is drawn from this, and hover tested on it. */
-  r: number;
-  /** Index into `colors`. */
-  c: number;
-};
+export type { PreviewSky } from "@/lib/graph/preview-sky-shape";
 
-export type PreviewSky = {
-  /** The world rect to frame: the stars' trimmed bounds, always including the sun at 0,0. */
-  frame: { minX: number; minY: number; maxX: number; maxY: number };
-  /** Flat [x, y, radius, colourIndex, alpha×100] per star, in layout px. */
-  stars: number[];
-  /** Colours referenced by `stars` and `clusters`. */
-  colors: string[];
-  /** Flat [x1, y1, x2, y2] per constellation line. */
-  lines: number[];
-  /** One per company or school: its wash, and the only thing in the card you can point at. */
-  clusters: PreviewCluster[];
-  count: number;
-};
+const round = (v: number) => Math.round(v * 10) / 10;
 
-const STAR_FIELDS = 5;
-/** Outermost share of stars left out of the frame on each side, so a few loners do not shrink it. */
-const FRAME_TRIM = 0.04;
-
-function trimmed(values: number[]): [number, number] {
-  if (values.length === 0) return [0, 0];
-  const sorted = [...values].sort((a, b) => a - b);
-  const cut = Math.floor(sorted.length * FRAME_TRIM);
-  return [sorted[cut], sorted[sorted.length - 1 - cut]];
+/** Distinct values in first-seen order, and each value's index into them. */
+function palette<T>(key: (value: T) => string = String) {
+  const index = new Map<string, number>();
+  const values: T[] = [];
+  return {
+    values,
+    of(value: T) {
+      const k = key(value);
+      let i = index.get(k);
+      if (i === undefined) {
+        i = values.length;
+        values.push(value);
+        index.set(k, i);
+      }
+      return i;
+    },
+  };
 }
 
 export function buildPreviewSky(contacts: GraphContactInput[], userName: string): PreviewSky {
   const layout = buildHybridGraphLayout(contacts, userName);
-  const colorIndex = new Map<string, number>();
-  const colors: string[] = [];
-  const indexOf = (color: string) => {
-    let ci = colorIndex.get(color);
-    if (ci === undefined) {
-      ci = colors.length;
-      colors.push(color);
-      colorIndex.set(color, ci);
-    }
-    return ci;
-  };
+  const colors = palette<string>();
+  const names = palette<string>();
+  const lineStyles = palette<PreviewLineStyle>((s) => s.join("|"));
+  const starIndex = new Map<string, number>();
   const stars: number[] = [];
-  const positions = new Map<string, { x: number; y: number }>();
-  const xs: number[] = [0];
-  const ys: number[] = [0];
+  const washes: number[] = [];
+  let rings: number[] = [];
 
   for (const n of layout.nodes) {
-    if (n.type !== "contact") continue;
-    const d = n.data as GraphNodeData;
-    const visual = starVisual(d, false);
-    const color = visual.isComet ? "#ff6b4a" : visual.fill;
-    const ci = indexOf(color);
-    const x = Math.round(n.position.x);
-    const y = Math.round(n.position.y);
-    positions.set(n.id, { x, y });
-    xs.push(x);
-    ys.push(y);
-    stars.push(x, y, Math.round((visual.disc / 2) * 10) / 10, ci, Math.round(visual.alphaScale * 100));
+    const x = round(n.position.x);
+    const y = round(n.position.y);
+    if (n.type === "contact") {
+      const d = n.data as GraphNodeData;
+      starIndex.set(n.id, starIndex.size);
+      // No overdue flag: its ring is a status marker for the chart, and at card scale it only
+      // read as a stray donut on a star.
+      const flags = (d.figureRole === "scatter" ? STAR_SCATTER : 0) | (d.comet ? STAR_COMET : 0);
+      stars.push(
+        x,
+        y,
+        d.score ?? 2,
+        d.clusterColor ? colors.of(d.clusterColor) : -1,
+        flags,
+        // Only a comet's tail reads its angle.
+        d.comet ? Math.round((d.orbitAngle ?? 0) * 100) : 0
+      );
+    } else if (n.type === "nebula") {
+      const d = n.data as NebulaData;
+      washes.push(x, y, round(d.radius), colors.of(d.color), names.of(d.company));
+    } else if (n.type === "orbitRings") {
+      rings = [...(n.data as OrbitRingsData).radii];
+    }
   }
 
+  // The figures' lines only: the sun's rays are decoration the canvas renderer never draws.
   const lines: number[] = [];
   for (const e of layout.edges) {
-    if (e.data?.kind !== "constellation" && e.data?.kind !== "knows") continue;
-    const a = positions.get(e.source);
-    const b = positions.get(e.target);
-    if (a && b) lines.push(a.x, a.y, b.x, b.y);
+    const kind = e.data?.kind;
+    if (kind !== "constellation" && kind !== "knows") continue;
+    const a = starIndex.get(e.source);
+    const b = starIndex.get(e.target);
+    if (a === undefined || b === undefined) continue;
+    lines.push(
+      a,
+      b,
+      lineStyles.of([
+        kind,
+        String(e.style?.stroke ?? "rgba(255,255,255,0.35)"),
+        Number(e.style?.opacity ?? 0.5),
+        Number(e.style?.strokeWidth ?? 1),
+      ])
+    );
   }
 
-  // A cluster's name lives on its label node and its shape on its wash; they are one thing here.
-  const labelByClusterId = new Map<string, string>();
-  for (const n of layout.nodes) {
-    if (n.type !== "clusterLabel") continue;
-    const d = n.data as ClusterLabelData;
-    if (d.clusterId) labelByClusterId.set(d.clusterId, d.label);
-  }
-  const clusters: PreviewCluster[] = [];
-  for (const n of layout.nodes) {
-    if (n.type !== "nebula") continue;
-    const d = n.data as NebulaData;
-    const name = (d.clusterId && labelByClusterId.get(d.clusterId)) || d.company;
-    if (!name) continue;
-    clusters.push({
-      name,
-      x: Math.round(n.position.x),
-      y: Math.round(n.position.y),
-      r: Math.round(d.radius),
-      c: indexOf(d.color),
-    });
-  }
-
-  const [minX, maxX] = trimmed(xs);
-  const [minY, maxY] = trimmed(ys);
   return {
-    frame: { minX: Math.min(minX, 0), minY: Math.min(minY, 0), maxX: Math.max(maxX, 0), maxY: Math.max(maxY, 0) },
     stars,
-    colors,
+    colors: colors.values,
+    names: names.values,
+    washes,
     lines,
-    clusters,
-    count: stars.length / STAR_FIELDS,
+    lineStyles: lineStyles.values,
+    rings,
+    count: starIndex.size,
   };
 }

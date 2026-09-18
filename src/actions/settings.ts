@@ -2,22 +2,19 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
 import {
-  aiSuggestions,
   contactEmbeddings,
-  contacts,
-  imports,
-  interactions,
-  reminders,
-  tags,
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { encrypt } from "@/lib/crypto";
+import { ensureUserSettings } from "@/lib/user-settings";
+import { decryptOrNull, encrypt } from "@/lib/crypto";
+import { wisprKeyWasRejected } from "@/lib/wispr";
 import {
   DATA_CATEGORY_IDS,
-  expandCategories,
+  deletionOutcome,
   getDataFootprint,
   purgeUserData,
   type DataCategory,
@@ -35,29 +32,33 @@ import {
   resolveAiProvider,
   type AiProvider,
 } from "@/lib/ai";
+import { checkAiKey, keyCheckOutcome } from "@/lib/ai-key-check";
 import { getAiAccessStatus, managedKeysConfigured } from "@/lib/ai-access";
 import {
   chooseEmbeddingKey,
   managedEligibility,
   type ManagedEligibility,
 } from "@/lib/managed-ai-policy";
-import { isDemoAccount } from "@/lib/demo-account";
+import { demoAccountReason, isDemoAccount } from "@/lib/demo-account";
 
 export async function getSettings() {
   const userId = await requireUserId();
-  const db = await getDb();
-  const settings = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
+  // The row `requireUserId()` just loaded (request-cached), not a second read of it. That
+  // read sat in sequence in front of everything below, so it was a full round trip on
+  // every page that shows a settings-dependent notice (chat, capture, settings, a contact).
+  // Safe because no action writes settings and then calls this in the same request.
+  const settings = await ensureUserSettings(userId);
 
   const provider = resolveAiProvider(settings?.aiProvider);
   // Run alongside entitlements rather than after: neither depends on the other, and
   // `userHasApolloKey` already re-derives entitlements internally for its own hosted-key
   // check, so serializing them would only add latency.
-  const [entitlements, hasApolloKey, ai] = await Promise.all([
+  const wisprKey = decryptOrNull(settings?.wisprApiKeyEncrypted);
+  const [entitlements, hasApolloKey, ai, wisprKeyRejected] = await Promise.all([
     getEntitlements(userId),
     userHasApolloKey(userId),
     getAiAccessStatus(userId),
+    wisprKey ? wisprKeyWasRejected(userId, wisprKey).catch(() => false) : Promise.resolve(false),
   ]);
   // Mirrors the two runtime resolvers so this card states what would actually be used:
   // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
@@ -90,6 +91,8 @@ export async function getSettings() {
      * configured, since that is precisely the case worth reporting.
      */
     hasWisprKey: Boolean(settings?.wisprApiKeyEncrypted),
+    /** Wispr refused the saved key on its latest try; clears when the key changes. */
+    wisprKeyRejected,
     /**
      * Whether AI features will run — NOT whether a key is saved. A Lifetime account on
      * Orbit's managed key is `true` with no key at all; a Lifetime account that has used its
@@ -216,9 +219,17 @@ export async function saveAiSettings(input: {
 
   const provider = resolveAiProvider(input.provider);
   const aiModel = resolveAiModel(provider, input.model);
-  const encrypted = input.apiKey?.trim()
-    ? encrypt(input.apiKey.trim())
-    : null;
+  // Only a NEWLY entered key is checked; saving a model change with the key left blank
+  // costs no provider call.
+  const newKey = input.apiKey?.trim() || null;
+  let keyNote: string | null = null;
+  if (newKey) {
+    const outcome = keyCheckOutcome(await checkAiKey(provider, newKey), provider);
+    // Returned, not thrown: a thrown message is a digest in production.
+    if (!outcome.save) return { ok: false as const, error: outcome.error };
+    keyNote = outcome.note;
+  }
+  const encrypted = newKey ? encrypt(newKey) : null;
 
   const eligibility = await managedEligibilityFor(userId);
   const previousBackend = existing
@@ -273,7 +284,11 @@ export async function saveAiSettings(input: {
 
   revalidatePath("/settings");
   revalidatePath("/chat");
-  return { ok: true, embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend) };
+  return {
+    ok: true as const,
+    embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend),
+    keyNote,
+  };
 }
 
 export async function clearApiKey(provider?: AiProvider) {
@@ -295,7 +310,25 @@ export async function clearApiKey(provider?: AiProvider) {
     .update(userSettings)
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
-  revalidatePath("/settings");
+
+  // Clearing a key can move embeddings to another provider — an Anthropic account falls
+  // back from OpenAI to Gemini. Vectors from two providers cannot be compared, so stale ones
+  // go, by the same rule `saveAiSettings` applies when a save changes the backend.
+  let embeddingReset = false;
+  if (existing) {
+    const selected = resolveAiProvider(existing.aiProvider);
+    // Eligibility matters: on Lifetime, clearing a key can move search onto Orbit's managed key.
+    const eligibility = await managedEligibilityFor(userId);
+    const previousBackend = embeddingBackendFor(selected, existing, eligibility);
+    const nextBackend = embeddingBackendFor(selected, { ...existing, ...patch }, eligibility);
+    embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);
+    if (embeddingReset) {
+      await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+    }
+  }
+
+  revalidatePathIfRequestScoped("/settings");
+  return { ok: true as const, embeddingReset };
 }
 
 /**
@@ -412,41 +445,6 @@ export async function saveSocialLinks(input: {
   return { ok: true };
 }
 
-export async function exportAllData() {
-  const userId = await requireUserId();
-  const db = await getDb();
-
-  const [
-    contactRows,
-    interactionRows,
-    reminderRows,
-    tagRows,
-    importRows,
-    suggestionRows,
-  ] = await Promise.all([
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      with: { contactTags: { with: { tag: true } } },
-    }),
-    db.query.interactions.findMany({ where: eq(interactions.userId, userId) }),
-    db.query.reminders.findMany({ where: eq(reminders.userId, userId) }),
-    db.query.tags.findMany({ where: eq(tags.userId, userId) }),
-    db.query.imports.findMany({ where: eq(imports.userId, userId) }),
-    db.query.aiSuggestions.findMany({
-      where: eq(aiSuggestions.userId, userId),
-    }),
-  ]);
-
-  return {
-    exportedAt: new Date().toISOString(),
-    contacts: contactRows,
-    interactions: interactionRows,
-    reminders: reminderRows,
-    tags: tagRows,
-    imports: importRows,
-    suggestions: suggestionRows,
-  };
-}
 
 /** Row counts per category, for the delete dialog. */
 export async function getDeletableDataFootprint() {
@@ -470,19 +468,17 @@ export async function deleteAllData(categories?: readonly DataCategory[]) {
     only = categories.filter((c): c is DataCategory =>
       (DATA_CATEGORY_IDS as string[]).includes(c)
     );
-    if (only.length === 0) return { deleted: [] as DataCategory[] };
+    if (only.length === 0) return { deleted: [] as DataCategory[], pending: [] as DataCategory[] };
   }
 
-  await purgeUserData(userId, only ? { only } : {});
+  const result = await deletionOutcome(() => purgeUserData(userId, only ? { only } : {}));
 
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/settings");
   revalidatePath("/outreach");
 
-  return {
-    deleted: only ? [...expandCategories(only)] : [...DATA_CATEGORY_IDS],
-  };
+  return result;
 }
 
 /** Everything the settings billing card needs, in one round trip. */
@@ -493,5 +489,5 @@ export async function getPlanOverview() {
     contactUsageForUser(userId),
   ]);
 
-  return { entitlements, usage };
+  return { entitlements, usage, demoAccount: demoAccountReason(userId) };
 }

@@ -10,6 +10,8 @@ import {
 } from "@/actions/outlook";
 import { previewOutlookContacts, type OutlookContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
+import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
@@ -32,6 +34,16 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
     job?.kind === "outlook_contacts" && job.status === "running" ? job : null;
   const importProgress = outlookJob?.progress ?? null;
   const busy = pending || job?.status === "running";
+  // One handler for the header link and the button: both start the same Microsoft consent.
+  const connect = () =>
+    start(async () => {
+      try {
+        const { url } = await startOutlookOAuth(returnTo);
+        window.location.href = url;
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+      }
+    });
 
   // Clear local review UI once this job finishes (toast handled globally by
   // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
@@ -121,27 +133,25 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
         <div>
           <h2 className="text-lg font-medium text-ink">Outlook Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {status.connected
-              ? `Connected as ${status.emailAddress}`
-              : "Connect your Microsoft account to import contacts directly."}
+            {status.status === "needs_reauth"
+              ? `${SESSION_EXPIRED_LINE} to import contacts again`
+              : status.connected
+                ? `Connected as ${status.emailAddress}`
+                : "Connect your Microsoft account to import contacts directly."}
           </p>
+          {status.status === "disarmed" ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
+              <span>{calendarPauseLine(status.syncError, "Microsoft")}</span>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={connect}>
+                Reconnect Microsoft
+              </Button>
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {!status.connected ? (
-            <Button
-              disabled={busy}
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const { url } = await startOutlookOAuth(returnTo);
-                    window.location.href = url;
-                  } catch (err) {
-                    toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-                  }
-                })
-              }
-            >
-              Connect Microsoft
+            <Button disabled={busy} onClick={connect}>
+              {status.status === "needs_reauth" ? "Reconnect Microsoft" : "Connect Microsoft"}
             </Button>
           ) : (
             <>
@@ -167,12 +177,12 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
               >
                 {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
               </Button>
-              <Button
-                variant="outline"
+              <DisconnectAccountDialog
+                provider="outlook"
                 disabled={busy}
-                onClick={() =>
+                onConfirm={(opts) =>
                   start(async () => {
-                    await disconnectOutlook();
+                    await disconnectOutlook(opts);
                     setPeople([]);
                     setLoaded(false);
                     setStatus(null);
@@ -181,9 +191,7 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
                     getOutlookConnectionStatus().then(setStatus).catch(() => {});
                   })
                 }
-              >
-                Disconnect
-              </Button>
+              />
             </>
           )}
         </div>

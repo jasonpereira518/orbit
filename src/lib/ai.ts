@@ -12,7 +12,8 @@ import {
   openaiClient,
   resolveAiAccess,
   runOnGrant,
-  transcribeWithWisprGrant,
+  recordWisprGrantRejected,
+  transcribeWithWisprOutcomeGrant,
   type AiGrant,
 } from "@/lib/ai-access";
 import {
@@ -28,6 +29,7 @@ import {
 } from "@/lib/ai-opportunity-schema";
 import { closenessLegend } from "@/lib/capture/closeness";
 import {
+  recordUsage,
   withUsage,
   tokensFromGemini,
   tokensFromOpenAi,
@@ -37,6 +39,7 @@ import {
 import {
   AI_INCOMPLETE_MESSAGE,
   aiProviderErrorMessage,
+  asAiProviderError,
   aiProviderLabel,
   classifyAiError,
   friendlyError,
@@ -47,6 +50,7 @@ import {
   type SplitResult,
 } from "@/lib/chat-stream-protocol";
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
+import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
 
 export type { AiProvider, EmbeddingBackend };
 export {
@@ -99,6 +103,21 @@ export async function withRateLimitBackoff<T>(fn: () => Promise<T>): Promise<T> 
       const jitter = backoff * (0.5 + Math.random() * 0.5);
       await new Promise((resolve) => setTimeout(resolve, jitter));
     }
+  }
+}
+
+/**
+ * Runs the body of a `withUsage` callback so any provider failure is rethrown as Orbit's
+ * copy. Inside the callback on purpose: `withUsage` then classifies the rewritten error for
+ * `usage_events.error_kind`, exactly as it does for `completeJson`. Inside
+ * `withRateLimitBackoff` too, which classifies the same rewritten error: the copy keeps the
+ * words `classifyAiError` keys on.
+ */
+async function translatingProviderErrors<T>(provider: string, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (err) {
+    throw asAiProviderError(err, provider);
   }
 }
 
@@ -553,7 +572,8 @@ export async function completeJson(
         const response = await client.messages.create({
           model,
           max_tokens: maxOutputTokens,
-          temperature,
+          // Claude 4.7 and later reject sampling parameters with a 400.
+          ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
           system,
           messages: [{ role: "user", content: input.user }],
         }, { signal: aiSignal() });
@@ -737,7 +757,8 @@ async function completeMultimodalJsonInner(
     const response = await client.messages.create({
       model,
       max_tokens: maxOutputTokens,
-      temperature,
+      // Claude 4.7 and later reject sampling parameters with a 400.
+      ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
       system,
       messages: [{ role: "user", content }],
     }, { signal: aiSignal() });
@@ -822,32 +843,30 @@ export async function transcribeAudioWithAI(
 
   const wispr = await access.wispr(operation);
   if (wispr) {
-    const text = await withUsage(
-      {
-        userId,
-        operation,
-        provider: "wispr",
-        model: "flow",
-        kind: "transcription",
-        keyOwner: wispr.keyOwner,
-      },
-      async () =>
-        // `transcribeWithWispr` never throws: a bad key, an outage or an unrecognised
-        // response shape all return null. `withUsage` therefore records this as a
-        // successful call with a null result, which is the honest reading — we reached the
-        // provider and got nothing usable, and the row exists to show the volume.
-        transcribeWithWisprGrant(wispr, {
-          audioBase64: input.base64,
-          context: await buildWisprContext(userId, {
-            firstName: settings?.firstName,
-            lastName: settings?.lastName,
-          }),
-        }),
-    );
-    if (text) return { text, engine: "wispr" };
-    // Fall through. Wispr's wire format is unverified (see src/lib/wispr.ts), so a null
-    // here is as likely to be a schema surprise as an outage, and neither is worth
-    // failing a capture over.
+    const started = Date.now();
+    const outcome = await transcribeWithWisprOutcomeGrant(wispr, {
+      audioBase64: input.base64,
+      context: await buildWisprContext(userId, {
+        firstName: settings?.firstName,
+        lastName: settings?.lastName,
+      }),
+    });
+    // Recorded by hand: Wispr never throws, so `withUsage` filed every null — a dead key
+    // included — as a success. A rejected key is the user's (`auth`, outside
+    // OUR_ERROR_KINDS); any other null is `empty_response`.
+    recordUsage({
+      userId, operation, provider: "wispr", model: "flow", kind: "transcription", keyOwner: wispr.keyOwner,
+      success: outcome.text !== null,
+      errorKind: outcome.text !== null ? null : outcome.reason === "rejected_key" ? "auth" : "empty_response",
+      durationMs: Date.now() - started,
+    });
+    if (outcome.text !== null) return { text: outcome.text, engine: "wispr" };
+    if (outcome.reason === "rejected_key" && wispr.keyOwner === "user") {
+      await recordWisprGrantRejected(userId, wispr, outcome.status);
+    }
+    // Fall through to Whisper, then Gemini. Wispr's wire format is unverified (see
+    // src/lib/wispr.ts), so a null here is as likely to be a schema surprise as an
+    // outage, and neither is worth failing a capture over.
   }
 
   // After Wispr, one engine: the gate picks the user's own Whisper, then their own Gemini,
@@ -880,7 +899,7 @@ export async function transcribeAudioWithAI(
         kind: "transcription",
         keyOwner: grant.keyOwner,
       },
-      async () => {
+      () => translatingProviderErrors("OpenAI", async () => {
         // Whisper reads its prompt as the transcript that came before, so the previous
         // chunk's tail goes LAST — the end of the prompt is what it conditions on most — and
         // the names share what is left of the budget.
@@ -907,7 +926,7 @@ export async function transcribeAudioWithAI(
         const text = result.text?.trim();
         if (!text) return empty("whisper");
         return { text, engine: "whisper" as const };
-      },
+      }),
     ));
   }
 
@@ -924,7 +943,7 @@ export async function transcribeAudioWithAI(
         kind: "transcription",
         keyOwner: grant.keyOwner,
       },
-      async (report) => {
+      (report) => translatingProviderErrors("Gemini", async () => {
         const response = await client.models.generateContent({
           model,
           contents: [
@@ -964,7 +983,7 @@ export async function transcribeAudioWithAI(
         const text = parsed.text?.trim();
         if (!text) return empty("gemini");
         return { text, engine: "gemini" as const };
-      },
+      }),
     ));
   }
 }
@@ -1481,7 +1500,7 @@ export async function createEmbedding(userId: string, text: string) {
       keyOwner,
     },
     (report) =>
-      withRateLimitBackoff(async () => {
+      withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
         if (backend === "openai") {
           const client = openaiClient(grant);
           const res = await client.embeddings.create({
@@ -1505,7 +1524,7 @@ export async function createEmbedding(userId: string, text: string) {
         const values = res.embeddings?.[0]?.values;
         if (!values?.length) throw new Error("Empty embedding response");
         return values;
-      }),
+      })),
   ));
 }
 
@@ -1531,7 +1550,7 @@ export async function createEmbeddingsBatch(
       keyOwner,
     },
     (report) =>
-      withRateLimitBackoff(async () => {
+      withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
         if (backend === "openai") {
           const client = openaiClient(grant);
           const res = await client.embeddings.create({
@@ -1561,7 +1580,7 @@ export async function createEmbeddingsBatch(
           throw new Error("Incomplete embedding batch response");
         }
         return values;
-      }),
+      })),
   ));
 }
 
@@ -1791,6 +1810,7 @@ async function streamText(
     temperature?: number;
     maxOutputTokens?: number;
     operation: string;
+    signal?: AbortSignal;
   },
   onDelta: (delta: string) => void
 ): Promise<string> {
@@ -1798,10 +1818,12 @@ async function streamText(
   const { provider, model, keyOwner } = grant;
   const temperature = input.temperature ?? 0.3;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
+  // One deadline per call plus the caller's own abort — a fresh deadline per call, as always.
+  const signal = input.signal ? AbortSignal.any([aiSignal(), input.signal]) : aiSignal();
 
   return runOnGrant(grant, withUsage(
     { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
-    async (report) => {
+    (report) => translatingProviderErrors(aiProviderLabel(provider), async () => {
       let full = "";
       const emit = (t: string | undefined | null) => {
         if (!t) return;
@@ -1815,7 +1837,7 @@ async function streamText(
           model,
           contents: input.user,
           config: {
-            abortSignal: aiSignal(),
+            abortSignal: signal,
             temperature,
             maxOutputTokens,
             systemInstruction: input.system,
@@ -1841,7 +1863,7 @@ async function streamText(
               { role: "user", content: input.user },
             ],
           },
-          { signal: aiSignal() }
+          { signal }
         );
         let usage: unknown = null;
         for await (const chunk of stream) {
@@ -1855,11 +1877,12 @@ async function streamText(
           {
             model,
             max_tokens: maxOutputTokens,
-            temperature,
+            // Claude 4.7 and later reject sampling parameters with a 400.
+            ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
             system: input.system,
             messages: [{ role: "user", content: input.user }],
           },
-          { signal: aiSignal() }
+          { signal }
         );
         for await (const event of stream) {
           if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
@@ -1871,7 +1894,8 @@ async function streamText(
 
       if (!full.trim()) throw new Error("Empty AI response");
       return full;
-    }
+    }),
+    { cancelSignal: input.signal }
   ));
 }
 
@@ -1898,7 +1922,8 @@ export async function chatWithNetworkStream(
   recruitersContext: NonNullable<Parameters<typeof chatWithNetwork>[6]>,
   onDelta: (delta: string) => void,
   focusProfile: Parameters<typeof chatWithNetwork>[7] = null,
-  attachedContext: Parameters<typeof chatWithNetwork>[8] = null
+  attachedContext: Parameters<typeof chatWithNetwork>[8] = null,
+  options: { signal?: AbortSignal } = {}
 ): Promise<SplitResult> {
   const prompt = buildChatPrompt({
     question,
@@ -1918,6 +1943,7 @@ export async function chatWithNetworkStream(
       temperature: 0.3,
       user: prompt.user,
       system: `${prompt.systemCore}${CHAT_STREAM_TAIL}`,
+      signal: options.signal,
     },
     (delta) => {
       const out = splitter.push(delta);

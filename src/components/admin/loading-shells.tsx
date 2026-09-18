@@ -21,7 +21,7 @@ type PanelBlock = {
 };
 
 export type LoadingBlock =
-  | { tiles: 3 | 4 }
+  | { tiles: 3 | 4 | 5 }
   | ({ panel: true } & PanelBlock)
   | { pair: [PanelBlock, PanelBlock] }
   | { toolbar: true }
@@ -31,6 +31,7 @@ export type LoadingBlock =
 const TILE_GRID = {
   3: "grid gap-3 sm:grid-cols-3",
   4: "grid gap-3 sm:grid-cols-2 lg:grid-cols-4",
+  5: "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5",
 } as const;
 
 /**

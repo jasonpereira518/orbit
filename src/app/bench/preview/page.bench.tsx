@@ -13,7 +13,7 @@ export default function PreviewBenchPage() {
   return (
     <main className="mx-auto max-w-xl p-6">
       <div className={`h-[300px] overflow-hidden rounded-2xl border border-white/10 ${STAGE_GROUND}`}>
-        <ConstellationPreviewCanvas sky={sky} />
+        <ConstellationPreviewCanvas sky={sky} href="/graph" label="Constellation preview" />
       </div>
     </main>
   );

@@ -11,11 +11,13 @@ import { getCronHealth, getSystemIssues, recentWebhookOutcomes } from "@/lib/adm
  *
  * Polled by the external uptime monitor and by the GitHub Actions scheduler, so it has
  * three obligations: answer 503 for the two things that make the whole app wrong (the
- * database is unreachable, or the schema is behind the code), never hang past the
+ * database is unreachable, or the schema is BEHIND the code), never hang past the
  * monitor's own timeout, and never tell an anonymous caller anything about
  * configuration. The DEEP view — behind HEALTH_TOKEN — adds the operational facts the ops
  * sweep also reads; a degraded deep view is still HTTP 200, because "a cron is late" must
- * not page as "the site is down".
+ * not page as "the site is down". A schema AHEAD of the code is a rollback — the previous
+ * deployment promoted over a newer database — and answers 200 "degraded" for the same
+ * reason: it must not page, and the scheduler keys every job on this probe.
  *
  * A function killed at its `maxDuration` never answers at all; the monitor's response-time
  * alert is what covers that class, which is why the probe also reports DB latency.
@@ -32,7 +34,8 @@ export type HealthReport = {
   deploymentId: string | null;
   builtAt: string | null;
   env: string | null;
-  schema: { expected: number; recorded: number | null };
+  /** `ahead` is a rollback: the database was migrated by a newer deployment than this one. */
+  schema: { expected: number; recorded: number | null; ahead: boolean };
   db: { ok: boolean; latencyMs: number | null; reason: HealthReason | null };
   cron?: {
     processStalled: { state: string | null; startedAt: string | null; missed: boolean };
@@ -86,7 +89,7 @@ async function probeSchemaVersion(): Promise<{ recorded: number | null }> {
  * a shared compute. A setting nobody checks is a setting nobody has, so it is reported here
  * where the ops sweep and /admin/health can both see it.
  */
-async function probeStatementTimeout(): Promise<string | null> {
+export async function probeStatementTimeout(): Promise<string | null> {
   const db = await getDb();
   const res = await db.execute(sql`SHOW statement_timeout`);
   const row = rowsOf<{ statement_timeout: string }>(res)[0];
@@ -115,23 +118,25 @@ export async function checkHealth(options: {
   const started = Date.now();
   let recorded: number | null = null;
   let reason: HealthReason | null = null;
+  let ahead = false;
   try {
     ({ recorded } = await withTimeout(probe(), timeoutMs));
-    if (recorded !== SCHEMA_VERSION) reason = "schema_mismatch";
+    if (recorded === null || recorded < SCHEMA_VERSION) reason = "schema_mismatch";
+    else if (recorded > SCHEMA_VERSION) ahead = true;
   } catch (err) {
     reason = err instanceof TimeoutError ? "db_timeout" : "db_error";
   }
   const latencyMs = reason === "db_error" || reason === "db_timeout" ? null : Date.now() - started;
 
   const report: HealthReport = {
-    status: reason ? "down" : "ok",
+    status: reason ? "down" : ahead ? "degraded" : "ok",
     httpStatus: reason ? 503 : 200,
     checkedAt: now.toISOString(),
     sha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
     deploymentId: process.env.VERCEL_DEPLOYMENT_ID ?? null,
     builtAt: process.env.BUILD_TIME ?? null,
     env: process.env.VERCEL_ENV ?? null,
-    schema: { expected: SCHEMA_VERSION, recorded },
+    schema: { expected: SCHEMA_VERSION, recorded, ahead },
     db: { ok: !reason || reason === "schema_mismatch", latencyMs, reason },
   };
 

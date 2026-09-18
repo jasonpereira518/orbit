@@ -10,6 +10,7 @@ import {
   APP_NAV,
   MOBILE_BOTTOM_NAV,
   MOBILE_MORE_NAV,
+  fullPrefetch,
   isNavActive,
 } from "@/components/layout/app-nav";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -472,6 +473,7 @@ export function MobileNav({
                 <li key={navItem.href} className="flex-1">
                   <Link
                     href={navItem.href}
+                    prefetch={fullPrefetch(navItem, isNavActive(pathname, navItem.href))}
                     ref={(el) => {
                       itemRefs.current[myIndex] = el;
                     }}

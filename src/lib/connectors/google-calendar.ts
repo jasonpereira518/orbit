@@ -24,6 +24,7 @@
  *    connection is broken", and counting it as a failure would walk a perfectly healthy
  *    connection up the backoff ladder and eventually disarm it.
  */
+import { googleFetchWithRetry } from "@/lib/google-fetch";
 import type { ParsedCalendarEvent } from "@/lib/calendar-import";
 import { classifyCalendarEvent, counterpartsOf } from "@/lib/calendar-classify";
 import { calendarExternalIdBase } from "@/lib/ingest/external-id";
@@ -179,7 +180,6 @@ export type FetchPageOptions = {
 export async function fetchCalendarPage(opts: FetchPageOptions): Promise<CalendarFetchResult> {
   const { accessToken, cursor } = opts;
   const now = opts.now ?? new Date();
-  const doFetch = opts.fetchImpl ?? fetch;
 
   const params = new URLSearchParams({
     singleEvents: "true",
@@ -198,8 +198,11 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
   // first sync restarts from the beginning every run and never reaches its last page.
   if (cursor?.pageToken) params.set("pageToken", cursor.pageToken);
 
-  const res = await doFetch(`${CALENDAR_API}?${params}`, {
+  const res = await googleFetchWithRetry(`${CALENDAR_API}?${params}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    // Well inside the scheduler's 60-second per-connection budget.
+    timeoutMs: 20_000,
+    fetchImpl: opts.fetchImpl,
   });
 
   if (res.status === 410) throw new CalendarSyncTokenExpiredError();

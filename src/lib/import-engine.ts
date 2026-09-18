@@ -32,6 +32,8 @@ import {
 } from "@/lib/duplicates";
 import { getAdapter } from "@/lib/import-adapters";
 import { startQueryCount, stopQueryCount } from "@/lib/query-counter";
+import { reportAndContinue, reportError } from "@/lib/report-error";
+import { withReference } from "@/lib/errors";
 
 /**
  * Rows pulled from the DB per processing loop iteration. Widened from 40 to cut the fixed
@@ -150,8 +152,10 @@ export type ImportAdapter<P> = {
 async function scheduleContinuation(importId: string) {
   try {
     await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
-  } catch {
-    // Best-effort — the process-stalled cron will pick this job back up.
+  } catch (err) {
+    // Best-effort — the process-stalled cron will pick this job back up. Reported (throttled)
+    // because a kick that always fails means every large import waits an hour per chunk.
+    reportError(err, { where: "job.import.continuation-kick", level: "warning", extra: { importId } });
   }
 }
 
@@ -942,13 +946,17 @@ export async function runImportJob(importId: string): Promise<void> {
     // Google/Outlook contacts and every other import type already had — a deliberate
     // improvement, not scope creep: it's the one finalization step every import type is
     // supposed to get, not something specific to this task's two new adapters.
-    await refreshOutreachSuggestions(importRow.userId).catch(() => null);
+    await refreshOutreachSuggestions(importRow.userId).catch(
+      reportAndContinue({ where: "job.import.finalize.outreach", userId: importRow.userId }, null)
+    );
 
     // Adapter-specific once-per-job finalization (see `ImportAdapter.finalize`) — e.g. the
     // LinkedIn messages adapter's AI enrichment pass. Runs over every contact this job
     // touched across every chunk, once, not per chunk; non-fatal like the two calls above.
     if (adapter.finalize) {
-      await adapter.finalize(importRow.userId, [...allTouchedContactIds]).catch(() => null);
+      await adapter.finalize(importRow.userId, [...allTouchedContactIds]).catch(
+        reportAndContinue({ where: "job.import.finalize.adapter", userId: importRow.userId, extra: { importId: importRow.id } }, null)
+      );
     }
 
     // Redraw the distribution once, now that every contact this import will ever add is in.
@@ -957,7 +965,9 @@ export async function runImportJob(importId: string): Promise<void> {
     // is also why neither the create nor the merge path scores rows as they land: scoring a
     // duplicate as it is merged would issue extra queries per row to reach a number that is
     // immediately superseded by this recalibration.
-    await recalibrateCloseness(importRow.userId).catch(() => null);
+    await recalibrateCloseness(importRow.userId).catch(
+      reportAndContinue({ where: "job.import.finalize.recalibrate", userId: importRow.userId }, null)
+    );
     await kickEmbeddingBackfill(importRow.userId);
 
     revalidatePath("/");
@@ -990,12 +1000,15 @@ export async function failImport(
   stats?: ImportStats
 ) {
   const message = err instanceof Error ? err.message : "Import failed";
+  // Reported, and the stored message carries the reference, so a failed import in someone's
+  // history can be traced to the real error rather than to a truncated line on a row.
+  const ref = reportError(err, { where: "job.import", extra: { importId } });
   const db = await getDb();
   await db
     .update(imports)
     .set({
       status: "failed",
-      errorMessage: message.slice(0, 500),
+      errorMessage: withReference(message.slice(0, 480), ref),
       updatedAt: new Date(),
       // Optional and additive: the Gmail recruiter scan runner shares this failure path but
       // has no query-count stats of its own to report, so it calls this with the two-arg

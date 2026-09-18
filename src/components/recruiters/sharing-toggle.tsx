@@ -18,7 +18,10 @@ import { friendlyError } from "@/lib/errors";
  *
  * The copy states what leaves the account and what never does. That list is load-bearing,
  * not decoration: it is the only place a user is told that notes and AI summaries stay
- * private. Keep it in sync with `toPublicRecruiter`.
+ * private. Keep it in sync with `toPublicRecruiter` and `resolveRecruiterPii`: contact
+ * details live on each user's own link, and reach the pool only while a pooled link
+ * vouches for them — and only callers that share may add them to a shared row
+ * (`logRecruiter`, the Gmail scan).
  */
 export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
   const router = useRouter();
@@ -88,17 +91,20 @@ export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
 
       <dl className="grid gap-3 border-t border-border/60 pt-4 text-sm sm:grid-cols-2">
         <div>
-          <dt className="font-medium text-foreground">Shared when on</dt>
+          <dt className="font-medium text-foreground">Shared while you share</dt>
           <dd className="mt-1 text-muted-foreground">
-            Recruiter name, firm, specialty, their work email and LinkedIn, and
-            your star rating as part of the community average.
+            Each recruiter’s name, firm and specialty, and your star rating as
+            part of the community average. Their work email, phone and LinkedIn
+            are shown only to other people who share their lists too — including
+            an address Orbit found in your inbox.
           </dd>
         </div>
         <div>
           <dt className="font-medium text-foreground">Never shared</dt>
           <dd className="mt-1 text-muted-foreground">
-            Your notes, your AI interaction summaries, your status, and anything
-            Orbit read from your inbox.
+            Your notes, your AI interaction summaries, your status and the text
+            of your emails. While your list is private, the contact details and
+            ratings you log stay out of the pool too.
           </dd>
         </div>
       </dl>

@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { requireUserId } from "@/lib/auth";
-import { friendlyError } from "@/lib/errors";
 import {
   countIgnoredPeopleFor,
   listIgnoredPeopleFor,
@@ -10,6 +9,7 @@ import {
   removeIgnoredPerson,
   type IgnoredPerson,
 } from "@/lib/ignored-people";
+import { actionFailure } from "@/lib/action-failure";
 
 type Fail = { ok: false; error: string };
 
@@ -18,7 +18,7 @@ export async function listIgnoredPeople(): Promise<{ ok: true; people: IgnoredPe
     const userId = await requireUserId();
     return { ok: true, people: await listIgnoredPeopleFor(userId) };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t load the ignored people — try again?") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t load the ignored people — try again?", "ignored-people.list-ignored-people") };
   }
 }
 
@@ -38,7 +38,7 @@ export async function addIgnoredPersonAsContact(
     revalidatePath("/capture");
     return { ok: true, ...out };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t add them — try again?") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t add them — try again?", "ignored-people.add-ignored-person-as-contact") };
   }
 }
 
@@ -48,6 +48,6 @@ export async function forgetIgnoredPerson(id: string): Promise<{ ok: true } | Fa
     await removeIgnoredPerson(userId, id);
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t remove them — try again?") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t remove them — try again?", "ignored-people.forget-ignored-person") };
   }
 }

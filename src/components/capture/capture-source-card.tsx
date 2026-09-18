@@ -181,7 +181,7 @@ export function CaptureSourceCard({
                     <Button
                       variant="secondary"
                       size="icon-sm"
-                      className="absolute top-1/2 left-2 -translate-y-1/2 rounded-full opacity-90"
+                      className="tap-target absolute top-1/2 left-2 -translate-y-1/2 rounded-full opacity-90"
                       onClick={() => step(-1)}
                       aria-label="Previous photo"
                     >
@@ -190,7 +190,7 @@ export function CaptureSourceCard({
                     <Button
                       variant="secondary"
                       size="icon-sm"
-                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded-full opacity-90"
+                      className="tap-target absolute top-1/2 right-2 -translate-y-1/2 rounded-full opacity-90"
                       onClick={() => step(1)}
                       aria-label="Next photo"
                     >

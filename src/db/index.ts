@@ -8,7 +8,7 @@ import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -65,11 +65,15 @@ CREATE TABLE IF NOT EXISTS user_settings (
   subscription_period_end timestamptz,
   subscription_monthly_cents integer,
   subscription_interval text,
+  subscription_event_at timestamptz,
   comped_note text,
   comped_at timestamptz,
   comped_by text,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
+  terms_accepted_at timestamptz,
+  terms_version text,
+  timeline_backfill_enabled integer NOT NULL DEFAULT 0,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
@@ -181,6 +185,8 @@ CREATE TABLE IF NOT EXISTS reminder_lists (
   name_normalized text NOT NULL,
   position integer NOT NULL DEFAULT 0,
   is_inbox integer NOT NULL DEFAULT 0,
+  icon text,
+  color text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS reminder_lists_user_idx ON reminder_lists(user_id);
@@ -374,6 +380,15 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   content text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS embedding_failures (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_type text NOT NULL,
+  source_id text NOT NULL,
+  error_kind text,
+  failed_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS embedding_failures_source_uidx ON embedding_failures(user_id, source_type, source_id);
 CREATE TABLE IF NOT EXISTS contact_profiles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -536,6 +551,7 @@ CREATE TABLE IF NOT EXISTS recruiters (
   email_normalized text,
   linkedin_url text,
   phone text,
+  created_by_user_id text,
   avg_rating integer NOT NULL DEFAULT 0,
   rating_count integer NOT NULL DEFAULT 0,
   log_count integer NOT NULL DEFAULT 0,
@@ -563,6 +579,9 @@ CREATE TABLE IF NOT EXISTS user_recruiter_links (
   last_email_at timestamptz,
   email_count integer NOT NULL DEFAULT 0,
   gmail_thread_id text,
+  email text,
+  phone text,
+  linkedin_url text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -847,6 +866,28 @@ CREATE INDEX IF NOT EXISTS webhook_deliveries_created_idx ON webhook_deliveries(
 CREATE INDEX IF NOT EXISTS webhook_deliveries_event_idx ON webhook_deliveries(event_id);
 CREATE INDEX IF NOT EXISTS webhook_deliveries_target_idx ON webhook_deliveries(target_user_id);
 CREATE INDEX IF NOT EXISTS webhook_deliveries_type_created_idx ON webhook_deliveries(event_type, created_at);
+CREATE TABLE IF NOT EXISTS stripe_processed_events (
+  event_id text PRIMARY KEY,
+  event_type text NOT NULL,
+  processed_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS data_purge_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  target_user_id text NOT NULL,
+  categories jsonb NOT NULL DEFAULT '[]',
+  keep_settings boolean NOT NULL DEFAULT true,
+  full_purge boolean NOT NULL DEFAULT false,
+  completed_steps jsonb NOT NULL DEFAULT '[]',
+  status text NOT NULL DEFAULT 'running',
+  attempts integer NOT NULL DEFAULT 1,
+  last_error text,
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  last_attempt_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS data_purge_runs_status_attempt_idx ON data_purge_runs(status, last_attempt_at);
+CREATE INDEX IF NOT EXISTS data_purge_runs_target_idx ON data_purge_runs(target_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS user_settings_stripe_customer_uidx ON user_settings(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS error_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -1297,6 +1338,8 @@ CREATE TABLE IF NOT EXISTS page_views (
   device text NOT NULL,
   is_bot boolean NOT NULL DEFAULT false,
   dwell_ms integer,
+  load_ms integer,
+  nav_type text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
@@ -1485,6 +1528,21 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // either branch still needs this table's two columns, hence one more bump rather than
 // reusing the number either side shipped it under.
 //
+// 58 = user_settings.terms_accepted_at, terms_version and timeline_backfill_enabled (launch
+// Phase 1: recorded Terms consent and the opt-in LinkedIn timeline backfill). 56 is claimed by
+// three open branches (calendar enrichment, both outreach redesigns) and 57 by the AI-key
+// gating branch, whose columns are different — and whose bump was still UNPUSHED, so the
+// "scan every remote branch" rule could not see it. Two branches sharing a number is the
+// trap in docs: a database stamped 57 by that branch would never run these ALTERs.
+//
+// 59 = launch Phase 2: user_settings.subscription_event_at (the Stripe ordering clock) and
+// the partial unique index on user_settings.stripe_customer_id, stripe_processed_events
+// (webhook dedupe), data_purge_runs (the resumable deletion ledger), and
+// recruiters.created_by_user_id plus user_recruiter_links.email/phone/linkedin_url with
+// their one-time PII backfill in alters.
+// 60 = embedding_failures, the backfill's mark for rows the provider refused on their
+// own, so one poison row stops failing its batch every hour (launch phase 3a).
+//
 // 61 = user_settings.lifetime_checkout_session_id + lifetime_checkout_started_at, the pending
 // Lifetime checkout the AI gate asks Stripe about before refusing a just-paid account. Built
 // as 57; renumbered past every open claim at PR time — 56 (calendar-contact-enrichment,
@@ -1507,10 +1565,73 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // whole set arrives together and the split has nothing left to protect. Renumbered past
 // main's 61 and past the 56/58/59/60 claims its comment above records.
 //
-// 63 = chat_threads.context_note: freeform context the user types for one chat conversation
-// (never extracted into contacts). Built as 34 before this branch merged main's DDL through
-// 62; renumbered past it per the same rule as every entry above.
-export const SCHEMA_VERSION = 63;
+// 64 = merging main (61, 62) into the launch stack (58, 59, 60). No DDL of its own. A
+// database stamped 62 by main never ran 58-60's statements, and one stamped 60 by the launch
+// stack never ran 61-62's, so only a number above both makes each pick up the other. 63 is
+// claimed by the unpushed onboarding-flow-revision worktree, the same trap 57 was.
+//
+// 65 = launch Phase 4 polish: no DDL. Two idempotent data migrations at the end of
+// `alters` — calendar feed tokens hashed in place, li-event interactions tagged ai_derived.
+//
+// 66 = the reminders redesign: no DDL. One idempotent data migration at the end of `alters`
+// folds the legacy `completed` reminder status into `done`. Checked against every remote
+// branch on Sep 18 2026: none claimed anything above main's 65.
+//
+// 67 = reminder_lists.icon / .color, for the list editor. Its own bump rather than folded into
+// 66: PR #220's preview build may already have stamped its preview database 66, which would
+// then skip these columns. Checked against every remote branch on Sep 18 2026.
+//
+// 68 = page_views.load_ms + nav_type, the page-load timing the navigation-speed work is
+// measured by (PR #222). Built as 67; renumbered past #220's 66 and 67.
+//
+// 69 = merging main (66, 67) into #222 (68). No DDL of its own. #222's preview builds stamped
+// the shared preview database 68 WITHOUT 67's reminder_lists columns, so a merged build at
+// 68 would skip them there; only a number above both makes every database pick up both.
+//
+// 70 = chat_threads.context_note: freeform context the user types for one chat conversation
+// (never extracted into contacts). Built as 34, then 63, before this branch merged main's DDL
+// through 69; renumbered past every claim (checked against all remote branches and local
+// worktrees on Sep 18 2026: none above 69).
+export const SCHEMA_VERSION = 70;
+
+/**
+ * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
+ * SCALE_DDL ADD below (whitespace aside). `applyScaleSchema` compares the stored expression
+ * against it; `scripts/smoke-linkedin-slug-guard.ts` asserts the two cannot drift.
+ */
+export const LINKEDIN_SLUG_EXPRESSION =
+  "lower(nullif(split_part(split_part(split_part(split_part(coalesce(linkedin_url, \'\'), \'/in/\', 2), \'?\', 1), \'#\', 1), \'/\', 1), \'\'))";
+
+/** The rewrite SCALE_DDL performs when that expression changes. Matched by exact text. */
+export const DROP_LINKEDIN_SLUG_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS linkedin_slug";
+
+/** Postgres re-renders stored expressions (casts, upper-case keywords, parentheses). */
+export function normalizeGeneratedExpression(expr: string): string {
+  return expr.toLowerCase().replace(/::text/g, "").replace(/[\s()]/g, "");
+}
+
+/** Whether the stored linkedin_slug expression differs from LINKEDIN_SLUG_EXPRESSION. */
+export function linkedinSlugNeedsRewrite(stored: string | null): boolean {
+  if (stored === null) return false; // no column yet: the ADD creates it
+  return normalizeGeneratedExpression(stored) !== normalizeGeneratedExpression(LINKEDIN_SLUG_EXPRESSION);
+}
+
+/** The stored expression, null when there is no such column, undefined when unreadable. */
+async function storedLinkedinSlugExpression(run: StatementRunner): Promise<string | null | undefined> {
+  try {
+    const result = await run(
+      `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
+         FROM pg_attribute a
+         JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+        WHERE a.attrelid = to_regclass(\'public.contacts\')
+          AND a.attname = \'linkedin_slug\'
+          AND NOT a.attisdropped`
+    );
+    return rowsOf<{ expr: string | null }>(result)[0]?.expr ?? null;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1854,7 +1975,13 @@ async function runStatements(
  * added once the duplicate pairs already in the table are gone.
  */
 export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFailure[]) {
-  await runStatements(run, SCALE_DDL, "scale DDL", failed);
+  // The linkedin_slug DROP rewrites every contacts row under an exclusive lock, so it runs
+  // only when the stored expression is not the declared one (or cannot be read — then the
+  // old unconditional behaviour is the safe default).
+  const stored = await storedLinkedinSlugExpression(run);
+  const rewriteSlug = stored === undefined || linkedinSlugNeedsRewrite(stored);
+  const statements = rewriteSlug ? SCALE_DDL : SCALE_DDL.filter((s) => s !== DROP_LINKEDIN_SLUG_STATEMENT);
+  await runStatements(run, statements, "scale DDL", failed);
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
   // `ensureReady`), so local search finally behaves like production — unlike pgvector,
@@ -1902,11 +2029,14 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
 }
 
 /**
- * Whether the recorded schema version already matches this build.
+ * Whether the recorded schema version already covers this build.
  *
- * One SELECT standing in for the whole DDL sweep. Anything unexpected (no table yet, a
- * fresh database, a permissions problem) answers "no" and the caller does the full pass —
- * being wrong here costs a slow boot, never a wrong schema.
+ * One SELECT standing in for the whole DDL sweep. AT OR ABOVE counts as current: above is a
+ * rollback — a newer deployment migrated the database and this older one is serving — and
+ * re-running the older sweep inside a user request would only cost time and then (before
+ * `recordSchemaVersion` learned GREATEST) write the lower number back. Anything unexpected
+ * (no table yet, a fresh database, a permissions problem) answers "no" and the caller does
+ * the full pass — being wrong here costs a slow boot, never a wrong schema.
  */
 export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
   try {
@@ -1915,14 +2045,82 @@ export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
          id integer PRIMARY KEY DEFAULT 1,
          version integer NOT NULL,
          applied_at timestamptz NOT NULL DEFAULT now(),
+         fingerprint text,
          CONSTRAINT schema_migrations_single_row CHECK (id = 1)
        )`
     );
+    const result = await run(`SELECT version, fingerprint FROM schema_migrations WHERE id = 1`);
+    const row = rowsOf<{ version: number | string; fingerprint: string | null }>(result)[0];
+    return isSchemaCurrent(row ? { version: Number(row.version), fingerprint: row.fingerprint ?? null } : null);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A hash of every statement in `DDL`, `SCALE_DDL` and `alters` (which spreads
+ * `ADMIN_V2_STATEMENTS`), whitespace-collapsed. Recorded beside SCHEMA_VERSION: two
+ * branches that both shipped the same number with different statements disagree here, so
+ * the second one's statements run instead of being skipped by a matching integer.
+ *
+ * DDL embedded in code (`migratePgvector`, `ensureColumn` calls) is not hashed; changing
+ * that still needs a version bump, as today.
+ */
+let fingerprintMemo: string | undefined;
+export function schemaFingerprint(): string {
+  if (!fingerprintMemo) {
+    const statements = [DDL, ...SCALE_DDL, ...alters]
+      .map((s) => s.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    fingerprintMemo = createHash("sha256").update(statements.join("\n")).digest("hex");
+  }
+  return fingerprintMemo;
+}
+
+/** The decision `schemaIsCurrent` makes from the recorded row. Pure. */
+export function isSchemaCurrent(recorded: { version: number; fingerprint: string | null } | null): boolean {
+  if (!recorded || !Number.isFinite(recorded.version)) return false;
+  // A newer build migrated this database and an older one is serving (a rollback): never
+  // re-sweep with older DDL — the never-downgrade rule.
+  if (recorded.version > SCHEMA_VERSION) return true;
+  if (recorded.version < SCHEMA_VERSION) return false;
+  return recorded.fingerprint === schemaFingerprint();
+}
+
+/**
+ * `schemaIsCurrent` + `detectExtensions` in a single statement, for the path every cold
+ * start takes. On neon-http each statement is its own HTTPS request, and the slow way is
+ * three in sequence (CREATE TABLE IF NOT EXISTS, the version read, the extension read)
+ * ahead of the first query a visitor is waiting on.
+ *
+ * Only ever answers "yes, current — and here are the extensions". Anything else (the
+ * table is missing, no row, a version behind, a read error) returns false and the caller
+ * falls through to the original slow path, which is what creates the table and migrates.
+ * So a wrong answer here can cost a round trip, never a skipped migration.
+ */
+async function schemaIsCurrentFast(run: StatementRunner): Promise<boolean> {
+  try {
     const result = await run(
-      `SELECT version FROM schema_migrations WHERE id = 1`
+      `SELECT m.version,
+              m.fingerprint,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS has_vector,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS has_trigram
+         FROM schema_migrations m
+        WHERE m.id = 1`
     );
-    const rows = rowsOf<{ version: number | string }>(result);
-    return Number(rows[0]?.version) === SCHEMA_VERSION;
+    const row = rowsOf<{
+      version: number | string;
+      fingerprint: string | null;
+      has_vector: boolean;
+      has_trigram: boolean;
+    }>(result)[0];
+    if (!row) return false;
+    if (!isSchemaCurrent({ version: Number(row.version), fingerprint: row.fingerprint ?? null })) {
+      return false;
+    }
+    globalForDb.orbitPgvector = Boolean(row.has_vector);
+    globalForDb.orbitTrigram = Boolean(row.has_trigram);
+    return true;
   } catch {
     return false;
   }
@@ -1953,11 +2151,18 @@ async function detectExtensions(run: StatementRunner) {
 
 export async function recordSchemaVersion(run: StatementRunner) {
   try {
+    // Databases stamped before the fingerprint existed lack the column. Idempotent.
+    await run(`ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS fingerprint text`);
+    // Never downgrades: a rollback that sweeps must not overwrite a newer build's stamp.
+    // The fingerprint is hex, so inlining it is safe.
     await run(
-      `INSERT INTO schema_migrations (id, version, applied_at)
-       VALUES (1, ${SCHEMA_VERSION}, now())
+      `INSERT INTO schema_migrations (id, version, applied_at, fingerprint)
+       VALUES (1, ${SCHEMA_VERSION}, now(), '${schemaFingerprint()}')
        ON CONFLICT (id) DO UPDATE
-         SET version = EXCLUDED.version, applied_at = EXCLUDED.applied_at`
+         SET version = EXCLUDED.version,
+             applied_at = EXCLUDED.applied_at,
+             fingerprint = EXCLUDED.fingerprint
+         WHERE schema_migrations.version <= EXCLUDED.version`
     );
   } catch (err) {
     // A boot that cannot record its version just re-runs the idempotent sweep next time.
@@ -2127,6 +2332,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "recruiter_sharing",
     "integer NOT NULL DEFAULT 0"
   );
+  await ensureColumn(client, "user_settings", "terms_accepted_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "terms_version", "text");
+  await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
     "user_recruiter_links",
@@ -2674,6 +2882,9 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_version text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS timeline_backfill_enabled integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS shared_to_pool integer NOT NULL DEFAULT 1`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
@@ -2813,7 +3024,46 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS event_companies_event_company_role_uidx ON event_companies(event_id, company_id, role)`,
   `CREATE INDEX IF NOT EXISTS event_companies_user_company_idx ON event_companies(user_id, company_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS target_companies_user_company_uidx ON target_companies(user_id, company_id)`,
-  // Schema v63: chat context note.
+  // Launch Phase 2. Columns first, then the one-time recruiter PII backfill, whose statements
+  // read the columns they fill. Each backfill statement only fills what is still null, so a
+  // re-run on any later version bump changes nothing.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_event_at timestamptz`,
+  `ALTER TABLE recruiters ADD COLUMN IF NOT EXISTS created_by_user_id text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS phone text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS linkedin_url text`,
+  // The creator is the earliest link written within 120 seconds of the canonical row (the same window as the Phase 0 runtime rule), since
+  // upsertCanonicalRecruiter and ensureUserLink run back to back in one request.
+  `UPDATE recruiters r SET created_by_user_id = f.user_id FROM (SELECT DISTINCT ON (l.recruiter_id) l.recruiter_id, l.user_id FROM user_recruiter_links l JOIN recruiters r2 ON r2.id = l.recruiter_id WHERE l.created_at <= r2.created_at + interval '120 seconds' ORDER BY l.recruiter_id, l.created_at) f WHERE r.id = f.recruiter_id AND r.created_by_user_id IS NULL`,
+  // The creator, or the only linker, is who put the shared details there, so they go onto that link.
+  // Anything else stays on the shared row only: its contributor cannot be determined.
+  `UPDATE user_recruiter_links l SET email = COALESCE(l.email, r.email), phone = COALESCE(l.phone, r.phone), linkedin_url = COALESCE(l.linkedin_url, r.linkedin_url) FROM recruiters r WHERE r.id = l.recruiter_id AND (r.email IS NOT NULL OR r.phone IS NOT NULL OR r.linkedin_url IS NOT NULL) AND (l.user_id = r.created_by_user_id OR NOT EXISTS (SELECT 1 FROM user_recruiter_links o WHERE o.recruiter_id = l.recruiter_id AND o.id <> l.id))`,
+  // A Gmail-scan link matched this row by the sender address first, so that address is almost
+  // always the one in this user's own mailbox.
+  `UPDATE user_recruiter_links l SET email = r.email FROM recruiters r WHERE r.id = l.recruiter_id AND l.source = 'gmail' AND l.email IS NULL AND r.email IS NOT NULL`,
+  // Launch Phase 4: calendar feed tokens are stored as their SHA-256, hex, matching
+  // hashCalendarFeedToken in src/lib/calendar-feed.ts. Idempotent: live tokens are
+  // 43-character base64url, so a stored 64-hex value is already a hash and is left alone.
+  `UPDATE user_settings
+      SET calendar_feed_token = encode(sha256(convert_to(calendar_feed_token, 'UTF8')), 'hex')
+    WHERE calendar_feed_token IS NOT NULL AND calendar_feed_token !~ '^[0-9a-f]{64}$'`,
+  // Launch Phase 4: LinkedIn timeline events a model inferred are tagged ai_derived, so
+  // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
+  `UPDATE interactions SET source = 'ai_derived'
+    WHERE external_id LIKE 'li-event:%' AND source IS DISTINCT FROM 'ai_derived'`,
+  // Schema v66: `completed` was an early spelling of a done reminder. Every reader matched
+  // both; after this only `done` exists, and the reminders query matches that alone.
+  // Idempotent: nothing writes `completed` to reminders any more.
+  `UPDATE reminders SET status = 'done' WHERE status = 'completed'`,
+  // Schema v67: a reminder list's icon and colour, chosen from its right-click editor.
+  // Keys into src/lib/reminder-list-style.ts; NULL means the default (Inbox tray / list glyph,
+  // no tint), so existing lists need no backfill.
+  `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS icon text`,
+  `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS color text`,
+  // v68: page-load timing on the traffic pipeline (src/lib/nav-timing.ts).
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS load_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
+  // Schema v70: chat context note.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS context_note text`,
 ];
 
@@ -2925,9 +3175,37 @@ async function ensureReady(): Promise<void> {
       schemaReconciled = undefined;
       globalForDb.orbitPglite = await open();
     }
+    simulateNetworkLatency(globalForDb.orbitPglite);
   }
 
   await globalForDb.orbitPglite.waitReady;
+}
+
+/**
+ * LOCAL MEASUREMENT ONLY: `ORBIT_SIM_DB_LATENCY_MS=20` makes every PGlite statement wait
+ * that long before it runs, the way each neon-http statement in production is its own
+ * HTTPS round trip. Local PGlite answers in microseconds, so without this a page that
+ * awaits eight queries one after another is exactly as fast as one that runs them all at
+ * once — and the difference is the whole cost of a slow page in production. With it, a
+ * loader's wall time is roughly (sequential depth × latency), which is what
+ * `scripts/smoke-page-depth.ts` and `scripts/dev/nav-timing.mjs` measure.
+ *
+ * The delay is applied before the statement is queued, so concurrent statements wait in
+ * parallel just as concurrent HTTPS requests would. Never reachable in production: this is
+ * the PGlite branch, which only runs without a `DATABASE_URL`.
+ */
+function simulateNetworkLatency(client: PGlite) {
+  const ms = Number(process.env.ORBIT_SIM_DB_LATENCY_MS);
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  const marked = client as PGlite & { orbitSimLatency?: boolean };
+  if (marked.orbitSimLatency) return;
+  marked.orbitSimLatency = true;
+  const query = client.query.bind(client);
+  const sleep = () => new Promise((resolve) => setTimeout(resolve, ms));
+  client.query = (async (...args: Parameters<PGlite["query"]>) => {
+    await sleep();
+    return query(...args);
+  }) as PGlite["query"];
 }
 
 /**
@@ -2970,8 +3248,14 @@ async function ready(): Promise<void> {
 
 /** How long a builder may hold the migration lease before another may steal it. */
 const MIGRATION_LEASE_MS = 5 * 60 * 1000;
-/** How long to wait for someone else's lease before giving up and sweeping anyway. */
-const MIGRATION_LOCK_WAIT_MS = 3 * 60 * 1000;
+/** How long `scripts/migrate.ts` waits for another builder's lease before sweeping anyway. */
+export const BUILD_MIGRATION_LOCK_WAIT_MS = 3 * 60 * 1000;
+/**
+ * How long a runtime cold start (`getDb()`) waits. Pages stop at 60 s, so the build wait
+ * would kill the request; on timeout the runtime path does NOT sweep — the holder is
+ * migrating, and racing it is what the lease prevents.
+ */
+export const RUNTIME_MIGRATION_LOCK_WAIT_MS = 20 * 1000;
 const MIGRATION_LOCK_POLL_MS = 2000;
 
 /**
@@ -2990,15 +3274,15 @@ const MIGRATION_LOCK_POLL_MS = 2000;
  * build at best. Two builds racing is not hypothetical: a production deploy and a preview
  * build, or two pushes in a minute, both call this.
  *
- * Never fails the caller. If the lease cannot be won within the wait, this logs and runs the
- * sweep anyway — exactly the behaviour that existed before this function did. A lock that can
- * turn a deploy into a hard failure when a previous builder died holding it would be a worse
- * trade than the race it prevents; the lease TTL covers that case, and this covers the TTL
- * being wrong.
+ * Never fails the caller. If the lease is not won within `options.waitMs`, `options.onTimeout`
+ * decides: the build sweeps anyway (the pre-lease behaviour — a lock that can turn a deploy
+ * into a hard failure when a previous builder died holding it would be a worse trade than the
+ * race it prevents), a runtime cold start serves without sweeping.
  */
 async function withMigrationLock<T>(
   run: StatementRunner,
-  body: () => Promise<T>
+  body: () => Promise<T>,
+  options: { waitMs: number; onTimeout: () => Promise<T> }
 ): Promise<T> {
   // The lease table has to exist before the sweep that creates every other table, so it is
   // created here rather than in the DDL. Concurrent `CREATE TABLE IF NOT EXISTS` can still
@@ -3020,7 +3304,7 @@ async function withMigrationLock<T>(
     // Already there, or raced. Either way the acquire below is the real test.
   }
 
-  const deadline = Date.now() + MIGRATION_LOCK_WAIT_MS;
+  const deadline = Date.now() + options.waitMs;
   while (Date.now() < deadline) {
     try {
       // Wins only when the row is absent or the previous holder's lease has expired. The
@@ -3049,12 +3333,7 @@ async function withMigrationLock<T>(
     await new Promise((resolve) => setTimeout(resolve, MIGRATION_LOCK_POLL_MS));
   }
 
-  if (!held) {
-    console.warn(
-      `[db] another builder has held the migration lease for ${MIGRATION_LOCK_WAIT_MS}ms; sweeping anyway`
-    );
-    return body();
-  }
+  if (!held) return options.onTimeout();
 
   try {
     return await body();
@@ -3076,6 +3355,15 @@ export type SchemaReconcileResult = {
   /** False when the recorded version already matched and nothing ran. */
   applied: boolean;
   failed: SchemaFailure[];
+  /** True when a runtime caller gave up on another holder's lease and did not sweep. */
+  lockTimedOut?: boolean;
+};
+
+export type ReconcileOptions = {
+  /** Default BUILD_MIGRATION_LOCK_WAIT_MS. */
+  lockWaitMs?: number;
+  /** When another holder keeps the lease past `lockWaitMs`: "sweep" (build, default) or "skip" (runtime). */
+  onLockTimeout?: "sweep" | "skip";
 };
 
 /**
@@ -3084,7 +3372,7 @@ export type SchemaReconcileResult = {
  * The whole sweep is idempotent, but "idempotent" is not "free": on `neon-http` every
  * statement is a separate HTTPS request, so replaying ~165 of them is the single largest
  * cost in a cold start. Confirm the recorded version first and skip the lot when it
- * already matches. A version mismatch — or any error reading it — takes the full pass.
+ * already matches. A version behind this build — or any error reading it — takes the full pass; a version ahead of it (a rollback) is left alone.
  *
  * The version is recorded ONLY when nothing failed. A sweep that logged a failure and
  * recorded the version anyway is how an index went missing from production for a month
@@ -3093,12 +3381,18 @@ export type SchemaReconcileResult = {
  * runs this ahead of `next build` and refuses to deploy on any failure, so in practice a
  * runtime boot only ever sees the no-op path.
  */
-export async function reconcileSchema(): Promise<SchemaReconcileResult> {
+export async function reconcileSchema(options: ReconcileOptions = {}): Promise<SchemaReconcileResult> {
   await ready();
   const neonSql = globalForDb.orbitNeonSql;
   const run: StatementRunner = neonSql
     ? (statement) => neonSql.query(statement)
     : (statement) => globalForDb.orbitPglite!.query(statement);
+
+  // Every cold start lands here before its first real query, so the common case — the build
+  // already migrated — has to be ONE round trip, not three.
+  if (await schemaIsCurrentFast(run)) {
+    return { version: SCHEMA_VERSION, applied: false, failed: [] };
+  }
 
   if (await schemaIsCurrent(run)) {
     // pgvector/pg_trgm availability lives in module state, not in the database, so it
@@ -3107,7 +3401,8 @@ export async function reconcileSchema(): Promise<SchemaReconcileResult> {
     return { version: SCHEMA_VERSION, applied: false, failed: [] };
   }
 
-  return withMigrationLock(run, async () => {
+  const lockWaitMs = options.lockWaitMs ?? BUILD_MIGRATION_LOCK_WAIT_MS;
+  const sweep = async (): Promise<SchemaReconcileResult> => {
     // Re-check inside the lock. Whoever held it before us may have just finished the very
     // sweep we were about to run — this is the whole reason the lock is worth taking.
     if (await schemaIsCurrent(run)) {
@@ -3123,6 +3418,19 @@ export async function reconcileSchema(): Promise<SchemaReconcileResult> {
     }
     if (failed.length === 0) await recordSchemaVersion(run);
     return { version: SCHEMA_VERSION, applied: true, failed };
+  };
+
+  return withMigrationLock(run, sweep, {
+    waitMs: lockWaitMs,
+    onTimeout: async () => {
+      if ((options.onLockTimeout ?? "sweep") === "sweep") {
+        console.warn(`[db] another builder has held the migration lease for ${lockWaitMs}ms; sweeping anyway`);
+        return sweep();
+      }
+      console.warn(`[db] migration lease busy for ${lockWaitMs}ms; serving without sweeping while the holder migrates`);
+      await detectExtensions(run);
+      return { version: SCHEMA_VERSION, applied: false, failed: [], lockTimedOut: true };
+    },
   });
 }
 
@@ -3130,7 +3438,7 @@ export async function getDb(): Promise<Db> {
   await ready();
 
   if (!schemaReconciled) {
-    schemaReconciled = reconcileSchema()
+    schemaReconciled = reconcileSchema({ lockWaitMs: RUNTIME_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "skip" })
       .then(() => undefined)
       .catch((err) => {
         schemaReconciled = undefined;

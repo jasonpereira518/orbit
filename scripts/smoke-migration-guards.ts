@@ -15,7 +15,8 @@
 import "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { checkMigrationTarget, databaseHost, validateEnv } from "../src/lib/env";
-import { getDb, reconcileSchema } from "../src/db";
+import { readFileSync } from "node:fs";
+import { BUILD_MIGRATION_LOCK_WAIT_MS, RUNTIME_MIGRATION_LOCK_WAIT_MS, getDb, reconcileSchema } from "../src/db";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -123,6 +124,27 @@ async function leaseChecks() {
   check("an expired lease is taken immediately, not waited out",
     Date.now() - stealStarted < 2000 && stolen.applied === true, `${Date.now() - stealStarted}ms`);
   check("nothing failed on the stolen sweep", stolen.failed.length === 0);
+
+  // A runtime cold start meeting a builder's live lease must give up fast and not sweep.
+  await db.execute(sql`INSERT INTO schema_migration_lock (id, holder, acquired_at, expires_at)
+    VALUES (1, 'slow-builder', now(), now() + interval '5 minutes')
+    ON CONFLICT (id) DO UPDATE SET holder = 'slow-builder', expires_at = now() + interval '5 minutes'`);
+  await db.execute(sql`UPDATE schema_migrations SET version = 1 WHERE id = 1`);
+  const rtStarted = Date.now();
+  const rt = await reconcileSchema({ lockWaitMs: 1500, onLockTimeout: "skip" });
+  const rtWaited = Date.now() - rtStarted;
+  check("the runtime path gives up after its cap", rtWaited >= 1500 && rtWaited < 6000, `${rtWaited}ms`);
+  check("and serves without sweeping", rt.applied === false && rt.lockTimedOut === true, JSON.stringify(rt));
+  const version = (rowsOf(await db.execute(sql`SELECT version FROM schema_migrations WHERE id = 1`))[0] as { version: number }).version;
+  check("leaving the version for the holder to record", Number(version) === 1, String(version));
+  check("the runtime cap is at most 20 s and below the build wait",
+    RUNTIME_MIGRATION_LOCK_WAIT_MS <= 20_000 && RUNTIME_MIGRATION_LOCK_WAIT_MS < BUILD_MIGRATION_LOCK_WAIT_MS);
+  check("getDb() uses the runtime options",
+    readFileSync("src/db/index.ts", "utf8").includes(
+      'reconcileSchema({ lockWaitMs: RUNTIME_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "skip" })'));
+  await db.execute(sql`DELETE FROM schema_migration_lock WHERE holder = 'slow-builder'`);
+  const restored = await reconcileSchema();
+  check("after the holder is gone the next reconcile sweeps", restored.applied === true && restored.failed.length === 0);
 }
 
 async function main() {

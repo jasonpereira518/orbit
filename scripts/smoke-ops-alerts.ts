@@ -34,10 +34,12 @@ const HEALTHY: OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: hoursAgo(2), lastState: "ok" },
     syncRun: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    drain: { lastStartedAt: hoursAgo(0.2), lastState: "ok" },
     jobFeed: { lastStartedAt: hoursAgo(1), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
+  resendRejectedLastHour: 0,
   wedgedImports: 0,
   failedImportsLast24h: 0,
   outreach: { overdue: 0, oldestOverdueDays: null },
@@ -45,10 +47,21 @@ const HEALTHY: OpsSnapshot = {
   errorEventsLastHour: 0,
   perfSlowLastHour: 0,
   missingRequiredEnv: [],
+  missingExpectedEnv: [],
   deploy: { prodSha: "abc", mainSha: "abc", mainCommittedAt: hoursAgo(30) },
   reauthNeeded: 0,
   wedgedSyncs: 0,
   failingSyncs: 0,
+  stuckPurges: 0,
+  processStalledRecent: ["ok"],
+  backfillFailures24h: { accounts: 0, kinds: [] },
+  statementTimeout: "20s",
+  stripeUnattributed24h: { fulfilments: 0, other: 0 },
+  embeddingBacklog: { accounts: 0, oldestAt: null },
+  syncOldestDueAgeMs: null,
+  aiRefusals24h: { unembeddable: 0, quotaAccounts: 0 },
+  calendarDisarmed: 0,
+  sharedBudgets: { avatarSourcesExhausted: [], apolloCapHits: 0 },
   managedAi: {
     configured: true,
     switchedOff: false,
@@ -102,6 +115,19 @@ function main() {
     Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: hoursAgo(2), lastState: "failed" } } }, "cron.failed")));
   check("cron last run stale (killed) → cron.failed",
     Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: hoursAgo(2), lastState: "stale" } } }, "cron.failed")));
+
+  check("three partial nightly runs in a row → cron.partial_streak (warning)",
+    find({ ...HEALTHY, processStalledRecent: ["partial", "partial", "partial"] }, "cron.partial_streak")?.severity === "warning");
+  check("two partials then an ok is not a streak",
+    !find({ ...HEALTHY, processStalledRecent: ["partial", "partial", "ok"] }, "cron.partial_streak"));
+  check("only two runs recorded is not yet a streak",
+    !find({ ...HEALTHY, processStalledRecent: ["partial", "partial"] }, "cron.partial_streak"));
+  check("a failed drain → drain.failed",
+    find({ ...HEALTHY, cron: { ...HEALTHY.cron, drain: { lastStartedAt: hoursAgo(0.1), lastState: "failed" } } }, "drain.failed")?.severity === "warning");
+  check("a killed drain → drain.failed",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, drain: { lastStartedAt: hoursAgo(1), lastState: "stale" } } }, "drain.failed")));
+  check("a partial drain (customer endpoints refusing) is not drain.failed",
+    !find({ ...HEALTHY, cron: { ...HEALTHY.cron, drain: { lastStartedAt: hoursAgo(0.1), lastState: "partial" } } }, "drain.failed"));
 
   // Connector sync. Its freshness window is its own (3h), not the nightly job's 25h — a job
   // that should run every fifteen minutes must not be able to go a full day unnoticed.
@@ -163,6 +189,10 @@ function main() {
 
   check("a Stripe checkout error in the last hour → critical",
     find({ ...HEALTHY, stripeCheckoutErrorsLastHour: 1 }, "stripe.checkout_error")?.severity === "critical");
+  check("a Resend rejection in the last hour → resend.rejected (warning)",
+    find({ ...HEALTHY, resendRejectedLastHour: 1 }, "resend.rejected")?.severity === "warning");
+  check("…whose detail names the usual cause",
+    Boolean(find({ ...HEALTHY, resendRejectedLastHour: 3 }, "resend.rejected")?.detail.includes("RESEND_FROM_EMAIL")));
   check("a wedged import → warning", find({ ...HEALTHY, wedgedImports: 1 }, "import.wedged")?.severity === "warning");
   check("three failed imports in 24h → import.failed_burst", Boolean(find({ ...HEALTHY, failedImportsLast24h: 3 }, "import.failed_burst")));
   check("two failed imports is not a burst", !find({ ...HEALTHY, failedImportsLast24h: 2 }, "import.failed_burst"));
@@ -179,12 +209,63 @@ function main() {
   const missing = find({ ...HEALTHY, missingRequiredEnv: ["CRON_SECRET", "APP_BASE_URL"] }, "config.missing");
   check("missing required env → config.missing naming the variables",
     missing?.severity === "warning" && missing.detail.includes("CRON_SECRET") && missing.detail.includes("APP_BASE_URL"), missing?.detail);
+  check("backfills failing for two accounts → backfill.failed (warning)",
+    find({ ...HEALTHY, backfillFailures24h: { accounts: 2, kinds: ["embeddings"] } }, "backfill.failed")?.severity === "warning");
+  check("one account's failing backfill is that user's key, not an ops alert",
+    !find({ ...HEALTHY, backfillFailures24h: { accounts: 1, kinds: ["embeddings"] } }, "backfill.failed"));
+
+  const exhausted = find({ ...HEALTHY, sharedBudgets: { avatarSourcesExhausted: ["unavatar"], apolloCapHits: 0 } }, "avatar.source_exhausted");
+  check("an exhausted photo source → avatar.source_exhausted (info), naming it",
+    exhausted?.severity === "info" && exhausted.detail.includes("unavatar"), exhausted?.detail);
+  check("accounts hitting the hosted Apollo cap → apollo.hosted_cap_hits (info)",
+    find({ ...HEALTHY, sharedBudgets: { avatarSourcesExhausted: [], apolloCapHits: 3 } }, "apollo.hosted_cap_hits")?.severity === "info");
+
+  check("five disarmed calendars → calendar.disarmed (info)",
+    find({ ...HEALTHY, calendarDisarmed: 5 }, "calendar.disarmed")?.severity === "info");
+  check("one or two disarmed calendars is user churn, not an alert", !find({ ...HEALTHY, calendarDisarmed: 2 }, "calendar.disarmed"));
+
+  check("a spike of unembeddable rows → embedding.unembeddable (warning)",
+    find({ ...HEALTHY, aiRefusals24h: { unembeddable: 10, quotaAccounts: 0 } }, "embedding.unembeddable")?.severity === "warning");
+  check("a few odd rows are not a spike",
+    !find({ ...HEALTHY, aiRefusals24h: { unembeddable: 3, quotaAccounts: 0 } }, "embedding.unembeddable"));
+  check("an account out of provider credit → ai.quota_failures (info)",
+    find({ ...HEALTHY, aiRefusals24h: { unembeddable: 0, quotaAccounts: 2 } }, "ai.quota_failures")?.severity === "info");
+
+  check("a connection overdue by 3h while sync runs → sync.lagging (warning)",
+    find({ ...HEALTHY, syncOldestDueAgeMs: 3 * 3_600_000 }, "sync.lagging")?.severity === "warning");
+  check("an hour overdue is just the schedule's lag", !find({ ...HEALTHY, syncOldestDueAgeMs: 3_600_000 }, "sync.lagging"));
+  check("a dead schedule says sync.schedule_missed, not also sync.lagging",
+    !find({ ...HEALTHY, syncOldestDueAgeMs: 5 * 3_600_000, cron: { ...HEALTHY.cron, syncRun: { lastStartedAt: hoursAgo(4), lastState: "ok" } } }, "sync.lagging"));
+
+  check("an account with a flag older than 6h → embedding.backlog (warning)",
+    find({ ...HEALTHY, embeddingBacklog: { accounts: 1, oldestAt: hoursAgo(30) } }, "embedding.backlog")?.severity === "warning");
+  check("fresh flags only (the backfill is working) → quiet",
+    !find({ ...HEALTHY, embeddingBacklog: { accounts: 0, oldestAt: hoursAgo(2) } }, "embedding.backlog"));
+
+  check("an unattributed checkout → stripe.unattributed (critical)",
+    find({ ...HEALTHY, stripeUnattributed24h: { fulfilments: 1, other: 0 } }, "stripe.unattributed")?.severity === "critical");
+  check("an unattributed invoice or refund only → warning",
+    find({ ...HEALTHY, stripeUnattributed24h: { fulfilments: 0, other: 2 } }, "stripe.unattributed")?.severity === "warning");
+
+  check("statement_timeout 0 → config.statement_timeout_unbounded (warning)",
+    find({ ...HEALTHY, statementTimeout: "0" }, "config.statement_timeout_unbounded")?.severity === "warning");
+  check("a bounded or unknown timeout is quiet",
+    !find(HEALTHY, "config.statement_timeout_unbounded") && !find({ ...HEALTHY, statementTimeout: null }, "config.statement_timeout_unbounded"));
+
+  check("Slack unset in production → config.alerts_undeliverable (warning)",
+    find({ ...HEALTHY, missingExpectedEnv: ["SLACK_OPS_WEBHOOK_URL"] }, "config.alerts_undeliverable")?.severity === "warning");
+  check("another missing expected variable is not an alert",
+    !find({ ...HEALTHY, missingExpectedEnv: ["SENTRY_DSN"] }, "config.alerts_undeliverable"));
+
   check("prod behind main by more than 6h → deploy.drift",
     Boolean(find({ ...HEALTHY, deploy: { prodSha: "abc", mainSha: "def", mainCommittedAt: hoursAgo(7) } }, "deploy.drift")));
   check("prod behind main by an hour is just a deploy in flight",
     !find({ ...HEALTHY, deploy: { prodSha: "abc", mainSha: "def", mainCommittedAt: hoursAgo(1) } }, "deploy.drift"));
   check("no deploy payload → no drift condition", !find({ ...HEALTHY, deploy: null }, "deploy.drift"));
   check("accounts needing re-auth → info", find({ ...HEALTHY, reauthNeeded: 3 }, "reauth.needed")?.severity === "info");
+  check("a failed deletion run → purge.stuck (critical)",
+    find({ ...HEALTHY, stuckPurges: 1 }, "purge.stuck")?.severity === "critical");
+  check("no failed deletion runs → no purge.stuck", !find(HEALTHY, "purge.stuck"));
   check("every condition carries a title and a detail",
     evaluateOpsConditions({ ...HEALTHY, wedgedImports: 1, reauthNeeded: 1, errorEventsLastHour: 9 }, NOW).every((c) => c.title && c.detail));
 
@@ -222,6 +303,12 @@ function main() {
 
   t = planTransitions([row("a", { severity: "warning" })], [cond("a", "critical")], NOW);
   check("an escalation in severity re-opens", t.open.length === 1 && t.open[0].severity === "critical");
+
+  t = planTransitions([row("a", { lastNotifiedAt: null, notifyCount: 0 })], [cond("a", "warning")], NOW);
+  check("an active row Slack never took is offered as an open again", t.open.length === 1 && t.unchanged.length === 0 && t.remind.length === 0);
+
+  t = planTransitions([row("a", { lastNotifiedAt: null, notifyCount: 0 })], [], NOW);
+  check("a never-announced row still recovers (state closes)", t.recover.length === 1);
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

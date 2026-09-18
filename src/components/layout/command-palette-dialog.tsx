@@ -13,6 +13,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
   ArrowRight,
+  BellPlus,
+  CalendarClock,
   CornerDownLeft,
   Loader2,
   Mic,
@@ -105,6 +107,21 @@ const ACTIONS: Command[] = [
     href: "/imports",
     icon: Upload,
     keywords: "linkedin csv vcard vcf google outlook iphone phone address book calendar ics",
+  },
+  {
+    id: "action:new-reminder",
+    label: "New reminder",
+    href: "/reminders?new=1",
+    icon: BellPlus,
+    keywords: "add create task follow up remind todo",
+  },
+  {
+    id: "action:upcoming-reminders",
+    label: "Upcoming reminders",
+    hint: "What’s due after today",
+    href: "/reminders?view=upcoming",
+    icon: CalendarClock,
+    keywords: "due soon week schedule next",
   },
   {
     id: "action:duplicates",

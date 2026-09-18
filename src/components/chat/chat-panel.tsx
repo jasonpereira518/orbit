@@ -634,6 +634,7 @@ export function ChatPanel() {
             onDone: (info) => {
               ensurePlaceholder();
               patch((m) => ({ ...m, id: info.messageId || assistantId, streaming: false }));
+              if (info.notice) toast.message(info.notice);
               if (info.title) setThreadTitle(info.title);
               setThreads((prev) => {
                 const next = prev.filter((t) => t.id !== activeId);

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { Copy, Plus } from "lucide-react";
 import { listContactLetters, listContactsPage } from "@/actions/contacts";
@@ -45,14 +46,17 @@ export default async function ContactsPage({
     letter: params.letter,
   };
 
-  const [page, letters, planOverview, duplicateCount] = await Promise.all([
+  // The duplicates button streams in behind the list (`DuplicatesButton` below): its count
+  // is a self-join over the whole network, two round trips deep, and it was the slowest
+  // thing in this `Promise.all`, so it decided when the list appeared. The quota notice
+  // stays here — it renders a line above the list for every free account, and arriving
+  // late it would shove the list down after it had painted.
+  const [page, letters, planOverview] = await Promise.all([
     // One page, not the whole network. Filtering, searching and ordering all happen in
     // Postgres now, so this costs the same whether the user knows 50 people or 50,000.
     listContactsPage({ ...filters, limit: CONTACTS_PAGE_SIZE }),
     listContactLetters(),
     getPlanOverview(),
-    // Cheap and capped; decides whether the review entry point appears at all.
-    countDuplicates(),
   ]);
 
   return (
@@ -66,15 +70,11 @@ export default async function ContactsPage({
       }
       actions={
         <>
-          {duplicateCount > 0 ? (
-            <Link
-              href="/contacts/duplicates"
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
-              <Copy className="mr-1 h-4 w-4" aria-hidden />
-              {duplicateCount >= 99 ? "99+ duplicates" : `${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}`}
-            </Link>
-          ) : null}
+          {/* No fallback: the button only exists when there are duplicates, so it arriving
+              a beat late is indistinguishable from it being there. */}
+          <Suspense fallback={null}>
+            <DuplicatesButton />
+          </Suspense>
           <RefreshContactsButton />
           <Link
             href="/capture"
@@ -124,5 +124,19 @@ export default async function ContactsPage({
         </ContactsFilters>
       </div>
     </PeopleListShell>
+  );
+}
+
+/** Cheap and capped; decides whether the review entry point appears at all. */
+async function DuplicatesButton() {
+  const duplicateCount = await countDuplicates().catch(() => 0);
+  if (duplicateCount <= 0) return null;
+  return (
+    <Link href="/contacts/duplicates" className={cn(buttonVariants({ variant: "outline" }))}>
+      <Copy className="mr-1 h-4 w-4" aria-hidden />
+      {duplicateCount >= 99
+        ? "99+ duplicates"
+        : `${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}`}
+    </Link>
   );
 }

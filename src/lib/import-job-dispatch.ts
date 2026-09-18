@@ -11,10 +11,10 @@ import {
   CALENDAR_ICS_IMPORT_TYPE,
 } from "@/lib/import-adapters/calendar";
 import { runImportJob } from "@/lib/import-engine";
-import {
-  GMAIL_SCAN_IMPORT_TYPE,
-  runGmailRecruiterScanJob,
-} from "@/lib/gmail-scan-processor";
+import { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-type";
+// Value-only, used inside a function: this module and the processor are in an import cycle,
+// so the constant above must come from a module that is never mid-initialisation.
+import { runGmailRecruiterScanJob } from "@/lib/gmail-scan-processor";
 
 /**
  * Re-exported from their adapters, which is where these constants now live: the adapter

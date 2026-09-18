@@ -81,7 +81,10 @@ export function AppShell({
     pathname === "/settings" || pathname.startsWith("/settings/");
   const isConstellation =
     pathname === "/graph" || pathname.startsWith("/graph/");
-  const isViewportLocked = isChat || isConstellation;
+  // The reminders page is a three-pane workspace whose panes scroll on their own, so it
+  // fills the viewport like /chat and /graph rather than scrolling as a document.
+  const isReminders = pathname === "/reminders";
+  const isViewportLocked = isChat || isConstellation || isReminders;
   const smallSky = useSmallSky();
   // The ask bar is not a link to /chat — it calls `askNetwork` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
@@ -91,6 +94,9 @@ export function AppShell({
     !isChat &&
     !isSettings &&
     !isConstellation &&
+    // A floating bar over a viewport-locked queue would sit on its last rows and on the
+    // detail pane. ⌘K still asks from there (the palette falls back to /chat).
+    !isReminders &&
     !hiddenSet.has("page.chat");
   // Where the palette sends a typed question: the ask bar when it is on screen, /chat when
   // the page has no bar, and nowhere on /chat itself (its composer is already right there)

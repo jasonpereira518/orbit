@@ -79,6 +79,29 @@ export const ERROR_SOURCES = {
    */
   providerHealthCheck: "provider.health_check",
   /**
+   * A background backfill (embeddings, LinkedIn timeline events) threw inside `after()`,
+   * where nothing else would ever see it. Throttled per (kind, account) per hour by
+   * `recordBackfillFailure`, so a key that keeps failing is one row an hour, not one per kick.
+   */
+  backfillFailed: "backfill.failed",
+  /** A Stripe event no account matched (checkout, invoice, refund). Ids only. */
+  stripeUnattributed: "stripe.unattributed",
+  /**
+   * Wispr answered 401/403 to a user's own key. One row per rejected capture at most; the
+   * key's fingerprint (never the key) lets Settings say "this key" rather than "a key".
+   */
+  wisprTranscribe: "wispr.transcribe",
+  /**
+   * Resend refused an email Orbit tried to send ON ORBIT'S KEY: an interest-list welcome or
+   * follow-up, or a hosted outreach message. Invisible before — a console line Vercel keeps
+   * for an hour (every waitlist welcome of Sep 7–9 2026 died this way) or a per-message error
+   * only the sender saw. Bounded by signups and `DAILY_SEND_LIMIT`. A `RESEND_FROM_EMAIL` on
+   * an unverified domain rejects every send at once, so the ops sweep opens `resend.rejected`
+   * on one row. A user's own Resend key being refused is theirs to fix and is not recorded
+   * here — it would page Orbit about someone else's configuration.
+   */
+  resendRejected: "resend.rejected",
+  /**
    * A provider refused or throttled one of ORBIT'S managed AI keys (`src/lib/ai-access.ts`).
    * `kind` is the failure kind, the provider lives in context. Throttled to one row per
    * (provider, kind) per process per hour, and the ops sweep pages on any row at all: a

@@ -57,6 +57,11 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
     DataCategory,
     number
   > | null>(null);
+  // Set when a delete stopped part-way; the dialog stays open to say what happened.
+  const [partial, setPartial] = useState<{
+    deleted: DataCategory[];
+    pending: DataCategory[];
+  } | null>(null);
   const [pending, start] = useTransition();
 
   useEffect(() => {
@@ -81,6 +86,7 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
   const reset = () => {
     setPicked(new Set(DATA_CATEGORY_IDS));
     setTyped("");
+    setPartial(null);
   };
 
   const toggle = (id: DataCategory) => {
@@ -105,7 +111,16 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
         // Cross-tab best-effort: graph listeners can react via storage events.
         localStorage.setItem("orbit:stop-operations", String(Date.now()));
 
-        const { deleted } = await deleteAllData(chosen);
+        const { deleted, pending: stillPending } = await deleteAllData(chosen);
+        if (stillPending.length > 0) {
+          setPartial({ deleted, pending: stillPending });
+          setTyped("");
+          toast.warning(
+            `Deleted ${deleted.length} of ${deleted.length + stillPending.length} categories — Orbit will finish the rest on its own`
+          );
+          router.refresh();
+          return;
+        }
         setOpen(false);
         reset();
         toast.success(
@@ -216,6 +231,22 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
           })}
         </ul>
 
+        {partial && (
+          <div
+            role="status"
+            className="rounded-lg border border-border bg-muted/40 p-3 text-xs leading-snug"
+          >
+            <p className="font-medium text-foreground">Part of this is still being deleted</p>
+            <p className="mt-1 text-muted-foreground">
+              Done: {labelsFor(partial.deleted)}
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Still to go: {labelsFor(partial.pending)}. Orbit retries these on its own within a
+              day — there’s nothing more you need to do
+            </p>
+          </div>
+        )}
+
         <label className="block space-y-1.5">
           <span className="text-xs font-medium">
             Type {CONFIRMATION} to confirm
@@ -254,4 +285,11 @@ export function DeleteDataDialog({ trigger }: { trigger: React.ReactNode }) {
       </DialogContent>
     </Dialog>
   );
+}
+
+function labelsFor(ids: readonly DataCategory[]): string {
+  if (ids.length === 0) return "nothing yet";
+  return DATA_CATEGORY_META.filter((c) => ids.includes(c.id))
+    .map((c) => c.label)
+    .join(", ");
 }

@@ -15,10 +15,18 @@ import {
   runGmailRecruiterScanJob,
 } from "@/lib/gmail-scan-processor";
 import {
+  hasCalendarScope,
   buildGmailAuthUrl,
   getGmailOAuthConfigSummary,
+  hasContactsScope,
+  hasGmailReadScope,
   hasSendScope,
 } from "@/lib/gmail";
+import { isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
+import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
+import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { purgeUserData } from "@/lib/user-data";
+import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
@@ -33,6 +41,16 @@ export type GmailConnectionStatus = {
    * and can scan, but must reconnect before Orbit can send on their behalf.
    */
   canSend: boolean;
+  /** Null when there is no connection row. See `deriveConnectionHealth`. */
+  status: ConnectionHealth | null;
+  /** The scheduler's last error, verbatim — never rendered as-is (`calendarPauseLine`). */
+  syncError: string | null;
+  /** ISO time of the next calendar sync, or null when none is scheduled. */
+  nextSyncAt: string | null;
+  /** The grant covers gmail.readonly: the recruiter scan and confirmation emails can run. */
+  canRead: boolean;
+  /** The grant covers contacts.readonly. */
+  canImportContacts: boolean;
   /** Safe: configured redirect URI only (no secrets). */
   redirectUri: string | null;
 };
@@ -47,6 +65,11 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       emailAddress: null,
       lastSyncedAt: null,
       canSend: false,
+      status: null,
+      syncError: null,
+      nextSyncAt: null,
+      canRead: false,
+      canImportContacts: false,
       redirectUri: summary.redirectUri,
     };
   }
@@ -62,13 +85,27 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     emailAddress: conn?.emailAddress || null,
     lastSyncedAt: conn?.lastSyncedAt?.toISOString() || null,
     canSend: Boolean(conn && conn.status === "active" && hasSendScope(conn.scopes)),
+    status: conn
+      ? deriveConnectionHealth({
+          status: conn.status,
+          nextSyncAt: conn.nextSyncAt,
+          syncError: conn.syncError,
+          calendarScopeGranted: hasCalendarScope(conn.scopes),
+        })
+      : null,
+    syncError: conn?.syncError ?? null,
+    nextSyncAt: conn?.nextSyncAt?.toISOString() ?? null,
+    canRead: Boolean(conn && conn.status === "active" && hasGmailReadScope(conn.scopes)),
+    canImportContacts: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
     redirectUri: summary.redirectUri,
   };
 }
 
-export async function startGmailOAuth(
-  returnTo?: string
-): Promise<{ url: string }> {
+export async function startGmailOAuth(input: {
+  purpose: GooglePurpose;
+  returnTo?: string;
+}): Promise<{ url: string }> {
+  if (!isGooglePurpose(input.purpose)) throw new Error("Unknown Google connection purpose");
   const userId = await requireSyncUser();
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
@@ -88,8 +125,10 @@ export async function startGmailOAuth(
 
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo =
-    returnTo && returnTo.startsWith("/") ? returnTo : "";
-  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}`;
+    input.returnTo && input.returnTo.startsWith("/") ? input.returnTo : "";
+  // The purpose rides in the state so the callback can check that Google granted the one
+  // scope this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
+  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${input.purpose}`;
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
@@ -99,29 +138,42 @@ export async function startGmailOAuth(
     maxAge: 600,
   });
 
-  return { url: buildGmailAuthUrl(state) };
+  return { url: buildGmailAuthUrl(state, input.purpose) };
 }
 
-export async function disconnectGmail() {
+export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
   const db = await getDb();
+  const grant = await db.query.gmailConnections.findFirst({
+    where: eq(gmailConnections.userId, userId),
+    columns: { refreshTokenEncrypted: true, accessTokenEncrypted: true },
+  });
+  // Row first: the disconnect is done even if Google never answers.
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
+  if (grant) await revokeGoogleGrant(grant);
+  if (opts.alsoDelete === true) {
+    await purgeUserData(userId, { only: DISCONNECT_DELETE_CATEGORIES.gmail });
+  }
   revalidatePath("/recruiters");
 }
 
 export async function consumeGmailOAuthState(
   state: string | null
-): Promise<{ userId: string; returnTo: string | null }> {
+): Promise<{ userId: string; returnTo: string | null; purpose: GooglePurpose | null }> {
   const jar = await cookies();
   const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
   jar.delete(OAUTH_STATE_COOKIE);
   if (!state || !expected || state !== expected) {
     throw new Error("Invalid OAuth state");
   }
-  const [userId, , encodedReturnTo] = state.split(":");
+  const [userId, , encodedReturnTo, rawPurpose] = state.split(":");
   if (!userId) throw new Error("Invalid OAuth state");
   const returnTo = encodedReturnTo ? decodeURIComponent(encodedReturnTo) : "";
-  return { userId, returnTo: returnTo.startsWith("/") ? returnTo : null };
+  return {
+    userId,
+    returnTo: returnTo.startsWith("/") ? returnTo : null,
+    purpose: isGooglePurpose(rawPurpose) ? rawPurpose : null,
+  };
 }
 
 
@@ -170,6 +222,9 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
     });
     if (!conn || conn.status !== "active") {
       throw new UserFacingError("Connect Gmail first, then scan");
+    }
+    if (!hasGmailReadScope(conn.scopes)) {
+      throw new UserFacingError("Allow Orbit to read your mail first — reconnect Gmail and tick mail access");
     }
 
     // Fail here rather than after the mailbox sweep: classification is the whole point of

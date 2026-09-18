@@ -18,7 +18,7 @@
  * implied it would fetch the guest list of a party you attended would generate a support
  * ticket per user.
  */
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarPlus, ChevronDown, Loader2, Mail, Plug, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,7 +33,11 @@ import {
 } from "@/actions/events";
 import type { EventConnectionSummary } from "@/lib/events/connections";
 import type { EventConnectionProvider } from "@/lib/events/types";
-import { friendlyError } from "@/lib/errors";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { startGmailOAuth } from "@/actions/gmail";
+import type { GooglePurpose } from "@/lib/google-scopes";
+import { readOAuthReturn } from "@/lib/oauth-return";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 /** Where each platform hides its personal calendar link, in the fewest words that get there. */
 const FEED_HELP: Record<
@@ -66,14 +70,27 @@ function Steps({ name, steps }: { name: string; steps: string[] }) {
   );
 }
 
+const EVENTBRITE_RETURN = {
+  param: "eventbrite",
+  provider: "Eventbrite",
+  connectedText: "Eventbrite connected — events you host will sync automatically",
+  reasons: {
+    no_organization:
+      "That Eventbrite account has no organization to sync — create one on Eventbrite, then connect again",
+  },
+};
+
 export function EventConnectionsCard({
   connections,
   eventbriteConfigured,
-  googleConnected,
+  googleMailGranted,
+  googleCalendarGranted,
 }: {
   connections: EventConnectionSummary[];
   eventbriteConfigured: boolean;
   googleConnected: boolean;
+  googleMailGranted: boolean;
+  googleCalendarGranted: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -82,13 +99,54 @@ export function EventConnectionsCard({
   const [feedUrl, setFeedUrl] = useState("");
   const [openFeed, setOpenFeed] = useState<"luma_ics" | "partiful_ics" | null>(null);
 
+  const oauthToasted = useRef(false);
+  useEffect(() => {
+    const result = readOAuthReturn(window.location.search, EVENTBRITE_RETURN);
+    if (!result) return;
+    if (!oauthToasted.current) {
+      oauthToasted.current = true;
+      if (result.tone === "success") toast.success(result.text);
+      else if (result.tone === "message") toast.message(result.text);
+      else toast.error(result.text);
+    }
+    // Stripped on the first gesture, not now — see `readOAuthReturn`. pointerdown/keydown
+    // fire before the click that could queue an action, so the restore lands first.
+    const strip = () =>
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${result.nextSearch}${window.location.hash}`
+      );
+    window.addEventListener("pointerdown", strip, { once: true, capture: true });
+    window.addEventListener("keydown", strip, { once: true, capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", strip, true);
+      window.removeEventListener("keydown", strip, true);
+    };
+  }, []);
+
   const byProvider = (provider: EventConnectionProvider) =>
     connections.find((c) => c.provider === provider);
   const luma = byProvider("luma");
   const eventbrite = byProvider("eventbrite");
   const gmail = byProvider("gmail");
 
+  function connectGoogle(purpose: GooglePurpose) {
+    start(async () => {
+      try {
+        const { url } = await startGmailOAuth({ purpose, returnTo: "/events" });
+        window.location.href = url;
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+      }
+    });
+  }
+
   function setGmailScan(enabled: boolean) {
+    if (enabled && !googleMailGranted) {
+      connectGoogle("event_mail");
+      return;
+    }
     start(async () => {
       const result = await setGmailEventScan(enabled);
       if (!result.ok) {
@@ -104,6 +162,34 @@ export function EventConnectionsCard({
     });
   }
 
+  // Google sends the person back here after consent. Toast once, then clean the URL. No
+  // server action is fired from this effect, so the replaceState cannot drop one.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const google = params.get("google");
+    if (!google) return;
+    const purpose = params.get("purpose");
+    if (google === "connected") {
+      toast.success(
+        purpose === "calendar"
+          ? "Google Calendar connected — meetings appear after the next sync"
+          : purpose === "event_mail"
+            ? "Mail access allowed — press Turn on to scan confirmation emails"
+            : "Google connected"
+      );
+    } else if (google === "error") {
+      const oauth = describeOAuthReason(params.get("reason"), "Google", purpose);
+      if (oauth.cancelled) toast.message(oauth.message);
+      else toast.error(oauth.message);
+    }
+    for (const key of ["google", "gmail", "reason", "purpose"]) params.delete(key);
+    const next = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+    );
+  }, []);
   function saveFeed(provider: "luma_ics" | "partiful_ics") {
     start(async () => {
       const result = await connectEventFeed(provider, feedUrl);
@@ -220,8 +306,8 @@ export function EventConnectionsCard({
     needsAttention > 0
       ? `${needsAttention} ${needsAttention === 1 ? "connection needs" : "connections need"} attention`
       : connections.length > 0
-        ? `${connections.length} connected${googleConnected ? " · Google Calendar" : ""}`
-        : googleConnected
+        ? `${connections.length} connected${googleCalendarGranted ? " · Google Calendar" : ""}`
+        : googleCalendarGranted
           ? "Google Calendar · connect Luma, Partiful and more"
           : "Connect Luma, Partiful, Gmail and more";
 
@@ -262,6 +348,22 @@ export function EventConnectionsCard({
           up here — not the ones you&rsquo;re waitlisted, pending or invited to. A connected
           Google Calendar already does this for invites that land in it.
         </p>
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-ink">Google Calendar</p>
+            <p className="text-xs text-muted-foreground">
+              {googleCalendarGranted
+                ? "Connected — meetings with people in your network land on their timelines."
+                : "Read-only access to your calendar, so meetings with people in your network land on their timelines."}
+            </p>
+          </div>
+          {googleCalendarGranted ? null : (
+            <Button variant="outline" size="sm" onClick={() => connectGoogle("calendar")} disabled={pending}>
+              <CalendarPlus className="size-4" aria-hidden />
+              Connect
+            </Button>
+          )}
+        </div>
         {feedRow("luma_ics")}
         {feedRow("partiful_ics")}
 
@@ -274,9 +376,9 @@ export function EventConnectionsCard({
             <p className="text-xs text-muted-foreground">
               {gmail
                 ? "On — Orbit reads only mail from Luma, Partiful, Eventbrite, Meetup and Posh, and keeps the subject line, nothing else."
-                : googleConnected
+                : googleMailGranted
                   ? "Find events from “you’re registered” emails. Orbit opens only mail from those platforms, stores no message content, and never sends any of it to AI."
-                  : "Connect Google first — this reads the mailbox you have already connected."}
+                  : "Find events from “you’re registered” emails. Turning this on asks Google for permission to read your mail — Orbit opens only mail from those platforms and stores no message content."}
             </p>
           </div>
           {gmail ? (
@@ -289,7 +391,7 @@ export function EventConnectionsCard({
               variant="outline"
               size="sm"
               onClick={() => setGmailScan(true)}
-              disabled={pending || !googleConnected}
+              disabled={pending}
             >
               <Mail className="size-4" aria-hidden />
               Turn on

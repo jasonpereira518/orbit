@@ -45,6 +45,7 @@ import { contactsListSelection } from "../src/lib/contact-avatar-sql";
 import { traced } from "../src/lib/perf-trace";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { scaleContactRows } from "./lib/scale-fixture";
+import { loadKnowledgeBase } from "../src/lib/knowledge-base";
 
 const USER = "smoke-page-budgets-user";
 const N = 3000;
@@ -597,6 +598,42 @@ async function main() {
   await traced("fast.thing", async () => 1, { thresholdMs: 10_000, now: clock, record: async (e) => void recorded.push(e) });
   check("a call under the threshold is not recorded", recorded.length === 1);
 
+  // ---- Knowledge -----------------------------------------------------------------------
+  console.log("\nKnowledge base (loadKnowledgeBase)…");
+  startQueryCount();
+  const knowledge = await loadKnowledgeBase(USER);
+  const knowledgeCount = stopQueryCount();
+  const knowledgeStatements = capturedQueries();
+  const knowledgeScans = contactScans(knowledgeStatements);
+  console.log(`  statements: ${knowledgeCount}`);
+  check("knowledge issues ≤ 4 statements", knowledgeCount <= 4, `got ${knowledgeCount}`);
+  check(
+    "every knowledge contacts scan is bounded by LIMIT",
+    knowledgeScans.length >= 1 && knowledgeScans.every((s) => /\blimit\b/i.test(s)),
+    knowledgeScans.find((s) => !/\blimit\b/i.test(s))?.slice(0, 200)
+  );
+  check(
+    "knowledge never pulls notes as a bare column",
+    knowledgeScans.every((s) => !selectsBare(s, "notes")),
+    knowledgeScans.find((s) => selectsBare(s, "notes"))?.slice(0, 200)
+  );
+  check(
+    "knowledge never selects profile_image_url",
+    knowledgeStatements.every((s) => !s.includes('"profile_image_url"'))
+  );
+  check("knowledge returns at most 400 entries", knowledge.entries.length <= 400, `${knowledge.entries.length}`);
+  check("knowledge still counts every contact", knowledge.stats.people === N + SPECIAL_ROWS, `${knowledge.stats.people}`);
+  const knowledgeBytes = JSON.stringify(knowledge).length;
+  const renderedContacts = new Set(knowledge.entries.map((e) => e.contactId)).size || 1;
+  console.log(`  ${(knowledgeBytes / 1024).toFixed(0)} KB, ${(knowledgeBytes / renderedContacts).toFixed(0)} bytes a rendered contact`);
+  // Up to four entries a contact (summary, notes, two key facts), each snippet capped at 420
+  // characters. A regression that ships whole notes or an avatar per entry blows through this.
+  check(
+    "knowledge moves under 2,500 bytes per contact it renders",
+    knowledgeBytes / renderedContacts < 2500,
+    `${(knowledgeBytes / renderedContacts).toFixed(0)} bytes a contact`
+  );
+
   // ---- Payload scaling ---------------------------------------------------------------
   //
   // Everything above runs at ONE account size, so it can prove a payload is narrow but not
@@ -609,6 +646,12 @@ async function main() {
   const smallDashboard = await getDashboardData(SCALE_USER);
   const smallGraph = await loadGraphData(SCALE_USER, { profile: Promise.resolve(null), scope: "all" });
   const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false });
+  const smallKnowledge = await loadKnowledgeBase(SCALE_USER);
+  check(
+    "knowledge payload does not grow with the account",
+    JSON.stringify(knowledge).length / Math.max(1, JSON.stringify(smallKnowledge).length) < 1.5,
+    `${JSON.stringify(smallKnowledge).length} → ${JSON.stringify(knowledge).length} bytes`
+  );
 
   type Surface = {
     name: string;

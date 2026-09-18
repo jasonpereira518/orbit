@@ -3,7 +3,6 @@
 import type { MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
-import { friendlyError } from "@/lib/errors";
 import {
   analyzeMeetingTranscript,
   buildMeetingCorpus,
@@ -22,6 +21,7 @@ import {
 } from "@/lib/meeting-sessions";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { isoDay } from "@/lib/suggested-reminder-utils";
+import { actionFailure } from "@/lib/action-failure";
 
 /**
  * Meeting capture's session lifecycle. The audio itself never passes through here — chunks
@@ -47,7 +47,7 @@ export async function createMeetingSession(input: {
     const row = await createMeetingSessionRow(userId, input);
     return { ok: true, id: row.id, startedAtIso: row.startedAt.toISOString() };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t start the meeting") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t start the meeting", "meetings.create-meeting-session") };
   }
 }
 
@@ -70,7 +70,7 @@ export async function resumeMeetingSession(
       durationMs: res.session.durationMs,
     };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t resume the meeting") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t resume the meeting", "meetings.resume-meeting-session") };
   }
 }
 
@@ -84,7 +84,7 @@ export async function endMeetingSession(
     if (!row) return { ok: false, error: "That meeting no longer exists" };
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t stop the meeting") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t stop the meeting", "meetings.end-meeting-session") };
   }
 }
 
@@ -98,7 +98,7 @@ export async function saveMeetingDetails(
     if (!row) return { ok: false, error: "That meeting no longer exists" };
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t update the meeting") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t update the meeting", "meetings.save-meeting-details") };
   }
 }
 
@@ -133,7 +133,7 @@ export async function loadMeetingTranscript(
       },
     };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t load the transcript") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t load the transcript", "meetings.load-meeting-transcript") };
   }
 }
 
@@ -171,7 +171,7 @@ export async function analyzeMeetingSession(
     userId = await requireUserId();
     await consumeBucket("capture", userId, RATE_LIMITS.capture);
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t analyze the meeting") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t analyze the meeting", "meetings.analyze-meeting-session") };
   }
 
   try {
@@ -206,7 +206,9 @@ export async function analyzeMeetingSession(
           { complete: completeJson, parseJson: parseAiJson }
         );
       } catch (err) {
-        const message = friendlyError(err, "Couldn’t analyze the meeting");
+        const message = await actionFailure(err, "Couldn’t analyze the meeting", "meetings.analyze-digest", {
+          sessionId: t.session.id,
+        });
         await storeMeetingDigest(userId, t.session.id, { error: message });
         return { ok: false, error: message };
       }
@@ -260,7 +262,7 @@ export async function analyzeMeetingSession(
       },
     };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t analyze the meeting") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t analyze the meeting", "meetings.analyze-meeting-session") };
   }
 }
 
@@ -270,6 +272,6 @@ export async function discardMeetingSession(id: string): Promise<{ ok: true } | 
     await discardMeetingSessionRow(userId, id);
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: friendlyError(err, "Couldn’t discard the meeting") };
+    return { ok: false, error: await actionFailure(err, "Couldn’t discard the meeting", "meetings.discard-meeting-session") };
   }
 }

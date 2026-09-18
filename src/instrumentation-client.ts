@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { markNavStart } from "@/lib/nav-timing";
 
 /**
  * Browser-side Sentry: hydration errors, client exceptions, and errors caught by the
@@ -16,4 +17,14 @@ Sentry.init({
   sendDefaultPii: false,
 });
 
-export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
+/**
+ * Every client-side navigation starts here. Sentry gets its breadcrumb, and page-load timing
+ * gets its clock start (`src/lib/nav-timing.ts`, read back by the pageview beacon).
+ */
+export function onRouterTransitionStart(
+  url: string,
+  navigationType: "push" | "replace" | "traverse"
+) {
+  markNavStart(url);
+  Sentry.captureRouterTransitionStart(url, navigationType);
+}

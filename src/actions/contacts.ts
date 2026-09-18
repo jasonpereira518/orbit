@@ -1,6 +1,10 @@
 "use server";
 
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
+import { contactsCursorCondition, contactsCursorFor, contactsOrderBy, decodeContactsCursor, encodeContactsCursor } from "@/lib/contacts-page-cursor";
+import { deleteReplacedAvatar } from "@/lib/avatar-blob";
+import { deleteContactForUser } from "@/lib/contact-delete";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -94,29 +98,6 @@ export type {
   ContactsPageFilters,
 } from "@/lib/contacts-page";
 
-/** Ordering position of the last row on a page, enough to resume immediately after it. */
-type Cursor =
-  | { s: "name"; k: string; n: string; id: string }
-  | { s: "closeness"; c: number; id: string }
-  | { s: "recent"; u: string; id: string };
-
-function encodeCursor(cursor: Cursor): string {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
-}
-
-function decodeCursor(raw: string | undefined, sort: ContactSort): Cursor | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    // A cursor from a different sort describes a position that does not exist in this
-    // ordering. Starting over beats silently skipping or repeating people.
-    if (!parsed || parsed.s !== sort) return null;
-    return parsed as Cursor;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * One page of a user's contacts, ordered, filtered and searched in Postgres.
  *
@@ -137,19 +118,19 @@ export async function listContactsPage(
 
   const sort: ContactSort = filters?.sort ?? "name";
   const limit = Math.min(Math.max(filters?.limit ?? CONTACTS_PAGE_SIZE, 1), 200);
-  // "relevance" has no stable keyset — see `orderFor` — so it never accepts a cursor and
+  // "relevance" has no stable keyset — see `contactsOrderBy` — so it never accepts a cursor and
   // always returns its first (only) page.
-  const cursor = sort === "relevance" ? null : decodeCursor(filters?.cursor, sort);
+  const cursor = sort === "relevance" ? null : decodeContactsCursor(filters?.cursor, sort, Boolean(filters?.q?.trim()));
 
   const conditions = [eq(contacts.userId, userId)];
 
   const q = filters?.q?.trim();
-  // Reused below by `orderFor` (relevance ranking) and by the match-reason map — one
+  // Reused below by `contactsOrderBy` (relevance ranking) and by the match-reason map — one
   // hybrid-search call serves widening, ranking, and explaining, instead of asking thrice.
   let semanticIds: string[] = [];
   let matchReasons = new Map<string, string>();
   if (q) {
-    // Short queries are prefix lookups ("mar" -> Marcus) that `searchCondition` alone
+    // Short queries are prefix lookups ("mar" -> Marcus) that `contactSearchCondition` alone
     // already serves well; below this length a semantic round trip only adds latency.
     // At 3+ chars, OR in contacts whose title/company/experience is a semantic match
     // even when no literal keyword overlaps ("Full-time SWE at Google" finding someone
@@ -161,10 +142,12 @@ export async function listContactsPage(
     matchReasons = matchReasonsFor(ranked);
     conditions.push(
       semanticIds.length
-        ? or(searchCondition(q), inArray(contacts.id, semanticIds))!
-        : searchCondition(q)
+        ? or(contactSearchCondition(q), inArray(contacts.id, semanticIds))!
+        : contactSearchCondition(q)
     );
   }
+  // Name matches first in every sort while searching; see `contacts-page-cursor.ts`.
+  const tier = q ? nameMatchTierSql(q) : null;
 
   const company = filters?.company?.trim();
   if (company) {
@@ -195,13 +178,13 @@ export async function listContactsPage(
     );
   }
 
-  if (cursor) conditions.push(cursorCondition(cursor));
+  if (cursor) conditions.push(contactsCursorCondition(cursor, tier));
 
   const rows = await db
-    .select(contactsListSelection)
+    .select({ ...contactsListSelection, nameTier: tier ?? sql<number>`2` })
     .from(contacts)
     .where(and(...conditions))
-    .orderBy(...orderFor(sort, semanticIds))
+    .orderBy(...contactsOrderBy(sort, tier, semanticIds))
     // One extra row answers "is there more" without a second count.
     .limit(limit + 1);
 
@@ -240,7 +223,7 @@ export async function listContactsPage(
       tags: tagsByContact.get(row.id) ?? [],
       matchReason: matchReasons.get(row.id) ?? null,
     })),
-    nextCursor: hasMore ? encodeCursor(cursorFor(sort, page[page.length - 1])) : null,
+    nextCursor: hasMore ? encodeContactsCursor(contactsCursorFor(sort, page[page.length - 1], Boolean(tier))) : null,
     total,
   };
 }
@@ -262,113 +245,6 @@ function matchReasonsFor(ranked: RankedContact[]): Map<string, string> {
     else if (r.matchedArms.includes("semantic")) reasons.set(r.id, "Matched by meaning");
   }
   return reasons;
-}
-
-/**
- * Every ordering ends in `id`, so it is a total order — without that tiebreak two contacts
- * comparing equal can straddle a page boundary and be shown twice or skipped. It matters
- * more than it sounds: closeness is a 0–100 integer over thousands of rows, so ties are the
- * common case, not the edge case.
- *
- * The tiebreak also has to run in the *same direction* as the column ahead of it. Cursors
- * are row-value comparisons — `(a, b) < (x, y)` — and that form compares every element the
- * same way. Pairing a descending sort with an ascending id silently produces a condition
- * that skips rows on one side of each tie and repeats them on the other.
- */
-function orderFor(sort: ContactSort, rankedIds: string[] = []) {
-  if (sort === "closeness") {
-    return [desc(contacts.closeness), desc(contacts.id)];
-  }
-  if (sort === "recent") {
-    return [desc(contacts.updatedAt), desc(contacts.id)];
-  }
-  if (sort === "relevance") {
-    // Rank first, name as the tiebreak — both for genuine ties and for rows `array_position`
-    // can't place at all: a contact that matched only the literal `searchCondition`, never
-    // the hybrid-search arms, falls through to name order after every ranked hit.
-    return [relevanceRank(rankedIds), asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
-  }
-  return [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
-}
-
-/**
- * Position within `rankedIds`, ascending so the best hybrid-search match (index 0) sorts
- * first; `array_position` returns null for a contact the ranking never produced, and null
- * sorts last under ascending order by default — hence the explicit `nulls last` rather than
- * relying on that default holding.
- */
-function relevanceRank(rankedIds: string[]) {
-  if (rankedIds.length === 0) return sql`0`;
-  return sql`array_position(array[${sql.join(
-    rankedIds.map((id) => sql`${id}::uuid`),
-    sql`, `
-  )}]::uuid[], ${contacts.id}) nulls last`;
-}
-
-function cursorCondition(cursor: Cursor) {
-  if (cursor.s === "closeness") {
-    // Both elements descending, matching `orderFor`. See the note there on why the id must
-    // run the same direction as the column it breaks ties for.
-    return sql`(${contacts.closeness}, ${contacts.id}) < (${cursor.c}, ${cursor.id}::uuid)`;
-  }
-  if (cursor.s === "recent") {
-    return sql`(${contacts.updatedAt}, ${contacts.id}) < (${new Date(cursor.u)}, ${cursor.id}::uuid)`;
-  }
-  // Row-value comparison rather than the unrolled OR chain, so the planner can satisfy it
-  // straight from `contacts_user_sort_idx`.
-  return sql`(${contacts.sortKey}, ${contacts.fullName}, ${contacts.id}) > (${cursor.k}, ${cursor.n}, ${cursor.id}::uuid)`;
-}
-
-function cursorFor(
-  sort: ContactSort,
-  row: { id: string; sortKey: string | null; fullName: string; closeness: number | null; updatedAt: Date }
-): Cursor {
-  if (sort === "closeness") {
-    return { s: "closeness", c: row.closeness ?? 0, id: row.id };
-  }
-  if (sort === "recent") {
-    return { s: "recent", u: new Date(row.updatedAt).toISOString(), id: row.id };
-  }
-  return { s: "name", k: row.sortKey ?? "", n: row.fullName, id: row.id };
-}
-
-/**
- * Match a query against the stored search vector, fuzzily against names, and against tags.
- *
- * Four branches because they answer different questions. `search_tsv` is whole-word and
- * ranked, and covers everything on the contact row. The `%` prefix match is kept for the
- * partial-word case a user typing into a filter box expects: "mar" should find "Marcus"
- * before they finish the word, which neither full-text nor trigram will do. Trigram
- * similarity is what finds someone when the spelling is off by a character — it is
- * index-backed via `contacts_name_trgm` on `lower(full_name)`/`lower(company)`, so it is
- * only worth adding for queries long enough to produce meaningful trigrams. Tags cannot be
- * in a generated column — they live in their own table — so they are an EXISTS.
- *
- * `search_tsv` is written as a bare identifier because Drizzle has no `tsvector` column
- * type to declare it with; Postgres maintains it as a generated column either way. The
- * query selects `from contacts` unaliased, so the qualified name resolves.
- */
-function searchCondition(q: string) {
-  const like = `${q.toLowerCase()}%`;
-  const lowered = q.toLowerCase();
-  // Trigram similarity only helps (and only uses its index) for queries long
-  // enough to produce meaningful trigrams; short prefixes are served by LIKE.
-  const fuzzy =
-    lowered.length >= 4
-      ? sql` or lower(${contacts.fullName}) % ${lowered} or lower(coalesce(${contacts.company}, '')) % ${lowered}`
-      : sql``;
-  return sql`(
-    contacts.search_tsv @@ websearch_to_tsquery('simple', ${q})
-    or lower(${contacts.fullName}) like ${like}
-    or lower(coalesce(${contacts.company}, '')) like ${like}
-    or lower(coalesce(${contacts.email}, '')) like ${like}
-    ${fuzzy}
-    or exists (
-      select 1 from contact_tags ct
-      join tags t on t.id = ct.tag_id
-      where ct.contact_id = ${contacts.id} and lower(t.name) like ${like}
-    )
-  )`;
 }
 
 /**
@@ -398,7 +274,7 @@ export async function searchContactsForPicker(
 
   const conditions = [eq(contacts.userId, userId)];
   const term = q?.trim();
-  if (term) conditions.push(searchCondition(term));
+  if (term) conditions.push(contactSearchCondition(term));
 
   const rows = await db
     .select({
@@ -415,6 +291,9 @@ export async function searchContactsForPicker(
     .from(contacts)
     .where(and(...conditions))
     .orderBy(
+      // Name matches first, so "Priya" opens on Priya rather than on whoever sorts first
+      // among the people whose notes mention her.
+      ...(term ? [asc(nameMatchTierSql(term))] : []),
       ...(order === "recent"
         ? [
             // Never-spoken-to contacts fall to the back and sort alphabetically among
@@ -702,6 +581,8 @@ export async function getContact(id: string) {
           // from a meeting capture rather than a hand-typed note.
           noteBatchId: true,
           aiSummary: true,
+          // Provenance: the profile's "last touch" skips AI-derived timeline events.
+          source: true,
         },
         extras: {
           notesPreview: sql<
@@ -852,10 +733,7 @@ export async function rateContacts(
 
 export async function deleteContact(id: string) {
   const userId = await requireUserId();
-  const db = await getDb();
-  await db
-    .delete(contacts)
-    .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
+  await deleteContactForUser(userId, id);
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/graph");
@@ -1183,7 +1061,7 @@ export async function backfillContactAvatars(
         deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
         persistRemote: downloadAndPersistAvatar,
         resolveConnectedAccount,
-        resolveLinkedIn: fetchLinkedInPhotoUrl,
+        resolveLinkedIn: (contactId, url) => fetchLinkedInPhotoUrl(contactId, url, userId),
         resolveGravatar: fetchGravatarPhotoUrl,
         resolveApollo,
         save: async (contactId, photoUrl) => {
@@ -1355,7 +1233,8 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         try {
           profileImageUrl = await fetchLinkedInPhotoUrl(
             contact.id,
-            contact.linkedinUrl
+            contact.linkedinUrl,
+            userId
           );
         } catch (err) {
           if (err instanceof AvatarSourceRateLimitError) {
@@ -1374,6 +1253,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
             { profileImageUrl },
             { skipRevalidate: true }
           );
+          await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
           refreshed += 1;
         } else {
           unmatched += 1;
@@ -1398,6 +1278,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         },
         { skipRevalidate: true }
       );
+      if (profileImageUrl) await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
 
       // Apollo fills a gap; it never overwrites an extension capture. `saveContactProfile`
       // enforces that, so this call is unconditional and cheap when it is outranked.

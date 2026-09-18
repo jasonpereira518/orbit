@@ -122,6 +122,8 @@ export type ChatStreamEvent =
         title: string | null;
         relevance: number;
       }>;
+      /** One line of context about how the answer was found, e.g. keywords-only search. */
+      notice?: string | null;
     }
   | { type: "error"; message: string };
 
