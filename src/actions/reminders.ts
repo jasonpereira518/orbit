@@ -710,6 +710,23 @@ export async function reopenReminderAction(snapshot: CompletionSnapshot) {
   return result;
 }
 
+/**
+ * Reopen a done reminder — the Done view's way back. Status only: the action items its
+ * completion closed stay closed, because nothing here knows which ones that was (the
+ * toast Undo, which does, uses `reopenReminderAction`). Undo is `markReminderDone`.
+ */
+export async function reopenDoneReminderAction(id: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const rows = await db
+    .update(reminders)
+    .set({ status: "pending" })
+    .where(and(eq(reminders.id, id), eq(reminders.userId, userId), eq(reminders.status, "done")))
+    .returning(); // bare: a field selector breaks over the Db union
+  revalidateReminderPaths();
+  return rows.length > 0 ? { reminderId: id } : null;
+}
+
 /** Draft a follow-up message grounded in the reminder contact's conversation history. */
 export async function draftFollowUpResponse(reminderId: string) {
   const userId = await requireUserId();

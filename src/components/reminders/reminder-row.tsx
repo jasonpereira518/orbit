@@ -48,6 +48,8 @@ export type ReminderRowHandlers = {
   onOpen: (id: string) => void;
   onToggleSelect: (id: string, range: boolean) => void;
   onDone: (id: string) => void;
+  /** Done view: the filled circle takes it back to pending. */
+  onReopen: (id: string) => void;
   onSnooze: (id: string, ymd: string, label: string) => void;
   onDelete: (id: string) => void;
   onMove: (id: string, listId: string) => void;
@@ -171,11 +173,11 @@ export const ReminderRow = memo(function ReminderRow({
             tabIndex={-1}
             onClick={(e) => {
               stop(e);
-              if (!isDone) handlers.onDone(item.id);
+              if (isDone) handlers.onReopen(item.id);
+              else handlers.onDone(item.id);
             }}
-            disabled={isDone}
-            aria-label={isDone ? "Done" : `Mark “${item.title}” done`}
-            title={isDone ? "Done" : "Mark done (e)"}
+            aria-label={isDone ? `Mark “${item.title}” not done` : `Mark “${item.title}” done`}
+            title={isDone ? "Reopen" : "Mark done (e)"}
             className={cn(
               "group/done tap-target relative mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors duration-fast",
               isDone

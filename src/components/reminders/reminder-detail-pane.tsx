@@ -11,6 +11,7 @@ import {
   Mail,
   NotebookPen,
   Phone,
+  RotateCcw,
   Sparkles,
   Trash2,
   X,
@@ -37,6 +38,7 @@ export function ReminderDetailPane({
   lists,
   onClose,
   onDone,
+  onReopen,
   onSnooze,
   onDelete,
   snoozeOpen,
@@ -47,6 +49,7 @@ export function ReminderDetailPane({
   lists: Array<{ id: string; name: string }>;
   onClose: () => void;
   onDone: (id: string) => void;
+  onReopen: (id: string) => void;
   onSnooze: (id: string, ymd: string, label: string) => void;
   onDelete: (id: string) => void;
   snoozeOpen: boolean;
@@ -80,6 +83,11 @@ export function ReminderDetailPane({
         {!isDone && (
           <Button size="sm" variant="ghost" className="tap-target relative h-7 gap-1.5 px-2 text-xs" onClick={() => onDone(item.id)}>
             <Check className="size-3.5" /> Done
+          </Button>
+        )}
+        {isDone && (
+          <Button size="sm" variant="ghost" className="tap-target relative h-7 gap-1.5 px-2 text-xs" onClick={() => onReopen(item.id)}>
+            <RotateCcw className="size-3.5" /> Reopen
           </Button>
         )}
         {!isDone && (

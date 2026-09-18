@@ -17,6 +17,7 @@ import {
   deleteReminderAction,
   loadRemindersPage,
   markReminderDone,
+  reopenDoneReminderAction,
   reopenReminderAction,
   rescheduleReminderAction,
   restoreReminderAction,
@@ -380,6 +381,20 @@ export function RemindersStage({
     );
   }
 
+  function reopenOne(id: string) {
+    return exitThen([id], isDoneView, async () => {
+      const res = await runToastAction({
+        run: () => reopenDoneReminderAction(id),
+        success: "Reopened",
+        failure: "Couldn’t reopen that — try again?",
+        refresh,
+        undo: (snap) => (snap ? () => markReminderDone(id) : null),
+      });
+      refresh();
+      return res !== undefined;
+    });
+  }
+
   function snoozeOne(id: string, ymd: string, label: string) {
     return (
       exitThen([id], leavesOnSnooze(ymd), async () => {
@@ -485,9 +500,9 @@ export function RemindersStage({
 
   // Row handlers that never change identity, so `ReminderRow`'s memo holds while the
   // queue re-renders: each forwards to the latest render's function through a ref.
-  const live = useRef({ doneOne, snoozeOne, deleteOne, moveOne, toggleSelect, openDetail });
+  const live = useRef({ doneOne, reopenOne, snoozeOne, deleteOne, moveOne, toggleSelect, openDetail });
   useLayoutEffect(() => {
-    live.current = { doneOne, snoozeOne, deleteOne, moveOne, toggleSelect, openDetail };
+    live.current = { doneOne, reopenOne, snoozeOne, deleteOne, moveOne, toggleSelect, openDetail };
   });
   const handlers: ReminderRowHandlers = useMemo(
     () => ({
@@ -495,6 +510,7 @@ export function RemindersStage({
       onOpen: (id) => live.current.openDetail(id),
       onToggleSelect: (id, range) => live.current.toggleSelect(id, range),
       onDone: (id) => live.current.doneOne(id),
+      onReopen: (id) => live.current.reopenOne(id),
       onSnooze: (id, ymd, label) => live.current.snoozeOne(id, ymd, label),
       onDelete: (id) => live.current.deleteOne(id),
       onMove: (id, listId) => live.current.moveOne(id, listId),
@@ -586,6 +602,7 @@ export function RemindersStage({
         if (focusedId) focusRow(focusedId);
       }}
       onDone={doneOne}
+      onReopen={reopenOne}
       onSnooze={snoozeOne}
       onDelete={deleteOne}
       snoozeOpen={paneSnoozeOpen}
