@@ -9,6 +9,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { ensureUserSettings } from "@/lib/user-settings";
 import { decryptOrNull, encrypt } from "@/lib/crypto";
 import { wisprKeyWasRejected } from "@/lib/wispr";
 import {
@@ -42,10 +43,11 @@ import { demoAccountReason, isDemoAccount } from "@/lib/demo-account";
 
 export async function getSettings() {
   const userId = await requireUserId();
-  const db = await getDb();
-  const settings = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
+  // The row `requireUserId()` just loaded (request-cached), not a second read of it. That
+  // read sat in sequence in front of everything below, so it was a full round trip on
+  // every page that shows a settings-dependent notice (chat, capture, settings, a contact).
+  // Safe because no action writes settings and then calls this in the same request.
+  const settings = await ensureUserSettings(userId);
 
   const provider = resolveAiProvider(settings?.aiProvider);
   // Run alongside entitlements rather than after: neither depends on the other, and

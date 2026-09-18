@@ -3167,9 +3167,37 @@ async function ensureReady(): Promise<void> {
       schemaReconciled = undefined;
       globalForDb.orbitPglite = await open();
     }
+    simulateNetworkLatency(globalForDb.orbitPglite);
   }
 
   await globalForDb.orbitPglite.waitReady;
+}
+
+/**
+ * LOCAL MEASUREMENT ONLY: `ORBIT_SIM_DB_LATENCY_MS=20` makes every PGlite statement wait
+ * that long before it runs, the way each neon-http statement in production is its own
+ * HTTPS round trip. Local PGlite answers in microseconds, so without this a page that
+ * awaits eight queries one after another is exactly as fast as one that runs them all at
+ * once — and the difference is the whole cost of a slow page in production. With it, a
+ * loader's wall time is roughly (sequential depth × latency), which is what
+ * `scripts/smoke-page-depth.ts` and `scripts/dev/nav-timing.mjs` measure.
+ *
+ * The delay is applied before the statement is queued, so concurrent statements wait in
+ * parallel just as concurrent HTTPS requests would. Never reachable in production: this is
+ * the PGlite branch, which only runs without a `DATABASE_URL`.
+ */
+function simulateNetworkLatency(client: PGlite) {
+  const ms = Number(process.env.ORBIT_SIM_DB_LATENCY_MS);
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  const marked = client as PGlite & { orbitSimLatency?: boolean };
+  if (marked.orbitSimLatency) return;
+  marked.orbitSimLatency = true;
+  const query = client.query.bind(client);
+  const sleep = () => new Promise((resolve) => setTimeout(resolve, ms));
+  client.query = (async (...args: Parameters<PGlite["query"]>) => {
+    await sleep();
+    return query(...args);
+  }) as PGlite["query"];
 }
 
 /**

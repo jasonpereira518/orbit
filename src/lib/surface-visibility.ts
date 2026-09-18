@@ -62,6 +62,23 @@ export function isSurfaceHiddenError(err: unknown): err is SurfaceHiddenError {
 }
 
 /**
+ * Across requests, per server instance. Every page and gated action reads this table, and
+ * on a sidebar click (which skips the layouts that would otherwise have read it once) it
+ * was a round trip in front of the page's own queries. It changes only when an operator
+ * flips a switch, so each instance re-reads it at most every `HIDDEN_KEYS_TTL_MS`:
+ * `setSurfaceHidden` clears it at once on the instance that made the change, and other
+ * instances catch up within the TTL. Hiding is product gating, not authorization — a
+ * surface staying reachable for a few more seconds after it is hidden is acceptable.
+ */
+const HIDDEN_KEYS_TTL_MS = 15_000;
+let hiddenKeysMemo: { keys: Set<string>; at: number } | null = null;
+
+/** Forget the cross-request copy. For writers of `app_surface_flags`, including tests. */
+export function invalidateHiddenSurfaceKeys(): void {
+  hiddenKeysMemo = null;
+}
+
+/**
  * Every hidden surface key, regardless of who is asking.
  *
  * `cache()`d per request, the same idiom `getEntitlements` uses: the app-shell layout, the
@@ -70,15 +87,22 @@ export function isSurfaceHiddenError(err: unknown): err is SurfaceHiddenError {
  * absolute most — so reading all of it is cheaper than filtering in SQL.
  */
 export const getHiddenSurfaceKeys = cache(async (): Promise<Set<string>> => {
+  const now = Date.now();
+  if (hiddenKeysMemo && now - hiddenKeysMemo.at < HIDDEN_KEYS_TTL_MS) {
+    return hiddenKeysMemo.keys;
+  }
   try {
     const db = await getDb();
     const rows = await db
       .select({ surfaceKey: appSurfaceFlags.surfaceKey })
       .from(appSurfaceFlags);
-    return new Set(rows.map((r) => r.surfaceKey));
+    const keys = new Set(rows.map((r) => r.surfaceKey));
+    hiddenKeysMemo = { keys, at: now };
+    return keys;
   } catch {
     // Visible is the safe failure. A database hiccup that hid half the product would be a
-    // far worse outage than one that briefly showed a surface meant to be dark.
+    // far worse outage than one that briefly showed a surface meant to be dark. Not
+    // memoized, so the failure lasts one request rather than the whole TTL.
     return new Set<string>();
   }
 });
@@ -213,6 +237,7 @@ export async function setSurfaceHidden(
   } else {
     await db.delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, surfaceKey));
   }
+  invalidateHiddenSurfaceKeys();
 
   await recordAdminAction({
     adminUserId,
