@@ -80,6 +80,11 @@ export function getIntroRun(): IntroRun {
   return run;
 }
 
+/** The server snapshot: nothing ever starts a run outside the browser. */
+export function getIdleIntroRun(): IntroRun {
+  return IDLE;
+}
+
 /**
  * Called at module scope from inside the lazy graph chunk.
  *
