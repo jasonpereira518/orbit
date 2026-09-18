@@ -215,11 +215,13 @@ async function main() {
 
   // The ICS feed authenticates by token and never calls requireUserId, so it needs its own
   // check — this is the bypass a suspension gate is most likely to miss.
-  const { findUserByFeedToken } = await import("../src/lib/calendar-feed");
+  const { findUserByFeedToken, hashCalendarFeedToken } = await import(
+    "../src/lib/calendar-feed"
+  );
   const feedToken = "smoke-actions-feed-token-0123456789abcdef";
   await db
     .update(userSettings)
-    .set({ calendarFeedToken: feedToken })
+    .set({ calendarFeedTokenHash: hashCalendarFeedToken(feedToken) })
     .where(eq(userSettings.userId, TARGET));
   check(
     "the ICS feed goes quiet for a suspended account",
@@ -485,7 +487,7 @@ async function main() {
   );
   check(
     "but app state like the calendar feed token still resets",
-    afterDelete?.calendarFeedToken === null
+    afterDelete?.calendarFeedTokenHash === null
   );
   check(
     "the account's contacts are gone",

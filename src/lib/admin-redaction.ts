@@ -12,10 +12,12 @@
  *
  * Two classes live here, for two different reasons:
  *
- *   Credentials. Encrypted API keys, the calendar feed token, and OAuth access/refresh
- *   tokens are live bearer secrets. The admin console reads their *presence* as a boolean
- *   and nothing else; `decryptOrNull()` is never called from any admin module, including into
- *   a log line.
+ *   Credentials. Encrypted API keys and OAuth access/refresh tokens are live bearer
+ *   secrets. The admin console reads their *presence* as a boolean and nothing else;
+ *   `decryptOrNull()` is never called from any admin module, including into a log line.
+ *   The calendar feed token and issued API keys are NOT listed here even though they are
+ *   also bearer secrets: `calendar_feed_token_hash` and `api_keys.key_hash` store only a
+ *   SHA-256 digest, never the token itself, so there is nothing recoverable to redact.
  *
  *   Chat transcripts. `chat_messages.content` is the most private store in the app — an
  *   unstructured record of what the user asked about their own network, in their own
@@ -31,7 +33,6 @@ export const NEVER_REVEALABLE: readonly string[] = [
   "user_settings.resend_api_key_encrypted",
   "user_settings.twilio_account_sid_encrypted",
   "user_settings.twilio_auth_token_encrypted",
-  "user_settings.calendar_feed_token",
   "gmail_connections.access_token_encrypted",
   "gmail_connections.refresh_token_encrypted",
   "outlook_connections.access_token_encrypted",

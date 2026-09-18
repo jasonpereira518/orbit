@@ -251,6 +251,14 @@ export async function upsertCanonicalRecruiter(input: {
   email?: string | null;
   linkedinUrl?: string | null;
   phone?: string | null;
+  /**
+   * Whether the logging user has opted into the shared pool. An existing canonical row
+   * may already be pool-visible to other users, so filling in its gaps is itself a
+   * contribution to the shared list — gate it exactly like contact-detail visibility is
+   * gated on read. A private user creating a brand-new row is unaffected: that row stays
+   * invisible to everyone else until someone shares it (see `pooledPredicate`).
+   */
+  viewerIsSharing: boolean;
 }): Promise<Recruiter> {
   const db = await getDb();
   const fullName = input.fullName.trim();
@@ -264,6 +272,7 @@ export async function upsertCanonicalRecruiter(input: {
   });
 
   if (existing) {
+    if (!input.viewerIsSharing) return existing;
     const patch = mergeRecruiterFields(existing, input);
     if (Object.keys(patch).length > 1) {
       const [updated] = await db

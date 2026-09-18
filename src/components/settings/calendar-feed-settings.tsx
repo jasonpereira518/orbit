@@ -8,6 +8,7 @@ import {
   enableCalendarFeed,
   getCalendarFeedStatus,
   regenerateCalendarFeedToken,
+  type CalendarFeedLinks,
   type CalendarFeedStatus,
 } from "@/actions/calendar-feed";
 import { Button } from "@/components/ui/button";
@@ -42,20 +43,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-/** Shows enough of the token to identify the link without exposing it on screen. */
-function maskUrl(url: string) {
-  return url.replace(/\/api\/calendar\/([^.]+)/, (_m, token: string) => {
-    const tail = token.slice(-4);
-    return `/api/calendar/${"•".repeat(8)}${tail}`;
-  });
-}
-
 export function CalendarFeedSettings() {
   const [status, setStatus] = useState<CalendarFeedStatus | null>(null);
   const [loadFailure, setLoadFailure] = useState<"timeout" | "error" | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [revealed, setRevealed] = useState(false);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
+  // Held only in memory, separate from `status`: the server never stores the raw token, so
+  // this is the only copy that will ever exist, and it must not survive a reload.
+  const [revealedLinks, setRevealedLinks] = useState<CalendarFeedLinks | null>(null);
   const [pending, start] = useTransition();
 
   // A failed load must be visible and recoverable. Without this the section sits on
@@ -88,7 +83,7 @@ export function CalendarFeedSettings() {
         const next = await withTimeout(fn(), LOAD_TIMEOUT_MS);
         setStatus(next);
         setConfirmingRegen(false);
-        setRevealed(false);
+        setRevealedLinks(next.links);
         toast.success(label);
       } catch (err) {
         const timedOut = err instanceof Error && err.message === TIMED_OUT;
@@ -145,50 +140,58 @@ export function CalendarFeedSettings() {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Input
-              readOnly
-              value={
-                revealed ? status.url! : maskUrl(status.url!)
-              }
-              onFocus={(e) => e.currentTarget.select()}
-              className="font-mono text-xs"
-              aria-label="Calendar feed URL"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setRevealed((v) => !v)}
-              >
-                {revealed ? "Hide" : "Reveal"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(status.url!);
-                  toast.success("Copied to clipboard");
-                }}
-              >
-                Copy link
-              </Button>
-              <a
-                href={status.webcalUrl!}
-                className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
-              >
-                Add to Apple Calendar
-              </a>
-              <a
-                href={status.googleAddUrl!}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
-              >
-                Add to Google Calendar
-              </a>
+          {revealedLinks ? (
+            <div className="space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-4">
+              <p className="text-sm font-medium text-ink">
+                Copy this now — it will not be shown again.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Orbit stores only a hash of this link, so it can&apos;t be recovered or
+                re-displayed later. If you lose it, regenerate to get a new one.
+              </p>
+              <Input
+                readOnly
+                value={revealedLinks.url}
+                onFocus={(e) => e.currentTarget.select()}
+                className="font-mono text-xs"
+                aria-label="Calendar feed URL"
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(revealedLinks.url);
+                    toast.success("Copied to clipboard");
+                  }}
+                >
+                  Copy link
+                </Button>
+                <a
+                  href={revealedLinks.webcalUrl}
+                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
+                >
+                  Add to Apple Calendar
+                </a>
+                <a
+                  href={revealedLinks.googleAddUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
+                >
+                  Add to Google Calendar
+                </a>
+                <Button size="sm" variant="ghost" onClick={() => setRevealedLinks(null)}>
+                  Done
+                </Button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Your link isn&apos;t shown again after creation. If you didn&apos;t save it
+              (or added a new device), regenerate one below.
+            </p>
+          )}
 
           <p className="text-xs text-muted-foreground">
             {status.lastFetchedAt

@@ -1074,8 +1074,14 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
+ *
+ * v34 = user_settings.calendar_feed_token_hash replaces calendar_feed_token: the feed's
+ * bearer token moves from plaintext to a SHA-256 hash (see the column's comment in
+ * schema.ts). The backfill runs before the plaintext column is dropped, so an existing
+ * feed keeps working without the user doing anything — only Settings' ability to
+ * re-display the link is lost, since there is no longer a plaintext copy to show.
  */
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 34;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1600,7 +1606,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "wizard_step", "text");
   await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email", "text");
-  await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
+  await ensureColumn(client, "user_settings", "calendar_feed_token_hash", "text");
   await ensureColumn(
     client,
     "user_settings",
@@ -1659,9 +1665,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
 
   try {
     await client.exec(
-      `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx
-       ON user_settings(calendar_feed_token)
-       WHERE calendar_feed_token IS NOT NULL`
+      `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_hash_uidx
+       ON user_settings(calendar_feed_token_hash)
+       WHERE calendar_feed_token_hash IS NOT NULL`
     );
   } catch {
     // Index may already exist
@@ -2224,6 +2230,20 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
   `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v34: hash the calendar feed token instead of storing it in plaintext — see
+  // `calendarFeedTokenHash` in schema.ts. Order matters and must not be reshuffled: the
+  // column has to exist before the backfill can fill it, the backfill has to run before
+  // the plaintext column is dropped (or there is nothing left to hash), and the old
+  // unique index has to go before the new one claims the naming scheme.
+  // `hashCalendarFeedToken` in src/lib/calendar-feed.ts MUST keep computing this exact
+  // formula — plain SHA-256 hex over the raw UTF-8 token, no salt — or every token
+  // hashed before a formula change stops matching a lookup computed with the new one.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_hash text`,
+  `UPDATE user_settings SET calendar_feed_token_hash = encode(sha256(convert_to(calendar_feed_token, 'UTF8')), 'hex')
+   WHERE calendar_feed_token IS NOT NULL AND calendar_feed_token_hash IS NULL`,
+  `DROP INDEX IF EXISTS user_settings_calendar_feed_token_uidx`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_hash_uidx ON user_settings(calendar_feed_token_hash) WHERE calendar_feed_token_hash IS NOT NULL`,
+  `ALTER TABLE user_settings DROP COLUMN IF EXISTS calendar_feed_token`,
 ];
 
 /**

@@ -91,7 +91,7 @@ async function seed() {
       lastName: "Vandermeer",
       profileImageUrl: "https://img.clerk.test/marisol.png",
       geminiApiKeyEncrypted: SECRETS.geminiKey,
-      calendarFeedToken: SECRETS.calendarToken,
+      calendarFeedTokenHash: SECRETS.calendarToken,
     })
     .where(eq(userSettings.userId, USER));
 

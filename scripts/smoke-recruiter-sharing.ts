@@ -94,11 +94,13 @@ async function main() {
       fullName: `${MARK} Alpha`,
       firm: MARK,
       email: "alpha@zzsmokeshare.test",
+      viewerIsSharing: false,
     });
     const recB = await upsertCanonicalRecruiter({
       fullName: `${MARK} Beta`,
       firm: MARK,
       email: "beta@zzsmokeshare.test",
+      viewerIsSharing: false,
     });
     created.push(recA.id, recB.id);
 
@@ -218,6 +220,41 @@ async function main() {
       "A's rating withdrawn from public aggregate",
       (await db.query.recruiters.findFirst({ where: eq(recruiters.id, recA.id) }))
         ?.ratingCount === 0
+    );
+
+    console.log("\nprivate logging does not update an existing shared row");
+    const recC = await upsertCanonicalRecruiter({
+      fullName: `${MARK} Gamma`,
+      email: "gamma@zzsmokeshare.test",
+      viewerIsSharing: false,
+    });
+    created.push(recC.id);
+    check("row starts with no firm/specialty", (recC.firm === null) && (recC.specialty?.length ?? 0) === 0);
+
+    await upsertCanonicalRecruiter({
+      fullName: `${MARK} Gamma`,
+      firm: MARK,
+      email: "gamma@zzsmokeshare.test",
+      specialty: ["Engineering"],
+      viewerIsSharing: false,
+    });
+    let refetchedC = await db.query.recruiters.findFirst({ where: eq(recruiters.id, recC.id) });
+    check(
+      "a non-sharing logger leaves the existing shared row untouched",
+      refetchedC?.firm === null && (refetchedC?.specialty?.length ?? 0) === 0
+    );
+
+    await upsertCanonicalRecruiter({
+      fullName: `${MARK} Gamma`,
+      firm: MARK,
+      email: "gamma@zzsmokeshare.test",
+      specialty: ["Engineering"],
+      viewerIsSharing: true,
+    });
+    refetchedC = await db.query.recruiters.findFirst({ where: eq(recruiters.id, recC.id) });
+    check(
+      "a sharing logger can still fill in the existing row's gaps",
+      refetchedC?.firm === MARK && (refetchedC?.specialty?.length ?? 0) === 1
     );
 
     console.log("\nall recruiter sharing checks passed");

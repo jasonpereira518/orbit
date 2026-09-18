@@ -156,13 +156,21 @@ export const userSettings = pgTable("user_settings", {
   signupLandingPath: text("signup_landing_path"),
   signupAttributedAt: timestamp("signup_attributed_at", { withTimezone: true }),
   /**
-   * Opaque bearer token for the read-only ICS reminder feed. Stored in plaintext
-   * deliberately: the URL must stay re-displayable when the user adds a second device,
-   * and `crypto.ts` uses a random IV per call so ciphertext could not be indexed for
-   * lookup. Same sensitivity class as `calendar_subscriptions.ics_url`, which already
-   * holds the user's Google secret iCal URL in plaintext.
+   * SHA-256 hash of the read-only ICS feed's bearer token — never the token itself.
+   * Same scheme as `apiKeys.keyHash` (`src/lib/api/keys.ts`): the raw token is shown to
+   * the user exactly once, at creation or regeneration, and is unrecoverable after that.
+   *
+   * This column used to hold the token in plaintext, on the reasoning that the URL had
+   * to stay re-displayable for a second device and `crypto.ts`'s random-IV encryption
+   * can't be looked up by value. Both are true, but the tradeoff was wrong: a live
+   * bearer credential — one that reads someone's reminder titles, notes, and contact
+   * names — sat in clear text next to `DATABASE_URL`, so any read of that database
+   * (backup, replica, support tooling) handed it over. Hashing is deterministic, so the
+   * feed route still looks the token up by equality; it just can't be shown again.
+   * Migration backfills this from the old plaintext column and drops it — see
+   * `src/db/index.ts`. Existing users lose their displayed link and must regenerate.
    */
-  calendarFeedToken: text("calendar_feed_token"),
+  calendarFeedTokenHash: text("calendar_feed_token_hash"),
   calendarFeedTokenCreatedAt: timestamp("calendar_feed_token_created_at", {
     withTimezone: true,
   }),
@@ -2295,8 +2303,10 @@ export const interestListSignups = pgTable(
     utmMedium: text("utm_medium"),
     utmCampaign: text("utm_campaign"),
     landingPath: text("landing_path"),
-    /** Opaque, same convention as `user_settings.calendar_feed_token` — mints the one-click
-     * unsubscribe link without exposing the row's uuid or requiring a session. */
+    /** Opaque random token, stored in plaintext — mints the one-click unsubscribe link
+     * without exposing the row's uuid or requiring a session. Lower stakes than the
+     * calendar feed's bearer token (see `calendarFeedTokenHash`): this one only lets
+     * someone unsubscribe an email address, not read private data. */
     unsubscribeToken: text("unsubscribe_token").notNull(),
     unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
     /**

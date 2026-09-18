@@ -25,7 +25,11 @@ import {
   RECRUITER_CONFIDENCE_FLOOR,
   classifyRecruiterSender,
 } from "@/lib/recruiter-scan";
-import { ensureUserLink, upsertCanonicalRecruiter } from "@/lib/recruiters";
+import {
+  ensureUserLink,
+  isViewerSharing,
+  upsertCanonicalRecruiter,
+} from "@/lib/recruiters";
 
 export const GMAIL_SCAN_IMPORT_TYPE = "gmail_recruiter_scan";
 
@@ -215,6 +219,7 @@ async function processSender(
     firm: result.firm || payload.firm,
     email: payload.email,
     specialty: result.rolesDiscussed,
+    viewerIsSharing: await isViewerSharing(userId),
   });
 
   await ensureUserLink({

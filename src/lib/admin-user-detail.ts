@@ -44,10 +44,13 @@ import { assertRevealable } from "@/lib/admin-redaction";
  * never sent. That list is enforced at runtime by `assertRevealable()` against
  * `NEVER_REVEALABLE` in `src/lib/admin-redaction.ts`:
  *   - *_api_key_encrypted, twilio_auth_token_encrypted  (never decrypt a foreign user's key)
- *   - calendar_feed_token                               (a live plaintext bearer credential)
  *   - gmail/outlook access + refresh tokens             (same class)
  *   - chat_messages.content                             (the most private data in the app,
  *                                                        and no support question needs it)
+ *
+ * The calendar feed token is not on that list, and does not need to be: `calendarFeedTokenHash`
+ * stores only a SHA-256 digest, same as `api_keys.key_hash`, so there is no plaintext bearer
+ * value left in the database for a query to leak.
  *
  * Those are credentials and private correspondence, not support context. Nothing about
  * answering "why did this user's import fail" needs them, so the denylist stays a hard
@@ -638,7 +641,7 @@ export async function getAdminUserDetail(
       aiModel: settings.aiModel,
       keys,
       hasSelectedProviderKey,
-      calendarFeedEnabled: Boolean(settings.calendarFeedToken),
+      calendarFeedEnabled: Boolean(settings.calendarFeedTokenHash),
       calendarFeedLastFetchedAt: settings.calendarFeedLastFetchedAt,
       goalCount: goalAgg[0]?.n ?? 0,
     },

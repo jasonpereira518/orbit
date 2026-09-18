@@ -9,40 +9,34 @@ import {
   buildCalendarFeedUrl,
   buildCalendarFeedWebcalUrl,
   generateCalendarFeedToken,
+  hashCalendarFeedToken,
 } from "@/lib/calendar-feed";
+
+export type CalendarFeedLinks = {
+  url: string;
+  webcalUrl: string;
+  googleAddUrl: string;
+};
 
 export type CalendarFeedStatus = {
   enabled: boolean;
-  url: string | null;
-  webcalUrl: string | null;
-  googleAddUrl: string | null;
   createdAt: Date | null;
   lastFetchedAt: Date | null;
-};
+  /**
+   * The feed URL, for exactly one response: the one that just minted the token. Orbit
+   * stores only its SHA-256 hash (see `calendarFeedTokenHash` in `schema.ts`), the same
+   * scheme as API keys, so there is no plaintext left anywhere to re-display it from on a
+   * later `getCalendarFeedStatus` call. Lose it and the only way back is "Regenerate link".
+   */
+  links: CalendarFeedLinks | null;
+}
 
-function toStatus(row: {
-  calendarFeedToken: string | null;
-  calendarFeedTokenCreatedAt: Date | null;
-  calendarFeedLastFetchedAt: Date | null;
-}): CalendarFeedStatus {
-  if (!row.calendarFeedToken) {
-    return {
-      enabled: false,
-      url: null,
-      webcalUrl: null,
-      googleAddUrl: null,
-      createdAt: null,
-      lastFetchedAt: null,
-    };
-  }
-  const webcalUrl = buildCalendarFeedWebcalUrl(row.calendarFeedToken);
+function linksFor(token: string): CalendarFeedLinks {
+  const webcalUrl = buildCalendarFeedWebcalUrl(token);
   return {
-    enabled: true,
-    url: buildCalendarFeedUrl(row.calendarFeedToken),
+    url: buildCalendarFeedUrl(token),
     webcalUrl,
     googleAddUrl: `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcalUrl)}`,
-    createdAt: row.calendarFeedTokenCreatedAt,
-    lastFetchedAt: row.calendarFeedLastFetchedAt,
   };
 }
 
@@ -52,14 +46,14 @@ async function readSettings(userId: string) {
   const row = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
     columns: {
-      calendarFeedToken: true,
+      calendarFeedTokenHash: true,
       calendarFeedTokenCreatedAt: true,
       calendarFeedLastFetchedAt: true,
     },
   });
   return (
     row ?? {
-      calendarFeedToken: null,
+      calendarFeedTokenHash: null,
       calendarFeedTokenCreatedAt: null,
       calendarFeedLastFetchedAt: null,
     }
@@ -68,7 +62,13 @@ async function readSettings(userId: string) {
 
 export async function getCalendarFeedStatus(): Promise<CalendarFeedStatus> {
   const userId = await requireUserId();
-  return toStatus(await readSettings(userId));
+  const row = await readSettings(userId);
+  return {
+    enabled: Boolean(row.calendarFeedTokenHash),
+    createdAt: row.calendarFeedTokenCreatedAt,
+    lastFetchedAt: row.calendarFeedLastFetchedAt,
+    links: null,
+  };
 }
 
 async function writeToken(userId: string, token: string | null) {
@@ -77,7 +77,7 @@ async function writeToken(userId: string, token: string | null) {
   await db
     .update(userSettings)
     .set({
-      calendarFeedToken: token,
+      calendarFeedTokenHash: token ? hashCalendarFeedToken(token) : null,
       calendarFeedTokenCreatedAt: token ? new Date() : null,
       calendarFeedLastFetchedAt: null,
       updatedAt: new Date(),
@@ -89,21 +89,44 @@ async function writeToken(userId: string, token: string | null) {
 export async function enableCalendarFeed(): Promise<CalendarFeedStatus> {
   const userId = await requireUserId();
   const existing = await readSettings(userId);
-  if (existing.calendarFeedToken) return toStatus(existing);
+  // Already enabled: the raw token from whenever it was created is gone for good, so this
+  // can only report status, not hand back a link — same as any other status read.
+  if (existing.calendarFeedTokenHash) {
+    return {
+      enabled: true,
+      createdAt: existing.calendarFeedTokenCreatedAt,
+      lastFetchedAt: existing.calendarFeedLastFetchedAt,
+      links: null,
+    };
+  }
 
-  await writeToken(userId, generateCalendarFeedToken());
-  return toStatus(await readSettings(userId));
+  const token = generateCalendarFeedToken();
+  await writeToken(userId, token);
+  const row = await readSettings(userId);
+  return {
+    enabled: true,
+    createdAt: row.calendarFeedTokenCreatedAt,
+    lastFetchedAt: row.calendarFeedLastFetchedAt,
+    links: linksFor(token),
+  };
 }
 
 /** Revokes immediately: the previous URL starts 404ing on the next poll. */
 export async function regenerateCalendarFeedToken(): Promise<CalendarFeedStatus> {
   const userId = await requireUserId();
-  await writeToken(userId, generateCalendarFeedToken());
-  return toStatus(await readSettings(userId));
+  const token = generateCalendarFeedToken();
+  await writeToken(userId, token);
+  const row = await readSettings(userId);
+  return {
+    enabled: true,
+    createdAt: row.calendarFeedTokenCreatedAt,
+    lastFetchedAt: row.calendarFeedLastFetchedAt,
+    links: linksFor(token),
+  };
 }
 
 export async function disableCalendarFeed(): Promise<CalendarFeedStatus> {
   const userId = await requireUserId();
   await writeToken(userId, null);
-  return toStatus(await readSettings(userId));
+  return { enabled: false, createdAt: null, lastFetchedAt: null, links: null };
 }

@@ -185,6 +185,7 @@ export async function logRecruiter(input: LogRecruiterInput) {
     throw new Error("Recruiter name is required");
   }
 
+  const viewerIsSharing = await isViewerSharing(userId);
   let recruiterId = input.recruiterId;
 
   if (recruiterId) {
@@ -201,6 +202,7 @@ export async function logRecruiter(input: LogRecruiterInput) {
         email: input.email ?? existing.email,
         linkedinUrl: input.linkedinUrl ?? existing.linkedinUrl,
         phone: input.phone ?? existing.phone,
+        viewerIsSharing,
       });
     }
   } else {
@@ -211,6 +213,7 @@ export async function logRecruiter(input: LogRecruiterInput) {
       email: input.email,
       linkedinUrl: input.linkedinUrl,
       phone: input.phone,
+      viewerIsSharing,
     });
     recruiterId = created.id;
   }

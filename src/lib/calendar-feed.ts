@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { and, asc, eq, gte, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, reminders, userSettings } from "@/db/schema";
@@ -45,6 +45,16 @@ export function generateCalendarFeedToken() {
   return randomBytes(32).toString("base64url");
 }
 
+/**
+ * Deterministic, so the feed route can look a presented token up by equality without ever
+ * storing it. Plain SHA-256 rather than a password KDF for the same reason as
+ * `hashApiKey` (`src/lib/api/keys.ts`): the input is 256 bits of CSPRNG output, so there is
+ * no dictionary to slow down.
+ */
+export function hashCalendarFeedToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
 export function buildCalendarFeedUrl(token: string) {
   return `${getAppBaseUrl()}/api/calendar/${token}.ics`;
 }
@@ -64,7 +74,7 @@ export async function findUserByFeedToken(rawToken: string) {
 
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({
-    where: eq(userSettings.calendarFeedToken, token),
+    where: eq(userSettings.calendarFeedTokenHash, hashCalendarFeedToken(token)),
     columns: {
       userId: true,
       calendarFeedLastFetchedAt: true,

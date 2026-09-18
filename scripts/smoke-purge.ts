@@ -60,7 +60,7 @@ async function seed() {
     // The BYO provider key is a deliberate survivor of purge — see `purgeUserData`.
     // The calendar feed token is not, and must not outlive the account.
     geminiApiKeyEncrypted: "ciphertext",
-    calendarFeedToken: "feed-token",
+    calendarFeedTokenHash: "feed-token-hash",
   });
 
   const [company] = await db
@@ -488,7 +488,7 @@ async function main() {
   );
   check(
     "...but the calendar feed token cleared",
-    settingsAfterPurge?.calendarFeedToken === null
+    settingsAfterPurge?.calendarFeedTokenHash === null
   );
   await ledgerDb
     .delete(schema.userSettings)
