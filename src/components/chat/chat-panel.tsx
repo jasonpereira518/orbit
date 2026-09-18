@@ -505,7 +505,7 @@ export function ChatPanel() {
       setContextOpen(false);
       toast.success(contextIngest.notes.trim() ? "Context saved" : "Context cleared");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save context");
+      toast.error(friendlyError(err, "Couldn’t save that context — try again?"));
     } finally {
       setContextSaving(false);
     }
@@ -1091,13 +1091,12 @@ export function ChatPanel() {
       <Sheet open={contextOpen} onOpenChange={setContextOpen}>
         <SheetContent
           side="right"
-          // Wider than the default `sm:max-w-sm`(384px) the Sheet caps `side="right"` at —
-          // needed so the three scan buttons ("Upload notes / media", "Webcam", "Use your
-          // phone") fit on one row instead of wrapping. `data-[side=right]:` matches the
-          // built-in rule's own selector shape so this override actually wins the cascade;
-          // a plain `sm:max-w-*` here loses to it (same trap `interaction-detail-sheet.tsx`
-          // sidesteps by not fighting a `data-[side=right]` rule at all).
-          className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-lg"
+          // 26rem (416px) instead of the Sheet's `data-[side=right]:sm:max-w-sm` (384px):
+          // the three compact scan buttons need ~370px side by side and the sheet leaves
+          // 382px inside its border and padding at this width, at 384px only 350px.
+          // `data-[side=right]:` matches the built-in rule's selector shape so this wins the
+          // cascade; a plain `sm:max-w-*` loses to it.
+          className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-[26rem]"
         >
           <SheetHeader className="border-b border-border/60">
             <SheetTitle>Chat context</SheetTitle>
@@ -1131,6 +1130,7 @@ export function ChatPanel() {
               onTranscript={(text, sources, jobId) =>
                 contextIngest.onPhoneTranscript(text, sources, jobId ?? null)
               }
+              compact
             />
             {contextIngest.busy && (
               <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1147,6 +1147,10 @@ export function ChatPanel() {
                   contextDictation.toggle();
                   if (source === "pointer") contextTextareaRef.current?.focus();
                 }}
+                // Unlike the main composer's mic, which sits inline right next to the
+                // field it dictates into, this one is alone in the footer — an outline
+                // gives it the same "this is a control" weight the Save button has.
+                className="border border-border/70"
               />
               <Button
                 type="button"
