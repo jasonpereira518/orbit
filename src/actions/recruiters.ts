@@ -186,14 +186,20 @@ export async function logRecruiter(input: LogRecruiterInput) {
       if (!existing) throw new Error("Recruiter not found");
       // Patch THIS row directly: going back through upsertCanonicalRecruiter would let an
       // email match — and then patch — a different recruiter than the one being logged.
-      const patch = mergeRecruiterFields(existing, {
-        fullName: fullName || existing.fullName,
-        firm: input.firm,
-        specialty: input.specialty,
-        ...(sharing ? { email: input.email, linkedinUrl: input.linkedinUrl, phone: input.phone } : {}),
-      });
-      if (Object.keys(patch).length > 1) {
-        await db.update(recruiters).set(patch).where(eq(recruiters.id, existing.id));
+      // Only a sharing user may fill gaps on the shared row at all: firm and specialty are
+      // visible to everyone who can see it, so a private user's log stays on their own link.
+      if (sharing) {
+        const patch = mergeRecruiterFields(existing, {
+          fullName: fullName || existing.fullName,
+          firm: input.firm,
+          specialty: input.specialty,
+          email: input.email,
+          linkedinUrl: input.linkedinUrl,
+          phone: input.phone,
+        });
+        if (Object.keys(patch).length > 1) {
+          await db.update(recruiters).set(patch).where(eq(recruiters.id, existing.id));
+        }
       }
     } else {
       const created = await upsertCanonicalRecruiter({

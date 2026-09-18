@@ -342,6 +342,11 @@ export async function upsertCanonicalRecruiter(
   });
 
   if (existing) {
+    // An existing row may already be pool-visible, and firm/specialty are shown to every
+    // viewer of it, so filling its gaps is itself a contribution to the shared list. Only a
+    // sharing caller may do that; a private caller just links to the row as it stands.
+    // (A brand-new row is unaffected: it stays invisible until someone shares it.)
+    if (!opts.contributePii) return existing;
     const patch = mergeRecruiterFields(existing, shared);
     if (Object.keys(patch).length > 1) {
       const [updated] = await db
