@@ -38,19 +38,51 @@ export function GenericPageSkeleton() {
   );
 }
 
-/** Matches the reminders page body: list sidebar + reminder rows. */
-export function RemindersViewSkeleton() {
+/**
+ * The reminders page's stand-in. Tracks `reminders-stage.tsx` class for class — same
+ * fill-the-route root, same header, same `lg` rail at `w-52`, same queue card — so nothing
+ * moves when the real stage streams in. (The old skeleton put its rail at `md` while the
+ * page put it at `lg`, and every load jumped on tablet widths.)
+ */
+export function RemindersStageSkeleton() {
   return (
-    <div className="flex flex-col gap-6 md:flex-row">
-      <div className="w-full space-y-2 md:w-56">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-9 rounded-lg" />
-        ))}
+    <div data-fill-route data-clear-floating-controls className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="flex shrink-0 items-center justify-between">
+        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Reminders</h1>
       </div>
-      <div className="flex-1 space-y-2">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-16 rounded-xl" />
-        ))}
+      <div className="flex min-h-0 flex-1 gap-4 xl:gap-5">
+        <div className="hidden w-52 shrink-0 space-y-1 lg:block">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-8 rounded-lg" />
+          ))}
+          <div className="pt-5">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="mb-1 h-8 rounded-lg" />
+            ))}
+          </div>
+        </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card">
+          <div className="flex shrink-0 flex-col gap-3 border-b border-border/60 p-3 sm:p-4">
+            <div className="flex items-center justify-between gap-2">
+              <Skeleton className="h-7 w-32 rounded-lg" />
+              <Skeleton className="h-8 w-32 rounded-lg" />
+            </div>
+            <Skeleton className="h-10 w-full rounded-full" />
+          </div>
+          <div className="min-h-10 shrink-0 border-b border-border/60" />
+          <div className="min-h-0 flex-1 basis-0 overflow-hidden">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <div key={i} className="flex items-start gap-2.5 border-b border-border/40 px-3 py-2.5 sm:px-4">
+                <div className="size-4" />
+                <Skeleton className="mt-0.5 size-5 rounded-full" />
+                <div className="flex-1 space-y-1.5 py-0.5">
+                  <Skeleton className="h-4 w-3/5 rounded" />
+                  <Skeleton className="h-3 w-2/5 rounded" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
