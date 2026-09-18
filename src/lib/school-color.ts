@@ -1,4 +1,4 @@
-import { brandLuma, lookupBrand, type BrandKind } from "@/lib/brand-colors";
+import { brandLuma, lookupBrand, type Brand, type BrandKind } from "@/lib/brand-colors";
 import { hashHue } from "@/lib/hash";
 
 const NEUTRAL_STAR = "#c8d0dc";
@@ -9,6 +9,8 @@ export function normalizeOrgKey(name: string | null | undefined): string {
     .trim()
     .toLowerCase()
     .replace(/[.,']/g, "")
+    // "UNC-Chapel Hill" and "UNC Chapel Hill" are one school.
+    .replace(/\s*[-–—]\s*/g, " ")
     .replace(/\s+/g, " ")
     .replace(/\s*\(.*\)\s*$/, "")
     .trim();
@@ -35,15 +37,43 @@ function hashToBrandHex(input: string): string {
   return hslToHex(hue, sat, light);
 }
 
+/** The dimmest a brand may be drawn on the night sky. */
+const MIN_SKY_LUMA = 0.4;
+
 /**
- * The dark-sky treatment: lift near-black / near-white brands so they glow on the map.
- * Raw hexes come from `brand-colors.ts`; this is the constellation's own adaptation.
+ * The dark-sky treatment: make a brand visible on the dark map without changing what colour
+ * it is. Raw hexes come from `brand-colors.ts`; this is the constellation's own adaptation.
+ *
+ * A dark brand is lifted toward white until it clears `MIN_SKY_LUMA`, so Duke stays Duke blue and
+ * Stanford stays cardinal — they used to either stay navy (invisible on black) or, past a cutoff,
+ * all become the same slate grey. Only a brand with no hue at all (a black logo) ends up grey,
+ * which is what it is. Near-white is softened a touch so it does not glare.
  */
 export function mapFriendlyBrand(hex: string): string {
-  const luma = brandLuma(hex);
-  if (luma < 0.12) return "#6B7C93";
-  if (luma > 0.92) return "#E8EEF7";
-  return hex;
+  const raw = hex.replace("#", "");
+  if (raw.length !== 6) return hex;
+  const l = brandLuma(hex);
+  if (l > 0.92) return "#E8EEF7";
+  if (l >= MIN_SKY_LUMA) return hex;
+  for (let t = 0.05; t < 1; t += 0.05) {
+    const lifted = mixWithWhite(hex, t);
+    if (brandLuma(lifted) >= MIN_SKY_LUMA) return lifted;
+  }
+  return mixWithWhite(hex, 0.5);
+}
+
+/**
+ * Brands whose true hex reads as a different colour on the night sky. Stripe's "blurple"
+ * (#635BFF, hue ~243°) sits on the blue/violet line; on black, and mixed toward white for the
+ * stars, it read plainly blue. Nudged to the violet people see. Sky-only: cards keep the raw hex.
+ */
+const SKY_HUE_OVERRIDES: Record<string, string> = {
+  Stripe: "#9061F9",
+};
+
+/** A known brand as the constellation draws it. */
+export function skyBrandColor(brand: Brand): string {
+  return mapFriendlyBrand(SKY_HUE_OVERRIDES[brand.name] ?? brand.hex);
 }
 
 function resolveBrand(
@@ -54,7 +84,7 @@ function resolveBrand(
   const key = normalizeOrgKey(name);
   if (!key) return fallbackNeutral;
   const hit = lookupBrand(name, kind);
-  if (hit) return mapFriendlyBrand(hit.hex);
+  if (hit) return skyBrandColor(hit);
   return hashToBrandHex(key);
 }
 

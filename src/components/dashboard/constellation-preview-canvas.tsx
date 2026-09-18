@@ -6,7 +6,7 @@ import { LocateFixed } from "lucide-react";
 import { expandPreviewSky, type PreviewSky } from "@/lib/graph/preview-sky-shape";
 import { buildSkyIndex, type SkyIndex } from "@/components/graph/sky-canvas/sky-index";
 import { drawSky } from "@/components/graph/sky-canvas/draw-sky";
-import { bakeBackground } from "@/components/graph/sky-canvas/sky-sprites";
+import { bakeBackground, deviceRatio } from "@/components/graph/sky-canvas/sky-sprites";
 import { useSkyGestures } from "@/components/graph/sky-canvas/use-sky-gestures";
 import {
   NEBULA_LOBE_EDGE,
@@ -15,12 +15,11 @@ import {
 } from "@/lib/graph/nebula-lobes";
 import { clampPan, fitStarsToPane, zoomAt, type Camera } from "@/lib/graph/sky-camera";
 import type { SkyFocusState } from "@/lib/graph/sky-emphasis";
+import { starVisual } from "@/lib/graph/star-style";
 import { withAlpha } from "@/lib/school-color";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 
-/** Backing-store resolution cap: crisp stars on a retina card without a 4x store. */
-const MAX_DPR = 1.5;
 /** Screen px kept clear around the stars. */
 const INSET = { x: 22, top: 18, bottom: 18 };
 /** The washes' bitmap is at most this many px on its long side, and never finer than world px. */
@@ -38,6 +37,127 @@ const RESTING: SkyFocusState = {
   searchHitIds: new Set(),
   searchDimActive: false,
 };
+
+/**
+ * What makes the figures read as light rather than as a diagram.
+ *
+ * `drawSky` draws a pin-sharp star and a hairline between stars: right for the tab, where you
+ * are close enough to read names, but at card scale the figures came out as flat polygons. So
+ * the card paints a soft layer UNDER them — a bloom behind every star, a glow along every
+ * line, and a warm halo on the sun — and the crisp star and line land on top of it. It costs
+ * one blit per star and two strokes per line colour, and only while the sky moves.
+ */
+type Glow = {
+  stars: { x: number; y: number; color: string; disc: number; alpha: number }[];
+  lines: Map<string, number[]>;
+  sun: { x: number; y: number } | null;
+};
+
+/** Bloom radius in screen px, as a multiple of the star's drawn disc, and its bounds. */
+const BLOOM_SPAN = 4;
+const BLOOM_MIN_PX = 11;
+const BLOOM_MAX_PX = 26;
+/**
+ * The crisp lines' share of their chart opacity. Stars are the subject; at card scale full-
+ * strength lines turned every figure into an outlined polygon.
+ */
+const LINE_OPACITY = 0.7;
+const BLOOM_SPRITE_PX = 64;
+const bloomCache = new Map<string, HTMLCanvasElement>();
+
+/** One soft disc per star colour, baked once: a frame is a blit per star, never a gradient. */
+function bloomSprite(color: string): HTMLCanvasElement | null {
+  const cached = bloomCache.get(color);
+  if (cached) return cached;
+  const canvas = document.createElement("canvas");
+  canvas.width = BLOOM_SPRITE_PX;
+  canvas.height = BLOOM_SPRITE_PX;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const c = BLOOM_SPRITE_PX / 2;
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c);
+  g.addColorStop(0, withAlpha(color, 0.75));
+  g.addColorStop(0.16, withAlpha(color, 0.32));
+  g.addColorStop(0.45, withAlpha(color, 0.08));
+  g.addColorStop(1, withAlpha(color, 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, BLOOM_SPRITE_PX, BLOOM_SPRITE_PX);
+  bloomCache.set(color, canvas);
+  return canvas;
+}
+
+function buildGlow(index: SkyIndex): Glow {
+  const stars = index.stars.map((s) => {
+    const visual = starVisual(s.data, false);
+    return {
+      x: s.x,
+      y: s.y,
+      // `fill` is a hex colour for every star (tinted or white), which the sprite needs.
+      color: visual.fill,
+      disc: visual.disc,
+      // The loose stars around a figure stay quiet, as they do in the tab.
+      alpha: visual.dimmedScatter ? 0.35 : 0.85,
+    };
+  });
+  const lines = new Map<string, number[]>();
+  for (const e of index.edges) {
+    const segs = lines.get(e.stroke) ?? [];
+    segs.push(e.ax, e.ay, e.bx, e.by);
+    lines.set(e.stroke, segs);
+  }
+  return { stars, lines, sun: index.sun ? { x: index.sun.x, y: index.sun.y } : null };
+}
+
+function paintGlow(ctx: CanvasRenderingContext2D, glow: Glow, camera: Camera) {
+  ctx.save();
+  // Light adds to the sky rather than covering it.
+  ctx.globalCompositeOperation = "lighter";
+
+  ctx.lineCap = "round";
+  for (const [stroke, segs] of glow.lines) {
+    ctx.strokeStyle = stroke;
+    ctx.beginPath();
+    for (let i = 0; i < segs.length; i += 4) {
+      ctx.moveTo(segs[i] * camera.k + camera.x, segs[i + 1] * camera.k + camera.y);
+      ctx.lineTo(segs[i + 2] * camera.k + camera.x, segs[i + 3] * camera.k + camera.y);
+    }
+    // A wide faint pass and a narrower brighter one: a line of light, soft at the edge.
+    ctx.globalAlpha = 0.045;
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.globalAlpha = 0.07;
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+  }
+
+  for (const s of glow.stars) {
+    const sprite = bloomSprite(s.color);
+    if (!sprite) continue;
+    const r = Math.min(BLOOM_MAX_PX, Math.max(BLOOM_MIN_PX, s.disc * camera.k * BLOOM_SPAN));
+    ctx.globalAlpha = s.alpha;
+    ctx.drawImage(
+      sprite,
+      s.x * camera.k + camera.x - r,
+      s.y * camera.k + camera.y - r,
+      r * 2,
+      r * 2
+    );
+  }
+
+  if (glow.sun) {
+    const x = glow.sun.x * camera.k + camera.x;
+    const y = glow.sun.y * camera.k + camera.y;
+    const r = Math.min(64, Math.max(26, 90 * camera.k));
+    const halo = ctx.createRadialGradient(x, y, 0, x, y, r);
+    halo.addColorStop(0, "rgba(255,214,140,0.34)");
+    halo.addColorStop(0.3, "rgba(255,180,90,0.12)");
+    halo.addColorStop(1, "rgba(255,150,60,0)");
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = halo;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  ctx.restore();
+}
 
 type WashBitmap = { canvas: HTMLCanvasElement; minX: number; minY: number; scale: number };
 
@@ -136,8 +256,17 @@ export function ConstellationPreviewCanvas({
 
   const layout = useMemo(() => expandPreviewSky(sky), [sky]);
   const index = useMemo(() => buildSkyIndex(layout), [layout]);
-  // What `drawSky` paints itself: the washes come from `bakeWashes`, under it.
-  const drawn = useMemo<SkyIndex>(() => ({ ...index, nebulae: [] }), [index]);
+  // What `drawSky` paints itself: the washes come from `bakeWashes` under it, and the lines are
+  // softened (see LINE_OPACITY).
+  const drawn = useMemo<SkyIndex>(
+    () => ({
+      ...index,
+      nebulae: [],
+      edges: index.edges.map((e) => ({ ...e, opacity: e.opacity * LINE_OPACITY })),
+    }),
+    [index]
+  );
+  const glow = useMemo(() => buildGlow(index), [index]);
   const washesRef = useRef<WashBitmap | null>(null);
 
   const draw = useCallback(() => {
@@ -165,6 +294,7 @@ export function ConstellationPreviewCanvas({
         (washes.canvas.height / washes.scale) * camera.k
       );
     }
+    paintGlow(bctx, glow, camera);
 
     drawSky(ctx, {
       index: drawn,
@@ -178,7 +308,7 @@ export function ConstellationPreviewCanvas({
       sunSelected: false,
       background: backdrop,
     });
-  }, [drawn]);
+  }, [drawn, glow]);
 
   /** At most one frame per display refresh, and none at all while nothing moves. */
   const requestDraw = useCallback(() => {
@@ -210,7 +340,9 @@ export function ConstellationPreviewCanvas({
       const previous = paneRef.current;
       last = size;
 
-      const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+      // The screen's own resolution, to the tab's cap: a 1.5x store upscaled on a 2x display is
+      // what made the card look soft.
+      const dpr = deviceRatio();
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
       const ctx = canvas.getContext("2d");

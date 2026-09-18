@@ -38,7 +38,6 @@ export const LINE_FIELDS = 3;
 
 export const STAR_SCATTER = 1;
 export const STAR_COMET = 2;
-export const STAR_OVERDUE = 4;
 
 /**
  * The numbers back into the layout shape the chart's renderer reads. Every star carries only the
@@ -72,7 +71,6 @@ export function expandPreviewSky(sky: PreviewSky): { nodes: LayoutNode[]; edges:
       figureRole: flags & STAR_SCATTER ? "scatter" : "figure",
       clusterColor: c >= 0 ? sky.colors[c] : undefined,
       comet: Boolean(flags & STAR_COMET),
-      overdue: Boolean(flags & STAR_OVERDUE),
       orbitAngle: angle / 100,
     };
     nodes.push({ id: `s${i / STAR_FIELDS}`, type: "contact", position: { x, y }, data });

@@ -7,7 +7,7 @@
  * on their card because the card table had no schools. Values here are the brand's own color,
  * never pre-adapted for a surface. Each consumer applies its own context treatment on top:
  *
- *   - `school-color.ts`  lifts near-black / near-white brands so they glow on the dark sky.
+ *   - `school-color.ts`  lifts dark brands within their hue so they show on the dark sky.
  *   - `company-brand.ts` greys and lifts them so they read as text in the app UI.
  *
  * Pure and dependency-free, so it is safe in client bundles and `pure`-tier smoke scripts.
@@ -45,7 +45,7 @@ const ENTRIES: readonly BrandEntry[] = [
   ["school", "#57068C", ["New York University", "NYU"]],
   ["school", "#B3A369", ["Georgia Institute of Technology", "Georgia Tech"]],
   ["school", "#C41230", ["Carnegie Mellon University", "Carnegie Mellon", "CMU"]],
-  ["school", "#BF5700", ["University of Texas", "UT Austin", "UT"]],
+  ["school", "#BF5700", ["University of Texas", "UT Austin"]],
   ["school", "#500000", ["Texas A&M University", "Texas A&M"]],
   ["school", "#4B2E83", ["University of Washington"]],
   ["school", "#003087", ["Duke University", "Duke"]],
@@ -70,9 +70,28 @@ const ENTRIES: readonly BrandEntry[] = [
   ["school", "#002145", ["University of British Columbia", "UBC"]],
   ["school", "#FDD54F", ["University of Waterloo", "Waterloo"]],
   ["school", "#041E42", ["Georgetown University", "Georgetown"]],
+  ["school", "#CC0000", ["North Carolina State University", "NC State", "NCSU"]],
+  ["school", "#9E7E38", ["Wake Forest University", "Wake Forest"]],
+  ["school", "#232D4B", ["University of Virginia", "UVA"]],
+  ["school", "#861F41", ["Virginia Tech"]],
+  ["school", "#BA0C2F", ["University of Georgia"]],
+  ["school", "#0021A5", ["University of Florida"]],
+  ["school", "#BB0000", ["Ohio State University", "The Ohio State University", "Ohio State"]],
+  ["school", "#C5050C", ["University of Wisconsin"]],
+  ["school", "#E84A27", ["University of Illinois"]],
+  ["school", "#CEB888", ["Purdue University", "Purdue"]],
+  ["school", "#002D72", ["Johns Hopkins University", "Johns Hopkins"]],
+  ["school", "#CFAE70", ["Vanderbilt University", "Vanderbilt"]],
+  ["school", "#00205B", ["Rice University"]],
+  ["school", "#012169", ["Emory University", "Emory"]],
+  ["school", "#0C2340", ["University of Notre Dame", "Notre Dame"]],
+  ["school", "#CC0000", ["Boston University"]],
+  ["school", "#8A100B", ["Boston College"]],
+  ["school", "#E21833", ["University of Maryland"]],
+  ["school", "#182B49", ["UC San Diego", "UCSD"]],
 
   // Tech ----------------------------------------------------------------------------------
-  ["company", "#4285F4", ["Google", "Alphabet", "Google Cloud"]],
+  ["company", "#4285F4", ["Google", "Alphabet"]],
   ["company", "#FF9900", ["Amazon Web Services", "AWS"]],
   ["company", "#FF9900", ["Amazon", "AMZN"]],
   ["company", "#0081FB", ["Meta", "Meta Platforms"]],
@@ -119,14 +138,27 @@ const ENTRIES: readonly BrandEntry[] = [
   ["company", "#CCFF00", ["Robinhood"]],
   ["company", "#CC0000", ["Tesla"]],
   ["company", "#005288", ["SpaceX"]],
+  ["company", "#5E6AD2", ["Linear"]],
+  ["company", "#E60023", ["Pinterest"]],
+  ["company", "#FF4500", ["Reddit"]],
+  ["company", "#FFFC00", ["Snap", "Snapchat"]],
+  ["company", "#FE2C55", ["TikTok"]],
+  ["company", "#FF3008", ["DoorDash"]],
+  ["company", "#43B02A", ["Instacart"]],
+  ["company", "#FF7A59", ["HubSpot"]],
+  ["company", "#F06A6A", ["Asana"]],
+  ["company", "#00C4CC", ["Canva"]],
+  ["company", "#58CC02", ["Duolingo"]],
 
   // AI ------------------------------------------------------------------------------------
   ["company", "#10A37F", ["OpenAI", "Open AI"]],
-  ["company", "#D4A27F", ["Anthropic"]],
+  ["company", "#D97757", ["Anthropic"]],
   ["company", "#FFD21E", ["Hugging Face"]],
   ["company", "#A78BFA", ["Midjourney"]],
   ["company", "#20808D", ["Perplexity", "Perplexity AI"]],
   ["company", "#F54E00", ["Cursor", "Anysphere"]],
+  ["company", "#FA520F", ["Mistral AI", "Mistral"]],
+  ["company", "#FF7759", ["Cohere"]],
 
   // Finance / consulting / venture ------------------------------------------------------
   ["company", "#005EB8", ["JPMorgan Chase", "JP Morgan Chase", "JPMorgan", "J.P. Morgan", "JP Morgan"]],
@@ -134,6 +166,15 @@ const ENTRIES: readonly BrandEntry[] = [
   ["company", "#002F6C", ["Morgan Stanley"]],
   ["company", "#012169", ["Bank of America"]],
   ["company", "#003B70", ["Citibank", "Citi"]],
+  ["company", "#D71E28", ["Wells Fargo"]],
+  ["company", "#004977", ["Capital One"]],
+  ["company", "#003087", ["PayPal"]],
+  ["company", "#1A1F71", ["Visa"]],
+  ["company", "#EB001B", ["Mastercard"]],
+  ["company", "#006FCF", ["American Express", "Amex"]],
+  ["company", "#D04A02", ["PwC", "PricewaterhouseCoopers"]],
+  ["company", "#00338D", ["KPMG"]],
+  ["company", "#FFE600", ["Ernst & Young", "EY"]],
   ["company", "#86BC25", ["Deloitte"]],
   ["company", "#A100FF", ["Accenture"]],
   ["company", "#051C2C", ["McKinsey", "McKinsey & Company"]],
@@ -174,6 +215,9 @@ for (const [kind, hex, names] of ENTRIES) {
 /** Longest alias first, so "google cloud" and "meta platforms" win over their prefixes. */
 const KEYS_BY_LENGTH = [...INDEX.keys()].sort((a, b) => b.length - a.length);
 
+/** Shorter than this, a name is never matched as part of a longer alias. */
+const MIN_PARTIAL_NAME = 4;
+
 const memo = new Map<string, Brand | null>();
 
 /**
@@ -182,8 +226,14 @@ const memo = new Map<string, Brand | null>();
  * 1. Exact alias match in either table — so a contact whose *company* is "UNC Chapel Hill"
  *    still gets Carolina blue. When both tables hold the alias, `prefer` picks.
  * 2. Otherwise the longest alias that appears in the name as whole words ("IBM Watson" →
- *    IBM, "Columbia Business School" → Columbia). Whole words, so "x" never matches inside
- *    "Exxon" or "Box". When `prefer` is given, only that table is searched at this step.
+ *    IBM, "Columbia Business School" → Columbia, and "Penn State" is not Penn). Whole words,
+ *    so "x" never matches inside "Exxon" or "Box", nor "ut" inside "Utah State".
+ * 3. Otherwise, for a name of at least `MIN_PARTIAL_NAME` characters, the shortest alias that
+ *    contains the name as whole words ("Carnegie" → Carnegie Mellon).
+ *
+ * When `prefer` is given, steps 2 and 3 search only that table: a university is an employer,
+ * so the exact cross-table hit is right, but loose matching across kinds painted "Duke
+ * Capital Partners", a fund, Duke University blue.
  */
 export function lookupBrand(
   name: string | null | undefined,
@@ -208,6 +258,17 @@ export function lookupBrand(
       if (match) {
         hit = match;
         break;
+      }
+    }
+    if (!hit && key.length >= MIN_PARTIAL_NAME) {
+      for (const alias of [...KEYS_BY_LENGTH].reverse()) {
+        if (!` ${alias} `.includes(padded)) continue;
+        const brands = INDEX.get(alias)!;
+        const match = prefer ? brands.find((b) => b.kind === prefer) : brands[0];
+        if (match) {
+          hit = match;
+          break;
+        }
       }
     }
   }
