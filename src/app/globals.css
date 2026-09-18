@@ -2493,6 +2493,17 @@ html[data-celebration-handoff] [data-app-logo] {
   );
 }
 
+/* The reminders page runs its panes to the column's right edge, where the bell and
+ * feedback buttons float (from md: 2rem from the viewport edge, 2.5rem wide, against the
+ * column's 2.5rem padding). Reserving the gutter clears them with 0.5rem to spare. Keyed on
+ * an attribute the page's skeleton carries too, so the width doesn't change when the real
+ * page streams in. */
+@media (min-width: 48rem) {
+  :root:has([data-clear-floating-controls]) {
+    --content-rail-gutter: 2.5rem;
+  }
+}
+
 /* How much room the contacts A-Z rail reserves beside the content column. The rail
  * is thinner below `md` (28px on phones) than on desktop (36px), so the gutter follows
  * it: the rail publishes `var(--content-rail-gutter-size)` rather than a number, and

@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
@@ -31,16 +31,35 @@ import {
   getInboxListId,
   normalizeListName,
 } from "@/lib/reminder-lists";
+import { resolveTimeZone, TZ_COOKIE } from "@/lib/reminder-due-bucket";
+import { isListColor, isListIcon } from "@/lib/reminder-list-style";
+import {
+  REMINDERS_PAGE_SIZE,
+  isReminderSource,
+  isReminderView,
+  type ReminderListSummary,
+  type ReminderRailCounts,
+  type RemindersPage,
+  type RemindersPageFilters,
+} from "@/lib/reminders-page";
+import {
+  queryReminderRailCounts,
+  queryRemindersPage,
+} from "@/lib/reminders-page-query";
 import {
   completeReminder,
   ensureOutreachSuggestions,
   generateDueFollowUps,
   getDashboardData,
   maybeRefreshOutreachSuggestions,
+  dismissReminder,
   reopenReminder,
+  restoreDismissedReminder,
   snoozeReminder,
+  snoozeReminderTo,
   unsnoozeReminder,
   type CompletionSnapshot,
+  type DismissSnapshot,
   type SnoozeSnapshot,
 } from "@/lib/reminders";
 
@@ -122,153 +141,113 @@ export async function fetchDashboard() {
   return { data, networkStats };
 }
 
-export async function listRemindersPage(options?: {
-  listId?: string | null;
-  status?: "pending" | "done" | "all";
-}) {
+async function viewerTimeZone() {
+  const { cookies } = await import("next/headers");
+  try {
+    return resolveTimeZone((await cookies()).get(TZ_COOKIE)?.value);
+  } catch {
+    // No request scope (a script or smoke test calling the action directly): UTC, the same
+    // fallback as a request without the cookie.
+    return resolveTimeZone(null);
+  }
+}
+
+/**
+ * The reminders rail: lists with their pending counts, and the smart-view counts. Separate
+ * from `loadRemindersPage` so paging and filtering never recount the rail.
+ */
+export async function loadReminderRail(): Promise<{
+  lists: ReminderListSummary[];
+  inboxId: string | null;
+  counts: ReminderRailCounts;
+}> {
   const userId = await requireUserId();
   const db = await getDb();
-  const status = options?.status ?? "pending";
-
-  const lists = await ensureReminderLists(userId);
-  const inboxId = lists.find((l) => l.isInbox === 1)?.id ?? lists[0]?.id;
-  const selectedListId = options?.listId || inboxId || null;
-  const selectedIsInbox = Boolean(
-    selectedListId && lists.some((l) => l.id === selectedListId && l.isInbox === 1)
-  );
-
-  const allReminders = await db.query.reminders.findMany({
-    where: eq(reminders.userId, userId),
-    orderBy: [asc(reminders.dueDate), desc(reminders.createdAt)],
-    limit: 500,
+  const [lists, tz] = await Promise.all([
+    ensureReminderLists(userId),
+    viewerTimeZone(),
+  ]);
+  const inboxId =
+    lists.find((l) => l.isInbox === 1)?.id ?? lists[0]?.id ?? null;
+  const { counts, pendingByList } = await queryReminderRailCounts(db, userId, {
+    tz,
+    inboxId,
   });
-
-  const contactIds = [
-    ...new Set(
-      allReminders
-        .map((r) => r.contactId)
-        .filter((id): id is string => Boolean(id))
-    ),
-  ];
-
-  const contactRows =
-    contactIds.length > 0
-      ? await db.query.contacts.findMany({
-          where: and(
-            eq(contacts.userId, userId),
-            inArray(contacts.id, contactIds)
-          ),
-          columns: {
-            id: true,
-            fullName: true,
-            preferredName: true,
-            email: true,
-            phone: true,
-          },
-        })
-      : [];
-
-  const contactById = new Map(contactRows.map((c) => [c.id, c] as const));
-
-  const listCounts = new Map<string, { pending: number; done: number }>();
-  for (const list of lists) {
-    listCounts.set(list.id, { pending: 0, done: 0 });
-  }
-
-  const totals = { pending: 0, done: 0 };
-  for (const r of allReminders) {
-    // Dismissed rows (killed by a note-batch undo) count toward neither bucket — they
-    // aren't open work and aren't a completed task, so folding them into "done" would
-    // inflate that badge with reminders the done filter itself doesn't return.
-    if (r.status === "dismissed") continue;
-    const isPending = r.status === "pending";
-    if (isPending) totals.pending += 1;
-    else totals.done += 1;
-
-    const lid = r.listId || inboxId;
-    if (!lid) continue;
-    const bucket = listCounts.get(lid) ?? { pending: 0, done: 0 };
-    if (isPending) bucket.pending += 1;
-    else bucket.done += 1;
-    listCounts.set(lid, bucket);
-  }
-
-  // Inbox aggregates every list; other lists only show their own reminders.
-  const filtered = allReminders.filter((r) => {
-    if (!selectedIsInbox) {
-      const lid = r.listId || inboxId;
-      if (selectedListId && lid !== selectedListId) return false;
-    }
-    if (status === "pending") return r.status === "pending";
-    if (status === "done") {
-      return r.status === "done" || r.status === "completed";
-    }
-    // "all" still excludes dismissed rows: those are reminders an undone note batch
-    // killed, not a state the reminders page should ever surface as a list item.
-    return r.status !== "dismissed";
-  });
-
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date(startOfToday);
-  endOfToday.setDate(endOfToday.getDate() + 1);
-
-  filtered.sort((a, b) => {
-    const aDue = a.dueDate ? new Date(a.dueDate) : null;
-    const bDue = b.dueDate ? new Date(b.dueDate) : null;
-    const aOverdue = aDue && aDue.getTime() < startOfToday.getTime();
-    const bOverdue = bDue && bDue.getTime() < startOfToday.getTime();
-    if (aOverdue && !bOverdue) return -1;
-    if (!aOverdue && bOverdue) return 1;
-    const aToday =
-      aDue &&
-      aDue.getTime() >= startOfToday.getTime() &&
-      aDue.getTime() < endOfToday.getTime();
-    const bToday =
-      bDue &&
-      bDue.getTime() >= startOfToday.getTime() &&
-      bDue.getTime() < endOfToday.getTime();
-    if (aToday && !bToday && !bOverdue) return -1;
-    if (bToday && !aToday && !aOverdue) return 1;
-    if (!aDue && bDue) return 1;
-    if (aDue && !bDue) return -1;
-    if (aDue && bDue) return aDue.getTime() - bDue.getTime();
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  });
-
   return {
     lists: lists.map((l) => ({
       id: l.id,
       name: l.name,
       isInbox: l.isInbox === 1,
-      position: l.position,
-      // Inbox count = all reminders; other lists keep their own.
-      pendingCount:
-        l.isInbox === 1 ? totals.pending : listCounts.get(l.id)?.pending ?? 0,
-      doneCount:
-        l.isInbox === 1 ? totals.done : listCounts.get(l.id)?.done ?? 0,
+      icon: l.icon ?? null,
+      color: l.color ?? null,
+      pendingCount: pendingByList.get(l.id) ?? 0,
     })),
-    selectedListId,
-    status,
-    reminders: filtered.map((r) => {
-      const c = r.contactId ? contactById.get(r.contactId) : null;
-      return {
-        id: r.id,
-        title: r.title,
-        description: r.description,
-        dueDate: r.dueDate,
-        status: r.status,
-        reminderType: r.reminderType,
-        actionKind: (r.actionKind || "task") as ReminderActionKind,
-        listId: r.listId || inboxId || null,
-        contactId: r.contactId,
-        contactName: c ? c.preferredName?.trim() || c.fullName : null,
-        contactEmail: c?.email ?? null,
-        contactPhone: c?.phone ?? null,
-        noteBatchId: r.noteBatchId,
-        createdAt: r.createdAt,
-      };
-    }),
+    inboxId,
+    counts,
+  };
+}
+
+/**
+ * One page of reminders for a view or list, filtered and ordered in Postgres. The first
+ * page also carries `total`; pass `cursor` for the next. The viewer's timezone comes from
+ * the cookie, never from the caller, so a page and its continuation can't disagree about
+ * what "today" is.
+ */
+export async function loadRemindersPage(
+  filters: Omit<RemindersPageFilters, "tz">
+): Promise<RemindersPage> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const [inboxId, tz] = await Promise.all([
+    getInboxListId(userId),
+    viewerTimeZone(),
+  ]);
+
+  let listId: string | null = null;
+  if (filters.listId) {
+    const list = await findReminderListForUser(userId, filters.listId);
+    // A stale or foreign list id shows Today rather than an error page.
+    listId = list?.id ?? null;
+  }
+
+  const contactId =
+    typeof filters.contactId === "string" ? filters.contactId : null;
+  const [page, contact] = await Promise.all([
+    queryRemindersPage(
+      db,
+      userId,
+      {
+        view: listId
+          ? null
+          : isReminderView(filters.view)
+            ? filters.view
+            : "today",
+        listId,
+        q: typeof filters.q === "string" ? filters.q.slice(0, 200) : undefined,
+        kinds: filters.kinds?.filter(isReminderActionKind),
+        sources: filters.sources?.filter(isReminderSource),
+        contactId,
+        cursor: typeof filters.cursor === "string" ? filters.cursor : undefined,
+        limit: REMINDERS_PAGE_SIZE,
+        tz,
+      },
+      { inboxId }
+    ),
+    contactId && !filters.cursor
+      ? db.query.contacts.findFirst({
+          where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+          columns: { id: true, fullName: true, preferredName: true },
+        })
+      : Promise.resolve(undefined),
+  ]);
+  return {
+    ...page,
+    contactFilter: contact
+      ? {
+          id: contact.id,
+          name: contact.preferredName?.trim() || contact.fullName,
+        }
+      : null,
   };
 }
 
@@ -433,7 +412,7 @@ export async function createReminderList(name: string) {
       })
       .returning();
 
-    revalidatePath("/reminders");
+    revalidatePathIfRequestScoped("/reminders");
     return row;
   });
 }
@@ -468,7 +447,69 @@ export async function renameReminderList(id: string, name: string) {
       .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
       .returning();
 
-    revalidatePath("/reminders");
+    revalidatePathIfRequestScoped("/reminders");
+    return row;
+  });
+}
+
+/**
+ * The list editor's save: any of name, icon and colour. `null` resets icon or colour to the
+ * default. The Inbox keeps its name (Jason's call — it's the list Orbit files things into),
+ * but can take an icon and colour like any other.
+ */
+export async function updateReminderList(
+  id: string,
+  patch: { name?: string; icon?: string | null; color?: string | null }
+) {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const db = await getDb();
+
+    const list = await findReminderListForUser(userId, id);
+    if (!list) throw new UserFacingError("That list no longer exists");
+
+    const set: Partial<typeof reminderLists.$inferInsert> = {};
+    if (patch.name !== undefined) {
+      const display = displayListName(patch.name);
+      if (!display) throw new UserFacingError("Give the list a name first");
+      if (display !== list.name) {
+        if (list.isInbox === 1) throw new UserFacingError("The Inbox can’t be renamed");
+        const normalized = normalizeListName(display);
+        if (normalized === "inbox") throw new UserFacingError("Inbox is taken — pick another name");
+        const clash = await db.query.reminderLists.findFirst({
+          where: and(
+            eq(reminderLists.userId, userId),
+            eq(reminderLists.nameNormalized, normalized)
+          ),
+        });
+        if (clash && clash.id !== id) {
+          throw new UserFacingError("You already have a list with that name");
+        }
+        set.name = display;
+        set.nameNormalized = normalized;
+      }
+    }
+    if (patch.icon !== undefined) {
+      if (patch.icon !== null && !isListIcon(patch.icon)) {
+        throw new UserFacingError("That icon isn’t available");
+      }
+      set.icon = patch.icon;
+    }
+    if (patch.color !== undefined) {
+      if (patch.color !== null && !isListColor(patch.color)) {
+        throw new UserFacingError("That color isn’t available");
+      }
+      set.color = patch.color;
+    }
+    if (Object.keys(set).length === 0) return list;
+
+    const [row] = await db
+      .update(reminderLists)
+      .set(set)
+      .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
+      .returning();
+
+    revalidatePathIfRequestScoped("/reminders");
     return row;
   });
 }
@@ -492,7 +533,7 @@ export async function deleteReminderList(id: string) {
       .delete(reminderLists)
       .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)));
 
-    revalidatePath("/reminders");
+    revalidatePathIfRequestScoped("/reminders");
     return { inboxId };
   });
 }
@@ -740,6 +781,23 @@ export async function reopenReminderAction(snapshot: CompletionSnapshot) {
   return result;
 }
 
+/**
+ * Reopen a done reminder — the Done view's way back. Status only: the action items its
+ * completion closed stay closed, because nothing here knows which ones that was (the
+ * toast Undo, which does, uses `reopenReminderAction`). Undo is `markReminderDone`.
+ */
+export async function reopenDoneReminderAction(id: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const rows = await db
+    .update(reminders)
+    .set({ status: "pending" })
+    .where(and(eq(reminders.id, id), eq(reminders.userId, userId), eq(reminders.status, "done")))
+    .returning(); // bare: a field selector breaks over the Db union
+  revalidateReminderPaths();
+  return rows.length > 0 ? { reminderId: id } : null;
+}
+
 /** Draft a follow-up message grounded in the reminder contact's conversation history. */
 export async function draftFollowUpResponse(reminderId: string) {
   const userId = await requireUserId();
@@ -766,6 +824,258 @@ export async function unsnoozeReminderAction(snapshot: SnoozeSnapshot) {
   revalidatePathIfRequestScoped("/contacts");
   revalidatePathIfRequestScoped("/graph");
   return result;
+}
+
+/**
+ * A calendar day as the stored due instant: noon UTC, the codebase's "date only" convention
+ * (`atLocalNoon` on a UTC server; see `isDateOnly` in calendar-feed.ts). Noon keeps the
+ * same calendar day for any viewer within ±11 hours, where UTC midnight is already the
+ * previous evening in the Americas.
+ */
+function dayToDue(ymd: string): Date {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    throw new UserFacingError("That date doesn’t look right — pick another?");
+  }
+  const due = new Date(`${ymd}T12:00:00Z`);
+  // Round-trip check: rejects 2026-02-30, which Date would quietly roll into March.
+  if (Number.isNaN(due.getTime()) || due.toISOString().slice(0, 10) !== ymd) {
+    throw new UserFacingError("That date doesn’t look right — pick another?");
+  }
+  const fiveYears = 5 * 365 * 86_400_000;
+  if (Math.abs(due.getTime() - Date.now()) > fiveYears) {
+    throw new UserFacingError("Pick a date within the next few years");
+  }
+  return due;
+}
+
+/** Snooze to a chosen day (the picker's presets and calendar). Undo via `unsnoozeReminderAction`. */
+export async function rescheduleReminderAction(id: string, ymd: string) {
+  const userId = await requireUserId();
+  const snapshot = await snoozeReminderTo(userId, id, dayToDue(ymd));
+  revalidateReminderPaths();
+  revalidatePathIfRequestScoped("/contacts");
+  revalidatePathIfRequestScoped("/graph");
+  return snapshot;
+}
+
+/** Delete a reminder (soft — see `dismissReminder`). Undo via `restoreReminderAction`. */
+export async function deleteReminderAction(id: string) {
+  const userId = await requireUserId();
+  const snapshot = await dismissReminder(userId, id);
+  revalidateReminderPaths();
+  return snapshot;
+}
+
+function validDismissSnapshot(snap: DismissSnapshot): boolean {
+  return (
+    typeof snap?.reminderId === "string" &&
+    REMINDER_STATUSES.has(snap.previousStatus)
+  );
+}
+
+/** Undo for `deleteReminderAction`. */
+export async function restoreReminderAction(snapshot: DismissSnapshot) {
+  const userId = await requireUserId();
+  if (!validDismissSnapshot(snapshot)) return { restored: false };
+  const result = await restoreDismissedReminder(userId, snapshot);
+  revalidateReminderPaths();
+  return result;
+}
+
+/** Most reminders one bulk action may touch. The page's selection can't exceed a few pages. */
+const BULK_LIMIT = 200;
+/** Per-row helpers run this many at a time: fast on neon-http, gentle on PGlite. */
+const BULK_CONCURRENCY = 6;
+
+async function mapPooled<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(BULK_CONCURRENCY, items.length) }, worker)
+  );
+  return out;
+}
+
+export type BulkReminderOp =
+  | { op: "done" }
+  | { op: "snooze"; ymd: string }
+  | { op: "delete" }
+  | { op: "move"; listId: string };
+
+export type BulkReminderSnapshot =
+  | { op: "done"; items: CompletionSnapshot[] }
+  | { op: "snooze"; items: SnoozeSnapshot[] }
+  | { op: "delete"; items: DismissSnapshot[] }
+  | {
+      op: "move";
+      items: Array<{ reminderId: string; previousListId: string | null }>;
+    };
+
+/**
+ * Done / snooze / delete / move for a selection, with one snapshot so one Undo reverses the
+ * lot. Done, snooze and delete go through the same per-row helpers as the single actions —
+ * each carries side effects (linked action items, the contact's follow-up clock) and an Undo
+ * guard that a set-based rewrite would have to duplicate. Move has no side effects, so it is
+ * one statement.
+ */
+export async function bulkReminderAction(
+  ids: string[],
+  action: BulkReminderOp
+) {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const unique = [...new Set(ids.filter((id) => typeof id === "string"))];
+    if (unique.length === 0)
+      throw new UserFacingError("Select a reminder first");
+    if (unique.length > BULK_LIMIT) {
+      throw new UserFacingError(
+        `That’s more than ${BULK_LIMIT} at once — select fewer?`
+      );
+    }
+
+    let snapshot: BulkReminderSnapshot;
+    switch (action.op) {
+      case "done": {
+        const items = await mapPooled(unique, (id) =>
+          completeReminder(userId, id)
+        );
+        snapshot = {
+          op: "done",
+          items: items.filter((x): x is CompletionSnapshot => Boolean(x)),
+        };
+        break;
+      }
+      case "snooze": {
+        const due = dayToDue(action.ymd);
+        const items = await mapPooled(unique, (id) =>
+          snoozeReminderTo(userId, id, due)
+        );
+        snapshot = {
+          op: "snooze",
+          items: items.filter((x): x is SnoozeSnapshot => Boolean(x)),
+        };
+        break;
+      }
+      case "delete": {
+        const items = await mapPooled(unique, (id) =>
+          dismissReminder(userId, id)
+        );
+        snapshot = {
+          op: "delete",
+          items: items.filter((x): x is DismissSnapshot => Boolean(x)),
+        };
+        break;
+      }
+      case "move": {
+        const list = await findReminderListForUser(userId, action.listId);
+        if (!list) throw new UserFacingError("That list no longer exists");
+        const db = await getDb();
+        const before = await db
+          .select({ id: reminders.id, listId: reminders.listId })
+          .from(reminders)
+          .where(
+            and(eq(reminders.userId, userId), inArray(reminders.id, unique))
+          );
+        await db
+          .update(reminders)
+          .set({ listId: list.id })
+          .where(
+            and(eq(reminders.userId, userId), inArray(reminders.id, unique))
+          );
+        snapshot = {
+          op: "move",
+          items: before.map((r) => ({
+            reminderId: r.id,
+            previousListId: r.listId,
+          })),
+        };
+        break;
+      }
+      default:
+        throw new UserFacingError("That action isn’t available");
+    }
+
+    revalidateReminderPaths();
+    revalidatePathIfRequestScoped("/contacts");
+    revalidatePathIfRequestScoped("/graph");
+    return { count: snapshot.items.length, snapshot };
+  });
+}
+
+/** Undo for `bulkReminderAction`: each row's own inverse, with its own staleness guard. */
+export async function undoBulkReminderAction(snapshot: BulkReminderSnapshot) {
+  const userId = await requireUserId();
+  if (
+    !snapshot ||
+    !Array.isArray(snapshot.items) ||
+    snapshot.items.length > BULK_LIMIT
+  ) {
+    return { restored: false };
+  }
+
+  let restored = 0;
+  switch (snapshot.op) {
+    case "done": {
+      const valid = snapshot.items.filter(validCompletionSnapshot);
+      const results = await mapPooled(valid, (snap) =>
+        reopenReminder(userId, snap)
+      );
+      restored = results.filter((r) => r.restored).length;
+      break;
+    }
+    case "snooze": {
+      const valid = snapshot.items.filter(validSnoozeSnapshot);
+      const results = await mapPooled(valid, (snap) =>
+        unsnoozeReminder(userId, snap)
+      );
+      restored = results.filter((r) => r.restored).length;
+      break;
+    }
+    case "delete": {
+      const valid = snapshot.items.filter(validDismissSnapshot);
+      const results = await mapPooled(valid, (snap) =>
+        restoreDismissedReminder(userId, snap)
+      );
+      restored = results.filter((r) => r.restored).length;
+      break;
+    }
+    case "move": {
+      const db = await getDb();
+      const byList = new Map<string | null, string[]>();
+      for (const item of snapshot.items) {
+        if (typeof item?.reminderId !== "string") continue;
+        const key =
+          typeof item.previousListId === "string" ? item.previousListId : null;
+        byList.set(key, [...(byList.get(key) ?? []), item.reminderId]);
+      }
+      for (const [listId, ids] of byList) {
+        // A list deleted since the move can't be restored to; those rows stay put.
+        if (listId && !(await findReminderListForUser(userId, listId)))
+          continue;
+        const rows = await db
+          .update(reminders)
+          .set({ listId })
+          .where(and(eq(reminders.userId, userId), inArray(reminders.id, ids)))
+          .returning(); // bare: a field selector breaks over the Db union
+        restored += rows.length;
+      }
+      break;
+    }
+  }
+
+  revalidateReminderPaths();
+  revalidatePathIfRequestScoped("/contacts");
+  revalidatePathIfRequestScoped("/graph");
+  return { restored: restored > 0 };
 }
 
 /** Full inbox for the in-app notifications panel. */

@@ -12,6 +12,8 @@ import {
 } from "@/actions/suggested-reminders";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePickerButton } from "@/components/ui/date-picker";
+import { shortDayLabel } from "@/lib/reminder-due-bucket";
 import { cn } from "@/lib/utils";
 
 function isoDayValue(d: Date) {
@@ -30,25 +32,47 @@ function formatDue(d: Date) {
 
 export function SuggestedRemindersPanel({
   items,
+  embedded = false,
 }: {
   items: SuggestedReminderRow[];
+  /**
+   * Inside the reminders queue, which already titles it: no card or heading of its own, and
+   * an empty state instead of disappearing.
+   */
+  embedded?: boolean;
 }) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const visible = items.filter((i) => !dismissed.has(i.id));
 
-  if (!visible.length) return null;
+  if (!visible.length) {
+    return embedded ? (
+      <div className="flex min-h-48 flex-col items-center justify-center gap-1 text-center">
+        <p className="font-medium">All reviewed</p>
+        <p className="text-sm text-muted-foreground">
+          Dates Orbit finds in your notes will wait here for you.
+        </p>
+      </div>
+    ) : null;
+  }
 
   return (
-    <section className="space-y-3 rounded-2xl border border-amber-500/30 bg-amber-500/[0.04] p-5">
-      <div className="flex items-center gap-2">
-        <Sparkles className="size-4 text-amber-600 dark:text-amber-300" />
-        <h2 className="text-sm font-medium text-foreground">
-          Suggested from your notes
-        </h2>
-        <span className="text-xs text-muted-foreground">
-          {visible.length} to review
-        </span>
-      </div>
+    <section
+      className={cn(
+        "space-y-3",
+        !embedded && "rounded-2xl border border-amber-500/30 bg-amber-500/[0.04] p-5"
+      )}
+    >
+      {!embedded && (
+        <div className="flex items-center gap-2">
+          <Sparkles className="size-4 text-amber-600 dark:text-amber-300" />
+          <h2 className="text-sm font-medium text-foreground">
+            Suggested from your notes
+          </h2>
+          <span className="text-xs text-muted-foreground">
+            {visible.length} to review
+          </span>
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">
         Dates Orbit found written in notes you captured. Nothing is scheduled until
         you confirm it.
@@ -120,7 +144,7 @@ function SuggestionRow({
   }
 
   return (
-    <li className="rounded-xl border border-border/60 bg-card p-3">
+    <li className="rounded-xl border border-border/70 bg-card p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-1">
           {editing ? (
@@ -130,12 +154,12 @@ function SuggestionRow({
                 onChange={(e) => setTitle(e.target.value)}
                 aria-label="Reminder title"
               />
-              <Input
-                type="date"
+              <DatePickerButton
                 value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                aria-label="Due date"
+                onSelect={setDueDate}
+                label={shortDayLabel(dueDate)}
                 className={cn(
+                  "h-8 font-normal",
                   item.yearInferred && "ring-1 ring-amber-500/50"
                 )}
               />
@@ -178,19 +202,19 @@ function SuggestionRow({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-3">
+        <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-4">
           <Button
-            size="icon"
+            size="icon-sm"
             variant="ghost"
             aria-label="Edit"
             className="tap-target relative"
             disabled={pending}
             onClick={() => setEditing((v) => !v)}
           >
-            <Pencil className="size-4" />
+            <Pencil className="size-3.5" />
           </Button>
           <Button
-            size="icon"
+            size="icon-sm"
             variant="ghost"
             aria-label="Confirm reminder"
             className="tap-target relative"
@@ -204,10 +228,10 @@ function SuggestionRow({
               )
             }
           >
-            <Check className="size-4" />
+            <Check className="size-3.5" />
           </Button>
           <Button
-            size="icon"
+            size="icon-sm"
             variant="ghost"
             aria-label="Discard suggestion"
             className="tap-target relative"
@@ -221,7 +245,7 @@ function SuggestionRow({
               )
             }
           >
-            <X className="size-4" />
+            <X className="size-3.5" />
           </Button>
         </div>
       </div>

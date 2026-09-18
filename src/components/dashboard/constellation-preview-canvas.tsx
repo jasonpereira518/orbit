@@ -1,206 +1,327 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import type { PreviewSky } from "@/lib/graph/preview-sky";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { LocateFixed } from "lucide-react";
+import { expandPreviewSky, type PreviewSky } from "@/lib/graph/preview-sky-shape";
+import { buildSkyIndex, type SkyIndex } from "@/components/graph/sky-canvas/sky-index";
+import { drawSky } from "@/components/graph/sky-canvas/draw-sky";
+import { bakeBackground } from "@/components/graph/sky-canvas/sky-sprites";
+import { useSkyGestures } from "@/components/graph/sky-canvas/use-sky-gestures";
 import {
   NEBULA_LOBE_EDGE,
   NEBULA_LOBE_MID,
   nebulaLobes,
 } from "@/lib/graph/nebula-lobes";
+import { clampPan, fitStarsToPane, zoomAt, type Camera } from "@/lib/graph/sky-camera";
+import type { SkyFocusState } from "@/lib/graph/sky-emphasis";
 import { withAlpha } from "@/lib/school-color";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { cn } from "@/lib/utils";
 
-/** Backing-store resolution cap: crisp dots on a retina card without a 4x store. */
+/** Backing-store resolution cap: crisp stars on a retina card without a 4x store. */
 const MAX_DPR = 1.5;
 /** Screen px kept clear around the stars. */
-const INSET = 18;
-/** Never magnify a small network past this, or a handful of stars fills the card. */
-const MAX_SCALE = 1.2;
-/** How far from a cluster's centre still counts as pointing at it, in cluster radii. */
-const HOVER_REACH = 1.15;
+const INSET = { x: 22, top: 18, bottom: 18 };
+/** The washes' bitmap is at most this many px on its long side, and never finer than world px. */
+const WASH_MAX_PX = 2048;
+/**
+ * Zoom per px of ctrl+wheel travel. A trackpad pinch arrives as ctrl+wheel in steps of a few px;
+ * a mouse wheel notch is ~100px, which this makes a ~1.2x step.
+ */
+const WHEEL_ZOOM_RATE = 0.002;
 
-/** The card's world→screen transform, kept so the pointer can be tested against the sky. */
-type Frame = { k: number; cx: number; cy: number; width: number; height: number };
+/** Nothing is hovered, selected or searched in the card. */
+const RESTING: SkyFocusState = {
+  hoveredId: null,
+  selectedContactId: null,
+  searchHitIds: new Set(),
+  searchDimActive: false,
+};
+
+type WashBitmap = { canvas: HTMLCanvasElement; minX: number; minY: number; scale: number };
 
 /**
- * Paint the preview: one canvas, drawn once, and again only if its size changes.
+ * The clusters' washes, as the desktop chart paints them, baked once into a world-space bitmap.
  *
- * The same picture the chart draws — the clusters' washes, the constellation lines, the sun and
- * everyone's star — with none of its machinery: no React Flow, no per-star DOM, no animation
- * loop, and no contact records in the payload. Every wash is one gradient fill, dots are batched
- * into a path per colour and lines into a single path, so the whole sky is a few dozen fills
- * however many people are in it.
+ * `drawSky` has washes of its own, but they are the phone's: one blurred sprite per cluster,
+ * brighter and rounder than the five soft lobes a laptop shows (`NebulaWashNode` in
+ * graph-nodes.tsx). The card sits on the laptop's dashboard, so it takes the laptop's clouds —
+ * and bakes them, so a pan frame is one blit rather than five gradients per cluster. The clouds
+ * are soft by design, so a bitmap coarser than the screen when zoomed in loses nothing.
  */
-function paint(canvas: HTMLCanvasElement, sky: PreviewSky): Frame | null {
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  if (width < 2 || height < 2) return null;
-  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-  const w = Math.round(width * dpr);
-  const h = Math.round(height * dpr);
-  if (canvas.width !== w) canvas.width = w;
-  if (canvas.height !== h) canvas.height = h;
+function bakeWashes(index: SkyIndex): WashBitmap | null {
+  const lobes = index.nebulae.flatMap((n) =>
+    nebulaLobes(n.company, n.radius).map((lobe) => ({
+      ...lobe,
+      cx: n.x + lobe.x,
+      cy: n.y + lobe.y,
+      color: n.color,
+    }))
+  );
+  if (lobes.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const l of lobes) {
+    minX = Math.min(minX, l.cx - l.rx);
+    minY = Math.min(minY, l.cy - l.ry);
+    maxX = Math.max(maxX, l.cx + l.rx);
+    maxY = Math.max(maxY, l.cy + l.ry);
+  }
+  const scale = Math.min(1, WASH_MAX_PX / Math.max(maxX - minX, maxY - minY, 1));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil((maxX - minX) * scale));
+  canvas.height = Math.max(1, Math.ceil((maxY - minY) * scale));
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
+  ctx.setTransform(scale, 0, 0, scale, -minX * scale, -minY * scale);
 
-  const { frame } = sky;
-  const spanX = Math.max(frame.maxX - frame.minX, 1);
-  const spanY = Math.max(frame.maxY - frame.minY, 1);
-  const k = Math.min(MAX_SCALE, (width - INSET * 2) / spanX, (height - INSET * 2) / spanY);
-  const cx = (frame.minX + frame.maxX) / 2;
-  const cy = (frame.minY + frame.maxY) / 2;
-  const sx = (x: number) => (x - cx) * k + width / 2;
-  const sy = (y: number) => (y - cy) * k + height / 2;
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-
-  // The washes, behind everything: each cluster's colour, in the same five offset lobes the
-  // chart draws in CSS (see nebula-lobes.ts), so the two skies are the same sky.
-  for (const cluster of sky.clusters) {
-    const color = sky.colors[cluster.c];
-    if (!color) continue;
-    for (const lobe of nebulaLobes(cluster.name, cluster.r)) {
-      const rx = lobe.rx * k;
-      const ry = lobe.ry * k;
-      if (rx < 0.5 || ry < 0.5) continue;
-      const x = sx(cluster.x + lobe.x);
-      const y = sy(cluster.y + lobe.y);
-      const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-      fill.addColorStop(0, withAlpha(color, lobe.alpha));
-      fill.addColorStop(NEBULA_LOBE_MID, withAlpha(color, lobe.alpha * 0.45));
-      fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(color, 0));
-      fill.addColorStop(1, withAlpha(color, 0));
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.scale(1, ry / rx);
-      ctx.fillStyle = fill;
-      ctx.beginPath();
-      ctx.arc(0, 0, rx, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-
-  if (sky.lines.length > 0) {
+  for (const l of lobes) {
+    // A zero-radius gradient throws; under half a pixel there is nothing to draw anyway.
+    if (l.rx * scale < 0.5 || l.ry * scale < 0.5) continue;
+    const fill = ctx.createRadialGradient(0, 0, 0, 0, 0, l.rx);
+    fill.addColorStop(0, withAlpha(l.color, l.alpha));
+    fill.addColorStop(NEBULA_LOBE_MID, withAlpha(l.color, l.alpha * 0.45));
+    fill.addColorStop(NEBULA_LOBE_EDGE, withAlpha(l.color, 0));
+    fill.addColorStop(1, withAlpha(l.color, 0));
+    ctx.save();
+    ctx.translate(l.cx, l.cy);
+    ctx.scale(1, l.ry / l.rx);
+    ctx.fillStyle = fill;
     ctx.beginPath();
-    for (let i = 0; i < sky.lines.length; i += 4) {
-      ctx.moveTo(sx(sky.lines[i]), sy(sky.lines[i + 1]));
-      ctx.lineTo(sx(sky.lines[i + 2]), sy(sky.lines[i + 3]));
-    }
-    ctx.strokeStyle = "rgba(255,255,255,0.16)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    ctx.arc(0, 0, l.rx, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
-
-  // The sun: you, at the centre of it all.
-  const sunX = sx(0);
-  const sunY = sy(0);
-  const sun = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 16);
-  sun.addColorStop(0, "rgba(255,246,214,1)");
-  sun.addColorStop(0.3, "rgba(245,200,106,0.8)");
-  sun.addColorStop(1, "rgba(255,160,60,0)");
-  ctx.fillStyle = sun;
-  ctx.fillRect(sunX - 16, sunY - 16, 32, 32);
-
-  // Two passes per colour, each a single path: a faint halo, then the dot.
-  for (const pass of ["halo", "dot"] as const) {
-    for (let c = 0; c < sky.colors.length; c++) {
-      ctx.beginPath();
-      let any = false;
-      for (let i = 0; i < sky.stars.length; i += 5) {
-        if (sky.stars[i + 3] !== c) continue;
-        const r = Math.min(3.2, Math.max(1.1, sky.stars[i + 2] * k * 2.2));
-        const rr = pass === "halo" ? r * 2.6 : r;
-        const x = sx(sky.stars[i]);
-        const y = sy(sky.stars[i + 1]);
-        ctx.moveTo(x + rr, y);
-        ctx.arc(x, y, rr, 0, Math.PI * 2);
-        any = true;
-      }
-      if (!any) continue;
-      ctx.fillStyle = sky.colors[c];
-      ctx.globalAlpha = pass === "halo" ? 0.12 : 0.9;
-      ctx.fill();
-    }
-  }
-  ctx.globalAlpha = 1;
-  return { k, cx, cy, width, height };
+  return { canvas, minX, minY, scale };
 }
 
-type Hovered = { name: string; x: number; y: number };
-
-export function ConstellationPreviewCanvas({ sky }: { sky: PreviewSky }) {
+/**
+ * The constellation tab's sky, in a card you can move around.
+ *
+ * Drawn by the chart's own canvas renderer — the same star sprites, starfield and constellation
+ * lines, over the desktop chart's washes — and moved by the phone chart's own gestures: drag to
+ * pan, pinch (or ctrl/⌘+scroll, which is what a trackpad pinch sends) to zoom. A tap opens the
+ * full chart. What it leaves out is everything else that makes the tab a tool: no React Flow, no
+ * per-star DOM, no names, no selection. Between gestures it draws nothing at all.
+ *
+ * On a phone the card sits in a scrolling page, so a vertical swipe stays the page's (see
+ * `touch-pan-y` below): one finger moves the sky sideways, two fingers move it anywhere.
+ */
+export function ConstellationPreviewCanvas({
+  sky,
+  href,
+  label,
+}: {
+  sky: PreviewSky;
+  /** Where a tap goes. */
+  href: string;
+  label: string;
+}) {
+  const router = useRouter();
+  const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const frameRef = useRef<Frame | null>(null);
-  const [hovered, setHovered] = useState<Hovered | null>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const paneRef = useRef({ width: 0, height: 0, dpr: 1 });
+  const cameraRef = useRef<Camera>({ x: 0, y: 0, k: 1 });
+  const homeRef = useRef<Camera>({ x: 0, y: 0, k: 1 });
+  const backgroundRef = useRef<HTMLCanvasElement | null>(null);
+  const backdropRef = useRef<HTMLCanvasElement | null>(null);
+  const rafRef = useRef(0);
+  const movedRef = useRef(false);
+  const [moved, setMoved] = useState(false);
+  const prefersReducedMotion = usePrefersReducedMotion();
 
-  // Before paint, so the card never shows an empty frame; then only on a real size change.
+  const layout = useMemo(() => expandPreviewSky(sky), [sky]);
+  const index = useMemo(() => buildSkyIndex(layout), [layout]);
+  // What `drawSky` paints itself: the washes come from `bakeWashes`, under it.
+  const drawn = useMemo<SkyIndex>(() => ({ ...index, nebulae: [] }), [index]);
+  const washesRef = useRef<WashBitmap | null>(null);
+
+  const draw = useCallback(() => {
+    rafRef.current = 0;
+    const ctx = ctxRef.current;
+    const backdrop = backdropRef.current;
+    const { width, height, dpr } = paneRef.current;
+    if (!ctx || !backdrop || width < 2 || height < 2) return;
+    const camera = cameraRef.current;
+
+    // The screen-space starfield, then the world-space washes at the camera — composited into
+    // one bitmap, because `drawSky` clears the canvas and then paints its background first.
+    const bctx = backdrop.getContext("2d");
+    if (!bctx) return;
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bctx.clearRect(0, 0, width, height);
+    if (backgroundRef.current) bctx.drawImage(backgroundRef.current, 0, 0, width, height);
+    const washes = washesRef.current;
+    if (washes) {
+      bctx.drawImage(
+        washes.canvas,
+        washes.minX * camera.k + camera.x,
+        washes.minY * camera.k + camera.y,
+        (washes.canvas.width / washes.scale) * camera.k,
+        (washes.canvas.height / washes.scale) * camera.k
+      );
+    }
+
+    drawSky(ctx, {
+      index: drawn,
+      camera,
+      width,
+      height,
+      focus: RESTING,
+      focusCluster: null,
+      focusCompany: null,
+      companyFilter: "all",
+      sunSelected: false,
+      background: backdrop,
+    });
+  }, [drawn]);
+
+  /** At most one frame per display refresh, and none at all while nothing moves. */
+  const requestDraw = useCallback(() => {
+    if (!rafRef.current) rafRef.current = requestAnimationFrame(draw);
+  }, [draw]);
+
+  // Clear the handle as well as cancelling it: `requestDraw` gates on it, so a stale one left by
+  // StrictMode's unmount/remount would wedge the card, taking gestures and painting nothing.
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    },
+    []
+  );
+
+  // Before paint, so the card never shows an empty frame.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    frameRef.current = paint(canvas, sky);
-    let last = `${canvas.clientWidth}x${canvas.clientHeight}`;
-    const observer = new ResizeObserver(() => {
-      const size = `${canvas.clientWidth}x${canvas.clientHeight}`;
-      if (size === last) return;
-      last = size;
-      frameRef.current = paint(canvas, sky);
-      setHovered(null);
-    });
-    observer.observe(canvas);
-    return () => observer.disconnect();
-  }, [sky]);
+    washesRef.current = bakeWashes(index);
+    let last = "";
 
-  /**
-   * The clusters are the only thing in the card you can point at, and pointing at one names it.
-   * Tested against their centres rather than their washes, which overlap: the gap between two
-   * clusters belongs to neither. The name is a plain element over the canvas, so hovering never
-   * repaints the sky.
-   */
-  const onMove = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      const frame = frameRef.current;
-      const canvas = canvasRef.current;
-      if (!frame || !canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const px = event.clientX - rect.left;
-      const py = event.clientY - rect.top;
-      const wx = (px - frame.width / 2) / frame.k + frame.cx;
-      const wy = (py - frame.height / 2) / frame.k + frame.cy;
-      let best: Hovered | null = null;
-      let bestD = Infinity;
-      for (const cluster of sky.clusters) {
-        const reach = cluster.r * HOVER_REACH;
-        const d = (wx - cluster.x) ** 2 + (wy - cluster.y) ** 2;
-        if (d > reach * reach || d >= bestD) continue;
-        bestD = d;
-        best = {
-          name: cluster.name,
-          x: (cluster.x - frame.cx) * frame.k + frame.width / 2,
-          y: (cluster.y - frame.cy) * frame.k + frame.height / 2 - cluster.r * frame.k - 8,
+    const resize = () => {
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      const size = `${width}x${height}`;
+      if (width < 2 || height < 2 || size === last) return;
+      const previous = paneRef.current;
+      last = size;
+
+      const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctxRef.current = ctx;
+      paneRef.current = { width, height, dpr };
+
+      const backdrop = backdropRef.current ?? document.createElement("canvas");
+      backdrop.width = canvas.width;
+      backdrop.height = canvas.height;
+      backdropRef.current = backdrop;
+      backgroundRef.current = bakeBackground(width, height, dpr);
+
+      homeRef.current = fitStarsToPane(layout.nodes, { width, height }, INSET);
+      if (!movedRef.current || previous.width < 2) {
+        cameraRef.current = homeRef.current;
+      } else {
+        // Keep the world point that was centred, centred.
+        cameraRef.current = {
+          ...cameraRef.current,
+          x: cameraRef.current.x + (width - previous.width) / 2,
+          y: cameraRef.current.y + (height - previous.height) / 2,
         };
       }
-      setHovered((prev) =>
-        prev?.name === best?.name && prev?.x === best?.x && prev?.y === best?.y ? prev : best
-      );
-    },
-    [sky.clusters]
+      cancelAnimationFrame(rafRef.current);
+      draw();
+    };
+
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [index, layout.nodes, draw]);
+
+  const onCameraChanged = useCallback(() => {
+    if (!movedRef.current) {
+      movedRef.current = true;
+      setMoved(true);
+    }
+    requestDraw();
+  }, [requestDraw]);
+
+  const gestureHandlers = useMemo(
+    () => ({
+      cameraRef,
+      bounds: () => index.bounds,
+      pane: () => paneRef.current,
+      onCameraChanged,
+      onTap: () => router.push(href),
+      onSettled: () => {},
+      reducedMotion: prefersReducedMotion,
+      movable: true,
+      cancelTween: () => {},
+    }),
+    [index, onCameraChanged, router, href, prefersReducedMotion]
   );
+  useSkyGestures(containerRef, gestureHandlers);
+
+  /**
+   * Zoom on a trackpad pinch or ctrl/⌘+scroll, about the pointer. A plain scroll is left alone:
+   * it belongs to the page, and a card that swallowed it would trap the dashboard. Non-passive,
+   * so the browser's own page zoom does not fire as well.
+   */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const anchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const zoomed = zoomAt(cameraRef.current, anchor, Math.exp(-e.deltaY * WHEEL_ZOOM_RATE));
+      cameraRef.current = clampPan(zoomed, index.bounds, paneRef.current);
+      onCameraChanged();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [index, onCameraChanged]);
+
+  const recenter = () => {
+    cameraRef.current = homeRef.current;
+    movedRef.current = false;
+    setMoved(false);
+    requestDraw();
+  };
 
   return (
-    <div
-      className="relative h-full w-full"
-      onMouseMove={onMove}
-      onMouseLeave={() => setHovered(null)}
-    >
-      <canvas ref={canvasRef} aria-hidden className="block h-full w-full" />
-      {hovered && (
-        <span
-          className="pointer-events-none absolute -translate-x-1/2 -translate-y-full whitespace-nowrap text-[11px] font-semibold tracking-[0.08em] text-white [text-shadow:0_1px_6px_rgba(0,0,0,0.9)]"
-          style={{ left: hovered.x, top: Math.max(12, hovered.y) }}
+    <div className="relative h-full w-full">
+      <div
+        ref={containerRef}
+        role="img"
+        aria-label={label}
+        className="h-full w-full cursor-grab touch-pan-y select-none overscroll-none active:cursor-grabbing [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none]"
+      >
+        <canvas ref={canvasRef} aria-hidden className="block h-full w-full" />
+      </div>
+      {moved && (
+        <button
+          type="button"
+          onClick={recenter}
+          aria-label="Recenter the constellation"
+          title="Recenter"
+          className={cn(
+            "absolute right-2.5 top-2.5 flex size-8 items-center justify-center rounded-full",
+            "border border-white/15 bg-black/55 text-white/80 transition-colors",
+            "hover:bg-black/60 hover:text-white focus-visible:outline-2 focus-visible:outline-white/70"
+          )}
         >
-          {hovered.name}
-        </span>
+          <LocateFixed className="size-4" aria-hidden />
+        </button>
       )}
     </div>
   );
