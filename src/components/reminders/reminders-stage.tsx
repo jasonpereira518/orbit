@@ -745,7 +745,7 @@ export function RemindersStage({
                     )}
                   </div>
                 ) : (
-                  groups.map((group) => (
+                  groups.map((group, groupIndex) => (
                     <div key={group.bucket ?? "all"} role="group" aria-labelledby={group.bucket ? `bucket-${group.bucket}` : undefined}>
                       {group.bucket && (
                         <h3
@@ -756,7 +756,12 @@ export function RemindersStage({
                           )}
                         >
                           {DUE_BUCKET_LABELS[group.bucket]}
-                          <span className="tabular-nums opacity-70">{group.items.length}</span>
+                          <span className="tabular-nums opacity-70">
+                            {group.items.length}
+                            {/* Only what's loaded so far; the last group may continue on the
+                                next page, so it doesn't claim to be the whole count. */}
+                            {cursor && groupIndex === groups.length - 1 ? "+" : ""}
+                          </span>
                         </h3>
                       )}
                       <ul
