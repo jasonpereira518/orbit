@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ReminderSnoozeMenu } from "@/components/reminders/reminder-snooze-menu";
+import { ListGlyph } from "@/components/reminders/list-glyph";
 import { ACTION_KIND_LABELS } from "@/lib/reminder-action-kind";
 import { dueLabelFor } from "@/lib/reminder-due-bucket";
 import {
@@ -34,6 +35,15 @@ import {
 } from "@/lib/reminder-display";
 import type { ReminderRow as ReminderRowData } from "@/lib/reminders-page";
 import { cn } from "@/lib/utils";
+
+/** A list as the Move menus draw it; the style fields are optional for older callers. */
+export type ListOption = {
+  id: string;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  isInbox?: boolean;
+};
 
 export const KIND_ICONS: Record<ReminderActionKind, typeof Phone | null> = {
   call: Phone,
@@ -81,7 +91,7 @@ export const ReminderRow = memo(function ReminderRow({
 }: {
   item: ReminderRowData;
   today: string;
-  lists: Array<{ id: string; name: string }>;
+  lists: Array<ListOption>;
   selected: boolean;
   focused: boolean;
   /** Its details are open in the pane. */
@@ -290,7 +300,12 @@ export const ReminderRow = memo(function ReminderRow({
                       .filter((l) => l.id !== item.listId)
                       .map((l) => (
                         <DropdownMenuItem key={l.id} onClick={() => handlers.onMove(item.id, l.id)}>
-                          <FolderInput /> <span className="truncate">{l.name}</span>
+                          {l.isInbox !== undefined ? (
+                            <ListGlyph list={{ icon: l.icon ?? null, color: l.color ?? null, isInbox: l.isInbox }} />
+                          ) : (
+                            <FolderInput />
+                          )}{" "}
+                          <span className="truncate">{l.name}</span>
                         </DropdownMenuItem>
                       ))}
                   </>

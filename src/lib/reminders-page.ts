@@ -89,6 +89,9 @@ export type ReminderListSummary = {
   id: string;
   name: string;
   isInbox: boolean;
+  /** Keys into `reminder-list-style.ts`; null = default. */
+  icon: string | null;
+  color: string | null;
   /** Pending reminders filed in this list. */
   pendingCount: number;
 };

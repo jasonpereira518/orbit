@@ -209,6 +209,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contacts-search-paging": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
   "smoke-reminders-page": "pglite", // same shape as smoke-contacts-page
+  "smoke-reminder-list-style": "pglite",
   "smoke-csp-report": "pglite",
   "smoke-embedding-backfill": "pglite",
   "smoke-embedding-writes": "pglite",

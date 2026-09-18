@@ -5,21 +5,23 @@ import { useState, useTransition, type ComponentType } from "react";
 import {
   CalendarClock,
   CheckCheck,
-  Inbox,
-  List,
-  Pencil,
+  MoreHorizontal,
   Plus,
   Sparkles,
   Sun,
-  Trash2,
   Infinity as InfinityIcon,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   createReminderList,
   deleteReminderList,
-  renameReminderList,
 } from "@/actions/reminders";
+import {
+  ReminderCalendarSync,
+  type CalendarSyncSummary,
+} from "@/components/reminders/reminder-calendar-sync";
+import { ReminderListEditor } from "@/components/reminders/reminder-list-editor";
+import { ListGlyph } from "@/components/reminders/list-glyph";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -71,17 +73,21 @@ export function ReminderRail({
   lists,
   target,
   onSelect,
+  calendar,
 }: {
   counts: ReminderRailCounts;
   lists: ReminderListSummary[];
   target: RailTarget;
   onSelect: (target: RailTarget) => void;
+  /** Calendar sync's state, for the row at the rail's foot. */
+  calendar?: CalendarSyncSummary;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [newName, setNewName] = useState("");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
+  const [editor, setEditor] = useState<{ list: ReminderListSummary; anchor: HTMLElement } | null>(
+    null
+  );
   const [deleting, setDeleting] = useState<ReminderListSummary | null>(null);
 
   function createList() {
@@ -104,21 +110,8 @@ export function ReminderRail({
     });
   }
 
-  function renameList(id: string) {
-    start(async () => {
-      try {
-        const res = await renameReminderList(id, editName);
-        if (!res.ok) {
-          toast.error(res.error);
-          return;
-        }
-        setEditingId(null);
-        toast.success("List renamed");
-        router.refresh();
-      } catch (err) {
-        toast.error(friendlyError(err, "Couldn’t rename that list — try again?"));
-      }
-    });
+  function openEditor(list: ReminderListSummary, anchor: HTMLElement) {
+    setEditor({ list, anchor });
   }
 
   function confirmDelete() {
@@ -203,49 +196,30 @@ export function ReminderRail({
         <ul className="space-y-0.5">
           {lists.map((list) => {
             const active = target.kind === "list" && target.id === list.id;
-            if (editingId === list.id) {
-              return (
-                <li key={list.id}>
-                  <form
-                    className="flex gap-1"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      renameList(list.id);
-                    }}
-                  >
-                    <Input
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") setEditingId(null);
-                      }}
-                      aria-label={`Rename ${list.name}`}
-                      className="h-8"
-                      autoFocus
-                    />
-                    <Button type="submit" size="sm" disabled={pending}>
-                      Save
-                    </Button>
-                  </form>
-                </li>
-              );
-            }
+            const editing = editor?.list.id === list.id;
             return (
-              <li key={list.id} className="group/list relative">
+              <li
+                key={list.id}
+                className="group/list relative"
+                // Right-click opens the list's editor, anchored to the row.
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openEditor(list, e.currentTarget);
+                }}
+              >
                 <RailButton
-                  active={active}
+                  active={active || editing}
                   onClick={() => onSelect({ kind: "list", id: list.id })}
-                  icon={
-                    list.isInbox ? <Inbox className="size-4" /> : <List className="size-4" />
-                  }
+                  icon={<ListGlyph list={list} />}
                   label={list.name}
                   trailing={
                     list.pendingCount > 0 ? (
                       <span
                         className={cn(
                           "tabular-nums",
-                          // Makes way for rename/delete: on hover with a mouse, always on touch.
-                          !list.isInbox && "[@media(hover:hover)]:group-hover/list:opacity-0 [@media(hover:hover)]:group-focus-within/list:opacity-0 [@media(hover:none)]:hidden"
+                          // Makes way for ⋯: on hover with a mouse, always on touch.
+                          "[@media(hover:hover)]:group-hover/list:opacity-0 [@media(hover:hover)]:group-focus-within/list:opacity-0 [@media(hover:none)]:hidden",
+                          editing && "opacity-0"
                         )}
                       >
                         {list.pendingCount}
@@ -253,36 +227,29 @@ export function ReminderRail({
                     ) : null
                   }
                 />
-                {!list.isInbox && (
-                  // Revealed on hover with a mouse; always shown on touch, which has no hover to
-                  // reveal it with.
-                  <div className="absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity duration-fast group-hover/list:opacity-100 focus-within:opacity-100 pointer-coarse:gap-4 [@media(hover:none)]:opacity-100">
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="ghost"
-                      aria-label={`Rename ${list.name}`}
-                      className="tap-target relative"
-                      onClick={() => {
-                        setEditingId(list.id);
-                        setEditName(list.name);
-                      }}
-                    >
-                      <Pencil className="size-3" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="ghost"
-                      aria-label={`Delete ${list.name}`}
-                      className="tap-target relative"
-                      disabled={pending}
-                      onClick={() => setDeleting(list)}
-                    >
-                      <Trash2 className="size-3" />
-                    </Button>
-                  </div>
-                )}
+                {/* The editor's way in for touch and keyboard, which have no right-click.
+                    Revealed on hover with a mouse; always shown on touch. */}
+                <div
+                  className={cn(
+                    "absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity duration-fast group-hover/list:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100",
+                    editing && "opacity-100"
+                  )}
+                >
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={`Edit ${list.name}`}
+                    title="Rename, icon and color (or right-click)"
+                    className="tap-target relative"
+                    onClick={(e) => {
+                      const row = e.currentTarget.closest("li");
+                      openEditor(list, row instanceof HTMLElement ? row : e.currentTarget);
+                    }}
+                  >
+                    <MoreHorizontal className="size-3.5" />
+                  </Button>
+                </div>
               </li>
             );
           })}
@@ -314,6 +281,25 @@ export function ReminderRail({
           </Button>
         </form>
       </div>
+
+      {calendar && (
+        <div className="border-t border-border/60 pt-3">
+          <ReminderCalendarSync initial={calendar} />
+        </div>
+      )}
+
+      {editor && (
+        <ReminderListEditor
+          key={editor.list.id}
+          list={editor.list}
+          anchor={editor.anchor}
+          onClose={() => setEditor(null)}
+          onRequestDelete={(list) => {
+            setEditor(null);
+            setDeleting(list);
+          }}
+        />
+      )}
 
       <Dialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
         <DialogContent className="sm:max-w-sm">

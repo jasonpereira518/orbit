@@ -17,7 +17,8 @@ const FILES: Record<string, number> = {
   "src/components/reminders/suggested-reminders-panel.tsx": 3,
   // The reminders workspace. Its row's own controls are plain buttons the size check
   // doesn't see; they carry tap-target all the same.
-  "src/components/reminders/reminder-rail.tsx": 3,
+  // One ⋯ per list (the editor's way in) and Add list; no cluster left to widen.
+  "src/components/reminders/reminder-rail.tsx": 2,
   "src/components/reminders/reminder-bulk-bar.tsx": 1,
   "src/components/reminders/reminder-detail-pane.tsx": 2,
   "src/components/reminders/reminder-filters.tsx": 2,
@@ -31,7 +32,6 @@ const CLUSTER_GAPS: Array<[string, string]> = [
   ["src/components/reminders/suggested-reminders-panel.tsx", "pointer-coarse:gap-4"],
   ["src/components/reminders/reminder-row.tsx", "pointer-coarse:gap-4"],
   ["src/components/reminders/reminder-detail-pane.tsx", "pointer-coarse:gap-4"],
-  ["src/components/reminders/reminder-rail.tsx", "pointer-coarse:gap-4"],
 ];
 const SMALL = new Set(["icon-xs", "icon-sm", "icon"]);
 

@@ -32,6 +32,7 @@ import {
   normalizeListName,
 } from "@/lib/reminder-lists";
 import { resolveTimeZone, TZ_COOKIE } from "@/lib/reminder-due-bucket";
+import { isListColor, isListIcon } from "@/lib/reminder-list-style";
 import {
   REMINDERS_PAGE_SIZE,
   isReminderSource,
@@ -142,7 +143,13 @@ export async function fetchDashboard() {
 
 async function viewerTimeZone() {
   const { cookies } = await import("next/headers");
-  return resolveTimeZone((await cookies()).get(TZ_COOKIE)?.value);
+  try {
+    return resolveTimeZone((await cookies()).get(TZ_COOKIE)?.value);
+  } catch {
+    // No request scope (a script or smoke test calling the action directly): UTC, the same
+    // fallback as a request without the cookie.
+    return resolveTimeZone(null);
+  }
 }
 
 /**
@@ -171,6 +178,8 @@ export async function loadReminderRail(): Promise<{
       id: l.id,
       name: l.name,
       isInbox: l.isInbox === 1,
+      icon: l.icon ?? null,
+      color: l.color ?? null,
       pendingCount: pendingByList.get(l.id) ?? 0,
     })),
     inboxId,
@@ -435,6 +444,68 @@ export async function renameReminderList(id: string, name: string) {
     const [row] = await db
       .update(reminderLists)
       .set({ name: display, nameNormalized: normalized })
+      .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
+      .returning();
+
+    revalidatePathIfRequestScoped("/reminders");
+    return row;
+  });
+}
+
+/**
+ * The list editor's save: any of name, icon and colour. `null` resets icon or colour to the
+ * default. The Inbox keeps its name (Jason's call — it's the list Orbit files things into),
+ * but can take an icon and colour like any other.
+ */
+export async function updateReminderList(
+  id: string,
+  patch: { name?: string; icon?: string | null; color?: string | null }
+) {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const db = await getDb();
+
+    const list = await findReminderListForUser(userId, id);
+    if (!list) throw new UserFacingError("That list no longer exists");
+
+    const set: Partial<typeof reminderLists.$inferInsert> = {};
+    if (patch.name !== undefined) {
+      const display = displayListName(patch.name);
+      if (!display) throw new UserFacingError("Give the list a name first");
+      if (display !== list.name) {
+        if (list.isInbox === 1) throw new UserFacingError("The Inbox can’t be renamed");
+        const normalized = normalizeListName(display);
+        if (normalized === "inbox") throw new UserFacingError("Inbox is taken — pick another name");
+        const clash = await db.query.reminderLists.findFirst({
+          where: and(
+            eq(reminderLists.userId, userId),
+            eq(reminderLists.nameNormalized, normalized)
+          ),
+        });
+        if (clash && clash.id !== id) {
+          throw new UserFacingError("You already have a list with that name");
+        }
+        set.name = display;
+        set.nameNormalized = normalized;
+      }
+    }
+    if (patch.icon !== undefined) {
+      if (patch.icon !== null && !isListIcon(patch.icon)) {
+        throw new UserFacingError("That icon isn’t available");
+      }
+      set.icon = patch.icon;
+    }
+    if (patch.color !== undefined) {
+      if (patch.color !== null && !isListColor(patch.color)) {
+        throw new UserFacingError("That color isn’t available");
+      }
+      set.color = patch.color;
+    }
+    if (Object.keys(set).length === 0) return list;
+
+    const [row] = await db
+      .update(reminderLists)
+      .set(set)
       .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
       .returning();
 

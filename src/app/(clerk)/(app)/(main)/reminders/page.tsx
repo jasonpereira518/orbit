@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { loadReminderRail, loadRemindersPage } from "@/actions/reminders";
 import { listSuggestedReminders } from "@/actions/suggested-reminders";
+import { getCalendarFeedStatus } from "@/actions/calendar-feed";
 import { RemindersStage } from "@/components/reminders/reminders-stage";
 import type { RailTarget } from "@/components/reminders/reminder-rail";
 import { RemindersStageSkeleton } from "@/components/loading/page-skeletons";
@@ -44,7 +45,7 @@ async function RemindersContent({ searchParams }: { searchParams: Promise<Params
   const contactId = params.contact || null;
   const suggestedView = target.kind === "view" && target.view === "suggested";
 
-  const [rail, page, suggested] = await Promise.all([
+  const [rail, page, suggested, calendar] = await Promise.all([
     loadReminderRail(),
     loadRemindersPage({
       view: target.kind === "view" && target.view !== "suggested" ? target.view : null,
@@ -55,6 +56,8 @@ async function RemindersContent({ searchParams }: { searchParams: Promise<Params
       contactId,
     }),
     suggestedView ? listSuggestedReminders() : Promise.resolve(null),
+    // The rail's calendar-sync row. A failure here only costs that row its status.
+    getCalendarFeedStatus().catch(() => null),
   ]);
 
   // A list id that isn't (or is no longer) yours: the query already fell back to Today, so
@@ -74,6 +77,16 @@ async function RemindersContent({ searchParams }: { searchParams: Promise<Params
       filters={{ q, kinds, sources, contact: page.contactFilter ?? null }}
       suggested={suggested}
       openCreate={params.new === "1"}
+      calendar={
+        calendar
+          ? {
+              enabled: calendar.enabled,
+              lastFetchedAt: calendar.lastFetchedAt
+                ? new Date(calendar.lastFetchedAt).toISOString()
+                : null,
+            }
+          : undefined
+      }
     />
   );
 }

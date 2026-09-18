@@ -11,6 +11,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ReminderSnoozeMenu } from "@/components/reminders/reminder-snooze-menu";
+import { ListGlyph } from "@/components/reminders/list-glyph";
+import type { ListOption } from "@/components/reminders/reminder-row";
 import { cn } from "@/lib/utils";
 
 const BAR_BUTTON =
@@ -51,7 +53,7 @@ export function ReminderBulkBar({
   /** False in Done, where done/snooze make no sense. */
   canAct: boolean;
   today: string;
-  lists: Array<{ id: string; name: string }>;
+  lists: Array<ListOption>;
   busy: boolean;
   snoozeOpen: boolean;
   onSnoozeOpenChange: (open: boolean) => void;
@@ -106,6 +108,9 @@ export function ReminderBulkBar({
                 <DropdownMenuLabel>Move {count} to</DropdownMenuLabel>
                 {lists.map((l) => (
                   <DropdownMenuItem key={l.id} onClick={() => onMove(l.id, l.name)}>
+                    {l.isInbox !== undefined && (
+                      <ListGlyph list={{ icon: l.icon ?? null, color: l.color ?? null, isInbox: l.isInbox }} />
+                    )}
                     <span className="truncate">{l.name}</span>
                   </DropdownMenuItem>
                 ))}

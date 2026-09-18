@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   useCallback,
@@ -33,6 +32,8 @@ import { ReminderCreateForm } from "@/components/reminders/reminder-create-form"
 import { ReminderDetailPane } from "@/components/reminders/reminder-detail-pane";
 import { ReminderFilters, type QueueFilters } from "@/components/reminders/reminder-filters";
 import { ReminderRail, type RailTarget } from "@/components/reminders/reminder-rail";
+import type { CalendarSyncSummary } from "@/components/reminders/reminder-calendar-sync";
+import { ListGlyph } from "@/components/reminders/list-glyph";
 import { ReminderRow, type ReminderRowHandlers } from "@/components/reminders/reminder-row";
 import { RemindersShortcutsHelp } from "@/components/reminders/reminders-shortcuts-help";
 import { SuggestedRemindersPanel } from "@/components/reminders/suggested-reminders-panel";
@@ -117,6 +118,7 @@ export function RemindersStage({
   filters: urlFilters,
   suggested,
   openCreate = false,
+  calendar,
 }: {
   target: RailTarget;
   counts: ReminderRailCounts;
@@ -127,6 +129,7 @@ export function RemindersStage({
   suggested: SuggestedReminderRow[] | null;
   /** Arrived from the palette's "New reminder". */
   openCreate?: boolean;
+  calendar?: CalendarSyncSummary;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -205,10 +208,14 @@ export function RemindersStage({
 
   const visible = useMemo(() => items.filter((i) => !exiting.has(i.id)), [items, exiting]);
   const detailItem = detailId ? items.find((i) => i.id === detailId) ?? null : null;
-  const listOptions = useMemo(() => lists.map((l) => ({ id: l.id, name: l.name })), [lists]);
+  const listOptions = useMemo(
+    () => lists.map((l) => ({ id: l.id, name: l.name, icon: l.icon, color: l.color, isInbox: l.isInbox })),
+    [lists]
+  );
   const isDoneView = target.kind === "view" && target.view === "done";
   const isSuggested = target.kind === "view" && target.view === "suggested";
   const currentListId = target.kind === "list" ? target.id : null;
+  const currentList = currentListId ? lists.find((l) => l.id === currentListId) ?? null : null;
 
   // ── Search box: local while typing, written to the URL after a pause. ──
   const [qDraft, setQDraft] = useState(urlFilters.q);
@@ -613,15 +620,8 @@ export function RemindersStage({
   return (
     <div data-fill-route data-clear-floating-controls className="flex min-h-0 flex-1 flex-col gap-4">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div className="flex min-w-0 items-baseline gap-3">
-          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Reminders</h1>
-          <Link
-            href="/settings"
-            className="hidden text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline sm:inline"
-          >
-            Subscribe in your calendar →
-          </Link>
-        </div>
+        {/* Calendar sync lives at the foot of the rail now, with its status. */}
+        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Reminders</h1>
         <div className="flex items-center gap-1">
           <RemindersShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
         </div>
@@ -629,7 +629,7 @@ export function RemindersStage({
 
       <div className="flex min-h-0 flex-1 gap-4 xl:gap-5">
         <aside className="hidden w-52 shrink-0 overflow-y-auto overscroll-contain pb-4 lg:block">
-          <ReminderRail counts={counts} lists={lists} target={target} onSelect={selectTarget} />
+          <ReminderRail counts={counts} lists={lists} target={target} onSelect={selectTarget} calendar={calendar} />
         </aside>
 
         <section
@@ -653,9 +653,10 @@ export function RemindersStage({
               </Button>
               <h2
                 id="reminders-queue-title"
-                className="hidden min-w-0 flex-1 truncate font-heading text-lg font-medium lg:block"
+                className="hidden min-w-0 flex-1 items-center gap-2 font-heading text-lg font-medium lg:flex"
               >
-                {title}
+                {currentList && <ListGlyph list={currentList} className="size-4.5 shrink-0" />}
+                <span className="truncate">{title}</span>
               </h2>
               <div className="flex-1 lg:hidden" />
               <ReminderCreateForm
@@ -826,7 +827,7 @@ export function RemindersStage({
           {/* Visible, so the sheet's close button has a row of its own rather than sitting
               on Today's count. */}
           <SheetTitle className="mb-3 pr-8 text-base font-medium">Views and lists</SheetTitle>
-          <ReminderRail counts={counts} lists={lists} target={target} onSelect={selectTarget} />
+          <ReminderRail counts={counts} lists={lists} target={target} onSelect={selectTarget} calendar={calendar} />
         </SheetContent>
       </Sheet>
 
