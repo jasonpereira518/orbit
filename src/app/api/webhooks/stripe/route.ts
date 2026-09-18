@@ -11,6 +11,7 @@ import {
 } from "@/lib/stripe-fulfilment";
 import { WEBHOOK_REASONS, recordWebhookDelivery } from "@/lib/webhook-deliveries";
 import { reportError } from "@/lib/report-error";
+import { endSubscriptionAfterLifetime, replacesSubscription } from "@/lib/subscription-management";
 
 /**
  * (Existing header comment from lines 29–51 of 33a213c, unchanged, then:)
@@ -74,6 +75,15 @@ export async function POST(req: NextRequest) {
     const ctx = await readDecideContext(event, new Date());
     const decision = decideStripeEvent(event, ctx);
     await applyStripeDecision(decision);
+    // A Lifetime bought through "Switch to Lifetime" replaces Pro: stop it renewing. Best
+    // effort and idempotent — the verify-on-return path usually got here first.
+    if (
+      decision.mirror?.type === "lifetime" &&
+      event.type === "checkout.session.completed" &&
+      replacesSubscription(event.data.object as Stripe.Checkout.Session)
+    ) {
+      await endSubscriptionAfterLifetime(decision.mirror.userId);
+    }
     if (decision.outcome === "handled") {
       await markStripeEventProcessed(event.id, event.type);
     }
