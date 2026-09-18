@@ -22,7 +22,6 @@ import {
 } from "@/lib/graph-layout";
 import {
   STAR_COMET,
-  STAR_OVERDUE,
   STAR_SCATTER,
   type PreviewLineStyle,
   type PreviewSky,
@@ -67,10 +66,9 @@ export function buildPreviewSky(contacts: GraphContactInput[], userName: string)
     if (n.type === "contact") {
       const d = n.data as GraphNodeData;
       starIndex.set(n.id, starIndex.size);
-      const flags =
-        (d.figureRole === "scatter" ? STAR_SCATTER : 0) |
-        (d.comet ? STAR_COMET : 0) |
-        (d.overdue ? STAR_OVERDUE : 0);
+      // No overdue flag: its ring is a status marker for the chart, and at card scale it only
+      // read as a stray donut on a star.
+      const flags = (d.figureRole === "scatter" ? STAR_SCATTER : 0) | (d.comet ? STAR_COMET : 0);
       stars.push(
         x,
         y,
