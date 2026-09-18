@@ -21,6 +21,13 @@
  * ─────────────────────────────────────────────────────────────────────────────────────
  */
 
+import { createHash } from "node:crypto";
+
+import { and, desc, eq } from "drizzle-orm";
+
+import { getDb } from "@/db";
+import { errorEvents } from "@/db/schema";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import {
   MAX_VOCABULARY_TERMS,
   loadNetworkVocabulary,
@@ -114,21 +121,23 @@ export function parseTranscribeResponse(payload: unknown): string | null {
 
 // ── Call ──────────────────────────────────────────────────────────────────────────────
 
+export type WisprOutcome =
+  | { text: string }
+  | { text: null; reason: "rejected_key"; status: number }
+  | { text: null; reason: "empty" | "error" };
+
 /**
- * Transcribe one recording, or return null.
- *
- * Never throws. Every failure — no key, a 4xx, a timeout, a shape we do not recognise — is
- * the same outcome from the caller's point of view: try the next engine.
+ * Transcribe one recording. Never throws — every failure is "try the next engine" — but,
+ * unlike before, says WHICH failure, so a dead key is not logged as a successful call.
  */
-export async function transcribeWithWispr(
+export async function transcribeWithWisprOutcome(
   apiKey: string,
   input: WisprTranscribeInput,
-): Promise<string | null> {
-  if (!apiKey.trim()) return null;
-
+): Promise<WisprOutcome> {
+  if (!apiKey.trim()) return { text: null, reason: "error" };
   // base64 is 4 bytes per 3, so this is the decoded size the endpoint will see.
   const decodedBytes = Math.floor((input.audioBase64.length * 3) / 4);
-  if (decodedBytes > WISPR_MAX_AUDIO_BYTES) return null;
+  if (decodedBytes > WISPR_MAX_AUDIO_BYTES) return { text: null, reason: "error" };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -139,13 +148,25 @@ export async function transcribeWithWispr(
       body: JSON.stringify(buildTranscribeBody(input)),
       signal: controller.signal,
     });
-    if (!response.ok) return null;
-    return parseTranscribeResponse(await response.json());
+    if (response.status === 401 || response.status === 403) {
+      return { text: null, reason: "rejected_key", status: response.status };
+    }
+    if (!response.ok) return { text: null, reason: "error" };
+    const text = parseTranscribeResponse(await response.json());
+    return text ? { text } : { text: null, reason: "empty" };
   } catch {
-    return null;
+    return { text: null, reason: "error" };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Text or null, for callers that only need the transcript. */
+export async function transcribeWithWispr(
+  apiKey: string,
+  input: WisprTranscribeInput,
+): Promise<string | null> {
+  return (await transcribeWithWisprOutcome(apiKey, input)).text;
 }
 
 /**
@@ -167,4 +188,36 @@ export async function buildWisprContext(
     ...(user?.firstName ? { user_first_name: user.firstName } : {}),
     ...(user?.lastName ? { user_last_name: user.lastName } : {}),
   };
+}
+
+/** A stable, irreversible handle on a key: enough to tell "this key" from "a new key". */
+export function wisprKeyFingerprint(apiKey: string): string {
+  return createHash("sha256").update(apiKey.trim(), "utf8").digest("hex").slice(0, 16);
+}
+
+export async function recordWisprKeyRejected(userId: string, apiKey: string, status: number): Promise<void> {
+  await recordErrorEvent({
+    source: ERROR_SOURCES.wisprTranscribe,
+    kind: "key_rejected",
+    userId,
+    context: { status, keyFingerprint: wisprKeyFingerprint(apiKey) },
+  });
+}
+
+/** Whether the newest Wispr rejection for this user was for THIS key. */
+export async function wisprKeyWasRejected(userId: string, apiKey: string): Promise<boolean> {
+  const db = await getDb();
+  const [latest] = await db
+    .select({ context: errorEvents.context })
+    .from(errorEvents)
+    .where(
+      and(
+        eq(errorEvents.userId, userId),
+        eq(errorEvents.source, ERROR_SOURCES.wisprTranscribe),
+        eq(errorEvents.kind, "key_rejected")
+      )
+    )
+    .orderBy(desc(errorEvents.createdAt))
+    .limit(1);
+  return latest?.context?.keyFingerprint === wisprKeyFingerprint(apiKey);
 }

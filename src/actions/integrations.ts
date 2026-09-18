@@ -1,6 +1,7 @@
 "use server";
 
 import { getSettings } from "@/actions/settings";
+import { connectionSummary } from "@/lib/connection-status";
 import { getCalendarFeedStatus } from "@/actions/calendar-feed";
 import { listApiKeys } from "@/actions/api-keys";
 import { listWebhookEndpoints } from "@/actions/webhook-endpoints";
@@ -109,24 +110,11 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
 
   // Google Contacts and the Gmail recruiter scan share one Google connection.
   const googleStatus: IntegrationStatus | "unknown" =
-    google === "unknown"
-      ? "unknown"
-      : !google.configured
-        ? { state: "off", detail: "Unavailable" }
-        : google.connected
-          ? { state: "on", detail: "Connected" }
-          : { state: "off", detail: "Not connected" };
+    google === "unknown" ? "unknown" : connectionSummary(google);
   statuses.google = googleStatus;
   statuses.gmail = googleStatus;
 
-  statuses.outlook =
-    outlook === "unknown"
-      ? "unknown"
-      : !outlook.configured
-        ? { state: "off", detail: "Unavailable" }
-        : outlook.connected
-          ? { state: "on", detail: "Connected" }
-          : { state: "off", detail: "Not connected" };
+  statuses.outlook = outlook === "unknown" ? "unknown" : connectionSummary(outlook);
 
   // LinkedIn has no connection to report — it is a CSV you upload each time.
   statuses.linkedin = { state: "off", detail: "Upload a CSV export" };

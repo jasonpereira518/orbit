@@ -35,6 +35,7 @@ import { enrichEvent } from "@/lib/events/enrich";
 import { persistEventCover } from "@/lib/events/cover";
 import { attendedEventFilter } from "@/lib/events/store";
 import type { FetchPageDeps } from "@/lib/events/guarded-fetch";
+import { reportAndContinue, reportError } from "@/lib/report-error";
 
 /** How long a claimed event is off-limits to another pass. */
 const LEASE_MS = 10 * 60 * 1000;
@@ -173,7 +174,7 @@ export async function runEnrichmentPass(
   const wait = options.wait ?? sleep;
   const stats: EnrichQueueStats = { claimed: 0, enriched: 0, failed: 0, hostThrottled: 0 };
 
-  await requeueUnreadEvents(now).catch(() => {});
+  await requeueUnreadEvents(now).catch(reportAndContinue({ where: "job.event-enrich.requeue-unread" }, undefined));
   const claimed = await claimDueEnrichments(maxFetches, now);
   stats.claimed = claimed.length;
 
@@ -223,10 +224,14 @@ export async function runEnrichmentPass(
       } else {
         stats.failed++;
       }
-    } catch {
-      // `enrichEvent` already records a user-facing reason on the row; the pass must not stop.
+    } catch (err) {
+      // `enrichEvent` records a user-facing reason on the row for the failures it expects; a
+      // throw that reaches here is one it did not, so it is reported. The pass must not stop.
       stats.failed++;
-      await markEnrichResult(item.id, { ok: false, attempts: item.attempts }).catch(() => {});
+      reportError(err, { where: "job.event-enrich", userId: item.userId, level: "warning", extra: { eventId: item.id } });
+      await markEnrichResult(item.id, { ok: false, attempts: item.attempts }).catch(
+        reportAndContinue({ where: "job.event-enrich.mark-result" }, undefined)
+      );
     }
   }
 

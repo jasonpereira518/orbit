@@ -16,6 +16,12 @@ import { cn } from "@/lib/utils";
 import { loadProviderStatuses } from "@/lib/admin-providers";
 import { ProviderRefreshButton } from "@/components/admin/provider-refresh-button";
 import {
+  AiOperationsPanel,
+  AiVolumePanel,
+  ArtifactsPanel,
+  DataQualityPanel,
+} from "@/components/admin/product-health-panels";
+import {
   getBugSignatures,
   getCronHealth,
   getErrorEventSummary,
@@ -186,6 +192,20 @@ export default async function AdminHealthPage() {
           </AdminPanel>
         </div>
       )}
+
+      {/* Moved here from Growth, which now tracks people rather than machinery. Server-
+          rendered outside the live section for the same reason as the bug signatures:
+          these change over days, and each panel fetches and degrades on its own. */}
+      <div className="mt-6 space-y-6">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AiVolumePanel />
+          <AiOperationsPanel />
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <DataQualityPanel />
+          <ArtifactsPanel />
+        </div>
+      </div>
     </>
   );
 }

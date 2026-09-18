@@ -189,21 +189,13 @@ export const userSettings = pgTable("user_settings", {
   signupLandingPath: text("signup_landing_path"),
   signupAttributedAt: timestamp("signup_attributed_at", { withTimezone: true }),
   /**
-   * SHA-256 hash of the read-only ICS feed's bearer token — never the token itself.
-   * Same scheme as `apiKeys.keyHash` (`src/lib/api/keys.ts`): the raw token is shown to
-   * the user exactly once, at creation or regeneration, and is unrecoverable after that.
-   *
-   * This column used to hold the token in plaintext, on the reasoning that the URL had
-   * to stay re-displayable for a second device and `crypto.ts`'s random-IV encryption
-   * can't be looked up by value. Both are true, but the tradeoff was wrong: a live
-   * bearer credential — one that reads someone's reminder titles, notes, and contact
-   * names — sat in clear text next to `DATABASE_URL`, so any read of that database
-   * (backup, replica, support tooling) handed it over. Hashing is deterministic, so the
-   * feed route still looks the token up by equality; it just can't be shown again.
-   * Migration backfills this from the old plaintext column and drops it — see
-   * `src/db/index.ts`. Existing users lose their displayed link and must regenerate.
+   * Opaque bearer token for the read-only ICS reminder feed. Stored in plaintext
+   * deliberately: the URL must stay re-displayable when the user adds a second device,
+   * and `crypto.ts` uses a random IV per call so ciphertext could not be indexed for
+   * lookup. Same sensitivity class as `calendar_subscriptions.ics_url`, which already
+   * holds the user's Google secret iCal URL in plaintext.
    */
-  calendarFeedTokenHash: text("calendar_feed_token_hash"),
+  calendarFeedToken: text("calendar_feed_token"),
   calendarFeedTokenCreatedAt: timestamp("calendar_feed_token_created_at", {
     withTimezone: true,
   }),
@@ -262,6 +254,17 @@ export const userSettings = pgTable("user_settings", {
    */
   subscriptionInterval: text("subscription_interval").$type<"month" | "year">(),
   /**
+   * `created` of the newest Stripe subscription event whose mirror write has been applied.
+   *
+   * Stripe does not deliver in order, and a retried `customer.subscription.updated` from
+   * before a cancellation would otherwise re-grant Pro. `decideStripeEvent` ignores any
+   * subscription-mirror event older than this (see `isStaleSubscriptionEvent`). Checkout
+   * completions are gated by it but never advance it: Stripe stamps the subscription's own
+   * events a second either side of the checkout, so letting checkout advance the clock would
+   * make the real `customer.subscription.created` look stale.
+   */
+  subscriptionEventAt: timestamp("subscription_event_at", { withTimezone: true }),
+  /**
    * Provenance for a comped plan. `compedPlan` alone is a fact with no story, and it
    * outranks every real billing signal in `resolvePlan` permanently — so six months later
    * "why is this account on Lifetime?" has to be answerable from the row itself.
@@ -307,6 +310,27 @@ export const userSettings = pgTable("user_settings", {
    */
   recruiterSharing: integer("recruiter_sharing").default(0).notNull(),
   /**
+   * When this account accepted the Terms of Service, and which version.
+   *
+   * Written once from Clerk's `user.created` webhook when Clerk's express-consent checkbox
+   * recorded `legal_accepted_at`, otherwise by the guided-setup checkbox (`acceptTerms` in
+   * src/actions/onboarding-wizard.ts). `termsVersion` is `TERMS_VERSION` from
+   * src/lib/legal.ts at the moment of acceptance, so a later rewrite can tell who accepted
+   * an older text.
+   *
+   * Preserved by every Settings data wipe (PRESERVED_SETTINGS_COLUMNS in user-data.ts):
+   * deleting your contacts does not un-accept the terms you still use the product under.
+   */
+  termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+  termsVersion: text("terms_version"),
+  /**
+   * Opt-in to deriving LinkedIn timeline events with the user's own AI key. Integer, not
+   * boolean, per house convention. Defaults to 0: the backfill costs one model call per
+   * qualifying conversation and used to run unasked (audit A6). The runner, the cron sweep
+   * and the import card all read it — see src/lib/linkedin-timeline-backfill.ts.
+   */
+  timelineBackfillEnabled: integer("timeline_backfill_enabled").default(0).notNull(),
+  /**
    * Operator suspension. Enforced in `requireUserId()` (`src/lib/auth.ts`) rather than in a
    * layout: actions are reachable by direct POST, so the gate has to sit at the one function
    * every page *and* every server action already calls.
@@ -319,7 +343,18 @@ export const userSettings = pgTable("user_settings", {
   suspendedBy: text("suspended_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => [
+  /**
+   * One Stripe customer belongs to one account. Partial because NULL is the common value
+   * (every free account, and Lifetime sessions that created no Customer). Checkout never
+   * reuses a customer across accounts, so a violation means a hand edit or a dashboard
+   * subscription carrying the wrong `orbit_user_id` — the webhook then 500s loudly instead
+   * of `findUserIdByStripeCustomerId` silently picking one of two accounts.
+   */
+  uniqueIndex("user_settings_stripe_customer_uidx")
+    .on(t.stripeCustomerId)
+    .where(sql`${t.stripeCustomerId} is not null`),
+]);
 
 export const companies = pgTable(
   "companies",
@@ -787,6 +822,10 @@ export const reminderLists = pgTable(
     nameNormalized: text("name_normalized").notNull(),
     position: integer("position").default(0).notNull(),
     isInbox: integer("is_inbox").default(0).notNull(),
+    /** A key into `LIST_ICONS` (src/lib/reminder-list-style.ts); null = the default glyph. */
+    icon: text("icon"),
+    /** A key into `LIST_COLORS`; null = untinted. */
+    color: text("color"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -1825,6 +1864,32 @@ export const contactEmbeddings = pgTable(
   ]
 );
 
+/**
+ * Rows the embedding provider refused on their own, after the backfill bisected a failing
+ * batch down to a single text.
+ *
+ * Without a mark, one poison row fails its 200-row batch on every hourly pass forever and
+ * holds 199 healthy rows hostage with it. A profile row is also un-flagged
+ * (`contacts.embedding_stale_at = NULL`), so an edit re-stamps it and it gets another try; a
+ * meeting has no flag, so `PENDING_MEETINGS` in `embedding-backfill.ts` excludes anything
+ * listed here. `failed_at` is the last failure; `error_kind` is `classifyAiError`'s token.
+ * Purged with the `insights` category.
+ */
+export const embeddingFailures = pgTable(
+  "embedding_failures",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceType: text("source_type").$type<"profile" | "meeting">().notNull(),
+    sourceId: text("source_id").notNull(),
+    errorKind: text("error_kind"),
+    failedAt: timestamp("failed_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("embedding_failures_source_uidx").on(t.userId, t.sourceType, t.sourceId),
+  ]
+);
+
 export type RecruiterLinkStatus =
   | "planned"
   | "contacted"
@@ -1847,6 +1912,14 @@ export const recruiters = pgTable(
     emailNormalized: text("email_normalized"),
     linkedinUrl: text("linkedin_url"),
     phone: text("phone"),
+    /**
+     * Who created this canonical row. Backfilled from the earliest link written within 120
+     * seconds of the row (Phase 0's `CREATOR_LINK_WINDOW_SECONDS`); null means the creator could not be determined (legacy rows).
+     * `rederiveSharedRecruiterPii` treats a non-null creator as "every shared contact field
+     * must be vouched for by a pooled link". Set to `deleted-account` when the creator's data
+     * is purged, so the strict rule keeps applying.
+     */
+    createdByUserId: text("created_by_user_id"),
     avgRating: integer("avg_rating").default(0).notNull(),
     ratingCount: integer("rating_count").default(0).notNull(),
     logCount: integer("log_count").default(0).notNull(),
@@ -1903,6 +1976,14 @@ export const userRecruiterLinks = pgTable(
     emailCount: integer("email_count").default(0).notNull(),
     /** Most recent Gmail thread with this recruiter, so replies thread correctly. */
     gmailThreadId: text("gmail_thread_id"),
+    /**
+     * This user's own contact details for the recruiter. Contact details live HERE, per link:
+     * the canonical `recruiters` row carries only what sharing users contributed to the pool.
+     * `toPublicRecruiter` reads these first, then pooled values (audit A8).
+     */
+    email: text("email"),
+    phone: text("phone"),
+    linkedinUrl: text("linkedin_url"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -2276,6 +2357,7 @@ export const usageEvents = pgTable(
  *   onboarding.reset · integration.disconnect · calendar.enable · calendar.disable
  *   account.suspend · account.unsuspend · account.delete
  *   export.download
+ *   account.view · contact.view · auth.sign_in_link
  */
 export const adminAuditLog = pgTable(
   "admin_audit_log",
@@ -3012,10 +3094,8 @@ export const interestListSignups = pgTable(
     utmMedium: text("utm_medium"),
     utmCampaign: text("utm_campaign"),
     landingPath: text("landing_path"),
-    /** Opaque random token, stored in plaintext — mints the one-click unsubscribe link
-     * without exposing the row's uuid or requiring a session. Lower stakes than the
-     * calendar feed's bearer token (see `calendarFeedTokenHash`): this one only lets
-     * someone unsubscribe an email address, not read private data. */
+    /** Opaque, same convention as `user_settings.calendar_feed_token` — mints the one-click
+     * unsubscribe link without exposing the row's uuid or requiring a session. */
     unsubscribeToken: text("unsubscribe_token").notNull(),
     unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
     /**
@@ -4084,6 +4164,19 @@ export const pageViews = pgTable(
      * is not zero, and summing it as zero would understate every average on the page.
      */
     dwellMs: integer("dwell_ms"),
+    /**
+     * Milliseconds until the page's content was on screen: navigation start to the moment
+     * no loading skeleton is left. Set once, best-effort, by the `load` beacon (see
+     * `src/lib/nav-timing.ts`). NULL when it was never measured — the tab was hidden, the
+     * page never settled within the cap, or the beacon was lost. Not zero.
+     */
+    loadMs: integer("load_ms"),
+    /**
+     * How `load_ms` was measured. `hard` = a full document load (from `timeOrigin`, so it
+     * includes TTFB and any cold start); `soft` = a client-side navigation (from the
+     * router's transition start). The two are different populations and are never mixed.
+     */
+    navType: text("nav_type").$type<"hard" | "soft">(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -4212,3 +4305,55 @@ export const adminProviderSnapshots = pgTable(
 
 export type PlanUpgradeEventRow = typeof planUpgradeEvents.$inferSelect;
 export type AdminProviderSnapshotRow = typeof adminProviderSnapshots.$inferSelect;
+
+/**
+ * Stripe event ids whose effects have been applied — the webhook's dedupe ledger.
+ *
+ * Separate from `webhook_deliveries` on purpose: that table deliberately has NO unique index
+ * on (source, event_id), because the retry count is the most useful thing it records.
+ * Only `handled` outcomes are written here, so an event that was ignored for a reason that
+ * can change (an unattributed customer) is still re-evaluated when Stripe retries it. No user
+ * column: nothing here identifies a person.
+ */
+export const stripeProcessedEvents = pgTable("stripe_processed_events", {
+  eventId: text("event_id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  processedAt: timestamp("processed_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * One row per `purgeUserData` call: the ledger that makes a deletion resumable.
+ *
+ * `completed_steps` grows as each step lands, so the nightly job re-runs only what is left
+ * (every step is an idempotent WHERE-user delete). After `PURGE_MAX_ATTEMPTS` the run is
+ * marked `failed` and the ops sweep raises `purge.stuck`.
+ *
+ * `target_user_id`, not `user_id`: `scripts/smoke-purge.ts` sweeps every table with a
+ * `userId` column and requires zero rows after a purge, and this record must outlive the
+ * purge it describes — the same convention as `admin_audit_log.target_user_id`. A Clerk id
+ * is inert once the account is gone; finished runs are pruned after 30 days.
+ */
+export const dataPurgeRuns = pgTable(
+  "data_purge_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    targetUserId: text("target_user_id").notNull(),
+    categories: jsonb("categories").$type<string[]>().default([]).notNull(),
+    keepSettings: boolean("keep_settings").default(true).notNull(),
+    fullPurge: boolean("full_purge").default(false).notNull(),
+    completedSteps: jsonb("completed_steps").$type<string[]>().default([]).notNull(),
+    status: text("status").$type<"running" | "done" | "failed">().default("running").notNull(),
+    attempts: integer("attempts").default(1).notNull(),
+    lastError: text("last_error"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).defaultNow().notNull(),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("data_purge_runs_status_attempt_idx").on(t.status, t.lastAttemptAt),
+    index("data_purge_runs_target_idx").on(t.targetUserId),
+  ]
+);
+
+export type StripeProcessedEventRow = typeof stripeProcessedEvents.$inferSelect;
+export type DataPurgeRunRow = typeof dataPurgeRuns.$inferSelect;

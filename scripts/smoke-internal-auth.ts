@@ -13,7 +13,7 @@
  */
 import "./smoke/_env";
 
-import { internalAuthHeaders, internalFetch, isInternalRequest } from "../src/lib/internal-auth";
+import { INTERNAL_FETCH_TIMEOUT_MS, internalAuthHeaders, internalFetch, isInternalRequest } from "../src/lib/internal-auth";
 import { GET as processStalled } from "../src/app/api/imports/process-stalled/route";
 import { POST as continueImport } from "../src/app/api/imports/[id]/continue/route";
 import { POST as embeddingBackfill } from "../src/app/api/embeddings/backfill/route";
@@ -80,6 +80,26 @@ async function main() {
       (seen as { url: string; auth: string | null }).auth === `Bearer ${SECRET}`,
     JSON.stringify(seen)
   );
+
+  let seenSignal: AbortSignal | null | undefined;
+  const realFetch2 = globalThis.fetch;
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    seenSignal = init?.signal;
+    return new Response("{}");
+  }) as typeof fetch;
+  const own = new AbortController();
+  let ownSeen: AbortSignal | null | undefined;
+  try {
+    await internalFetch("/api/embeddings/backfill", { method: "POST" });
+    const defaulted = seenSignal;
+    await internalFetch("/api/embeddings/backfill", { method: "POST", signal: own.signal });
+    ownSeen = seenSignal;
+    check("internalFetch always carries an abort signal", defaulted instanceof AbortSignal && !defaulted.aborted);
+  } finally {
+    globalThis.fetch = realFetch2;
+  }
+  check("a caller's own signal wins", ownSeen === own.signal);
+  check("the default timeout is ten seconds", INTERNAL_FETCH_TIMEOUT_MS === 10_000);
 
   env({ VERCEL: "1", NODE_ENV: "production" });
   check("no secret on Vercel → closed", !isInternalRequest(req()));

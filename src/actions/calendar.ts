@@ -10,7 +10,8 @@ import {
   syncCalendarSubscription,
   syncDueCalendarSubscriptions,
 } from "@/lib/calendar-sync";
-import { asActionResult, friendlyError, UserFacingError } from "@/lib/errors";
+import { asActionResult, UserFacingError } from "@/lib/errors";
+import { actionFailure } from "@/lib/action-failure";
 
 function normalizeIcsUrl(raw: string) {
   let url = raw.trim();
@@ -86,7 +87,9 @@ export async function addCalendarSubscription(input: {
     } catch (err) {
       // Returned as data, so never stripped — and a sync failure can carry a provider's
       // raw response body (`Google Calendar 403: {…}`). Sanitise it here.
-      syncError = friendlyError(err, "the first sync didn’t finish");
+      syncError = await actionFailure(err, "the first sync didn’t finish", "calendar.first-sync", {
+        subscriptionId: row.id,
+      });
     }
 
     const subscription =

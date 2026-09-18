@@ -14,9 +14,13 @@ import { useState } from "react";
 import { CalendarClock, ChevronDown, ChevronUp, Lightbulb } from "lucide-react";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DatePickerButton } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { shortDayLabel } from "@/lib/reminder-due-bucket";
 import { cn } from "@/lib/utils";
+import type { RejectedCounts } from "@/lib/date-commitment-extract";
+import { skippedNoteText } from "@/lib/capture/skipped-note";
 
 export type ReviewablePerson = { key: string; name: string };
 
@@ -30,7 +34,7 @@ export function SuggestedRemindersReview({
   /** Accepted people from this same capture, for the contact picker. */
   people: ReviewablePerson[];
   onChange: (next: SuggestionReviewItem[]) => void;
-  skipped?: { relative: number; unverifiable: number; past: number } | null;
+  skipped?: RejectedCounts | null;
 }) {
   if (!items.length) {
     return <SkippedNote skipped={skipped} />;
@@ -124,11 +128,11 @@ function ReminderRow({
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Date</Label>
-              <Input
-                type="date"
+              <DatePickerButton
                 value={item.dueDateIso}
-                onChange={(e) => update(item.key, { dueDateIso: e.target.value })}
-                className={cn(item.yearInferred && "ring-1 ring-amber-500/50")}
+                onSelect={(ymd) => update(item.key, { dueDateIso: ymd })}
+                label={item.dueDateIso ? shortDayLabel(item.dueDateIso) : "Pick a date"}
+                className={cn("w-full justify-start font-normal", item.yearInferred && "ring-1 ring-amber-500/50")}
               />
               {item.yearInferred && (
                 <p className="text-xs text-amber-700 dark:text-amber-300">
@@ -202,30 +206,8 @@ function SourceLine({ item }: { item: SuggestionReviewItem }) {
  * Surfaces what the extractor threw away, so it's visible that Orbit is being
  * deliberately careful rather than looking like it simply missed things.
  */
-function SkippedNote({
-  skipped,
-}: {
-  skipped?: { relative: number; unverifiable: number; past: number } | null;
-}) {
-  if (!skipped) return null;
-  const parts: string[] = [];
-  if (skipped.relative) {
-    parts.push(
-      `${skipped.relative} unrecognized ${skipped.relative === 1 ? "phrase" : "phrases"} ("in a fortnight")`
-    );
-  }
-  if (skipped.past) {
-    parts.push(`${skipped.past} past ${skipped.past === 1 ? "date" : "dates"}`);
-  }
-  if (skipped.unverifiable) {
-    parts.push(`${skipped.unverifiable} unverified`);
-  }
-  if (!parts.length) return null;
-
-  return (
-    <p className="text-xs text-muted-foreground">
-      Skipped {parts.join(", ")}. Orbit only schedules dates it can verify or resolve
-      with confidence.
-    </p>
-  );
+function SkippedNote({ skipped }: { skipped?: RejectedCounts | null }) {
+  const text = skippedNoteText(skipped);
+  if (!text) return null;
+  return <p className="text-xs text-muted-foreground">{text}</p>;
 }

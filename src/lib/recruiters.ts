@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   recruiters,
@@ -18,7 +18,7 @@ export type PublicRecruiter = {
   avgRating: number;
   ratingCount: number;
   logCount: number;
-  /** Present only when the viewer has a personal link. */
+  /** Resolved per field by `resolveRecruiterPii`: this viewer's own link, else the pool. */
   email: string | null;
   linkedinUrl: string | null;
   phone: string | null;
@@ -69,9 +69,11 @@ export function normalizeLinkedinUrl(
 /**
  * Shape a canonical row for a specific viewer.
  *
- * `pooledForViewer` must mean "the viewer is sharing AND this row is in the pool" —
- * callers compute it with `pooledRecruiterIds`. Passing a bare "is in the pool" would
- * hand contact details to private viewers, who are entitled to see nothing but their own.
+ * Contact details resolve per field: the viewer's own link first, then the shared row only
+ * when that row is pooled for this viewer (`pooledIdsForViewer`).
+ * A link used to unlock the row's email, phone and LinkedIn for anyone who logged it, which
+ * handed one user's private contact details to any other user who typed the same name and
+ * firm (audit A8).
  *
  * Note what is absent: `notes` and `aiSummary` reach the caller only inside `myLink`,
  * which is null for anyone but the owner. They are never derived from `row`.
@@ -81,7 +83,7 @@ export function toPublicRecruiter(
   link: UserRecruiterLink | null,
   pooledForViewer = false
 ): PublicRecruiter {
-  const unlocked = Boolean(link) || pooledForViewer;
+  const pii = resolveRecruiterPii(row, link, pooledForViewer);
   return {
     id: row.id,
     fullName: row.fullName,
@@ -90,15 +92,19 @@ export function toPublicRecruiter(
     avgRating: row.avgRating,
     ratingCount: row.ratingCount,
     logCount: row.logCount,
-    email: unlocked ? row.email : null,
-    linkedinUrl: unlocked ? row.linkedinUrl : null,
-    phone: unlocked ? row.phone : null,
-    piiUnlocked: unlocked,
+    ...pii,
+    // Unchanged meaning: may this viewer see a contact section at all (their own link, or the pool).
+    piiUnlocked: Boolean(link) || pooledForViewer,
     myLink: link,
   };
 }
 
-/** Fill empty fields only — never overwrite existing non-empty values. */
+/**
+ * Fill empty fields only — never overwrite existing non-empty values.
+ *
+ * The caller decides what may reach the shared row: `upsertCanonicalRecruiter` blanks the
+ * contact fields unless the caller is sharing, so what arrives here is already vouched for.
+ */
 export function mergeRecruiterFields(
   existing: Recruiter,
   incoming: {
@@ -136,14 +142,79 @@ export function mergeRecruiterFields(
     }
     patch.specialty = Array.from(current);
   }
-  if (
-    incoming.fullName?.trim() &&
-    normalizePersonName(incoming.fullName) === existing.nameNormalized
-  ) {
-    // Keep existing display name; no-op
-  }
 
   return patch;
+}
+
+export type RecruiterPii = { email: string | null; phone: string | null; linkedinUrl: string | null };
+type PiiKey = keyof RecruiterPii;
+const PII_KEYS: PiiKey[] = ["email", "phone", "linkedinUrl"];
+
+function samePii(key: PiiKey, a: string, b: string): boolean {
+  if (key === "email") return a.trim().toLowerCase() === b.trim().toLowerCase();
+  if (key === "linkedinUrl") return normalizeLinkedinUrl(a) === normalizeLinkedinUrl(b);
+  return a.replace(/\D/g, "") === b.replace(/\D/g, "");
+}
+
+/** Per field: the viewer's own link, else the shared value only when pooled for this viewer. */
+export function resolveRecruiterPii(
+  row: RecruiterPii,
+  link: RecruiterPii | null,
+  pooledForViewer: boolean
+): RecruiterPii {
+  const pick = (key: PiiKey) => link?.[key]?.trim() ? link[key] : pooledForViewer ? row[key] : null;
+  return { email: pick("email"), phone: pick("phone"), linkedinUrl: pick("linkedinUrl") };
+}
+
+/**
+ * What the shared row should hold, given the pooled links that could vouch for it.
+ * Strict (a row with a known creator): only vouched values survive. Legacy (creator unknown):
+ * an unvouched value survives unless the user withdrawing holds that very value.
+ */
+export function pickPooledPii(
+  current: RecruiterPii,
+  pooled: RecruiterPii[],
+  opts: { strict: boolean; withdrawn?: RecruiterPii | null }
+): RecruiterPii {
+  const out = { ...current };
+  for (const key of PII_KEYS) {
+    const offered = pooled.map((p) => p[key]).filter((v): v is string => Boolean(v?.trim()));
+    const cur = current[key];
+    if (!cur) {
+      out[key] = offered[0] ?? null;
+      continue;
+    }
+    if (offered.some((v) => samePii(key, v, cur))) continue;
+    const withdrawn = opts.withdrawn?.[key];
+    if (opts.strict || (withdrawn && samePii(key, withdrawn, cur))) out[key] = offered[0] ?? null;
+  }
+  return out;
+}
+
+export async function pooledIdsForViewer(userId: string, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0 || !(await isViewerSharing(userId))) return new Set();
+  return pooledRecruiterIds(ids);
+}
+
+export async function rederiveSharedRecruiterPii(
+  recruiterId: string,
+  opts: { withdrawn?: RecruiterPii | null } = {}
+): Promise<void> {
+  const db = await getDb();
+  const row = await db.query.recruiters.findFirst({ where: eq(recruiters.id, recruiterId) });
+  if (!row) return;
+  const pooled = await db
+    .select({ email: userRecruiterLinks.email, phone: userRecruiterLinks.phone, linkedinUrl: userRecruiterLinks.linkedinUrl })
+    .from(userRecruiterLinks)
+    .innerJoin(userSettings, eq(userSettings.userId, userRecruiterLinks.userId))
+    .where(and(eq(userRecruiterLinks.recruiterId, recruiterId), eq(userRecruiterLinks.sharedToPool, 1), eq(userSettings.recruiterSharing, 1)))
+    .orderBy(asc(userRecruiterLinks.createdAt));
+  const next = pickPooledPii(row, pooled, { strict: row.createdByUserId !== null, withdrawn: opts.withdrawn });
+  if (PII_KEYS.every((k) => next[k] === row[k])) return;
+  await db
+    .update(recruiters)
+    .set({ ...next, emailNormalized: normalizeEmail(next.email), updatedAt: new Date() })
+    .where(eq(recruiters.id, recruiterId));
 }
 
 /**
@@ -244,25 +315,24 @@ export async function findMatchingRecruiter(input: {
   return null;
 }
 
-export async function upsertCanonicalRecruiter(input: {
-  fullName: string;
-  firm?: string | null;
-  specialty?: string[];
-  email?: string | null;
-  linkedinUrl?: string | null;
-  phone?: string | null;
-  /**
-   * Whether the logging user has opted into the shared pool. An existing canonical row
-   * may already be pool-visible to other users, so filling in its gaps is itself a
-   * contribution to the shared list — gate it exactly like contact-detail visibility is
-   * gated on read. A private user creating a brand-new row is unaffected: that row stays
-   * invisible to everyone else until someone shares it (see `pooledPredicate`).
-   */
-  viewerIsSharing: boolean;
-}): Promise<Recruiter> {
+export async function upsertCanonicalRecruiter(
+  input: {
+    fullName: string;
+    firm?: string | null;
+    specialty?: string[];
+    email?: string | null;
+    linkedinUrl?: string | null;
+    phone?: string | null;
+  },
+  opts: { contributePii?: boolean; createdByUserId?: string } = {}
+): Promise<Recruiter> {
   const db = await getDb();
   const fullName = input.fullName.trim();
   if (!fullName) throw new Error("Recruiter name is required");
+  // Matching may use every identifier; WRITING contact details to the shared row needs consent.
+  const shared = opts.contributePii
+    ? input
+    : { ...input, email: null, linkedinUrl: null, phone: null };
 
   const existing = await findMatchingRecruiter({
     email: input.email,
@@ -272,8 +342,12 @@ export async function upsertCanonicalRecruiter(input: {
   });
 
   if (existing) {
-    if (!input.viewerIsSharing) return existing;
-    const patch = mergeRecruiterFields(existing, input);
+    // An existing row may already be pool-visible, and firm/specialty are shown to every
+    // viewer of it, so filling its gaps is itself a contribution to the shared list. Only a
+    // sharing caller may do that; a private caller just links to the row as it stands.
+    // (A brand-new row is unaffected: it stays invisible until someone shares it.)
+    if (!opts.contributePii) return existing;
+    const patch = mergeRecruiterFields(existing, shared);
     if (Object.keys(patch).length > 1) {
       const [updated] = await db
         .update(recruiters)
@@ -293,10 +367,11 @@ export async function upsertCanonicalRecruiter(input: {
       firm: input.firm?.trim() || null,
       firmNormalized: normalizeFirm(input.firm),
       specialty: input.specialty || [],
-      email: input.email?.trim() || null,
-      emailNormalized: normalizeEmail(input.email),
-      linkedinUrl: normalizeLinkedinUrl(input.linkedinUrl),
-      phone: input.phone?.trim() || null,
+      email: shared.email?.trim() || null,
+      emailNormalized: normalizeEmail(shared.email),
+      linkedinUrl: normalizeLinkedinUrl(shared.linkedinUrl),
+      phone: shared.phone?.trim() || null,
+      createdByUserId: opts.createdByUserId ?? null,
       logCount: 0,
       avgRating: 0,
       ratingCount: 0,
@@ -359,6 +434,9 @@ export async function recomputeRecruiterRating(recruiterId: string) {
 export async function ensureUserLink(input: {
   userId: string;
   recruiterId: string;
+  email?: string | null;
+  phone?: string | null;
+  linkedinUrl?: string | null;
   status?: RecruiterLinkStatus;
   notes?: string | null;
   source?: RecruiterLinkSource;
@@ -388,6 +466,9 @@ export async function ensureUserLink(input: {
           input.contactId !== undefined
             ? input.contactId
             : existing.contactId,
+        email: input.email?.trim() || existing.email,
+        phone: input.phone?.trim() || existing.phone,
+        linkedinUrl: input.linkedinUrl?.trim() ? normalizeLinkedinUrl(input.linkedinUrl) : existing.linkedinUrl,
         updatedAt: new Date(),
       })
       .where(eq(userRecruiterLinks.id, existing.id))
@@ -405,6 +486,9 @@ export async function ensureUserLink(input: {
       source: input.source || "manual",
       personalRating: input.personalRating ?? null,
       contactId: input.contactId ?? null,
+      email: input.email?.trim() || null,
+      phone: input.phone?.trim() || null,
+      linkedinUrl: normalizeLinkedinUrl(input.linkedinUrl),
     })
     .returning();
 
@@ -493,10 +577,13 @@ export async function resweepUserRatings(userId: string) {
   const db = await getDb();
   const links = await db.query.userRecruiterLinks.findMany({
     where: eq(userRecruiterLinks.userId, userId),
-    columns: { recruiterId: true },
+    columns: { recruiterId: true, email: true, phone: true, linkedinUrl: true },
   });
   for (const link of links) {
     await recomputeRecruiterRating(link.recruiterId);
+    // Sharing just changed for this user, so every row they link to re-derives what the
+    // pool still vouches for.
+    await rederiveSharedRecruiterPii(link.recruiterId, { withdrawn: link });
   }
 }
 
@@ -507,3 +594,6 @@ export function communityScore(r: {
 }): number {
   return (r.avgRating / 10) * Math.max(1, r.logCount);
 }
+
+/** `created_by_user_id` after the creator's data is purged: not null, so vouching stays strict. */
+export const RECRUITER_DELETED_CREATOR = "deleted-account";

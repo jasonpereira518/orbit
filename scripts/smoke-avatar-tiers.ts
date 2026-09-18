@@ -110,7 +110,7 @@ async function main() {
   await withFetch(
     (url) => (url.includes("unavatar.io") ? jpegResponse() : new Response(null, { status: 500 })),
     async (calls) => {
-      const stored = await fetchLinkedInPhotoUrl("tier-1", LINKEDIN_URL);
+      const stored = await fetchLinkedInPhotoUrl("tier-1", LINKEDIN_URL, null);
       check(
         "the free tier resolves a photo",
         Boolean(stored?.startsWith("data:image/")),
@@ -143,7 +143,7 @@ async function main() {
       return jpegResponse();
     },
     async (calls) => {
-      const stored = await fetchLinkedInPhotoUrl("tier-2", LINKEDIN_URL);
+      const stored = await fetchLinkedInPhotoUrl("tier-2", LINKEDIN_URL, null);
       check(
         "microlink still backs up a free-tier miss",
         Boolean(stored?.startsWith("data:image/")),
@@ -267,7 +267,7 @@ async function main() {
       let thrown: unknown = null;
       let stored: string | null = null;
       try {
-        stored = await fetchLinkedInPhotoUrl("quota-1", LINKEDIN_URL);
+        stored = await fetchLinkedInPhotoUrl("quota-1", LINKEDIN_URL, null);
       } catch (err) {
         thrown = err;
       }
@@ -279,7 +279,7 @@ async function main() {
 
       const before = calls.filter((u) => u.includes("unavatar.io")).length;
       try {
-        await fetchLinkedInPhotoUrl("quota-2", LINKEDIN_URL);
+        await fetchLinkedInPhotoUrl("quota-2", LINKEDIN_URL, null);
       } catch {
         // expected: still deferred
       }

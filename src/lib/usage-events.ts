@@ -108,7 +108,15 @@ export function recordUsage(rec: UsageRecord): void {
  */
 export async function withUsage<T>(
   meta: UsageMeta,
-  run: (report: (tokens: TokenCounts) => void) => Promise<T>
+  run: (report: (tokens: TokenCounts) => void) => Promise<T>,
+  opts: {
+    /**
+     * The caller's own abort — a client that closed the tab. When it has fired, the
+     * failure is `cancelled`: nobody broke, and filed as `other` it would read as Orbit's
+     * fault in `OUR_ERROR_KINDS`.
+     */
+    cancelSignal?: AbortSignal;
+  } = {}
 ): Promise<T> {
   const started = Date.now();
   let tokens: TokenCounts = {};
@@ -130,7 +138,7 @@ export async function withUsage<T>(
       ...meta,
       ...tokens,
       success: false,
-      errorKind: classifyAiError(err),
+      errorKind: opts.cancelSignal?.aborted ? "cancelled" : classifyAiError(err),
       durationMs: Date.now() - started,
     });
     throw err;

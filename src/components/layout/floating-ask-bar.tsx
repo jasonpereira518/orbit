@@ -414,6 +414,7 @@ export function FloatingAskBar() {
             onDone: (info) => {
               ensurePlaceholder();
               patch((m) => ({ ...m, retrieved: info.retrieved, streaming: false }));
+              if (info.notice) toast.message(info.notice);
             },
             onError: (message) => {
               toast.error(message);

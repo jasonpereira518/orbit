@@ -103,7 +103,7 @@ export function buildMicrosoftAuthUrl(state: string) {
   return `https://login.microsoftonline.com/${tenant()}/oauth2/v2.0/authorize?${params}`;
 }
 
-type TokenResponse = {
+export type TokenResponse = {
   access_token: string;
   refresh_token?: string;
   expires_in?: number;
@@ -232,6 +232,32 @@ export async function upsertOutlookConnection(
 }
 
 /**
+ * Stores a refreshed access token and nothing else — see `storeRefreshedGmailToken` in
+ * `gmail.ts` for why a refresh must not re-arm sync or reset its failure state.
+ */
+export async function storeRefreshedOutlookToken(
+  userId: string,
+  tokens: TokenResponse
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(outlookConnections)
+    .set({
+      accessTokenEncrypted: encrypt(tokens.access_token),
+      ...(tokens.refresh_token
+        ? { refreshTokenEncrypted: encrypt(tokens.refresh_token) }
+        : {}),
+      tokenExpiresAt: tokens.expires_in
+        ? new Date(Date.now() + tokens.expires_in * 1000)
+        : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(outlookConnections.userId, userId));
+}
+
+const OUTLOOK_SESSION_EXPIRED = "Outlook session expired — reconnect";
+
+/**
  * Marks a connection as needing reconnection. Best-effort: health telemetry must never
  * turn a session-expired error into a 500.
  */
@@ -276,7 +302,7 @@ export async function getValidAccessToken(userId: string): Promise<string> {
   });
   if (!conn) throw new Error("Outlook is not connected");
   if (conn.status !== "active") {
-    throw new Error("Outlook session expired — reconnect");
+    throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
   }
 
   const expiresSoon =
@@ -290,7 +316,7 @@ export async function getValidAccessToken(userId: string): Promise<string> {
 
   if (!conn.refreshTokenEncrypted) {
     await markNeedsReauth(userId);
-    throw new Error("Outlook session expired — reconnect");
+    throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
   }
 
   let refreshed;
@@ -299,13 +325,12 @@ export async function getValidAccessToken(userId: string): Promise<string> {
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
       await markNeedsReauth(userId);
-      throw new Error("Outlook session expired — reconnect");
+      throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
     }
     throw err;
   }
 
-  // The upsert resets status to "active", which is the only path back from needs_reauth.
-  await upsertOutlookConnection(userId, refreshed, conn.emailAddress);
+  await storeRefreshedOutlookToken(userId, refreshed);
   await touchLastSynced({ id: conn.id, lastSyncedAt: null });
   return refreshed.access_token;
 }

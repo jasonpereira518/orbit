@@ -94,14 +94,12 @@ async function main() {
       fullName: `${MARK} Alpha`,
       firm: MARK,
       email: "alpha@zzsmokeshare.test",
-      viewerIsSharing: false,
-    });
+    }, { contributePii: true });
     const recB = await upsertCanonicalRecruiter({
       fullName: `${MARK} Beta`,
       firm: MARK,
       email: "beta@zzsmokeshare.test",
-      viewerIsSharing: false,
-    });
+    }, { contributePii: true });
     created.push(recA.id, recB.id);
 
     await db.insert(userRecruiterLinks).values({
@@ -109,12 +107,14 @@ async function main() {
       recruiterId: recA.id,
       personalRating: 5,
       status: "contacted",
+      email: "alpha@zzsmokeshare.test",
     });
     await db.insert(userRecruiterLinks).values({
       userId: USER_B,
       recruiterId: recB.id,
       personalRating: 3,
       status: "contacted",
+      email: "beta@zzsmokeshare.test",
     });
     await recomputeRecruiterRating(recA.id);
     await recomputeRecruiterRating(recB.id);
@@ -226,8 +226,9 @@ async function main() {
     const recC = await upsertCanonicalRecruiter({
       fullName: `${MARK} Gamma`,
       email: "gamma@zzsmokeshare.test",
-      viewerIsSharing: false,
-    });
+      // Created by a sharer so the email is on the row: matching is by email, and a private
+      // creator's email is deliberately never stored there.
+    }, { contributePii: true });
     created.push(recC.id);
     check("row starts with no firm/specialty", (recC.firm === null) && (recC.specialty?.length ?? 0) === 0);
 
@@ -236,8 +237,7 @@ async function main() {
       firm: MARK,
       email: "gamma@zzsmokeshare.test",
       specialty: ["Engineering"],
-      viewerIsSharing: false,
-    });
+    }, { contributePii: false });
     let refetchedC = await db.query.recruiters.findFirst({ where: eq(recruiters.id, recC.id) });
     check(
       "a non-sharing logger leaves the existing shared row untouched",
@@ -249,8 +249,7 @@ async function main() {
       firm: MARK,
       email: "gamma@zzsmokeshare.test",
       specialty: ["Engineering"],
-      viewerIsSharing: true,
-    });
+    }, { contributePii: true });
     refetchedC = await db.query.recruiters.findFirst({ where: eq(recruiters.id, recC.id) });
     check(
       "a sharing logger can still fill in the existing row's gaps",

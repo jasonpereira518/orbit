@@ -79,7 +79,7 @@ import {
   type EventConnectionSummary,
 } from "@/lib/events/connections";
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
-import { listCalendarEvents } from "@/lib/events/connectors/luma";
+import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma";
 import type {
   AttendeeRole,
   ConnectSummary,
@@ -88,6 +88,8 @@ import type {
 } from "@/lib/events/types";
 import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { GOOGLE_SCOPES, hasGmailReadScope, hasScope } from "@/lib/google-scopes";
+import { actionFailure } from "@/lib/action-failure";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
 const SURFACE = "page.events";
@@ -341,7 +343,10 @@ export async function previewResync(
   } catch (error) {
     return {
       ok: false,
-      error: error instanceof EventPageError ? error.message : "Couldn’t read that page — try again?",
+      error:
+        error instanceof EventPageError
+          ? error.message
+          : await actionFailure(error, "Couldn’t read that page — try again?", "events.preview-resync"),
     };
   }
 }
@@ -703,8 +708,12 @@ export async function addTargetCompanyFromEvent(
 export async function getEventConnections(): Promise<{
   connections: EventConnectionSummary[];
   eventbriteConfigured: boolean;
-  /** Whether the mailbox scan can be offered at all — it rides on an existing Google grant. */
+  /** Any active Google connection exists. */
   googleConnected: boolean;
+  /** That connection may read mail — the confirmation-email scan can run. */
+  googleMailGranted: boolean;
+  /** That connection may read the calendar — meetings sync. */
+  googleCalendarGranted: boolean;
 }> {
   const userId = await requireUserForSurface(SURFACE);
   const [connections, grant] = await Promise.all([
@@ -715,6 +724,8 @@ export async function getEventConnections(): Promise<{
     connections,
     eventbriteConfigured: eventbriteOAuthConfig().configured,
     googleConnected: grant !== null,
+    googleMailGranted: hasGmailReadScope(grant?.scopes),
+    googleCalendarGranted: hasScope(grant?.scopes, GOOGLE_SCOPES.calendar),
   };
 }
 
@@ -732,7 +743,12 @@ export async function connectLuma(apiKey: string): Promise<{ ok: boolean; error?
 
   try {
     await listCalendarEvents(key, null);
-  } catch {
+  } catch (error) {
+    // Only a 401/403 means the key is wrong. A Luma outage or a network error used to get
+    // the same "didn't accept that key" line, sending people to fix a key that was fine.
+    if (!(error instanceof LumaAuthError)) {
+      return { ok: false, error: await actionFailure(error, "Couldn’t reach Luma just now — try again", "events.connect-luma") };
+    }
     return {
       ok: false,
       error: "Luma didn’t accept that key — it needs to be a calendar key from a Luma Plus account",
@@ -796,7 +812,10 @@ export async function connectEventFeed(
       // `net-guard` and the fetcher both produce user-facing messages already.
       return { ok: false, error: error.message };
     }
-    return { ok: false, error: "That calendar link couldn’t be read — check it and try again?" };
+    return {
+      ok: false,
+      error: await actionFailure(error, "That calendar link couldn’t be read — check it and try again?", "events.connect-feed", { provider }),
+    };
   }
 }
 
@@ -813,7 +832,7 @@ export async function connectEventFeed(
  */
 export async function setGmailEventScan(
   enabled: boolean
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; needsMailScope?: boolean }> {
   const userId = await requireSyncUser();
 
   if (!enabled) {
@@ -822,13 +841,14 @@ export async function setGmailEventScan(
     return { ok: true };
   }
 
-  // Requires the Gmail grant to exist already. This switch never asks for a new scope — if
-  // the user has not connected Google at all, the honest answer is to send them there.
   const connection = await findGmailGrant(userId);
-  if (!connection) {
+  // This switch never widens a grant silently: without gmail.readonly it tells the card to
+  // send the person through Google's consent screen for exactly that scope.
+  if (!connection || !hasGmailReadScope(connection.scopes)) {
     return {
       ok: false,
-      error: "Connect Google first — Orbit scans the mailbox you have already connected.",
+      needsMailScope: true,
+      error: "Allow mail access first — Orbit asks Google for it next",
     };
   }
 

@@ -61,7 +61,7 @@ async function seed() {
     // The BYO provider key is a deliberate survivor of purge — see `purgeUserData`.
     // The calendar feed token is not, and must not outlive the account.
     geminiApiKeyEncrypted: "ciphertext",
-    calendarFeedTokenHash: "feed-token-hash",
+    calendarFeedToken: "feed-token",
   });
 
   const [company] = await db
@@ -379,6 +379,13 @@ async function seed() {
     content: "embedded note content",
   });
 
+  await db.insert(schema.embeddingFailures).values({
+    userId: USER,
+    sourceType: "meeting",
+    sourceId: `cal:evt-unembeddable:${contact.id}`,
+    errorKind: "other",
+  });
+
   const [recruiter] = await db
     .insert(schema.recruiters)
     .values({ fullName: "Rec Ruiter", nameNormalized: "rec ruiter" })
@@ -579,7 +586,15 @@ async function seed() {
     device: "desktop",
   });
 
-  return { recruiterId: recruiter.id };
+  // A second user's link keeps the shared row alive; a row only USER links must go.
+  await db.insert(schema.userRecruiterLinks).values({ userId: "smoke-purge-other-linker", recruiterId: recruiter.id });
+  const [soleRecruiter] = await db
+    .insert(schema.recruiters)
+    .values({ fullName: "Solo Recruiter", nameNormalized: "solo recruiter", email: "solo@example.test" })
+    .returning();
+  await db.insert(schema.userRecruiterLinks).values({ userId: USER, recruiterId: soleRecruiter.id, email: "solo@example.test" });
+
+  return { recruiterId: recruiter.id, soleRecruiterId: soleRecruiter.id };
 }
 
 async function main() {
@@ -594,7 +609,7 @@ async function main() {
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
     .catch(() => {});
-  const { recruiterId } = await seed();
+  const { recruiterId, soleRecruiterId } = await seed();
 
   console.log("\nSeeded");
   const seededCounts = new Map<string, number>();
@@ -656,7 +671,7 @@ async function main() {
   );
   check(
     "...but the calendar feed token cleared",
-    settingsAfterPurge?.calendarFeedTokenHash === null
+    settingsAfterPurge?.calendarFeedToken === null
   );
   await ledgerDb
     .delete(schema.userSettings)
@@ -696,6 +711,8 @@ async function main() {
     where: eq(schema.recruiters.id, recruiterId),
   });
   check("the shared recruiters directory survives", Boolean(survivor));
+  const sole = await db.query.recruiters.findFirst({ where: eq(schema.recruiters.id, soleRecruiterId) });
+  check("a recruiter only this user linked is deleted with them", !sole);
   await db.delete(schema.recruiters).where(eq(schema.recruiters.id, recruiterId));
 
   console.log("\nAll purge checks passed.");

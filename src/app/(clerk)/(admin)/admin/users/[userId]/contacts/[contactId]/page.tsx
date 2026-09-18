@@ -14,7 +14,7 @@ import {
 } from "@/components/admin/primitives";
 import { CopyId } from "@/components/admin/copy-id";
 import { requireAdminUserId } from "@/lib/admin";
-import { recordAccountView } from "@/lib/admin-operations";
+import { recordAccountView, recordContactView } from "@/lib/admin-operations";
 import { getAdminContactDetail } from "@/lib/admin-user-detail";
 
 export const metadata = { title: "Admin · Contact" };
@@ -41,6 +41,8 @@ export default async function AdminContactDetailPage({
 
   const detail = await getAdminContactDetail(decoded, contactId);
   if (!detail) notFound();
+  // After notFound(), so a mistyped id is never logged as a view of a real person.
+  await recordContactView(adminUserId, decoded, contactId);
 
   const { contact, interactions } = detail;
   const fields = contact.detail;

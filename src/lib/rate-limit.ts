@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 import { getDb } from "@/db";
 import { rateLimitBuckets } from "@/db/schema";
 
@@ -94,6 +95,20 @@ export const RATE_LIMITS = {
    */
   avatarResolve: { limit: 120, windowSec: 60 },
   /**
+   * App-wide daily allowance per quota'd photo source (Unavatar, Microlink), keyed on the
+   * source, not the user: both free tiers are ~25 lookups a day for the whole deployment,
+   * and the per-Lambda cooldowns cannot see each other.
+   */
+  avatarSourceShared: { limit: 25, windowSec: 86_400 },
+  /** One user's daily slice of each source, so one large network cannot drain it for all. */
+  avatarSourceUser: { limit: 5, windowSec: 86_400 },
+  /** People searches per user per day on Orbit's HOSTED Apollo key. Own keys are uncapped. */
+  apolloSearch: { limit: 20, windowSec: 86_400 },
+  /** Person matches (one Apollo credit each) per user per day on the hosted key. */
+  apolloEnrich: { limit: 50, windowSec: 86_400 },
+  /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
+  contactForm: { limit: 3, windowSec: 600 },
+  /**
    * `submitFeedback`: a form post carrying up to three screenshots. Generous per
    * submission, tight per window — this is the largest row a user can create directly,
    * and nobody has anything to say five times in five minutes.
@@ -147,6 +162,12 @@ export const RATE_LIMITS = {
    * name on a normal roster, tight enough that a retry storm cannot run up their bill.
    */
   eventWhy: { limit: 30, windowSec: 3600 },
+  /**
+   * Model-bound LinkedIn timeline conversations per user per day (audit A6). The runner
+   * keys the bucket by UTC date as well as user, so the cap resets at midnight UTC rather
+   * than 24 hours after the first call; the window only guarantees no reset mid-day.
+   */
+  timelineBackfillDaily: { limit: TIMELINE_DAILY_CONTACT_CAP, windowSec: 86_400 },
   /**
    * The AI gate asking Stripe whether a just-opened Lifetime checkout has been paid
    * (`src/lib/lifetime-checkout.ts`). One Stripe round trip each, and only ever on a refusal

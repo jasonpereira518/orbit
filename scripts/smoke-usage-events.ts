@@ -215,6 +215,47 @@ async function main() {
     check("succeeds even with degenerate metadata", value === 42);
   }
 
+  console.log("\nClient disconnect");
+  {
+    const controller = new AbortController();
+    controller.abort();
+    const aborted = new Error("Request was aborted.");
+    let caught: unknown = null;
+    try {
+      await withUsage(
+        { ...META, operation: "smoke.cancelled" },
+        async () => {
+          throw aborted;
+        },
+        { cancelSignal: controller.signal }
+      );
+    } catch (err) {
+      caught = err;
+    }
+    check("the abort is still rethrown unchanged", caught === aborted);
+    await settle();
+    const rows = await rowsFor(USER);
+    const row = rows.find((r) => r.operation === "smoke.cancelled");
+    check("a cancelled call writes a row", Boolean(row));
+    check("…filed as cancelled, not other", row?.errorKind === "cancelled", String(row?.errorKind));
+
+    const live = new AbortController();
+    try {
+      await withUsage(
+        { ...META, operation: "smoke.not-cancelled" },
+        async () => {
+          throw new Error("429 rate limit exceeded");
+        },
+        { cancelSignal: live.signal }
+      );
+    } catch {
+      // expected
+    }
+    await settle();
+    const other = (await rowsFor(USER)).find((r) => r.operation === "smoke.not-cancelled");
+    check("an unaborted signal keeps the real classification", other?.errorKind === "rate_limit", String(other?.errorKind));
+  }
+
   await cleanup();
   console.log("\nAll usage instrumentation checks passed.");
 }

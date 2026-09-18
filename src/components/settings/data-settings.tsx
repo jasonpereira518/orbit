@@ -2,13 +2,14 @@
 
 import { useTransition } from "react";
 import Link from "next/link";
-import { Download, Trash2 } from "lucide-react";
+import { Download, Trash2, UserX } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { exportAllData } from "@/actions/settings";
+import { friendlyError } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
 import { GooglePhotoMatch } from "@/components/settings/google-photo-match";
 import { DeleteDataDialog } from "@/components/settings/delete-data-dialog";
+import { DeleteAccountDialog } from "@/components/settings/delete-account-dialog";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
 
 export function DataSettings() {
@@ -42,17 +43,20 @@ export function DataSettings() {
           disabled={exporting}
           onClick={() =>
             startExport(async () => {
-              const data = await exportAllData();
-              const blob = new Blob([JSON.stringify(data, null, 2)], {
-                type: "application/json",
-              });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `orbit-export-${new Date().toISOString().slice(0, 10)}.json`;
-              a.click();
-              URL.revokeObjectURL(url);
-              toast.success("Export downloaded");
+              try {
+                const res = await fetch("/api/export", { cache: "no-store" });
+                if (!res.ok) throw new Error(`export responded ${res.status}`);
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `orbit-export-${new Date().toISOString().slice(0, 10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                toast.success("Export downloaded");
+              } catch (err) {
+                toast.error(friendlyError(err, "Couldn’t build your export — try again?"));
+              }
             })
           }
         >
@@ -77,6 +81,24 @@ export function DataSettings() {
             >
               <Trash2 className="size-3.5" />
               Delete data…
+            </Button>
+          }
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        title="Delete account"
+        description="Erase everything and remove your sign-in. Cancels an active Orbit Pro subscription."
+      >
+        <DeleteAccountDialog
+          trigger={
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-fit text-destructive hover:border-destructive/40 hover:bg-destructive/10"
+            >
+              <UserX className="size-3.5" />
+              Delete account…
             </Button>
           }
         />

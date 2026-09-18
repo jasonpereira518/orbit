@@ -46,13 +46,37 @@ export function generateCalendarFeedToken() {
 }
 
 /**
- * Deterministic, so the feed route can look a presented token up by equality without ever
- * storing it. Plain SHA-256 rather than a password KDF for the same reason as
- * `hashApiKey` (`src/lib/api/keys.ts`): the input is 256 bits of CSPRNG output, so there is
- * no dictionary to slow down.
+ * What `user_settings.calendar_feed_token` stores: the SHA-256 of the token, hex. The feed
+ * URL is a bearer credential, so the column holds only its fingerprint and a copy of the
+ * table opens nobody's calendar. Must equal the SQL that hashed existing rows in place:
+ * encode(sha256(convert_to(token, 'UTF8')), 'hex').
  */
 export function hashCalendarFeedToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+/** Mint a token, store its hash, and return the token — the only time it exists in plaintext. */
+export async function mintCalendarFeedToken(userId: string): Promise<string> {
+  const token = generateCalendarFeedToken();
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({
+      calendarFeedToken: hashCalendarFeedToken(token),
+      calendarFeedTokenCreatedAt: new Date(),
+      calendarFeedLastFetchedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(userSettings.userId, userId));
+  return token;
+}
+
+export async function clearCalendarFeedToken(userId: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ calendarFeedToken: null, calendarFeedTokenCreatedAt: null, calendarFeedLastFetchedAt: null, updatedAt: new Date() })
+    .where(eq(userSettings.userId, userId));
 }
 
 export function buildCalendarFeedUrl(token: string) {
@@ -74,7 +98,7 @@ export async function findUserByFeedToken(rawToken: string) {
 
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({
-    where: eq(userSettings.calendarFeedTokenHash, hashCalendarFeedToken(token)),
+    where: eq(userSettings.calendarFeedToken, hashCalendarFeedToken(token)),
     columns: {
       userId: true,
       calendarFeedLastFetchedAt: true,

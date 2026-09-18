@@ -8,6 +8,7 @@ import { rebuildContactEmbedding } from "@/lib/search";
 import { listOpenActionItems } from "@/lib/action-items";
 import { OPEN_OPPORTUNITY_STATUSES, opportunityKindLabel } from "@/lib/opportunity-kinds";
 import { isoDay } from "@/lib/suggested-reminder-utils";
+import { reportUnlessQuiet } from "@/lib/report-error";
 
 /** Never reject a good summary over an overlong standing paragraph — truncate instead. */
 export function clampStanding(s: string) {
@@ -346,7 +347,10 @@ Rules:
     standing = parsed.standing;
     nextStep = parsed.next_step;
     model = config.model;
-  } catch {
+  } catch (err) {
+    // The deterministic summary is a fine fallback, but a brief that silently never uses
+    // the model is a fault worth seeing — unless the cause is the person's own key setup.
+    reportUnlessQuiet(err, { where: "job.contact-brief", userId, extra: { contactId } });
     summary = buildDeterministicSummary({
       fullName: contact.fullName,
       preferredName: contact.preferredName,
@@ -412,7 +416,10 @@ Rules:
       },
     });
 
-  await rebuildContactEmbedding(userId, contactId).catch(() => null);
+  await rebuildContactEmbedding(userId, contactId).catch((err) => {
+    reportUnlessQuiet(err, { where: "job.contact-brief.embedding", userId, extra: { contactId } });
+    return null;
+  });
 
   return { summary: summary.trim(), standing, nextStep };
 }

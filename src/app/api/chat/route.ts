@@ -11,6 +11,7 @@ import { isPaywallError } from "@/lib/entitlements";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { reportedFailure } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -84,10 +85,8 @@ export async function POST(request: Request) {
       });
     }
   } catch (err) {
-    return NextResponse.json(
-      { error: friendlyError(err, TOAST_COPY.chatFailed) },
-      { status: 400 }
-    );
+    const failure = reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.prepare", userId });
+    return NextResponse.json({ error: failure.error, ref: failure.ref }, { status: 400 });
   }
 
   const encoder = new TextEncoder();
@@ -108,7 +107,8 @@ export async function POST(request: Request) {
               ctx.modelRecruiters,
               (delta) => send({ type: "answer", delta }),
               ctx.focusProfile,
-              ctx.attachedContext
+              ctx.attachedContext,
+              { signal: request.signal }
             ),
           { userId }
         );
@@ -126,6 +126,7 @@ export async function POST(request: Request) {
           messageId: saved.messageId,
           threadId,
           title: saved.title,
+          notice: ctx.searchNotice,
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,
             fullName: c.fullName,
@@ -135,9 +136,18 @@ export async function POST(request: Request) {
           })),
         });
       } catch (err) {
-        send({ type: "error", message: friendlyError(err, TOAST_COPY.chatFailed) });
+        // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
+        // an error of ours either — the provider call was aborted on purpose.
+        if (request.signal.aborted) return;
+        // The status line is already sent, so this reaches the client as an event. Report it:
+        // a mid-stream failure used to leave no trace outside the person's screen.
+        send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });
       } finally {
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // Already closed by the runtime when the client disconnected.
+        }
       }
     },
   });

@@ -27,7 +27,7 @@ import {
   userSettings,
 } from "../src/db/schema";
 import { assertNoForbiddenValues } from "../src/lib/admin-redaction";
-import { recordAccountView } from "../src/lib/admin-operations";
+import { recordAccountView, recordContactView } from "../src/lib/admin-operations";
 import {
   getAdminContactDetail,
   getAdminUserDetail,
@@ -91,7 +91,7 @@ async function seed() {
       lastName: "Vandermeer",
       profileImageUrl: "https://img.clerk.test/marisol.png",
       geminiApiKeyEncrypted: SECRETS.geminiKey,
-      calendarFeedTokenHash: SECRETS.calendarToken,
+      calendarFeedToken: SECRETS.calendarToken,
     })
     .where(eq(userSettings.userId, USER));
 
@@ -230,6 +230,19 @@ async function main() {
 
   await recordAccountView(ADMIN, USER, new Date(Date.now() + 2 * 60 * 60 * 1000));
   check("a view in a later session does", (await viewRows()).length === 2);
+  /* ------------------------------------------------------------ the contact view row */
+
+  // Not throttled, unlike account.view: the privacy policy says every contact record the
+  // operator opens is recorded with its id, and the detail page has no mutations that
+  // would re-render it on its own.
+  await recordContactView(ADMIN, USER, contactId);
+  await recordContactView(ADMIN, USER, contactId);
+  const contactViews = (await viewRows()).filter((r) => r.action === "contact.view");
+  check("every contact record opened is recorded", contactViews.length === 2, `${contactViews.length}`);
+  check(
+    "each row names the contact",
+    contactViews.every((r) => r.resourceType === "contact" && r.resourceId === contactId)
+  );
 
   await cleanup();
   console.log("\nAll unmasked-inspector checks passed.");

@@ -1,6 +1,6 @@
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { listGoals } from "@/actions/goals";
-import { getCurrentUserProfile, isClerkConfigured } from "@/lib/auth";
+import { getDisplayProfile, isClerkConfigured } from "@/lib/auth";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
@@ -94,7 +94,7 @@ export default async function SettingsPage() {
   ] = await Promise.all([
     getSettings(),
     listGoals(),
-    getCurrentUserProfile(),
+    getDisplayProfile(),
     getPlanOverview(),
     requireUserId().then(resolveSurfaceVisibility),
     getTargetCompanies(),
@@ -143,6 +143,7 @@ export default async function SettingsPage() {
           <PlanSettings
             entitlements={planOverview.entitlements}
             usage={planOverview.usage}
+            demoAccount={planOverview.demoAccount}
           />
         </Section>
       </Group>

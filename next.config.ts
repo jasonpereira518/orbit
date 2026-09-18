@@ -47,9 +47,27 @@ const nextConfig: NextConfig = {
       "./public/landing/planets/*.png",
     ],
   },
+  // Dev logs every Server Function call with its arguments by default, which prints the
+  // API keys a person saves in Settings (saveAiSettings, saveOutreachSettings) into the
+  // terminal verbatim.
+  logging: {
+    serverFunctions: false,
+  },
   experimental: {
     // Route navigations animate via React's <ViewTransition> (route-transition.tsx).
     viewTransition: true,
+    // Client router cache for dynamic pages. The default (0) re-renders a page on the
+    // server on every visit, so going back to a tab you left seconds ago showed its
+    // skeleton again for ~350ms minimum — React holds a Suspense reveal for 300ms once a
+    // fallback is on screen. With 30s, a revisit inside the window is served from the
+    // client (measured ~50ms, no skeleton; scripts/dev/nav-timing.mjs).
+    //
+    // Staleness is bounded by more than the timer: any Server Action that calls
+    // revalidatePath/revalidateTag/refresh purges the whole client cache, the import and
+    // capture watchers call router.refresh() when a job lands, and notifications come from
+    // the app pulse, not from page renders. A NEW mutation path must do one of those, or a
+    // quick revisit can show the pre-mutation page for up to this long.
+    staleTimes: { dynamic: 30 },
     // Tree-shake icon/date/motion/clerk imports across the app bundle.
     optimizePackageImports: [
       "lucide-react",

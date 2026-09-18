@@ -21,6 +21,7 @@ import {
   formatDuration,
   sourceBreakdown,
   topAccountsByTraffic,
+  routeLoadTimes,
   topRoutes,
   trafficTotals,
   trafficTrend,
@@ -29,6 +30,11 @@ import {
 import { analyticsDisabledReason } from "@/lib/analytics-visitor";
 
 export const metadata = { title: "Admin · Traffic" };
+
+/** 840 → "840 ms", 2310 → "2.3 s". */
+function formatMs(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
 
 /**
  * What happened before anybody signed up.
@@ -64,7 +70,7 @@ export default async function AdminTrafficPage({
 
   // Each panel degrades on its own rather than taking the page down — the pattern
   // `/admin/health` uses for the same reason.
-  const [totals, trend, routes, geo, sources, devices, accounts] = await Promise.all([
+  const [totals, trend, routes, geo, sources, devices, accounts, loads] = await Promise.all([
     trafficTotals(range).catch(() => null),
     trafficTrend(range).catch(() => []),
     topRoutes(range).catch(() => []),
@@ -72,6 +78,7 @@ export default async function AdminTrafficPage({
     sourceBreakdown(range).catch(() => null),
     deviceBreakdown(range).catch(() => []),
     topAccountsByTraffic(range).catch(() => []),
+    routeLoadTimes(range).catch(() => []),
   ]);
 
   const days = rangeDays(range);
@@ -205,6 +212,45 @@ export default async function AdminTrafficPage({
                     <Td numeric>{r.visitorDays.toLocaleString()}</Td>
                     <Td numeric className="text-muted-foreground">
                       {formatDuration(r.medianDwellSeconds)}
+                    </Td>
+                  </tr>
+                ))}
+              </AdminTable>
+            )}
+          </AdminPanel>
+
+          <AdminPanel title="Page load speed">
+            {loads.length === 0 ? (
+              <EmptyState>
+                No page loads measured in this window. A view is timed from navigation start
+                until no loading skeleton is left on screen.
+              </EmptyState>
+            ) : (
+              <AdminTable minWidth="sm"
+                head={
+                  <>
+                    <Th>Route</Th>
+                    <Th>Kind</Th>
+                    <Th numeric>Samples</Th>
+                    <Th numeric>p50</Th>
+                    <Th numeric>p75</Th>
+                    <Th numeric>p95</Th>
+                  </>
+                }
+              >
+                {loads.map((r) => (
+                  <tr key={`${r.route}:${r.navType}`} className="border-b border-border/40">
+                    <Td className="font-mono text-xs">{r.route}</Td>
+                    {/* Full loads include TTFB and cold starts; in-app clicks start at the
+                        router. Different populations, so they get separate rows. */}
+                    <Td className="text-muted-foreground">
+                      {r.navType === "hard" ? "Full load" : "In-app click"}
+                    </Td>
+                    <Td numeric>{r.samples.toLocaleString()}</Td>
+                    <Td numeric>{formatMs(r.p50Ms)}</Td>
+                    <Td numeric>{formatMs(r.p75Ms)}</Td>
+                    <Td numeric className="text-muted-foreground">
+                      {formatMs(r.p95Ms)}
                     </Td>
                   </tr>
                 ))}

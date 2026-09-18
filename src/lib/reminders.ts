@@ -1158,13 +1158,25 @@ export async function snoozeReminder(
   reminderId: string,
   days = 7
 ): Promise<SnoozeSnapshot | null> {
-  const db = await getDb();
   const due = new Date();
   // Same 1..90 clamp as `scheduleContactFollowUp`. Both write `contacts.nextFollowUpAt`
   // for the same contact by different routes (the dashboard's day presets vs. the
   // reminder row's snooze), so they must not disagree about what a day count means.
   due.setDate(due.getDate() + Math.max(1, Math.min(90, days)));
+  return snoozeReminderTo(userId, reminderId, due);
+}
 
+/**
+ * Snooze to a chosen instant — the reminders page's picker ("Tomorrow", "This weekend", a
+ * calendar day). Same writes and same Undo snapshot as `snoozeReminder`, which is this with
+ * a day count.
+ */
+export async function snoozeReminderTo(
+  userId: string,
+  reminderId: string,
+  due: Date
+): Promise<SnoozeSnapshot | null> {
+  const db = await getDb();
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
     columns: { id: true, contactId: true, dueDate: true, status: true },
@@ -1342,4 +1354,53 @@ export async function reopenReminder(
   }
 
   return { restored: true };
+}
+
+/**
+ * What `dismissReminder` changed. Deleting a reminder is a soft delete to `dismissed` —
+ * the status a note-batch undo already writes — so the row's `item_hash` keeps blocking a
+ * re-paste from recreating it, and so an Undo has something to put back.
+ */
+export type DismissSnapshot = {
+  reminderId: string;
+  previousStatus: string;
+};
+
+export async function dismissReminder(
+  userId: string,
+  reminderId: string
+): Promise<DismissSnapshot | null> {
+  const db = await getDb();
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
+    columns: { status: true },
+  });
+  if (!reminder || reminder.status === "dismissed") return null;
+
+  await db
+    .update(reminders)
+    .set({ status: "dismissed" })
+    .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)));
+
+  return { reminderId, previousStatus: reminder.status };
+}
+
+/** Reverse a `dismissReminder`, only while the reminder is still dismissed. */
+export async function restoreDismissedReminder(
+  userId: string,
+  snap: DismissSnapshot
+): Promise<{ restored: boolean }> {
+  const db = await getDb();
+  const restored = await db
+    .update(reminders)
+    .set({ status: snap.previousStatus })
+    .where(
+      and(
+        eq(reminders.id, snap.reminderId),
+        eq(reminders.userId, userId),
+        eq(reminders.status, "dismissed")
+      )
+    )
+    .returning(); // bare: a field selector breaks over the Db union
+  return { restored: restored.length > 0 };
 }

@@ -215,6 +215,59 @@ export async function topRoutes(
   }));
 }
 
+export type RouteLoadRow = {
+  route: string;
+  navType: "hard" | "soft";
+  /** Views with a measured load — the sample size behind the percentiles. */
+  samples: number;
+  p50Ms: number;
+  p75Ms: number;
+  p95Ms: number;
+};
+
+/**
+ * Page-load percentiles per route, from `page_views.load_ms` (see `src/lib/nav-timing.ts`).
+ *
+ * Split by `nav_type` and never pooled: a hard load includes TTFB and any cold start, a
+ * soft navigation starts at the router, so averaging them would describe neither. Only
+ * rows with a measurement count — a NULL is an unmeasured view, not a fast one.
+ */
+export async function routeLoadTimes(
+  range: Range = "7d",
+  limit = 40,
+  now: Date = new Date()
+): Promise<RouteLoadRow[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT pv.route,
+           pv.nav_type,
+           count(*)::int AS samples,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY pv.load_ms) AS p50,
+           percentile_cont(0.75) WITHIN GROUP (ORDER BY pv.load_ms) AS p75,
+           percentile_cont(0.95) WITHIN GROUP (ORDER BY pv.load_ms) AS p95
+    FROM ${PV} AND pv.created_at >= ${since(range, now)}
+      AND pv.load_ms IS NOT NULL AND pv.nav_type IN ('hard', 'soft')
+    GROUP BY pv.route, pv.nav_type
+    ORDER BY samples DESC
+    LIMIT ${limit}
+  `);
+  return rowsOf<{
+    route: string;
+    nav_type: "hard" | "soft";
+    samples: number;
+    p50: string | number;
+    p75: string | number;
+    p95: string | number;
+  }>(result).map((r) => ({
+    route: r.route,
+    navType: r.nav_type,
+    samples: num(r.samples),
+    p50Ms: Math.round(num(r.p50)),
+    p75Ms: Math.round(num(r.p75)),
+    p95Ms: Math.round(num(r.p95)),
+  }));
+}
+
 export type GeoRow = {
   country: string | null;
   region: string | null;
@@ -480,16 +533,9 @@ export async function acquisitionFunnel(
   ];
 }
 
-/**
- * The minimum denominator a percentage is allowed to have.
- *
- * `/admin/growth` bans rates outright — "at this scale a percentage is two people wearing
- * a confidence interval". Conversion rate is the one question that cannot be answered
- * without one, so the compromise is this: every rate prints its own fraction beside it,
- * and below this many observations the percentage is withheld entirely rather than
- * dressing up a coin flip as a trend.
- */
-export const MIN_RATE_DENOMINATOR = 30;
+// Moved to a dependency-free module so client charts can share it; re-exported here so
+// every existing server import keeps working.
+export { MIN_RATE_DENOMINATOR, formatRate } from "@/lib/format-rate";
 
 /**
  * Seconds as a short human duration. Shared by the traffic page and the per-account
@@ -504,14 +550,6 @@ export function formatDuration(seconds: number | null): string {
   const h = Math.floor(m / 60);
   const rem = m % 60;
   return rem === 0 ? `${h}h` : `${h}h ${rem}m`;
-}
-
-/** "9 of 14" — with "(64%)" appended only once the denominator can support it. */
-export function formatRate(count: number, of: number | null): string {
-  if (of == null || of === 0) return count.toLocaleString();
-  const fraction = `${count.toLocaleString()} of ${of.toLocaleString()}`;
-  if (of < MIN_RATE_DENOMINATOR) return fraction;
-  return `${fraction} (${Math.round((count / of) * 100)}%)`;
 }
 
 /* ------------------------------------------------------------------------------------
@@ -784,7 +822,7 @@ export type AccountTrafficRow = {
 /**
  * Accounts ranked by how much they actually used the product in the window.
  *
- * Distinct from `activeTrend` in `admin-trends.ts`, which counts accounts that WROTE
+ * Distinct from `rollingActiveTrend` in `admin-trends.ts`, which counts accounts that WROTE
  * something across five tables. This counts accounts that showed up and looked — the
  * people who open Orbit daily and read without editing are invisible to the write-based
  * measure and are exactly who this finds.

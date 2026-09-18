@@ -15,6 +15,7 @@ import {
 import {
   buildTranscribeBody,
   parseTranscribeResponse,
+  transcribeWithWisprOutcome,
   type WisprContext,
 } from "../src/lib/wispr";
 
@@ -288,4 +289,39 @@ for (const bad of [null, undefined, "", 0, [], { error: "nope" }, { text: 42 }, 
   check(`rejects ${JSON.stringify(bad) ?? "undefined"}`, parseTranscribeResponse(bad) === null);
 }
 
-console.log("\nsmoke-wispr: all checks passed");
+// ── transcribeWithWisprOutcome ────────────────────────────────────────────────────────
+async function outcomeChecks() {
+  console.log("\ntranscribeWithWisprOutcome");
+  const realFetch = globalThis.fetch;
+  const input = { audioBase64: "AAAA", context: { dictionary_context: [], app: { name: "Orbit", type: "other" as const } } };
+  const answer = (res: Response) => { globalThis.fetch = (async () => res) as typeof fetch; };
+  try {
+    answer(new Response('{"error":"bad key"}', { status: 401 }));
+    const r401 = await transcribeWithWisprOutcome("k", input);
+    check("a 401 is a rejected key", r401.text === null && "reason" in r401 && r401.reason === "rejected_key");
+    answer(new Response("{}", { status: 403 }));
+    const r403 = await transcribeWithWisprOutcome("k", input);
+    check("a 403 is a rejected key", "reason" in r403 && r403.reason === "rejected_key");
+    answer(Response.json({ text: "Met Priya." }));
+    check("a transcript comes back", (await transcribeWithWisprOutcome("k", input)).text === "Met Priya.");
+    answer(Response.json({ text: "  " }));
+    const empty = await transcribeWithWisprOutcome("k", input);
+    check("silence is empty, not an error", "reason" in empty && empty.reason === "empty");
+    answer(new Response("oops", { status: 500 }));
+    const down = await transcribeWithWisprOutcome("k", input);
+    check("an outage is an error", "reason" in down && down.reason === "error");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+outcomeChecks().then(
+  () => {
+    console.log("\nsmoke-wispr: all checks passed");
+    process.exit(0);
+  },
+  (err) => {
+    console.error(err);
+    process.exit(1);
+  }
+);

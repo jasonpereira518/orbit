@@ -9,14 +9,15 @@ import {
   deviceFromUserAgent,
   hashVisitor,
 } from "@/lib/analytics-visitor";
-import { recordDwell, recordPageView } from "@/lib/page-views";
+import { recordDwell, recordLoad, recordPageView } from "@/lib/page-views";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
  * Traffic ingest. The client beacon in `src/components/analytics/pageview-beacon.tsx`
- * POSTs one of these per page view, then POSTs a `dwell` for it on the way out.
+ * POSTs one of these per page view, a `load` once its content is on screen, then a `dwell`
+ * for it on the way out.
  *
  * ONE VERB, TWO KINDS, and not because that is prettier. The exit message has to survive
  * the page being torn down, which means `navigator.sendBeacon` — the only transport the
@@ -120,6 +121,8 @@ export async function POST(request: Request) {
       url?: unknown;
       referrer?: unknown;
       dwellMs?: unknown;
+      loadMs?: unknown;
+      navType?: unknown;
     } | null;
 
     if (!body || !isUuid(body.id)) return OK();
@@ -127,6 +130,17 @@ export async function POST(request: Request) {
     // Time-on-page, sent by `sendBeacon` as the page goes away.
     if (body.kind === "dwell") {
       if (typeof body.dwellMs === "number") await recordDwell(body.id, body.dwellMs);
+      return OK();
+    }
+
+    // Time until the page's content was on screen, sent once the skeletons are gone.
+    if (body.kind === "load") {
+      if (
+        typeof body.loadMs === "number" &&
+        (body.navType === "hard" || body.navType === "soft")
+      ) {
+        await recordLoad(body.id, body.loadMs, body.navType);
+      }
       return OK();
     }
 

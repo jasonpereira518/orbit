@@ -175,3 +175,49 @@ export function lockedByImplication(
   for (const id of picked) out.delete(id);
   return out;
 }
+
+/** A unit of `purgeUserData`: a category, or the full-purge-only billing anonymisation. */
+export type PurgeStepKey = DataCategory | "billing";
+
+/** Attempts (the first run plus nightly resumes) before a purge run is marked failed. */
+export const PURGE_MAX_ATTEMPTS = 5;
+
+export function isDataCategory(value: string): value is DataCategory {
+  return (DATA_CATEGORY_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * The ordered steps for an already-expanded selection. `preferences` (the `user_settings`
+ * reset) always runs LAST, after billing, exactly as `purgeUserData` always has — the
+ * settings row is what every other step's bookkeeping hangs off.
+ */
+export function planPurgeSteps(
+  categories: readonly string[],
+  fullPurge: boolean
+): PurgeStepKey[] {
+  const selected = new Set(categories);
+  const steps: PurgeStepKey[] = DATA_CATEGORY_META.map((c) => c.id).filter(
+    (id) => id !== "preferences" && selected.has(id)
+  );
+  if (fullPurge) steps.push("billing");
+  if (selected.has("preferences")) steps.push("preferences");
+  return steps;
+}
+
+export type DisconnectProvider = "gmail" | "outlook";
+
+/**
+ * What "Also delete what Orbit imported from this account" deletes, as whole categories
+ * from the registry above, so the dialog can show each one's own label and description.
+ * Only categories an account actually fills and that stay within it: Gmail feeds the
+ * recruiter scan; Outlook feeds only contacts, and the `contacts` category is every contact.
+ */
+export const DISCONNECT_DELETE_CATEGORIES: Readonly<
+  Record<DisconnectProvider, readonly DataCategory[]>
+> = {
+  gmail: ["recruiters"],
+  outlook: [],
+};
+
+/** Where a user removes Orbit's Outlook access themselves (no app-side revoke exists). */
+export const MICROSOFT_ACCOUNT_URL = "https://myaccount.microsoft.com/";

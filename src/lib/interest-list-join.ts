@@ -15,6 +15,7 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { ipLogTag } from "@/lib/log-redaction";
 import type { Attribution } from "@/lib/attribution-parse";
 import {
   MIN_FILL_MS,
@@ -105,7 +106,7 @@ export async function joinInterestListCore(
     // ticket — the write must never fail open — but only the first is expected. The
     // response stays indistinguishable from a real join, so this log is the only signal
     // that a real person was dropped.
-    if (isRateLimitedError(err)) console.warn("[interest-list] join rate-limited", { ip: ctx.ip });
+    if (isRateLimitedError(err)) console.warn("[interest-list] join rate-limited", { ipTag: ipLogTag(ctx.ip) });
     else console.error("[interest-list] limiter failed", err);
     return { ok: true, ticket: await plausibleTicket() };
   }
