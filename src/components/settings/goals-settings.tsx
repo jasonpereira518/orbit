@@ -38,6 +38,7 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
                 type="button"
                 size="icon"
                 variant="ghost"
+                aria-label={`Remove goal: ${g.text}`}
                 disabled={pending}
                 onClick={() =>
                   start(() =>

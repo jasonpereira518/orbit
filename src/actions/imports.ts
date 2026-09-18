@@ -60,6 +60,7 @@ import {
   fetchOutlookContacts,
   getValidAccessToken as getValidOutlookAccessToken,
 } from "@/lib/outlook";
+import { actionFailure } from "@/lib/action-failure";
 
 function simpleHash(input: string) {
   let h = 0;
@@ -100,10 +101,12 @@ function hasEncodingArtifacts(rows: { firstName: string; lastName: string; compa
  * `LinkedInExportError` is forwarded word for word: anything else is a bug, or
  * PapaParse's own wording, and was never written to be read in a toast.
  */
-function linkedInExportErrorMessage(err: unknown): string {
+async function linkedInExportErrorMessage(err: unknown, where: string): Promise<string> {
+  // A LinkedInExportError is about the person's file. Anything else is a parser fault, and
+  // it used to be reported to them as "is it the right export?" with no trace anywhere.
   return err instanceof LinkedInExportError
     ? err.message
-    : "Couldn’t read that file — is it the LinkedIn export this card asks for?";
+    : actionFailure(err, "Couldn’t read that file — is it the LinkedIn export this card asks for?", where);
 }
 
 type PreviewRefusal = { error: string };
@@ -127,7 +130,7 @@ export async function previewLinkedInCsv(csvText: string) {
   try {
     parsed = parseLinkedInConnectionsCsv(csvText);
   } catch (err) {
-    return refusal(linkedInExportErrorMessage(err));
+    return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin"));
   }
   const { columns, rows, warnings } = parsed;
   if (hasEncodingArtifacts(rows)) {
@@ -363,7 +366,7 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
   try {
     parsed = parseLinkedInMessagesCsv(csvText);
   } catch (err) {
-    return refusal(linkedInExportErrorMessage(err));
+    return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin-messages"));
   }
   const { columns, messages } = parsed;
   if (!messages.length) {
@@ -1090,7 +1093,12 @@ export async function previewContactsFile(
       error:
         err instanceof ContactsFileError
           ? err.message
-          : "Couldn’t read that file — export your contacts again as a vCard (.vcf) and try that",
+          : await actionFailure(
+              err,
+              "Couldn’t read that file — export your contacts again as a vCard (.vcf) and try that",
+              "imports.preview-contacts-file",
+              { fileName }
+            ),
     };
   }
 

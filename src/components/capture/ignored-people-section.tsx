@@ -132,7 +132,7 @@ function IgnoredList({ onCount }: { onCount: (n: number) => void }) {
                 variant="ghost"
                 size="icon-sm"
                 aria-label={`Forget ${p.displayName}`}
-                className="text-muted-foreground"
+                className="tap-target relative text-muted-foreground"
                 onClick={() => {
                   remove(p.id);
                   void forgetIgnoredPerson(p.id).then((res) => {

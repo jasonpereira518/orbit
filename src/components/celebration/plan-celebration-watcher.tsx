@@ -187,53 +187,61 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     maybeCelebrate(plan);
   }, [plan, maybeCelebrate]);
 
-  // Feed 2 — fast post-checkout poll, armed by the ?upgraded= param the
-  // Stripe success URL carries. The param only arms the poll; the celebrated
-  // tier always comes from what the server actually says.
+  // Feed 2 — post-checkout. With a `session_id`, first ask the server to verify the session
+  // with Stripe and apply it (the webhook may be late or failing); then fast-poll as before.
+  // Params are stripped only AFTER that action settles: a router navigation landing while an
+  // action is queued can drop the action.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const upgraded = params.get("upgraded");
     if (upgraded !== "pro" && upgraded !== "lifetime") return;
-    // Lifetime's success URL carries the Checkout Session, so the first tick can ask Stripe
-    // directly instead of waiting on the webhook (`confirmCheckoutSession`).
-    const sessionId = upgraded === "lifetime" ? params.get("session_id") : null;
+    const sessionId = params.get("session_id");
 
-    const url = new URL(window.location.href);
-    url.searchParams.delete("upgraded");
-    url.searchParams.delete("session_id");
-    // Strip immediately so a refresh cannot re-arm; the hash (and its scroll
-    // target) survives the replace.
-    router.replace(url.pathname + url.search + url.hash);
+    let cancelled = false;
+    let interval: number | undefined;
 
-    let attempts = 0;
-    let running = false;
-    const interval = window.setInterval(async () => {
-      if (running) return;
-      if (activeRef.current || attempts >= FAST_POLL_ATTEMPTS) {
-        window.clearInterval(interval);
-        return;
-      }
-      attempts += 1;
-      running = true;
-      try {
-        // Inside the tick, not before the `router.replace` above: a server action queued
-        // during that navigation is dropped and hangs.
-        if (attempts === 1 && sessionId) {
+    void (async () => {
+      if (sessionId) {
+        try {
           const { status } = await confirmCheckoutSession(sessionId);
           if (status === "processing") {
             toast.info("Your payment is still clearing — Lifetime switches on the moment it does");
           }
+        } catch {
+          // The webhook is still the guarantee; polling below picks it up.
         }
-        maybeCelebrate(await getCurrentPlan());
-      } catch {
-        // Network blips: the next tick, the ambient poll, or the next page
-        // load will get it.
-      } finally {
-        running = false;
       }
-    }, FAST_POLL_MS);
-    return () => window.clearInterval(interval);
-    // Arm once per mount; the param is gone after the replace.
+      if (cancelled) return;
+      const url = new URL(window.location.href);
+      url.searchParams.delete("upgraded");
+      url.searchParams.delete("session_id");
+      router.replace(url.pathname + url.search + url.hash);
+
+      let attempts = 0;
+      let running = false;
+      interval = window.setInterval(async () => {
+        if (running) return;
+        if (activeRef.current || attempts >= FAST_POLL_ATTEMPTS) {
+          window.clearInterval(interval);
+          return;
+        }
+        attempts += 1;
+        running = true;
+        try {
+          maybeCelebrate(await getCurrentPlan());
+        } catch {
+          // Network blips: the next tick, the ambient poll, or the next page load will get it.
+        } finally {
+          running = false;
+        }
+      }, FAST_POLL_MS);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (interval !== undefined) window.clearInterval(interval);
+    };
+    // Arm once per mount; the params are gone after the replace.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -279,14 +287,12 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Live-demo trigger — Ctrl+Shift+U. Unlike the dev preview above, this DOES exist in
-  // production: it's how the showcase account gets Lifetime on stage without a real
-  // Stripe checkout. It has to work in prod to be usable at the venue, so the guard that
-  // matters is server-side, not `NODE_ENV`: `triggerDemoCelebration` only ever comps the
-  // one Clerk account named by `DEMO_ACCOUNT_USER_ID`, checked against the caller's own
-  // session — every other signed-in user gets `{ ok: false }` and the keypress is a
-  // silent no-op, so the shortcut is worthless to anyone who isn't already signed into
-  // that specific account.
+  // Live-demo trigger — Ctrl+Shift+U. Unlike the dev preview above, this is not gated on
+  // NODE_ENV: it is how the showcase account gets Lifetime on stage without a real Stripe
+  // checkout, on whatever preview or local deployment the demo runs from. The guard that
+  // matters is server-side: `triggerDemoCelebration` only comps the one Clerk account named
+  // by `DEMO_ACCOUNT_USER_ID`, which src/lib/env.ts forbids in production, so there every
+  // keypress is a silent no-op.
   const demoTriggerBusyRef = useRef(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

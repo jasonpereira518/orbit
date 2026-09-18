@@ -282,12 +282,12 @@ export function ReminderCard({
             </div>
           )}
         </div>
-        <div className="flex shrink-0 items-start gap-1">
+        <div className="flex shrink-0 items-start gap-1 pointer-coarse:gap-4">
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
-            className="text-muted-foreground"
+            className="tap-target relative text-muted-foreground"
             aria-label="Edit reminder"
             onClick={() => setEditing(true)}
           >

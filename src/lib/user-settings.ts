@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, count, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { and, count, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { queuePlanUpgradeTransition } from "@/lib/plan-upgrade-events";
 import { userSettings } from "@/db/schema";
@@ -179,6 +179,33 @@ export async function setUserIdentity(
 }
 
 /**
+ * Stores a Terms acceptance. `onlyIfUnset` is for the Clerk webhook: user.created can be
+ * retried, and a retry must never re-stamp an old acceptance with a newer version. The
+ * guided-setup checkbox writes unconditionally — it IS an acceptance of the current text.
+ * Returns whether a row was written.
+ */
+export async function recordTermsAcceptance(
+  userId: string,
+  acceptance: { acceptedAt: Date; version: string },
+  opts: { onlyIfUnset?: boolean } = {}
+): Promise<boolean> {
+  const db = await getDb();
+  const where = opts.onlyIfUnset
+    ? and(eq(userSettings.userId, userId), isNull(userSettings.termsAcceptedAt))
+    : eq(userSettings.userId, userId);
+  const rows = await db
+    .update(userSettings)
+    .set({
+      termsAcceptedAt: acceptance.acceptedAt,
+      termsVersion: acceptance.version,
+      updatedAt: new Date(),
+    })
+    .where(where)
+    .returning();
+  return rows.length > 0;
+}
+
+/**
  * Clerk timestamps are unix epochs, but the units vary by field across the API surface.
  * Anything below ~2001-09 in milliseconds is far more likely to be seconds.
  */
@@ -217,7 +244,7 @@ export type SubscriptionMirror = {
 export async function setSubscriptionState(
   userId: string,
   mirror: SubscriptionMirror,
-  opts: { stripeCustomerId?: string | null; eventKey?: string } = {}
+  opts: { stripeCustomerId?: string | null; eventKey?: string; eventAt?: Date } = {}
 ) {
   const existing = await ensureUserSettings(userId);
   const db = await getDb();
@@ -235,6 +262,12 @@ export async function setSubscriptionState(
         : {}),
       ...(opts.stripeCustomerId !== undefined
         ? { stripeCustomerId: opts.stripeCustomerId }
+        : {}),
+      // GREATEST, not assignment: two deliveries racing must never move the clock backwards.
+      ...(opts.eventAt
+        ? {
+            subscriptionEventAt: sql`GREATEST(${userSettings.subscriptionEventAt}, ${opts.eventAt.toISOString()}::timestamptz)`,
+          }
         : {}),
       updatedAt: new Date(),
     })
@@ -312,6 +345,28 @@ export async function setLifetimePurchase(
   }
 
   return updated;
+}
+
+/**
+ * Withdraws a Lifetime purchase after a full refund or a lost dispute.
+ *
+ * Idempotent: Stripe retries, and a second revocation of an already-withdrawn grant is a
+ * no-op. Comps are untouched — `comped_plan` outranks this column in `resolvePlan`, and an
+ * operator's grant is not something a refund can take back. Queues no plan transition:
+ * the celebration watcher only ever looks upward.
+ *
+ * Returns whether a grant was actually removed.
+ */
+export async function revokeLifetimePurchase(userId: string): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db
+    .update(userSettings)
+    .set({ lifetimePurchasedAt: null, updatedAt: new Date() })
+    .where(
+      and(eq(userSettings.userId, userId), isNotNull(userSettings.lifetimePurchasedAt))
+    )
+    .returning();
+  return rows.length > 0;
 }
 
 /**

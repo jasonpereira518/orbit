@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { captureImageFiles, normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
 import { discardCapturePhotos, storeCapturePhotos } from "@/lib/capture-photos";
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
-import { friendlyError } from "@/lib/errors";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { MAX_SCAN_PAGES, estimateDecodedBytes } from "@/lib/scan-image";
 import {
@@ -11,6 +10,7 @@ import {
   recordHandoffError,
   recordHandoffTranscript,
 } from "@/lib/scan-handoff";
+import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 
 /**
  * Pages photographed on a phone, posted against a scan handoff token.
@@ -120,8 +120,14 @@ export async function POST(
     // laptop for a fresh QR code just to retake it would be a poor trade.
     // `friendlyError`, never `err.message`: this reaches the phone verbatim, and a raw
     // provider body is no more readable there than it is anywhere else.
-    const message = friendlyError(err, "Couldn’t read those pages — try again?");
-    await recordHandoffError(handoff.id, message).catch(() => {});
+    const message = reportedFailure(err, "Couldn’t read those pages — try again?", {
+      where: "route.scan-pages",
+      userId: handoff.userId,
+      extra: { handoffId: handoff.id, pages: files.length },
+    }).error;
+    await recordHandoffError(handoff.id, message).catch(
+      reportAndContinue({ where: "route.scan-pages.record", userId: handoff.userId }, undefined)
+    );
     return NextResponse.json({ error: message }, { status: 422 });
   }
 }

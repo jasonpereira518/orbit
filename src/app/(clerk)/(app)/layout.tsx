@@ -4,10 +4,12 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
+import { shouldShowTermsNotice } from "@/lib/legal";
 import { AppShell } from "@/components/layout/app-shell";
 import { LifetimeAiOfferProvider } from "@/components/lifetime-ai-offer";
 import { managedKeysConfigured } from "@/lib/ai-access";
 import { SectionFlash } from "@/components/layout/section-flash";
+import { TermsUpdateNotice } from "@/components/legal/terms-update-notice";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
@@ -93,6 +95,14 @@ export default async function AppLayout({
     redirect("/onboarding");
   }
 
+  // Accounts that predate Clerk's consent checkbox, and anyone who has not accepted the
+  // current TERMS_VERSION, are asked once in the shell rather than never (B9a).
+  const showTermsNotice = shouldShowTermsNotice({
+    clerkOn,
+    demoMode,
+    termsVersion: settings.termsVersion,
+  });
+
   const theme = resolveThemePreference(settings.theme);
 
   // Both feed the same render and neither reads the other, so they go together rather than
@@ -133,6 +143,7 @@ export default async function AppLayout({
           at a card — every account alert does — lands with that card called out. Mounted
           here so it works on every route rather than being wired up page by page. */}
       <SectionFlash />
+      {showTermsNotice && <TermsUpdateNotice />}
       {children}
       </AppShell>
 

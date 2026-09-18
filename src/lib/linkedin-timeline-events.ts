@@ -5,6 +5,7 @@
 
 import { z } from "zod";
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { qualifiesForTimelineAi } from "@/lib/timeline-cost";
 import { parseInteractionDateFromNotes } from "@/lib/interaction-date";
 
 export type LinkedInTimelineMessage = {
@@ -91,6 +92,11 @@ export async function extractLinkedInTimelineEvents(
     });
   }
 
+  // A single message is a reach-out and nothing else — there is no reply in which a
+  // meeting could have been proposed. Skipping the model here is most threads in an
+  // export, at no loss (audit A6).
+  if (!qualifiesForTimelineAi(usable.length)) return events;
+
   const transcript = usable
     .map((m) => {
       const when = m.date
@@ -103,7 +109,10 @@ export async function extractLinkedInTimelineEvents(
 
   try {
     const content = await completeJson(userId, {
-    operation: "import.linkedin.timeline",
+      operation: "import.linkedin.timeline",
+      // The fast tier (FAST_MODELS in ai.ts), not the user's chat model: extraction of at
+      // most eight short events does not need it, and this runs once per conversation.
+      speed: "fast",
       temperature: 0.1,
       system: `You extract relationship timeline events from a LinkedIn DM thread.
 Return strict JSON:

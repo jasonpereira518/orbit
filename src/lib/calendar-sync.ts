@@ -13,6 +13,7 @@ import {
   type NetworkEvent,
 } from "@/lib/ingest/events";
 import type { ReminderInsert } from "@/lib/import-engine";
+import { reportError } from "@/lib/report-error";
 
 const SYNC_WINDOW_PAST_MS = 90 * 86400000;
 const SYNC_WINDOW_FUTURE_MS = 60 * 86400000;
@@ -128,8 +129,9 @@ export async function applyNetworkingEvents(
   try {
     const candidates = calendarEventsToCandidates(windowed, selfEmails, "ics");
     if (candidates.length > 0) await recordDiscoveryCandidates(userId, candidates);
-  } catch {
-    // Never allowed to fail the calendar import that triggered it.
+  } catch (err) {
+    // Never allowed to fail the calendar import that triggered it; reported (throttled).
+    reportError(err, { where: "job.calendar.discovery", userId, level: "warning" });
   }
 
   const networkEvents: NetworkEvent[] = [];
@@ -327,6 +329,7 @@ export async function syncDueCalendarSubscriptions(userId: string) {
       const stats = await syncCalendarSubscription(userId, sub.id);
       results.push({ id: sub.id, stats });
     } catch (err) {
+      reportError(err, { where: "job.calendar.sync-due", userId, level: "warning", extra: { subscriptionId: sub.id } });
       results.push({
         id: sub.id,
         error: err instanceof Error ? err.message : "Sync failed",

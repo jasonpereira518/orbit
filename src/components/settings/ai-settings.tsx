@@ -55,6 +55,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   }
   const [provider, setProvider] = useState<AiProvider>(initialSettings.aiProvider);
   const [apiKey, setApiKey] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
   const [wisprKey, setWisprKey] = useState("");
   const [model, setModel] = useState(initialSettings.aiModel);
   const [customModel, setCustomModel] = useState(
@@ -99,6 +100,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             const next = value as AiProvider;
             setProvider(next);
             setApiKey("");
+            setKeyError(null);
             setModel(DEFAULT_MODELS[next]);
             setCustomModel(false);
           }}
@@ -167,8 +169,18 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
               : providerMeta.keyPlaceholder
           }
           value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
+          aria-invalid={keyError ? true : undefined}
+          aria-describedby={keyError ? "key-error" : undefined}
+          onChange={(e) => {
+            setApiKey(e.target.value);
+            setKeyError(null);
+          }}
         />
+        {keyError && (
+          <p id="key-error" role="alert" className="text-sm text-destructive">
+            {keyError}
+          </p>
+        )}
       </div>
 
       <div className="space-y-1.5">
@@ -238,12 +250,18 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                   model,
                   apiKey: apiKey.trim() || undefined,
                 });
+                if (!res.ok) {
+                  setKeyError(res.error);
+                  return;
+                }
+                setKeyError(null);
                 setApiKey("");
                 setSettings(await getSettings());
                 toast.success(
-                  res.embeddingReset
-                    ? "Saved — search will re-index for the new provider"
-                    : "AI settings saved"
+                  res.keyNote ??
+                    (res.embeddingReset
+                      ? "Saved — search will re-index for the new provider"
+                      : "AI settings saved")
                 );
               } catch (err) {
                 toast.error(
@@ -297,6 +315,11 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             onChange={(e) => setWisprKey(e.target.value)}
           />
         </div>
+        {settings.wisprKeyRejected ? (
+          <p role="status" className="text-sm text-warning">
+            Wispr didn’t accept this key, so voice notes use your AI provider instead — replace it or clear it
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
@@ -334,9 +357,38 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       <SettingsRow title="Saved keys">
         <ul className="space-y-1 text-sm text-muted-foreground">
           {settings.providers.map((p) => (
-            <li key={p.id}>
-              {p.label}:{" "}
-              {p.hasPersonalKey ? "saved" : p.managedAvailable ? "none — Orbit’s key" : "none"}
+            <li key={p.id} className="flex min-h-9 items-center justify-between gap-3">
+              <span>
+                {p.label}: {p.hasPersonalKey ? "saved" : p.managedAvailable ? "none — Orbit’s key" : "none"}
+              </span>
+              {/* Per key, not per selected provider: switching provider used to leave the
+                  old key live for embeddings and transcription with no way to remove it. */}
+              {p.hasPersonalKey ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={pending}
+                  aria-label={`Clear saved ${p.label} key`}
+                  onClick={() =>
+                    start(async () => {
+                      try {
+                        const res = await clearApiKey(p.id);
+                        setSettings(await getSettings());
+                        toast.success(
+                          res.embeddingReset
+                            ? `${p.label} key cleared — search will re-index`
+                            : `${p.label} key cleared`
+                        );
+                      } catch (err) {
+                        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+                      }
+                    })
+                  }
+                >
+                  Clear
+                </Button>
+              ) : null}
             </li>
           ))}
         </ul>

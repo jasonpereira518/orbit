@@ -18,7 +18,7 @@ import type { PersonDraft } from "@/components/capture/review/person-card";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { SuggestedOpportunitiesReview } from "@/components/capture/suggested-opportunities-review";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
-import { acceptedPeople, countDecisions, defaultReminderKeys, opportunityRows, peopleDecisions } from "@/lib/capture/review-reducer";
+import { acceptedPeople, countDecisions, defaultReminderKeys, opportunityRows, peopleDecisions, plannedCaptureReminders, saveButtonLabel } from "@/lib/capture/review-reducer";
 import type { CaptureDecision, CaptureDecisions, CaptureJobResult, CaptureOpportunityChoices, CaptureReminderChoices, OpportunityReviewItem } from "@/lib/capture/types";
 import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 
@@ -87,22 +87,30 @@ export function CaptureSummary({
   const counts = countDecisions(result.items, decisions);
   const [editing, setEditing] = useState<string | null>(null);
   const checkedDates = suggestions.filter((s) => s.checked).length;
+  // Everything the save will write, not just the ticked dates: each accepted person's action
+  // items and fallback follow-up count too, after the save's own de-duplication. Meeting
+  // digest items are counted by their ticks.
+  const planned = useMemo(
+    () =>
+      plannedCaptureReminders(
+        result,
+        decisions,
+        suggestions
+          .filter((s) => s.checked)
+          .map((s) => ({ title: s.title, dueDateIso: s.dueDateIso, dateBasis: s.dateBasis, personName: s.personNameOverride ?? s.personName }))
+      ),
+    [result, decisions, suggestions]
+  );
+  const reminderCount = planned.length + meetingExtraCount;
   const opportunities = opportunityRows(accepted, opportunityChoices);
   const checkedOpportunities = opportunities.filter((o) => o.checked).length;
-
-  const saveLabel = useMemo(() => {
-    const parts: string[] = [];
-    if (hasMeeting) parts.push("meeting");
-    if (accepted.length) parts.push(`${accepted.length} ${accepted.length === 1 ? "contact" : "contacts"}`);
-    const reminderCount = checkedDates + meetingExtraCount;
-    if (reminderCount) parts.push(`${reminderCount} ${reminderCount === 1 ? "reminder" : "reminders"}`);
-    if (checkedOpportunities) {
-      parts.push(`${checkedOpportunities} ${checkedOpportunities === 1 ? "opportunity" : "opportunities"}`);
-    }
-    return parts.length ? `Save ${parts.join(" + ")}` : "Save";
-  }, [accepted.length, checkedDates, checkedOpportunities, hasMeeting, meetingExtraCount]);
-
-  const actionItemCount = accepted.reduce((n, a) => n + a.item.parsed.action_items.length, 0);
+  const saveLabel = saveButtonLabel({
+    meeting: hasMeeting,
+    contacts: accepted.length,
+    reminders: reminderCount,
+    opportunities: checkedOpportunities,
+  });
+  const actionItemCount = planned.filter((p) => p.kind === "action_item").length;
   const dueLabel = result.anchorIso ? format(addDays(new Date(`${result.anchorIso}T12:00:00`), 14), "MMM d") : "in 2 weeks";
   const editingEntry = editing ? accepted.find((a) => a.item.key === editing) ?? null : null;
   const canSave = hasMeeting || accepted.length > 0 || checkedDates > 0;
@@ -164,7 +172,7 @@ export function CaptureSummary({
                       variant="ghost"
                       size="icon-sm"
                       aria-label={`Set ${name} aside`}
-                      className="text-muted-foreground"
+                      className="tap-target relative text-muted-foreground"
                       disabled={saving}
                       onClick={() => onDecide(item.key, decisionFromDraft("reject", index, draft))}
                     >
@@ -177,7 +185,7 @@ export function CaptureSummary({
           </ul>
         ) : hasMeeting ? (
           <p className="text-sm text-muted-foreground">
-            No people to save from this meeting — its summary{checkedDates + meetingExtraCount > 0 ? " and reminders" : ""} will still be saved.
+            No people to save from this meeting — its summary{reminderCount > 0 ? " and reminders" : ""} will still be saved.
           </p>
         ) : suggestions.length > 0 ? (
           <p className="text-sm text-muted-foreground">No people to save from these notes — just the dates below.</p>

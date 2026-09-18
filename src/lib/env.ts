@@ -44,6 +44,16 @@ export const EXPECTED_IN_PRODUCTION = [
   // Not read by the app at all — it exists so `checkMigrationTarget` below can tell a
   // preview build pointed at its own Neon branch from one pointed at production.
   "PRODUCTION_DB_HOST",
+  // Critical alerts also go here (the channel with push on); unset, criticals only reach #orbit-ops.
+  "SLACK_OPS_CRITICAL_WEBHOOK_URL",
+  // The only detector for a dead scheduler: the sweep pings it, the monitor pages on silence.
+  "BETTERSTACK_HEARTBEAT_URL",
+  // Unset, bounces and complaints are never recorded and a dead address is mailed forever.
+  "RESEND_WEBHOOK_SECRET",
+  // Gmail, Google Contacts and Calendar all ride this one OAuth client.
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
+  "GOOGLE_REDIRECT_URI",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [
@@ -80,6 +90,8 @@ export type EnvReport = {
   warnings: string[];
   /** Names from REQUIRED_IN_PRODUCTION that are unset. Feeds the ops sweep's `config.missing`. */
   missingRequired: string[];
+  /** Names from EXPECTED_IN_PRODUCTION that are unset. Production only. Feeds `config.alerts_undeliverable`. */
+  missingExpected: string[];
 };
 
 type EnvBag = Record<string, string | undefined>;
@@ -90,6 +102,7 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
   const errors: string[] = [];
   const warnings: string[] = [];
   const missingRequired: string[] = [];
+  const missingExpected: string[] = [];
 
   if (options.vercelEnv === "production") {
     for (const name of REQUIRED_IN_PRODUCTION) {
@@ -146,7 +159,10 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     }
 
     for (const name of EXPECTED_IN_PRODUCTION) {
-      if (!has(env, name)) warnings.push(`${name} is unset; the feature it enables is off`);
+      if (!has(env, name)) {
+        warnings.push(`${name} is unset; the feature it enables is off`);
+        missingExpected.push(name);
+      }
     }
     // Lifetime is sold as including AI. Selling it with no managed key means every buyer
     // without a key of their own is refused — a warning rather than a failed build, since
@@ -160,7 +176,7 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
         "No ORBIT_MANAGED_*_API_KEY is set; Lifetime is on sale but its included AI has no key to run on"
       );
     }
-    return { errors, warnings, missingRequired };
+    return { errors, warnings, missingRequired, missingExpected };
   }
 
   if (options.vercelEnv === "preview") {
@@ -180,14 +196,14 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     if (!has(env, "PRODUCTION_DB_HOST")) {
       warnings.push("PRODUCTION_DB_HOST is unset; the preview-migration guard is unarmed");
     }
-    return { errors, warnings, missingRequired };
+    return { errors, warnings, missingRequired, missingExpected };
   }
 
   // Local development and CI: nothing is required — PGlite and demo mode cover the rest.
   for (const name of REQUIRED_IN_PRODUCTION) {
     if (!has(env, name)) warnings.push(`${name} is unset (required in production)`);
   }
-  return { errors, warnings, missingRequired };
+  return { errors, warnings, missingRequired, missingExpected };
 }
 
 /** The report for this process. */
@@ -272,4 +288,45 @@ export function checkMigrationTarget(
     };
   }
   return { allowed: true, reason: `target ${target ?? "(unparseable)"} is not the production host` };
+}
+
+/** drizzle-kit subcommands that write schema to the database the config points at. */
+export const DRIZZLE_WRITE_COMMANDS = ["push", "migrate", "drop"] as const;
+
+/**
+ * Whether this drizzle-kit invocation may run. `drizzle.config.ts` calls it with its own
+ * argv. Fail-closed for writing commands: they need explicit consent, a parseable target,
+ * and a PRODUCTION_DB_HOST that is not that target. Names hosts, never credentials.
+ */
+export function checkDrizzleCommand(
+  argv: readonly string[],
+  env: EnvBag
+): { allowed: boolean; reason: string } {
+  const command = argv.find((a) => (DRIZZLE_WRITE_COMMANDS as readonly string[]).includes(a));
+  if (!command) return { allowed: true, reason: "not a schema-writing drizzle-kit command" };
+  if (env.ALLOW_DRIZZLE_PUSH?.trim() !== "1") {
+    return {
+      allowed: false,
+      reason:
+        `drizzle-kit ${command} is refused unless ALLOW_DRIZZLE_PUSH=1. It drops what Orbit ` +
+        "manages outside schema.ts (embedding_vector, the HNSW index, the migration tables); " +
+        "use npm run db:migrate instead.",
+    };
+  }
+  const target = databaseHost(env.DATABASE_URL);
+  if (!target) return { allowed: false, reason: `drizzle-kit ${command} needs a postgres:// DATABASE_URL.` };
+  const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
+  if (!production) {
+    return {
+      allowed: false,
+      reason: `drizzle-kit ${command} is refused while PRODUCTION_DB_HOST is unset: nothing can tell ${target} from production.`,
+    };
+  }
+  if (target === production) {
+    return {
+      allowed: false,
+      reason: `drizzle-kit ${command} is refused: DATABASE_URL points at ${target}, which PRODUCTION_DB_HOST names as production.`,
+    };
+  }
+  return { allowed: true, reason: `target ${target} is not the production host` };
 }

@@ -3,6 +3,8 @@ import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { decryptOrNull } from "@/lib/crypto";
+import { UserFacingError } from "@/lib/errors";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { normalizeCompanyKey } from "@/lib/company-name";
 import {
   LINKEDIN_REFRESH_BATCH_SIZE,
@@ -118,21 +120,44 @@ export type LinkedInProfileEnrichment = {
   experiences: IncomingExperience[];
 };
 
-export async function getApolloApiKey(userId: string): Promise<string | null> {
+/** Shown once a user has spent the day's share of Orbit's hosted Apollo key. */
+export const APOLLO_DAILY_LIMIT_MESSAGE =
+  "You’ve used today’s Apollo lookups on Orbit’s key — add your own Apollo key in Settings, or try again tomorrow";
+
+async function resolveApolloKey(userId: string): Promise<{ apiKey: string; hosted: boolean } | null> {
   const db = await getDb();
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
   const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
-  if (personal) return personal;
+  if (personal) return { apiKey: personal, hosted: false };
 
-  // Enrichment has no quota anywhere in the product — unlike sending, which every plan
-  // caps at DAILY_SEND_LIMIT a day — so Orbit's shared Apollo key is the one cost a
-  // one-time payment cannot fund forever. It stays subscription-only; Lifetime and Free
-  // users add their own key in Settings, which the short-circuit above already prefers.
+  // Enrichment has no quota anywhere else in the product — unlike sending, which every plan
+  // caps at DAILY_SEND_LIMIT — so Orbit's shared Apollo key is the one cost a one-time
+  // payment cannot fund forever. It stays subscription-only (Lifetime and Free users add
+  // their own key in Settings, which the short-circuit above already prefers), and is now
+  // also capped per day (`spendHostedApollo`).
   const { canUseHostedEnrichment } = await getEntitlements(userId);
   if (!canUseHostedEnrichment) return null;
-  return process.env.APOLLO_API_KEY || null;
+  const hosted = process.env.APOLLO_API_KEY || null;
+  return hosted ? { apiKey: hosted, hosted: true } : null;
+}
+
+export async function getApolloApiKey(userId: string): Promise<string | null> {
+  return (await resolveApolloKey(userId))?.apiKey ?? null;
+}
+
+/** Counts `units` hosted calls against the user's day. A user's own key never gets here. */
+async function spendHostedApollo(userId: string, kind: "search" | "enrich", units = 1): Promise<void> {
+  const policy = kind === "search" ? RATE_LIMITS.apolloSearch : RATE_LIMITS.apolloEnrich;
+  try {
+    for (let i = 0; i < units; i++) {
+      await consumeBucket(`apollo.${kind}`, userId, policy);
+    }
+  } catch (err) {
+    if (isRateLimitedError(err)) throw new UserFacingError(APOLLO_DAILY_LIMIT_MESSAGE);
+    throw err;
+  }
 }
 
 export async function userHasApolloKey(userId: string): Promise<boolean> {
@@ -306,11 +331,21 @@ function mockCompanyName(filters: AudienceFilters, index: number) {
   return `Demo Company ${index}`;
 }
 
+/**
+ * A sample prospect's email domain — ALWAYS under example.com, which is reserved so mail to
+ * it can never be delivered. This used to return the real organisation domain from the
+ * audience filters (capitalone.com), turning every sample into a plausible stranger.
+ */
+/**
+ * A sample prospect's email domain — ALWAYS under example.com, which is reserved so mail to
+ * it can never be delivered. This used to return the real organisation domain from the
+ * audience filters (capitalone.com), turning every sample into a plausible stranger.
+ */
 function mockDomain(filters: AudienceFilters, company: string) {
-  if (filters.organizationDomains?.[0]?.trim()) {
-    return filters.organizationDomains[0].trim().replace(/^www\./, "");
-  }
-  return `${company.toLowerCase().replace(/[^a-z0-9]+/g, "")}.example.com`;
+  const base =
+    filters.organizationDomains?.[0]?.trim().replace(/^www\./, "").split(".")[0] || company;
+  const label = base.toLowerCase().replace(/[^a-z0-9]+/g, "") || "demo";
+  return `${label}.example.com`;
 }
 
 function mockProspects(filters: AudienceFilters, page: number): NormalizedProspect[] {
@@ -414,9 +449,9 @@ export async function searchPeople(
   total: number;
   source: OutreachSearchSource;
 }> {
-  const apiKey = await getApolloApiKey(userId);
+  const key = await resolveApolloKey(userId);
 
-  if (!apiKey) {
+  if (!key) {
     return {
       prospects: mockProspects(filters, page),
       total: 50,
@@ -424,9 +459,11 @@ export async function searchPeople(
     };
   }
 
+  if (key.hosted) await spendHostedApollo(userId, "search");
+
   const response = await apolloFetch(
     APOLLO_SEARCH_URL,
-    apiKey,
+    key.apiKey,
     buildSearchBody(filters, page)
   );
 
@@ -481,17 +518,18 @@ export async function enrichPerson(
   externalId: string,
   hints?: { email?: string; linkedinUrl?: string; fullName?: string }
 ): Promise<NormalizedProspect | null> {
-  const apiKey = await getApolloApiKey(userId);
-  if (!apiKey || externalId.startsWith("demo-")) {
+  const key = await resolveApolloKey(userId);
+  if (!key || externalId.startsWith("demo-")) {
     return null;
   }
+  if (key.hosted) await spendHostedApollo(userId, "enrich");
 
   const body: Record<string, unknown> = {};
   if (hints?.email) body.email = hints.email;
   if (hints?.linkedinUrl) body.linkedin_url = hints.linkedinUrl;
   if (hints?.fullName) body.name = hints.fullName;
 
-  const response = await apolloFetch(APOLLO_MATCH_URL, apiKey, body);
+  const response = await apolloFetch(APOLLO_MATCH_URL, key.apiKey, body);
 
   if (!response.ok) return null;
 
@@ -520,15 +558,16 @@ export async function enrichPeopleFromLinkedIn(
     );
   }
 
-  const maybeApiKey = await getApolloApiKey(userId);
-  if (!maybeApiKey) {
+  const key = await resolveApolloKey(userId);
+  if (!key) {
     throw new Error(
       "Add an Apollo API key in Settings → Outreach to refresh LinkedIn profiles."
     );
   }
+  if (key.hosted) await spendHostedApollo(userId, "enrich", people.length);
   // Rebind post-guard so the hoisted matchOne closure sees `string`, not
   // `string | null`.
-  const apiKey = maybeApiKey;
+  const apiKey = key.apiKey;
 
   const results: (LinkedInProfileEnrichment | null)[] = new Array(people.length);
   let nextIndex = 0;

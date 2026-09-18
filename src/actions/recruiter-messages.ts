@@ -25,21 +25,25 @@ import {
   type RecruiterDraft,
   type SendDraftsResult,
 } from "@/lib/recruiter-message-types";
-import { ActionResult, asActionResult, friendlyError, UserFacingError } from "@/lib/errors";
+import { pooledIdsForViewer, resolveRecruiterPii } from "@/lib/recruiters";
+import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { actionFailure } from "@/lib/action-failure";
 
 /** Spacing between sends in a batch, so an approved batch trickles rather than bursts. */
 const SEND_SPACING_MS = 1200;
 
 function toDraft(
   row: RecruiterMessage,
-  recruiter: { fullName: string; firm: string | null; email: string | null }
+  recruiter: { fullName: string; firm: string | null },
+  /** From `resolveRecruiterPii`: a draft never reveals an address its sender cannot see. */
+  recruiterEmail: string | null
 ): RecruiterDraft {
   return {
     id: row.id,
     recruiterId: row.recruiterId,
     recruiterName: recruiter.fullName,
     recruiterFirm: recruiter.firm,
-    recruiterEmail: recruiter.email,
+    recruiterEmail,
     intent: row.intent as RecruiterIntent,
     subject: row.subject,
     body: row.body,
@@ -137,6 +141,7 @@ export async function generateRecruiterDrafts(
       }))
     );
 
+    const pooled = await pooledIdsForViewer(userId, links.map((l) => l.recruiterId));
     const created: RecruiterDraft[] = [];
     for (let i = 0; i < links.length; i += 1) {
       const draft = drafts[i];
@@ -153,7 +158,13 @@ export async function generateRecruiterDrafts(
           gmailThreadId: links[i].gmailThreadId,
         })
         .returning();
-      created.push(toDraft(row, links[i].recruiter));
+      created.push(
+        toDraft(
+          row,
+          links[i].recruiter,
+          resolveRecruiterPii(links[i].recruiter, links[i], pooled.has(links[i].recruiterId)).email
+        )
+      );
     }
 
     if (created.length === 0) {
@@ -169,9 +180,16 @@ export async function listRecruiterDrafts(): Promise<RecruiterDraft[]> {
   const userId = await requireRecruitersUser();
   const db = await getDb();
   const rows = await db
-    .select({ message: recruiterMessages, recruiter: recruiters })
+    .select({ message: recruiterMessages, recruiter: recruiters, link: userRecruiterLinks })
     .from(recruiterMessages)
     .innerJoin(recruiters, eq(recruiters.id, recruiterMessages.recruiterId))
+    .leftJoin(
+      userRecruiterLinks,
+      and(
+        eq(userRecruiterLinks.recruiterId, recruiterMessages.recruiterId),
+        eq(userRecruiterLinks.userId, recruiterMessages.userId)
+      )
+    )
     .where(
       and(
         eq(recruiterMessages.userId, userId),
@@ -179,7 +197,10 @@ export async function listRecruiterDrafts(): Promise<RecruiterDraft[]> {
       )
     )
     .orderBy(asc(recruiterMessages.createdAt));
-  return rows.map((r) => toDraft(r.message, r.recruiter));
+  const pooled = await pooledIdsForViewer(userId, rows.map((r) => r.recruiter.id));
+  return rows.map((r) =>
+    toDraft(r.message, r.recruiter, resolveRecruiterPii(r.recruiter, r.link, pooled.has(r.recruiter.id)).email)
+  );
 }
 
 export async function updateRecruiterDraft(
@@ -264,9 +285,16 @@ export async function sendRecruiterDrafts(
     const from = { name: profile?.name?.trim() || null, email: conn.emailAddress };
 
     const rows = await db
-      .select({ message: recruiterMessages, recruiter: recruiters })
+      .select({ message: recruiterMessages, recruiter: recruiters, link: userRecruiterLinks })
       .from(recruiterMessages)
       .innerJoin(recruiters, eq(recruiters.id, recruiterMessages.recruiterId))
+      .leftJoin(
+        userRecruiterLinks,
+        and(
+          eq(userRecruiterLinks.recruiterId, recruiterMessages.recruiterId),
+          eq(userRecruiterLinks.userId, recruiterMessages.userId)
+        )
+      )
       .where(
         and(
           eq(recruiterMessages.userId, userId),
@@ -275,12 +303,14 @@ export async function sendRecruiterDrafts(
         )
       )
       .orderBy(asc(recruiterMessages.createdAt));
+    // Only an address this user may read: their own link first, then the pool.
+    const pooled = await pooledIdsForViewer(userId, rows.map((r) => r.recruiter.id));
 
     const failed: SendDraftsResult["failed"] = [];
     let sent = 0;
 
     for (const [index, row] of rows.entries()) {
-      const to = row.recruiter.email;
+      const to = resolveRecruiterPii(row.recruiter, row.link, pooled.has(row.recruiter.id)).email;
       if (!to) {
         failed.push({
           id: row.message.id,
@@ -325,7 +355,9 @@ export async function sendRecruiterDrafts(
           recruiterName: row.recruiter.fullName,
           // Returned as data, so never stripped — and `message` can be a raw Gmail API
           // body. The raw text stays in `errorMessage` above, which no screen renders.
-          error: friendlyError(err, `Couldn’t send to ${row.recruiter.fullName} — try again?`),
+          error: await actionFailure(err, `Couldn’t send to ${row.recruiter.fullName} — try again?`, "recruiter-messages.send", {
+            messageId: row.message.id,
+          }),
         });
       }
 

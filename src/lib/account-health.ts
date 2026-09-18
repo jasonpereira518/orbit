@@ -23,7 +23,8 @@ import {
   type HealthInput,
 } from "@/lib/account-alerts";
 import { getEntitlements } from "@/lib/entitlements";
-import { getGmailOAuthConfigSummary } from "@/lib/gmail";
+import { deriveConnectionHealth } from "@/lib/connection-status";
+import { getGmailOAuthConfigSummary, hasCalendarScope } from "@/lib/gmail";
 import { getOutlookOAuthConfigSummary } from "@/lib/outlook";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
@@ -97,6 +98,28 @@ function connectionFacts(
   };
 }
 
+function googleCalendarFacts(
+  configured: boolean,
+  status: unknown,
+  nextSyncAt: unknown,
+  syncError: unknown,
+  scopes: unknown
+): HealthInput["googleCalendar"] {
+  const resolved = text(status);
+  if (!configured || !resolved || !hasCalendarScope(text(scopes))) return null;
+  const reason = text(syncError);
+  return {
+    paused:
+      deriveConnectionHealth({
+        status: resolved,
+        nextSyncAt: toDate(nextSyncAt),
+        syncError: reason,
+        calendarScopeGranted: true,
+      }) === "disarmed",
+    reason,
+  };
+}
+
 export async function loadAccountHealthInput(
   userId: string,
   now: Date = new Date()
@@ -128,6 +151,15 @@ export async function loadAccountHealthInput(
         WHERE ${gmailConnections.userId} = ${userId} LIMIT 1)`,
       gmailHasRefresh: sql<boolean | null>`(
         SELECT ${gmailConnections.refreshTokenEncrypted} IS NOT NULL FROM ${gmailConnections}
+        WHERE ${gmailConnections.userId} = ${userId} LIMIT 1)`,
+      gmailNextSyncAt: sql<Date | string | null>`(
+        SELECT ${gmailConnections.nextSyncAt} FROM ${gmailConnections}
+        WHERE ${gmailConnections.userId} = ${userId} LIMIT 1)`,
+      gmailSyncError: sql<string | null>`(
+        SELECT ${gmailConnections.syncError} FROM ${gmailConnections}
+        WHERE ${gmailConnections.userId} = ${userId} LIMIT 1)`,
+      gmailScopes: sql<string | null>`(
+        SELECT ${gmailConnections.scopes} FROM ${gmailConnections}
         WHERE ${gmailConnections.userId} = ${userId} LIMIT 1)`,
 
       outlookStatus: sql<string | null>`(
@@ -232,6 +264,13 @@ export async function loadAccountHealthInput(
       row.outlookEmail,
       row.outlookExpiresAt,
       row.outlookHasRefresh
+    ),
+    googleCalendar: googleCalendarFacts(
+      getGmailOAuthConfigSummary().configured,
+      row.gmailStatus,
+      row.gmailNextSyncAt,
+      row.gmailSyncError,
+      row.gmailScopes
     ),
 
     calendarErrorCount: num(row.calendarErrorCount),

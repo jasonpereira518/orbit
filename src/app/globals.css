@@ -2516,3 +2516,23 @@ html[data-celebration-handoff] [data-app-logo] {
     --content-rail-gutter: 0px !important;
   }
 }
+
+/*
+ * A 44px touch target on an icon button smaller than that, without moving or resizing the
+ * icon. Coarse pointers only: with a mouse the painted button is the target. The element
+ * must be positioned (relative or absolute). Neighbours in one row need enough gap that two
+ * enlarged areas never overlap: pointer-coarse:gap-4 beside 28px buttons, gap-3 beside 32px.
+ */
+@utility tap-target {
+  @media (pointer: coarse) {
+    &::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 2.75rem);
+      height: max(100%, 2.75rem);
+      transform: translate(-50%, -50%);
+    }
+  }
+}

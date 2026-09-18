@@ -1,7 +1,9 @@
+import { recordBackfillFailure } from "@/lib/backfill-failures";
 import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { reportError } from "@/lib/report-error";
 
 export const maxDuration = 300;
 
@@ -33,8 +35,13 @@ export async function POST(request: Request) {
       // "row that is permanently pending but never claimable" bug into one wasted
       // invocation instead of an unbounded kick storm against our own function.
       if (remaining > 0 && embedded > 0) await kickEmbeddingBackfill(userId);
-    } catch {
-      // A provider failure leaves the work pending on purpose; the daily cron re-kicks it.
+    } catch (err) {
+      // A provider failure leaves the work pending on purpose; the cron re-kicks it. Reported
+      // (throttled) so a key or provider that fails every run is visible, not silent.
+      reportError(err, { where: "job.embedding-backfill", userId, level: "warning" });
+      // Sentry is for the exception; this row is what lets the ops sweep notice a backfill
+      // that keeps failing across accounts (`backfill.failed`).
+      await recordBackfillFailure("embeddings", userId, err);
     }
   });
 

@@ -1,4 +1,5 @@
 import type { CronRunState } from "@/lib/cron-runs";
+import { PURGE_MAX_ATTEMPTS } from "@/lib/data-categories";
 import { hasMissedRun } from "@/lib/cron-runs";
 import { MANAGED_AI_ALERTS } from "@/lib/managed-ai-policy";
 
@@ -40,6 +41,8 @@ export type OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: Date | null; lastState: CronRunState | null };
     syncRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    /** The outbound webhook drain (`/api/webhooks/outbound/drain`), every ten minutes. */
+    drain: { lastStartedAt: Date | null; lastState: CronRunState | null };
     /**
      * The hourly job feed. Alerted on here rather than shown on `/admin/health`, because
      * that page reads two named jobs and this is not one of them — so without a condition,
@@ -47,9 +50,15 @@ export type OpsSnapshot = {
      */
     jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
+  /** The last PARTIAL_STREAK process-stalled states, newest first. */
+  processStalledRecent: CronRunState[];
+  /** Distinct accounts and kinds with a backfill.failed row in the last day. */
+  backfillFailures24h: { accounts: number; kinds: string[] };
   /** Most recent delivery outcomes per source, newest first. */
   webhooks: { clerk: WebhookOutcome[]; stripe: WebhookOutcome[]; resend: WebhookOutcome[] };
   stripeCheckoutErrorsLastHour: number;
+  /** `error_events` rows from `resend.rejected` in the last hour. */
+  resendRejectedLastHour: number;
   wedgedImports: number;
   failedImportsLast24h: number;
   outreach: { overdue: number; oldestOverdueDays: number | null };
@@ -57,6 +66,22 @@ export type OpsSnapshot = {
   errorEventsLastHour: number;
   perfSlowLastHour: number;
   missingRequiredEnv: string[];
+  /** EXPECTED_IN_PRODUCTION names that are unset (production only). */
+  missingExpectedEnv: string[];
+  /** The app role's statement_timeout ("20s", "0" = none). Production only. */
+  statementTimeout: string | null;
+  /** stripe.unattributed rows in the last day: checkout fulfilments vs everything else. */
+  stripeUnattributed24h: { fulfilments: number; other: number };
+  /** Accounts with an embedding flag older than EMBEDDING_BACKLOG_STALE_HOURS, and the oldest flag. */
+  embeddingBacklog: { accounts: number; oldestAt: Date | null };
+  /** How long the most overdue armed connection has waited; null when none is due. */
+  syncOldestDueAgeMs: number | null;
+  /** Last 24 h: embedding_failures rows, and accounts with a `quota` usage failure. */
+  aiRefusals24h: { unembeddable: number; quotaAccounts: number };
+  /** Active calendar-scoped Google connections disarmed with an error. */
+  calendarDisarmed: number;
+  /** Shared third-party budgets refused today: photo sources out, accounts at the hosted Apollo cap. */
+  sharedBudgets: { avatarSourcesExhausted: string[]; apolloCapHits: number };
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
@@ -64,6 +89,8 @@ export type OpsSnapshot = {
   wedgedSyncs: number;
   /** Connections the scheduler gave up on and disarmed. */
   failingSyncs: number;
+  /** `data_purge_runs` marked failed: deletions a user asked for that did not finish. */
+  stuckPurges: number;
   /** Orbit's managed AI keys — the Lifetime cost exposure. See `managed-ai-ops.ts`. */
   managedAi: ManagedAiOpsFacts;
 };
@@ -92,11 +119,21 @@ export const REMIND_AFTER_MS: Record<OpsSeverity, number | null> = {
 };
 
 const WEBHOOK_STREAK = 3;
+export const PARTIAL_STREAK = 3;
 const FAILED_IMPORT_BURST = 3;
 const ERROR_BURST = 5;
 const PERF_SLOW_BURST = 3;
 const OUTAGE_ACCOUNTS = 2;
+const BACKFILL_FAILING_ACCOUNTS = 2;
+/** A starting value: one odd row is noise, a spike means the provider refuses a content shape. */
+export const UNEMBEDDABLE_SPIKE = 10;
 const DRIFT_AFTER_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Several hourly backfill passes. Must stay in step with the `'6 hours'` interval in
+ * `loadOpsSnapshot`'s backlog query — the SQL cannot interpolate this constant safely.
+ */
+export const EMBEDDING_BACKLOG_STALE_HOURS = 6;
 
 const isRejected = (o: WebhookOutcome) => o === "invalid" || o === "error";
 
@@ -108,6 +145,12 @@ const isRejected = (o: WebhookOutcome) => o === "invalid" || o === "error";
  * without a commit on a public repo, and it is the second failure this needs to catch.
  */
 const SYNC_SCHEDULE_SILENT_MS = 3 * 60 * 60 * 1000;
+
+/** A connection this overdue while runs are happening means demand outgrew a run. */
+export const SYNC_LAG_ALERT_MS = 2 * 60 * 60 * 1000;
+
+/** Disarmed calendars at once that read as a Google-side change rather than user churn. */
+export const CALENDAR_DISARM_BURST = 5;
 
 /**
  * How long the job-feed sweep may be silent before it is treated as dead.
@@ -142,6 +185,30 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       detail: `Last run ${cron.lastStartedAt?.toISOString() ?? "unknown"} ended ${cron.lastState}.`,
       href: "/admin/health",
     });
+  } else if (
+    s.processStalledRecent.length >= PARTIAL_STREAK &&
+    s.processStalledRecent.slice(0, PARTIAL_STREAK).every((state) => state === "partial")
+  ) {
+    out.push({
+      id: "cron.partial_streak",
+      severity: "warning",
+      title: "Nightly job keeps finishing partial",
+      detail: `The last ${PARTIAL_STREAK} runs ended partial — one housekeeping step is failing every time. The run stats on /admin/health show which counter stopped moving.`,
+      href: "/admin/health",
+    });
+  }
+
+  // The drain's own `partial` means customer endpoints refused deliveries, which is theirs to
+  // fix; `failed`/`stale` means the drain itself broke and nothing is being retried.
+  const drain = s.cron.drain;
+  if (drain.lastState === "failed" || drain.lastState === "stale") {
+    out.push({
+      id: "drain.failed",
+      severity: "warning",
+      title: `Outbound webhook drain ${drain.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${drain.lastStartedAt?.toISOString() ?? "unknown"} ended ${drain.lastState}; customer webhooks are not being retried.`,
+      href: "/admin/health",
+    });
   }
 
   for (const [source, severity] of [
@@ -167,6 +234,27 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "critical",
       title: "Stripe checkout is failing",
       detail: `${s.stripeCheckoutErrorsLastHour} checkout attempt(s) errored in the last hour — nobody can pay.`,
+      href: "/admin/health",
+    });
+  }
+
+  const unattributed = s.stripeUnattributed24h;
+  if (unattributed.fulfilments + unattributed.other > 0) {
+    out.push({
+      id: "stripe.unattributed",
+      severity: unattributed.fulfilments > 0 ? "critical" : "warning",
+      title: unattributed.fulfilments > 0 ? "Someone paid and has no plan" : "Stripe events match no account",
+      detail: `${unattributed.fulfilments} checkout fulfilment(s) and ${unattributed.other} other Stripe event(s) in the last day matched no Orbit account. error_events (source stripe.unattributed) holds each event id.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (s.resendRejectedLastHour > 0) {
+    out.push({
+      id: "resend.rejected",
+      severity: "warning",
+      title: "Resend is refusing Orbit's email",
+      detail: `${s.resendRejectedLastHour} email(s) refused in the last hour — usually RESEND_FROM_EMAIL is on a domain Resend has not verified, which refuses every send.`,
       href: "/admin/health",
     });
   }
@@ -213,6 +301,22 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Connector sync ${sync.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${sync.lastStartedAt?.toISOString() ?? "unknown"} ended ${sync.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // More connections due than one run can take. Only while the schedule itself is alive —
+  // a dead schedule makes every connection overdue and is already sync.schedule_missed.
+  if (
+    syncSilentFor !== null &&
+    syncSilentFor <= SYNC_SCHEDULE_SILENT_MS &&
+    (s.syncOldestDueAgeMs ?? 0) > SYNC_LAG_ALERT_MS
+  ) {
+    out.push({
+      id: "sync.lagging",
+      severity: "warning",
+      title: "Connector sync is falling behind",
+      detail: `The most overdue connection has waited ${((s.syncOldestDueAgeMs ?? 0) / 3_600_000).toFixed(1)} h — more accounts are due than a run can sync.`,
       href: "/admin/health",
     });
   }
@@ -270,6 +374,18 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
     });
   }
 
+  // `sync.failing` above already says "we gave up on an account". This is the burst: many
+  // calendars disarmed at once is a Google-side change (a scope, an API, a quota), not churn.
+  if (s.calendarDisarmed >= CALENDAR_DISARM_BURST) {
+    out.push({
+      id: "calendar.disarmed",
+      severity: "info",
+      title: "Many calendar syncs are disarmed",
+      detail: `${s.calendarDisarmed} Google calendar connections are disarmed with an error — check for a Google-side change before blaming users.`,
+      href: "/admin/health",
+    });
+  }
+
   if (s.outreach.overdue > 0 && (s.outreach.oldestOverdueDays ?? 0) >= 1) {
     out.push({
       id: "outreach.overdue",
@@ -288,6 +404,66 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `${provider} is failing across accounts`,
       detail: `'${o.errorKind}' errors from ${o.accounts} accounts in the last day — the provider, not one user's key.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (s.backfillFailures24h.accounts >= BACKFILL_FAILING_ACCOUNTS) {
+    out.push({
+      id: "backfill.failed",
+      severity: "warning",
+      title: "Background backfills are failing",
+      detail: `${s.backfillFailures24h.kinds.join(" and ")} backfill failed for ${s.backfillFailures24h.accounts} accounts in the last day — the provider or Orbit, not one user's key.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (s.embeddingBacklog.accounts >= 1) {
+    const oldestHours = s.embeddingBacklog.oldestAt
+      ? (now.getTime() - s.embeddingBacklog.oldestAt.getTime()) / 3_600_000
+      : EMBEDDING_BACKLOG_STALE_HOURS;
+    out.push({
+      id: "embedding.backlog",
+      severity: "warning",
+      title: "Semantic search is falling behind",
+      detail: `${s.embeddingBacklog.accounts} account(s) have contacts waiting over ${EMBEDDING_BACKLOG_STALE_HOURS} h for search embeddings (oldest ${oldestHours.toFixed(1)} h), so search and chat fall back to keywords for them.`,
+      href: "/admin/health",
+    });
+  }
+
+  if (s.aiRefusals24h.unembeddable >= UNEMBEDDABLE_SPIKE) {
+    out.push({
+      id: "embedding.unembeddable",
+      severity: "warning",
+      title: "The embedding provider is refusing content",
+      detail: `${s.aiRefusals24h.unembeddable} contacts or meetings were marked unembeddable in the last day — a spike means the provider started refusing a content shape, not one odd row.`,
+      href: "/admin/health",
+    });
+  }
+  if (s.aiRefusals24h.quotaAccounts >= 1) {
+    out.push({
+      id: "ai.quota_failures",
+      severity: "info",
+      title: "Accounts are out of AI provider credit",
+      detail: `${s.aiRefusals24h.quotaAccounts} account(s) hit a quota or empty-balance error in the last day. Each already sees a "top up" alert; this is the count.`,
+      href: "/admin/health",
+    });
+  }
+  if (s.sharedBudgets.avatarSourcesExhausted.length > 0) {
+    out.push({
+      id: "avatar.source_exhausted",
+      severity: "info",
+      title: "A shared photo source is out for today",
+      detail: `${s.sharedBudgets.avatarSourcesExhausted.join(" and ")} used its whole daily allowance; photo lookups defer until the window resets.`,
+      href: "/admin/health",
+    });
+  }
+  if (s.sharedBudgets.apolloCapHits >= 1) {
+    out.push({
+      id: "apollo.hosted_cap_hits",
+      severity: "info",
+      title: "Accounts are hitting the hosted Apollo cap",
+      detail: `${s.sharedBudgets.apolloCapHits} account budget(s) for hosted Apollo search or enrichment ran out today — demand against the Apollo plan.`,
       href: "/admin/health",
     });
   }
@@ -320,6 +496,28 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
     });
   }
 
+  // Persisted even though it can never reach Slack (see runOpsSweep): this row IS the alert,
+  // on /admin/health and in the deep /api/health view.
+  if (s.missingExpectedEnv.includes("SLACK_OPS_WEBHOOK_URL")) {
+    out.push({
+      id: "config.alerts_undeliverable",
+      severity: "warning",
+      title: "Alerts are not reaching Slack",
+      detail: "SLACK_OPS_WEBHOOK_URL is unset in production, so every alert stays on /admin/health until someone looks.",
+      href: "/admin/health",
+    });
+  }
+
+  if (s.statementTimeout === "0") {
+    out.push({
+      id: "config.statement_timeout_unbounded",
+      severity: "warning",
+      title: "Database queries have no time limit",
+      detail: "The app role's statement_timeout is 0, so one runaway query can hold the shared compute for every user. Run the ALTER ROLE in docs/RUNBOOK.md → Neon one-time settings.",
+      href: "/admin/health",
+    });
+  }
+
   if (
     s.deploy &&
     s.deploy.prodSha !== s.deploy.mainSha &&
@@ -341,6 +539,17 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "info",
       title: "Accounts need to reconnect a mailbox",
       detail: `${s.reauthNeeded} Gmail/Outlook connection(s) need the user to re-authorize.`,
+      href: "/admin/health",
+    });
+  }
+
+  // Critical, not warning: a user was told their data was deleted, and it is still here.
+  if (s.stuckPurges > 0) {
+    out.push({
+      id: "purge.stuck",
+      severity: "critical",
+      title: "An account deletion is stuck",
+      detail: `${s.stuckPurges} deletion run(s) stopped after ${PURGE_MAX_ATTEMPTS} attempts — rows the user asked to delete are still in the database. See data_purge_runs.last_error.`,
       href: "/admin/health",
     });
   }
@@ -454,7 +663,9 @@ export function planTransitions(
 
   for (const c of conditions) {
     const prev = prevById.get(c.id);
-    if (!prev || !prev.active || prev.severity !== c.severity) {
+    // `lastNotifiedAt === null` on an active row means the sweep persisted the condition but
+    // Slack never took the message (see runOpsSweep). Offer it again until it lands.
+    if (!prev || !prev.active || prev.severity !== c.severity || prev.lastNotifiedAt === null) {
       out.open.push(c);
       continue;
     }

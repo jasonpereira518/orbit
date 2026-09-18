@@ -178,11 +178,12 @@ function SuggestionRow({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-3">
           <Button
             size="icon"
             variant="ghost"
             aria-label="Edit"
+            className="tap-target relative"
             disabled={pending}
             onClick={() => setEditing((v) => !v)}
           >
@@ -192,6 +193,7 @@ function SuggestionRow({
             size="icon"
             variant="ghost"
             aria-label="Confirm reminder"
+            className="tap-target relative"
             disabled={pending || !title.trim()}
             onClick={() =>
               run("Reminder added", "Couldn’t add that reminder — try again?", () =>
@@ -208,6 +210,7 @@ function SuggestionRow({
             size="icon"
             variant="ghost"
             aria-label="Discard suggestion"
+            className="tap-target relative"
             disabled={pending}
             onClick={() =>
               run(

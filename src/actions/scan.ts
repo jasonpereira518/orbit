@@ -2,7 +2,6 @@
 
 import QRCode from "qrcode";
 import { requireUserId } from "@/lib/auth";
-import { friendlyError } from "@/lib/errors";
 import { getCaptureJobRow, toCaptureJobView, type CaptureJobView } from "@/lib/capture-jobs";
 import {
   cancelScanHandoff,
@@ -15,6 +14,7 @@ import {
 import { getDb } from "@/db";
 import { captureHandoffs } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
+import { actionFailure } from "@/lib/action-failure";
 
 /**
  * Desktop-side half of the phone handoff. Every export here is async, because one
@@ -67,7 +67,7 @@ export async function mintScanHandoffAction() {
       } satisfies MintedScanHandoff,
     };
   } catch (err) {
-    return { ok: false as const, error: friendlyError(err, "Couldn’t make a QR code — try again?") };
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t make a QR code — try again?", "scan.mint-scan-handoff-action") };
   }
 }
 
@@ -94,7 +94,7 @@ export async function watchScanHandoffAction(token: string, captureJobId: string
     const state = grant.status === "uploading" ? "uploading" : pages > 0 ? "ready" : "waiting";
     return { ok: true, watch: { state, pages, error: grant.error, job } };
   } catch (err) {
-    return { ok: false as const, error: friendlyError(err, "Couldn’t check on your phone — try again?") };
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t check on your phone — try again?", "scan.watch-scan-handoff-action") };
   }
 }
 
@@ -112,7 +112,7 @@ export async function finishScanHandoffAction(token: string) {
     const job = out.captureJobId ? await getCaptureJobRow(userId, out.captureJobId) : null;
     return { ok: true as const, job: job ? toCaptureJobView(job) : null };
   } catch (err) {
-    return { ok: false as const, error: friendlyError(err, "Couldn’t finish that scan — try again?") };
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t finish that scan — try again?", "scan.finish-scan-handoff-action") };
   }
 }
 
@@ -123,6 +123,6 @@ export async function cancelScanHandoffAction(token: string) {
     await cancelScanHandoff(userId, token);
     return { ok: true as const };
   } catch (err) {
-    return { ok: false as const, error: friendlyError(err, "Couldn’t cancel that code — try again?") };
+    return { ok: false as const, error: await actionFailure(err, "Couldn’t cancel that code — try again?", "scan.cancel-scan-handoff-action") };
   }
 }

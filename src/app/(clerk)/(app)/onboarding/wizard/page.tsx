@@ -16,6 +16,10 @@ export default async function OnboardingWizardPage() {
   }
 
   return (
-    <SetupWizardLazy initialStepId={status.step} hasApiKey={settings.hasApiKey} />
+    <SetupWizardLazy
+      initialStepId={status.step}
+      hasApiKey={settings.hasApiKey}
+      termsAccepted={status.termsAccepted}
+    />
   );
 }
