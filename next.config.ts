@@ -69,7 +69,7 @@ const nextConfig: NextConfig = {
     // quick revisit can show the pre-mutation page for up to this long.
     //
     // `static` is how long a FULL prefetch stays usable — the sidebar's `prefetchFull`
-    // links (Contacts and Reminders; see app-nav.ts) render the whole destination
+    // links (Dashboard, Contacts and Reminders; see app-nav.ts) render the whole destination
     // ahead of the click. The default is 5 minutes, which would let a click show a page that
     // old; 60s bounds that, and hovering a link whose prefetch has expired fetches it again,
     // so a mouse user still usually lands on warm data. It also covers statically generated

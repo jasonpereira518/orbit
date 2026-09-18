@@ -2,7 +2,7 @@ import { count, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { companies, interactions } from "@/db/schema";
 import { closenessTier } from "@/lib/closeness";
-import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
 import { getNetworkStatsCounts } from "@/lib/dashboard-aggregates";
 
 export type NetworkStatItem = {
@@ -104,7 +104,8 @@ export async function getNetworkStats(
           .select({ value: count() })
           .from(companies)
           .where(eq(companies.userId, userId)),
-    getClosenessCohort(userId),
+    // Slim, and shared with the dashboard load on the same request: this reads `raw` only.
+    getClosenessCohortSlim(userId),
   ]);
 
   const interactionCount = interactionCountRows[0]?.value ?? 0;

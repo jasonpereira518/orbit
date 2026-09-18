@@ -20,7 +20,7 @@ import {
   getDashboardVocabularies,
   getGoalAlignedContactIds,
 } from "@/lib/dashboard-aggregates";
-import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
@@ -746,7 +746,10 @@ export async function getDashboardData(
     // also has to recalibrate, in exchange for every other render carrying five fewer
     // columns per contact. `ClosenessCohortRow` is typed precisely so this trade has to be
     // made deliberately rather than discovered.
-    getClosenessCohort(userId),
+    // Slim: every whole-network use below reads four numbers per contact (raw, closeness,
+    // orbitScore, tier), so the full breakdowns — every scoring factor, ~3.6 MB at 10,000
+    // contacts — never leave the database. See `getClosenessCohortSlim`.
+    getClosenessCohortSlim(userId),
     getConstellationConfig(),
     // Aggregates Postgres answers better than a pass over the scan would — and, more to the
     // point, each one lets a column come off that scan. See dashboard-aggregates.ts.
