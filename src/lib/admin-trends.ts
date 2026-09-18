@@ -87,6 +87,41 @@ export type DepthPoint = {
   imports: number;
 };
 
+export type WorkflowStagePoint = {
+  bucketStart: Date;
+  signedUp: number;
+  onboarded: number;
+  hasContacts: number;
+  loggedActivity: number;
+  cameBack: number;
+};
+
+export type ConsistencyPoint = {
+  bucketStart: Date;
+  active: number;
+  threeOfFour: number;
+  allFour: number;
+};
+
+export type AiWeekPoint = {
+  bucketStart: Date;
+  calls: number;
+  failures: number;
+  orbitMicros: number;
+  userMicros: number;
+  /** Calls on a model with no known price — not free, just unpriced. */
+  unpriced: number;
+};
+
+export type AiOperationCostRow = {
+  operation: string;
+  calls: number;
+  users: number;
+  failures: number;
+  micros: number;
+  orbitMicros: number;
+};
+
 export type FeatureAdoption = {
   chat: number;
   outreach: number;
@@ -485,6 +520,174 @@ export async function depthTrend(
     notes: num(r.notes),
     chats: num(r.chats),
     imports: num(r.imports),
+  }));
+}
+
+/**
+ * Where each week's signups are in the workflow now: the furthest stage every account has
+ * reached, as mutually exclusive counts so a week's bar stacks to its signups.
+ *
+ *   Signed up        nothing past account creation
+ *   Onboarded        finished the tour or wizard, or imported (mirrors `needsOnboarding`)
+ *   Has contacts     at least one contact — typed or imported
+ *   Logged activity  a saved capture, a hand-logged note or a chat message: the loop the
+ *                    product exists for, done at least once
+ *   Came back        wrote anything seven or more days after signing up
+ *
+ * "Now", not "at the time": a week from March shows where March's signups stand today. So
+ * the newest week always looks least advanced — its accounts cannot have "come back" yet.
+ */
+export async function workflowStagesTrend(
+  grain: Grain = "week",
+  buckets = 12
+): Promise<WorkflowStagePoint[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    WITH spine AS (${series(grain, buckets)}),
+    per_user AS (
+      SELECT date_trunc(${grain}, s.created_at) AS b,
+             CASE
+               WHEN EXISTS (
+                 SELECT 1 FROM (${writesSince(sql`s.created_at + interval '7 days'`)}) w
+                 WHERE w.user_id = s.user_id
+               ) THEN 5
+               WHEN EXISTS (SELECT 1 FROM capture_jobs j WHERE j.user_id = s.user_id AND j.status = 'saved')
+                 OR EXISTS (SELECT 1 FROM interactions x WHERE x.user_id = s.user_id
+                              AND x.note_batch_id IS NULL AND x.external_id IS NULL)
+                 OR EXISTS (SELECT 1 FROM chat_messages m WHERE m.user_id = s.user_id AND m.role = 'user')
+                 THEN 4
+               WHEN EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id) THEN 3
+               WHEN s.onboarding_completed_at IS NOT NULL
+                 OR EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id) THEN 2
+               ELSE 1
+             END AS stage
+      FROM user_settings s
+      WHERE s.created_at >= ${SPINE_START}
+    )
+    SELECT spine.bucket_start,
+           count(p.b) FILTER (WHERE p.stage = 1)::int AS signed_up,
+           count(p.b) FILTER (WHERE p.stage = 2)::int AS onboarded,
+           count(p.b) FILTER (WHERE p.stage = 3)::int AS has_contacts,
+           count(p.b) FILTER (WHERE p.stage = 4)::int AS logged,
+           count(p.b) FILTER (WHERE p.stage = 5)::int AS came_back
+    FROM spine
+    LEFT JOIN per_user p ON p.b = spine.bucket_start
+    GROUP BY spine.bucket_start
+    ORDER BY spine.bucket_start
+  `);
+  return rowsOf<Record<string, string | number>>(result).map((r) => ({
+    bucketStart: toDate(r.bucket_start as string),
+    signedUp: num(r.signed_up),
+    onboarded: num(r.onboarded),
+    hasContacts: num(r.has_contacts),
+    loggedActivity: num(r.logged),
+    cameBack: num(r.came_back),
+  }));
+}
+
+/**
+ * Who keeps using Orbit week after week, not just who showed up once.
+ *
+ * For each week: accounts that wrote something that week, accounts that wrote in at least
+ * three of the four weeks ending with it, and accounts that wrote in all four. The last two
+ * are nested inside the first only loosely — someone active in weeks 1–3 but quiet this
+ * week still counts as consistent, which is the point: one quiet week is not churn.
+ */
+export async function consistentUsersTrend(buckets = 12): Promise<ConsistencyPoint[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    WITH spine AS (${series("week", buckets)}),
+    wk AS (
+      SELECT DISTINCT user_id, date_trunc('week', created_at) AS week
+      FROM (${writesSince(sql`${SPINE_START} - interval '21 days'`)}) w
+    )
+    SELECT spine.bucket_start,
+           count(u.user_id) FILTER (WHERE u.this_week)::int AS active,
+           count(u.user_id) FILTER (WHERE u.weeks >= 3)::int AS three_of_four,
+           count(u.user_id) FILTER (WHERE u.weeks = 4)::int AS all_four
+    FROM spine
+    LEFT JOIN LATERAL (
+      SELECT wk.user_id,
+             count(*) AS weeks,
+             bool_or(wk.week = spine.bucket_start) AS this_week
+      FROM wk
+      WHERE wk.week BETWEEN spine.bucket_start - interval '3 weeks' AND spine.bucket_start
+      GROUP BY wk.user_id
+    ) u ON true
+    GROUP BY spine.bucket_start
+    ORDER BY spine.bucket_start
+  `);
+  return rowsOf<Record<string, string | number>>(result).map((r) => ({
+    bucketStart: toDate(r.bucket_start as string),
+    active: num(r.active),
+    threeOfFour: num(r.three_of_four),
+    allFour: num(r.all_four),
+  }));
+}
+
+/**
+ * AI calls and their estimated cost per week, cost split by who pays for it.
+ *
+ * `key_owner = 'orbit'` is Orbit's managed keys — real spend. `'user'` is a BYOK key: the
+ * account pays its provider, so it is shown for scale but is not Orbit's cost. The figure
+ * is `estimated_cost_micros`, priced at call time from the model's list price; calls on a
+ * model with no known price record NULL and are counted separately rather than as free.
+ * Clamped to the `usage_events` retention window, like `aiVolumeTrend`.
+ */
+export async function aiWeeklyUsage(buckets = 12): Promise<AiWeekPoint[]> {
+  const bounded = Math.min(buckets, Math.max(Math.floor(USAGE_EVENT_RETENTION_DAYS / 7), 1));
+  const db = await getDb();
+  const result = await db.execute(sql`
+    WITH spine AS (${series("week", bounded)}),
+    u AS (
+      SELECT date_trunc('week', created_at) AS b, success, key_owner, estimated_cost_micros
+      FROM usage_events
+      WHERE created_at >= ${SPINE_START}
+    )
+    SELECT spine.bucket_start,
+           count(u.b)::int AS calls,
+           count(u.b) FILTER (WHERE u.success = 0)::int AS failures,
+           coalesce(sum(u.estimated_cost_micros) FILTER (WHERE u.key_owner = 'orbit'), 0)::bigint AS orbit_micros,
+           coalesce(sum(u.estimated_cost_micros) FILTER (WHERE u.key_owner <> 'orbit'), 0)::bigint AS user_micros,
+           count(u.b) FILTER (WHERE u.estimated_cost_micros IS NULL)::int AS unpriced
+    FROM spine
+    LEFT JOIN u ON u.b = spine.bucket_start
+    GROUP BY spine.bucket_start
+    ORDER BY spine.bucket_start
+  `);
+  return rowsOf<Record<string, string | number>>(result).map((r) => ({
+    bucketStart: toDate(r.bucket_start as string),
+    calls: num(r.calls),
+    failures: num(r.failures),
+    orbitMicros: num(r.orbit_micros),
+    userMicros: num(r.user_micros),
+    unpriced: num(r.unpriced),
+  }));
+}
+
+/** The most-used AI operations over a window, with their estimated cost. */
+export async function aiOperationCosts(days = 84): Promise<AiOperationCostRow[]> {
+  const span = sql.raw(`interval '${Math.max(1, Math.min(days, USAGE_EVENT_RETENTION_DAYS))} days'`);
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT operation,
+           count(*)::int AS calls,
+           count(DISTINCT user_id)::int AS users,
+           count(*) FILTER (WHERE success = 0)::int AS failures,
+           coalesce(sum(estimated_cost_micros), 0)::bigint AS micros,
+           coalesce(sum(estimated_cost_micros) FILTER (WHERE key_owner = 'orbit'), 0)::bigint AS orbit_micros
+    FROM usage_events
+    WHERE created_at >= now() - ${span}
+    GROUP BY operation
+    ORDER BY calls DESC, operation
+  `);
+  return rowsOf<Record<string, string | number>>(result).map((r) => ({
+    operation: String(r.operation),
+    calls: num(r.calls),
+    users: num(r.users),
+    failures: num(r.failures),
+    micros: num(r.micros),
+    orbitMicros: num(r.orbit_micros),
   }));
 }
 

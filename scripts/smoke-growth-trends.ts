@@ -25,12 +25,16 @@ import "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
+  aiOperationCosts,
+  aiWeeklyUsage,
+  consistentUsersTrend,
   depthTrend,
   growthSnapshot,
   retentionCurves,
   rollingActiveTrend,
   userTotalsTrend,
   viewersTrend,
+  workflowStagesTrend,
 } from "../src/lib/admin-trends";
 import { MIN_RATE_DENOMINATOR, formatRate } from "../src/lib/format-rate";
 import { grainAllowed, growthHref, resolveGrowthWindow } from "../src/lib/growth-range";
@@ -76,6 +80,7 @@ async function main() {
     depth: await depthTrend("week", BUCKETS),
     snapshot: await growthSnapshot(56),
     retention: await retentionCurves(6, 12),
+    stages: await workflowStagesTrend("week", BUCKETS),
   };
 
   // --- 3. Seed ------------------------------------------------------------------------
@@ -148,6 +153,7 @@ async function main() {
     depth: await depthTrend("week", BUCKETS),
     snapshot: await growthSnapshot(56),
     retention: await retentionCurves(6, 12),
+    stages: await workflowStagesTrend("week", BUCKETS),
   };
 
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -252,6 +258,67 @@ async function main() {
   check(
     "a cohort with a three-day-old member draws no week 0",
     Boolean(young) && !young!.weeks.some((w) => w.week === 0)
+  );
+
+  console.log("\nWorkflow stages");
+  const stageDelta = (k: "signedUp" | "onboarded" | "hasContacts" | "loggedActivity" | "cameBack") =>
+    sum(after.stages.map((p) => p[k])) - sum(before.stages.map((p) => p[k]));
+  // a and b wrote 7+ days after joining; c (three days old) chatted but cannot have come back.
+  check("two accounts came back", stageDelta("cameBack") === 2, `delta ${stageDelta("cameBack")}`);
+  check("c stops at logged activity", stageDelta("loggedActivity") === 1, `delta ${stageDelta("loggedActivity")}`);
+  check(
+    "stages partition each week's signups",
+    after.stages.every((p, i) => {
+      const t = after.totals[i]!;
+      return p.signedUp + p.onboarded + p.hasContacts + p.loggedActivity + p.cameBack === t.added;
+    })
+  );
+
+  // --- 5. Consistency and AI cost: their own seed, their own baseline ----------------
+  console.log("\nConsistent use");
+  const cBefore = await consistentUsersTrend(BUCKETS);
+  const aiBefore = await aiWeeklyUsage(BUCKETS);
+  const opsBefore = await aiOperationCosts(30);
+
+  // k writes once a week, four weeks running: consistent by both definitions.
+  await user("k", ago(40 * DAY));
+  for (const d of [0, 7, 14, 21]) await contact("k", ago(d * DAY + 1 * HOUR));
+  // AI: two managed-key calls, one BYOK call, one failed unpriced call.
+  const ev = (owner: string, micros: number | null, success: number) => sql`
+    INSERT INTO usage_events (user_id, operation, provider, model, kind, key_owner, estimated_cost_micros, success, created_at)
+    VALUES (${id("k")}, 'smoke.growth_op', 'test', 'test-model', 'text', ${owner}, ${micros}, ${success}, ${ago(1 * HOUR)})`;
+  await db.execute(ev("orbit", 1500, 1));
+  await db.execute(ev("orbit", 2500, 1));
+  await db.execute(ev("user", 700, 1));
+  await db.execute(ev("user", null, 0));
+
+  const cAfter = await consistentUsersTrend(BUCKETS);
+  check(
+    "all-four ≤ three-of-four at every week",
+    cAfter.every((p) => p.allFour <= p.threeOfFour)
+  );
+  check("k counts as active in all four weeks", last(cAfter).allFour - last(cBefore).allFour === 1, `delta ${last(cAfter).allFour - last(cBefore).allFour}`);
+  check("and in three-of-four", last(cAfter).threeOfFour - last(cBefore).threeOfFour === 1);
+
+  console.log("\nAI usage and cost");
+  const aiAfter = await aiWeeklyUsage(BUCKETS);
+  const aNow = last(aiAfter);
+  const aPrev = last(aiBefore);
+  check("four calls this week", aNow.calls - aPrev.calls === 4, `delta ${aNow.calls - aPrev.calls}`);
+  check("one failure", aNow.failures - aPrev.failures === 1);
+  check("managed-key cost is Orbit's", aNow.orbitMicros - aPrev.orbitMicros === 4000, `delta ${aNow.orbitMicros - aPrev.orbitMicros}`);
+  check("BYOK cost kept separate", aNow.userMicros - aPrev.userMicros === 700);
+  check("unpriced call counted, not treated as free", aNow.unpriced - aPrev.unpriced === 1);
+  const op = (await aiOperationCosts(30)).find((r) => r.operation === "smoke.growth_op");
+  const opPrev = opsBefore.find((r) => r.operation === "smoke.growth_op");
+  check(
+    "operation row carries calls, cost and Orbit's share",
+    Boolean(op) &&
+      op!.calls - (opPrev?.calls ?? 0) === 4 &&
+      op!.micros - (opPrev?.micros ?? 0) === 4700 &&
+      op!.orbitMicros - (opPrev?.orbitMicros ?? 0) === 4000 &&
+      op!.failures - (opPrev?.failures ?? 0) === 1,
+    JSON.stringify(op)
   );
 
   console.log(failures === 0 ? "\nAll growth-trend checks passed." : `\n${failures} failure(s).`);

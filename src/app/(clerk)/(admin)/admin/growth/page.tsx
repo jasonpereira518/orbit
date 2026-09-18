@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import { ChevronRight } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
@@ -11,6 +13,7 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { TimeSeriesChart, type ChartSeries } from "@/components/admin/growth-charts";
+import { GrowthMoreMetrics } from "@/components/admin/growth-more-metrics";
 import {
   activationTrend,
   depthTrend,
@@ -33,8 +36,11 @@ import {
   RANGE_LABEL,
   grainAllowed,
   growthHref,
+  longLabel,
+  monthLabel,
   rangeSpanDays,
   resolveGrowthWindow,
+  shortLabel,
 } from "@/lib/growth-range";
 import { cn } from "@/lib/utils";
 
@@ -529,36 +535,35 @@ export default async function AdminGrowthPage({
             )}
           </AdminPanel>
         </div>
+
+        {/* Detail, closed by default. Native <details> so it opens without JavaScript, and
+            its own Suspense boundary so these queries never hold up the charts above —
+            the section streams in while it is still closed. */}
+        <details className="group">
+          <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border/70 bg-card px-4 py-3 text-sm font-medium transition-colors duration-fast hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+            <ChevronRight
+              aria-hidden
+              className="size-4 text-muted-foreground transition-transform duration-fast group-open:rotate-90"
+            />
+            More metrics
+            <span className="font-normal text-muted-foreground">
+              · workflow stages, consistent use, AI cost, artifacts, data quality — weekly,
+              last 12 weeks
+            </span>
+          </summary>
+          <div className="mt-6">
+            <Suspense
+              fallback={
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  Loading more metrics…
+                </p>
+              }
+            >
+              <GrowthMoreMetrics />
+            </Suspense>
+          </div>
+        </details>
       </div>
     </>
   );
-}
-
-/* ------------------------------------------------------------------- labels --------- */
-
-// Buckets come back as UTC midnights from date_trunc, so every label is formatted in UTC —
-// in local time a Monday bucket would read as Sunday for anyone west of Greenwich.
-
-function shortLabel(d: Date, grain: Grain) {
-  if (grain === "month") {
-    return d.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
-  }
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-}
-
-function longLabel(d: Date, grain: Grain) {
-  if (grain === "month") return monthLabel(d);
-  const date = d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-  if (grain === "week") return `Week of ${date}`;
-  const weekday = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
-  return `${weekday}, ${date}`;
-}
-
-function monthLabel(d: Date) {
-  return d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }

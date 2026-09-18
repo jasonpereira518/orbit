@@ -120,3 +120,32 @@ export function growthHref(range: GrowthRange, grain: Grain | null): string {
   const qs = params.toString();
   return `/admin/growth${qs ? `?${qs}` : ""}`;
 }
+
+/* ------------------------------------------------------------------- labels --------- */
+
+// Buckets come back as UTC midnights from date_trunc, so every label is formatted in UTC —
+// in local time a Monday bucket would read as Sunday for anyone west of Greenwich.
+
+export function shortLabel(d: Date, grain: Grain) {
+  if (grain === "month") {
+    return d.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
+  }
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+export function longLabel(d: Date, grain: Grain) {
+  if (grain === "month") return monthLabel(d);
+  const date = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  if (grain === "week") return `Week of ${date}`;
+  const weekday = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  return `${weekday}, ${date}`;
+}
+
+export function monthLabel(d: Date) {
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
