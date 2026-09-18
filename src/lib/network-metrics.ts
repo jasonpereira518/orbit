@@ -380,7 +380,8 @@ export function selectMetricsSample<T extends { id: string }>(
  */
 export function computeNetworkMetrics(
   sampled: GraphContactInput[],
-  scores: Map<string, ClosenessBreakdown>,
+  // Only `raw` is read — typed that narrowly so the dashboard can pass its slim scores.
+  scores: Map<string, Pick<ClosenessBreakdown, "raw">>,
   totalContacts: number
 ): NetworkMetrics {
   const sampledIds = new Set(sampled.map((c) => c.id));

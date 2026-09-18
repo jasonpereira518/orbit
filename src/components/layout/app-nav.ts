@@ -24,9 +24,9 @@ export type AppNavItem = {
    * only way past React's 300ms Suspense reveal hold on a first visit.
    *
    * It costs a full server render of the destination on every page that shows the link, so
-   * it is reserved for pages that are both visited daily and bounded in cost — Contacts
-   * (paginated) and Reminders — and never for a heavy one (Constellation scans the whole
-   * network; Dashboard, see its note). See `fullPrefetch` below for how it is applied.
+   * it is reserved for pages that are both visited daily and bounded in cost — Dashboard,
+   * Contacts (paginated) and Reminders — and never for a heavy one (Constellation returns
+   * every engaged contact). See `fullPrefetch` below for how it is applied.
    */
   prefetchFull?: boolean;
 };
@@ -35,10 +35,12 @@ const DASHBOARD: AppNavItem = {
   href: "/dashboard",
   label: "Dashboard",
   icon: LayoutDashboard,
-  // NOT `prefetchFull`, though it is the most-visited page: heavy accounts' dashboards have
-  // run into the function time limit (see `maxDuration` in the (main) layout), and a full
-  // prefetch would start that render from every page they open. Revisit once the
-  // dashboard's query shape is fixed. Returning to it is covered by `staleTimes.dynamic`.
+  // Excluded at first: heavy accounts' dashboards had hit the function time limit, and a
+  // full prefetch starts that render from every page. Measured since, with
+  // `scripts/dev/dashboard-scale.ts`: bounded rows (Phase B) and the slim closeness read
+  // put a 10,000-contact dashboard at ~0.5 s with 50 ms per statement, 15 statements flat
+  // at every size — the same order as Contacts. So it is prefetched like the other two.
+  prefetchFull: true,
 };
 const CONTACTS: AppNavItem = {
   href: "/contacts",

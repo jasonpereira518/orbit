@@ -6,7 +6,8 @@
  * failing — the profile would simply be wrong.
  *
  * Also pins the fallback: a contact that has never been scored must take the whole-network
- * path, not render a closeness of zero from a missing row.
+ * path, not render a closeness of zero from a missing row. And the dashboard's slim read
+ * (`getClosenessCohortSlim`) must carry exactly the full read's four whole-network numbers.
  *
  * Run: npx tsx scripts/smoke-contact-closeness.ts
  */
@@ -17,6 +18,7 @@ import { getDb } from "../src/db";
 import { contacts, interactions, userSettings } from "../src/db/schema";
 import {
   getClosenessCohort,
+  getClosenessCohortSlim,
   getContactCloseness,
   recalibrateCloseness,
 } from "../src/lib/closeness-cohort";
@@ -97,6 +99,28 @@ run(async () => {
     );
     check(`${label}: same goals`, JSON.stringify(one.goals) === JSON.stringify(whole.goals));
   }
+
+  // The dashboard's slim read: the same four numbers, exactly, for every contact — it
+  // extracts them from the stored breakdown rather than reading the rounded columns.
+  const slim = await getClosenessCohortSlim(USER);
+  check("slim read covers the same contacts", slim.byId.size === whole.byId.size);
+  for (const [id, full] of whole.byId) {
+    const lean = slim.byId.get(id);
+    check(
+      `slim matches full for ${id.slice(0, 8)}`,
+      !!lean &&
+        lean.raw === full.raw &&
+        lean.closeness === full.closeness &&
+        lean.orbitScore === full.orbitScore &&
+        lean.tier === full.tier,
+      `${JSON.stringify(lean)} vs raw=${full.raw} closeness=${full.closeness} orbit=${full.orbitScore} tier=${full.tier}`
+    );
+  }
+  check(
+    "slim read carries the same constellation tallies",
+    JSON.stringify([...slim.constellationSignals]) === JSON.stringify([...whole.constellationSignals])
+  );
+  check("slim read carries the same average", slim.averageRaw === whole.averageRaw);
 
   // An unscored contact (created after the last recalibration) must fall back to the
   // whole-network path — which scores it — rather than read a missing breakdown as zero.
