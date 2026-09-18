@@ -162,10 +162,9 @@ export function ReminderCard({
             <ExpandableText text={description} lines={2} className="mt-1" />
           )}
           {due && (
-            // Relative-time text reads the wall clock at render time, so the SSR pass
-            // and the client hydration pass a moment later can land in different
-            // date-fns rounding buckets (e.g. "about 24 hours" vs "1 day"). That's
-            // expected clock drift, not a data mismatch.
+            // The label is the viewer's calendar day (see `dueLabel` above), which the
+            // server can't know — it renders in its own zone — so the one hydrating render
+            // may differ. That's a timezone difference, not a data mismatch.
             <p
               suppressHydrationWarning
               className={cn(
