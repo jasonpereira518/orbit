@@ -176,7 +176,7 @@ run(async () => {
     const u = f.calls.update[0]?.params;
     check("the switch sends the same item swap", u?.items?.[0]?.id === "si_smoke" && u.items[0].price === "price_smoke_annual");
     check("a declined charge rejects the switch outright", u?.payment_behavior === "error_if_incomplete");
-    check("keeps the period metadata in step", u?.metadata && (u.metadata as Record<string, string>).orbit_billing_period === "annual");
+    check("keeps the period metadata in step", (u?.metadata as Record<string, string> | undefined)?.orbit_billing_period === "annual");
     check("reports annual", up.ok && up.subscription.period === "annual" && up.subscription.amountCents === 5000, JSON.stringify(up));
 
     const same = await sm.changeBillingPeriod(SUBSCRIBER, "annual", { stripe: f.stripe });
