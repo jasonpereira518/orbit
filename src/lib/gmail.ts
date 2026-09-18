@@ -61,6 +61,18 @@ export function hasCalendarScope(scopes: string | null | undefined) {
   return Boolean(scopes?.includes(GOOGLE_CALENDAR_SCOPE));
 }
 
+/**
+ * True once a connection can read mail.
+ *
+ * Checked before email activity sync for the same reason `hasCalendarScope` is checked
+ * before calendar sync: a token minted before a scope shipped stays valid for everything
+ * else and returns 403 for that one API, which without a probe reads as a healthy
+ * connection failing repeatedly.
+ */
+export function hasMailReadScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes("https://www.googleapis.com/auth/gmail.readonly"));
+}
+
 /** Canonical Gmail OAuth callback path — must match Google Cloud authorized redirect URIs. */
 export const GMAIL_CALLBACK_PATH = "/api/gmail/callback";
 
@@ -540,6 +552,9 @@ export type GmailHeaderSummary = {
   id: string;
   threadId: string;
   from: string;
+  /** Recipients, raw and comma-separated. Needed to tell who a sent message went to. */
+  to: string;
+  cc: string;
   subject: string;
   snippet: string;
   internalDate: number | null;
@@ -594,7 +609,7 @@ export async function fetchGmailHeaders(
   const results = await mapWithConcurrency(refs, concurrency, async (ref) => {
     try {
       const res = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
           signal: AbortSignal.timeout(10_000),
@@ -607,6 +622,8 @@ export async function fetchGmailHeaders(
         id: ref.id,
         threadId: msg.threadId || ref.threadId,
         from: headerValue(msg, "From"),
+        to: headerValue(msg, "To"),
+        cc: headerValue(msg, "Cc"),
         subject: headerValue(msg, "Subject"),
         snippet: msg.snippet || "",
         internalDate: Number.isFinite(internal) ? internal : null,
@@ -668,6 +685,8 @@ export async function fetchGmailMessages(
         id,
         threadId: msg.threadId || "",
         from: headerValue(msg, "From"),
+        to: headerValue(msg, "To"),
+        cc: headerValue(msg, "Cc"),
         subject: headerValue(msg, "Subject"),
         snippet: msg.snippet || "",
         internalDate: Number.isFinite(internal) ? internal : null,

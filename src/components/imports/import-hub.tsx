@@ -107,6 +107,14 @@ const LinkedInConnectionsImport = dynamic(
   { loading: () => <PanelSkeleton /> },
 );
 
+const EmailActivityPanelLoader = dynamic(
+  () =>
+    import("@/components/imports/email-activity-loader").then((m) => ({
+      default: m.EmailActivityPanelLoader,
+    })),
+  { ssr: false }
+);
+
 const GoogleContactsImport = dynamic(
   () =>
     import("@/components/imports/google-contacts-import").then((m) => ({
@@ -280,6 +288,9 @@ export function ImportHub({
         >
           <LinkedInConnectionsImport />
           <GoogleContactsImport />
+          {/* Directly under the Google connection, because it reads the mailbox connected
+              there and the opt-in should not be somewhere the user has to go looking. */}
+          <EmailActivityPanelLoader />
           <OutlookContactsImport />
         </div>
       )}

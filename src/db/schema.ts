@@ -151,6 +151,15 @@ export const userSettings = pgTable("user_settings", {
    */
   senderBio: text("sender_bio"),
   /**
+   * Whether a connected mailbox may be read for relationship activity. 0 by default.
+   *
+   * Opt-in rather than implied by the Gmail connection, which users make to import contacts,
+   * sync a calendar or send a follow-up. Quietly turning that into "Orbit now reads who you
+   * email and when" would be a surprise, and the fact that only metadata is stored is not a
+   * reason to skip asking.
+   */
+  emailActivitySync: integer("email_activity_sync").notNull().default(0),
+  /**
    * How this account arrived — captured on FIRST touch of a marketing page and persisted
    * on the first authenticated request. Write-once: a user who lands via a Reddit link,
    * browses for a week and finally signs up after a direct visit was acquired by Reddit,

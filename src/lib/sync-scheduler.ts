@@ -26,7 +26,18 @@ import {
   fetchCalendarPage,
   toNetworkEvents,
 } from "@/lib/connectors/google-calendar";
-import { hasCalendarScope, getValidAccessToken } from "@/lib/gmail";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { gmailConnections, userSettings } from "@/db/schema";
+import {
+  emailActivitySince,
+  syncEmailActivity,
+} from "@/lib/email-activity-server";
+import {
+  hasCalendarScope,
+  hasMailReadScope,
+  getValidAccessToken,
+} from "@/lib/gmail";
 import {
   claimDueConnections,
   disarmSync,
@@ -96,6 +107,10 @@ export type SyncRunStats = {
   eventConnectionsSynced: number;
   eventConnectionsFailed: number;
   eventRostersFetched: number;
+  /** Email activity: mailboxes read, and interactions those reads produced. */
+  mailboxesSynced: number;
+  mailboxesSkipped: number;
+  emailInteractionsLogged: number;
   budgetExhausted: boolean;
 };
 
@@ -115,6 +130,9 @@ function emptyRunStats(): SyncRunStats {
     eventConnectionsSynced: 0,
     eventConnectionsFailed: 0,
     eventRostersFetched: 0,
+    mailboxesSynced: 0,
+    mailboxesSkipped: 0,
+    emailInteractionsLogged: 0,
     budgetExhausted: false,
   };
 }
@@ -204,6 +222,49 @@ async function syncGoogleCalendar(
  * way this rejects is if claiming itself fails, which means the database is unreachable and
  * there is nothing to record anyway.
  */
+/**
+ * Read one connection's mailbox for relationship activity, if the user asked for it.
+ *
+ * Three gates, all of which must pass, and each one is a different kind of "no": the user has
+ * to have opted in (`email_activity_sync`), the token has to carry the read scope, and the
+ * connection has to know which address is the user's own — without that last one every
+ * message looks inbound and the "waiting on a reply" queue fills with the user's own
+ * outbox.
+ */
+async function syncMailboxActivity(
+  conn: ClaimedConnection,
+  stats: SyncRunStats
+): Promise<void> {
+  if (!hasMailReadScope(conn.scopes)) {
+    stats.mailboxesSkipped++;
+    return;
+  }
+
+  const db = await getDb();
+  const [settings, connection] = await Promise.all([
+    db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, conn.userId),
+      columns: { emailActivitySync: true },
+    }),
+    db.query.gmailConnections.findFirst({
+      where: eq(gmailConnections.userId, conn.userId),
+      columns: { emailAddress: true },
+    }),
+  ]);
+
+  if (!settings?.emailActivitySync || !connection?.emailAddress) {
+    stats.mailboxesSkipped++;
+    return;
+  }
+
+  const result = await syncEmailActivity(conn.userId, {
+    selfEmail: connection.emailAddress,
+    since: await emailActivitySince(conn.userId),
+  });
+  stats.mailboxesSynced++;
+  stats.emailInteractionsLogged += result.interactionsLogged;
+}
+
 export async function runSyncPass(
   options: { now?: Date; budgetMs?: number; deps?: SyncDeps } = {}
 ): Promise<SyncRunStats> {
@@ -250,6 +311,11 @@ export async function runSyncPass(
     try {
       await syncGoogleCalendar(conn, stats, now, deps);
       stats.synced++;
+      // Best-effort and deliberately after the calendar: a mailbox pass that throws must not
+      // cost the connection its calendar sync, and the two answer different questions.
+      await syncMailboxActivity(conn, stats).catch(() => {
+        stats.mailboxesSkipped++;
+      });
     } catch (err) {
       stats.failed++;
       // A dead grant is permanent until the user reconnects; anything else is worth retrying.

@@ -81,6 +81,15 @@ export type NetworkEvent = {
   summary?: string | null;
   notes?: string | null;
   topics?: string[] | null;
+  /**
+   * Who sent it, where the source knows. NULL means "not stated", which is not the same as
+   * inbound — see `@/lib/awaiting-reply`, which treats an unknown direction as no evidence
+   * at all rather than as a message the user sent.
+   *
+   * Calendar events leave this unset: a meeting has no sender. Email sets it, and that is
+   * what lets a synced mailbox feed the "waiting on a reply" queue.
+   */
+  direction?: "in" | "out" | null;
 };
 
 export type IngestOptions = {
@@ -486,6 +495,7 @@ export async function ingestEvents(
       externalId: interactionExternalId(pair.event.externalIdBase, contactId),
       rawNotes: pair.event.notes ?? null,
       aiSummary: pair.event.summary ?? null,
+      direction: pair.event.direction ?? null,
       topics: pair.event.topics ?? null,
     }));
 

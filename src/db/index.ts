@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   last_name text,
   profile_image_url text,
   sender_bio text,
+  email_activity_sync integer NOT NULL DEFAULT 0,
   signup_referrer text,
   signup_utm_source text,
   signup_utm_medium text,
@@ -1089,6 +1090,10 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * and .revert_stats. None of the three can be backfilled, so imports that finished before
  * this version stay unrevertible by construction.
  *
+ * v39 = user_settings.email_activity_sync: the opt-in for reading a connected mailbox's
+ * metadata as relationship activity. Defaults to 0 — an existing Gmail connection does not
+ * imply consent to this, because it was made for contacts, calendar or sending.
+ *
  * v38 = contact_job_changes: the first record anywhere that a contact MOVED. Company and
  * title were overwritten in place, so "they just joined Stripe" was indistinguishable from
  * "they have been at Stripe for six years". Nothing to backfill — the previous values were
@@ -1108,7 +1113,7 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * signal that means the same thing, and inferring one from past interaction spacing would
  * invent an intent the user never expressed.
  */
-export const SCHEMA_VERSION = 38;
+export const SCHEMA_VERSION = 39;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1568,6 +1573,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "constellation_pin", "text");
   await ensureColumn(client, "contacts", "keep_in_touch_days", "integer");
   await ensureColumn(client, "user_settings", "sender_bio", "text");
+  await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
     "interactions",
@@ -2167,6 +2173,7 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS keep_in_touch_days integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS shared_to_pool integer NOT NULL DEFAULT 1`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
