@@ -10,7 +10,7 @@
  *
  * Pure: no database, no network. Run: npx tsx scripts/smoke-env.ts
  */
-import { validateEnv, REQUIRED_IN_PRODUCTION } from "../src/lib/env";
+import { validateEnv, REQUIRED_IN_PRODUCTION, EXPECTED_IN_PRODUCTION } from "../src/lib/env";
 
 function check(label: string, cond: boolean, detail?: string) {
   if (!cond) throw new Error(`${label} FAILED${detail ? `: ${detail}` : ""}`);
@@ -100,6 +100,28 @@ function main() {
     prod({ SLACK_OPS_WEBHOOK_URL: undefined }).errors.length === 0 &&
       prod({ SLACK_OPS_WEBHOOK_URL: undefined }).warnings.some((w) => w.includes("SLACK_OPS_WEBHOOK_URL"))
   );
+
+  check(
+    "missingExpected lists exactly the unset EXPECTED_IN_PRODUCTION names",
+    JSON.stringify(prod({}).missingExpected) ===
+      JSON.stringify(EXPECTED_IN_PRODUCTION.filter((n) => !GOOD[n])),
+    JSON.stringify(prod({}).missingExpected)
+  );
+  check("an unset Slack webhook is in missingExpected",
+    prod({ SLACK_OPS_WEBHOOK_URL: undefined }).missingExpected.includes("SLACK_OPS_WEBHOOK_URL"));
+  check("off production missingExpected is always empty",
+    validateEnv({}, { vercelEnv: undefined }).missingExpected.length === 0 &&
+      validateEnv({}, { vercelEnv: "preview" }).missingExpected.length === 0);
+
+  for (const name of [
+    "SLACK_OPS_CRITICAL_WEBHOOK_URL", "BETTERSTACK_HEARTBEAT_URL", "RESEND_WEBHOOK_SECRET",
+    "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI",
+  ]) {
+    check(`${name} is expected in production`, (EXPECTED_IN_PRODUCTION as readonly string[]).includes(name));
+    const r = prod({ [name]: undefined });
+    check(`production without ${name} warns and never errors`,
+      r.errors.length === 0 && r.warnings.some((w) => w.startsWith(name)), r.errors.join("; "));
+  }
 
   const preview = validateEnv(
     { DATABASE_URL: GOOD.DATABASE_URL, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x", CLERK_SECRET_KEY: "sk_test_x", ENCRYPTION_SECRET: GOOD.ENCRYPTION_SECRET },

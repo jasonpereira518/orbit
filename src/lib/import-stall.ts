@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { imports } from "@/db/schema";
 import { failImport } from "@/lib/import-engine";
 import { RESUMABLE_IMPORT_TYPES, runImportJobById } from "@/lib/import-job-dispatch";
+import { reportError } from "@/lib/report-error";
 
 /**
  * The stalled-import backstop: resume server-owned jobs that went quiet, a bounded number
@@ -80,8 +81,9 @@ export async function resumeStalledImports(options: {
     try {
       await runner(job.id);
       result.resumed += 1;
-    } catch {
+    } catch (err) {
       result.resumeFailed += 1;
+      reportError(err, { where: "job.import.resume-stalled", extra: { importId: job.id } });
     }
   }
 

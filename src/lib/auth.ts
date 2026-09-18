@@ -120,6 +120,44 @@ export type UserProfile = {
   imageUrl?: string;
 };
 
+/**
+ * The signed-in user's profile for RENDERING — a name to greet, an avatar, an address to
+ * show — read from the `user_settings` mirror instead of Clerk's Backend API.
+ *
+ * `getCurrentUserProfile()` below is a network call to Clerk on every use. The dashboard,
+ * the graph and the settings page all made it while rendering, so a page switch waited on
+ * Clerk as well as on Postgres. The mirror (`setUserEmail` / `setUserIdentity`, kept by the
+ * `user.created`/`user.updated` webhook) holds the same fields, and the row is already
+ * loaded and request-cached by `requireUserId()` — so this is usually zero round trips.
+ *
+ * Falls back to Clerk whenever the mirror cannot answer (no email, or no name at all),
+ * which is also what backfills it. Anything where a stale value would be WRONG rather than
+ * merely out of date — a Stripe customer's email, a From line — keeps calling
+ * `getCurrentUserProfile()` directly.
+ */
+export async function getDisplayProfile(): Promise<UserProfile | null> {
+  if (isDemoMode() || !isClerkConfigured()) return getCurrentUserProfile();
+
+  try {
+    const { userId } = await auth();
+    if (userId) {
+      const settings = await ensureUserSettings(userId);
+      const name = [settings?.firstName, settings?.lastName].filter(Boolean).join(" ");
+      if (settings?.email && name) {
+        return {
+          id: userId,
+          name,
+          email: settings.email,
+          imageUrl: settings.profileImageUrl ?? undefined,
+        };
+      }
+    }
+  } catch {
+    // Fall through to Clerk: a missing mirror is a slower page, never a broken one.
+  }
+  return getCurrentUserProfile();
+}
+
 export async function getCurrentUserProfile(): Promise<UserProfile | null> {
   if (isDemoMode()) {
     return {
@@ -142,11 +180,19 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
       // net if a user.updated webhook is ever missed. Deliberately here rather than in
       // bootstrapAuthenticatedUser, which runs on every authenticated request — this
       // path already pays for the currentUser() call. Best-effort; never blocks render.
-      if (email) {
-        void import("@/lib/user-settings")
-          .then(({ setUserEmail }) => setUserEmail(user.id, email))
-          .catch(() => {});
-      }
+      //
+      // The name and avatar are backfilled the same way, so `getDisplayProfile()` can answer
+      // from the mirror next time instead of calling Clerk again.
+      void import("@/lib/user-settings")
+        .then(async ({ setUserEmail, setUserIdentity }) => {
+          if (email) await setUserEmail(user.id, email);
+          await setUserIdentity(user.id, {
+            firstName: user.firstName,
+            lastName: user.lastName,
+            imageUrl: user.imageUrl,
+          });
+        })
+        .catch(() => {});
       return {
         id: user.id,
         name: user.fullName || user.firstName || "You",

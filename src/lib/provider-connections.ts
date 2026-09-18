@@ -38,8 +38,6 @@ const PROVIDER_TABLES: Record<SyncProvider, string> = {
   microsoft: "outlook_connections",
 };
 
-export const SYNC_PROVIDERS = Object.keys(PROVIDER_TABLES) as SyncProvider[];
-
 /**
  * How long a claim is honoured before another run may take the row.
  *
@@ -274,4 +272,19 @@ export async function loadCoverageSources(
     mailConnected: Boolean(row?.mail_connected),
     calendarConnected: Boolean(row?.calendar_connected),
   };
+}
+
+/**
+ * How long the most overdue armed connection has waited past its `next_sync_at`, in ms, or
+ * null when nothing is due. The scheduler's lag metric; the ops sweep alerts on it.
+ */
+export async function oldestDueAgeMs(provider: SyncProvider, now: Date = new Date()): Promise<number | null> {
+  const db = await getDb();
+  const table = sql.raw(PROVIDER_TABLES[provider]);
+  const result = await db.execute(sql`
+    SELECT min(next_sync_at) AS oldest FROM ${table}
+     WHERE status = 'active' AND next_sync_at IS NOT NULL AND next_sync_at <= ${now}
+  `);
+  const oldest = rowsOf<{ oldest: string | Date | null }>(result)[0]?.oldest ?? null;
+  return oldest ? Math.max(0, now.getTime() - new Date(oldest).getTime()) : null;
 }

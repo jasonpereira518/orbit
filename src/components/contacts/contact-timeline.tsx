@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { CircleDashed, FileText, Plus } from "lucide-react";
+import { CircleDashed, FileText, Plus, Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { reorderSameDayInteractions } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
@@ -22,8 +22,8 @@ import {
   monthLabel,
   monthShort,
 } from "@/components/contacts/timeline-date-scrubber";
-import { InteractionDetailSheet } from "@/components/contacts/interaction-detail-sheet";
-import { LogInteractionSheet } from "@/components/contacts/log-interaction-sheet";
+import { InteractionDetailSheetLazy } from "@/components/contacts/interaction-detail-sheet-lazy";
+import { LogInteractionSheetLazy } from "@/components/contacts/log-interaction-sheet-lazy";
 import {
   INTERACTION_FLIGHT_EVENT,
   type InteractionFlightDetail,
@@ -45,6 +45,8 @@ import { EASE_HOUSE } from "@/lib/motion";
 import { timelineDayLabel, timelineGapLabel } from "@/lib/timeline-date";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 export type TimelineInteraction = {
   id: string;
@@ -54,6 +56,8 @@ export type TimelineInteraction = {
   /** `raw_notes` truncated in SQL — enough for the clamped preview and for "has notes". */
   notesPreview: string | null;
   aiSummary: string | null;
+  /** Set when a captured batch wrote this row. Null for a hand-logged interaction. */
+  noteBatchId?: string | null;
 };
 
 /** How many rows get a staggered entrance before the cascade is capped. */
@@ -92,6 +96,7 @@ export function ContactTimeline({
   interactions,
   openActionItems,
   hasApiKey,
+  aiReason = null,
 }: {
   contactId: string;
   contactName: string;
@@ -99,6 +104,8 @@ export function ContactTimeline({
   /** Open items for this contact, from the same query the brief card's next steps use. */
   openActionItems: { id: string; interactionId: string }[];
   hasApiKey: boolean;
+  /** The AI gate's reason when `hasApiKey` is false. */
+  aiReason?: AiAccessDenial | null;
 }) {
   const router = useRouter();
   useRefreshOnVisible();
@@ -379,7 +386,7 @@ export function ContactTimeline({
         );
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not reorder");
+        toast.error(friendlyError(err, "Couldn’t reorder that — try again?"));
       }
     });
   }
@@ -721,7 +728,7 @@ export function ContactTimeline({
                                     <span className="mt-1 line-clamp-2 block text-sm leading-relaxed text-ink">
                                       {preview(i)}
                                     </span>
-                                    {openCount > 0 || hasNotes ? (
+                                    {openCount > 0 || hasNotes || i.noteBatchId ? (
                                       <span className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                                         {openCount > 0 ? (
                                           <span className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2 py-0.5">
@@ -733,6 +740,16 @@ export function ContactTimeline({
                                           <span className="inline-flex items-center gap-1">
                                             <FileText className="size-3" />
                                             Notes
+                                          </span>
+                                        ) : null}
+                                        {/* Informational, not a link: this whole row is a
+                                            button, and nesting an anchor inside one is
+                                            invalid and unreachable by keyboard. The batch
+                                            itself is reachable from the detail sheet. */}
+                                        {i.noteBatchId ? (
+                                          <span className="inline-flex items-center gap-1">
+                                            <Sparkles className="size-3" />
+                                            From a capture
                                           </span>
                                         ) : null}
                                       </span>
@@ -774,7 +791,7 @@ export function ContactTimeline({
         )}
       </CardContent>
 
-      <InteractionDetailSheet
+      <InteractionDetailSheetLazy
         interactionId={openId}
         canReorder={{
           // Reordering writes the whole day at once, so it is only offered on the unfiltered
@@ -861,10 +878,11 @@ export function ContactTimeline({
         ) : null}
       </AnimatePresence>
 
-      <LogInteractionSheet
+      <LogInteractionSheetLazy
         contactId={contactId}
         contactName={contactName}
         hasApiKey={hasApiKey}
+        aiReason={aiReason}
         open={logOpen}
         onOpenChange={setLogOpen}
       />

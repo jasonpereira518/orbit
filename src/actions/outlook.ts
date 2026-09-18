@@ -2,9 +2,13 @@
 
 import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
+import { purgeUserData } from "@/lib/user-data";
+import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { getDb } from "@/db";
 import { outlookConnections } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { buildMicrosoftAuthUrl, getOutlookOAuthConfigSummary } from "@/lib/outlook";
 
@@ -15,6 +19,12 @@ export type OutlookConnectionStatus = {
   connected: boolean;
   emailAddress: string | null;
   lastSyncedAt: string | null;
+  /** Null when there is no connection row. See `deriveConnectionHealth`. */
+  status: ConnectionHealth | null;
+  /** The scheduler's last error, verbatim — never rendered as-is (`calendarPauseLine`). */
+  syncError: string | null;
+  /** ISO time of the next calendar sync, or null when none is scheduled. */
+  nextSyncAt: string | null;
   /** Safe: configured redirect URI only (no secrets). */
   redirectUri: string | null;
 };
@@ -28,6 +38,9 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
       connected: false,
       emailAddress: null,
       lastSyncedAt: null,
+      status: null,
+      syncError: null,
+      nextSyncAt: null,
       redirectUri: summary.redirectUri,
     };
   }
@@ -42,6 +55,17 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
     connected: Boolean(conn && conn.status === "active"),
     emailAddress: conn?.emailAddress || null,
     lastSyncedAt: conn?.lastSyncedAt?.toISOString() || null,
+    status: conn
+      ? deriveConnectionHealth({
+          status: conn.status,
+          nextSyncAt: conn.nextSyncAt,
+          syncError: conn.syncError,
+          // There is no Microsoft calendar sync — runSyncPass claims Google only.
+          calendarScopeGranted: false,
+        })
+      : null,
+    syncError: conn?.syncError ?? null,
+    nextSyncAt: conn?.nextSyncAt?.toISOString() ?? null,
     redirectUri: summary.redirectUri,
   };
 }
@@ -70,10 +94,20 @@ export async function startOutlookOAuth(returnTo?: string): Promise<{ url: strin
   return { url: buildMicrosoftAuthUrl(state) };
 }
 
-export async function disconnectOutlook() {
+/**
+ * Deleting the row is all Orbit can do: Microsoft has no endpoint that revokes one app's
+ * delegated token (`revokeSignInSessions` would sign the user out of every app). The
+ * disconnect dialog links the user to their Microsoft account to remove the grant there.
+ */
+export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
   const db = await getDb();
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+  const extra = DISCONNECT_DELETE_CATEGORIES.outlook;
+  if (opts.alsoDelete === true && extra.length > 0) {
+    await purgeUserData(userId, { only: extra });
+  }
+  revalidatePath("/settings");
 }
 
 export async function consumeOutlookOAuthState(

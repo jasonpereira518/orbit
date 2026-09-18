@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   toast as sonnerToast,
   type ExternalToast,
@@ -8,17 +8,33 @@ import {
 import { cn } from "@/lib/utils";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { keepNotification } from "@/lib/kept-notifications";
+import { friendlyError } from "@/lib/errors";
 
 const EXPAND_THRESHOLD = 100;
 
 function ExpandableToastMessage({
   message,
   tone = "default",
+  onLayoutChange,
 }: {
   message: string;
   tone?: "default" | "error";
+  onLayoutChange?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // See `send` below: sonner has to be told when this changes height.
+  const onLayoutChangeRef = useRef(onLayoutChange);
+  useEffect(() => {
+    onLayoutChangeRef.current = onLayoutChange;
+  });
+  const hasRendered = useRef(false);
+  useEffect(() => {
+    if (!hasRendered.current) {
+      hasRendered.current = true;
+      return;
+    }
+    onLayoutChangeRef.current?.();
+  }, [expanded]);
   const needsExpand =
     message.length > EXPAND_THRESHOLD || message.includes("\n");
 
@@ -58,13 +74,20 @@ function ExpandableToastMessage({
 
 function maybeExpandable(
   message: string | ReactNode,
-  tone: "default" | "error" = "default"
+  tone: "default" | "error" = "default",
+  onLayoutChange?: () => void
 ) {
   if (typeof message !== "string") return message;
   if (message.length <= EXPAND_THRESHOLD && !message.includes("\n")) {
     return message;
   }
-  return <ExpandableToastMessage message={message} tone={tone} />;
+  return (
+    <ExpandableToastMessage
+      message={message}
+      tone={tone}
+      onLayoutChange={onLayoutChange}
+    />
+  );
 }
 
 /**
@@ -83,7 +106,8 @@ function maybeExpandable(
  * at three lines no matter what this expanded to.
  */
 function maybeExpandableDescription(
-  data?: ExternalToast
+  data?: ExternalToast,
+  onLayoutChange?: () => void
 ): ExternalToast | undefined {
   if (!data || typeof data.description !== "string") return data;
   return {
@@ -96,9 +120,51 @@ function maybeExpandableDescription(
         // paragraph, which `ExpandableText` otherwise renders at `text-sm`.
         className="text-[13px] leading-5 text-muted-foreground"
         buttonClassName="orbit-toast-expander"
+        onLayoutChange={onLayoutChange}
       />
     ),
   };
+}
+
+type Send = (title: ReactNode, data?: ExternalToast) => string | number;
+
+/**
+ * Show a toast whose expanders can grow it, and keep sonner's measurement honest.
+ *
+ * Sonner measures a toast's height once and re-measures only when its `title` or
+ * `description` changes identity — it has no ResizeObserver. While the stack is hovered
+ * it then locks every toast to that measurement (`height: var(--initial-height)`). And
+ * you have to hover a toast to reach its See more. So clicking it expanded the text
+ * inside a box that stayed the old height, and the text spilled out of the bottom.
+ *
+ * The fix is sonner's own supported way to change a live toast: call it again with the
+ * same id. Fresh title and description elements are new identities, which is exactly
+ * what triggers the re-measure — and the same component types in the same place, so
+ * React keeps each expander's open/closed state across the re-issue. Sonner applies the
+ * update in a `setTimeout`, after the expansion has already rendered, so the height it
+ * measures is the expanded one, and the stack offsets update with it.
+ */
+function send(
+  sendFn: Send,
+  message: string | ReactNode,
+  tone: "default" | "error",
+  data: ExternalToast | undefined
+): string | number {
+  // The id is only known once sonner returns it, but `remeasure` has to exist before
+  // that — it is handed to the elements being sent. Hence a holder, not a `let`.
+  const sent: { id?: string | number } = {};
+  const remeasure = () => {
+    if (sent.id === undefined) return;
+    sendFn(maybeExpandable(message, tone, remeasure), {
+      ...maybeExpandableDescription(data, remeasure),
+      id: sent.id,
+    });
+  };
+  sent.id = sendFn(
+    maybeExpandable(message, tone, remeasure),
+    maybeExpandableDescription(data, remeasure)
+  );
+  return sent.id;
 }
 
 /**
@@ -182,63 +248,137 @@ export const toast = {
   ...sonnerToast,
   error(message: string | ReactNode, data?: OrbitToastData) {
     if (data?.keep === false) {
-      return sonnerToast.error(
-        maybeExpandable(message, "error"),
-        maybeExpandableDescription({
-          ...stripKeep(data),
-          duration: data.duration ?? 10_000,
-        })
-      );
+      return send((t, d) => sonnerToast.error(t, d), message, "error", {
+        ...stripKeep(data),
+        duration: data.duration ?? 10_000,
+      });
     }
     return withKeep("error", message, data, (d) =>
-      sonnerToast.error(
-        maybeExpandable(message, "error"),
-        maybeExpandableDescription({ ...d, duration: d.duration ?? 10_000 })
-      )
+      send((t, dd) => sonnerToast.error(t, dd), message, "error", {
+        ...d,
+        duration: d.duration ?? 10_000,
+      })
     );
   },
   message(message: string | ReactNode, data?: OrbitToastData) {
     if (!data?.action || data.keep === false) {
-      return sonnerToast.message(
-        maybeExpandable(message),
-        maybeExpandableDescription(stripKeep(data))
-      );
+      return send((t, d) => sonnerToast.message(t, d), message, "default", stripKeep(data));
     }
     return withKeep("action", message, data, (d) =>
-      sonnerToast.message(maybeExpandable(message), maybeExpandableDescription(d))
+      send((t, dd) => sonnerToast.message(t, dd), message, "default", d)
     );
   },
   warning(message: string | ReactNode, data?: OrbitToastData) {
     if (!data?.action || data.keep === false) {
-      return sonnerToast.warning(
-        maybeExpandable(message),
-        maybeExpandableDescription(stripKeep(data))
-      );
+      return send((t, d) => sonnerToast.warning(t, d), message, "default", stripKeep(data));
     }
     return withKeep("action", message, data, (d) =>
-      sonnerToast.warning(maybeExpandable(message), maybeExpandableDescription(d))
+      send((t, dd) => sonnerToast.warning(t, dd), message, "default", d)
     );
   },
   success(message: string | ReactNode, data?: OrbitToastData) {
     if (!data?.action || data.keep === false) {
-      return sonnerToast.success(
-        maybeExpandable(message),
-        maybeExpandableDescription(stripKeep(data))
-      );
+      return send((t, d) => sonnerToast.success(t, d), message, "default", stripKeep(data));
     }
     return withKeep("action", message, data, (d) =>
-      sonnerToast.success(maybeExpandable(message), maybeExpandableDescription(d))
+      send((t, dd) => sonnerToast.success(t, dd), message, "default", d)
     );
   },
   info(message: string | ReactNode, data?: OrbitToastData) {
     if (!data?.action || data.keep === false) {
-      return sonnerToast.info(
-        maybeExpandable(message),
-        maybeExpandableDescription(stripKeep(data))
-      );
+      return send((t, d) => sonnerToast.info(t, d), message, "default", stripKeep(data));
     }
     return withKeep("action", message, data, (d) =>
-      sonnerToast.info(maybeExpandable(message), maybeExpandableDescription(d))
+      send((t, dd) => sonnerToast.info(t, dd), message, "default", d)
     );
   },
 };
+
+/**
+ * Whether an inverse reported that it could not restore — `{ restored: false }`, which
+ * the inverses in this PR return when the row changed in the meantime. Anything else
+ * (a plain row, nothing at all) counts as restored. `unknown` rather than a declared
+ * shape, because some inverses are ordinary actions — moving a reminder back is just
+ * `moveReminderToList` — and return whatever they return.
+ */
+function reportedNotRestored(result: unknown): boolean {
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    "restored" in result &&
+    (result as { restored: unknown }).restored === false
+  );
+}
+
+/**
+ * Run a server action, confirm it with a toast, and offer Undo where the action has a
+ * real inverse.
+ *
+ * This replaces three hand-rolled copies of the same try / toast / refresh helper —
+ * `runAction` in the notifications panel, `run` in the suggested-reminders panel, and
+ * a bare pair in `reminder-done-snooze` — so the Undo behaviour is decided once.
+ *
+ * Three things it gets right that the copies could not:
+ *
+ * - Failure copy goes through `friendlyError`, never `err.message`.
+ * - An Undo toast is `keep: false`. Undo is a courtesy for the next few seconds, not
+ *   something to file in the notification center — and after a reload its callback
+ *   would be gone anyway, leaving a row with a dead button.
+ * - When an inverse reports `restored: false` (the row changed in the meantime), it
+ *   says so. Announcing "Undone" over a state that was not restored is worse than
+ *   offering no Undo at all.
+ */
+export async function runToastAction<T>(opts: {
+  run: () => Promise<T>;
+  success: string | ((result: T) => string);
+  /** Shown if `run` throws — passed to `friendlyError` as the fallback. */
+  failure: string;
+  /** Re-read whatever the action changed. Called after the action and after an Undo. */
+  refresh?: () => unknown;
+  /** Return the inverse for this result, or nothing to offer no Undo. */
+  undo?: (result: T) => (() => Promise<unknown>) | null | undefined;
+  undone?: string;
+}): Promise<T | undefined> {
+  let result: T;
+  try {
+    result = await opts.run();
+  } catch (err) {
+    toast.error(friendlyError(err, opts.failure));
+    return undefined;
+  }
+
+  const message =
+    typeof opts.success === "function" ? opts.success(result) : opts.success;
+  const inverse = opts.undo?.(result);
+
+  if (inverse) {
+    toast.success(message, {
+      keep: false,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          void (async () => {
+            try {
+              const undone = await inverse();
+              if (reportedNotRestored(undone)) {
+                toast.message("That’s changed since — nothing to undo", { keep: false });
+              } else {
+                toast.success(opts.undone ?? "Undone", { keep: false });
+              }
+              await opts.refresh?.();
+            } catch (err) {
+              toast.error(friendlyError(err, "Couldn’t undo that — try again?"), {
+                keep: false,
+              });
+            }
+          })();
+        },
+      },
+    });
+  } else {
+    toast.success(message);
+  }
+
+  await opts.refresh?.();
+  return result;
+}

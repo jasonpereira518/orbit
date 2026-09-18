@@ -2,6 +2,7 @@ import { cache } from "react";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, interactions, userGoals, userSettings } from "@/db/schema";
+import { countsAsTouch } from "@/lib/interaction-provenance";
 import {
   applyClosenessCohort,
   buildClosenessCohort,
@@ -174,9 +175,123 @@ export function getClosenessCohort(
   const existing = store.get(userId);
   if (existing) return existing;
 
-  const pending = resolveCohortResult(userId, preloadedRows);
+  const pending = resolveCohortResult(userId, preloadedRows) as Promise<ClosenessCohortResult>;
   store.set(userId, pending);
   return pending;
+}
+
+/** The four fields every whole-network reader of closeness actually uses. */
+export type ClosenessScalars = Pick<ClosenessBreakdown, "raw" | "closeness" | "orbitScore" | "tier">;
+
+export type ClosenessCohortSlimResult = Omit<ClosenessCohortResult, "byId"> & {
+  byId: Map<string, ClosenessScalars>;
+};
+
+/** Separate from `cohortStore`, so a slim result can never be handed to a full reader. */
+const slimCohortStore = cache(() => new Map<string, Promise<ClosenessCohortSlimResult>>());
+
+/**
+ * `getClosenessCohort` for readers that only need each contact's ring, band and score —
+ * the dashboard. A full breakdown carries every scoring factor; at 10,000 contacts the full
+ * read returned ~3.6 MB of them for the dashboard to use four numbers out of each. Same
+ * values, exactly (they are extracted from the same stored breakdown, not the rounded
+ * columns), and the same repair path when nothing usable is stored.
+ */
+export function getClosenessCohortSlim(userId: string): Promise<ClosenessCohortSlimResult> {
+  // A full result already built on this request answers a slim question too.
+  const full = cohortStore().get(userId);
+  if (full) return full;
+
+  const store = slimCohortStore();
+  const existing = store.get(userId);
+  if (existing) return existing;
+
+  const pending = resolveCohortResult(userId, undefined, { slim: true });
+  store.set(userId, pending);
+  return pending;
+}
+
+/**
+ * The closeness inputs ONE contact's page needs, in a single parallel round of queries.
+ *
+ * `getClosenessCohort` answers for the whole network, and the contact page used to call it
+ * to explain a single score: three round trips in sequence (the cohort row, an unscored
+ * count, then a scan of every contact's stored breakdown plus a group-by over every
+ * interaction), all to read one row out of each. This reads that one row directly — the
+ * stored distribution, this contact's stored breakdown, the goals, and this contact's
+ * interaction tallies — all at once.
+ *
+ * Returns the same result shape, populated for `contactId` only, so the page reads it
+ * exactly as before. Falls back to the whole-network path whenever the stored data cannot
+ * answer (no usable distribution, or this contact has never been scored), which is also
+ * the path that repairs it. Unlike that path it does not recompute because OTHER contacts
+ * are unscored: this page shows one score, and the list or dashboard will pick them up.
+ */
+export async function getContactCloseness(
+  userId: string,
+  contactId: string
+): Promise<ClosenessCohortResult> {
+  // Something on this request already built the whole cohort: reuse it rather than query.
+  const existing = cohortStore().get(userId);
+  if (existing) return existing;
+
+  const db = await getDb();
+  const since = new Date(Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const [cohortRow, scored, goalRows, touchRows] = await Promise.all([
+    readCohortRow(userId),
+    // Raw SQL for the same reason as `readStoredParts`: `closeness_breakdown` is
+    // deliberately absent from the Drizzle schema.
+    db.execute(sql`
+      select closeness_breakdown as breakdown
+      from contacts
+      where user_id = ${userId} and id = ${contactId} and closeness_breakdown is not null
+    `),
+    db.query.userGoals.findMany({
+      where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
+      columns: { text: true },
+    }),
+    db
+      .select({
+        contactId: interactions.contactId,
+        recent: sql<number>`count(*) filter (where ${interactions.interactionDate} >= ${since})::int`,
+        total: sql<number>`count(*)::int`,
+        ...constellationSignalAggregates,
+      })
+      .from(interactions)
+      .where(
+        and(
+          eq(interactions.userId, userId),
+          eq(interactions.contactId, contactId),
+          countsAsTouch()
+        )
+      )
+      .groupBy(interactions.contactId),
+  ]);
+
+  const breakdown = rowsOf<{ breakdown: ClosenessBreakdown | null }>(scored)[0]?.breakdown;
+  if (!cohortRow || !isUsableSnapshot(cohortRow.snapshot) || !breakdown) {
+    return getClosenessCohort(userId);
+  }
+
+  const snapshot = cohortRow.snapshot;
+  return {
+    cohort: cohortFromSnapshot(snapshot),
+    byId: new Map([[contactId, breakdown]]),
+    averageRaw: snapshot.averageRaw ?? 0,
+    goals: goalRows.map((g) => g.text),
+    touchCounts: new Map(touchRows.map((r) => [r.contactId, Number(r.recent) || 0])),
+    interactedIds: new Set(
+      touchRows.filter((r) => Number(r.total) > 0).map((r) => r.contactId)
+    ),
+    constellationSignals: signalsFromRows(touchRows),
+    inputs: {
+      maxCompany: snapshot.maxCompany ?? 1,
+      maxSchool: snapshot.maxSchool ?? 1,
+      userDomain: snapshot.userDomain ?? null,
+      mailConnected: snapshot.mailConnected ?? false,
+      calendarConnected: snapshot.calendarConnected ?? false,
+    },
+  };
 }
 
 /**
@@ -190,15 +305,23 @@ export function getClosenessCohort(
  */
 async function resolveCohortResult(
   userId: string,
-  preloadedRows?: ClosenessCohortRow[] | Promise<ClosenessCohortRow[]>
-): Promise<ClosenessCohortResult> {
-  const cohortRow = await readCohortRow(userId);
+  preloadedRows?: ClosenessCohortRow[] | Promise<ClosenessCohortRow[]>,
+  options: { slim?: boolean } = {}
+): Promise<ClosenessCohortResult | ClosenessCohortSlimResult> {
+  // ONE round on the normal path, where this used to be three in sequence: the cohort row,
+  // then the unscored count, then the reads below. The reads start speculatively alongside
+  // the checks that decide whether they are wanted. When the checks send us to the rebuild
+  // instead — no usable distribution, or unscored contacts, which is rare because contacts
+  // are scored as they are written — the speculative reads are simply discarded.
+  const stored = readStoredParts(userId, options.slim ?? false);
+  stored.catch(() => {});
+  const [cohortRow, unscored] = await Promise.all([
+    readCohortRow(userId),
+    countUnscoredContacts(userId),
+  ]);
 
-  if (cohortRow && isUsableSnapshot(cohortRow.snapshot)) {
-    const unscored = await countUnscoredContacts(userId);
-    if (unscored === 0) {
-      return readStoredCohortResult(userId, cohortRow.snapshot);
-    }
+  if (cohortRow && isUsableSnapshot(cohortRow.snapshot) && unscored === 0) {
+    return assembleStoredResult(await stored, cohortRow.snapshot);
   }
 
   const result = await buildCohortResult(userId, preloadedRows);
@@ -206,11 +329,12 @@ async function resolveCohortResult(
   return result;
 }
 
-/** Assemble the same result shape from stored columns, doing no scoring at all. */
-async function readStoredCohortResult(
-  userId: string,
-  snapshot: NonNullable<Awaited<ReturnType<typeof readCohortRow>>>["snapshot"]
-): Promise<ClosenessCohortResult> {
+/**
+ * The stored reads, no scoring at all. `slim` returns only the four fields whole-network
+ * readers use (`ClosenessScalars`), extracted from each breakdown in SQL — the database still
+ * reads the jsonb, but a few numbers per contact cross the wire instead of the whole thing.
+ */
+async function readStoredParts(userId: string, slim: boolean) {
   const db = await getDb();
   const since = new Date(
     Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
@@ -222,11 +346,22 @@ async function readStoredCohortResult(
   const [scored, goalRows, touchRows] = await Promise.all([
     // Raw SQL because `closeness_breakdown` is deliberately absent from the Drizzle schema
     // (see the note on the `contacts` table) — this is the one place that wants it.
-    db.execute(sql`
-      select id, closeness_breakdown as breakdown
-      from contacts
-      where user_id = ${userId} and closeness_breakdown is not null
-    `),
+    slim
+      ? db.execute(sql`
+          select id, jsonb_build_object(
+            'raw', closeness_breakdown->'raw',
+            'closeness', closeness_breakdown->'closeness',
+            'orbitScore', closeness_breakdown->'orbitScore',
+            'tier', closeness_breakdown->'tier'
+          ) as breakdown
+          from contacts
+          where user_id = ${userId} and closeness_breakdown is not null
+        `)
+      : db.execute(sql`
+          select id, closeness_breakdown as breakdown
+          from contacts
+          where user_id = ${userId} and closeness_breakdown is not null
+        `),
     db.query.userGoals.findMany({
       where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
       columns: { text: true },
@@ -241,10 +376,20 @@ async function readStoredCohortResult(
         ...constellationSignalAggregates,
       })
       .from(interactions)
-      .where(eq(interactions.userId, userId))
+      .where(and(eq(interactions.userId, userId), countsAsTouch()))
       .groupBy(interactions.contactId),
   ]);
+  return { scored, goalRows, touchRows };
+}
 
+/** Assemble the result shape from `readStoredParts` and the stored distribution. */
+function assembleStoredResult(
+  { scored, goalRows, touchRows }: Awaited<ReturnType<typeof readStoredParts>>,
+  snapshot: NonNullable<Awaited<ReturnType<typeof readCohortRow>>>["snapshot"]
+): ClosenessCohortResult {
+  // Full breakdowns, or `ClosenessScalars` on the slim path — typed as the full shape here
+  // and narrowed back by `getClosenessCohortSlim`'s return type, which is the only caller
+  // that ever asks for slim rows.
   const byId = new Map<string, ClosenessBreakdown>();
   for (const row of rowsOf<{ id: string; breakdown: ClosenessBreakdown | null }>(scored)) {
     if (row.breakdown) byId.set(row.id, row.breakdown);
@@ -356,7 +501,7 @@ async function buildCohortResult(
         ...constellationSignalAggregates,
       })
       .from(interactions)
-      .where(eq(interactions.userId, userId))
+      .where(and(eq(interactions.userId, userId), countsAsTouch()))
       .groupBy(interactions.contactId),
     db.query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),

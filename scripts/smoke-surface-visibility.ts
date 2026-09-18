@@ -18,9 +18,12 @@ import { adminAuditLog, appSurfaceFlags } from "../src/db/schema";
 import {
   isSurfaceHiddenError,
   requireVisibleSurface,
+  resolveSurfaceVisibility,
   setSurfaceHidden,
 } from "../src/lib/surface-visibility";
 import {
+  COMING_SOON_COMPANIONS,
+  COMING_SOON_KEYS,
   FEEDBACK_SURFACE_KEY,
   SURFACES,
   getSurface,
@@ -205,6 +208,40 @@ async function main() {
         adminOk = false;
       }
       check("an operator is exempt from hiding", adminOk);
+
+      // Coming-soon pages do NOT ride that exemption — they default closed for admins too,
+      // so an unreleased feature cannot ship early just because whoever built it is an
+      // admin. `isPreviewingUnreleased` reads a separate opt-in cookie; outside a request
+      // context (this script) that read throws and is caught as false, so both viewers land
+      // on the same default here — which is exactly the case worth asserting.
+      const forAdmin = await resolveSurfaceVisibility(ADMIN);
+      const forUser = await resolveSurfaceVisibility(USER);
+      check(
+        "an operator gets the coming-soon screen for unreleased pages by default",
+        COMING_SOON_KEYS.size > 0 &&
+          !forAdmin.previewingUnreleased &&
+          [...COMING_SOON_KEYS].every((k) => forAdmin.comingSoon.has(k))
+      );
+      check(
+        "an ordinary user gets the coming-soon screen for every marked page",
+        COMING_SOON_KEYS.size > 0 &&
+          [...COMING_SOON_KEYS].every((k) => forUser.comingSoon.has(k))
+      );
+      const companions = Object.values(COMING_SOON_COMPANIONS).flat();
+      check(
+        "a coming-soon page hides its companion surfaces for both a user and a default admin",
+        companions.every((k) => forUser.hidden.has(k)) &&
+          companions.every((k) => forAdmin.hidden.has(k))
+      );
+      check(
+        "every coming-soon companion is a real surface hung off a coming-soon page",
+        companions.every((k) => getSurface(k) !== undefined) &&
+          Object.keys(COMING_SOON_COMPANIONS).every((k) => COMING_SOON_KEYS.has(k))
+      );
+      check(
+        "coming-soon never leaks into what the admin console reports as hidden",
+        companions.every((k) => !forUser.hiddenForUsers.has(k) || before.has(k))
+      );
     } finally {
       if (priorAdmins === undefined) delete process.env.ADMIN_USER_IDS;
       else process.env.ADMIN_USER_IDS = priorAdmins;
