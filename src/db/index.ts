@@ -1337,6 +1337,8 @@ CREATE TABLE IF NOT EXISTS page_views (
   device text NOT NULL,
   is_bot boolean NOT NULL DEFAULT false,
   dwell_ms integer,
+  load_ms integer,
+  nav_type text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
@@ -1577,7 +1579,14 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 67 = reminder_lists.icon / .color, for the list editor. Its own bump rather than folded into
 // 66: PR #220's preview build may already have stamped its preview database 66, which would
 // then skip these columns. Checked against every remote branch on Sep 18 2026.
-export const SCHEMA_VERSION = 67;
+//
+// 68 = page_views.load_ms + nav_type, the page-load timing the navigation-speed work is
+// measured by (PR #222). Built as 67; renumbered past #220's 66 and 67.
+//
+// 69 = merging main (66, 67) into #222 (68). No DDL of its own. #222's preview builds stamped
+// the shared preview database 68 WITHOUT 67's reminder_lists columns, so a merged build at
+// 68 would skip them there; only a number above both makes every database pick up both.
+export const SCHEMA_VERSION = 69;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2070,6 +2079,45 @@ export function isSchemaCurrent(recorded: { version: number; fingerprint: string
   if (recorded.version > SCHEMA_VERSION) return true;
   if (recorded.version < SCHEMA_VERSION) return false;
   return recorded.fingerprint === schemaFingerprint();
+}
+
+/**
+ * `schemaIsCurrent` + `detectExtensions` in a single statement, for the path every cold
+ * start takes. On neon-http each statement is its own HTTPS request, and the slow way is
+ * three in sequence (CREATE TABLE IF NOT EXISTS, the version read, the extension read)
+ * ahead of the first query a visitor is waiting on.
+ *
+ * Only ever answers "yes, current — and here are the extensions". Anything else (the
+ * table is missing, no row, a version behind, a read error) returns false and the caller
+ * falls through to the original slow path, which is what creates the table and migrates.
+ * So a wrong answer here can cost a round trip, never a skipped migration.
+ */
+async function schemaIsCurrentFast(run: StatementRunner): Promise<boolean> {
+  try {
+    const result = await run(
+      `SELECT m.version,
+              m.fingerprint,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS has_vector,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS has_trigram
+         FROM schema_migrations m
+        WHERE m.id = 1`
+    );
+    const row = rowsOf<{
+      version: number | string;
+      fingerprint: string | null;
+      has_vector: boolean;
+      has_trigram: boolean;
+    }>(result)[0];
+    if (!row) return false;
+    if (!isSchemaCurrent({ version: Number(row.version), fingerprint: row.fingerprint ?? null })) {
+      return false;
+    }
+    globalForDb.orbitPgvector = Boolean(row.has_vector);
+    globalForDb.orbitTrigram = Boolean(row.has_trigram);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -3006,6 +3054,9 @@ const alters = [
   // no tint), so existing lists need no backfill.
   `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS icon text`,
   `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS color text`,
+  // v68: page-load timing on the traffic pipeline (src/lib/nav-timing.ts).
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS load_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
 ];
 
 /**
@@ -3300,6 +3351,12 @@ export async function reconcileSchema(options: ReconcileOptions = {}): Promise<S
   const run: StatementRunner = neonSql
     ? (statement) => neonSql.query(statement)
     : (statement) => globalForDb.orbitPglite!.query(statement);
+
+  // Every cold start lands here before its first real query, so the common case — the build
+  // already migrated — has to be ONE round trip, not three.
+  if (await schemaIsCurrentFast(run)) {
+    return { version: SCHEMA_VERSION, applied: false, failed: [] };
+  }
 
   if (await schemaIsCurrent(run)) {
     // pgvector/pg_trgm availability lives in module state, not in the database, so it

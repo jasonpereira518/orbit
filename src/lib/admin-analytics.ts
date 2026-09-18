@@ -215,6 +215,59 @@ export async function topRoutes(
   }));
 }
 
+export type RouteLoadRow = {
+  route: string;
+  navType: "hard" | "soft";
+  /** Views with a measured load — the sample size behind the percentiles. */
+  samples: number;
+  p50Ms: number;
+  p75Ms: number;
+  p95Ms: number;
+};
+
+/**
+ * Page-load percentiles per route, from `page_views.load_ms` (see `src/lib/nav-timing.ts`).
+ *
+ * Split by `nav_type` and never pooled: a hard load includes TTFB and any cold start, a
+ * soft navigation starts at the router, so averaging them would describe neither. Only
+ * rows with a measurement count — a NULL is an unmeasured view, not a fast one.
+ */
+export async function routeLoadTimes(
+  range: Range = "7d",
+  limit = 40,
+  now: Date = new Date()
+): Promise<RouteLoadRow[]> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT pv.route,
+           pv.nav_type,
+           count(*)::int AS samples,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY pv.load_ms) AS p50,
+           percentile_cont(0.75) WITHIN GROUP (ORDER BY pv.load_ms) AS p75,
+           percentile_cont(0.95) WITHIN GROUP (ORDER BY pv.load_ms) AS p95
+    FROM ${PV} AND pv.created_at >= ${since(range, now)}
+      AND pv.load_ms IS NOT NULL AND pv.nav_type IN ('hard', 'soft')
+    GROUP BY pv.route, pv.nav_type
+    ORDER BY samples DESC
+    LIMIT ${limit}
+  `);
+  return rowsOf<{
+    route: string;
+    nav_type: "hard" | "soft";
+    samples: number;
+    p50: string | number;
+    p75: string | number;
+    p95: string | number;
+  }>(result).map((r) => ({
+    route: r.route,
+    navType: r.nav_type,
+    samples: num(r.samples),
+    p50Ms: Math.round(num(r.p50)),
+    p75Ms: Math.round(num(r.p75)),
+    p95Ms: Math.round(num(r.p95)),
+  }));
+}
+
 export type GeoRow = {
   country: string | null;
   region: string | null;

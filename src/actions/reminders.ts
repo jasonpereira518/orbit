@@ -11,7 +11,7 @@ import {
   type ReminderActionKind,
 } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
-import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
+import { requireUserId, getDisplayProfile } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
@@ -125,7 +125,7 @@ export async function fetchDashboard() {
       getDashboardData(userId, {
         // Clerk profile fetch runs concurrently with the DB work; resolved at
         // its single use site (graphPreview.summary.userName).
-        userName: getCurrentUserProfile()
+        userName: getDisplayProfile()
           .then((p) => p?.name || undefined)
           .catch(() => undefined),
       }),
