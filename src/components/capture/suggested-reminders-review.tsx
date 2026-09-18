@@ -14,8 +14,10 @@ import { useState } from "react";
 import { CalendarClock, ChevronDown, ChevronUp, Lightbulb } from "lucide-react";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DatePickerButton } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { shortDayLabel } from "@/lib/reminder-due-bucket";
 import { cn } from "@/lib/utils";
 import type { RejectedCounts } from "@/lib/date-commitment-extract";
 import { skippedNoteText } from "@/lib/capture/skipped-note";
@@ -126,11 +128,11 @@ function ReminderRow({
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Date</Label>
-              <Input
-                type="date"
+              <DatePickerButton
                 value={item.dueDateIso}
-                onChange={(e) => update(item.key, { dueDateIso: e.target.value })}
-                className={cn(item.yearInferred && "ring-1 ring-amber-500/50")}
+                onSelect={(ymd) => update(item.key, { dueDateIso: ymd })}
+                label={item.dueDateIso ? shortDayLabel(item.dueDateIso) : "Pick a date"}
+                className={cn("w-full justify-start font-normal", item.yearInferred && "ring-1 ring-amber-500/50")}
               />
               {item.yearInferred && (
                 <p className="text-xs text-amber-700 dark:text-amber-300">

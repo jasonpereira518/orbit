@@ -185,6 +185,8 @@ CREATE TABLE IF NOT EXISTS reminder_lists (
   name_normalized text NOT NULL,
   position integer NOT NULL DEFAULT 0,
   is_inbox integer NOT NULL DEFAULT 0,
+  icon text,
+  color text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS reminder_lists_user_idx ON reminder_lists(user_id);
@@ -1567,7 +1569,15 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 65 = launch Phase 4 polish: no DDL. Two idempotent data migrations at the end of
 // `alters` — calendar feed tokens hashed in place, li-event interactions tagged ai_derived.
-export const SCHEMA_VERSION = 65;
+//
+// 66 = the reminders redesign: no DDL. One idempotent data migration at the end of `alters`
+// folds the legacy `completed` reminder status into `done`. Checked against every remote
+// branch on Sep 18 2026: none claimed anything above main's 65.
+//
+// 67 = reminder_lists.icon / .color, for the list editor. Its own bump rather than folded into
+// 66: PR #220's preview build may already have stamped its preview database 66, which would
+// then skip these columns. Checked against every remote branch on Sep 18 2026.
+export const SCHEMA_VERSION = 67;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2987,6 +2997,15 @@ const alters = [
   // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
   `UPDATE interactions SET source = 'ai_derived'
     WHERE external_id LIKE 'li-event:%' AND source IS DISTINCT FROM 'ai_derived'`,
+  // Schema v66: `completed` was an early spelling of a done reminder. Every reader matched
+  // both; after this only `done` exists, and the reminders query matches that alone.
+  // Idempotent: nothing writes `completed` to reminders any more.
+  `UPDATE reminders SET status = 'done' WHERE status = 'completed'`,
+  // Schema v67: a reminder list's icon and colour, chosen from its right-click editor.
+  // Keys into src/lib/reminder-list-style.ts; NULL means the default (Inbox tray / list glyph,
+  // no tint), so existing lists need no backfill.
+  `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS icon text`,
+  `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS color text`,
 ];
 
 /**

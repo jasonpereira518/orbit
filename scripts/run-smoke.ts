@@ -69,6 +69,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-clerk-session-hint": "pure",
   "smoke-closeness": "pure",
   "smoke-command-palette": "pure",
+  "smoke-reminder-due-bucket": "pure",
+  "smoke-triage-keys": "pure",
   "smoke-event-canonical-url": "pure",
   "smoke-event-connectors": "pure",
   "smoke-event-discovery": "pure",
@@ -206,6 +208,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-search-rank": "pglite",
   "smoke-contacts-search-paging": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
+  "smoke-reminders-page": "pglite", // same shape as smoke-contacts-page
+  "smoke-reminder-list-style": "pglite",
   "smoke-csp-report": "pglite",
   "smoke-embedding-backfill": "pglite",
   "smoke-embedding-writes": "pglite",

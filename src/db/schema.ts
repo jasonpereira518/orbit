@@ -822,6 +822,10 @@ export const reminderLists = pgTable(
     nameNormalized: text("name_normalized").notNull(),
     position: integer("position").default(0).notNull(),
     isInbox: integer("is_inbox").default(0).notNull(),
+    /** A key into `LIST_ICONS` (src/lib/reminder-list-style.ts); null = the default glyph. */
+    icon: text("icon"),
+    /** A key into `LIST_COLORS`; null = untinted. */
+    color: text("color"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [

@@ -131,9 +131,9 @@ export const TOUR_STEPS: TourStep[] = [
     id: "reminders",
     navKey: "reminders",
     title: "Reminders",
-    body: "Everything due or overdue lands here — filter by status and clear it in one click.",
+    body: "Everything due or overdue lands here, grouped by day — clear it in one click, or a whole selection at once.",
     hotspots: [
-      { id: "status", label: "Filter by Active, Done, or All." },
+      { id: "status", label: "Switch between Today, Upcoming, and Done." },
       { id: "reminder", label: "Overdue and type badges at a glance." },
       { id: "actions", label: "Mark done or snooze a week, right from the list." },
     ],
