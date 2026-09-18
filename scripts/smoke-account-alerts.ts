@@ -11,9 +11,10 @@ import "./smoke/_env";
 /**
  * One more env fact this test depends on, set BEFORE any module that reads it is imported.
  *
- *  - `VERCEL` set makes `allowEnvProviderKeys()` false, which is what production does. Any
- *    `GEMINI_API_KEY` lying around in the environment would otherwise satisfy the AI-key
- *    predicate and the `ai.no_key` cases below would silently pass for the wrong reason.
+ *  - `VERCEL` set makes the AI gate ignore the local-dev key names (`managedKey` in
+ *    `src/lib/ai-access.ts`), which is what production does. A `GEMINI_API_KEY` lying around
+ *    in the environment would otherwise count as a managed key and the `ai.no_key` cases
+ *    below could pass or fail for the wrong reason.
  */
 process.env.VERCEL = "1";
 
@@ -411,6 +412,7 @@ async function main() {
     "ai.no_key",
     "connection.gmail",
     "connection.outlook",
+    "connection.google_calendar",
     "plan.contact_cap_reached",
     "billing.past_due",
   ];
@@ -453,6 +455,43 @@ async function main() {
   } else {
     check("18 no alert reaches OS notifications", due.every((i) => !i.id.startsWith("alert:")));
   }
+
+  // --- 20. paused Google Calendar sync ---------------------------------------------------
+  const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+  await reset();
+  await db.insert(gmailConnections).values({
+    ...gmailBase, status: "active", refreshTokenEncrypted: "enc:refresh",
+    scopes: CALENDAR_SCOPE, nextSyncAt: null, syncError: "Google Calendar 403: forbidden",
+  });
+  const paused = await getAccountAlerts(USER);
+  const pausedAlert = paused.find((a) => a.code === "connection.google_calendar");
+  check("20 a disarmed calendar sync alerts", Boolean(pausedAlert), JSON.stringify(paused.map((a) => a.code)));
+  check("20 it is a warning (no red dot)", pausedAlert?.severity === "warn");
+  check("20 it points at the Google card", pausedAlert?.cta?.href === "/imports#import-google-contacts");
+  check("20 it never shows the raw sync error", !(pausedAlert?.body ?? "").includes("403"));
+
+  await reset();
+  await db.insert(gmailConnections).values({
+    ...gmailBase, status: "active", refreshTokenEncrypted: "enc:refresh",
+    scopes: "https://www.googleapis.com/auth/gmail.readonly", nextSyncAt: null,
+    syncError: "Calendar access not granted — reconnect Google to enable calendar sync",
+  });
+  check("20b no calendar scope is silent", !(await codes()).includes("connection.google_calendar"));
+
+  await reset();
+  await db.insert(gmailConnections).values({
+    ...gmailBase, status: "active", refreshTokenEncrypted: "enc:refresh",
+    scopes: CALENDAR_SCOPE, nextSyncAt: new Date(Date.now() + 60 * MINUTE), syncError: "Google Calendar 503",
+  });
+  check("20c a sync still in backoff is not paused", !(await codes()).includes("connection.google_calendar"));
+
+  await reset();
+  await db.insert(gmailConnections).values({
+    ...gmailBase, status: "needs_reauth", refreshTokenEncrypted: "enc:refresh",
+    scopes: CALENDAR_SCOPE, nextSyncAt: null, syncError: "Gmail session expired — reconnect",
+  });
+  const dead = await codes();
+  check("20d a dead grant raises only the reconnect alert", dead.includes("connection.gmail") && !dead.includes("connection.google_calendar"), dead.join(","));
 
   // --- 19. query budget ---------------------------------------------------------------
   await reset();

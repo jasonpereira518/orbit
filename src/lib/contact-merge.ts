@@ -34,6 +34,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
 import { contactMerges, contacts, duplicateSuggestions } from "@/db/schema";
+import { deleteAvatarBlobs, isAvatarBlobUrl } from "@/lib/avatar-blob";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import { scheduleEmbeddingRebuild } from "@/lib/contact-writes";
 
@@ -135,7 +136,7 @@ export async function mergeContacts(
 
   const db = await getDb();
   const rows = await db
-    .select({ id: contacts.id })
+    .select({ id: contacts.id, profileImageUrl: contacts.profileImageUrl })
     .from(contacts)
     .where(and(eq(contacts.userId, userId), sql`${contacts.id} IN (${winnerId}::uuid, ${loserId}::uuid)`));
   const present = new Set(rows.map((r) => r.id));
@@ -427,6 +428,11 @@ export async function mergeContacts(
     return statements;
   });
 
+  await releaseOrphanedLoserPhoto(userId, mergeId, {
+    winner: rows.find((r) => r.id === winnerId)?.profileImageUrl ?? null,
+    loser: rows.find((r) => r.id === loserId)?.profileImageUrl ?? null,
+  });
+
   if (!options.deferInvalidation) await invalidateAfterMerge(userId, winnerId);
 
   return { mergeId, winnerId, loserId };
@@ -475,6 +481,33 @@ export async function resolveContactId(userId: string, contactId: string): Promi
  *
  * Merges in a chain may be undone in any order — see the note on `stillMerged` below.
  */
+/**
+ * The fold is COALESCE(winner, loser), so the loser's photo survives only when the winner
+ * had none. Otherwise its Blob object is orphaned: delete it, and null it in the archive so
+ * an unmerge restores the contact photo-less (the backfill re-resolves it) rather than
+ * pointing at nothing. Best-effort and after the commit: never worth failing a merge over.
+ */
+async function releaseOrphanedLoserPhoto(
+  userId: string,
+  mergeId: string,
+  photos: { winner: string | null; loser: string | null }
+) {
+  if (photos.winner === null || !isAvatarBlobUrl(photos.loser) || photos.loser === photos.winner) {
+    return;
+  }
+  try {
+    await deleteAvatarBlobs([photos.loser]);
+    const db = await getDb();
+    await db.execute(sql`
+      UPDATE contact_merges
+         SET loser_snapshot = jsonb_set(loser_snapshot, '{profile_image_url}', 'null'::jsonb)
+       WHERE id = ${mergeId}::uuid AND user_id = ${userId}
+    `);
+  } catch {
+    // See above.
+  }
+}
+
 export async function unmergeContacts(userId: string, mergeId: string): Promise<MergeResult> {
   const db = await getDb();
   const [merge] = await db

@@ -94,12 +94,12 @@ async function main() {
       fullName: `${MARK} Alpha`,
       firm: MARK,
       email: "alpha@zzsmokeshare.test",
-    });
+    }, { contributePii: true });
     const recB = await upsertCanonicalRecruiter({
       fullName: `${MARK} Beta`,
       firm: MARK,
       email: "beta@zzsmokeshare.test",
-    });
+    }, { contributePii: true });
     created.push(recA.id, recB.id);
 
     await db.insert(userRecruiterLinks).values({
@@ -107,12 +107,14 @@ async function main() {
       recruiterId: recA.id,
       personalRating: 5,
       status: "contacted",
+      email: "alpha@zzsmokeshare.test",
     });
     await db.insert(userRecruiterLinks).values({
       userId: USER_B,
       recruiterId: recB.id,
       personalRating: 3,
       status: "contacted",
+      email: "beta@zzsmokeshare.test",
     });
     await recomputeRecruiterRating(recA.id);
     await recomputeRecruiterRating(recB.id);

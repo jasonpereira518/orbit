@@ -13,11 +13,12 @@
  */
 import "./smoke/_env";
 
-import { internalAuthHeaders, internalFetch, isInternalRequest } from "../src/lib/internal-auth";
+import { INTERNAL_FETCH_TIMEOUT_MS, internalAuthHeaders, internalFetch, isInternalRequest } from "../src/lib/internal-auth";
 import { GET as processStalled } from "../src/app/api/imports/process-stalled/route";
 import { POST as continueImport } from "../src/app/api/imports/[id]/continue/route";
 import { POST as embeddingBackfill } from "../src/app/api/embeddings/backfill/route";
 import { POST as timelineBackfill } from "../src/app/api/linkedin/timeline-events/backfill/route";
+import { POST as runCaptureJob } from "../src/app/api/capture/jobs/[id]/run/route";
 
 const SECRET = "smoke-internal-auth-secret";
 
@@ -80,6 +81,26 @@ async function main() {
     JSON.stringify(seen)
   );
 
+  let seenSignal: AbortSignal | null | undefined;
+  const realFetch2 = globalThis.fetch;
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    seenSignal = init?.signal;
+    return new Response("{}");
+  }) as typeof fetch;
+  const own = new AbortController();
+  let ownSeen: AbortSignal | null | undefined;
+  try {
+    await internalFetch("/api/embeddings/backfill", { method: "POST" });
+    const defaulted = seenSignal;
+    await internalFetch("/api/embeddings/backfill", { method: "POST", signal: own.signal });
+    ownSeen = seenSignal;
+    check("internalFetch always carries an abort signal", defaulted instanceof AbortSignal && !defaulted.aborted);
+  } finally {
+    globalThis.fetch = realFetch2;
+  }
+  check("a caller's own signal wins", ownSeen === own.signal);
+  check("the default timeout is ten seconds", INTERNAL_FETCH_TIMEOUT_MS === 10_000);
+
   env({ VERCEL: "1", NODE_ENV: "production" });
   check("no secret on Vercel → closed", !isInternalRequest(req()));
   check("internalAuthHeaders() is empty without a secret", Object.keys(internalAuthHeaders()).length === 0);
@@ -103,6 +124,8 @@ async function main() {
   check("embeddings/backfill → 401", emb.status === 401, `got ${emb.status}`);
   const tl = await timelineBackfill(req());
   check("linkedin/timeline-events/backfill → 401", tl.status === 401, `got ${tl.status}`);
+  const cap = await runCaptureJob(req(), { params: Promise.resolve({ id: "smoke-capture" }) });
+  check("capture/jobs/[id]/run → 401", cap.status === 401, `got ${cap.status}`);
 
   console.log("\nRoutes reject a wrong bearer when a secret is configured...");
   env({ CRON_SECRET: SECRET, VERCEL: "1", NODE_ENV: "production" });
@@ -111,9 +134,10 @@ async function main() {
     continueImport(req("Bearer nope"), { params: Promise.resolve({ id: "smoke-import" }) }),
     embeddingBackfill(req("Bearer nope")),
     timelineBackfill(req("Bearer nope")),
+    runCaptureJob(req("Bearer nope"), { params: Promise.resolve({ id: "smoke-capture" }) }),
   ]);
   check(
-    "all four → 401",
+    "all five → 401",
     wrong.every((r) => r.status === 401),
     wrong.map((r) => r.status).join(",")
   );

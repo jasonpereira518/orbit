@@ -13,6 +13,8 @@
  */
 import "./smoke/_env";
 
+import { readFile } from "node:fs/promises";
+
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
@@ -335,10 +337,19 @@ async function main() {
   {
     // purgeUserData must recompute the shared directory's denormalized counters; without
     // that, every account deletion permanently inflates them.
-    const src = await import("../src/lib/user-data");
+    //
+    // Checked against the module source rather than `purgeUserData.toString()`: the call
+    // lives in the `recruiters` step of `STEPS`, not in the function body, and the string
+    // match silently stopped covering anything the moment that split happened. The
+    // behaviour itself is asserted end-to-end in `scripts/smoke-purge-selective.ts`; this
+    // is the cheap tripwire beside the other source-level guards in this file.
+    const src = await readFile(
+      new URL("../src/lib/user-data.ts", import.meta.url),
+      "utf8"
+    );
     check(
       "purgeUserData recomputes recruiter ratings",
-      src.purgeUserData.toString().includes("recomputeRecruiterRating")
+      src.includes("recomputeRecruiterRating(recruiterId)")
     );
   }
 

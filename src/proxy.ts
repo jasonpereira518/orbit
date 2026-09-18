@@ -2,6 +2,8 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { PUBLIC_ROUTES } from "@/lib/public-routes";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { API_SIGNED_OUT_BODY, API_SIGNED_OUT_STATUS, isApiPath } from "@/lib/api-signed-out";
+import { isLocalhost } from "@/lib/demo-account";
 import {
   ATTRIBUTION_COOKIE,
   ATTRIBUTION_MAX_AGE_S,
@@ -95,7 +97,19 @@ export default configured
   ? clerkMiddleware(
       async (auth, req) => {
         if (!isPublicRoute(req)) {
-          await auth.protect();
+          if (isApiPath(new URL(req.url).pathname)) {
+            // API callers get JSON, never a redirect: a followed 307 hands them the sign-in
+            // page as a 200 they cannot tell from success. `auth.protect()` is skipped here
+            // because it treats every request inside the proxy as a page navigation.
+            // Pending sessions read as signed out, as protect() would treat them.
+            const { userId } = await auth();
+            if (!userId) {
+              return NextResponse.json(API_SIGNED_OUT_BODY, { status: API_SIGNED_OUT_STATUS });
+            }
+          } else {
+            // Pages — and the server-action POSTs made to them — keep Clerk's behaviour.
+            await auth.protect();
+          }
         }
         return withPathname(req);
       },
@@ -108,13 +122,19 @@ export default configured
         });
       }
       // Defense in depth for the admin console. Without Clerk keys this is demo mode, where
-      // `requireUserId()` succeeds as the shared "demo-user" — so the route must be gone
-      // entirely, not merely unauthorized. `src/lib/admin.ts` denies it independently.
+      // `requireUserId()` succeeds as the shared "demo-user" — so everywhere except a real
+      // `next dev` worktree the route must be gone entirely, not merely unauthorized.
+      // `src/lib/admin.ts` grants "demo-user" the same `isLocalhost()` exemption, so a
+      // worktree with no `.env` can still reach the console; anything else Clerk-less
+      // (a misconfigured deploy, `next start` locally, `NODE_ENV=test`) still 404s here.
       //
       // `/api/admin` is listed separately rather than caught by the same prefix: the export
       // handler lives under /api and would otherwise fall through this branch entirely.
       const { pathname } = new URL(req.url);
-      if (pathname.startsWith("/admin") || pathname.startsWith("/api/admin")) {
+      if (
+        !isLocalhost() &&
+        (pathname.startsWith("/admin") || pathname.startsWith("/api/admin"))
+      ) {
         return new NextResponse(null, { status: 404 });
       }
       return withPathname(req);
@@ -122,7 +142,15 @@ export default configured
 
 export const config = {
   matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    // The extension list is an allowlist of things middleware must NOT touch. A static
+    // asset type missing from it is matched, fails `isPublicRoute`, and gets a 307 to
+    // /sign-in instead of its bytes — so the file silently becomes an HTML sign-in page.
+    // It fails in production only (locally `configured` is false and this branch is
+    // skipped entirely), and for `<picture>` it is unrecoverable: once a <source> matches
+    // by type the browser commits to that URL and never falls back to the <img>. That is
+    // exactly how `avif` broke every planet on the marketing hero. Add new static
+    // extensions here when you add them to public/.
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|avif|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     "/(api|trpc)(.*)",
     "/__clerk/:path*",
   ],

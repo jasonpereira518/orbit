@@ -27,6 +27,7 @@
   --color-import-connections: var(--import-connections);
   --color-import-messages: var(--import-messages);
   --color-import-calendar: var(--import-calendar);
+  --color-import-scan: var(--import-scan);
   --color-interaction-together: var(--interaction-together);
   --color-interaction-live: var(--interaction-live);
   --color-interaction-written: var(--interaction-written);
@@ -80,6 +81,10 @@
   --transition-duration-celestial: 700ms; /* landing + constellation set-pieces */
 
   --ease-house: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Strong ease-in-out, for something travelling across the screen rather than arriving
+   * (the mobile nav's pill). Not named `--ease-in-out`: Tailwind v4 owns that variable,
+   * and overriding it would retune every `ease-in-out` utility in the app. */
+  --ease-glide: cubic-bezier(0.77, 0, 0.175, 1);
 
   /* Retime every bare `transition-*` utility (~100 call sites) onto the
    * interaction tier in one place. */
@@ -133,6 +138,7 @@
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  --import-scan: #3f8a63;
   /* Timeline interaction families. Four groups over the ten interaction types, ordered by
      how much of the person was actually present: together (met them) -> live (spoke to them)
      -> written (exchanged text) -> yours (your own record, nothing confirmed). See
@@ -256,6 +262,7 @@
   --import-connections: #9b9ff5;
   --import-messages: #f0956f;
   --import-calendar: #e2b45f;
+  --import-scan: #6fd39d;
   /* Same ladder inverted: brighter means more present on a dark card. */
   --interaction-together: #f5cd7a;
   --interaction-live: #f5a3c0;
@@ -288,8 +295,8 @@
  * so a toast painted straight over a running job card.
  *
  * The mobile baseline clears the fixed nav pill: `layout/mobile-nav.tsx` is
- * `bottom-0` with `pb-[calc(0.75rem+env(safe-area-inset-bottom))]` around a
- * ~60px pill, so ~5.25rem is the occupied band.
+ * `bottom-0` with `pb-[calc(0.5rem+env(safe-area-inset-bottom))]` around a
+ * ~55px pill, so ~4.25rem is the occupied band.
  *
  * The breakpoint is 48rem (Tailwind's `md`, where `md:hidden` takes the nav
  * away) and NOT sonner's own 600px mobile breakpoint — otherwise toasts in the
@@ -304,7 +311,7 @@
  * to go in the block above, and `check:tokens` will not tell you otherwise. */
 :root {
   --orbit-corner-bottom: calc(
-    5.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
+    4.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
   );
   --orbit-corner-right: 0.75rem;
 
@@ -351,19 +358,9 @@
      orange; behind 13px nav labels any alpha of it reads burnt rather than light. This is
      that same hue mixed toward white, so it stays unmistakably YC orange while going pale,
      and carries a higher alpha to keep the hover as *present* as the saturated version was.
-     `--accent` is not reusable here: it is a pale peach in light mode but a dark brown in
-     dark mode, so it would invert the intent on one of the two themes. */
+     No `.dark .yc-theme` counterpart: the admin console is always light
+     (`src/components/theme-provider.tsx` forces it on /admin). */
   --admin-nav-hover: rgb(255 178 127 / 0.45);
-}
-
-.dark .yc-theme {
-  --primary: #ff9152;
-  --primary-foreground: #2a1000;
-  --accent: #47280f;
-  --accent-foreground: #ff9152;
-  /* Dark mode needs no lightening — `--primary` is already a pale-bright orange here, so
-     this is that value at the alpha the wash wants. */
-  --admin-nav-hover: rgb(255 145 82 / 0.20);
 }
 
 @layer base {
@@ -425,7 +422,6 @@
     0 8px 32px -8px rgba(26, 28, 26, 0.18),
     0 2px 8px -2px rgba(26, 28, 26, 0.08);
   backdrop-filter: blur(28px) saturate(1.65);
-  -webkit-backdrop-filter: blur(28px) saturate(1.65);
   /* backdrop-filter is intentionally NOT transitioned — animating a re-blur
    * of the largest persistent surface is one of the most expensive effects
    * a browser can run. */
@@ -591,11 +587,18 @@
  * floating surfaces that detach from screen edges (mobile bottom nav).
  * Same sheen/blur/border as .liquid-glass, but with a lighter fill than
  * the base panel — leans toward see-through glass rather than a fully
- * frosted tinted panel, without going fully transparent — and no outer
- * drop-shadow: against a light fill the blurred shadow read as a
- * dark haze floating under the bar rather than a grounded shadow, so only
- * the hairline inset highlights (top sheen + bottom edge) are kept for
- * definition. Combined selector (not a bare class) so specificity (0,2,0)
+ * frosted tinted panel, without going fully transparent.
+ *
+ * The outer shadow is short and tinted, not the base panel's wide grey one.
+ * The pill once had no drop shadow at all: back when its blur was dead, the wide
+ * shadow read as a dark haze floating under the bar. Now that the pill really frosts
+ * the page, it needs something to lift it off that page, or the glass reads as a flat
+ * translucent band. A tight contact shadow plus a soft, low falloff (negative spread,
+ * so nothing spills past the ends) gives it a place to sit, and tinting it with the
+ * brand's deep teal keeps it from going grey against the light fill. The outer
+ * hairline gives the white rim an edge on a white page.
+ *
+ * Combined selector (not a bare class) so specificity (0,2,0)
  * reliably beats both .liquid-glass (0,1,0) and .dark .liquid-glass
  * (0,2,0, but declared earlier so loses the source-order tiebreak),
  * independent of Tailwind's layered utilities. */
@@ -605,14 +608,17 @@
   border-radius: 9999px;
   background: linear-gradient(
     165deg,
-    rgba(255, 255, 255, 0.5) 0%,
-    rgba(255, 255, 255, 0.32) 42%,
-    rgba(247, 248, 246, 0.28) 100%
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.2) 42%,
+    rgba(247, 248, 246, 0.16) 100%
   );
   border-color: rgba(255, 255, 255, 0.45);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
-    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset;
+    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset,
+    0 0 0 0.5px rgba(15, 61, 62, 0.1),
+    0 3px 8px -3px rgba(15, 61, 62, 0.16),
+    0 12px 24px -12px rgba(15, 61, 62, 0.3);
 }
 
 .liquid-glass.liquid-glass-pill::before {
@@ -622,14 +628,16 @@
 .dark .liquid-glass.liquid-glass-pill {
   background: linear-gradient(
     165deg,
-    rgba(43, 57, 86, 0.5) 0%,
-    rgba(26, 36, 56, 0.38) 45%,
-    rgba(14, 21, 36, 0.32) 100%
+    rgba(43, 57, 86, 0.36) 0%,
+    rgba(26, 36, 56, 0.26) 45%,
+    rgba(14, 21, 36, 0.2) 100%
   );
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
-    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset;
+    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset,
+    0 3px 8px -2px rgba(0, 0, 0, 0.4),
+    0 14px 28px -12px rgba(0, 0, 0, 0.65);
 }
 
 .dark .liquid-glass.liquid-glass-pill::before {
@@ -701,7 +709,6 @@
    * the panel makes the browser resample it every frame. Switched off rather than left to
    * burn frames for an effect nobody can see. */
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   /* `.liquid-glass` declares `transition` as a SHORTHAND, and being unlayered it beats
    * Tailwind's `transition`/`duration-*` utilities outright — which silently reduces the
    * open/close to background+border+shadow and makes the window snap into place instead
@@ -963,18 +970,6 @@
 
 /* ── Constellation / solar system ── */
 
-@keyframes constellation-corona {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.45;
-  }
-  50% {
-    transform: scale(1.18);
-    opacity: 0.75;
-  }
-}
-
 @keyframes constellation-corona-outer {
   0%,
   100% {
@@ -984,20 +979,6 @@
   50% {
     transform: scale(1.28);
     opacity: 0.4;
-  }
-}
-
-@keyframes constellation-spotlight {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 0 rgba(255, 246, 214, 0.8),
-      0 0 20px 4px rgba(255, 255, 255, 0.5);
-  }
-  50% {
-    box-shadow:
-      0 0 0 12px rgba(255, 246, 214, 0),
-      0 0 36px 10px rgba(255, 255, 255, 0.7);
   }
 }
 
@@ -1032,22 +1013,12 @@
   }
 }
 
-@keyframes constellation-comet-drift {
+/* The starfield's ambient life: two groups of ~25 stars breathing in counter-phase
+   (constellation-starfield.tsx). Two compositor layers in place of 220. */
+@keyframes constellation-twinkle-group {
   0%,
   100% {
-    transform: translateX(0);
-    opacity: 0.85;
-  }
-  50% {
-    transform: translateX(3px);
-    opacity: 1;
-  }
-}
-
-@keyframes constellation-nebula-breathe {
-  0%,
-  100% {
-    opacity: 0.75;
+    opacity: 0.3;
   }
   50% {
     opacity: 1;
@@ -1081,20 +1052,24 @@
   animation: constellation-twinkle 1.4s ease-in-out infinite;
 }
 
-.constellation-corona {
-  animation: constellation-corona 3.2s ease-in-out infinite;
-}
-
+/* The sun keeps one slow breath — the outer corona — as the chart's single standing
+   animation inside the viewport. Its inner corona and core used to pulse too; three
+   overlapping layers of the same glow read as one, at three times the cost. */
 .constellation-corona-outer {
   animation: constellation-corona-outer 4.8s ease-in-out infinite;
 }
 
-.constellation-sun-core {
-  animation: constellation-corona 2.6s ease-in-out infinite;
-}
-
+/*
+ * A search hit's ring holds still. It used to pulse its box-shadow forever, and a box-shadow
+ * animation is a repaint, not a compositor effect: searching a 311-person company repainted the
+ * chart's entire viewport layer every frame (14fps standing still) and re-committed the layer
+ * tree 60 times a second, which is what made the stars flash and the page blank in patches.
+ * The sole hit still bobs (a transform, so compositor-only) to catch the eye.
+ */
 .constellation-spotlight-ring {
-  animation: constellation-spotlight 1.8s ease-in-out infinite;
+  box-shadow:
+    0 0 0 2px rgba(255, 246, 214, 0.55),
+    0 0 18px 4px rgba(255, 255, 255, 0.4);
 }
 
 .constellation-bob {
@@ -1107,18 +1082,29 @@
   }
 }
 
+/*
+ * Only stars that just arrived carry this class (`data.entering`, set by graph-canvas-flow.tsx
+ * and cleared once it has played). It used to be on every star, so each one React Flow mounted
+ * replayed it — including every star a pan brought into view under `onlyRenderVisibleElements`,
+ * and all of them whenever the chart remounted — and a running animation is a compositor
+ * layer: a 1,000-star entrance doubled the layer count.
+ *
+ * `backwards`, not `both`: the animation ends on the star's resting state anyway, and an
+ * animation that stays in effect keeps its element composited.
+ */
 .constellation-planet-enter {
-  animation: constellation-planet-enter 0.45s var(--ease-house) both;
+  animation: constellation-planet-enter 0.45s var(--ease-house) backwards;
 }
 
-.constellation-starfield span {
-  animation: constellation-twinkle var(--twinkle-dur, 4s) ease-in-out infinite;
-  animation-delay: var(--twinkle-delay, 0s);
+.constellation-twinkle-group {
+  animation: constellation-twinkle-group 7s ease-in-out infinite;
 }
 
-.constellation-nebula {
-  animation: constellation-nebula-breathe 7s ease-in-out infinite;
-  filter: blur(1px);
+@media (prefers-reduced-motion: reduce) {
+  .constellation-twinkle-group,
+  .constellation-corona-outer {
+    animation: none;
+  }
 }
 
 .constellation-comet {
@@ -1127,7 +1113,6 @@
   justify-content: flex-start;
   width: 42px;
   height: 14px;
-  animation: constellation-comet-drift 3.4s ease-in-out infinite;
 }
 
 .constellation-comet-head {
@@ -1159,6 +1144,45 @@
   box-shadow: 0 0 8px 1px rgba(255, 80, 50, 0.35);
 }
 
+/**
+ * Give the sky's viewport a compositor layer of its own — WHILE IT MOVES.
+ *
+ * Only while it moves, because a promoted layer is rasterised once and then transformed: hold it
+ * through a zoom and the browser stretches the picture it already has, which is what made the
+ * names look soft as the camera came in. `graph-canvas-flow.tsx` adds this class on
+ * `onMoveStart` and drops it on `onMoveEnd`, so every resting view is drawn at its own scale.
+ *
+ *
+ * React Flow pans and zooms by writing a transform on this element. Without a layer, every
+ * frame of a drag repaints the whole sky — a thousand blurred glows, gradients and labels —
+ * and every wheel tick re-rasterises it at the new scale, which is why the main thread sat in
+ * `LayerTreeHost::WaitForCommitCompletion` for most of a zoom. With one, a pan is the
+ * compositor moving an existing raster and a zoom scales it, at 1,000 contacts taking zoom
+ * from 9fps to 27 and pan from 16 to 28.
+ *
+ * Scoped to the constellation: `will-change` is a real cost (a layer, and memory for its
+ * tiles), and it is earned only here, where the transform changes on most frames.
+ */
+.constellation-stage.constellation-moving .react-flow__viewport {
+  will-change: transform;
+}
+
+/**
+ * Constellation lines get their own layer too, for a different reason: not motion, isolation.
+ *
+ * Lines are added and removed as a pan brings stars in and out of view, and each change
+ * invalidates the line's bounding box — for a long diagonal, a large rectangle — in whatever
+ * layer it paints into. Sharing the viewport's layer, that re-rastered every nebula wash under
+ * the box, and radial gradients the size of a cluster are the costliest pixels in the sky.
+ * Seating related companies together packed more nebulae under those boxes, and a close-up pan
+ * across a 10,000-person sky fell from 60fps to 36. In a layer of their own, lines repaint only
+ * lines. It adds no layer count to speak of — there is one edge container — where giving each
+ * nebula a layer instead fixed the same frames at the cost of hundreds of layers.
+ */
+.constellation-stage.constellation-moving .react-flow__edges {
+  will-change: transform;
+}
+
 .constellation-edge-label {
   font-size: 8px;
   letter-spacing: 0.1em;
@@ -1188,7 +1212,6 @@
       rgba(40, 50, 80, 0.25) 0%,
       transparent 60%
     );
-  filter: blur(0.5px);
 }
 
 .constellation-stage .react-flow__controls {
@@ -1234,7 +1257,6 @@
     rgba(232, 243, 241, 0.015) 100%
   );
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 /* Sticky nav pill — more opaque than .dark .liquid-glass so the starfield
@@ -1257,7 +1279,6 @@
     0 16px 48px -12px rgba(0, 0, 0, 0.65),
     0 4px 14px -4px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(24px) saturate(1.4);
-  -webkit-backdrop-filter: blur(24px) saturate(1.4);
 }
 
 .landing-header-glass::before {
@@ -1285,11 +1306,13 @@
   z-index: 1;
 }
 
-#landing-groups,
-#landing-reminders,
-#landing-how,
-#landing-features,
-#landing-cta {
+/* Scoped to .landing-root: the dashboard's reminders card also carries id="reminders"
+ * with its own, smaller scroll margin, and a bare id selector would override it. */
+.landing-root #groups,
+.landing-root #reminders,
+.landing-root #how,
+.landing-root #features,
+.landing-root #cta {
   scroll-margin-top: 6rem;
 }
 
@@ -1326,6 +1349,60 @@
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
 }
 
+/* ── Coming soon (`components/coming-soon`) ──
+ * Ambient loops for the dry-dock scene. Every loop ends on the frame it starts on, so the
+ * global reduced-motion clamp at the bottom of this file leaves a composed still rather
+ * than a crane frozen mid-swing. `view-box` + a user-unit origin, not `fill-box`: the ring
+ * groups carry a moon that sticks out of the ring's box, and a fill-box centre would sit
+ * off the planet by that much and make the orbit visibly precess. */
+@keyframes coming-soon-sway {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(5deg);
+  }
+  75% {
+    transform: rotate(-5deg);
+  }
+}
+@keyframes coming-soon-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes coming-soon-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+.coming-soon-ring,
+.coming-soon-ring-reverse {
+  animation: interest-orbit 48s linear infinite;
+  transform-box: view-box;
+  transform-origin: 160px 160px;
+}
+.coming-soon-ring-reverse {
+  animation-duration: 32s;
+  animation-direction: reverse;
+}
+.coming-soon-sway {
+  animation: coming-soon-sway 6s ease-in-out infinite;
+  transform-box: view-box;
+  transform-origin: 118px 34px;
+}
+.coming-soon-blink {
+  animation: coming-soon-blink 1.6s ease-in-out infinite;
+}
+.coming-soon-marquee {
+  animation: coming-soon-marquee 28s linear infinite;
+}
+
 /* ── Interest list (/interest) ──
  * Two ambient loops. Linear, not the house curve: these are orbits, and an
  * orbit that eases would read as a wobble. The global reduced-motion clamp at
@@ -1352,6 +1429,36 @@
   transform-origin: 50% 50%;
   transform-box: fill-box;
   will-change: transform;
+}
+
+/* The /interest card's Y-axis flip (form → boarding pass). The wrapper supplies the
+ * perspective; the face is what motion rotates. `transform-style` keeps the glass's
+ * backdrop-filter composited during the turn. */
+.interest-flip-stage {
+  perspective: 1400px;
+}
+.interest-flip-face {
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+
+/* Referral moons drift around the planet once they have dropped in. Slow enough to read
+ * as an orbit, not a spinner. Paused, not removed, under reduced motion so the moons
+ * still sit on their ring. */
+@keyframes interest-moon-drift {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.interest-moons-drift {
+  animation: interest-moon-drift 40s linear infinite;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .interest-moons-drift {
+    animation-play-state: paused;
+  }
 }
 
 /* Orbit Lifetime's badge is the one place the brand gold appears as a surface
@@ -1613,8 +1720,10 @@
 .scene-features {
   --scene-size: 2000px;
 }
+/* Includes the closing wordmark, which grows with the column until max-w-6xl caps it:
+ * measured 841 at 1024 and 891 from 1232 up. */
 .scene-finale {
-  --scene-size: 560px;
+  --scene-size: 900px;
 }
 
 /* Measured at 500x667 and biased up slightly, since narrower viewports wrap
@@ -1631,7 +1740,7 @@
     --scene-size: 2900px;
   }
   .scene-finale {
-    --scene-size: 820px;
+    --scene-size: 1140px;
   }
 }
 
@@ -1652,7 +1761,7 @@
     --scene-size: 3500px;
   }
   .scene-finale {
-    --scene-size: 1200px;
+    --scene-size: 1300px;
   }
 }
 
@@ -2082,7 +2191,12 @@ html [data-sonner-toaster] {
    travel reads; the box-shadow tier is the interaction one, for the hover lift. */
 [data-sonner-toaster] li.orbit-toast {
   transition:
-    transform var(--transition-duration-slow) var(--ease-house),
+    /* Arrival settles rather than snaps. `--ease-house` (0.22, 1, 0.36, 1) has y1 = 1,
+       so it leaves at full speed and then drifts — right for a panel you asked for,
+       abrupt for something that arrives unasked. This drawer curve starts gentler and
+       decelerates into place, at the same duration. The exit, below, stays brisk:
+       leaving fast reads as responsive; arriving fast reads as urgent. */
+    transform var(--transition-duration-slow) cubic-bezier(0.32, 0.72, 0, 1),
     opacity var(--transition-duration-base) ease,
     height var(--transition-duration-base) var(--ease-house),
     box-shadow var(--transition-duration-fast) ease,
@@ -2360,4 +2474,48 @@ html[data-celebration-handoff] [data-app-logo] {
     color-mix(in oklab, black 28%, transparent) 45%,
     transparent 100%
   );
+}
+
+/* How much room the contacts A-Z rail reserves beside the content column. The rail
+ * is thinner below `md` (28px on phones) than on desktop (36px), so the gutter follows
+ * it: the rail publishes `var(--content-rail-gutter-size)` rather than a number, and
+ * this picks the size per breakpoint. Each value stops the content 0.5rem (phone) /
+ * 1.5rem (desktop) clear of the rail; the arithmetic is in contacts-list.tsx. */
+:root {
+  --content-rail-gutter-size: 1.625rem;
+}
+@media (min-width: 48rem) {
+  :root {
+    --content-rail-gutter-size: 2.25rem;
+  }
+}
+
+/* The contacts A-Z rail hides itself on short viewports (a landscape phone), so the
+ * page must stop reserving room for it at the same height. The rail publishes the
+ * gutter as an inline style on the root element, which only an important declaration
+ * can override. Keep the 500px threshold in step with the rail's own. */
+@media (max-height: 500px) {
+  :root {
+    --content-rail-gutter: 0px !important;
+  }
+}
+
+/*
+ * A 44px touch target on an icon button smaller than that, without moving or resizing the
+ * icon. Coarse pointers only: with a mouse the painted button is the target. The element
+ * must be positioned (relative or absolute). Neighbours in one row need enough gap that two
+ * enlarged areas never overlap: pointer-coarse:gap-4 beside 28px buttons, gap-3 beside 32px.
+ */
+@utility tap-target {
+  @media (pointer: coarse) {
+    &::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 2.75rem);
+      height: max(100%, 2.75rem);
+      transform: translate(-50%, -50%);
+    }
+  }
 }
