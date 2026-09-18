@@ -100,6 +100,7 @@ export const ReminderFilters = forwardRef<
         <Button
           variant="ghost"
           size="icon-xs"
+          className="tap-target relative"
           aria-label="Clear search"
           onClick={() => onQChange("")}
         >
@@ -199,6 +200,7 @@ export const ReminderFilters = forwardRef<
         <Button
           variant="ghost"
           size="icon-xs"
+          className="tap-target relative"
           aria-label="Clear filters"
           title="Clear filters"
           onClick={() => onChange({ kinds: [], sources: [], contact: null })}

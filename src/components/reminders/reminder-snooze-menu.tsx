@@ -67,7 +67,7 @@ export function ReminderSnoozeMenu({
         aria-label={triggerLabel ? undefined : "Snooze"}
         title={triggerLabel ? undefined : "Snooze (s)"}
         className={cn(
-          "inline-flex items-center justify-center gap-1.5 rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
+          "tap-target relative inline-flex items-center justify-center gap-1.5 rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
           triggerLabel ? "h-7 px-2 text-xs font-medium" : "size-7",
           triggerClassName
         )}

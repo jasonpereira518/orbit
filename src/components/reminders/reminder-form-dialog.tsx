@@ -215,6 +215,7 @@ export function ReminderFormFields({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
+                className="tap-target relative"
                 aria-label="Clear due date"
                 onClick={() => setDueDate("")}
               >

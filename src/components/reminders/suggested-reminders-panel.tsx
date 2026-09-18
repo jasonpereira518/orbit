@@ -202,7 +202,7 @@ function SuggestionRow({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-3">
+        <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-4">
           <Button
             size="icon-sm"
             variant="ghost"

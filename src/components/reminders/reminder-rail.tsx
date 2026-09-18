@@ -244,7 +244,8 @@ export function ReminderRail({
                       <span
                         className={cn(
                           "tabular-nums",
-                          !list.isInbox && "[@media(hover:hover)]:group-hover/list:opacity-0 [@media(hover:hover)]:group-focus-within/list:opacity-0"
+                          // Makes way for rename/delete: on hover with a mouse, always on touch.
+                          !list.isInbox && "[@media(hover:hover)]:group-hover/list:opacity-0 [@media(hover:hover)]:group-focus-within/list:opacity-0 [@media(hover:none)]:hidden"
                         )}
                       >
                         {list.pendingCount}
@@ -253,12 +254,15 @@ export function ReminderRail({
                   }
                 />
                 {!list.isInbox && (
-                  <div className="absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity duration-fast group-hover/list:opacity-100 focus-within:opacity-100 [@media(hover:none)]:hidden">
+                  // Revealed on hover with a mouse; always shown on touch, which has no hover to
+                  // reveal it with.
+                  <div className="absolute inset-y-0 right-1 flex items-center opacity-0 transition-opacity duration-fast group-hover/list:opacity-100 focus-within:opacity-100 pointer-coarse:gap-4 [@media(hover:none)]:opacity-100">
                     <Button
                       type="button"
                       size="icon-xs"
                       variant="ghost"
                       aria-label={`Rename ${list.name}`}
+                      className="tap-target relative"
                       onClick={() => {
                         setEditingId(list.id);
                         setEditName(list.name);
@@ -271,6 +275,7 @@ export function ReminderRail({
                       size="icon-xs"
                       variant="ghost"
                       aria-label={`Delete ${list.name}`}
+                      className="tap-target relative"
                       disabled={pending}
                       onClick={() => setDeleting(list)}
                     >
@@ -303,6 +308,7 @@ export function ReminderRail({
             variant="outline"
             disabled={pending || !newName.trim()}
             aria-label="Add list"
+            className="tap-target relative"
           >
             <Plus className="size-3.5" />
           </Button>

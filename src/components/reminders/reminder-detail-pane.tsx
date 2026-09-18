@@ -75,10 +75,10 @@ export function ReminderDetailPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 items-center gap-1 border-b border-border/60 px-3 py-2">
+      <header className="flex shrink-0 items-center gap-1 border-b border-border/60 px-3 py-2 pointer-coarse:gap-4">
         <h2 className="sr-only">Reminder details</h2>
         {!isDone && (
-          <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-xs" onClick={() => onDone(item.id)}>
+          <Button size="sm" variant="ghost" className="tap-target relative h-7 gap-1.5 px-2 text-xs" onClick={() => onDone(item.id)}>
             <Check className="size-3.5" /> Done
           </Button>
         )}
@@ -98,12 +98,12 @@ export function ReminderDetailPane({
           variant="ghost"
           aria-label="Delete reminder"
           title="Delete (#)"
-          className="text-muted-foreground hover:text-destructive"
+          className="tap-target relative text-muted-foreground hover:text-destructive"
           onClick={() => onDelete(item.id)}
         >
           <Trash2 className="size-3.5" />
         </Button>
-        <Button size="icon-sm" variant="ghost" aria-label="Close details" title="Close (Esc)" onClick={onClose}>
+        <Button size="icon-sm" variant="ghost" aria-label="Close details" title="Close (Esc)" className="tap-target relative" onClick={onClose}>
           <X className="size-3.5" />
         </Button>
       </header>

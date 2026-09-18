@@ -134,7 +134,9 @@ export const ReminderRow = memo(function ReminderRow({
       <div className="overflow-hidden">
         <div
           className={cn(
-            "relative flex items-start gap-2.5 px-3 py-2.5 transition-[background-color,translate] duration-slow ease-house sm:px-4",
+            // Coarse pointers: the checkbox's and the done circle's enlarged hit areas each reach
+            // 12px past their edges, so they need 24px between them to not overlap.
+            "relative flex items-start gap-2.5 px-3 py-2.5 transition-[background-color,translate] duration-slow ease-house pointer-coarse:gap-6 sm:px-4",
             "hover:bg-muted/40",
             selected && "bg-primary/[0.06] hover:bg-primary/[0.09]",
             active && "bg-muted/60",
@@ -175,7 +177,7 @@ export const ReminderRow = memo(function ReminderRow({
             aria-label={isDone ? "Done" : `Mark “${item.title}” done`}
             title={isDone ? "Done" : "Mark done (e)"}
             className={cn(
-              "group/done mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors duration-fast",
+              "group/done tap-target relative mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors duration-fast",
               isDone
                 ? "border-primary bg-primary text-primary-foreground"
                 : due?.bucket === "overdue"
@@ -241,7 +243,7 @@ export const ReminderRow = memo(function ReminderRow({
               menu is open so the popup doesn't lose its anchor. */}
           <div
             className={cn(
-              "flex shrink-0 items-center gap-0.5 transition-opacity duration-fast",
+              "flex shrink-0 items-center gap-0.5 transition-opacity duration-fast pointer-coarse:gap-4",
               snoozeOpen || moreOpen
                 ? "opacity-100"
                 : "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-focus-within/row:opacity-100"
@@ -263,7 +265,7 @@ export const ReminderRow = memo(function ReminderRow({
               <DropdownMenuTrigger
                 aria-label="More actions"
                 title="More actions"
-                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="tap-target relative inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 <MoreHorizontal className="size-3.5" />
               </DropdownMenuTrigger>

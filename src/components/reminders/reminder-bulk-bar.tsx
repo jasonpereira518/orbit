@@ -14,7 +14,7 @@ import { ReminderSnoozeMenu } from "@/components/reminders/reminder-snooze-menu"
 import { cn } from "@/lib/utils";
 
 const BAR_BUTTON =
-  "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
+  "tap-target relative inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
 
 /**
  * Select-all and the bulk actions for a selection.
@@ -121,7 +121,7 @@ export function ReminderBulkBar({
             <Trash2 className="size-3.5" /> Delete
           </button>
           <div className="flex-1" />
-          <Button variant="ghost" size="icon-xs" aria-label="Clear selection" title="Clear selection (Esc)" onClick={onClear}>
+          <Button variant="ghost" size="icon-xs" aria-label="Clear selection" title="Clear selection (Esc)" className="tap-target relative" onClick={onClear}>
             <X className="size-3.5" />
           </Button>
         </>
