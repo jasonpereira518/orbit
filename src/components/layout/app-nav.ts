@@ -18,17 +18,33 @@ export type AppNavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
+  /**
+   * Prefetch the WHOLE route — its data, not just its loading skeleton — while the link is
+   * on screen. A click then renders from the client cache with no skeleton, which is the
+   * only way past React's 300ms Suspense reveal hold on a first visit.
+   *
+   * It costs a full server render of the destination on every page that shows the link, so
+   * it is reserved for pages that are both visited daily and bounded in cost — Contacts
+   * (paginated) and Reminders — and never for a heavy one (Constellation scans the whole
+   * network; Dashboard, see its note). See `fullPrefetch` below for how it is applied.
+   */
+  prefetchFull?: boolean;
 };
 
 const DASHBOARD: AppNavItem = {
   href: "/dashboard",
   label: "Dashboard",
   icon: LayoutDashboard,
+  // NOT `prefetchFull`, though it is the most-visited page: heavy accounts' dashboards have
+  // run into the function time limit (see `maxDuration` in the (main) layout), and a full
+  // prefetch would start that render from every page they open. Revisit once the
+  // dashboard's query shape is fixed. Returning to it is covered by `staleTimes.dynamic`.
 };
 const CONTACTS: AppNavItem = {
   href: "/contacts",
   label: "Contacts",
   icon: Users,
+  prefetchFull: true,
 };
 const CAPTURE: AppNavItem = {
   href: "/capture",
@@ -51,6 +67,7 @@ const REMINDERS: AppNavItem = {
   href: "/reminders",
   label: "Reminders",
   icon: Bell,
+  prefetchFull: true,
 };
 const CHAT: AppNavItem = {
   href: "/chat",
@@ -124,6 +141,15 @@ export const MOBILE_MORE_NAV = [
   OUTREACH,
   KNOWLEDGE,
 ];
+
+/**
+ * The `prefetch` prop for a nav link: `true` (whole route) for `prefetchFull` items that are
+ * not the page already on screen, otherwise the default (the route down to its
+ * `loading.tsx`). Prefetching the current page would pay for a render nobody can click to.
+ */
+export function fullPrefetch(item: AppNavItem, active: boolean): true | undefined {
+  return item.prefetchFull && !active ? true : undefined;
+}
 
 export function isNavActive(pathname: string, href: string) {
   if (href === "/contacts") {

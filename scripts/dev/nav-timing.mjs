@@ -92,6 +92,19 @@ console.table(rows);
 const ready = rows.map((r) => r.ready_ms).filter((v) => typeof v === "number").sort((a, b) => a - b);
 const pct = (p) => ready[Math.min(ready.length - 1, Math.floor(p * ready.length))];
 console.log(`ready p50=${pct(0.5)}ms p75=${pct(0.75)}ms max=${ready.at(-1)}ms (n=${ready.length})`);
+// Server cost: every `?_rsc=` fetch is a render of that route on the server — prefetches
+// included, which is exactly what full prefetching trades latency for.
+const rsc = await cdp.evaluate(`(() => {
+  const counts = {};
+  for (const e of performance.getEntriesByType("resource")) {
+    if (!e.name.includes("_rsc=")) continue;
+    const path = new URL(e.name).pathname;
+    counts[path] = (counts[path] ?? 0) + 1;
+  }
+  return counts;
+})()`);
+const total = Object.values(rsc).reduce((a, b) => a + b, 0);
+console.log(`RSC fetches: ${total} over ${rows.length} clicks`, rsc);
 if (cdp.consoleErrors.length) console.log("console errors:", cdp.consoleErrors.slice(0, 5));
 cdp.close();
 process.exit(0);

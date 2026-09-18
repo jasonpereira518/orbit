@@ -67,7 +67,14 @@ const nextConfig: NextConfig = {
     // capture watchers call router.refresh() when a job lands, and notifications come from
     // the app pulse, not from page renders. A NEW mutation path must do one of those, or a
     // quick revisit can show the pre-mutation page for up to this long.
-    staleTimes: { dynamic: 30 },
+    //
+    // `static` is how long a FULL prefetch stays usable — the sidebar's `prefetchFull`
+    // links (Contacts and Reminders; see app-nav.ts) render the whole destination
+    // ahead of the click. The default is 5 minutes, which would let a click show a page that
+    // old; 60s bounds that, and hovering a link whose prefetch has expired fetches it again,
+    // so a mouse user still usually lands on warm data. It also covers statically generated
+    // pages, which is harmless: those change only on deploy.
+    staleTimes: { dynamic: 30, static: 60 },
     // Tree-shake icon/date/motion/clerk imports across the app bundle.
     optimizePackageImports: [
       "lucide-react",
