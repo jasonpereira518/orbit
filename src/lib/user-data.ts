@@ -104,7 +104,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * the same bug class `scripts/smoke-purge.ts` exists to catch.
  *
  * Every table carrying a `user_id` must be handled by some step here, either by an explicit
- * delete or by a cascade from one. The nine covered by cascade, so deliberately absent:
+ * delete or by a cascade from one. The ten covered by cascade, so deliberately absent:
  *   - `chat_messages`        -> cascades from `chat_threads`
  *   - `import_job_rows`      -> cascades from `imports`
  *   - `action_items`         -> cascades from `contacts` and `interactions`
@@ -113,6 +113,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *   - `contact_profiles`     -> cascades from `contacts` (verified by `scripts/smoke-purge.ts`,
  *                               not assumed — see that script's header)
  *   - `contact_experiences`  -> cascades from `contacts` (same)
+ *   - `contact_job_changes`  -> cascades from `contacts` (same)
  *   - `contact_opportunities`-> cascades from `contacts`. Its `source_interaction_id` is
  *                               `on delete set null`, so the interaction FK is NOT what
  *                               covers it — the contact one is.

@@ -1,5 +1,5 @@
-import { and, eq, inArray } from "drizzle-orm";
-import { getDb } from "@/db";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
   aiSuggestions,
@@ -10,6 +10,11 @@ import {
 } from "@/db/schema";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
+import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
+import {
+  JOB_CHANGE_FRESH_DAYS,
+  describeJobChange,
+} from "@/lib/job-changes";
 import {
   buildConstellationClusters,
   toNamedGraphClusters,
@@ -39,6 +44,8 @@ const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
   "post_event",
   "linkedin_thread_quiet",
+  "awaiting_reply",
+  "job_change",
 ] as const;
 
 const MAX_AUTO_SUGGESTIONS = 12;
@@ -91,6 +98,14 @@ const REMINDER_CAP = 20;
 const SUGGESTION_CAP = 40;
 
 const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
+  // Above post_event: an unanswered message names a specific thing the user did and a
+  // specific decision to make about it, where the others describe a state of the
+  // relationship. It is also the only one with a closing window — past 30 days
+  // `dormant_high_value` says something more useful.
+  // Above a stated cadence, because unlike everything else here it expires: a congratulation
+  // lands in the weeks after a move and reads as an afterthought a quarter later.
+  job_change: 6,
+  awaiting_reply: 4,
   post_event: 3,
   linkedin_thread_quiet: 2,
   dormant_high_value: 1,
@@ -171,6 +186,7 @@ async function buildOutreachSuggestions(userId: string) {
       // and silently falls back to the default for everybody.
       cadenceDays: true,
       cadencePhrase: true,
+      cadenceSource: true,
       // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
       // an optional field here would let a caller forget the column and quietly never
       // suppress anything, with nothing failing to say so.
@@ -219,9 +235,97 @@ async function buildOutreachSuggestions(userId: string) {
     }
   }
 
+  // Who is waiting on an answer.
+  //
+  // `DISTINCT ON` gives the single most recent interaction per contact in one indexed pass,
+  // rather than loading every interaction and reducing in JS — this runs on the dashboard.
+  // The ORDER BY must lead with `contact_id` for DISTINCT ON, and the `id` tiebreak keeps
+  // the result stable when two rows share a timestamp (a bulk note paste does exactly that).
+  const lastTouches = rowsOf<{
+    contact_id: string;
+    direction: "in" | "out" | null;
+    interaction_date: string | Date | null;
+  }>(
+    await db.execute(sql`
+      SELECT DISTINCT ON (contact_id)
+        contact_id, direction, interaction_date
+      FROM interactions
+      WHERE user_id = ${userId}
+      ORDER BY contact_id, interaction_date DESC, id DESC
+    `)
+  );
+
+  const byId = new Map(all.map((c) => [c.id, c]));
+  for (const { contactId, daysWaiting } of awaitingReplies(
+    lastTouches.map((r) => ({
+      contactId: r.contact_id,
+      direction: r.direction,
+      interactionDate: r.interaction_date,
+    }))
+  )) {
+    const c = byId.get(contactId);
+    // `isDiscoveryEligible` still applies: a contact with a follow-up already scheduled is
+    // covered, and one pinned off the constellation has been told to leave them alone.
+    if (!c || !isDiscoveryEligible(c)) continue;
+    upsertCandidate(c.id, {
+      suggestionType: "awaiting_reply",
+      title: `Nudge ${contactDisplayName(c)}`,
+      description: awaitingReplyDescription(daysWaiting),
+      relatedContactIds: [c.id],
+      confidenceScore: 85,
+    });
+  }
+
+  // Who just moved.
+  //
+  // `DISTINCT ON` keeps the most recent move per contact: somebody who changes title twice
+  // in a month should produce one suggestion naming where they ended up, not two.
+  const recentMoves = rowsOf<{
+    contact_id: string;
+    previous_company: string | null;
+    new_company: string | null;
+    previous_title: string | null;
+    new_title: string | null;
+  }>(
+    await db.execute(sql`
+      SELECT DISTINCT ON (contact_id)
+        contact_id, previous_company, new_company, previous_title, new_title
+      FROM contact_job_changes
+      WHERE user_id = ${userId}
+        AND detected_at >= now() - ${sql.raw(`interval '${JOB_CHANGE_FRESH_DAYS} days'`)}
+      ORDER BY contact_id, detected_at DESC, id DESC
+    `)
+  );
+  for (const move of recentMoves) {
+    const c = byId.get(move.contact_id);
+    if (!c || !isDiscoveryEligible(c)) continue;
+    upsertCandidate(c.id, {
+      suggestionType: "job_change",
+      title: `Congratulate ${contactDisplayName(c)}`,
+      description: describeJobChange({
+        previousCompany: move.previous_company,
+        newCompany: move.new_company,
+        previousTitle: move.previous_title,
+        newTitle: move.new_title,
+      }),
+      relatedContactIds: [c.id],
+      confidenceScore: 92,
+    });
+  }
+
+  // A stated cadence no longer raises a suggestion of its own. Main's `dormant_high_value`
+  // reads `cadence_days` through `idleThresholdFor`, so it fires at the interval the user
+  // chose rather than at a flat 30 days, and quotes their own phrase back at them — which is
+  // strictly better than the separate `keep_in_touch` row this branch built beside it. The
+  // control that SETS a cadence is still this branch's; the reading of it is main's.
+
   const dormantHighValue = all.filter(
     (c) =>
       isDiscoveryEligible(c) &&
+      // No suppression here any more. This branch used to skip a contact with a cadence
+      // entirely, because its own suggestion covered them; main instead moves the threshold
+      // to the cadence via `idleThresholdFor` below, which is the better answer — the mentor
+      // set to yearly is not silenced for a year, they surface on the day they are due.
       (c.priorityLevel >= 2 || c.relationshipScore >= 4) &&
       daysAgo(c.lastInteractionAt) >= idleThresholdFor(c.cadenceDays, DORMANT_DAYS)
   );
@@ -400,30 +504,49 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
         inArray(reminders.contactId, candidateIds),
         eq(reminders.status, "pending")
       ),
-      columns: { id: true, contactId: true },
+      // `createdBy` is projected because the guard below turns on it. Without it every
+      // existing reminder looks system-generated and hand-written ones get overwritten.
+      columns: { id: true, contactId: true, createdBy: true },
     });
-    const reminderIdByContact = new Map(
-      existingReminders.map((r) => [r.contactId, r.id])
+    const existingByContact = new Map(
+      existingReminders.map((r) => [r.contactId, r])
     );
 
     const rowsToInsert: (typeof reminders.$inferInsert)[] = [];
+    // Contacts we actually acted on. Not `candidateIds`: the guard below skips anyone whose
+    // reminder a person wrote, and stamping `next_follow_up_at` on them would move a date
+    // the user set from a queue that decided not to touch them.
+    const actedOn: string[] = [];
 
     for (const contact of candidates) {
       const name = contact.preferredName || contact.fullName;
       const title = `Follow up with ${name}`;
-      const existingReminderId = reminderIdByContact.get(contact.id);
+      const existing = existingByContact.get(contact.id);
 
-      if (existingReminderId) {
+      if (existing) {
+        // Never rewrite what a person wrote.
+        //
+        // This used to set `title`, `reminderType`, `actionKind` and `createdBy` on the
+        // existing row, so pressing "Generate more" turned a hand-written "Send the intro
+        // deck", due 30 Oct, into "Follow up with Chris Nowak" due now — title, note and
+        // date gone, with no undo, no confirmation and no toast. `scheduleContactFollowUp`
+        // in @/actions/reminders already carries the same fix and the same reasoning; this
+        // is its neighbour, which never got it.
+        //
+        // A user-authored reminder means this contact is already handled, so skip them
+        // entirely rather than bringing the date forward: the queue exists to surface
+        // people with nothing planned, and the user has plainly planned something.
+        //
+        // Restored during the merge of main: the bulk rewrite that replaced the per-contact
+        // round trips here reinstated the overwrite, setting title/type/createdBy again.
+        if (existing.createdBy !== "system") continue;
+
+        // A previously generated row is ours to move — but only its due date.
         await db
           .update(reminders)
-          .set({
-            title,
-            dueDate: now,
-            reminderType: "generated",
-            actionKind: "follow_up",
-            createdBy: "system",
-          })
-          .where(eq(reminders.id, existingReminderId));
+          .set({ dueDate: now })
+          .where(eq(reminders.id, existing.id));
+        actedOn.push(contact.id);
       } else {
         rowsToInsert.push({
           userId,
@@ -436,6 +559,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
           createdBy: "system",
           status: "pending",
         });
+        actedOn.push(contact.id);
       }
     }
 
@@ -450,9 +574,9 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
         followUpStatus: "pending",
         updatedAt: now,
       })
-      .where(and(inArray(contacts.id, candidateIds), eq(contacts.userId, userId)));
+      .where(and(inArray(contacts.id, actedOn), eq(contacts.userId, userId)));
 
-    created = candidates.length;
+    created = actedOn.length;
   }
 
   await refreshOutreachSuggestions(userId);
@@ -1342,4 +1466,34 @@ export async function reopenReminder(
   }
 
   return { restored: true };
+}
+
+
+/**
+ * Delete a reminder outright, returning enough of it to offer an undo.
+ *
+ * There was no delete at all: the three controls on a card were edit, complete and
+ * snooze, and no `deleteReminder` existed anywhere. Completing was the only way to clear
+ * a row, which quietly conflates "I did this" with "this should never have been here" —
+ * and left the Done tab as a permanent record of both.
+ *
+ * A hard delete rather than a status flag, because `status: "dismissed"` already means
+ * something specific (a reminder killed by a note-batch undo) and the reminders page
+ * filters those out on purpose. Undo re-inserts from the returned snapshot.
+ */
+export async function deleteReminder(userId: string, reminderId: string) {
+  const db = await getDb();
+  const [row] = await db
+    .delete(reminders)
+    .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)))
+    .returning();
+  if (!row) return null;
+
+  // Action items point at the reminder; orphaning them would leave a task nothing can
+  // complete or reopen.
+  await db
+    .delete(actionItems)
+    .where(and(eq(actionItems.userId, userId), eq(actionItems.reminderId, reminderId)));
+
+  return row;
 }

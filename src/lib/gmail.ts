@@ -59,6 +59,18 @@ export function hasCalendarScope(scopes: string | null | undefined) {
   return hasScope(scopes, GOOGLE_CALENDAR_SCOPE);
 }
 
+/**
+ * True once a connection can read mail.
+ *
+ * Checked before email activity sync for the same reason `hasCalendarScope` is checked
+ * before calendar sync: a token minted before a scope shipped stays valid for everything
+ * else and returns 403 for that one API, which without a probe reads as a healthy
+ * connection failing repeatedly.
+ */
+export function hasMailReadScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes("https://www.googleapis.com/auth/gmail.readonly"));
+}
+
 /** Canonical Gmail OAuth callback path — must match Google Cloud authorized redirect URIs. */
 export const GMAIL_CALLBACK_PATH = "/api/gmail/callback";
 
@@ -718,7 +730,14 @@ export type GmailHeaderSummary = {
   id: string;
   threadId: string;
   from: string;
+  /** Recipients, raw and comma-separated. Needed to tell who a sent message went to. */
   to: string;
+  /**
+   * Optional, unlike `to`: this was added for email-activity sync, and every fixture and
+   * caller that predates it builds a summary without one. Required, it would have forced a
+   * meaningless `cc: ""` into each of them.
+   */
+  cc?: string;
   subject: string;
   snippet: string;
   internalDate: number | null;
@@ -781,7 +800,7 @@ export async function fetchGmailHeaders(
   const results = await mapWithConcurrency(refs, concurrency, async (ref) => {
     try {
       const res = await gmailFetchWithRetry(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence`,
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
           timeoutMs: 10_000,
@@ -798,6 +817,7 @@ export async function fetchGmailHeaders(
         threadId: msg.threadId || ref.threadId,
         from: headerValue(msg, "From"),
         to: headerValue(msg, "To"),
+        cc: headerValue(msg, "Cc"),
         subject: headerValue(msg, "Subject"),
         snippet: msg.snippet || "",
         internalDate: Number.isFinite(internal) ? internal : null,
@@ -810,7 +830,10 @@ export async function fetchGmailHeaders(
       return null;
     }
   });
-  return results.filter((r): r is GmailHeaderSummary => r !== null);
+  // `NonNullable<typeof r>` rather than naming the type: the constructed object sets `cc`
+  // while `GmailHeaderSummary` leaves it optional, and a predicate has to narrow to the
+  // inferred element type, not to a wider one.
+  return results.filter((r): r is NonNullable<typeof r> => r !== null);
 }
 
 function decodeBase64Url(data: string) {
@@ -904,6 +927,7 @@ export async function fetchGmailMessageLinks(
         threadId: msg.threadId || "",
         from: headerValue(msg, "From"),
         to: headerValue(msg, "To"),
+        cc: headerValue(msg, "Cc"),
         subject: headerValue(msg, "Subject"),
         snippet: msg.snippet || "",
         internalDate: Number.isFinite(internal) ? internal : null,
@@ -917,7 +941,7 @@ export async function fetchGmailMessageLinks(
       return null;
     }
   });
-  return results.filter((r): r is GmailLinkMessage => r !== null);
+    return results.filter((r): r is NonNullable<typeof r> => r !== null);
 }
 
 export type GmailMessageContent = GmailHeaderSummary & { body: string };

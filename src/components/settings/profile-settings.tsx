@@ -3,11 +3,13 @@
 import { useState, useTransition } from "react";
 import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { clerkAppearance } from "@/lib/clerk-appearance";
-import { saveSocialLinks } from "@/actions/settings";
+import { saveSenderBio, saveSocialLinks } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
+import { Textarea } from "@/components/ui/textarea";
+import { SENDER_BIO_MAX_LENGTH } from "@/lib/sender-profile";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -45,13 +47,17 @@ export function ProfileSettings({
   profile,
   clerkEnabled,
   initialSocialLinks,
+  initialSenderBio,
 }: {
   profile: ProfileData | null;
   clerkEnabled: boolean;
   initialSocialLinks: SocialLinks;
+  initialSenderBio: string;
 }) {
   const [socials, setSocials] = useState(initialSocialLinks);
+  const [bio, setBio] = useState(initialSenderBio);
   const [pending, start] = useTransition();
+  const [bioPending, startBio] = useTransition();
 
   return (
     <SettingsSection
@@ -108,6 +114,46 @@ export function ProfileSettings({
           )}
         </div>
       )}
+
+      <SettingsRow
+        title="About you"
+        description="One or two sentences: what you do, and what you are looking for. Orbit puts this in every message it drafts for you — without it, drafts have a name to sign off with and nothing to introduce."
+      >
+        <Textarea
+          id="sender-bio"
+          rows={3}
+          value={bio}
+          maxLength={SENDER_BIO_MAX_LENGTH}
+          placeholder="Backend engineer at a seed-stage fintech, moving into platform work. Looking for staff-level roles and people who have made that jump."
+          className="resize-y text-sm"
+          onChange={(e) => setBio(e.target.value)}
+        />
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            size="sm"
+            disabled={bioPending}
+            onClick={() =>
+              startBio(async () => {
+                try {
+                  const saved = await saveSenderBio(bio);
+                  // Reflect what was actually stored — the action collapses whitespace and
+                  // truncates, so echoing the stored value keeps the box honest about it.
+                  setBio(saved.senderBio);
+                  toast.success(saved.senderBio ? "Saved" : "Cleared");
+                } catch (err) {
+                  toast.error(friendlyError(err, "Couldn’t save that — try again?"));
+                }
+              })
+            }
+          >
+            {bioPending ? "Saving…" : "Save"}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            {bio.trim().length}/{SENDER_BIO_MAX_LENGTH}
+          </p>
+        </div>
+      </SettingsRow>
 
       <SettingsRow
         title="Your socials"

@@ -332,6 +332,25 @@
   );
   --orbit-corner-right: 0.75rem;
 
+  /* Width the top-right floating rail occupies, so a page header can keep its own
+     controls out from under it.
+     ------------------------------------------------------------------------------
+     `layout/app-shell.tsx` and `feedback/feedback-widget.tsx` both pin an icon button
+     to `fixed right-5 md:right-8` — the notifications bell and, below it, feedback.
+     They are `hidden md:block`, so the rail only exists from `md` up.
+
+     Without reserving it, a page that puts a control at its own top-right edge lands
+     underneath. Measured on /graph: the Constellation scope toggle ended at
+     viewport-36px while the feedback button spans viewport-72px to viewport-32px, so
+     `document.elementFromPoint` at the toggle's centre returned "Send feedback" at both
+     1024 and 1280 — the toggle was unreachable by mouse on an ordinary laptop, and at
+     1440 its right 28px were still covered. The page had already tried to dodge this by
+     bottom-aligning the control, which moved it out of the bell's row but not out of
+     feedback's.
+
+     2rem offset + 2.5rem button + 1rem breathing room. */
+  --orbit-top-rail: 5.5rem;
+
   /* Raised by pages that put a primary action in this corner, so a toast can
      never cover it — see `lib/corner-clearance.ts`. Set on <html>, because the
      toaster is portalled to <body> and a wrapper override would never reach it. */
@@ -347,12 +366,38 @@
   --orbit-toast-bottom: calc(
     var(--orbit-corner-bottom) + var(--orbit-job-stack-height)
   );
+
+  /* Vertical band the fixed mobile nav occupies, for content that must clear it.
+     ------------------------------------------------------------------------------
+     `layout/mobile-nav.tsx` is `fixed bottom-0` and is not in the layout flow, so
+     anything sized against the viewport lands underneath it. Measured at 390x844 it
+     spans y765-844; the chat composer's own `h-[calc(100dvh-16.5rem)]` put its bottom
+     edge at 792, hiding 27px of the box a user types into and ALL FOUR suggestion chips
+     the empty state tells them to try, and the paywall's "See plans" button overlapped
+     by 13px on every locked surface.
+
+     Distinct from `--orbit-corner-bottom` above, which anchors floating widgets in the
+     corner; this is the band ordinary page content has to stay out of. 0 at `md`, where
+     `md:hidden` takes the nav away. */
+  --orbit-bottom-nav: calc(5.5rem + env(safe-area-inset-bottom));
+
+  /* Width the contacts A-Z rail occupies on the right.
+     ------------------------------------------------------------------------------
+     The rail in `contacts/contacts-list.tsx` is portalled to <body> as
+     `fixed right-2 z-40` around a 2.25rem column, so it floats over whatever the list
+     puts at that screen position — which is the per-row reminder and delete buttons.
+     Reserving the width keeps both: the rail stays usable on a long list, and the row
+     actions move out from under it, rather than hiding the rail on small screens and
+     losing jump-to-letter exactly where the scroll is longest. */
+  --orbit-letter-rail: 3.25rem;
 }
 
 @media (min-width: 48rem) {
   :root {
     --orbit-corner-bottom: calc(1.25rem + var(--orbit-corner-lift));
     --orbit-corner-right: 1.25rem;
+    /* The nav is `md:hidden`, so there is no band to avoid. */
+    --orbit-bottom-nav: 0px;
   }
 }
 
@@ -2491,6 +2536,90 @@ html[data-celebration-handoff] [data-app-logo] {
     color-mix(in oklab, black 28%, transparent) 45%,
     transparent 100%
   );
+}
+
+/* ---------------------------------------------------------------------------
+   Route-transition progress bar.
+
+   The crawl is CSS, not JavaScript, and that is the point rather than a
+   preference. This bar exists to show that a navigation is underway, and the
+   moment it most needs to be moving is the moment React is busy rendering the
+   route it is reporting on. Measured on this app's own navigations: a
+   setTimeout at 150ms fires on time, but React does not paint the resulting
+   state update until the transition commits 331-784ms later — so a bar drawn
+   from React state only ever appeared at the very end, when it was useless.
+   A compositor-driven transform animation runs regardless of what the main
+   thread is doing, including through the 56-227ms long tasks measured during
+   these same transitions.
+
+   `transform: scaleX` rather than `width` for the same reason: width is laid
+   out on the main thread, transform is not.
+
+   The animation is asymptotic and stops at 92%. A bar that fills completely
+   while the work continues claims to be finished, which is the same lie as no
+   bar at all — just slower to notice. Reaching 100% is a separate, deliberate
+   act performed only when the route has actually arrived.
+
+   The 150ms animation-delay is the debounce Next's own docs recommend: a
+   prefetched route commits well inside it and shows nothing at all.
+   --------------------------------------------------------------------------- */
+@keyframes route-progress-crawl {
+  0% {
+    transform: scaleX(0.02);
+  }
+  12% {
+    transform: scaleX(0.28);
+  }
+  30% {
+    transform: scaleX(0.52);
+  }
+  60% {
+    transform: scaleX(0.74);
+  }
+  100% {
+    transform: scaleX(0.92);
+  }
+}
+
+.route-progress-fill {
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+  opacity: 0;
+}
+
+[data-route-progress="running"] .route-progress-fill {
+  opacity: 1;
+  animation: route-progress-crawl 12s cubic-bezier(0.16, 0.72, 0.3, 1) 150ms
+    forwards;
+  /* Invisible until the debounce elapses, so a fast navigation never flashes. */
+  transition: opacity 120ms linear 150ms;
+}
+
+[data-route-progress="done"] .route-progress-fill {
+  animation: none;
+  transform: scaleX(1);
+  opacity: 0;
+  transition:
+    transform 180ms ease-out,
+    opacity 180ms ease-out 120ms;
+}
+
+/* Reduced motion keeps the information and drops the movement: a static bar
+   that says "something is happening" and then leaves. */
+@media (prefers-reduced-motion: reduce) {
+  [data-route-progress="running"] .route-progress-fill {
+    animation: none;
+    transform: scaleX(1);
+    opacity: 0.65;
+    /* Restated rather than inherited: without it the bar appeared instantly here (measured
+       at 120ms, against 270ms with motion), so a navigation fast enough to show nothing to
+       everyone else still flashed for a reduced-motion user. The debounce is information,
+       not decoration — it is what keeps the bar meaning "this is taking a moment". */
+    transition: opacity 120ms linear 150ms;
+  }
+  [data-route-progress="done"] .route-progress-fill {
+    transition: opacity 120ms linear;
+  }
 }
 
 /* How much room the contacts A-Z rail reserves beside the content column. The rail

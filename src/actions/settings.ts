@@ -9,6 +9,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { normalizeSenderBio } from "@/lib/sender-profile";
 import { decryptOrNull, encrypt } from "@/lib/crypto";
 import { wisprKeyWasRejected } from "@/lib/wispr";
 import {
@@ -146,6 +147,7 @@ export async function getSettings() {
       canUseSync: entitlements.canUseSync,
       canUseExtension: entitlements.canUseExtension,
     },
+    senderBio: settings?.senderBio || "",
     socialLinks: {
       linkedin: settings?.socialLinks?.linkedin || "",
       twitter: settings?.socialLinks?.twitter || "",
@@ -155,6 +157,30 @@ export async function getSettings() {
     /** Null until the account has recorded a choice — see the column in schema.ts. */
     desktopNotificationsEnabled: settings?.desktopNotificationsEnabled ?? null,
   };
+}
+
+/**
+ * Save how the user describes themselves. Fed to every message Orbit drafts for them.
+ *
+ * Normalizing on the way in rather than at each read site: this is pasted straight into
+ * prompts, where an embedded newline ends the block and turns the remainder into what looks
+ * like a fresh instruction.
+ */
+export async function saveSenderBio(bio: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const senderBio = normalizeSenderBio(bio);
+
+  await db
+    .insert(userSettings)
+    .values({ userId, senderBio })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { senderBio, updatedAt: new Date() },
+    });
+
+  revalidatePath("/settings");
+  return { senderBio: senderBio ?? "" };
 }
 
 export async function saveThemePreference(theme: ThemePreference) {
@@ -489,3 +515,5 @@ export async function getPlanOverview() {
 
   return { entitlements, usage, demoAccount: demoAccountReason(userId) };
 }
+
+

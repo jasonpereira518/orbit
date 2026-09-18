@@ -1,28 +1,13 @@
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { cn } from "@/lib/utils";
+import { formatDueLabel } from "@/lib/dates";
 
+/** Delegates to the shared formatter; see `@/lib/dates`. */
 function followUpDueLabel(nextFollowUpAt?: Date | string | null) {
-  if (!nextFollowUpAt) return null;
-  const d = new Date(nextFollowUpAt);
-  if (Number.isNaN(d.getTime())) return null;
-  const now = new Date();
-  const overdue = d <= now;
-  if (overdue) {
-    const days = Math.max(
-      1,
-      Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24))
-    );
-    return { text: `Overdue ${days} day${days === 1 ? "" : "s"}`, overdue: true };
-  }
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return { text: "Due today", overdue: false };
-  return {
-    text: `Due ${formatDistanceToNow(d, { addSuffix: true })}`,
-    overdue: false,
-  };
+  const due = formatDueLabel(nextFollowUpAt);
+  return due ? { text: due.text, overdue: due.tone === "overdue" } : null;
 }
 
 function lastTouchLabel(lastInteractionAt?: Date | string | null) {

@@ -22,6 +22,7 @@ import { getRankedContacts } from "@/actions/search";
 import type { RankedContact } from "@/lib/hybrid-search";
 import {
   CONTACTS_PAGE_SIZE,
+  parseQuietDays,
   type ContactPickerOption,
   type ContactSort,
   type ContactsPage,
@@ -158,6 +159,35 @@ export async function listContactsPage(
 
   if (filters?.minScore) {
     conditions.push(sql`${contacts.relationshipScore} >= ${filters.minScore}`);
+  }
+
+  // Tags had a write path, a search index and no read surface at all: you could set
+  // them, find them via free-text search, and never see them again. This is the filter
+  // half; the chips on each row are the other.
+  const tag = filters?.tag?.trim();
+  if (tag) {
+    conditions.push(sql`exists (
+      select 1 from contact_tags ct
+      join tags t on t.id = ct.tag_id
+      where ct.contact_id = ${contacts.id}
+        and t.user_id = ${userId}
+        and lower(trim(t.name)) = ${tag.toLowerCase()}
+    )`);
+  }
+
+  // "Gone quiet": nothing logged for at least this many days. A contact with no interaction
+  // at all qualifies — `last_interaction_at` is stamped at create, so NULL here means the
+  // column predates that or an import left it empty, and either way "never" is quieter than
+  // any threshold. Inlined rather than bound because an interval built from a parameter is
+  // awkward in Postgres; `parseQuietDays` has already reduced it to one of three integers,
+  // so there is no user string anywhere near this.
+  const quiet = parseQuietDays(filters?.quiet);
+  if (quiet !== null) {
+    conditions.push(
+      sql`(${contacts.lastInteractionAt} is null or ${contacts.lastInteractionAt} <= now() - ${sql.raw(
+        `interval '${quiet} days'`
+      )})`
+    );
   }
 
   if (filters?.followUp === "due") {
@@ -627,15 +657,39 @@ export async function createContact(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
+  const { contact } = await createContactDetailed(input, options);
+  return contact;
+}
+
+/**
+ * `createContact`, but it also tells you what actually happened.
+ *
+ * `resolveOrCreateContact` has always returned an `outcome` and `createContact` has
+ * always thrown it away, so the form toasted "Contact created" even when the submission
+ * had been folded into an existing person — silently replacing their company and role,
+ * with the contact count unchanged and no way back. A caller with a human in front of it
+ * needs to be able to say which of the two happened.
+ *
+ * Separate from `createContact` rather than a changed return type, so the importer and
+ * outreach paths that only want the row keep working unchanged.
+ */
+export async function createContactDetailed(
+  input: ContactInput,
+  options?: ContactWriteOptions
+) {
   const userId = await requireUserId();
-  const { contactId } = await resolveOrCreateContact(userId, input, options);
+  const { contactId, outcome, reason } = await resolveOrCreateContact(
+    userId,
+    input,
+    options
+  );
   const db = await getDb();
   const [contact] = await db
     .select()
     .from(contacts)
     .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
     .limit(1);
-  return contact;
+  return { contact, outcome, reason: reason ?? null };
 }
 
 /**
@@ -1065,9 +1119,21 @@ export async function backfillContactAvatars(
         resolveGravatar: fetchGravatarPhotoUrl,
         resolveApollo,
         save: async (contactId, photoUrl) => {
+          // `updatedAt` deliberately left alone, for the reason spelled out on
+          // `setConstellationPin` below: the dashboard and /knowledge both order by
+          // `desc(updated_at)`, and a background photo fetch is an invisible operation. A
+          // fresh LinkedIn import would otherwise shove every contact it created to the top
+          // of "recently updated" purely because their avatars downloaded.
+          //
+          // It is also load-bearing for revertible imports. `revertImport` asks "has the
+          // user edited this contact since the import" by comparing `created_at` against
+          // `updated_at`, and this ran on every page load against exactly the contacts an
+          // import had just created — so an undo found them all "edited", deleted nothing,
+          // and said so. The revert commit claimed this had been verified; the embedding
+          // backfill had been, this had not.
           await db
             .update(contacts)
-            .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+            .set({ profileImageUrl: photoUrl })
             .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
         },
         markChecked: async (contactId) => {

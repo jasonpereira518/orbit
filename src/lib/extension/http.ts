@@ -20,6 +20,7 @@ import {
   ExtensionUnauthorizedError,
   requireExtensionUserId,
 } from "./auth";
+import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 
 /** Rolling one-minute budgets, per user. */
 const REQUEST_LIMIT_PER_MINUTE = 60;
@@ -48,6 +49,7 @@ const STATUS_BY_CODE: Record<ExtensionErrorCode, number> = {
   duplicate: 409,
   limit_exceeded: 402,
   payload_too_large: 413,
+  payment_required: 402,
   server_error: 500,
 };
 
@@ -213,6 +215,9 @@ function toErrorResponse(error: unknown) {
       retryAfterSeconds: error.retryAfterSeconds,
     });
   }
+  if (isPaywallError(error)) {
+    return jsonError({ code: "payment_required", message: error.message });
+  }
   if (error instanceof PayloadTooLargeError) {
     return jsonError({ code: "payload_too_large", message: error.message });
   }
@@ -252,6 +257,13 @@ export function extensionRoute<TIn, TOut>(config: {
   return async function handle(req: Request) {
     try {
       const userId = await requireExtensionUserId(req);
+      // The extension is a paid feature — it is a bullet on both the Pro and Lifetime
+      // cards and absent from the Free list — but `canUseExtension` was read only by UI
+      // components and settings. No route enforced it, so a free user who installed the
+      // extension got the whole thing. Checked here, in the shared pipeline, so a route
+      // added later cannot forget it; contrast the public API, which gates at its own
+      // auth layer and correctly returns 402.
+      await requireEntitlement(userId, "extension");
       await consumeBudget(userId, config.cost ?? "request");
 
       const input = config.schema

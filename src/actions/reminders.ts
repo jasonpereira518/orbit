@@ -18,6 +18,7 @@ import {
   inferReminderActionKind,
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
+import { normalizeCadence } from "@/lib/keep-in-touch";
 import { loadNotificationPanel } from "@/lib/notification-panel";
 import { traced } from "@/lib/perf-trace";
 import {
@@ -659,6 +660,50 @@ export async function scheduleContactFollowUpAt(
   return { reminder: row, dueDate: due.toISOString() };
 }
 
+/**
+ * Set or clear how often the user wants to speak to this contact.
+ *
+ * Writes the SAME columns the capture path writes when a note says "check in monthly" —
+ * `cadence_days` with `cadence_source` marking who said it. This branch originally added a
+ * separate `keep_in_touch_days`; main's model is richer and already had a slot for a
+ * user-stated interval, so the column was dropped in the merge rather than kept beside it.
+ *
+ * Deliberately does NOT schedule a follow-up: a cadence is a standing preference, and
+ * materializing it into a `next_follow_up_at` would make the contact ineligible for the very
+ * suggestion it exists to produce (`isDiscoveryEligible` treats a booked follow-up as
+ * already covered).
+ */
+export async function setKeepInTouchCadence(
+  contactId: string,
+  days: number | null
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  // Anything unusable collapses to "no cadence" rather than throwing: this is a preference
+  // control, and a bad value is better cleared than left half-set. `normalizeCadence` also
+  // rejects zero and negatives, which would otherwise make a contact permanently overdue.
+  const cadence = days === null ? null : normalizeCadence(days);
+
+  await db
+    .update(contacts)
+    .set({
+      cadenceDays: cadence,
+      // The phrase belongs to whoever stated it. A user picking "Quarterly" from four
+      // buttons did not say anything, so the phrase is cleared rather than left quoting a
+      // note that no longer describes the interval.
+      cadencePhrase: null,
+      cadenceSource: cadence === null ? null : "user",
+      cadenceSetAt: cadence === null ? null : new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+
+  revalidateReminderPaths(contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  return { keepInTouchDays: cadence };
+}
+
 export async function clearContactFollowUp(contactId: string) {
   const userId = await requireUserId();
   const db = await getDb();
@@ -711,7 +756,21 @@ export async function completeFollowUpWithTouch(
     // Orbit only ever logs a follow-up the user sent, so this is always outbound. Set
     // explicitly rather than left NULL: NULL means "sender unknown" and would push the
     // contact onto the legacy volume fallback in constellation eligibility.
-    direction: channel === "linkedin_message" ? "out" : undefined,
+    // Orbit only ever logs a follow-up the user sent, so this is always outbound — on every
+    // channel, not just LinkedIn.
+    //
+    // This used to set it for `linkedin_message` alone, for a reason that turns out to apply
+    // only there: NULL means "sender unknown", which pushes a contact onto the legacy volume
+    // fallback in constellation eligibility. But those counts are scoped to
+    // `interaction_type = 'linkedin_message'` (see `constellationSignalAggregates` in
+    // `closeness-cohort.ts`), so a direction on an email or a call row is invisible to them.
+    // The guard was correct and unnecessarily narrow.
+    //
+    // Recording it for every channel is what makes "waiting on a reply" possible at all: the
+    // job seeker's follow-ups are emails, and an email touch that recorded no direction was
+    // indistinguishable from a note someone typed about a conversation they had. See
+    // `@/lib/awaiting-reply`.
+    direction: "out",
     rawNotes: options?.notes,
     aiSummary:
       channel === "email"

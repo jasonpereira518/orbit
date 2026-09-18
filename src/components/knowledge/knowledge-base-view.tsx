@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { format } from "date-fns";
 import {
@@ -33,7 +34,10 @@ const FILTERS: { id: Filter; label: string }[] = [
 ];
 
 const KIND_LABEL: Record<KnowledgeKind, string> = {
-  message: "LinkedIn message",
+  // "Message", not "LinkedIn message": `kindOf` in actions/knowledge.ts buckets both
+  // `linkedin_message` AND the generic `message` type here, so anything imported from
+  // another source was being labelled as LinkedIn.
+  message: "Message",
   note: "Note",
   summary: "AI summary",
   key_fact: "Key fact",
@@ -56,37 +60,69 @@ function KindIcon({ kind }: { kind: KnowledgeKind }) {
   }
 }
 
+const SEARCH_DEBOUNCE_MS = 250;
+
 export function KnowledgeBaseView({
   stats,
   entries,
+  initialQuery,
+  initialFilter,
 }: {
   stats: KnowledgeStats;
   entries: KnowledgeEntry[];
+  initialQuery: string;
+  initialFilter: Filter;
 }) {
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const router = useRouter();
+  const [query, setQuery] = useState(initialQuery);
+  const [filter, setFilter] = useState<Filter>(initialFilter);
+  const debounceRef = useRef<number | null>(null);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const tokens = q.split(/\s+/).filter((t) => t.length > 1);
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
+  }, []);
 
-    return entries.filter((e) => {
-      if (filter !== "all" && e.kind !== filter) return false;
-      if (!q) return true;
-      const hay = [e.contactName, e.company, e.title, e.snippet, e.kind]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      if (hay.includes(q)) return true;
-      return tokens.every((t) => hay.includes(t));
-    });
-  }, [entries, filter, query]);
+  /**
+   * The query goes to the server now.
+   *
+   * It used to filter `entries` in the browser — which meant the search only covered the
+   * few hundred rows that had been shipped, and a note from two years ago produced "No
+   * matches for that search" while sitting in the table. The page said it held everything
+   * Orbit knows; the search reached the newest page of it.
+   */
+  function apply(next?: { q?: string; filter?: Filter }) {
+    const params = new URLSearchParams();
+    const qq = (next?.q ?? query).trim();
+    const ff = next?.filter ?? filter;
+    if (qq) params.set("q", qq);
+    if (ff !== "all") params.set("kind", ff);
+    const qs = params.toString();
+    router.replace(qs ? `/knowledge?${qs}` : "/knowledge");
+    router.refresh();
+  }
 
-  const empty = entries.length === 0;
+  function scheduleSearch(value: string) {
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    if (!value.trim()) {
+      apply({ q: "" });
+      return;
+    }
+    debounceRef.current = window.setTimeout(() => apply({ q: value }), SEARCH_DEBOUNCE_MS);
+  }
+
+  // The server has already applied both; what arrives is what matches.
+  const filtered = entries;
+  const searching = Boolean(initialQuery.trim()) || initialFilter !== "all";
+  const empty = entries.length === 0 && !searching;
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Two columns from the smallest size: one column below 640px meant the four stat
+          cards filled a 390px screen on their own, pushing the search box and the first
+          result below the fold on the page whose entire job is finding something. */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat
           icon={<Users className="h-4 w-4" />}
           label="People"
@@ -150,7 +186,10 @@ export function KnowledgeBaseView({
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  scheduleSearch(e.target.value);
+                }}
                 placeholder="Search people, messages, notes…"
                 className="pl-9"
               />
@@ -160,7 +199,10 @@ export function KnowledgeBaseView({
                 <button
                   key={f.id}
                   type="button"
-                  onClick={() => setFilter(f.id)}
+                  onClick={() => {
+                    setFilter(f.id);
+                    apply({ filter: f.id });
+                  }}
                   className={cn(
                     "rounded-lg px-2.5 py-1.5 text-xs transition-colors",
                     filter === f.id
@@ -175,7 +217,9 @@ export function KnowledgeBaseView({
           </div>
 
           <p className="text-sm text-muted-foreground">
-            Showing {filtered.length} of {entries.length} items
+            {searching
+              ? `${filtered.length} ${filtered.length === 1 ? "match" : "matches"}`
+              : `Showing ${filtered.length} of ${stats.entriesTotal} items`}
           </p>
 
           <ul className="divide-y divide-border/50 rounded-2xl border border-border/60">

@@ -149,12 +149,33 @@ export function buildConstellationClusters(
   return { clusters, byContactId };
 }
 
-/** Company/school clusters shaped for graph + dashboard payloads. */
+/**
+ * The minimum a "constellation" can be.
+ *
+ * A figure is traced between people, so one person is a star, not a constellation.
+ */
+const MIN_CLUSTER_MEMBERS = 2;
+
+/**
+ * Company/school clusters shaped for graph + dashboard payloads.
+ *
+ * Filtered by COUNT as well as kind. The assignment above only applies its `>= 2` rule to
+ * the preferred company/school branches; anything that falls through to `assignCluster`
+ * gets a company cluster even as a party of one. So the Clusters chip read 19-20 while
+ * the canvas drew 8 figures, and eleven of the entries in the popover had a count of 1 —
+ * clicking one zoomed the camera to a single isolated star.
+ *
+ * This also resolves the duplicate the popover showed for the same name: "UNC Chapel Hill"
+ * appeared as both COMPANY (3) and SCHOOL (1), because school is only a fallback and the
+ * one alumnus whose employer cluster was too small landed in a separate school cluster of
+ * their own. The singleton is no longer named, so the pair collapses.
+ */
 export function toNamedGraphClusters(clusters: BuiltCluster[]) {
   return clusters
     .filter(
       (c): c is BuiltCluster & { kind: "company" | "school" } =>
-        c.kind === "company" || c.kind === "school"
+        (c.kind === "company" || c.kind === "school") &&
+        c.count >= MIN_CLUSTER_MEMBERS
     )
     .map((c) => ({
       id: c.id,

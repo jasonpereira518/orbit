@@ -36,6 +36,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
   "smoke-toast-copy": "pure",
+
   "smoke-admin-gate": "pure",
   "smoke-admin-redaction": "pure",
   "smoke-admin-yc-calculations": "pure",
@@ -59,6 +60,11 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-file-drop": "pure",
   "smoke-cadence": "pure",
   "smoke-chat-mentions": "pure",
+  "smoke-phase0-primitives": "pure",
+  "smoke-honest-reporting": "pure",
+  "smoke-outreach-readiness": "pure",
+  "smoke-route-progress": "pure",
+  "smoke-settings-export": "pure",
   "smoke-chat-pipeline": "pure",
   "smoke-chat-prompt": "pure",
   "smoke-chat-retrieval": "pure",
@@ -175,6 +181,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-admin-render": "pglite",
   "smoke-admin-roster": "pglite",
   "smoke-admin-unmasked": "pglite",
+  "smoke-awaiting-reply": "pglite",
   "smoke-avatar-migration": "pglite",
   "smoke-avatar-source-budget": "pglite",
   "smoke-broadcasts": "pglite",
@@ -197,7 +204,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-duplicate-review": "pglite",
   "smoke-event-companies": "pglite",
   "smoke-event-discovery-store": "pglite",
+  "smoke-contacts-last-touch": "pglite",
+  "smoke-email-activity": "pglite",
   "smoke-event-roster": "pglite",
+  "smoke-fact-lists": "pglite",
+  "smoke-job-changes": "pglite",
+  "smoke-keep-in-touch": "pglite",
+  "smoke-knowledge": "pglite",
   "smoke-constellation-admin": "pglite",
   "smoke-constellation-payload-leak": "pglite",
   "smoke-constellation-pin": "pglite",
@@ -216,6 +229,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-health": "pglite",
   "smoke-hybrid-search": "pglite",
   "smoke-import-engine": "pglite",
+  "smoke-import-revert": "pglite",
   "smoke-import-stall": "pglite",
   "smoke-ingest-events": "pglite",
   "smoke-import-resumption-auth": "pglite",
@@ -252,6 +266,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-history": "pglite",
   "smoke-meeting-sessions": "pglite",
   "smoke-ops-snapshot": "pglite",
+  "smoke-no-silent-data-loss": "pglite",
   "smoke-ops-sweep": "pglite",
   "smoke-admin-analytics": "pglite",
   "smoke-growth-trends": "pglite",
@@ -284,6 +299,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-resend-rejection": "pglite",
   "smoke-schema-fingerprint": "pglite",
   "smoke-related-contacts-scale": "pglite",
+  "smoke-sender-profile": "pglite",
   "smoke-schema-upgrade": "pglite",
   "smoke-stripe-unattributed": "pglite",
   "smoke-stripe-webhook": "pglite",
@@ -299,6 +315,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-usage-events": "pglite",
   "smoke-usage-summary": "pglite",
   "smoke-user-settings-race": "pglite",
+  "smoke-warm-paths": "pglite",
   "smoke-webhook-guard": "pglite",
   "smoke-webhook-delivery": "pglite",
   "smoke-wispr-key-rejection": "pglite",
@@ -308,8 +325,6 @@ const MANIFEST: Record<string, Tier> = {
 };
 
 const TIMEOUT_MS: Partial<Record<string, number>> = {
-  "smoke-page-budgets": 5 * 60_000,
-  "smoke-import-engine": 5 * 60_000,
 };
 const DEFAULT_TIMEOUT_MS = 3 * 60_000;
 

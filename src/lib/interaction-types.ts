@@ -174,6 +174,19 @@ const BY_FAMILY = new Map<string, InteractionFamilySpec>(
 );
 
 /** Maps any stored `interaction_type` onto the canonical set. Unknown values become "note". */
+/**
+ * Every raw `interaction_type` string this app recognises — the canonical values plus the
+ * legacy spellings still sitting in the table.
+ *
+ * Exported so a SQL query can build its own IN-lists by running each value through
+ * `normalizeInteractionType` rather than hard-coding a copy of `LEGACY_ALIASES` next to a
+ * `count(*) filter (...)`. The knowledge base's stats do exactly that, and a hand-copied
+ * list there would silently stop counting `meeting_note` the day someone adds an alias.
+ */
+export function knownInteractionTypeValues(): string[] {
+  return [...INTERACTION_TYPES.map((t) => t.value), ...Object.keys(LEGACY_ALIASES)];
+}
+
 export function normalizeInteractionType(raw: string | null | undefined): InteractionTypeValue {
   if (!raw) return DEFAULT_INTERACTION_TYPE;
   const key = raw.trim().toLowerCase();

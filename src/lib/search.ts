@@ -66,7 +66,16 @@ export async function upsertContactEmbedding(
   // caller gets the default (the live provider call), and a smoke test can inject a
   // deterministic stub to exercise this function's DB effects — the upsert, the
   // `RETURNING` mapping, `persistEmbeddingVectors` — without a live AI key.
-  embed: typeof createEmbedding = createEmbedding
+  embed: typeof createEmbedding = createEmbedding,
+  /**
+   * Rethrow instead of swallowing. Off by default because most callers are
+   * fire-and-forget background rebuilds that must not fail a user's write.
+   *
+   * The Constellation's Refresh button is the exception: it reports progress to
+   * someone who is watching, so a swallowed failure there became a green
+   * "Constellation refreshed" after rebuilding nothing at all.
+   */
+  opts: { strict?: boolean } = {}
 ): Promise<boolean> {
   if (!content.trim()) return false;
 
@@ -107,7 +116,12 @@ export async function upsertContactEmbedding(
       await persistEmbeddingVectors([{ id: inserted.id, embedding }]);
     }
     return Boolean(inserted?.id);
-  } catch {
+  } catch (err) {
+    // A swallowed `false` here is indistinguishable from the legitimate "nothing to do"
+    // returns above (empty content, unchanged hash) — which is exactly the ambiguity this
+    // function's own header warns callers about. `strict` lets a caller that reports to a
+    // human tell the two apart.
+    if (opts.strict) throw err;
     // AI key may be missing; skip embeddings silently
     return false;
   }
@@ -308,7 +322,9 @@ function splitProfileEmbeddingContent(
 export async function rebuildContactEmbedding(
   userId: string,
   contactId: string,
-  embed: typeof createEmbedding = createEmbedding
+  embed: typeof createEmbedding = createEmbedding,
+  /** See `upsertContactEmbedding`; forwarded unchanged. */
+  opts: { strict?: boolean } = {}
 ): Promise<boolean> {
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
@@ -322,9 +338,9 @@ export async function rebuildContactEmbedding(
   if (!contact) return false;
 
   const { profile, notes } = splitProfileEmbeddingContent(contact);
-  const profileWritten = await upsertContactEmbedding(userId, contactId, "profile", profile, contactId, embed);
+  const profileWritten = await upsertContactEmbedding(userId, contactId, "profile", profile, contactId, embed, opts);
   if (notes) {
-    const notesWritten = await upsertContactEmbedding(userId, contactId, "notes", notes, contactId, embed);
+    const notesWritten = await upsertContactEmbedding(userId, contactId, "notes", notes, contactId, embed, opts);
     return profileWritten || notesWritten;
   }
   // Content shrank back under the split threshold — drop the now-stale "notes" row so it

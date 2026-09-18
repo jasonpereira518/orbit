@@ -15,6 +15,8 @@ import {
   type CalendarEventRowPayload,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { REVERT_REFUSAL_MESSAGE, describeRevert } from "@/lib/import-revert-policy";
+import { revertImport } from "@/lib/import-revert";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
   buildDuplicateIndex,
@@ -1330,4 +1332,23 @@ export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
     matched,
     remaining: needPhoto.length - matched,
   };
+}
+
+export async function revertImportAction(importId: string) {
+  const userId = await requireUserId();
+  const result = await revertImport(userId, importId);
+
+  if (!result.ok) {
+    return { ok: false as const, message: REVERT_REFUSAL_MESSAGE[result.reason] };
+  }
+
+  // Everything an import touches, in reverse.
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath("/imports");
+  revalidatePath("/graph");
+  revalidatePath("/chat");
+  revalidatePath("/reminders");
+
+  return { ok: true as const, message: describeRevert(result.stats), stats: result.stats };
 }

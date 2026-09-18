@@ -13,16 +13,25 @@ import { getEntitlements } from "@/lib/entitlements";
 export const maxDuration = 300;
 
 export default async function ImportsPage() {
-  // Keep the history paint fast; refresh subscriptions after the response.
-  after(() => {
-    void syncStaleCalendarSubscriptions().catch(() => {});
-  });
-
   const [history, calendarSubscriptions, entitlements] = await Promise.all([
     listImports(),
     listCalendarSubscriptions(),
     getEntitlements(await requireUserId()),
   ]);
+
+  // Keep the history paint fast; refresh subscriptions after the response.
+  //
+  // Gated on the entitlement rather than fired unconditionally. `requireEntitlement`
+  // records a `gate_events` row BEFORE it throws, and the `.catch(() => {})` swallowed
+  // the throw — so every free user who opened this page to upload a LinkedIn CSV
+  // silently logged demand for calendar sync, on every visit and every refresh. That
+  // table's own comment calls it "the only place demand for a gated feature can be
+  // observed", and this was filling it with page views.
+  if (entitlements.canUseSync) {
+    after(() => {
+      void syncStaleCalendarSubscriptions().catch(() => {});
+    });
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">

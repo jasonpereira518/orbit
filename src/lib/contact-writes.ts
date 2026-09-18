@@ -15,8 +15,11 @@ import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
+import { mergeFactList } from "@/lib/fact-lists";
+import { detectJobChange } from "@/lib/job-changes";
 import {
   contactIdentities,
+  contactJobChanges,
   contactTags,
   contacts,
   interactions,
@@ -39,6 +42,11 @@ import {
   rebuildContactEmbedding,
   rebuildContactEmbeddingsBatch,
 } from "@/lib/search";
+import {
+  normalizeContactInput,
+  parseContactInput,
+  parseContactPatch,
+} from "@/lib/contact-input";
 
 export type ContactWriteOptions = {
   /** Skip path revalidation during bulk imports. */
@@ -53,6 +61,19 @@ export type ContactWriteOptions = {
    * is about to be redrawn anyway.
    */
   skipCloseness?: boolean;
+  /**
+   * Union `keyFacts` / `sharedInterests` / `opportunities` with what the contact already has
+   * instead of replacing them.
+   *
+   * For EXTRACTION paths only — a pasted note, a capture, the extension. Those have seen one
+   * conversation and cannot know that an older fact stopped being true, and they routinely
+   * return `[]` because the note was about something else; writing that through deleted
+   * everything the contact had accumulated. See `@/lib/fact-lists`.
+   *
+   * A person editing the contact must NOT set this: they are stating the whole list, and
+   * with this on they could never delete a single entry.
+   */
+  mergeFactLists?: boolean;
   /**
    * Pre-computed remaining contact allowance, or `null` for unlimited.
    *
@@ -356,9 +377,13 @@ export async function contactUsageForUser(userId: string) {
 
 export async function createContactForUser(
   userId: string,
-  input: ContactInput,
+  rawInput: ContactInput,
   options?: ContactWriteOptions
 ) {
+  // Before the headroom check: an invalid contact should not consume the plan
+  // allowance or record a paywall gate-hit on its way to being rejected.
+  const input = parseContactInput(rawInput);
+
   const headroom = await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) {
     const { plan, contactLimit } = await getEntitlements(userId);
@@ -514,13 +539,41 @@ export async function createContactsBulkForUser(
   // Take what fits rather than failing the whole batch: a free user importing 847
   // LinkedIn connections should still get their first 500, and the caller reports the
   // shortfall by comparing `created.length` against what it passed in.
+  //
+  // A row with no usable name THROWS rather than being quietly dropped, and that is the
+  // load-bearing part.
+  //
+  // This used to `filter` such rows out before the insert, which silently broke the one
+  // thing both bulk callers rely on: they map `created[i]` back to `inputs[i]` by position
+  // (`import-engine.ts` and `ingest/events.ts` both do). Drop one row from the middle and
+  // every later row's interactions, reminders and revert metadata attach to the WRONG
+  // contact — someone else's meeting notes on someone else's profile, with nothing
+  // reporting it. A LinkedIn export with an email but no first or last name reaches here,
+  // so this was not hypothetical.
+  //
+  // Throwing keeps the invariant `valid.length === inputs.length`, which is what makes the
+  // positional mapping sound and what makes the plan-cap shortfall below unambiguous —
+  // any deficit is now the cap, never a dropped row. The import engine's
+  // `writeWithNarrowing` catches this, halves the batch, and isolates the offending row as
+  // `failed` with this message, which is the visible failure the user can act on. Phase 0
+  // made lenient validation name-only for exactly this reason: a row the write layer
+  // refuses belongs in `failedRows` where someone can see it, not silently discarded.
+  const valid = inputs.map((input) => {
+    const result = normalizeContactInput(input, "lenient");
+    if (!result.ok) {
+      const why = result.issues.map((i) => `${i.field}: ${i.message}`).join("; ");
+      throw new Error(`Contact row has no usable name (${why || "name is required"})`);
+    }
+    return result.value;
+  });
+
   const headroom =
     options?.headroom !== undefined
       ? options.headroom
       : await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) return [];
   const admitted =
-    headroom === null ? inputs : inputs.slice(0, headroom);
+    headroom === null ? valid : valid.slice(0, headroom);
 
   const db = await getDb();
   const now = new Date();
@@ -658,13 +711,19 @@ export async function createContactsBulkForUser(
  * `LEAST`/`GREATEST` ignore NULL operands and return the non-null one — verified against
  * this project's own PGlite, not assumed — so an input that supplies neither leaves both
  * columns untouched, and one that supplies only a later date advances only that side.
+ *
+ * Returns the `updated_at` it stamped on every row it touched, or null for an empty call.
+ * The import engine records that value in each merged row's revert snapshot: an undo
+ * compares it against the contact's current `updated_at` and refuses to restore a person
+ * who has been edited since. Returned rather than passed in, because this function also
+ * uses the same instant for `embedding_stale_at` and the two must not drift.
  */
 export async function bulkMergeContactsForUser(
   userId: string,
   merges: Array<{ contactId: string; input: Partial<ContactInput> }>,
   companyResolve: CompanyResolver
-) {
-  if (merges.length === 0) return;
+): Promise<Date | null> {
+  if (merges.length === 0) return null;
   const db = await getDb();
   const now = new Date();
 
@@ -730,20 +789,77 @@ export async function bulkMergeContactsForUser(
     )
     WHERE c.id = v.id AND c.user_id = ${userId}
   `);
+
+  return now;
+}
+
+/**
+ * Read the contact's current lists and union the incoming ones into them.
+ *
+ * Returns only the keys the patch actually carries, so a note that mentions no shared
+ * interests leaves that column entirely alone rather than rewriting it with itself.
+ * Returns null when the patch carries none of the three, so the extra read is skipped.
+ */
+async function mergedFactLists(
+  db: Awaited<ReturnType<typeof getDb>>,
+  userId: string,
+  id: string,
+  input: Partial<ContactInput>
+): Promise<Partial<Record<"keyFacts" | "sharedInterests" | "opportunities", string[]>> | null> {
+  const wanted = (["keyFacts", "sharedInterests", "opportunities"] as const).filter(
+    (key) => input[key] !== undefined
+  );
+  if (wanted.length === 0) return null;
+
+  const current = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, id), eq(contacts.userId, userId)),
+    columns: { keyFacts: true, sharedInterests: true, opportunities: true },
+  });
+  // No row means the update below will match nothing either; let it fall through and report
+  // that the ordinary way rather than inventing a patch for a contact that is not there.
+  if (!current) return null;
+
+  const patch: Partial<Record<(typeof wanted)[number], string[]>> = {};
+  for (const key of wanted) {
+    patch[key] = mergeFactList(current[key], input[key]);
+  }
+  return patch;
 }
 
 export async function updateContactForUser(
   userId: string,
   id: string,
-  input: Partial<ContactInput>,
+  rawInput: Partial<ContactInput>,
   options?: ContactWriteOptions
 ) {
+  // Same contract as create, applied to whichever fields this patch actually carries.
+  const input = parseContactPatch(rawInput);
+
   const db = await getDb();
   const staleAt = new Date();
 
   const companyPatch =
     input.company !== undefined
       ? await companyFieldsForWrite(userId, input.company)
+      : null;
+
+  // One extra read, and only on extraction paths that asked for it. Done here rather than at
+  // each call site so the union rule lives with the writer it qualifies — there is one
+  // writer for these columns and adding a second place that decides this is how the two
+  // drift apart.
+  const factPatch = options?.mergeFactLists
+    ? await mergedFactLists(db, userId, id, input)
+    : null;
+
+  // The before-image, read only when this patch could constitute a move. One extra read on
+  // writes that touch company or title — which is enrichment refreshes and the edit form,
+  // not the hot paths.
+  const previousJob =
+    input.company !== undefined || input.title !== undefined
+      ? ((await db.query.contacts.findFirst({
+          where: and(eq(contacts.id, id), eq(contacts.userId, userId)),
+          columns: { company: true, title: true },
+        })) ?? null)
       : null;
 
   const [contact] = await db
@@ -812,6 +928,8 @@ export async function updateContactForUser(
       ...(input.cadencePhrase !== undefined ? { cadencePhrase: input.cadencePhrase } : {}),
       ...(input.cadenceSource !== undefined ? { cadenceSource: input.cadenceSource } : {}),
       ...(input.cadenceSetAt !== undefined ? { cadenceSetAt: input.cadenceSetAt } : {}),
+      // Last, so it overrides the three replacements above when the caller asked to merge.
+      ...(factPatch ?? {}),
       ...(input.nextFollowUpAt !== undefined
         ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
         : {}),
@@ -819,6 +937,30 @@ export async function updateContactForUser(
     })
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
     .returning();
+
+  // Record the move, if it was one. After the update and deliberately non-fatal: a failure
+  // to note a job change must never cost the user the edit they actually made.
+  if (contact && previousJob) {
+    const change = detectJobChange(previousJob, {
+      company: input.company,
+      title: input.title,
+    });
+    if (change) {
+      try {
+        await db.insert(contactJobChanges).values({
+          userId,
+          contactId: id,
+          previousCompany: change.previousCompany,
+          newCompany: change.newCompany,
+          previousTitle: change.previousTitle,
+          newTitle: change.newTitle,
+          source: input.source ?? null,
+        });
+      } catch {
+        // Nothing to do about it here; the contact row is already correct.
+      }
+    }
+  }
 
   // Keep identity rows in step with the columns. An email corrected here must release the
   // old address and claim the new one, or duplicate prevention keeps matching on a value

@@ -137,6 +137,7 @@ export default async function SettingsPage() {
             profile={profile}
             clerkEnabled={isClerkConfigured()}
             initialSocialLinks={initialSettings.socialLinks}
+            initialSenderBio={initialSettings.senderBio}
           />
         </Section>
         <Section id="settings-plan" hidden={hidden}>

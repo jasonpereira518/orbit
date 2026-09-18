@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
   useTransition,
-  type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -142,6 +141,9 @@ function overdueFollowUpLabel(nextFollowUpAt?: string | Date | null) {
   return `Overdue ${days} day${days === 1 ? "" : "s"}`;
 }
 
+/** Beyond this a row's tags start competing with the name for the eye. */
+const MAX_ROW_TAGS = 3;
+
 const TIER_TOOLTIP: Record<"inner" | "mid" | "outer", string> = {
   inner: "Inner orbit",
   mid: "Mid orbit",
@@ -153,8 +155,11 @@ export type ContactsListFilters = {
   company?: string;
   minScore?: number;
   followUp?: "due";
+  /** Days since the last logged interaction — see `parseQuietDays`. */
+  quiet?: number;
   sort?: ContactSort;
   letter?: string;
+  tag?: string;
 };
 
 export function ContactsList({
@@ -360,6 +365,8 @@ export function ContactsList({
     if (filters.company) params.set("company", filters.company);
     if (filters.minScore) params.set("minScore", String(filters.minScore));
     if (filters.followUp) params.set("followUp", filters.followUp);
+    if (filters.tag) params.set("tag", filters.tag);
+    if (filters.quiet) params.set("quiet", String(filters.quiet));
     if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
     params.set("letter", letter);
     router.replace(`/contacts?${params.toString()}`);
@@ -447,25 +454,9 @@ export function ContactsList({
                   const { overdue, scheduledLabel, overdueText, lastTouch, details } =
                     rowMeta.get(c.id)!;
 
-                  function openContact() {
-                    if (exiting) return;
-                    router.push(`/contacts/${c.id}`);
-                  }
-
-                  function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openContact();
-                    }
-                  }
-
                   return (
                     <li
                       key={c.id}
-                      role="link"
-                      tabIndex={0}
-                      onClick={openContact}
-                      onKeyDown={onRowKeyDown}
                       className={cn(
                         // content-visibility skips layout/paint for offscreen
                         // rows — the browser remembers real heights after
@@ -481,10 +472,30 @@ export function ContactsList({
                       <div className="overflow-hidden">
                         <div
                           className={cn(
-                            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
+                            "group/row relative flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
                             exiting && "-translate-x-8"
                           )}
                         >
+                          {/* A real link, stretched over the row.
+                              The row used to be an `<li role="link">` with a
+                              `router.push` in onClick, which navigates but is not a
+                              link: no cmd/middle-click to open in a new tab, no
+                              status-bar preview, nothing to copy. On a list whose whole
+                              purpose is scanning and opening people that is a daily
+                              papercut. It cannot WRAP the row — the row contains the
+                              reminder and delete buttons, and interactive elements
+                              cannot nest inside an anchor — so it overlays instead, with
+                              those controls lifted above it by `relative z-10`. */}
+                          <Link
+                            href={`/contacts/${c.id}`}
+                            aria-label={c.preferredName || c.fullName}
+                            tabIndex={exiting ? -1 : 0}
+                            onClick={(e) => {
+                              if (exiting) e.preventDefault();
+                            }}
+                            className="absolute inset-0 z-0 rounded-none outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
+                          />
+                          <div className="relative z-10 shrink-0">
                           <ContactAvatarPreview contact={c}>
                             <ContactAvatar
                               contactId={c.id}
@@ -500,6 +511,7 @@ export function ContactsList({
                               resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
                             />
                           </ContactAvatarPreview>
+                          </div>
 
                           <div className="min-w-0 flex-1">
                             <p className="truncate font-medium text-ink">
@@ -662,6 +674,10 @@ export function ContactsList({
           contactName={draftContact?.name ?? ""}
         />
 
+        {/* Hidden under a non-name sort: jumping to "M" is meaningless in a list ordered
+            by closeness or recency, and the rail would scroll to a letter that is not
+            where the rows actually are. */}
+        {(!filters.sort || filters.sort === "name") && (
         <AlphabetScrubber
           available={availableLetters}
           activeLetter={activeLetter}
@@ -673,6 +689,7 @@ export function ContactsList({
             setActiveLetter(null);
           }}
         />
+        )}
 
         <Dialog
           open={confirmId !== null}
@@ -682,7 +699,14 @@ export function ContactsList({
         >
           <DialogContent showCloseButton={false} className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Delete {confirmContact?.fullName}?</DialogTitle>
+              {/* Clamped: the name is interpolated straight into the title, and a
+                  10,000-character one pushed this dialog's own Cancel and Delete buttons
+                  to x=116,705px — the record became undeletable through the UI, and the
+                  only way out was to rename it shorter first. Phase 0 caps new input at
+                  200 characters, but rows written before that still have to render. */}
+              <DialogTitle className="line-clamp-2 break-words">
+                Delete {confirmContact?.fullName}?
+              </DialogTitle>
               <DialogDescription>
                 {CONTACT_DELETE_EXPLAINER}
               </DialogDescription>

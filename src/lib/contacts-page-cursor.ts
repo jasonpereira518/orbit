@@ -24,9 +24,20 @@ import type { ContactSort } from "@/lib/contacts-page";
 export type ContactsCursor =
   | { s: "name"; k: string; n: string; id: string; t?: number }
   | { s: "closeness"; c: number; id: string; t?: number }
-  | { s: "recent"; u: string; id: string; t?: number };
+  | { s: "recent"; u: string; id: string; t?: number }
+  // `lt`, not `t`: `t` is already the name-match tier on every variant, and a timestamp
+  // stored under that key would be read back as a tier and compared against an integer.
+  | { s: "last_touch"; lt: string | null; id: string; t?: number };
 
-type CursorRow = { id: string; sortKey: string | null; fullName: string; closeness: number | null; updatedAt: Date; nameTier: number };
+type CursorRow = {
+  id: string;
+  sortKey: string | null;
+  fullName: string;
+  closeness: number | null;
+  updatedAt: Date;
+  lastInteractionAt: Date | null;
+  nameTier: number;
+};
 
 export function encodeContactsCursor(cursor: ContactsCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
@@ -67,6 +78,13 @@ export function contactsOrderBy(sort: ContactSort, tier: SQL<number> | null, ran
   if (sort === "relevance") return [...lead, relevanceRank(rankedIds), asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
   if (sort === "closeness") return [...lead, desc(contacts.closeness), desc(contacts.id)];
   if (sort === "recent") return [...lead, desc(contacts.updatedAt), desc(contacts.id)];
+  // NULLS LAST, so people with no logged interaction sit at the bottom rather than the top:
+  // Postgres puts NULLs FIRST under DESC by default, which would open the list with everyone
+  // the user knows least about. It must match `contacts_user_last_touch_idx` exactly or the
+  // index is not used and the sort becomes a full scan.
+  if (sort === "last_touch") {
+    return [...lead, sql`${contacts.lastInteractionAt} desc nulls last`, desc(contacts.id)];
+  }
   return [...lead, asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
 }
 
@@ -76,6 +94,22 @@ function sortCondition(cursor: ContactsCursor): SQL {
   }
   if (cursor.s === "recent") {
     return sql`(${contacts.updatedAt}, ${contacts.id}) < (${new Date(cursor.u)}, ${cursor.id}::uuid)`;
+  }
+  if (cursor.s === "last_touch") {
+    // NULLS LAST has two phases, and a plain row-value comparison cannot express either:
+    // `(col, id) < (NULL, x)` evaluates to NULL, which excludes every row, so one condition
+    // here silently truncates the list at whatever page first reaches the undated tail.
+    //
+    // Phase one, still inside the dated rows: anything strictly older, plus every undated
+    // row, since those all sort after the dated ones.
+    if (cursor.lt !== null) {
+      return sql`(
+        (${contacts.lastInteractionAt}, ${contacts.id}) < (${new Date(cursor.lt)}, ${cursor.id}::uuid)
+        or ${contacts.lastInteractionAt} is null
+      )`;
+    }
+    // Phase two, already into the undated tail: only undated rows remain, ordered by id.
+    return sql`(${contacts.lastInteractionAt} is null and ${contacts.id} < ${cursor.id}::uuid)`;
   }
   // Row-value comparison rather than an unrolled OR chain, so the planner can satisfy it
   // straight from `contacts_user_sort_idx`.
@@ -93,5 +127,13 @@ export function contactsCursorFor(sort: ContactSort, row: CursorRow, searching: 
   const t = searching ? { t: Number(row.nameTier) } : {};
   if (sort === "closeness") return { s: "closeness", c: row.closeness ?? 0, id: row.id, ...t };
   if (sort === "recent") return { s: "recent", u: new Date(row.updatedAt).toISOString(), id: row.id, ...t };
+  if (sort === "last_touch") {
+    return {
+      s: "last_touch",
+      lt: row.lastInteractionAt ? new Date(row.lastInteractionAt).toISOString() : null,
+      id: row.id,
+      ...t,
+    };
+  }
   return { s: "name", k: row.sortKey ?? "", n: row.fullName, id: row.id, ...t };
 }

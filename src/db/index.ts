@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   first_name text,
   last_name text,
   profile_image_url text,
+  sender_bio text,
+  email_activity_sync integer NOT NULL DEFAULT 0,
   signup_referrer text,
   signup_utm_source text,
   signup_utm_medium text,
@@ -170,6 +172,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   source text,
   external_id text,
   note_batch_id uuid,
+  import_id uuid,
   raw_notes text,
   ai_summary text,
   topics jsonb DEFAULT '[]',
@@ -202,6 +205,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   action_kind text NOT NULL DEFAULT 'task',
   created_by text NOT NULL DEFAULT 'user',
   note_batch_id uuid,
+  import_id uuid,
   source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL,
   action_item_id uuid,
   source_excerpt text,
@@ -341,6 +345,8 @@ CREATE TABLE IF NOT EXISTS imports (
   error_message text,
   stats jsonb DEFAULT '{}',
   stall_resumes integer NOT NULL DEFAULT 0,
+  reverted_at timestamptz,
+  revert_stats jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -352,6 +358,8 @@ CREATE TABLE IF NOT EXISTS import_job_rows (
   payload jsonb NOT NULL,
   status text NOT NULL DEFAULT 'pending',
   contact_id uuid,
+  outcome text,
+  revert_snapshot jsonb,
   error_message text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -1567,7 +1575,7 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 65 = launch Phase 4 polish: no DDL. Two idempotent data migrations at the end of
 // `alters` — calendar feed tokens hashed in place, li-event interactions tagged ai_derived.
-export const SCHEMA_VERSION = 65;
+export const SCHEMA_VERSION = 66;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -1608,6 +1616,19 @@ async function storedLinkedinSlugExpression(run: StatementRunner): Promise<strin
   }
 }
 
+// 66 = this branch's DDL, collapsed into one bump because it merges as one commit:
+// contacts_user_last_touch_idx (built as 36),
+// user_settings.sender_bio (37), the contact_job_changes table (38) and
+// user_settings.email_activity_sync (39). `keep_in_touch_days` (built as 35) is NOT here:
+// main's v62 added contacts.cadence_days for the same job, with a `cadence_source` that can
+// say whether the user or a note stated it, so this branch's column was dropped in the merge
+// rather than kept beside it. Every one of those numbers carries DIFFERENT DDL
+// on main — 35-39 there are the composer index, events, event discovery, cross-event
+// identity and companies-at-events — so reusing any of them would leave these columns
+// unapplied on every database main has already stamped. This is the collision the notes
+// above keep describing; the only safe move is a number above everything either side has
+// claimed.
+
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
  * few thousand people. Kept apart from `DDL` because these are all `ALTER`/`CREATE INDEX`
@@ -1639,6 +1660,23 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS mention_picks jsonb NOT NULL DEFAULT '[]'`,
   `CREATE INDEX IF NOT EXISTS capture_jobs_user_batch_idx ON capture_jobs(user_id, batch_group_id)`,
 
+  // Job-change history. In SCALE_DDL rather than the local `alters` list further down
+  // because that one is only scanned for ALTERs — a CREATE TABLE there runs, but
+  // `smoke-schema-ddl` cannot see it, and the table would be invisible to the parity check
+  // that keeps Neon and PGlite in step.
+  `CREATE TABLE IF NOT EXISTS contact_job_changes (
+     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+     user_id text NOT NULL,
+     contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+     previous_company text,
+     new_company text,
+     previous_title text,
+     new_title text,
+     source text,
+     detected_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS contact_job_changes_user_idx ON contact_job_changes(user_id, detected_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS contact_job_changes_contact_idx ON contact_job_changes(contact_id, detected_at DESC)`,
   // --- Generated columns -----------------------------------------------------------
   //
   // An attendee's employer, normalised. MUST stay byte-identical to `normalizeCompanyKey`
@@ -1763,10 +1801,20 @@ export const SCALE_DDL: string[] = [
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
-  // For the composer's pickers, which open on "who have I actually spoken to lately"
-  // rather than whoever is alphabetically first. `updated_at` is the wrong column for
-  // that — editing a contact is not talking to them.
-  `CREATE INDEX IF NOT EXISTS contacts_user_last_interaction_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST)`,
+  // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
+  // on "who have I actually spoken to lately" rather than whoever is alphabetically first
+  // (`updated_at` is the wrong column for that — editing a contact is not talking to them).
+  //
+  // Main grew `contacts_user_last_interaction_idx` with the same leading columns while this
+  // branch grew this one; they are not kept side by side because this is a strict superset —
+  // the `id DESC` tiebreak the keyset cursor in `listContactsPage` needs, on top of a prefix
+  // that answers the picker's query identically. Two indexes over the same columns cost
+  // every write twice and buy one query nothing.
+  //
+  // NULLS LAST must be spelled out here and in `orderFor` together: an index whose null
+  // ordering disagrees with the query's is simply not used, and the sort silently becomes a
+  // full scan as the network grows.
+  `CREATE INDEX IF NOT EXISTS contacts_user_last_touch_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
@@ -2157,6 +2205,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interactions", "external_id", "text");
   await ensureColumn(client, "interactions", "direction", "text");
   await ensureColumn(client, "contacts", "constellation_pin", "text");
+  await ensureColumn(client, "user_settings", "sender_bio", "text");
+  await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
     "interactions",
@@ -2817,6 +2867,8 @@ const alters = [
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS resolution_note text`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_activity_sync integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_version text`,
@@ -2845,6 +2897,35 @@ const alters = [
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS raw_date_phrase text`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS date_basis text`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS item_hash text`,
+  // Schema v34: revertible imports.
+  //
+  // `import_id` is the provenance that makes an undo exact — the revert deletes the rows
+  // carrying its own id and nothing else. Written only on INSERT (the engine leaves it out
+  // of its ON CONFLICT set clause), so a re-import that refreshes a row someone logged by
+  // hand never claims it.
+  //
+  // `outcome` is the column this feature was waiting on: `import_job_rows` recorded WHICH
+  // contact a row produced but not whether the import created that person or merged into
+  // someone already there. Both are `done` with a contact id, and deleting a merged-into
+  // contact would destroy a person who predates the import entirely.
+  //
+  // `revert_snapshot` carries the pre-merge values of exactly the columns the merge writes,
+  // so a fold-in can be rolled back rather than only counted. NULL on every pre-v34 row,
+  // which `revertImport` reports as unrevertible instead of guessing.
+  //
+  // No backfill is possible for any of the three: nothing recorded create-vs-merge, and the
+  // overwritten values are gone. Imports finished before this lands stay unrevertible, and
+  // the UI says so rather than offering a button that would do the wrong thing.
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS import_id uuid`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS import_id uuid`,
+  `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS outcome text`,
+  `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS revert_snapshot jsonb`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS reverted_at timestamptz`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS revert_stats jsonb`,
+  // Partial: the overwhelming majority of interactions and reminders are hand-made and
+  // carry NULL here, and the only query that reads the column asks for one import's rows.
+  `CREATE INDEX IF NOT EXISTS interactions_import_idx ON interactions(import_id) WHERE import_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS reminders_import_idx ON reminders(import_id) WHERE import_id IS NOT NULL`,
   ...ADMIN_V2_STATEMENTS,
   // Embedding staleness: imports flag contacts here instead of embedding inline, and a
   // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes

@@ -328,6 +328,9 @@ export default async function ContactDetailPage({
           keyFacts={contact.keyFacts || []}
           sharedInterests={contact.sharedInterests || []}
           industry={contact.industry}
+          // Whether a human actually set a 1-5, which `relationshipScore`'s non-null default
+          // of 2 cannot express: the card shows "Not rated yet" rather than a made-up number.
+          isRated={contact.statedCloseness != null}
           closeness={closeness}
           lastTouchAt={lastTouchAt}
           hasLoggedInteraction={hasLoggedInteraction}

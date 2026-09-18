@@ -1,8 +1,21 @@
 import { getKnowledgeBase } from "@/actions/knowledge";
+import type { KnowledgeKind } from "@/lib/knowledge-base-types";
 import { KnowledgeBaseView } from "@/components/knowledge/knowledge-base-view";
 
-export default async function KnowledgePage() {
-  const { stats, entries } = await getKnowledgeBase();
+const KINDS: KnowledgeKind[] = ["message", "note", "summary", "key_fact", "meeting"];
+
+export default async function KnowledgePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; kind?: string }>;
+}) {
+  const params = await searchParams;
+  const q = params.q?.trim() || "";
+  const kind = KINDS.includes(params.kind as KnowledgeKind)
+    ? (params.kind as KnowledgeKind)
+    : "all";
+
+  const { stats, entries } = await getKnowledgeBase({ q, kind });
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -16,7 +29,12 @@ export default async function KnowledgePage() {
         </p>
       </div>
 
-      <KnowledgeBaseView stats={stats} entries={entries} />
+      <KnowledgeBaseView
+        stats={stats}
+        entries={entries}
+        initialQuery={q}
+        initialFilter={kind}
+      />
     </div>
   );
 }

@@ -49,10 +49,20 @@ export const needsOnboarding = cache(async (userId: string) => {
   ]);
 
   if (existingContact || existingImport) {
-    // Don't block navigation on the backfill write.
-    after(() => {
-      void persistOnboardingComplete(userId).catch(() => {});
-    });
+    // A tour the user deliberately restarted must not be completed out from under them.
+    //
+    // "Replay tour" in Settings clears `onboardingCompletedAt`, but this backfill writes
+    // it straight back on the next gated page view — so the tour survived exactly one
+    // navigation, and was unreachable for any account with a single contact, which is
+    // every account past minute one. `onboardingStep` marks a tour in progress;
+    // `resetOnboarding` now sets it, so an explicit replay is distinguishable from a
+    // long-standing account that simply never had the flag written.
+    if (!settings.onboardingStep) {
+      // Don't block navigation on the backfill write.
+      after(() => {
+        void persistOnboardingComplete(userId).catch(() => {});
+      });
+    }
     return false;
   }
 

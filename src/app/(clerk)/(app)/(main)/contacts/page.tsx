@@ -1,7 +1,12 @@
 import Link from "next/link";
+import type { ContactSort } from "@/lib/contacts-page";
 import { Copy, Plus } from "lucide-react";
 import { listContactLetters, listContactsPage } from "@/actions/contacts";
-import { CONTACTS_PAGE_SIZE, type ContactSort } from "@/lib/contacts-page";
+import {
+  CONTACTS_PAGE_SIZE,
+  isContactSort,
+  parseQuietDays,
+} from "@/lib/contacts-page";
 import { getPlanOverview } from "@/actions/settings";
 import { countDuplicates } from "@/actions/duplicates";
 import { buttonVariants } from "@/components/ui/button";
@@ -12,7 +17,6 @@ import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
 import { cn } from "@/lib/utils";
 
-const SORTS: ContactSort[] = ["name", "closeness", "recent", "relevance"];
 
 export default async function ContactsPage({
   searchParams,
@@ -23,27 +27,38 @@ export default async function ContactsPage({
     minScore?: string;
     followUp?: string;
     sort?: string;
+    quiet?: string;
     letter?: string;
+    tag?: string;
   }>;
 }) {
   const params = await searchParams;
-  // There's no sort control in the UI yet, so `sort` only ever comes from a
-  // hand-typed URL today — but it still wins over the default whenever present,
-  // so a future sort control can override the implicit "relevance while
-  // searching" behavior below.
-  const explicitSort = SORTS.includes(params.sort as ContactSort)
-    ? (params.sort as ContactSort)
-    : undefined;
+  // An explicit `sort` always wins; `isContactSort` accepts every value the picker offers
+  // plus `relevance`, which the picker deliberately does not (see `contacts-page.ts`).
+  // Without one, a search still orders by relevance — main's behaviour, kept.
+  const explicitSort = isContactSort(params.sort) ? params.sort : undefined;
   const sort: ContactSort = explicitSort ?? (params.q?.trim() ? "relevance" : "name");
+  const quiet = parseQuietDays(params.quiet);
 
   const filters = {
     q: params.q,
     company: params.company,
     minScore: params.minScore ? Number(params.minScore) : undefined,
     followUp: params.followUp === "due" ? ("due" as const) : undefined,
+    quiet: quiet ?? undefined,
     sort,
     letter: params.letter,
+    tag: params.tag,
   };
+
+  const filtersActive = Boolean(
+    params.q?.trim() ||
+      params.company?.trim() ||
+      params.minScore ||
+      params.followUp === "due" ||
+      params.tag?.trim() ||
+      quiet !== null
+  );
 
   const [page, letters, planOverview, duplicateCount] = await Promise.all([
     // One page, not the whole network. Filtering, searching and ordering all happen in
@@ -62,7 +77,12 @@ export default async function ContactsPage({
       subtitle={
         page.total === null
           ? "Your network"
-          : `${page.total.toLocaleString()} ${page.total === 1 ? "person" : "people"} in your network`
+          : // `total` counts what the filters matched, not the network. Calling a filtered
+            // count "in your network" told someone with 24 contacts that they had 6 — and
+            // the more prominent the filters get, the more often that reads as data loss.
+            `${page.total.toLocaleString()} ${page.total === 1 ? "person" : "people"}${
+              filtersActive ? " match" : " in your network"
+            }`
       }
       actions={
         <>
@@ -105,6 +125,10 @@ export default async function ContactsPage({
           initialCompany={params.company || ""}
           initialMinScore={params.minScore || ""}
           initialFollowUp={params.followUp || ""}
+          initialSort={sort}
+          initialQuiet={quiet === null ? "" : String(quiet)}
+          initialTag={params.tag || ""}
+          initialLetter={params.letter || ""}
         >
           {/*
             Keyed on the filters so a new query starts from a clean list rather than appending
@@ -113,7 +137,7 @@ export default async function ContactsPage({
             down and rebuilt the whole subtree.
           */}
           <ContactsList
-            key={[params.q, params.company, params.minScore, params.followUp, sort].join("|")}
+            key={[params.q, params.company, params.minScore, params.followUp, params.tag, String(quiet), sort].join("|")}
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}
