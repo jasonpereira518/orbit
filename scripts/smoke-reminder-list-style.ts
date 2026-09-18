@@ -25,6 +25,11 @@ async function main() {
   delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   delete process.env.CLERK_SECRET_KEY;
   (process.env as Record<string, string>).NODE_ENV = "development";
+  // In demo mode requireUserId bootstraps demo-user, and an account with no contacts (this
+  // one) is filled with the demo workspace — chat history and all — which then sits in the
+  // suite's shared database and throws off absolute counts in other scripts
+  // (smoke-admin-analytics caught it in CI).
+  process.env.ORBIT_DEMO_DATA = "off";
   const db = await getDb();
   await db.delete(reminderLists).where(eq(reminderLists.userId, USER));
 
