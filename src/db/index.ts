@@ -1335,6 +1335,8 @@ CREATE TABLE IF NOT EXISTS page_views (
   device text NOT NULL,
   is_bot boolean NOT NULL DEFAULT false,
   dwell_ms integer,
+  load_ms integer,
+  nav_type text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
@@ -1567,7 +1569,10 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 65 = launch Phase 4 polish: no DDL. Two idempotent data migrations at the end of
 // `alters` — calendar feed tokens hashed in place, li-event interactions tagged ai_derived.
-export const SCHEMA_VERSION = 65;
+//
+// 67 = page_views.load_ms + nav_type, the page-load timing the navigation-speed work is
+// measured by. 66 is claimed by the unpushed reminders-page-layout worktree.
+export const SCHEMA_VERSION = 67;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2060,6 +2065,45 @@ export function isSchemaCurrent(recorded: { version: number; fingerprint: string
   if (recorded.version > SCHEMA_VERSION) return true;
   if (recorded.version < SCHEMA_VERSION) return false;
   return recorded.fingerprint === schemaFingerprint();
+}
+
+/**
+ * `schemaIsCurrent` + `detectExtensions` in a single statement, for the path every cold
+ * start takes. On neon-http each statement is its own HTTPS request, and the slow way is
+ * three in sequence (CREATE TABLE IF NOT EXISTS, the version read, the extension read)
+ * ahead of the first query a visitor is waiting on.
+ *
+ * Only ever answers "yes, current — and here are the extensions". Anything else (the
+ * table is missing, no row, a version behind, a read error) returns false and the caller
+ * falls through to the original slow path, which is what creates the table and migrates.
+ * So a wrong answer here can cost a round trip, never a skipped migration.
+ */
+async function schemaIsCurrentFast(run: StatementRunner): Promise<boolean> {
+  try {
+    const result = await run(
+      `SELECT m.version,
+              m.fingerprint,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS has_vector,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS has_trigram
+         FROM schema_migrations m
+        WHERE m.id = 1`
+    );
+    const row = rowsOf<{
+      version: number | string;
+      fingerprint: string | null;
+      has_vector: boolean;
+      has_trigram: boolean;
+    }>(result)[0];
+    if (!row) return false;
+    if (!isSchemaCurrent({ version: Number(row.version), fingerprint: row.fingerprint ?? null })) {
+      return false;
+    }
+    globalForDb.orbitPgvector = Boolean(row.has_vector);
+    globalForDb.orbitTrigram = Boolean(row.has_trigram);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -2987,6 +3031,9 @@ const alters = [
   // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
   `UPDATE interactions SET source = 'ai_derived'
     WHERE external_id LIKE 'li-event:%' AND source IS DISTINCT FROM 'ai_derived'`,
+  // v67: page-load timing on the traffic pipeline (src/lib/nav-timing.ts).
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS load_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
 ];
 
 /**
@@ -3281,6 +3328,12 @@ export async function reconcileSchema(options: ReconcileOptions = {}): Promise<S
   const run: StatementRunner = neonSql
     ? (statement) => neonSql.query(statement)
     : (statement) => globalForDb.orbitPglite!.query(statement);
+
+  // Every cold start lands here before its first real query, so the common case — the build
+  // already migrated — has to be ONE round trip, not three.
+  if (await schemaIsCurrentFast(run)) {
+    return { version: SCHEMA_VERSION, applied: false, failed: [] };
+  }
 
   if (await schemaIsCurrent(run)) {
     // pgvector/pg_trgm availability lives in module state, not in the database, so it

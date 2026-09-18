@@ -7,7 +7,7 @@ import { contacts } from "@/db/schema";
 import { loadGraphData } from "@/lib/graph-data";
 import { traced } from "@/lib/perf-trace";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
-import { getCurrentUserProfile } from "@/lib/auth";
+import { getDisplayProfile } from "@/lib/auth";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { reportError } from "@/lib/report-error";
@@ -17,7 +17,7 @@ export type { GraphCluster, UserSocialLinks } from "@/lib/graph-data";
 export async function getGraphData() {
   const userId = await requireUserForSurface("page.graph");
   // Handed over un-awaited: the Clerk profile round trip runs alongside the contact scan.
-  return traced("graph.load", () => loadGraphData(userId, { profile: getCurrentUserProfile() }), {
+  return traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), {
     userId,
   });
 }
@@ -37,7 +37,7 @@ export async function getFullGraphData() {
   const userId = await requireUserForSurface("page.graph");
   return traced(
     "graph.load.all",
-    () => loadGraphData(userId, { profile: getCurrentUserProfile(), scope: "all" }),
+    () => loadGraphData(userId, { profile: getDisplayProfile(), scope: "all" }),
     { userId }
   );
 }
@@ -106,7 +106,7 @@ export async function refreshConstellationBatch(input?: {
 
   const done = processed >= total;
   const graph = done
-    ? await traced("graph.load", () => loadGraphData(userId, { profile: getCurrentUserProfile() }), { userId })
+    ? await traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), { userId })
     : null;
 
   return {

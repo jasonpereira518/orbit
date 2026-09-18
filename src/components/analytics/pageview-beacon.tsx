@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { isTrackedPath } from "@/lib/analytics-routes";
+import { readNavStart, waitForContent } from "@/lib/nav-timing";
 
 /**
- * Sends one page view per navigation, and the time spent on it when the page goes away.
+ * Sends one page view per navigation, how long its content took to appear, and the time
+ * spent on it when the page goes away.
  *
  * Mounted in the ROOT layout, so it covers marketing, auth, checkout and the product with
  * one instance. It must never import anything that reaches `@/db` — a client component
@@ -65,7 +67,7 @@ function sessionId(now: number): string | null {
  */
 let documentReported = false;
 
-function post(payload: Record<string, unknown>, viaBeacon: boolean): void {
+function post(payload: Record<string, unknown>, viaBeacon: boolean): Promise<void> {
   try {
     const body = JSON.stringify(payload);
     if (viaBeacon && typeof navigator.sendBeacon === "function") {
@@ -75,16 +77,20 @@ function post(payload: Record<string, unknown>, viaBeacon: boolean): void {
         "/api/track",
         new Blob([body], { type: "application/json" })
       );
-      return;
+      return Promise.resolve();
     }
-    void fetch("/api/track", {
+    return fetch("/api/track", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
       keepalive: true,
-    }).catch(() => {});
+    }).then(
+      () => {},
+      () => {}
+    );
   } catch {
     // Blocked by an extension, offline, CSP. Nothing to do and nothing to report.
+    return Promise.resolve();
   }
 }
 
@@ -152,7 +158,10 @@ export function PageviewBeacon() {
     const referrer = documentReported ? null : document.referrer || null;
     documentReported = true;
 
-    post(
+    // Null means this view is a document load rather than a client-side navigation.
+    const navStart = readNavStart(pathname);
+
+    const viewSent = post(
       {
         kind: "view",
         id,
@@ -166,9 +175,22 @@ export function PageviewBeacon() {
       false
     );
 
+    // Page-load timing (`src/lib/nav-timing.ts`). The `load` beacon waits for the view's
+    // own request to settle, because it UPDATEs the row that request inserts — sent first,
+    // it would match nothing and the measurement would be lost without a trace.
+    const measuring = new AbortController();
+    void waitForContent(measuring.signal).then(async (readyAt) => {
+      if (readyAt === null) return;
+      const navType = navStart === null ? "hard" : "soft";
+      const loadMs = readyAt - (navStart ?? 0);
+      await viewSent;
+      void post({ kind: "load", id, loadMs, navType }, false);
+    });
+
     // Leaving this route — either to another one, or out of the app entirely. This is the
     // one departure that really is final for this view, so the ref is cleared after it.
     return () => {
+      measuring.abort();
       flush(true);
       open.current = null;
     };

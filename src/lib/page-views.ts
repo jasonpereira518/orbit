@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { pageViews } from "@/db/schema";
 import type { DeviceKind } from "@/lib/analytics-visitor";
@@ -63,6 +63,34 @@ export async function recordDwell(id: string, dwellMs: number): Promise<void> {
     .update(pageViews)
     .set({ dwellMs: sql`greatest(coalesce(${pageViews.dwellMs}, 0), ${clamped})` })
     .where(eq(pageViews.id, id));
+}
+
+/**
+ * The longest page load we record. Past this the measurement is not a page load any more —
+ * a laptop lid closed mid-navigation, a tab throttled in the background — and one such
+ * value would drag every percentile on the admin page.
+ */
+export const MAX_LOAD_MS = 60_000;
+
+/**
+ * Record how long a view took to show its content, from the `load` beacon.
+ *
+ * FIRST WRITE WINS, the opposite of dwell. A load is measured exactly once per view, so a
+ * second beacon for the same id can only be a retry or a forgery; neither should replace
+ * the first figure. `nav_type` is written in the same statement so the two can never
+ * disagree about which measurement the number is.
+ */
+export async function recordLoad(
+  id: string,
+  loadMs: number,
+  navType: "hard" | "soft"
+): Promise<void> {
+  if (!Number.isFinite(loadMs) || loadMs < 0 || loadMs > MAX_LOAD_MS) return;
+  const db = await getDb();
+  await db
+    .update(pageViews)
+    .set({ loadMs: Math.round(loadMs), navType })
+    .where(and(eq(pageViews.id, id), isNull(pageViews.loadMs)));
 }
 
 /**

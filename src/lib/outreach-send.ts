@@ -2,7 +2,6 @@ import { outreachFromAddress } from "@/lib/outreach-sender";
 import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { Resend } from "resend";
-import twilio from "twilio";
 import { getDb } from "@/db";
 import {
   outreachCampaigns,
@@ -169,6 +168,11 @@ export async function sendOutreachMessage(input: {
     throw new Error("Twilio is not fully configured. Add credentials in Settings.");
   }
 
+  // Imported here, not at the top of the file. The Twilio SDK is ~19 MB on disk and this
+  // module sits under every page that can reach an outreach action, so a static import put
+  // it in the shared server chunk and made every cold start of the app evaluate it — for a
+  // channel almost nobody uses. Only an actual SMS send pays for it now.
+  const { default: twilio } = await import("twilio");
   const client = twilio(config.twilioAccountSid, config.twilioAuthToken);
   let message;
   try {

@@ -4160,6 +4160,19 @@ export const pageViews = pgTable(
      * is not zero, and summing it as zero would understate every average on the page.
      */
     dwellMs: integer("dwell_ms"),
+    /**
+     * Milliseconds until the page's content was on screen: navigation start to the moment
+     * no loading skeleton is left. Set once, best-effort, by the `load` beacon (see
+     * `src/lib/nav-timing.ts`). NULL when it was never measured — the tab was hidden, the
+     * page never settled within the cap, or the beacon was lost. Not zero.
+     */
+    loadMs: integer("load_ms"),
+    /**
+     * How `load_ms` was measured. `hard` = a full document load (from `timeOrigin`, so it
+     * includes TTFB and any cold start); `soft` = a client-side navigation (from the
+     * router's transition start). The two are different populations and are never mixed.
+     */
+    navType: text("nav_type").$type<"hard" | "soft">(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
