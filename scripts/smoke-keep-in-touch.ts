@@ -14,6 +14,15 @@
  *      cross-module behaviour (a predicate in one file, a filter in another), so it is
  *      asserted against the real queue rather than by reading either one.
  *
+ * Reworked when main was merged. This branch stored the interval in its own
+ * `keep_in_touch_days` and raised a dedicated `keep_in_touch` suggestion; main had already
+ * added `contacts.cadence_days` (with a `cadence_source` saying whether a note or the user
+ * stated it) and feeds it to `idleThresholdFor`, so a cadence moves the dormancy threshold
+ * to the interval the user chose instead of silencing the heuristic and replacing it. That
+ * is the better answer — the mentor set to yearly is not muted for a year, they surface on
+ * the day they are due — so the column and the suggestion type were both dropped and the
+ * control that SETS a cadence now writes main's columns.
+ *
  * Run: npx tsx scripts/smoke-keep-in-touch.ts
  */
 import "./smoke/_env";
@@ -161,8 +170,8 @@ async function dbChecks() {
     return c;
   }
 
-  const yearly = await person("Yearly Yara", { keepInTouchDays: 365 });
-  const quarterly = await person("Quarterly Quinn", { keepInTouchDays: 90 });
+  const yearly = await person("Yearly Yara", { cadenceDays: 365, cadenceSource: "user" });
+  const quarterly = await person("Quarterly Quinn", { cadenceDays: 90, cadenceSource: "user" });
   const noCadence = await person("Unset Ursula");
 
   await refreshOutreachSuggestions(USER);
@@ -170,12 +179,12 @@ async function dbChecks() {
   const typeOf = (id: string) =>
     rows.find((r) => (r.relatedContactIds as string[] | null)?.includes(id))?.suggestionType ?? null;
 
-  section("A cadence reaches the queue and displaces the guess");
+  section("A cadence retunes the queue rather than silencing it");
 
   check(
-    "a lapsed quarterly cadence is surfaced as itself",
-    typeOf(quarterly.id) === "keep_in_touch",
-    `got ${typeOf(quarterly.id)}`
+    "a lapsed quarterly cadence surfaces",
+    typeOf(quarterly.id) === "dormant_high_value",
+    `got ${typeOf(quarterly.id)} — a cadence moves the idle threshold to the interval the user chose; it does not raise a separate row`
   );
   check(
     "a contact with no cadence still gets the heuristic",
@@ -188,30 +197,30 @@ async function dbChecks() {
     `got ${typeOf(yearly.id)} — "gone quiet" is exactly what a yearly cadence means NOT to say`
   );
 
-  section("The description carries the reason, not just the name");
+  section("The description says something");
 
   const quinn = rows.find((r) => (r.relatedContactIds as string[] | null)?.includes(quarterly.id));
   check(
-    "it names the interval the user chose",
-    (quinn?.description ?? "").startsWith("Quarterly check-in"),
+    "it reports how long it has actually been",
+    /\d+ days? ago/.test(quinn?.description ?? ""),
     `got ${JSON.stringify(quinn?.description)}`
   );
-  check("and the title is an action", (quinn?.title ?? "").startsWith("Check in with"));
+  check("and the title is an action", (quinn?.title ?? "").startsWith("Reach out to"));
 
   section("Clearing a cadence hands the contact back to the heuristic");
 
   await db
     .update(contacts)
-    .set({ keepInTouchDays: null })
+    .set({ cadenceDays: null, cadenceSource: null })
     .where(eq(contacts.id, yearly.id));
   await refreshOutreachSuggestions(USER);
   const after = await db.query.aiSuggestions.findMany({ where: eq(aiSuggestions.userId, USER) });
   const yaraAfter =
     after.find((r) => (r.relatedContactIds as string[] | null)?.includes(yearly.id))?.suggestionType ?? null;
   check(
-    "silent under a cadence, dormant once it is cleared",
+    "silent under a year-long cadence, dormant once it is cleared",
     yaraAfter === "dormant_high_value",
-    `got ${yaraAfter} — suppression must be a live read of the column, not a one-time write`
+    `got ${yaraAfter} — the threshold must be a live read of the column, not a one-time write`
   );
 
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, USER));

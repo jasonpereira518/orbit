@@ -17,7 +17,7 @@ import type {
   KnowledgeEntry,
   KnowledgeKind,
   KnowledgeStats,
-} from "@/lib/knowledge-page";
+} from "@/lib/knowledge-base-types";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -151,7 +151,7 @@ export function KnowledgeBaseView({
         <Link href="/chat" className="underline-offset-2 hover:underline">
           Chat
         </Link>{" "}
-        or ⌘K.
+        or ⌘J.
       </p>
 
       {empty ? (

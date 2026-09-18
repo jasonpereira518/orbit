@@ -14,8 +14,10 @@ import {
   FREE_CONTACT_LIMIT,
   getEntitlements,
   isPaywallError,
+  requireEntitlement,
   resolvePlan,
 } from "../src/lib/entitlements";
+import { isDemoAccount } from "../src/lib/demo-account";
 import {
   contactHeadroomForUser,
   contactUsageForUser,
@@ -221,6 +223,73 @@ async function main() {
 
   const usage = await contactUsageForUser(USER);
   check("usage reports unlimited", usage.limit === null, JSON.stringify(usage));
+
+  // --- demo accounts are never gated ---
+  // The showcase account stays on the plan it holds (free here) so the on-stage upgrade
+  // still has something to upgrade from; only the gates lift.
+  console.log("\ndemo accounts");
+  await reset();
+  const priorShowcase = process.env.DEMO_ACCOUNT_USER_ID;
+  process.env.DEMO_ACCOUNT_USER_ID = USER;
+  try {
+    ent = await getEntitlements(USER);
+    check("showcase keeps its real plan", ent.plan === "free" && ent.source === "free", ent.plan);
+    check("showcase has no contact cap", ent.contactLimit === null);
+    check("showcase headroom unlimited", (await contactHeadroomForUser(USER)) === null);
+    check(
+      "showcase has every feature",
+      ent.canUseOutreach &&
+        ent.canUseHostedSending &&
+        ent.canUseHostedEnrichment &&
+        ent.canUseRecruiters &&
+        ent.canUseSync &&
+        ent.canUseExtension &&
+        ent.canUseApi,
+      JSON.stringify(ent)
+    );
+    let demoThrew: unknown = null;
+    try {
+      await requireEntitlement(USER, "hostedEnrichment");
+    } catch (err) {
+      demoThrew = err;
+    }
+    check("requireEntitlement lets the showcase through", demoThrew === null, String(demoThrew));
+
+    await setBilling({ compedPlan: "lifetime" });
+    ent = await getEntitlements(USER);
+    check("comped showcase reports lifetime", ent.plan === "lifetime", ent.plan);
+    check("comped showcase keeps hosted enrichment", ent.canUseHostedEnrichment === true);
+  } finally {
+    if (priorShowcase === undefined) delete process.env.DEMO_ACCOUNT_USER_ID;
+    else process.env.DEMO_ACCOUNT_USER_ID = priorShowcase;
+  }
+  check("another account is not the showcase", !isDemoAccount("someone-else"));
+  // Localhost (`next dev`) makes every account a demo account, Clerk or not. Outside it,
+  // `demo-user` gets nothing: a Clerk-less deploy would otherwise hand every anonymous
+  // visitor paid access on that shared account.
+  const env = process.env as Record<string, string | undefined>;
+  const priorEnv = { node: env.NODE_ENV, clerk: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY };
+  try {
+    delete env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    env.NODE_ENV = "development";
+    check("demo-user on localhost is a demo account", isDemoAccount("demo-user"));
+    env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_smoke";
+    check("a Clerk account on localhost is a demo account", isDemoAccount("user_real"));
+    ent = await getEntitlements(USER);
+    check("localhost lifts every gate", ent.canUseOutreach && ent.contactLimit === null);
+    env.NODE_ENV = "production";
+    check("a Clerk account off localhost is not", !isDemoAccount("user_real"));
+    delete env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    check("demo-user in a Clerk-less prod build is not", !isDemoAccount("demo-user"));
+    await setBilling({ compedPlan: null });
+    ent = await getEntitlements(USER);
+    check("off localhost the free gates hold", !ent.canUseOutreach && ent.contactLimit !== null);
+  } finally {
+    if (priorEnv.node === undefined) delete env.NODE_ENV;
+    else env.NODE_ENV = priorEnv.node;
+    if (priorEnv.clerk === undefined) delete env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    else env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = priorEnv.clerk;
+  }
 
   await reset();
   const db2 = await getDb();

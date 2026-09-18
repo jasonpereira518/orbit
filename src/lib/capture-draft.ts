@@ -1,82 +1,149 @@
 /**
- * Local persistence for an in-progress capture paste.
+ * The capture page's unsaved notes, kept in localStorage as they are typed, so a closed tab,
+ * a reload or a failed extraction never costs someone a page of notes.
  *
- * The notes textarea was plain `useState("")` with nothing behind it, so the text was
- * gone on reload, on switching the Messy/Structured tab, and — worst — on following the
- * app's own instruction. With no AI key the panel shows "Add an AI API key to extract
- * people from notes… add one in Settings, then come back here"; clicking that Settings
- * link discarded whatever had just been pasted. On a phone, after a conference, that is
- * the whole point of the product thrown away by the only path forward it offered.
+ * localStorage rather than the server on purpose: a draft is by definition something the
+ * person has not decided to keep, and writing every keystroke of prose about named people to
+ * the database would turn "I was just typing" into a record. It stays on the device, scoped
+ * by account, and is thrown away on save or after `DRAFT_TTL_MS`.
  *
- * localStorage rather than a server draft: this is a per-device convenience for text the
- * user has not committed yet, it must survive a hard reload with no network, and it must
- * never cost a write to the database on every keystroke.
- *
- * Every accessor is wrapped: private windows, cleared site data and browsers set to block
- * storage all throw on access rather than returning null, and a capture panel that cannot
- * remember a draft must still work perfectly.
+ * Pure apart from the `Storage` it is handed, so `scripts/smoke-capture-draft.ts` can drive
+ * it with an in-memory one.
  */
+import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
 
-const PREFIX = "orbit-capture-draft-v1";
-
-/** Longer than any plausible session, short enough that a stale paste is not resurrected. */
-const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Drafts are scoped to the surface that owns them.
- *
- * The panel is mounted in three places — /capture, the chat "Notes" sheet, and the
- * onboarding wizard — and from a contact profile it is additionally locked to one person.
- * A single shared key would resurrect notes about Sarah inside Marcus's profile.
+ * How long a draft may keep its photos. Unsaved capture photos are pruned on the server
+ * after 24 hours (`UNATTACHED_PHOTO_TTL_MS` in `capture-photos.ts`, which this file must not
+ * import: it reaches the database). Stopping short of that means a restored draft never
+ * shows a thumbnail whose photo is already gone.
  */
-export function captureDraftKey(scope: {
-  entryPoint?: string | null;
-  lockedParticipantId?: string | null;
-}) {
-  const surface = scope.entryPoint || "capture";
-  const locked = scope.lockedParticipantId || "none";
-  return `${PREFIX}:${surface}:${locked}`;
+export const DRAFT_PHOTO_TTL_MS = 20 * 60 * 60 * 1000;
+
+const KEY_PREFIX = "orbit:capture-draft:v1";
+
+export type CaptureDraft = {
+  notes: string;
+  /** `ingestCaptureMedia`'s source labels, so the saved capture is labelled correctly. */
+  sources: string[];
+  photoIds: string[];
+  /**
+   * Contacts named with `@`, kept so a restored draft's tokens are still green and still
+   * link on save. Without them the text comes back and the links quietly do not.
+   *
+   * Run through `sanitizeMentionPicks` on the way OUT as well as in: localStorage is the
+   * user's own machine and anything there can be edited, and this ends up as a contact id
+   * in a write. The shape check is cheap; skipping it is how a draft becomes an injection
+   * point for the price of an open devtools tab.
+   */
+  mentionPicks: MentionPick[];
+  /** Epoch ms of the last write. */
+  savedAt: number;
+};
+
+/**
+ * One draft per account and per person: notes started while logging with Sarah are not
+ * the notes on the general capture page.
+ */
+export function captureDraftKey(userId: string, contactId: string | null) {
+  return `${KEY_PREFIX}:${userId}:${contactId ?? "general"}`;
 }
 
-type StoredDraft = { text: string; savedAt: number };
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
 
-export function readCaptureDraft(key: string): string | null {
+/**
+ * The draft under `key`, or null when there is none worth restoring — expired, empty,
+ * or not something this code wrote. Never throws: storage that is full, disabled or
+ * holding junk just means there is nothing to restore.
+ */
+export function readCaptureDraft(
+  storage: Pick<Storage, "getItem" | "removeItem">,
+  key: string,
+  now = Date.now()
+): CaptureDraft | null {
+  let raw: string | null;
   try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredDraft;
-    if (typeof parsed?.text !== "string" || !parsed.text.trim()) return null;
-    if (
-      typeof parsed.savedAt === "number" &&
-      Date.now() - parsed.savedAt > MAX_AGE_MS
-    ) {
-      clearCaptureDraft(key);
-      return null;
-    }
-    return parsed.text;
+    raw = storage.getItem(key);
   } catch {
     return null;
   }
+  if (!raw) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    safeRemove(storage, key);
+    return null;
+  }
+  const d = parsed as Partial<CaptureDraft> | null;
+  if (
+    !d ||
+    typeof d.notes !== "string" ||
+    typeof d.savedAt !== "number" ||
+    !isStringArray(d.sources) ||
+    !isStringArray(d.photoIds)
+  ) {
+    safeRemove(storage, key);
+    return null;
+  }
+  // Optional on purpose: drafts written before `@`-picks existed are still good drafts, and
+  // throwing one away would lose a page of notes to a schema change.
+  const mentionPicks = sanitizeMentionPicks(d.mentionPicks);
+  if (now - d.savedAt > DRAFT_TTL_MS) {
+    safeRemove(storage, key);
+    return null;
+  }
+
+  const photoIds = now - d.savedAt > DRAFT_PHOTO_TTL_MS ? [] : d.photoIds;
+  if (!d.notes.trim() && !photoIds.length) {
+    safeRemove(storage, key);
+    return null;
+  }
+  return { notes: d.notes, sources: d.sources, photoIds, mentionPicks, savedAt: d.savedAt };
 }
 
-export function writeCaptureDraft(key: string, text: string) {
+/**
+ * Write the draft, or remove it when there is nothing in it — an empty textarea is not a
+ * draft, and leaving one behind would bring back a "restored" banner over nothing.
+ */
+export function writeCaptureDraft(
+  storage: Pick<Storage, "setItem" | "removeItem">,
+  key: string,
+  draft: Omit<CaptureDraft, "savedAt">,
+  now = Date.now()
+) {
+  if (!draft.notes.trim() && !draft.photoIds.length) {
+    safeRemove(storage, key);
+    return;
+  }
   try {
-    if (!text.trim()) {
-      window.localStorage.removeItem(key);
-      return;
-    }
-    const payload: StoredDraft = { text, savedAt: Date.now() };
-    window.localStorage.setItem(key, JSON.stringify(payload));
+    storage.setItem(
+      key,
+      JSON.stringify({
+        ...draft,
+        mentionPicks: sanitizeMentionPicks(draft.mentionPicks),
+        savedAt: now,
+      } satisfies CaptureDraft)
+    );
   } catch {
-    // Quota exceeded on a very large paste, or storage blocked outright. The draft is a
-    // convenience; losing it must never break the paste the user is in the middle of.
+    // Full or disabled storage (private browsing on some browsers). The page still works;
+    // it just cannot promise to remember.
   }
 }
 
-export function clearCaptureDraft(key: string) {
+export function clearCaptureDraft(storage: Pick<Storage, "removeItem">, key: string) {
+  safeRemove(storage, key);
+}
+
+function safeRemove(storage: Pick<Storage, "removeItem">, key: string) {
   try {
-    window.localStorage.removeItem(key);
+    storage.removeItem(key);
   } catch {
-    // See above.
+    // Nothing to do; see `writeCaptureDraft`.
   }
 }

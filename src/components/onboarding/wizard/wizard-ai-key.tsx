@@ -9,15 +9,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { integrationHref } from "@/components/settings/sections";
+import { useLifetimeIncludesAi } from "@/components/lifetime-ai-offer";
 
 /**
- * The setup wizard's "connect your AI key" step, shown before the capture path when the
- * account has no provider key yet.
+ * The setup wizard's "connect your AI key" step, shown before the capture path when AI
+ * would not run for the account yet (`getSettings().hasApiKey`, the AI gate's verdict).
  *
- * Production is strictly bring-your-own-key, and the capture path is the first thing a new
- * user tries — so without this step the guided setup led straight into a hard error with a
- * link back to Settings. Deliberately skippable: importing or adding people by hand needs
- * no key at all.
+ * AI is bring-your-own-key on every plan but Lifetime, and the capture path is the first
+ * thing a new user tries — so without this step the guided setup led straight into a hard
+ * error with a link back to Settings. A Lifetime account never sees it: Orbit's managed key
+ * makes `hasApiKey` true with no key saved. Deliberately skippable: importing or adding
+ * people by hand needs no key at all.
  */
 export function WizardAiKey({
   onSaved,
@@ -30,6 +34,7 @@ export function WizardAiKey({
   const [apiKey, setApiKey] = useState("");
   const [pending, start] = useTransition();
   const meta = AI_PROVIDERS.find((p) => p.id === provider);
+  const lifetimeIncludesAi = useLifetimeIncludesAi();
 
   function save() {
     const key = apiKey.trim();
@@ -37,17 +42,14 @@ export function WizardAiKey({
     start(async () => {
       try {
         const res = await saveAiSettings({ provider, apiKey: key });
-        // Do not advance the wizard on a key the provider refused — discovering it three
-        // screens later is exactly the setup cliff this check exists to remove.
         if (!res.ok) {
           toast.error(res.error);
           return;
         }
-        if (res.keyWarning) toast.warning(res.keyWarning);
-        else toast.success(`${meta?.label ?? "AI"} key verified`);
+        toast.success(res.keyNote ?? `${meta?.label ?? "AI"} key saved`);
         onSaved();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not save the key");
+        toast.error(friendlyError(err, "That key didn’t save — try again?"));
       }
     });
   }
@@ -58,6 +60,15 @@ export function WizardAiKey({
         Orbit reads your notes and answers questions about your network with an AI model
         that runs on your own key — at cost, never marked up, and never shared. You can
         change it any time under Settings.
+        {lifetimeIncludesAi && (
+          <>
+            {" "}With{" "}
+            <Link href="/pricing" className="font-medium text-primary underline-offset-2 hover:underline">
+              Orbit Lifetime
+            </Link>
+            , AI is included and no key is needed.
+          </>
+        )}
       </p>
 
       <div className="grid gap-2 sm:grid-cols-3">
@@ -95,20 +106,8 @@ export function WizardAiKey({
           }}
         />
         <p className="text-xs text-muted-foreground">
-          Stored encrypted with your account. The free tiers cover a normal week of use.
-          {meta?.consoleUrl && (
-            <>
-              {" "}
-              <a
-                href={meta.consoleUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-medium text-foreground underline underline-offset-2 hover:no-underline"
-              >
-                Get a {meta.label} key →
-              </a>
-            </>
-          )}
+          Stored encrypted with your account. Keys are created in your provider&apos;s
+          console; the free tiers cover a normal week of use.
         </p>
       </div>
 
@@ -120,7 +119,7 @@ export function WizardAiKey({
           Skip for now
         </Button>
         <Link
-          href="/settings#settings-ai"
+          href={integrationHref("ai")}
           className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:underline"
         >
           More options in Settings

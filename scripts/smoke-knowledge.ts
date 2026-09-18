@@ -30,7 +30,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, interactions, userSettings } from "../src/db/schema";
 import { getKnowledgeBase } from "../src/actions/knowledge";
-import { KNOWLEDGE_PAGE_SIZE } from "../src/lib/knowledge-page";
+import { KNOWLEDGE_ENTRY_LIMIT as KNOWLEDGE_PAGE_SIZE } from "../src/lib/knowledge-base";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 let failures = 0;

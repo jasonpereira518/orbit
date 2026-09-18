@@ -1,5 +1,3 @@
-"use client";
-
 import Link from "next/link";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";

@@ -30,15 +30,6 @@ import {
   parseDueDateInput,
 } from "../src/lib/dates";
 import {
-  MISSING_AI_API_KEY_MESSAGE,
-  MissingAiKeyError,
-  aiProviderErrorMessage,
-  classifyAiError,
-  isMissingAiApiKeyError,
-  isMissingAiApiKeyMessage,
-  toUserFacingError,
-} from "../src/lib/errors";
-import {
   normalizeContactInput,
   parseContactInput,
   parseContactPatch,
@@ -123,63 +114,10 @@ function main() {
     calendarDaysBetween(morning, new Date(2026, 8, 9, 23, 0, 0)) === -1
   );
 
-  // ---------------------------------------------------------------- 3. errors
-  section("AI error classification");
-  const missing = new MissingAiKeyError(
-    "No Gemini API key configured. Add your own key in Settings."
-  );
-  const invalid = new Error(
-    "Invalid Gemini API key. Update it in Settings or check your server env key."
-  );
-  const rateLimited = new Error("429 rate limit exceeded");
-
-  check("a missing key is recognised by type", isMissingAiApiKeyError(missing));
-  check(
-    "a missing key wrapped as a cause is still recognised",
-    isMissingAiApiKeyError(
-      Object.assign(new Error("An error occurred in the Server Components render"), {
-        cause: missing,
-      })
-    )
-  );
-  check("an invalid key is NOT a missing key", !isMissingAiApiKeyError(invalid));
-  check("a rate limit is not a missing key", !isMissingAiApiKeyError(rateLimited));
-
-  check(
-    "a missing key normalizes to the Settings prompt",
-    toUserFacingError(missing).message === MISSING_AI_API_KEY_MESSAGE
-  );
-  // The regression that started all this.
-  check(
-    "an invalid key keeps its own message instead of being rewritten",
-    toUserFacingError(invalid).message === invalid.message,
-    `got "${toUserFacingError(invalid).message}"`
-  );
-  check(
-    "aiProviderErrorMessage reports a missing key as missing",
-    aiProviderErrorMessage(missing, "Gemini") === MISSING_AI_API_KEY_MESSAGE,
-    `got "${aiProviderErrorMessage(missing, "Gemini")}"`
-  );
-  check(
-    "aiProviderErrorMessage reports a rejected key as invalid",
-    /^Invalid Gemini API key/.test(aiProviderErrorMessage(invalid, "Gemini"))
-  );
-  check(
-    "a rate limit is still classified as a rate limit",
-    classifyAiError(rateLimited) === "rate_limit"
-  );
-  check("a missing key classifies as auth", classifyAiError(missing) === "auth");
-
-  // The client only ever sees a message, so its check must be exact.
-  check(
-    "the client-side check matches the normalized message",
-    isMissingAiApiKeyMessage(MISSING_AI_API_KEY_MESSAGE)
-  );
-  check(
-    "the client-side check does NOT match an invalid-key message",
-    !isMissingAiApiKeyMessage(invalid.message)
-  );
-  check("the client-side check ignores empty input", !isMissingAiApiKeyMessage(""));
+  // AI error classification lived here. Main's errors.ts reached the same place by a
+  // different route — exact-copy matching plus named patterns, with its own reasoning about
+  // not telling a Stripe failure to add an AI key — so the `MissingAiKeyError` type this
+  // branch introduced is gone, and `smoke-friendly-error.ts` covers the behaviour now.
 
   // -------------------------------------------------------- 4. contact input
   section("contact input contract");

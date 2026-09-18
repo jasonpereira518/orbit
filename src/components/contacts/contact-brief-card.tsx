@@ -12,6 +12,7 @@ import { ContactNextSteps, type OpenActionItem } from "@/components/contacts/con
 import { flashSection } from "@/components/layout/section-flash";
 import { requestInteractionReveal } from "@/components/contacts/reveal-interaction";
 import type { RecentDiscussion } from "@/lib/contact-brief";
+import { friendlyError } from "@/lib/errors";
 
 /**
  * Scrolls the timeline to the interaction a "recent discussion" line came from and glows it.
@@ -31,44 +32,20 @@ function revealInteraction(interactionId: string) {
   flashSection(`interaction-${interactionId}`);
 }
 
-export function ContactBriefCard({ contactId, standing, recentDiscussions, nextSteps, stale, aiConfigured = true, summary = null }: {
-  contactId: string; standing: string | null; recentDiscussions: RecentDiscussion[]; nextSteps: OpenActionItem[]; stale: boolean;
-  /**
-   * Whether an AI provider key is configured. Without one the brief generator falls back
-   * to a deterministic template that produces no "standing" at all, so promising that the
-   * brief "will write itself from your notes" is a promise the app cannot keep — and
-   * Regenerate returns 200 in ~50ms having changed nothing.
-   */
-  aiConfigured?: boolean;
-  /**
-   * The "Who they are" summary rendered directly above this card.
-   *
-   * Without an AI key the brief generator's fallback sets `standing = summary`, so the
-   * two cards rendered character-for-character identical paragraphs. Passing it here
-   * lets this card notice the duplication and show its empty state instead of repeating
-   * the paragraph the reader just finished.
-   */
-  summary?: string | null;
+export function ContactBriefCard({ contactId, standing, nextStep, recentDiscussions, nextSteps, stale }: {
+  contactId: string; standing: string | null; nextStep: string | null; recentDiscussions: RecentDiscussion[]; nextSteps: OpenActionItem[]; stale: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  // Identical to the summary above means the deterministic fallback produced it, not a
-  // model reading the relationship — so it says nothing new and is dropped.
-  const distinctStanding =
-    standing && standing.trim() === (summary ?? "").trim() ? null : standing;
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader className="border-b border-border/50">
         <CardTitle as="h2">Where things stand</CardTitle>
         <CardAction>
-          {/* Disabled without a key: Refresh used to return 200 in ~50ms and change
-              nothing at all, so a user would sit there clicking it. */}
-          <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground"
-            disabled={pending || !aiConfigured}
-            title={aiConfigured ? undefined : "Add an AI provider key in Settings to refresh this"}
+          <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={pending}
             onClick={() => start(async () => {
               try { await regenerateContactSummary(contactId); router.refresh(); }
-              catch (err) { toast.error(err instanceof Error ? err.message : "Could not refresh"); }
+              catch (err) { toast.error(friendlyError(err, "Couldn’t refresh that — try again?")); }
             })}>
             <RefreshCw className="size-3.5" /> {stale ? "Updating…" : "Refresh"}
           </Button>
@@ -77,11 +54,19 @@ export function ContactBriefCard({ contactId, standing, recentDiscussions, nextS
       <CardContent className="grid gap-5 pt-4 lg:grid-cols-[1.2fr_1fr]">
         <div className="space-y-4">
           <p className="text-sm leading-relaxed text-ink">
-            {distinctStanding ??
-              (aiConfigured
-                ? "Log an interaction below and the brief will write itself from your notes."
-                : "Add an AI provider key in Settings and Orbit will write this from your logged notes.")}
+            {standing ?? "Log an interaction below and the brief will write itself from your notes."}
           </p>
+          {/* The one thing to do next, written with this contact's open commitments and
+              opportunities in front of the model. Null when nothing is open — which is a real
+              answer, and better than a generic nudge. */}
+          {nextStep && (
+            <p className="rounded-xl border border-primary/25 bg-primary/5 px-3 py-2 text-sm font-medium text-ink">
+              <span className="mr-1.5 text-xs font-semibold uppercase tracking-wide text-primary">
+                Next
+              </span>
+              {nextStep}
+            </p>
+          )}
           {recentDiscussions.length > 0 && (
             <div>
               <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent discussions</p>

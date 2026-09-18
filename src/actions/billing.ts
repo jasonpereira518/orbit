@@ -1,6 +1,7 @@
 "use server";
 
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
+import { getShowcaseAccountId } from "@/lib/demo-account";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getEntitlements } from "@/lib/entitlements";
 import {
@@ -16,11 +17,15 @@ import {
   isProCheckoutConfigured,
   isStripeConfigured,
 } from "@/lib/stripe";
+import { confirmCheckoutForUser } from "@/lib/stripe-fulfilment";
+import { createBillingPortalUrl, type BillingPortalResult } from "@/lib/billing-portal";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import type { BillingPeriod } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
-import { setCompedPlan } from "@/lib/user-settings";
+import { setCompedPlan, setPendingLifetimeCheckout } from "@/lib/user-settings";
+import { reportError } from "@/lib/report-error";
+import { withReference } from "@/lib/errors";
 
 export type CheckoutResult = { url: string } | { error: string };
 
@@ -63,23 +68,31 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
       customer_email: profile?.email || undefined,
       // The plan card here already reads "Orbit Lifetime" once the webhook lands, so this
       // page confirms the purchase without needing a bespoke success screen. `upgraded`
-      // arms the celebration watcher's fast poll — the webhook may not have landed yet.
-      success_url: `${baseUrl}/settings?upgraded=lifetime#settings-plan`,
+      // arms the celebration watcher's fast poll; `session_id` (Stripe fills the template)
+      // lets it confirm the payment with Stripe directly, before the webhook lands.
+      success_url: `${baseUrl}/settings?upgraded=lifetime&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
+    // Remembered so the AI gate can recognise this payment if the webhook is slow — see
+    // `src/lib/lifetime-checkout.ts`. Never an entitlement on its own.
+    await setPendingLifetimeCheckout(userId, session.id);
     return { url: session.url };
   } catch (err) {
-    console.error("Stripe checkout session failed:", err);
+    // Reported with the Stripe error code, and the person gets a reference to quote. This
+    // used to return a generic line as a 200, and the real cause lived only in a
+    // console.error on whichever server happened to run it.
+    const kind = stripeErrorKind(err);
+    const ref = reportError(err, { where: "action.billing.checkout", userId, extra: { plan: "lifetime", stripeCode: kind } });
     await recordErrorEvent({
       source: ERROR_SOURCES.stripeCheckout,
-      kind: stripeErrorKind(err),
+      kind,
       userId,
       message: err,
-      context: { plan: "lifetime" },
+      context: { plan: "lifetime", ref },
     });
-    return { error: "Could not start checkout. Please try again." };
+    return { error: withReference("Couldn’t start checkout — try again", ref) };
   }
 }
 
@@ -139,22 +152,26 @@ export async function startProCheckout(
       },
       customer_email: profile?.email || undefined,
       // `upgraded` arms the celebration watcher's fast poll; see the Lifetime session.
-      success_url: `${baseUrl}/settings?upgraded=pro#settings-plan`,
+      success_url: `${baseUrl}/settings?upgraded=pro&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
     return { url: session.url };
   } catch (err) {
-    console.error("Stripe subscription checkout failed:", err);
+    // Reported with the Stripe error code, and the person gets a reference to quote. This
+    // used to return a generic line as a 200, and the real cause lived only in a
+    // console.error on whichever server happened to run it.
+    const kind = stripeErrorKind(err);
+    const ref = reportError(err, { where: "action.billing.checkout", userId, extra: { plan: "pro", stripeCode: kind } });
     await recordErrorEvent({
       source: ERROR_SOURCES.stripeCheckout,
-      kind: stripeErrorKind(err),
+      kind,
       userId,
       message: err,
-      context: { plan: "pro" },
+      context: { plan: "pro", ref },
     });
-    return { error: "Could not start checkout. Please try again." };
+    return { error: withReference("Couldn’t start checkout — try again", ref) };
   }
 }
 
@@ -181,20 +198,65 @@ export async function getCurrentPlan(): Promise<Plan> {
   return plan;
 }
 
+/** Stripe's customer portal for the caller's own subscription. Returns the URL, like checkout. */
+export async function openBillingPortal(): Promise<BillingPortalResult> {
+  const userId = await requireUserId();
+  return createBillingPortalUrl(userId);
+}
+
+/**
+ * Confirm a checkout the moment the buyer is back, instead of waiting on the webhook. Called
+ * once by the celebration watcher with the `session_id` Stripe put in the success URL.
+ *
+ * Two checks, both through the same idempotent writers as the webhook. First the general
+ * one (`confirmCheckoutForUser`), which applies a paid Pro or Lifetime session for this
+ * caller. When that applies nothing, the Lifetime check the AI gate also uses
+ * (`confirmLifetimeCheckout`) says whether the payment is merely still clearing, so the
+ * watcher can tell the buyer rather than stay silent. Anything else changes nothing.
+ */
+export async function confirmCheckoutSession(
+  sessionId: string
+): Promise<{ status: "granted" | "processing" | "unconfirmed" }> {
+  const userId = await requireUserId();
+  if (!isStripeConfigured()) return { status: "unconfirmed" };
+  if (typeof sessionId !== "string" || !/^cs_[A-Za-z0-9_]{8,250}$/.test(sessionId)) {
+    return { status: "unconfirmed" };
+  }
+  try {
+    const result = await confirmCheckoutForUser(userId, sessionId, {
+      retrieve: (id) =>
+        getStripe().checkout.sessions.retrieve(id, {
+          expand: ["payment_intent.latest_charge", "subscription"],
+        }),
+    });
+    if (result.status === "applied") return { status: "granted" };
+  } catch (err) {
+    // Not recorded as a stripeCheckout error event: that source pages "nobody can pay".
+    console.error("Checkout confirmation on return did not complete:", err);
+  }
+  try {
+    const { confirmLifetimeCheckout } = await import("@/lib/lifetime-checkout");
+    const verdict = await confirmLifetimeCheckout(userId, sessionId);
+    if (verdict.kind === "paid") return { status: "granted" };
+    if (verdict.kind === "processing") return { status: "processing" };
+  } catch (err) {
+    console.error("Lifetime checkout check on return did not complete:", err);
+  }
+  return { status: "unconfirmed" };
+}
+
 /**
  * Live-demo cheat code: grants Lifetime with a keypress instead of a real checkout.
  *
- * Deliberately narrow. This is reachable from production (see the comment in
- * `plan-celebration-watcher.tsx` on why it has to be), so the gate can't be "is this
- * dev/staging" — it has to be "is this literally the one account the showcase runs
- * from". `DEMO_ACCOUNT_USER_ID` names that account's Clerk id; every other caller,
- * however they reached this action, gets `{ ok: false }` and nothing changes. Unset
- * (the default in any environment that hasn't configured a showcase account) disables
- * the shortcut entirely rather than falling back to some other check.
+ * Deliberately narrow. The gate is not "is this dev/staging" but "is this literally the one
+ * account the showcase runs from": `DEMO_ACCOUNT_USER_ID` names that account's Clerk id, and
+ * every other caller gets `{ ok: false }` with nothing changed. `src/lib/env.ts` forbids the
+ * variable in production builds, so there it is always unset and the shortcut is off; live
+ * demos run from a preview or local deployment.
  */
 export async function triggerDemoCelebration(): Promise<{ ok: boolean }> {
   const userId = await requireUserId();
-  const demoAccountId = process.env.DEMO_ACCOUNT_USER_ID?.trim();
+  const demoAccountId = getShowcaseAccountId();
   if (!demoAccountId || userId !== demoAccountId) return { ok: false };
 
   await setCompedPlan(userId, "lifetime", {

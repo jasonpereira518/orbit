@@ -15,7 +15,8 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { hasAiKeyFor } from "@/lib/ai";
+import { managedKeysConfigured } from "@/lib/ai-access";
+import type { AiProvider } from "@/lib/ai-providers";
 import { AI_PROVIDERS, resolveAiProvider } from "@/lib/ai-providers";
 import { userHasApolloKey } from "@/lib/apollo";
 import { canAutoSend } from "@/lib/outreach-channels";
@@ -52,6 +53,40 @@ export function campaignReadinessFacts(
     selected: selected.length,
     sendable: selected.filter((p) => canAutoSend(channel, p)).length,
   };
+}
+
+/**
+ * Whether an AI call could be made for this provider at all.
+ *
+ * Local to this module after the merge of main: this used to call `hasAiKeyFor` in
+ * `@/lib/ai`, which main's AI-gating rework removed. Main keeps the equivalent private in
+ * `ai-access.ts`, and the readiness strip only needs the question answered, not the
+ * machinery — so it asks it here rather than re-opening that module's surface.
+ *
+ * Personal key first, then a managed key configured for the deployment: either one means a
+ * draft can actually be generated, which is the only thing this strip reports.
+ */
+function hasAiKeyFor(
+  provider: AiProvider,
+  settings:
+    | {
+        geminiApiKeyEncrypted?: string | null;
+        openaiApiKeyEncrypted?: string | null;
+        anthropicApiKeyEncrypted?: string | null;
+      }
+    | null
+    | undefined
+): boolean {
+  const personal =
+    provider === "gemini"
+      ? settings?.geminiApiKeyEncrypted
+      : provider === "openai"
+        ? settings?.openaiApiKeyEncrypted
+        : provider === "anthropic"
+          ? settings?.anthropicApiKeyEncrypted
+          : null;
+  if (personal) return true;
+  return Boolean(managedKeysConfigured()[provider]);
 }
 
 export async function getOutreachReadiness(

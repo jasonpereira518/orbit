@@ -7,9 +7,12 @@ import { saveSenderBio, saveSocialLinks } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
 import { Textarea } from "@/components/ui/textarea";
 import { SENDER_BIO_MAX_LENGTH } from "@/lib/sender-profile";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 /**
  * Sized per-instance rather than in `clerkAppearance`: the same object dresses
@@ -57,13 +60,10 @@ export function ProfileSettings({
   const [bioPending, startBio] = useTransition();
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-ink">Profile and account</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Your identity and sign-in for Orbit.
-        </p>
-      </div>
+    <SettingsSection
+      title="Profile and account"
+      description="Your identity and sign-in for Orbit."
+    >
 
       {profile ? (
         <div className="flex flex-wrap items-center gap-4">
@@ -115,20 +115,17 @@ export function ProfileSettings({
         </div>
       )}
 
-      <div className="border-t border-border/60 pt-4">
-        <h3 className="text-sm font-medium text-ink">About you</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          One or two sentences: what you do, and what you are looking for. Orbit puts this in
-          every message it drafts for you — without it, drafts have a name to sign off with
-          and nothing to introduce.
-        </p>
+      <SettingsRow
+        title="About you"
+        description="One or two sentences: what you do, and what you are looking for. Orbit puts this in every message it drafts for you — without it, drafts have a name to sign off with and nothing to introduce."
+      >
         <Textarea
           id="sender-bio"
           rows={3}
           value={bio}
           maxLength={SENDER_BIO_MAX_LENGTH}
           placeholder="Backend engineer at a seed-stage fintech, moving into platform work. Looking for staff-level roles and people who have made that jump."
-          className="mt-3 resize-y text-sm"
+          className="resize-y text-sm"
           onChange={(e) => setBio(e.target.value)}
         />
         <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -145,9 +142,7 @@ export function ProfileSettings({
                   setBio(saved.senderBio);
                   toast.success(saved.senderBio ? "Saved" : "Cleared");
                 } catch (err) {
-                  toast.error(
-                    err instanceof Error ? err.message : "Could not save"
-                  );
+                  toast.error(friendlyError(err, "Couldn’t save that — try again?"));
                 }
               })
             }
@@ -158,14 +153,13 @@ export function ProfileSettings({
             {bio.trim().length}/{SENDER_BIO_MAX_LENGTH}
           </p>
         </div>
-      </div>
+      </SettingsRow>
 
-      <div className="border-t border-border/60 pt-4">
-        <h3 className="text-sm font-medium text-ink">Your socials</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Shown when you click the sun in Constellation.
-        </p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <SettingsRow
+        title="Your socials"
+        description="Shown when you click the sun in Constellation."
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
           {(
             [
               ["linkedin", "LinkedIn URL"],
@@ -191,7 +185,6 @@ export function ProfileSettings({
         <Button
           type="button"
           size="sm"
-          className="mt-3"
           disabled={pending}
           onClick={() =>
             start(async () => {
@@ -200,7 +193,7 @@ export function ProfileSettings({
                 toast.success("Social links saved");
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Could not save"
+                  friendlyError(err, TOAST_COPY.saveFailed)
                 );
               }
             })
@@ -208,7 +201,7 @@ export function ProfileSettings({
         >
           {pending ? "Saving…" : "Save socials"}
         </Button>
-      </div>
-    </section>
+      </SettingsRow>
+    </SettingsSection>
   );
 }

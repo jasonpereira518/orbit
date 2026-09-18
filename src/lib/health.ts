@@ -11,11 +11,13 @@ import { getCronHealth, getSystemIssues, recentWebhookOutcomes } from "@/lib/adm
  *
  * Polled by the external uptime monitor and by the GitHub Actions scheduler, so it has
  * three obligations: answer 503 for the two things that make the whole app wrong (the
- * database is unreachable, or the schema is behind the code), never hang past the
+ * database is unreachable, or the schema is BEHIND the code), never hang past the
  * monitor's own timeout, and never tell an anonymous caller anything about
  * configuration. The DEEP view — behind HEALTH_TOKEN — adds the operational facts the ops
  * sweep also reads; a degraded deep view is still HTTP 200, because "a cron is late" must
- * not page as "the site is down".
+ * not page as "the site is down". A schema AHEAD of the code is a rollback — the previous
+ * deployment promoted over a newer database — and answers 200 "degraded" for the same
+ * reason: it must not page, and the scheduler keys every job on this probe.
  *
  * A function killed at its `maxDuration` never answers at all; the monitor's response-time
  * alert is what covers that class, which is why the probe also reports DB latency.
@@ -32,7 +34,8 @@ export type HealthReport = {
   deploymentId: string | null;
   builtAt: string | null;
   env: string | null;
-  schema: { expected: number; recorded: number | null };
+  /** `ahead` is a rollback: the database was migrated by a newer deployment than this one. */
+  schema: { expected: number; recorded: number | null; ahead: boolean };
   db: { ok: boolean; latencyMs: number | null; reason: HealthReason | null };
   cron?: {
     processStalled: { state: string | null; startedAt: string | null; missed: boolean };
@@ -46,6 +49,11 @@ export type HealthReport = {
     sentry: boolean;
     slack: boolean;
     pgvector: boolean | null;
+    /**
+     * The session's `statement_timeout`, as Postgres reports it ("20s", or "0" for none).
+     * Null when the probe could not read it.
+     */
+    statementTimeout: string | null;
   };
   alerts?: Array<{ id: string; severity: string; openedAt: string; title: string | null }>;
   /** Slow calls recorded in the last hour (see perf-trace.ts). */
@@ -72,6 +80,22 @@ async function probeSchemaVersion(): Promise<{ recorded: number | null }> {
   return { recorded: row ? Number(row.version) : null };
 }
 
+/**
+ * The role's `statement_timeout`.
+ *
+ * `docs/RUNBOOK.md` instructs setting this on the Neon role and nothing ever checked that
+ * anyone did — and the HTTP driver cannot set it per session, so if the role does not carry
+ * it, no query in production has an upper bound and one runaway scan degrades every user on
+ * a shared compute. A setting nobody checks is a setting nobody has, so it is reported here
+ * where the ops sweep and /admin/health can both see it.
+ */
+export async function probeStatementTimeout(): Promise<string | null> {
+  const db = await getDb();
+  const res = await db.execute(sql`SHOW statement_timeout`);
+  const row = rowsOf<{ statement_timeout: string }>(res)[0];
+  return row?.statement_timeout ?? null;
+}
+
 /** Best-effort: a failing section reads as null rather than failing the probe. */
 async function section<T>(work: () => Promise<T>, ms: number): Promise<T | null> {
   try {
@@ -94,29 +118,31 @@ export async function checkHealth(options: {
   const started = Date.now();
   let recorded: number | null = null;
   let reason: HealthReason | null = null;
+  let ahead = false;
   try {
     ({ recorded } = await withTimeout(probe(), timeoutMs));
-    if (recorded !== SCHEMA_VERSION) reason = "schema_mismatch";
+    if (recorded === null || recorded < SCHEMA_VERSION) reason = "schema_mismatch";
+    else if (recorded > SCHEMA_VERSION) ahead = true;
   } catch (err) {
     reason = err instanceof TimeoutError ? "db_timeout" : "db_error";
   }
   const latencyMs = reason === "db_error" || reason === "db_timeout" ? null : Date.now() - started;
 
   const report: HealthReport = {
-    status: reason ? "down" : "ok",
+    status: reason ? "down" : ahead ? "degraded" : "ok",
     httpStatus: reason ? 503 : 200,
     checkedAt: now.toISOString(),
     sha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
     deploymentId: process.env.VERCEL_DEPLOYMENT_ID ?? null,
     builtAt: process.env.BUILD_TIME ?? null,
     env: process.env.VERCEL_ENV ?? null,
-    schema: { expected: SCHEMA_VERSION, recorded },
+    schema: { expected: SCHEMA_VERSION, recorded, ahead },
     db: { ok: !reason || reason === "schema_mismatch", latencyMs, reason },
   };
 
   if (!options.deep || report.status === "down") return report;
 
-  const [nightly, sweep, webhooks, issues, alerts, slow, pgvector] = await Promise.all([
+  const [nightly, sweep, webhooks, issues, alerts, slow, pgvector, statementTimeout] = await Promise.all([
     section(() => getCronHealth("imports.process-stalled", now), timeoutMs),
     section(() => getCronHealth("ops.sweep", now), timeoutMs),
     section(() => recentWebhookOutcomes(5, now), timeoutMs),
@@ -143,6 +169,7 @@ export async function checkHealth(options: {
       return row?.n ?? 0;
     }, timeoutMs),
     section(async () => Boolean(await isPgvectorAvailable()), timeoutMs),
+    section(probeStatementTimeout, timeoutMs),
   ]);
 
   const envReport = getEnvReport();
@@ -165,6 +192,7 @@ export async function checkHealth(options: {
     sentry: Boolean(process.env.SENTRY_DSN),
     slack: Boolean(process.env.SLACK_OPS_WEBHOOK_URL),
     pgvector,
+    statementTimeout,
   };
   report.alerts = (alerts ?? []).map((a) => ({
     id: a.id,

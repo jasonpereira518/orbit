@@ -4,7 +4,7 @@ import { contacts, userGoals, userSettings } from "@/db/schema";
 import type { UserProfile } from "@/lib/auth";
 import { closenessTier } from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
-import { isCometContact } from "@/lib/comet";
+import { isCometContact, pickClusterComets } from "@/lib/comet";
 import {
   buildConstellationClusters,
   toNamedGraphClusters,
@@ -183,9 +183,6 @@ export async function loadGraphData(
    * only when someone actually asks for it.
    *
    * What that costs, and why each is fine:
-   *   - Saved star positions: `positionsFromPayload` prunes to the payload for rendering, but
-   *     no longer writes that pruned map back (see `graph-positions.ts`), so a narrower view
-   *     cannot delete a layout.
    *   - `summary.total` and `scoreCounts`: computed over ALL rows below, not the visible set,
    *     so the numbers keep describing the network rather than the picture.
    *   - The comet list: now scoped to people you have actually engaged with, which is what
@@ -200,6 +197,11 @@ export async function loadGraphData(
 
   const { clusters: built } = buildConstellationClusters(visibleContacts);
   const clusters: GraphCluster[] = toNamedGraphClusters(built);
+
+  // A few comets per cluster, not every year-quiet contact (see COMETS_PER_CLUSTER). Written onto
+  // the payload so the red stars, the Re-engage list and the comet count all agree.
+  const comets = pickClusterComets(visibleContacts, built);
+  for (const c of visibleContacts) c.dormant = comets.has(c.id);
 
   // The filter dropdowns list what is actually on the chart. An option that can only ever
   // yield an empty sky is a dead end, and the user has no way to see why.
@@ -218,7 +220,7 @@ export async function loadGraphData(
   const tags = [...new Set(visibleContacts.flatMap((c) => c.tags))];
 
   const scoreCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-  let dormantCount = 0;
+  const dormantCount = comets.size;
   let overdueCount = 0;
   // Counted from the absolute score, not from the rings above: rings are quota
   // shares, so ring 4 + ring 5 is a fixed 22% of any network and would report
@@ -229,7 +231,6 @@ export async function loadGraphData(
     scoreCounts[s] = (scoreCounts[s] || 0) + 1;
     const raw = closenessCohort.byId.get(c.id)?.raw;
     if (raw != null && closenessTier(raw) !== "outer") strongTies += 1;
-    if (c.dormant) dormantCount += 1;
     if (c.nextFollowUpAt && new Date(c.nextFollowUpAt).getTime() < Date.now()) {
       overdueCount += 1;
     }

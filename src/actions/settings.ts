@@ -2,38 +2,23 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
 import {
-  actionItems,
-  aiSuggestions,
-  calendarSubscriptions,
-  chatMessages,
-  chatThreads,
-  companies,
-  contactBriefs,
   contactEmbeddings,
-  contactExperiences,
-  contactProfiles,
-  contacts,
-  eventAttendees,
-  events,
-  imports,
-  interactions,
-  noteBatches,
-  recruiterMessages,
-  reminderLists,
-  reminders,
-  suggestedReminders,
-  tags,
-  userGoals,
-  userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { normalizeSenderBio } from "@/lib/sender-profile";
-import { redactSettingsForExport } from "@/lib/settings-export";
-import { encrypt } from "@/lib/crypto";
-import { purgeUserData } from "@/lib/user-data";
+import { decryptOrNull, encrypt } from "@/lib/crypto";
+import { wisprKeyWasRejected } from "@/lib/wispr";
+import {
+  DATA_CATEGORY_IDS,
+  deletionOutcome,
+  getDataFootprint,
+  purgeUserData,
+  type DataCategory,
+} from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
 import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
@@ -45,10 +30,16 @@ import {
   AI_PROVIDERS,
   resolveAiModel,
   resolveAiProvider,
-  usingEnvKey,
-  verifyProviderKey,
   type AiProvider,
 } from "@/lib/ai";
+import { checkAiKey, keyCheckOutcome } from "@/lib/ai-key-check";
+import { getAiAccessStatus, managedKeysConfigured } from "@/lib/ai-access";
+import {
+  chooseEmbeddingKey,
+  managedEligibility,
+  type ManagedEligibility,
+} from "@/lib/managed-ai-policy";
+import { demoAccountReason, isDemoAccount } from "@/lib/demo-account";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -61,9 +52,12 @@ export async function getSettings() {
   // Run alongside entitlements rather than after: neither depends on the other, and
   // `userHasApolloKey` already re-derives entitlements internally for its own hosted-key
   // check, so serializing them would only add latency.
-  const [entitlements, hasApolloKey] = await Promise.all([
+  const wisprKey = decryptOrNull(settings?.wisprApiKeyEncrypted);
+  const [entitlements, hasApolloKey, ai, wisprKeyRejected] = await Promise.all([
     getEntitlements(userId),
     userHasApolloKey(userId),
+    getAiAccessStatus(userId),
+    wisprKey ? wisprKeyWasRejected(userId, wisprKey).catch(() => false) : Promise.resolve(false),
   ]);
   // Mirrors the two runtime resolvers so this card states what would actually be used:
   // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
@@ -80,30 +74,43 @@ export async function getSettings() {
       openai: Boolean(settings?.openaiApiKeyEncrypted),
       anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
     },
-    usingEnvKey: usingEnvKey(provider, settings),
+    /**
+     * The AI gate's view of this account — plan-aware, allowance-aware. Everything that says
+     * "add your key" or "Orbit covers AI" renders from this, never from key presence alone.
+     */
+    ai,
     // Whether "Fill from Apollo" on the contact page has anything to call — computed via
     // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
     hasApolloKey,
-    hasApiKey:
-      provider === "gemini"
-        ? Boolean(settings?.geminiApiKeyEncrypted) ||
-          usingEnvKey("gemini", settings)
-        : provider === "openai"
-          ? Boolean(settings?.openaiApiKeyEncrypted) ||
-            usingEnvKey("openai", settings)
-          : Boolean(settings?.anthropicApiKeyEncrypted) ||
-            usingEnvKey("anthropic", settings),
+    /**
+     * Whether voice capture will try Wispr first.
+     *
+     * Presence only, like `keys` above — this decides whether the capture panel is
+     * entitled to say "Wispr didn't answer", and a rejected key still counts as
+     * configured, since that is precisely the case worth reporting.
+     */
+    hasWisprKey: Boolean(settings?.wisprApiKeyEncrypted),
+    /** Wispr refused the saved key on its latest try; clears when the key changes. */
+    wisprKeyRejected,
+    /**
+     * Whether AI features will run — NOT whether a key is saved. A Lifetime account on
+     * Orbit's managed key is `true` with no key at all; a Lifetime account that has used its
+     * month's allowance is `false` even with none missing. The name predates plans; ~20
+     * components read it to decide between the feature and the "add your key" notice, and
+     * that is exactly the question `ai.ready` answers.
+     */
+    hasApiKey: ai.ready,
     providers: AI_PROVIDERS.map((p) => ({
       id: p.id,
       label: p.label,
-      envVar: p.envVar,
       hasPersonalKey:
         p.id === "gemini"
           ? Boolean(settings?.geminiApiKeyEncrypted)
           : p.id === "openai"
             ? Boolean(settings?.openaiApiKeyEncrypted)
             : Boolean(settings?.anthropicApiKeyEncrypted),
-      usingEnv: usingEnvKey(p.id, settings),
+      /** Orbit holds a managed key for this provider AND this account may use it. */
+      managedAvailable: Boolean(ai.eligibility) && managedKeysConfigured()[p.id],
     })),
     // Mirrors the plan gate in `getOutreachSendConfig` / `getApolloApiKey`: Orbit's shared
     // keys only count as configured when the plan actually permits hosted sends, so the
@@ -147,6 +154,8 @@ export async function getSettings() {
       github: settings?.socialLinks?.github || "",
       website: settings?.socialLinks?.website || "",
     },
+    /** Null until the account has recorded a choice — see the column in schema.ts. */
+    desktopNotificationsEnabled: settings?.desktopNotificationsEnabled ?? null,
   };
 }
 
@@ -187,33 +196,38 @@ export async function saveThemePreference(theme: ThemePreference) {
     });
 }
 
-async function embeddingBackendFor(
+/**
+ * Which embedding backend a given key state would land on — the same policy function the
+ * gate runs (`chooseEmbeddingKey`), so a provider switch that moves search onto a different
+ * embedding space (including onto or off Orbit's managed key) is detected and the stale
+ * vectors cleared.
+ */
+function embeddingBackendFor(
   provider: AiProvider,
   settings: {
     geminiApiKeyEncrypted: string | null;
     openaiApiKeyEncrypted: string | null;
     anthropicApiKeyEncrypted: string | null;
-  } | null
+  } | null,
+  eligibility: ManagedEligibility
 ) {
-  if (provider === "openai") {
-    if (settings?.openaiApiKeyEncrypted || usingEnvKey("openai", settings)) {
-      return "openai";
-    }
-    return null;
-  }
-  if (provider === "gemini") {
-    if (settings?.geminiApiKeyEncrypted || usingEnvKey("gemini", settings)) {
-      return "gemini";
-    }
-    return null;
-  }
-  if (settings?.openaiApiKeyEncrypted || usingEnvKey("openai", settings)) {
-    return "openai";
-  }
-  if (settings?.geminiApiKeyEncrypted || usingEnvKey("gemini", settings)) {
-    return "gemini";
-  }
-  return null;
+  const choice = chooseEmbeddingKey({
+    eligibility,
+    selectedProvider: provider,
+    selectedModel: "",
+    personal: {
+      gemini: Boolean(settings?.geminiApiKeyEncrypted),
+      openai: Boolean(settings?.openaiApiKeyEncrypted),
+      anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
+    },
+    managed: managedKeysConfigured(),
+  });
+  return choice.ok ? choice.provider : null;
+}
+
+async function managedEligibilityFor(userId: string): Promise<ManagedEligibility> {
+  const { plan } = await getEntitlements(userId);
+  return managedEligibility(plan, isDemoAccount(userId));
 }
 
 export async function saveAiSettings(input: {
@@ -229,28 +243,21 @@ export async function saveAiSettings(input: {
 
   const provider = resolveAiProvider(input.provider);
   const aiModel = resolveAiModel(provider, input.model);
-
-  // Verify before storing. A key that the provider rejects is refused here, at the field
-  // that caused it, instead of being encrypted, reported as saved, and then failing
-  // several screens away the first time an AI feature runs.
-  //
-  // Only a credential rejection blocks the save — if the provider is simply unreachable
-  // the key is stored and the caller is told the check could not run, because refusing to
-  // save on a transient outage would be its own trap.
-  let keyWarning: string | null = null;
-  const rawKey = input.apiKey?.trim();
-  if (rawKey) {
-    const verdict = await verifyProviderKey(provider, rawKey);
-    if (verdict.status === "invalid") {
-      return { ok: false as const, error: verdict.message };
-    }
-    if (verdict.status === "unreachable") keyWarning = verdict.message;
+  // Only a NEWLY entered key is checked; saving a model change with the key left blank
+  // costs no provider call.
+  const newKey = input.apiKey?.trim() || null;
+  let keyNote: string | null = null;
+  if (newKey) {
+    const outcome = keyCheckOutcome(await checkAiKey(provider, newKey), provider);
+    // Returned, not thrown: a thrown message is a digest in production.
+    if (!outcome.save) return { ok: false as const, error: outcome.error };
+    keyNote = outcome.note;
   }
+  const encrypted = newKey ? encrypt(newKey) : null;
 
-  const encrypted = rawKey ? encrypt(rawKey) : null;
-
+  const eligibility = await managedEligibilityFor(userId);
   const previousBackend = existing
-    ? await embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing)
+    ? embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing, eligibility)
     : null;
 
   const nextKeyState = {
@@ -287,7 +294,7 @@ export async function saveAiSettings(input: {
     });
   }
 
-  const nextBackend = await embeddingBackendFor(provider, nextKeyState);
+  const nextBackend = embeddingBackendFor(provider, nextKeyState, eligibility);
   if (
     previousBackend &&
     nextBackend &&
@@ -304,7 +311,7 @@ export async function saveAiSettings(input: {
   return {
     ok: true as const,
     embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend),
-    keyWarning,
+    keyNote,
   };
 }
 
@@ -327,7 +334,64 @@ export async function clearApiKey(provider?: AiProvider) {
     .update(userSettings)
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
+
+  // Clearing a key can move embeddings to another provider — an Anthropic account falls
+  // back from OpenAI to Gemini. Vectors from two providers cannot be compared, so stale ones
+  // go, by the same rule `saveAiSettings` applies when a save changes the backend.
+  let embeddingReset = false;
+  if (existing) {
+    const selected = resolveAiProvider(existing.aiProvider);
+    // Eligibility matters: on Lifetime, clearing a key can move search onto Orbit's managed key.
+    const eligibility = await managedEligibilityFor(userId);
+    const previousBackend = embeddingBackendFor(selected, existing, eligibility);
+    const nextBackend = embeddingBackendFor(selected, { ...existing, ...patch }, eligibility);
+    embeddingReset = Boolean(previousBackend && nextBackend && previousBackend !== nextBackend);
+    if (embeddingReset) {
+      await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+    }
+  }
+
+  revalidatePathIfRequestScoped("/settings");
+  return { ok: true as const, embeddingReset };
+}
+
+/**
+ * Store or clear the Wispr transcription key.
+ *
+ * Its own action rather than a field on `saveAiSettings`, because Wispr is not an
+ * `AiProvider`: it transcribes and never completes, so it takes no part in provider or
+ * model selection and none of that action's re-indexing logic applies to it.
+ *
+ * An empty string clears the key; `undefined` leaves it untouched. That asymmetry is what
+ * lets the settings form send the field unconditionally without wiping a stored key every
+ * time an unrelated control is saved.
+ */
+export async function saveVoiceSettings(input: { wisprApiKey?: string }) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const existing = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+
+  const trimmed = input.wisprApiKey?.trim();
+  const wisprApiKeyEncrypted =
+    input.wisprApiKey === undefined
+      ? (existing?.wisprApiKeyEncrypted ?? null)
+      : trimmed
+        ? encrypt(trimmed)
+        : null;
+
+  if (existing) {
+    await db
+      .update(userSettings)
+      .set({ wisprApiKeyEncrypted, updatedAt: new Date() })
+      .where(eq(userSettings.userId, userId));
+  } else {
+    await db.insert(userSettings).values({ userId, wisprApiKeyEncrypted });
+  }
+
   revalidatePath("/settings");
+  return { ok: true as const };
 }
 
 export async function saveOutreachSettings(input: {
@@ -405,155 +469,40 @@ export async function saveSocialLinks(input: {
   return { ok: true };
 }
 
-export async function exportAllData() {
+
+/** Row counts per category, for the delete dialog. */
+export async function getDeletableDataFootprint() {
   const userId = await requireUserId();
-  const db = await getDb();
-
-  // "Export everything" used to mean six tables — contacts, interactions, reminders,
-  // tags, imports and suggestions — while `purgeUserData` enumerates thirty-six. So the
-  // raw text of every pasted note, every chat, every profile and brief, goals, events and
-  // recruiter history all fell outside "everything", for a product whose pitch is "your
-  // network, your data".
-  //
-  // What is deliberately still excluded, and why:
-  //   - operational telemetry (usage_events, error_events, gate_events, extension_usage,
-  //     api_idempotency_keys, webhook deliveries) — Orbit's records about the account,
-  //     not the user's own content;
-  //   - secrets (api_keys, the encrypted provider keys and OAuth tokens on
-  //     user_settings / gmail_connections / outlook_connections) — a plaintext export is
-  //     the last place a credential should appear;
-  //   - contact_embeddings — derived vectors, regenerated from the content above.
-  const [
-    contactRows,
-    interactionRows,
-    reminderRows,
-    reminderListRows,
-    suggestedReminderRows,
-    tagRows,
-    importRows,
-    suggestionRows,
-    noteBatchRows,
-    profileRows,
-    experienceRows,
-    briefRows,
-    actionItemRows,
-    companyRows,
-    eventRows,
-    eventAttendeeRows,
-    goalRows,
-    chatThreadRows,
-    chatMessageRows,
-    calendarSubscriptionRows,
-    recruiterMessageRows,
-    recruiterLinkRows,
-    settingsRow,
-  ] = await Promise.all([
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      with: { contactTags: { with: { tag: true } } },
-    }),
-    db.query.interactions.findMany({ where: eq(interactions.userId, userId) }),
-    db.query.reminders.findMany({ where: eq(reminders.userId, userId) }),
-    db.query.reminderLists.findMany({ where: eq(reminderLists.userId, userId) }),
-    db.query.suggestedReminders.findMany({
-      where: eq(suggestedReminders.userId, userId),
-    }),
-    db.query.tags.findMany({ where: eq(tags.userId, userId) }),
-    db.query.imports.findMany({ where: eq(imports.userId, userId) }),
-    db.query.aiSuggestions.findMany({
-      where: eq(aiSuggestions.userId, userId),
-    }),
-    db.query.noteBatches.findMany({ where: eq(noteBatches.userId, userId) }),
-    db.query.contactProfiles.findMany({ where: eq(contactProfiles.userId, userId) }),
-    db.query.contactExperiences.findMany({
-      where: eq(contactExperiences.userId, userId),
-    }),
-    db.query.contactBriefs.findMany({ where: eq(contactBriefs.userId, userId) }),
-    db.query.actionItems.findMany({ where: eq(actionItems.userId, userId) }),
-    db.query.companies.findMany({ where: eq(companies.userId, userId) }),
-    db.query.events.findMany({ where: eq(events.userId, userId) }),
-    db.query.eventAttendees.findMany({ where: eq(eventAttendees.userId, userId) }),
-    db.query.userGoals.findMany({ where: eq(userGoals.userId, userId) }),
-    db.query.chatThreads.findMany({ where: eq(chatThreads.userId, userId) }),
-    db.query.chatMessages.findMany({ where: eq(chatMessages.userId, userId) }),
-    db.query.calendarSubscriptions.findMany({
-      where: eq(calendarSubscriptions.userId, userId),
-    }),
-    db.query.recruiterMessages.findMany({
-      where: eq(recruiterMessages.userId, userId),
-    }),
-    db.query.userRecruiterLinks.findMany({
-      where: eq(userRecruiterLinks.userId, userId),
-    }),
-    db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) }),
-  ]);
-
-  return {
-    exportedAt: new Date().toISOString(),
-    contacts: contactRows,
-    interactions: interactionRows,
-    reminders: reminderRows,
-    reminderLists: reminderListRows,
-    suggestedReminders: suggestedReminderRows,
-    tags: tagRows,
-    imports: importRows,
-    suggestions: suggestionRows,
-    noteBatches: noteBatchRows,
-    contactProfiles: profileRows,
-    contactExperiences: experienceRows,
-    contactBriefs: briefRows,
-    actionItems: actionItemRows,
-    companies: companyRows,
-    events: eventRows,
-    eventAttendees: eventAttendeeRows,
-    goals: goalRows,
-    chatThreads: chatThreadRows,
-    chatMessages: chatMessageRows,
-    // The outbound feed token is not here — it lives on `user_settings` and is redacted
-    // there; these rows only hold the URLs the user subscribed Orbit to.
-    calendarSubscriptions: calendarSubscriptionRows,
-    recruiterMessages: recruiterMessageRows,
-    recruiterLinks: recruiterLinkRows,
-    settings: settingsRow ? redactSettingsForExport(settingsRow) : null,
-  };
+  return getDataFootprint(userId);
 }
 
 /**
- * What is about to be destroyed, so the confirmation can name it.
+ * Delete the chosen categories of the caller's own data.
  *
- * "Delete ALL your Orbit data? This cannot be undone." in a bare `window.confirm` was
- * the entire guard in front of `purgeUserData` — a routine that deletes across
- * thirty-six tables and is careful enough to document every one of them. The destruction
- * was well built; only the door in front of it was flimsy.
+ * `categories` is validated against `DATA_CATEGORY_IDS` rather than trusted: this is a
+ * server action, so its argument is a request body, and an unrecognised id must not silently
+ * widen or narrow a destructive call. An empty selection is a no-op, not a full purge —
+ * the failure mode of getting that backwards is unrecoverable.
  */
-export async function getDeletionFootprint() {
+export async function deleteAllData(categories?: readonly DataCategory[]) {
   const userId = await requireUserId();
-  const db = await getDb();
 
-  const [contactRows, interactionRows, reminderRows, noteBatchRows] =
-    await Promise.all([
-      db.$count(contacts, eq(contacts.userId, userId)),
-      db.$count(interactions, eq(interactions.userId, userId)),
-      db.$count(reminders, eq(reminders.userId, userId)),
-      db.$count(noteBatches, eq(noteBatches.userId, userId)),
-    ]);
+  let only: DataCategory[] | undefined;
+  if (categories) {
+    only = categories.filter((c): c is DataCategory =>
+      (DATA_CATEGORY_IDS as string[]).includes(c)
+    );
+    if (only.length === 0) return { deleted: [] as DataCategory[], pending: [] as DataCategory[] };
+  }
 
-  return {
-    contacts: contactRows,
-    interactions: interactionRows,
-    reminders: reminderRows,
-    noteBatches: noteBatchRows,
-  };
-}
-
-export async function deleteAllData() {
-  const userId = await requireUserId();
-  await purgeUserData(userId);
+  const result = await deletionOutcome(() => purgeUserData(userId, only ? { only } : {}));
 
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/settings");
   revalidatePath("/outreach");
+
+  return result;
 }
 
 /** Everything the settings billing card needs, in one round trip. */
@@ -564,7 +513,7 @@ export async function getPlanOverview() {
     contactUsageForUser(userId),
   ]);
 
-  return { entitlements, usage };
+  return { entitlements, usage, demoAccount: demoAccountReason(userId) };
 }
 
 

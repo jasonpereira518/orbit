@@ -73,20 +73,26 @@ const KNOWLEDGE: AppNavItem = {
   icon: BookOpen,
 };
 
-/** Primary sidebar destinations (above the Extras divider) */
+/** Primary sidebar destinations (above the "Coming soon" divider) */
 export const APP_NAV_CORE: AppNavItem[] = [
   DASHBOARD,
   CONTACTS,
   CAPTURE,
-  EVENTS,
-  IMPORTS,
   REMINDERS,
   CHAT,
+  IMPORTS,
   CONSTELLATION,
 ];
 
-/** Items under the Extras divider (Settings is rendered separately) */
-export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH, KNOWLEDGE];
+/**
+ * Items under the "Coming soon" divider (Settings is rendered separately).
+ *
+ * The name is stale for Knowledge, which has shipped — it stays in this group rather than
+ * moving up to `APP_NAV_CORE` because the divider's label describes Events and Outreach,
+ * the two items that actually are coming soon (`comingSoon` in `src/lib/surfaces.ts`), and
+ * splitting the group over one released item was a deliberate no per product decision.
+ */
+export const APP_NAV_EXTRAS: AppNavItem[] = [EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -111,10 +117,10 @@ export const MOBILE_BOTTOM_NAV: Array<
 ];
 
 export const MOBILE_MORE_NAV = [
-  EVENTS,
-  IMPORTS,
   REMINDERS,
+  IMPORTS,
   CONSTELLATION,
+  EVENTS,
   OUTREACH,
   KNOWLEDGE,
 ];

@@ -19,6 +19,8 @@ import {
 } from "@/lib/outreach-channels";
 import type { OutreachChannel } from "@/lib/outreach-types";
 import { DangerSendDialog } from "@/components/outreach/danger-send-dialog";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type Row = {
   prospectId: string;
@@ -61,12 +63,16 @@ export function BulkActionBar({
 
   function handleSelectAll() {
     start(async () => {
-      await updateProspectSelection({
-        campaignId,
-        prospectIds: rows.map((r) => r.prospectId),
-        status: "selected",
-      });
-      refresh();
+      try {
+        await updateProspectSelection({
+          campaignId,
+          prospectIds: rows.map((r) => r.prospectId),
+          status: "selected",
+        });
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+      }
     });
   }
 
@@ -82,11 +88,15 @@ export function BulkActionBar({
       .join("\n\n");
     navigator.clipboard.writeText(text);
     start(async () => {
-      for (const row of activeRows) {
-        await markMessageAction({ messageId: row.messageId, status: "copied" });
+      try {
+        for (const row of activeRows) {
+          await markMessageAction({ messageId: row.messageId, status: "copied" });
+        }
+        toast.success(`Copied ${activeRows.length} drafts`);
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
-      toast.success(`Copied ${activeRows.length} drafts`);
-      refresh();
     });
   }
 
@@ -105,13 +115,17 @@ export function BulkActionBar({
       }
     }
     start(async () => {
-      for (const row of activeRows) {
-        if (canOpenInApp(row.channel, row)) {
-          await markMessageAction({ messageId: row.messageId, status: "opened" });
+      try {
+        for (const row of activeRows) {
+          if (canOpenInApp(row.channel, row)) {
+            await markMessageAction({ messageId: row.messageId, status: "opened" });
+          }
         }
+        toast.success(`Opened ${activeRows.length} apps`);
+        refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
-      toast.success(`Opened ${activeRows.length} apps`);
-      refresh();
     });
   }
 
@@ -139,7 +153,7 @@ export function BulkActionBar({
         }
         setDangerOpen(true);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Quality check failed");
+        toast.error(friendlyError(err, "Couldn’t check those drafts — try again?"));
       }
     });
   }
@@ -152,35 +166,30 @@ export function BulkActionBar({
           messageIds: sendable.map((r) => r.messageId),
           ignoreWarnings: ignoreWarnings || !qualityNote,
         });
-        // `toast.success` fired unconditionally, so a run where every send failed —
-        // the default state, since Resend and Twilio are unconfigured until a user
-        // sets them up — produced a green "Sent 0, failed 12". The per-message reason
-        // was collected in `results[].error` and shown nowhere.
-        const firstError = result.results.find((r) => !r.ok)?.error;
-        if (result.sent === 0 && result.failed > 0) {
-          toast.error(
-            firstError
-              ? `Nothing sent — ${firstError}`
-              : `Nothing sent (${result.failed} failed)`
-          );
-        } else if (result.failed > 0) {
-          toast.warning(
-            `Sent ${result.sent}, ${result.failed} failed${firstError ? ` — ${firstError}` : ""}`
-          );
+        if (result.status === "blocked") {
+          toast.error(result.reason);
+          return;
+        }
+        if (result.status === "needs_confirmation") {
+          setQualityNote(`Quality warning: ${result.warning}`);
+          setIgnoreWarnings(true);
+          // Not a failure — the send is waiting on the person. A quiet message, so it
+          // is not red and is not filed under Missed as though something broke.
+          toast.message("Check the warning, then confirm the send again");
+          return;
+        }
+        const { sent, failed } = result;
+        if (sent === 0 && failed > 0) {
+          toast.error(`None of those sent — try again?`);
+        } else if (failed > 0) {
+          toast.success(`Sent ${sent} — ${failed} didn’t go through`);
         } else {
-          toast.success(`Sent ${result.sent}`);
+          toast.success(`Sent ${sent} ${sent === 1 ? "message" : "messages"}`);
         }
         setDangerOpen(false);
         refresh();
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Bulk send failed";
-        if (message.startsWith("Quality warnings:")) {
-          setQualityNote(message);
-          setIgnoreWarnings(true);
-          toast.error("Review warnings, then confirm send again");
-          return;
-        }
-        toast.error(message);
+        toast.error(friendlyError(err, TOAST_COPY.sendFailed));
       }
     });
   }

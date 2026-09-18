@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Pencil, Plus, X } from "lucide-react";
+import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { updateContact } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
@@ -67,7 +68,9 @@ export function EditableFactList({
         toast.success(`${title} saved`);
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : `Could not save ${title.toLowerCase()}`);
+        toast.error(
+          friendlyError(err, `Couldn’t save those ${title.toLowerCase()} — try again?`)
+        );
       }
     });
   }

@@ -141,19 +141,26 @@ async function main() {
   // ------------------------------------------------------- 2. delete and reopen
   section("Reminders can be deleted and reopened");
 
-  await completeReminder(USER, handWritten.id);
+  // `completeReminder` returns a snapshot and `reopenReminder` takes it — main's shape,
+  // which also restores the action items the completion closed. This branch's reopen took a
+  // bare id and only moved the status back; main's is strictly more, so the test follows it.
+  const snap = await completeReminder(USER, handWritten.id);
   const completed = await db.query.reminders.findFirst({
     where: eq(reminders.id, handWritten.id),
   });
   check("completing sets done", completed?.status === "done");
+  check("completing returns a snapshot to undo with", Boolean(snap));
 
-  const reopened = await reopenReminder(USER, handWritten.id);
-  check("reopen returns the row", Boolean(reopened));
-  check("reopen restores pending", reopened?.status === "pending");
+  const reopened = await reopenReminder(USER, snap!);
+  check("reopen reports it restored something", reopened.restored);
+  const afterReopen = await db.query.reminders.findFirst({
+    where: eq(reminders.id, handWritten.id),
+  });
+  check("reopen restores pending", afterReopen?.status === "pending");
   check(
     "reopen does NOT move the due date the way snooze does",
-    reopened?.dueDate?.getTime() === userDue.getTime(),
-    `got ${reopened?.dueDate?.toISOString()}`
+    afterReopen?.dueDate?.getTime() === userDue.getTime(),
+    `got ${afterReopen?.dueDate?.toISOString()}`
   );
 
   const snapshot = await deleteReminder(USER, handWritten.id);

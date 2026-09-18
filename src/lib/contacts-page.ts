@@ -9,8 +9,17 @@
 /**
  * How a contacts page is ordered. The cursor's shape follows from this, so a page fetched
  * under one sort cannot be continued under another.
+ *
+ * `"relevance"` is the odd one out: it only means something alongside a search query, has
+ * no stable keyset (a hybrid-search rank isn't a column), and so never paginates past its
+ * first page. See `orderFor` in `src/actions/contacts.ts`.
  */
-export type ContactSort = "name" | "closeness" | "recent" | "last_touch";
+export type ContactSort =
+  | "name"
+  | "closeness"
+  | "recent"
+  | "last_touch"
+  | "relevance";
 
 /**
  * The sorts offered in the UI, in the order they appear.
@@ -29,8 +38,17 @@ export const CONTACT_SORTS: { value: ContactSort; label: string }[] = [
   { value: "recent", label: "Recently updated" },
 ];
 
+/**
+ * `relevance` is deliberately absent from the picker above and still valid here.
+ *
+ * It is what a SEARCH sorts by — the page selects it implicitly when `q` is set — and it
+ * means nothing without one. Offering it as a fifth chip would let someone pick "relevance"
+ * on an empty query and get an ordering with no ranking behind it.
+ */
 export function isContactSort(value: unknown): value is ContactSort {
-  return CONTACT_SORTS.some((s) => s.value === value);
+  return (
+    value === "relevance" || CONTACT_SORTS.some((s) => s.value === value)
+  );
 }
 
 /**
@@ -95,6 +113,8 @@ export type ContactListRow = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar: boolean;
   relationshipScore: number;
   /** 0–1, matching what the UI renders. Stored as a 0–100 integer so it can be indexed. */
   closeness: number;
@@ -103,6 +123,10 @@ export type ContactListRow = {
   nextFollowUpAt: Date | null;
   lastInteractionAt: Date | null;
   tags: string[];
+  /** Why this contact matched an active search, only when that isn't obvious from the row
+   *  itself (e.g. a past role, not their current company field). Null outside a search, and
+   *  for the common case where the match is already visible in the row's own text. */
+  matchReason: string | null;
 };
 
 export type ContactsPage = {
@@ -117,4 +141,11 @@ export type ContactPickerOption = {
   fullName: string;
   preferredName: string | null;
   company: string | null;
+  /** For the gendered fallback illustration when there is no photo. */
+  firstName: string | null;
+  /**
+   * Already browser-safe — `clientAvatarUrlSql` decides this in Postgres so a picker never
+   * selects `profile_image_url`, which holds up to 120 KB of base64 per contact.
+   */
+  avatarUrl: string | null;
 };

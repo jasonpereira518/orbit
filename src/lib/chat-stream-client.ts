@@ -18,26 +18,35 @@ export type ChatStreamHandlers = {
   onError: (message: string) => void;
 };
 
+export const CHAT_SIGNED_OUT_MESSAGE = "You’re signed out — sign in again to keep chatting";
+
+export type ChatResponseKind = "stream" | "signed_out" | "error";
+
 /**
- * Whether this failure is the caller's own Stop button rather than something going wrong.
- *
- * Aborting a fetch rejects, and the rejection reached `onError` like any other — so pressing
- * Stop showed a red toast reading "BodyStreamBuffer was aborted" and, because the panel's
- * error path clears the turn, deleted the question and the partial answer along with it.
- * Stopping a reply you asked for is not an error, and it certainly is not a reason to throw
- * away what the person typed.
- *
- * Both the DOMException name and the signal are checked: the name is what the platform
- * throws for `fetch`, and the signal covers a reader rejecting with something else after the
- * abort has already landed.
+ * What came back from `/api/chat`, before a byte of it is parsed. A 200 that is not an
+ * event stream is the sign-in page reached through a followed redirect — the one way a
+ * signed-out request used to look like success.
  */
-function isAbort(err: unknown, signal?: AbortSignal): boolean {
-  if (signal?.aborted) return true;
-  return err instanceof DOMException && err.name === "AbortError";
+export function classifyChatResponse(res: {
+  status: number;
+  ok: boolean;
+  contentType: string | null;
+}): ChatResponseKind {
+  if (res.status === 401) return "signed_out";
+  if (!res.ok) return "error";
+  return (res.contentType ?? "").toLowerCase().includes("text/event-stream")
+    ? "stream"
+    : "signed_out";
 }
 
 export async function streamChat(
-  body: { question: string; threadId?: string | null; contactId?: string | null },
+  body: {
+    question: string;
+    threadId?: string | null;
+    contactId?: string | null;
+    /** Contact ids the composer's `@Name` chips resolved to. */
+    contextContactIds?: string[];
+  },
   handlers: ChatStreamHandlers,
   signal?: AbortSignal
 ): Promise<void> {
@@ -50,12 +59,20 @@ export async function streamChat(
       signal,
     });
   } catch (err) {
-    if (isAbort(err, signal)) return;
     handlers.onError(err instanceof Error ? err.message : "Could not reach Orbit");
     return;
   }
 
-  if (!res.ok || !res.body) {
+  const kind = classifyChatResponse({
+    status: res.status,
+    ok: res.ok,
+    contentType: res.headers.get("content-type"),
+  });
+  if (kind === "signed_out") {
+    handlers.onError(CHAT_SIGNED_OUT_MESSAGE);
+    return;
+  }
+  if (kind === "error" || !res.body) {
     let message = `Chat failed (${res.status})`;
     try {
       const data = (await res.json()) as { error?: string };
@@ -86,8 +103,6 @@ export async function streamChat(
       for (const event of parsed.events) dispatch(event, handlers);
     }
   } catch (err) {
-    // Whatever streamed before the stop stays on screen; the caller asked for it to end.
-    if (isAbort(err, signal)) return;
     handlers.onError(err instanceof Error ? err.message : "The connection dropped");
   }
 }

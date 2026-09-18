@@ -2,6 +2,7 @@ import { cache } from "react";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, interactions, userGoals, userSettings } from "@/db/schema";
+import { countsAsTouch } from "@/lib/interaction-provenance";
 import {
   applyClosenessCohort,
   buildClosenessCohort,
@@ -241,7 +242,7 @@ async function readStoredCohortResult(
         ...constellationSignalAggregates,
       })
       .from(interactions)
-      .where(eq(interactions.userId, userId))
+      .where(and(eq(interactions.userId, userId), countsAsTouch()))
       .groupBy(interactions.contactId),
   ]);
 
@@ -356,7 +357,7 @@ async function buildCohortResult(
         ...constellationSignalAggregates,
       })
       .from(interactions)
-      .where(eq(interactions.userId, userId))
+      .where(and(eq(interactions.userId, userId), countsAsTouch()))
       .groupBy(interactions.contactId),
     db.query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),

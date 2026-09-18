@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Mail } from "lucide-react";
+import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import {
   setEmailActivitySync,
@@ -31,7 +32,7 @@ export function EmailActivityPanel({ status }: { status: EmailActivityStatus }) 
         toast.success(next ? "Email activity on" : "Email activity off");
       } catch (err) {
         setEnabled(previous);
-        toast.error(err instanceof Error ? err.message : "Could not save");
+        toast.error(friendlyError(err, "Couldn’t save that — try again?"));
       }
     });
   }

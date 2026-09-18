@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { formatDistanceToNow } from "date-fns";
 import {
   Copy,
   Mail,
@@ -12,7 +13,7 @@ import {
   NotebookPen,
   Coffee,
 } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { runToastAction, toast } from "@/lib/toast";
 import {
   draftFollowUpResponse,
   moveReminderToList,
@@ -20,12 +21,12 @@ import {
 import type { ReminderActionKind } from "@/db/schema";
 import { ACTION_KIND_LABELS } from "@/lib/reminder-action-kind";
 import { ReminderDoneSnooze } from "@/components/reminders/reminder-done-snooze";
-import { formatDueLabel } from "@/lib/dates";
-import { AbsoluteDay } from "@/components/ui/relative-time";
 import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const TYPE_LABELS: Record<string, string> = {
   manual: "Task",
@@ -44,6 +45,24 @@ const TYPE_STYLES: Record<string, string> = {
   ai_suggested: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
   extracted_date: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
 };
+
+function dueLabel(dueDate: Date | string | null | undefined) {
+  if (!dueDate) return null;
+  const d = new Date(dueDate);
+  if (Number.isNaN(d.getTime())) return null;
+  const overdue = d <= new Date();
+  if (overdue) {
+    const days = Math.max(
+      1,
+      Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24))
+    );
+    return { text: `Overdue ${days} day${days === 1 ? "" : "s"}`, overdue: true };
+  }
+  return {
+    text: `Due ${formatDistanceToNow(d, { addSuffix: true })}`,
+    overdue: false,
+  };
+}
 
 export type ReminderCardListOption = {
   id: string;
@@ -66,7 +85,6 @@ export function ReminderCard({
   showListMove = false,
   compact = false,
   noteBatchId,
-  status = "pending",
 }: {
   id: string;
   title: string;
@@ -84,11 +102,8 @@ export function ReminderCard({
   compact?: boolean;
   /** When this reminder came from a confirmed note paste, links the type chip back to its results page. */
   noteBatchId?: string | null;
-  /** Drives the reopen affordance and the completed styling. */
-  status?: string;
 }) {
-  const due = formatDueLabel(dueDate);
-  const isDone = status === "done" || status === "completed";
+  const due = dueLabel(dueDate);
   const typeLabel = noteBatchId ? "From notes" : TYPE_LABELS[reminderType] ?? "Task";
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -103,7 +118,7 @@ export function ReminderCard({
         setDraft(result.body);
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not draft follow-up"
+          friendlyError(err, TOAST_COPY.draftFollowUpFailed)
         );
       }
     });
@@ -167,25 +182,12 @@ export function ReminderCard({
             <p
               className={cn(
                 "mt-1 text-xs",
-                // A completed reminder is not overdue work. It used to render in the
-                // same amber "Overdue 1 day" as a live one, so the Done tab was
-                // indistinguishable from the pending list except by which tab you were
-                // on.
-                due.tone === "overdue" && !isDone
+                due.overdue
                   ? "font-medium text-amber-700 dark:text-amber-300"
                   : "text-muted-foreground"
               )}
             >
-              {isDone ? "Completed" : due.text}
-              {/* The absolute day alongside the relative phrase: two reminders on the
-                  same date used to read "in about 4 hours" and "in about 24 hours".
-                  `AbsoluteDay` rather than a bare `formatAbsoluteDay` because this is
-                  server-rendered: the raw helper reads the runtime's locale and timezone,
-                  which differ between the server and the reader's browser, so it both
-                  mismatched on hydration and could name the wrong day outright. */}
-              {!isDone && dueDate && (
-                <AbsoluteDay date={dueDate} className="text-muted-foreground" prefix=" · " />
-              )}
+              {due.text}
             </p>
           )}
 
@@ -255,17 +257,20 @@ export function ReminderCard({
                 onChange={(e) => {
                   const next = e.target.value;
                   if (!next || next === listId) return;
-                  startMove(async () => {
-                    try {
-                      await moveReminderToList(id, next);
-                      toast.success("Moved");
-                      router.refresh();
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Could not move"
-                      );
-                    }
-                  });
+                  const previous = listId;
+                  const nextName = lists.find((l) => l.id === next)?.name;
+                  startMove(() =>
+                    runToastAction({
+                      run: () => moveReminderToList(id, next),
+                      success: nextName ? `Moved to ${nextName}` : "Moved",
+                      failure: "Couldn’t move that reminder — try again?",
+                      refresh: () => router.refresh(),
+                      // The prior list is already on the card, so the inverse is just
+                      // a move back. Offered only when there was a list to return to.
+                      undo: () =>
+                        previous ? () => moveReminderToList(id, previous) : null,
+                    }).then(() => undefined)
+                  );
                 }}
               >
                 {lists.map((l) => (
@@ -277,18 +282,18 @@ export function ReminderCard({
             </div>
           )}
         </div>
-        <div className="flex shrink-0 items-start gap-1">
+        <div className="flex shrink-0 items-start gap-1 pointer-coarse:gap-4">
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
-            className="text-muted-foreground"
+            className="tap-target relative text-muted-foreground"
             aria-label="Edit reminder"
             onClick={() => setEditing(true)}
           >
             <Pencil className="size-3.5" />
           </Button>
-          <ReminderDoneSnooze id={id} status={status} />
+          <ReminderDoneSnooze id={id} />
         </div>
       </div>
 
@@ -322,7 +327,7 @@ export function ReminderCard({
               className="h-7 px-2 text-xs"
               onClick={() => {
                 void navigator.clipboard.writeText(draft);
-                toast.success("Copied to clipboard");
+                toast.success(TOAST_COPY.copied);
               }}
             >
               <Copy className="mr-1 h-3 w-3" />

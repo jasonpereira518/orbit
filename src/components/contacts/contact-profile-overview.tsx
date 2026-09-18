@@ -16,13 +16,14 @@ import {
 } from "@/components/ui/card";
 import { EditableFactList } from "@/components/contacts/editable-fact-list";
 import type { ClosenessBreakdown } from "@/lib/closeness";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export function ContactProfileOverview({
   contactId,
   aiSummary,
   keyFacts,
   sharedInterests,
-  opportunities,
   industry,
   closeness,
   lastTouchAt,
@@ -35,7 +36,6 @@ export function ContactProfileOverview({
   aiSummary: string | null;
   keyFacts: string[];
   sharedInterests: string[];
-  opportunities: string[];
   industry: string | null;
   closeness: ClosenessBreakdown;
   lastTouchAt: Date | string | null;
@@ -81,9 +81,7 @@ export function ContactProfileOverview({
                     router.refresh();
                   } catch (err) {
                     toast.error(
-                      err instanceof Error
-                        ? err.message
-                        : "Could not generate summary"
+                      friendlyError(err, TOAST_COPY.summaryFailed)
                     );
                   }
                 })
@@ -110,9 +108,13 @@ export function ContactProfileOverview({
 
       {/* Rendered even when empty, unlike before. These are the fields the AI fills in, and
           a card that only appears once something already exists gives the user no way to
-          add the first entry — or to discover that Orbit tracks this at all. `opportunities`
-          was the extreme case: written by every extraction, shown on the admin contact page,
-          and never once shown to the person whose network it describes. */}
+          add the first entry — or to discover that Orbit tracks this at all.
+
+          Opportunities are NOT edited here. This branch added a third card for them, before
+          main's meeting-notes work made `contacts.opportunities` a derived mirror of the
+          `contact_opportunities` table — so an edit written straight to the column would be
+          silently overwritten the next time that mirror was rebuilt. They have their own
+          typed section on this page now (`contact-opportunities-section.tsx`). */}
       <EditableFactList
         contactId={contactId}
         field="keyFacts"
@@ -131,14 +133,6 @@ export function ContactProfileOverview({
         items={sharedInterests}
       />
 
-      <EditableFactList
-        contactId={contactId}
-        field="opportunities"
-        title="Opportunities"
-        addLabel="Add opportunity"
-        emptyHint="Nothing yet. What this person could help with, or you could help them with."
-        items={opportunities}
-      />
 
       {industry?.trim() ? (
         <Card className="border-border/70 shadow-none">

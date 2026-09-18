@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { managedKeysConfigured } from "@/lib/ai-access";
 import {
   calendarSubscriptions,
   gmailConnections,
@@ -270,11 +271,12 @@ export async function aiErrorBreakdown(
 }
 
 /**
- * Accounts that cannot use AI at all, because no key exists for the provider they selected.
+ * Accounts that cannot use AI at all: no key exists for the provider they selected, and
+ * they are not on Lifetime with a managed key to fall back on.
  *
- * Production is strictly BYOK, so these accounts hit a hard error on their first capture.
- * The inspector calls this the highest-value signal in the console; it belongs on a
- * cross-account screen for the same reason.
+ * AI is BYOK on every plan but Lifetime, so these accounts hit a hard error on their first
+ * capture. The inspector calls this the highest-value signal in the console; it belongs on
+ * a cross-account screen for the same reason.
  */
 export async function accountsMissingProviderKey(): Promise<
   Array<{ userId: string; email: string | null; provider: string }>
@@ -297,7 +299,12 @@ export async function accountsMissingProviderKey(): Promise<
       provider: sql<string>`coalesce(${userSettings.aiProvider}, 'gemini')`,
     })
     .from(userSettings)
-    .where(sql`NOT (${hasKey})`);
+    .where(
+      // Same rule as `resolvePlan`'s Lifetime branch; only relevant when Orbit holds a key.
+      Object.values(managedKeysConfigured()).some(Boolean)
+        ? sql`NOT (${hasKey}) AND NOT (${userSettings.compedPlan} = 'lifetime' OR (${userSettings.compedPlan} IS NULL AND ${userSettings.lifetimePurchasedAt} IS NOT NULL))`
+        : sql`NOT (${hasKey})`
+    );
 }
 
 export async function getAdminHealth(

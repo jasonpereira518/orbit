@@ -44,19 +44,19 @@ export const PROVIDER_MODELS: Record<
 > = {
   gemini: [
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
+    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite (cheapest)" },
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
   ],
   openai: [
-    { value: "gpt-4o-mini", label: "GPT-4o mini" },
+    { value: "gpt-4o-mini", label: "GPT-4o mini (cheapest)" },
     { value: "gpt-4o", label: "GPT-4o" },
     { value: "gpt-4.1-mini", label: "GPT-4.1 mini" },
     { value: "gpt-4.1", label: "GPT-4.1" },
   ],
   anthropic: [
     { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
-    { value: "claude-opus-4", label: "Claude Opus 4" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 (cheapest)" },
+    { value: "claude-opus-4-5", label: "Claude Opus 4.5" },
   ],
 };
 
@@ -69,7 +69,33 @@ export const DEFAULT_MODELS: Record<AiProvider, string> = {
 const LEGACY_MODEL_MAP: Record<string, string> = {
   "gemini-2.5-flash": "gemini-3.5-flash",
   "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
+  // Was offered as a preset but was never a valid Anthropic id (the 4.0 alias was
+  // claude-opus-4-0, and that snapshot retired June 15 2026). Stored settings migrate on read.
+  "claude-opus-4": "claude-opus-4-5",
 };
+
+/**
+ * Anthropic model families that still accept `temperature`.
+ *
+ * An ALLOWLIST on purpose: Claude 4.7 and later (Opus 4.7, 4.8, 5, Sonnet 5, Fable) return
+ * a 400 for a non-default sampling parameter, and a custom id typed into Settings is newer
+ * than any list. Omitting temperature is accepted by every model, so an unknown id falls
+ * safe. Only families still served are listed — Opus 4.0/4.1, Sonnet 4.0 and Claude 3 are
+ * retired, and a request to them fails whatever it carries.
+ */
+const ANTHROPIC_TEMPERATURE_FAMILIES = [
+  "claude-haiku-4-5",
+  "claude-sonnet-4-5",
+  "claude-sonnet-4-6",
+  "claude-opus-4-5",
+  "claude-opus-4-6",
+];
+
+export function anthropicAcceptsTemperature(model: string): boolean {
+  return ANTHROPIC_TEMPERATURE_FAMILIES.some(
+    (family) => model === family || model.startsWith(`${family}-`)
+  );
+}
 
 export function resolveAiProvider(value?: string | null): AiProvider {
   if (value === "openai" || value === "anthropic" || value === "gemini") {

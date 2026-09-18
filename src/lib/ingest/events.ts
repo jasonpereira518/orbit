@@ -54,6 +54,7 @@ import { createCompanyResolver, type CompanyResolver } from "@/lib/companies";
 import { recordDuplicateSuggestion } from "@/lib/contact-merge";
 import { interactionExternalId } from "@/lib/ingest/external-id";
 import type { InteractionInsert, ReminderInsert } from "@/lib/import-engine";
+import { reportAndContinue } from "@/lib/report-error";
 
 /** One identifiable person on an event. Every field optional — sources differ in what they know. */
 export type NetworkParticipant = {
@@ -592,6 +593,6 @@ export async function finalizeIngest(ctx: IngestContext): Promise<void> {
   if (ctx.touchedContactIds.size === 0) return;
   const { markCohortDirty } = await import("@/lib/closeness-materialize");
   const { kickEmbeddingBackfill } = await import("@/lib/embedding-backfill");
-  await markCohortDirty(ctx.userId).catch(() => null);
-  await kickEmbeddingBackfill(ctx.userId).catch(() => null);
+  await markCohortDirty(ctx.userId).catch(reportAndContinue({ where: "job.ingest.cohort-dirty", userId: ctx.userId }, null));
+  await kickEmbeddingBackfill(ctx.userId).catch(reportAndContinue({ where: "job.ingest.embedding-kick", userId: ctx.userId }, null));
 }

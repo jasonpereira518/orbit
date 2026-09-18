@@ -6,15 +6,13 @@ import { requireUserId } from "@/lib/auth";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   downloadAndPersistAvatar,
-  hasFreshNoPhotoMarker,
-  noPhotoMarker,
+  fetchGravatarPhotoUrl,
   fetchLinkedInPhotoUrl,
   isDurableAvatarUrl,
   isUnusableAvatarUrl,
-  MicrolinkRateLimitError,
+  AvatarSourceRateLimitError,
   parseImageDataUrl,
 } from "@/lib/contact-avatar";
-import { isUuid } from "@/lib/ids";
 
 type Params = { params: Promise<{ contactId: string }> };
 
@@ -25,6 +23,42 @@ function dataUrlResponse(dataUrl: string) {
     headers: {
       "Content-Type": parsed.contentType,
       "Cache-Control": "private, max-age=86400",
+    },
+  });
+}
+
+/**
+ * A miss the browser is allowed to remember.
+ *
+ * List rows resolve on demand, so an uncacheable 404 is re-requested on every render and
+ * every scroll pass — which costs more than the on-demand resolution saves. An hour is
+ * short enough to pick up a later backfill, and `orbit:avatars-updated` appends a
+ * cache-busting `?t=` the moment one actually resolves.
+ */
+function miss(status: 404) {
+  return new NextResponse(null, {
+    status,
+    headers: { "Cache-Control": "private, max-age=3600" },
+  });
+}
+
+/**
+ * Quota exhausted.
+ *
+ * `Retry-After` is the honest answer for the tier that ran out — Microlink resets can be
+ * hours away. The browser cache entry is capped far shorter on purpose: it blocks EVERY
+ * tier for that contact, and the free ones (Unavatar, Gravatar) are not the exhausted
+ * ones and may well succeed on the next pass. Caching the full Retry-After would mute a
+ * contact for a whole afternoon over a quota that never applied to it.
+ */
+const MAX_RETRY_CACHE_SEC = 600;
+
+function retryLater(retryAfterSec: number) {
+  return new NextResponse(null, {
+    status: 429,
+    headers: {
+      "Retry-After": String(retryAfterSec),
+      "Cache-Control": `private, max-age=${Math.min(retryAfterSec, MAX_RETRY_CACHE_SEC)}`,
     },
   });
 }
@@ -54,11 +88,6 @@ export async function GET(_req: Request, { params }: Params) {
     return new NextResponse(null, { status: 401 });
   }
   const { contactId } = await params;
-  // Same uuid guard as the contact pages. Without it a junk id in an <img src>
-  // returns a 500 instead of the 404 the caller already handles.
-  if (!isUuid(contactId)) {
-    return new NextResponse(null, { status: 404 });
-  }
   const db = await getDb();
 
   const contact = await db.query.contacts.findFirst({
@@ -67,11 +96,12 @@ export async function GET(_req: Request, { params }: Params) {
       id: true,
       profileImageUrl: true,
       linkedinUrl: true,
+      email: true,
     },
   });
 
   if (!contact) {
-    return new NextResponse(null, { status: 404 });
+    return miss(404);
   }
 
   const stored = contact.profileImageUrl?.trim() || "";
@@ -102,43 +132,36 @@ export async function GET(_req: Request, { params }: Params) {
   // No durable photo yet — resolve from LinkedIn (Microlink + Unavatar fallback). Each
   // resolution spends third-party quota, so this branch alone is rate limited; the
   // redirect and data-URL paths above are one read and stay unmetered.
-  // A recent miss is remembered, so a contact with no findable photo costs one lookup a
-  // week instead of one per page view. Without this, browsing ~30 profiles in a minute
-  // spent the whole `avatarResolve` budget and started 429ing.
-  if (hasFreshNoPhotoMarker(stored)) {
-    return new NextResponse(null, { status: 404 });
-  }
+  const linkedinUrl = contact.linkedinUrl?.trim();
+  const email = contact.email?.trim();
 
-  if (contact.linkedinUrl?.trim()) {
+  if (linkedinUrl || email) {
     try {
-      // Scope string matches the policy key, as every other call site does.
-      await consumeBucket("avatarResolve", userId, RATE_LIMITS.avatarResolve);
-      const photoUrl = await fetchLinkedInPhotoUrl(contactId, contact.linkedinUrl);
+      await consumeBucket("avatar.resolve", userId, RATE_LIMITS.avatarResolve);
+
+      let photoUrl: string | null = null;
+      if (linkedinUrl) {
+        photoUrl = await fetchLinkedInPhotoUrl(contactId, linkedinUrl, userId);
+      }
+      // Same ladder as the backfill: an email-only contact must resolve here too,
+      // or on-demand rows would silently never fill in for them.
+      if (!photoUrl && email) {
+        photoUrl = await fetchGravatarPhotoUrl(contactId, email);
+      }
+
       if (photoUrl) {
         await persistProfileImage(contactId, userId, photoUrl);
         return NextResponse.redirect(photoUrl);
       }
-      // Looked, found nothing. Record it rather than asking again on the next render.
-      await persistProfileImage(contactId, userId, noPhotoMarker());
     } catch (err) {
-      if (isRateLimitedError(err)) {
-        return new NextResponse(null, {
-          status: 429,
-          headers: { "Retry-After": String(err.retryAfterSec) },
-        });
-      }
-      if (err instanceof MicrolinkRateLimitError) {
-        const retryAfterSec = Math.max(
-          1,
-          Math.ceil((err.resetAt - Date.now()) / 1000)
+      if (isRateLimitedError(err)) return retryLater(err.retryAfterSec);
+      if (err instanceof AvatarSourceRateLimitError) {
+        return retryLater(
+          Math.max(1, Math.ceil((err.resetAt - Date.now()) / 1000))
         );
-        return new NextResponse(null, {
-          status: 429,
-          headers: { "Retry-After": String(retryAfterSec) },
-        });
       }
     }
   }
 
-  return new NextResponse(null, { status: 404 });
+  return miss(404);
 }

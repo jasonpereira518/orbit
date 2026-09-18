@@ -4,15 +4,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { runToastAction, toast } from "@/lib/toast";
 import {
   acceptScoreBump,
   dismissSuggestion,
+  restoreSuggestion,
   scheduleFromSuggestion,
 } from "@/actions/reminders";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 const REASON_LABELS: Record<string, string> = {
   job_change: "New role",
@@ -107,7 +109,7 @@ export function SuggestionRow({
                       router.refresh();
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not accept"
+                        friendlyError(err, "Couldn’t accept that — try again?")
                       );
                     }
                   })
@@ -126,13 +128,11 @@ export function SuggestionRow({
                   start(async () => {
                     try {
                       await scheduleFromSuggestion(id, 7);
-                      toast.success("Follow-up scheduled in 7 days");
+                      toast.success("Follow-up set for a week from now");
                       router.refresh();
                     } catch (err) {
                       toast.error(
-                        err instanceof Error
-                          ? err.message
-                          : "Could not schedule follow-up"
+                        friendlyError(err, "Couldn’t schedule that follow-up — try again?")
                       );
                     }
                   })
@@ -154,14 +154,19 @@ export function SuggestionRow({
         <Button
           size="icon"
           variant="ghost"
+          aria-label={`Dismiss suggestion for ${contactName}`}
           disabled={pending}
           className="shrink-0"
           onClick={() =>
-            start(async () => {
-              await dismissSuggestion(id);
-              toast.success("Dismissed");
-              router.refresh();
-            })
+            start(() =>
+              runToastAction({
+                run: () => dismissSuggestion(id),
+                success: "Dismissed",
+                failure: "Couldn’t dismiss that — try again?",
+                refresh: () => router.refresh(),
+                undo: () => () => restoreSuggestion(id),
+              }).then(() => undefined)
+            )
           }
         >
           <X className="h-4 w-4" />
