@@ -19,19 +19,20 @@ import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 
 export default async function DashboardPage() {
-  // Awaiting here does NOT cost the streaming start below. Both layouts above already
-  // resolved this on the same request and `getHiddenSurfaceKeys` is `cache()`d, so this
-  // await settles on an already-resolved promise rather than issuing a query.
+  // Start the bundle BEFORE the visibility await below. That await is free on a full page
+  // load (the layouts resolved it on the same request), but a sidebar click skips the
+  // shared layouts, so there it is real round trips — and awaiting it first put them in
+  // front of the dashboard's own queries. The bundle feeds every card from one network
+  // scan (don't split it into per-card fetches); each Suspense section awaits it.
+  const bundle = fetchDashboard();
+  // Unhandled until a section awaits it; an early rejection must not crash the render.
+  bundle.catch(() => {});
+
   const { hidden } = await resolveSurfaceVisibility(await requireUserId());
   const show = (key: string) => !hidden.has(key);
 
-  // Start the fetches WITHOUT awaiting: the header and grid shell flush
-  // immediately, and each Suspense section below awaits the shared promise
-  // it needs. The bundle promise feeds every card from one network scan
-  // (don't split it into per-card fetches); the outreach summary streams
-  // independently, and is not started at all when its card is hidden — it is
-  // the one query on this page that no other card shares.
-  const bundle = fetchDashboard();
+  // The outreach summary streams independently, and is not started at all when its card
+  // is hidden — it is the one query on this page that no other card shares.
   const outreachSummary = show("dashboard.outreach-performance")
     ? getOutreachPerformanceSummary()
     : null;

@@ -106,7 +106,12 @@ export async function fetchDashboard() {
   // One exception to the deferred rebuild below: an account that has never had a queue
   // built has nothing to render, so deferring would show an empty card on the first
   // visit and the real one only on the second. Builds once, then never again.
-  await ensureOutreachSuggestions(userId).catch(() => {});
+  //
+  // Started alongside the load rather than awaited ahead of it: on every visit but an
+  // account's first, this is a one-row existence check that used to add a whole round
+  // trip in front of everything else. When it DID build (returns true), the load below
+  // raced it and may have read an empty queue, so it is simply run again — once, ever.
+  const ensured = ensureOutreachSuggestions(userId).catch(() => false);
   // Calendar sync and the suggestion rebuild are slow; run both after the
   // response instead of on the dashboard's critical path. Suggestions are
   // stale-while-revalidate: this load renders whatever exists, the next
@@ -119,24 +124,35 @@ export async function fetchDashboard() {
       )
       .catch(() => {});
   });
-  const data = await traced(
-    "dashboard.load",
-    () =>
-      getDashboardData(userId, {
-        // Clerk profile fetch runs concurrently with the DB work; resolved at
-        // its single use site (graphPreview.summary.userName).
-        userName: getDisplayProfile()
-          .then((p) => p?.name || undefined)
-          .catch(() => undefined),
-      }),
-    { userId }
-  );
+  const load = () =>
+    traced(
+      "dashboard.load",
+      () =>
+        getDashboardData(userId, {
+          // Profile read runs concurrently with the DB work; resolved at its single use
+          // site (graphPreview.summary.userName).
+          userName: getDisplayProfile()
+            .then((p) => p?.name || undefined)
+            .catch(() => undefined),
+        }),
+      { userId }
+    );
 
   // No rows donated: getNetworkStats derives its four whole-network figures in SQL now. It
   // used to take the dashboard's scan, which is what forced last_interaction_at and
-  // created_at to be selected for the entire account to produce four integers.
-  const { getNetworkStats } = await import("@/lib/network-stats");
-  const networkStats = await getNetworkStats(userId);
+  // created_at to be selected for the entire account to produce four integers. Started
+  // with the load, not after it — the two share nothing, and in sequence the stats query
+  // added its full latency to every dashboard render.
+  const networkStatsPromise = import("@/lib/network-stats").then(({ getNetworkStats }) =>
+    getNetworkStats(userId)
+  );
+
+  const [firstLoad, builtQueue, networkStats] = await Promise.all([
+    load(),
+    ensured,
+    networkStatsPromise,
+  ]);
+  const data = builtQueue ? await load() : firstLoad;
 
   return { data, networkStats };
 }

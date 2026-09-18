@@ -181,6 +181,89 @@ export function getClosenessCohort(
 }
 
 /**
+ * The closeness inputs ONE contact's page needs, in a single parallel round of queries.
+ *
+ * `getClosenessCohort` answers for the whole network, and the contact page used to call it
+ * to explain a single score: three round trips in sequence (the cohort row, an unscored
+ * count, then a scan of every contact's stored breakdown plus a group-by over every
+ * interaction), all to read one row out of each. This reads that one row directly — the
+ * stored distribution, this contact's stored breakdown, the goals, and this contact's
+ * interaction tallies — all at once.
+ *
+ * Returns the same result shape, populated for `contactId` only, so the page reads it
+ * exactly as before. Falls back to the whole-network path whenever the stored data cannot
+ * answer (no usable distribution, or this contact has never been scored), which is also
+ * the path that repairs it. Unlike that path it does not recompute because OTHER contacts
+ * are unscored: this page shows one score, and the list or dashboard will pick them up.
+ */
+export async function getContactCloseness(
+  userId: string,
+  contactId: string
+): Promise<ClosenessCohortResult> {
+  // Something on this request already built the whole cohort: reuse it rather than query.
+  const existing = cohortStore().get(userId);
+  if (existing) return existing;
+
+  const db = await getDb();
+  const since = new Date(Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const [cohortRow, scored, goalRows, touchRows] = await Promise.all([
+    readCohortRow(userId),
+    // Raw SQL for the same reason as `readStoredCohortResult`: `closeness_breakdown` is
+    // deliberately absent from the Drizzle schema.
+    db.execute(sql`
+      select closeness_breakdown as breakdown
+      from contacts
+      where user_id = ${userId} and id = ${contactId} and closeness_breakdown is not null
+    `),
+    db.query.userGoals.findMany({
+      where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
+      columns: { text: true },
+    }),
+    db
+      .select({
+        contactId: interactions.contactId,
+        recent: sql<number>`count(*) filter (where ${interactions.interactionDate} >= ${since})::int`,
+        total: sql<number>`count(*)::int`,
+        ...constellationSignalAggregates,
+      })
+      .from(interactions)
+      .where(
+        and(
+          eq(interactions.userId, userId),
+          eq(interactions.contactId, contactId),
+          countsAsTouch()
+        )
+      )
+      .groupBy(interactions.contactId),
+  ]);
+
+  const breakdown = rowsOf<{ breakdown: ClosenessBreakdown | null }>(scored)[0]?.breakdown;
+  if (!cohortRow || !isUsableSnapshot(cohortRow.snapshot) || !breakdown) {
+    return getClosenessCohort(userId);
+  }
+
+  const snapshot = cohortRow.snapshot;
+  return {
+    cohort: cohortFromSnapshot(snapshot),
+    byId: new Map([[contactId, breakdown]]),
+    averageRaw: snapshot.averageRaw ?? 0,
+    goals: goalRows.map((g) => g.text),
+    touchCounts: new Map(touchRows.map((r) => [r.contactId, Number(r.recent) || 0])),
+    interactedIds: new Set(
+      touchRows.filter((r) => Number(r.total) > 0).map((r) => r.contactId)
+    ),
+    constellationSignals: signalsFromRows(touchRows),
+    inputs: {
+      maxCompany: snapshot.maxCompany ?? 1,
+      maxSchool: snapshot.maxSchool ?? 1,
+      userDomain: snapshot.userDomain ?? null,
+      mailConnected: snapshot.mailConnected ?? false,
+      calendarConnected: snapshot.calendarConnected ?? false,
+    },
+  };
+}
+
+/**
  * Read the scores this user already has, or compute them if there are none worth reading.
  *
  * Staleness is not a reason to recompute here — a ranking that is one debounce window

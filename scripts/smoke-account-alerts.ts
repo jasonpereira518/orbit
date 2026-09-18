@@ -50,6 +50,7 @@ import { FREE_CONTACT_LIMIT } from "../src/lib/plan-limits";
 import { getSurface } from "../src/lib/surfaces";
 import { startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { invalidateHiddenSurfaceKeys } from "../src/lib/surface-visibility";
 
 const USER = "smoke-account-alerts-user";
 const MINUTE = 60 * 1000;
@@ -84,6 +85,7 @@ async function reset() {
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   await db.delete(appSurfaceFlags);
+  invalidateHiddenSurfaceKeys();
   await ensureUserSettings(USER);
   // Healthy baseline: onboarded, a key for the selected provider, on a paid plan so the
   // contact cap does not apply.
@@ -390,11 +392,14 @@ async function main() {
     .insert(appSurfaceFlags)
     .values({ surfaceKey: "settings.ai", hiddenBy: "smoke" })
     .onConflictDoNothing();
+  // Written directly, not through setSurfaceHidden, so the instance memo must be told.
+  invalidateHiddenSurfaceKeys();
   check(
     "17 an alert pointing at a hidden surface is dropped",
     !(await codes()).includes("ai.no_key")
   );
   await db.delete(appSurfaceFlags);
+  invalidateHiddenSurfaceKeys();
 
   // Every surfaceKey the copy layer emits must be a real registry key, or the filter
   // above silently never matches.

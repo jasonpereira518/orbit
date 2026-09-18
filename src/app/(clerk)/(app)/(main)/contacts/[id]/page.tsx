@@ -20,7 +20,7 @@ import { ContactTimeline } from "@/components/contacts/contact-timeline";
 import { Reveal } from "@/components/motion/reveal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
-import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { getContactCloseness } from "@/lib/closeness-cohort";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import { constellationEligibility } from "@/lib/constellation-eligibility";
 import { requireUserId } from "@/lib/auth";
@@ -70,11 +70,12 @@ export default async function ContactDetailPage({
   // requireUserId()/auth() there — see the note below), so there needs to be
   // a single place upstream that resolves it during render.
   const userIdPromise = requireUserId();
-  // Closeness is relative, so even a single-contact page needs the whole
-  // orbit's distribution. Cached per request, and shared with any other
-  // surface on this page that scores contacts.
+  // Closeness is relative, so a single score needs the orbit's distribution — but only
+  // the stored one plus this contact's own row, read in one parallel round. The
+  // whole-network cohort (three sequential round trips and a scan of every contact) is
+  // only the fallback when nothing usable is stored. See `getContactCloseness`.
   const cohortPromise = userIdPromise.then((userId) =>
-    getClosenessCohort(userId)
+    getContactCloseness(userId, id)
   );
   const mentionsPromise = userIdPromise
     .then((u) => listContactMentions(u, id))
@@ -261,7 +262,14 @@ export default async function ContactDetailPage({
           company={contact.company}
           school={contact.school}
           location={contact.location}
-          profileImageUrl={contact.profileImageUrl}
+          profileImageUrl={
+            // Same rule as the list's `clientAvatarUrlSql`: an inline `data:` image (up to
+            // ~120 KB of base64) is served by `/api/avatars/{id}` instead of riding along in
+            // this page's payload. The hero only needs to know a stored photo exists.
+            contact.profileImageUrl?.trim().startsWith("data:image/")
+              ? `/api/avatars/${contact.id}`
+              : contact.profileImageUrl
+          }
           linkedinUrl={contact.linkedinUrl}
           channels={channels}
           formInitial={formInitial}
