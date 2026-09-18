@@ -480,16 +480,9 @@ export async function acquisitionFunnel(
   ];
 }
 
-/**
- * The minimum denominator a percentage is allowed to have.
- *
- * `/admin/growth` bans rates outright — "at this scale a percentage is two people wearing
- * a confidence interval". Conversion rate is the one question that cannot be answered
- * without one, so the compromise is this: every rate prints its own fraction beside it,
- * and below this many observations the percentage is withheld entirely rather than
- * dressing up a coin flip as a trend.
- */
-export const MIN_RATE_DENOMINATOR = 30;
+// Moved to a dependency-free module so client charts can share it; re-exported here so
+// every existing server import keeps working.
+export { MIN_RATE_DENOMINATOR, formatRate } from "@/lib/format-rate";
 
 /**
  * Seconds as a short human duration. Shared by the traffic page and the per-account
@@ -504,14 +497,6 @@ export function formatDuration(seconds: number | null): string {
   const h = Math.floor(m / 60);
   const rem = m % 60;
   return rem === 0 ? `${h}h` : `${h}h ${rem}m`;
-}
-
-/** "9 of 14" — with "(64%)" appended only once the denominator can support it. */
-export function formatRate(count: number, of: number | null): string {
-  if (of == null || of === 0) return count.toLocaleString();
-  const fraction = `${count.toLocaleString()} of ${of.toLocaleString()}`;
-  if (of < MIN_RATE_DENOMINATOR) return fraction;
-  return `${fraction} (${Math.round((count / of) * 100)}%)`;
 }
 
 /* ------------------------------------------------------------------------------------
@@ -784,7 +769,7 @@ export type AccountTrafficRow = {
 /**
  * Accounts ranked by how much they actually used the product in the window.
  *
- * Distinct from `activeTrend` in `admin-trends.ts`, which counts accounts that WROTE
+ * Distinct from `rollingActiveTrend` in `admin-trends.ts`, which counts accounts that WROTE
  * something across five tables. This counts accounts that showed up and looked — the
  * people who open Orbit daily and read without editing are invisible to the write-based
  * measure and are exactly who this finds.
