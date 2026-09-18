@@ -107,10 +107,16 @@ export function ScanControls({
   onRawFiles,
   onPages,
   onTranscript,
+  compact = false,
 }: {
   /** The host's accept string, for the general picker. */
   accept: string;
   disabled?: boolean;
+  /**
+   * Desktop only: smaller text and padding, buttons sharing one non-wrapping row. For hosts
+   * narrower than the ~430px the full-size labels need side by side (a side sheet).
+   */
+  compact?: boolean;
   /** Text, calendar, email and audio files — passed through untouched. */
   onRawFiles: (files: File[]) => void;
   /** Images and PDF pages, already downscaled and re-encoded to JPEG. */
@@ -162,6 +168,10 @@ export function ScanControls({
   }
 
   const busy = disabled || normalizing;
+  // `flex-1` shares the row's width out evenly instead of leaving a gap after the last
+  // button; the row never wraps, so all three stay on one line.
+  const compactButton = compact ? "h-7 flex-1 justify-center gap-1 px-2 text-xs" : undefined;
+  const iconSize = compact ? "size-3.5" : "size-4";
 
   return (
     <div className="space-y-3">
@@ -203,20 +213,25 @@ export function ScanControls({
           onClick={() => nativeCameraRef.current?.click()} />
       </div>
 
-      <div className="hidden flex-wrap items-center gap-2 md:flex">
-        <Button type="button" variant="outline" disabled={busy}
+      <div
+        className={cn(
+          "hidden items-center md:flex",
+          compact ? "gap-1.5" : "flex-wrap gap-2"
+        )}
+      >
+        <Button type="button" variant="outline" disabled={busy} className={compactButton}
           onClick={() => fileRef.current?.click()}>
-          <Upload className="size-4" />
+          <Upload className={iconSize} />
           Upload notes / media
         </Button>
-        <Button type="button" variant="outline" disabled={busy}
+        <Button type="button" variant="outline" disabled={busy} className={compactButton}
           onClick={() => setMode("camera")}>
-          <Camera className="size-4" />
+          <Camera className={iconSize} />
           Webcam
         </Button>
-        <Button type="button" variant="outline" disabled={busy}
+        <Button type="button" variant="outline" disabled={busy} className={compactButton}
           onClick={() => setMode("qr")}>
-          <Smartphone className="size-4" />
+          <Smartphone className={iconSize} />
           Use your phone
         </Button>
       </div>
