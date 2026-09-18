@@ -9,6 +9,7 @@ import {
   APP_NAV_CORE,
   APP_NAV_EXTRAS,
   APP_NAV_SETTINGS,
+  fullPrefetch,
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
@@ -45,6 +46,7 @@ function SidebarNavLink({
   return (
     <Link
       href={item.href}
+      prefetch={fullPrefetch(item, active)}
       title={
         hiddenFromUsers
           ? `${item.label} — hidden from users`
