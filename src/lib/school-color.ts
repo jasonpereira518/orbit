@@ -38,7 +38,7 @@ const SCHOOL_COLORS: Record<string, string> = {
   "carnegie mellon university": "#C41230",
   cmu: "#C41230",
   "university of texas": "#BF5700",
-  ut: "#BF5700",
+  "ut austin": "#BF5700",
   "university of washington": "#4B2E83",
   "duke university": "#003087",
   duke: "#003087",
@@ -56,6 +56,46 @@ const SCHOOL_COLORS: Record<string, string> = {
   "university of waterloo": "#FDD54F",
   georgetown: "#041E42",
   "georgetown university": "#041E42",
+  // Carolina blue.
+  unc: "#4B9CD3",
+  "unc chapel hill": "#4B9CD3",
+  "university of north carolina": "#4B9CD3",
+  "university of north carolina at chapel hill": "#4B9CD3",
+  "nc state": "#CC0000",
+  ncsu: "#CC0000",
+  "north carolina state university": "#CC0000",
+  "wake forest": "#9E7E38",
+  "wake forest university": "#9E7E38",
+  "university of virginia": "#232D4B",
+  uva: "#232D4B",
+  "virginia tech": "#861F41",
+  "university of georgia": "#BA0C2F",
+  "university of florida": "#0021A5",
+  "ohio state": "#BB0000",
+  "ohio state university": "#BB0000",
+  "the ohio state university": "#BB0000",
+  "penn state": "#041E42",
+  "pennsylvania state university": "#041E42",
+  "university of wisconsin": "#C5050C",
+  "university of illinois": "#E84A27",
+  purdue: "#CEB888",
+  "purdue university": "#CEB888",
+  usc: "#990000",
+  "university of southern california": "#990000",
+  "johns hopkins": "#002D72",
+  "johns hopkins university": "#002D72",
+  vanderbilt: "#CFAE70",
+  "vanderbilt university": "#CFAE70",
+  "rice university": "#00205B",
+  emory: "#012169",
+  "emory university": "#012169",
+  "notre dame": "#0C2340",
+  "university of notre dame": "#0C2340",
+  "boston university": "#CC0000",
+  "boston college": "#8A100B",
+  "university of maryland": "#E21833",
+  "uc san diego": "#182B49",
+  ucsd: "#182B49",
 };
 
 /** Curated primary brand colors for common companies. */
@@ -71,7 +111,9 @@ const COMPANY_COLORS: Record<string, string> = {
   openai: "#10A37F",
   microsoft: "#00A4EF",
   apple: "#A2AAAD",
-  stripe: "#635BFF",
+  // Stripe's "blurple" is #635BFF — hue ~243°, on the blue/violet line. On a black sky, and
+  // mixed toward white for the stars, it read plainly blue. Nudged to the violet people see.
+  stripe: "#9061F9",
   vercel: "#FFFFFF",
   netflix: "#E50914",
   uber: "#000000",
@@ -126,9 +168,44 @@ const COMPANY_COLORS: Record<string, string> = {
   robinhood: "#CCFF00",
   tesla: "#CC0000",
   spacex: "#005288",
-  anthropic: "#D4A27F",
-  perplexity: "#22B8CF",
+  // Anthropic's clay, not the older tan.
+  anthropic: "#D97757",
+  perplexity: "#20808D",
   cursor: "#7C6CFF",
+  mistral: "#FA520F",
+  "mistral ai": "#FA520F",
+  linear: "#5E6AD2",
+  "hugging face": "#FFD21E",
+  cohere: "#FF7759",
+  twilio: "#F22F46",
+  cloudflare: "#F38020",
+  lyft: "#FF00BF",
+  pinterest: "#E60023",
+  reddit: "#FF4500",
+  snap: "#FFFC00",
+  snapchat: "#FFFC00",
+  tiktok: "#FE2C55",
+  samsung: "#1428A0",
+  cisco: "#049FD9",
+  dell: "#007DB8",
+  hp: "#0096D6",
+  "hewlett packard": "#0096D6",
+  paypal: "#003087",
+  visa: "#1A1F71",
+  mastercard: "#EB001B",
+  "american express": "#006FCF",
+  amex: "#006FCF",
+  "wells fargo": "#D71E28",
+  "capital one": "#004977",
+  pwc: "#D04A02",
+  kpmg: "#00338D",
+  "ernst & young": "#FFE600",
+  doordash: "#FF3008",
+  instacart: "#43B02A",
+  hubspot: "#FF7A59",
+  asana: "#F06A6A",
+  canva: "#00C4CC",
+  duolingo: "#58CC02",
 };
 
 const NEUTRAL_STAR = "#c8d0dc";
@@ -139,6 +216,8 @@ export function normalizeOrgKey(name: string | null | undefined): string {
     .trim()
     .toLowerCase()
     .replace(/[.,']/g, "")
+    // "UNC-Chapel Hill" and "UNC Chapel Hill" are one school.
+    .replace(/\s*[-–—]\s*/g, " ")
     .replace(/\s+/g, " ")
     .replace(/\s*\(.*\)\s*$/, "")
     .trim();
@@ -165,51 +244,109 @@ function hashToBrandHex(input: string): string {
   return hslToHex(hue, sat, light);
 }
 
+/** Whether `words` appears in `within` as a run of whole words. */
+function containsWords(within: string[], words: string[]): boolean {
+  if (words.length === 0 || words.length > within.length) return false;
+  for (let i = 0; i + words.length <= within.length; i++) {
+    if (words.every((w, j) => within[i + j] === w)) return true;
+  }
+  return false;
+}
+
+/** Shorter than this, a name is only ever an exact match — "ut" or "x" is not a brand inside a word. */
+const MIN_PARTIAL_NAME = 4;
+
+/**
+ * The brand a name refers to, matched on whole words.
+ *
+ * Exact first. Then a known name inside this one ("Stripe Inc", "Google Cloud") — the longest,
+ * so "Boston College" is not "Boston University" and "Penn State" is not Penn. Then this name
+ * inside a known one ("Carnegie" → "Carnegie Mellon"), for names long enough to mean something.
+ * Whole words throughout: raw substrings painted "Exxon" and "Box" white (they contain "x") and
+ * "Utah State" Texas orange (it contains "ut").
+ */
 function lookupColor(
   key: string,
   map: Record<string, string>
 ): string | null {
   if (!key) return null;
   if (map[key]) return map[key];
+  const words = key.split(" ");
+  let best: string | null = null;
+  for (const known of Object.keys(map)) {
+    if (containsWords(words, known.split(" ")) && (!best || known.length > best.length)) {
+      best = known;
+    }
+  }
+  if (best) return map[best];
+  if (key.length < MIN_PARTIAL_NAME) return null;
   for (const [known, color] of Object.entries(map)) {
-    if (key.includes(known) || known.includes(key)) return color;
+    if (containsWords(known.split(" "), words)) return color;
   }
   return null;
 }
 
-/** Lift near-black / near-white brands so they glow on the dark map. */
-function mapFriendlyBrand(hex: string): string {
+function luma(hex: string): number {
   const raw = hex.replace("#", "");
-  if (raw.length !== 6) return hex;
   const r = parseInt(raw.slice(0, 2), 16);
   const g = parseInt(raw.slice(2, 4), 16);
   const b = parseInt(raw.slice(4, 6), 16);
-  const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  if (luma < 0.12) return "#6B7C93";
-  if (luma > 0.92) return "#E8EEF7";
-  return hex;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 }
 
-function resolveFromMap(
+/** The dimmest a brand may be drawn on the night sky. */
+const MIN_SKY_LUMA = 0.4;
+
+/**
+ * Make a brand visible on the dark map without changing what colour it is.
+ *
+ * A dark brand is lifted toward white until it clears `MIN_SKY_LUMA`, so Duke stays Duke blue and
+ * Stanford stays cardinal — they used to either stay navy (invisible on black) or, past a cutoff,
+ * all become the same slate grey. Only a brand with no hue at all (a black logo) ends up grey,
+ * which is what it is. Near-white is softened a touch so it does not glare.
+ */
+function mapFriendlyBrand(hex: string): string {
+  const raw = hex.replace("#", "");
+  if (raw.length !== 6) return hex;
+  const l = luma(hex);
+  if (l > 0.92) return "#E8EEF7";
+  if (l >= MIN_SKY_LUMA) return hex;
+  for (let t = 0.05; t < 1; t += 0.05) {
+    const lifted = mixWithWhite(hex, t);
+    if (luma(lifted) >= MIN_SKY_LUMA) return lifted;
+  }
+  return mixWithWhite(hex, 0.5);
+}
+
+/**
+ * The brand colour for a name, from the first table that knows it.
+ *
+ * Both tables are asked, the likelier one first: a university is an employer as often as it is
+ * a school, so a "company" cluster named UNC Chapel Hill must still find Carolina blue rather
+ * than falling through to a hashed colour. The other table only by exact name, though — loose
+ * word matching across kinds painted "Duke Capital Partners", a fund, Duke University blue.
+ */
+function resolveFromMaps(
   name: string | null | undefined,
-  map: Record<string, string>,
+  maps: Record<string, string>[],
   fallbackNeutral: string
 ): string {
   const key = normalizeOrgKey(name);
   if (!key) return fallbackNeutral;
-  const hit = lookupColor(key, map);
+  const [own, ...others] = maps;
+  const hit = lookupColor(key, own) ?? others.map((map) => map[key]).find(Boolean);
   if (hit) return mapFriendlyBrand(hit);
   return hashToBrandHex(key);
 }
 
 /** Primary color for a contact's school star tint. */
 export function schoolStarColor(school: string | null | undefined): string {
-  return resolveFromMap(school, SCHOOL_COLORS, NEUTRAL_STAR);
+  return resolveFromMaps(school, [SCHOOL_COLORS, COMPANY_COLORS], NEUTRAL_STAR);
 }
 
 /** Primary brand color for a company. */
 export function companyBrandColor(company: string | null | undefined): string {
-  return resolveFromMap(company, COMPANY_COLORS, NEUTRAL_ORG);
+  return resolveFromMaps(company, [COMPANY_COLORS, SCHOOL_COLORS], NEUTRAL_ORG);
 }
 
 export function clusterBrandColor(
