@@ -133,6 +133,7 @@ export default async function AppLayout({
       hidden={[...visibility.hidden]}
       hiddenForUsers={[...visibility.hiddenForUsers]}
       viewingAsUser={visibility.viewingAsUser}
+      previewingUnreleased={visibility.previewingUnreleased}
     >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}

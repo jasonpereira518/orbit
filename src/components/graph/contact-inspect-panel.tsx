@@ -401,6 +401,12 @@ function ContactPanelBody({
    * view, so it is also the right place to resolve a missing photo on demand.
    */
   const canResolvePhoto = Boolean(data.linkedinUrl?.trim() || data.email?.trim());
+  /** Their profile when we have it; otherwise the LinkedIn search you would have typed. */
+  const linkedinHref =
+    data.linkedinUrl?.trim() ||
+    `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(
+      [data.fullName || data.label, data.company].filter(Boolean).join(" ")
+    )}`;
   const photoSrc =
     !photoFailed && (Boolean(data.profileImageUrl?.trim()) || canResolvePhoto)
       ? `/api/avatars/${id}`
@@ -646,15 +652,46 @@ function ContactPanelBody({
             onRefresh();
           }}
         />
-        <Link
-          href={`/contacts/${id}`}
-          className={cn(
-            buttonVariants(),
-            "w-full bg-primary text-primary-foreground hover:bg-primary/90"
-          )}
-        >
-          Open full profile
-        </Link>
+        <div className="flex w-full items-stretch gap-2">
+          <Link
+            href={`/contacts/${id}`}
+            className={cn(
+              buttonVariants(),
+              "flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+            )}
+          >
+            Open full profile
+          </Link>
+          {/*
+            Straight to LinkedIn, the logo alone: their saved profile when there is one, and a
+            LinkedIn search for their name and company when there is not.
+          */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <a
+                  href={linkedinHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={
+                    data.linkedinUrl
+                      ? `Open ${data.label}'s LinkedIn profile`
+                      : `Search LinkedIn for ${data.label}`
+                  }
+                  className={cn(
+                    buttonVariants({ variant: "outline", size: "icon" }),
+                    "shrink-0"
+                  )}
+                />
+              }
+            >
+              <LinkedInGlyph className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {data.linkedinUrl ? "LinkedIn profile" : "Search on LinkedIn"}
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <Link
           href={`/capture?contactId=${id}`}
           className={cn(buttonVariants({ variant: "outline" }), "w-full")}

@@ -14,6 +14,7 @@ const AppStarfield = dynamic(
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { useSmallSky } from "@/components/graph/use-small-sky";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
+import { PreviewUnreleasedBanner } from "@/components/layout/preview-unreleased-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
@@ -51,6 +52,7 @@ export function AppShell({
   hidden,
   hiddenForUsers,
   viewingAsUser,
+  previewingUnreleased,
 }: {
   children: React.ReactNode;
   clerkOn: boolean;
@@ -62,6 +64,8 @@ export function AppShell({
   /** Surface keys hidden from ordinary users, for the operator's "Hidden" tags. */
   hiddenForUsers: string[];
   viewingAsUser: boolean;
+  /** True when an admin has opted into seeing real pages behind a coming-soon screen. */
+  previewingUnreleased: boolean;
 }) {
   const pathname = usePathname();
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
@@ -119,6 +123,7 @@ export function AppShell({
         {viewingAsUser && (
           <ViewAsUserBanner hiddenCount={hiddenForUsersSet.size} />
         )}
+        {previewingUnreleased && <PreviewUnreleasedBanner />}
         <div
           data-warp-craft
           className="flex min-h-0 flex-1 overflow-hidden bg-background dark:bg-transparent"
@@ -130,8 +135,11 @@ export function AppShell({
             loop — 700 arcs a frame, some with `shadowBlur`, one of the most expensive
             Canvas2D operations on iOS — is exactly the pressure that was taking the tab
             down. It costs a flatter background around the stage card on those devices.
+            On a larger constellation it stays, but still: one painted frame, no loop.
           */}
-          {!(isConstellation && smallSky) && <AppStarfield />}
+          {!(isConstellation && smallSky) && (
+            <AppStarfield still={isConstellation} />
+          )}
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />

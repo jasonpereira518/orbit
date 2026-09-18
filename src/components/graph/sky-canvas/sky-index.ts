@@ -13,7 +13,6 @@ import type {
   LayoutNode,
   NebulaData,
 } from "@/lib/graph-layout";
-import type { PositionMap } from "@/lib/graph-positions";
 import { buildSkyGrid, type SkyGrid, type SkyTarget } from "@/lib/graph/hit-test";
 import { starVisual } from "@/lib/graph/star-style";
 
@@ -74,20 +73,10 @@ export type SkyIndex = {
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
 };
 
-/**
- * A star arranged on a laptop must sit in the same place on a phone, so overrides are
- * honoured for rendering on both. The canvas never *writes* them — dragging a 2px star
- * is not a gesture a finger can perform, and read-only means the phone can never corrupt
- * a layout it cannot recreate.
- */
-function positionOf(node: LayoutNode, overrides: PositionMap) {
-  return overrides[node.id] || node.position;
-}
-
-export function buildSkyIndex(
-  layout: { nodes: LayoutNode[]; edges: LayoutEdge[] },
-  overrides: PositionMap
-): SkyIndex {
+export function buildSkyIndex(layout: {
+  nodes: LayoutNode[];
+  edges: LayoutEdge[];
+}): SkyIndex {
   const stars: StarEntry[] = [];
   const nebulae: NebulaEntry[] = [];
   const clusterLabels: ClusterLabelEntry[] = [];
@@ -97,7 +86,7 @@ export function buildSkyIndex(
   let ringRadii: number[] = [];
 
   for (const node of layout.nodes) {
-    const p = positionOf(node, overrides);
+    const p = node.position;
     positions.set(node.id, p);
 
     if (node.type === "orbitRings") {
@@ -123,6 +112,7 @@ export function buildSkyIndex(
     }
     if (node.type === "clusterLabel") {
       const d = node.data as ClusterLabelData;
+      // The node sits at the name's anchor: bottom-centre, just above the cluster's top star.
       clusterLabels.push({
         id: node.id,
         x: p.x,
@@ -181,7 +171,8 @@ export function buildSkyIndex(
   for (const l of clusterLabels) {
     // Rectangular in spirit; a radius covering the 104px label box is close enough for a
     // finger and keeps one uniform grid rather than two.
-    targets.push({ id: l.id, x: l.x, y: l.y, r: 60, kind: "clusterLabel" });
+    // Centred on the name, which sits above its anchor.
+    targets.push({ id: l.id, x: l.x, y: l.y - 8, r: 60, kind: "clusterLabel" });
   }
 
   let minX = -240;
@@ -196,6 +187,8 @@ export function buildSkyIndex(
   }
 
   const labelOrder = [...stars].sort((a, b) => b.score - a.score);
+  // Largest first: when names collide, the bigger cluster keeps its name.
+  clusterLabels.sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
 
   return {
     stars,

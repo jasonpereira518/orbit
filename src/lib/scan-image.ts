@@ -33,8 +33,10 @@ export const SCAN_QUALITY_LADDER = [0.82, 0.72, 0.62] as const;
  * Byte target per page, after encoding.
  *
  * Not a hard cap on what the server accepts — that is `CAPTURE_MAX_UPLOAD_BYTES` — but the
- * size we aim each page at so that a full 8-page scan lands around 10MB and never has to
- * discover the request limit the hard way.
+ * size `encodePage` walks its ladder down to hit, so that a full scan never has to discover
+ * the request limit the hard way. Only the pathological page that is still over target at
+ * the bottom of the ladder exceeds it, which is what makes `SCAN_PAGE_BUDGET_BYTES` below a
+ * sound worst case rather than an average.
  */
 export const SCAN_TARGET_BYTES = 1_200_000;
 
@@ -44,8 +46,43 @@ export const SCAN_OUTPUT_MIME = "image/jpeg";
 /**
  * Pages per scan. The single source of truth: `capture-ingest` imports this rather than
  * keeping its own copy, so the client's page counter and the server's slice cannot drift.
+ *
+ * ## Why 12, and what would have to change to go higher
+ *
+ * Three ceilings bound this, and 12 is the largest number that clears all three with room
+ * left over. `scripts/smoke-scan-image.ts` asserts the first one rather than trusting this
+ * comment to stay true.
+ *
+ *   1. THE REQUEST. Every page rides in one upload, so the worst case is
+ *      `MAX_SCAN_PAGES * SCAN_TARGET_BYTES` = 14.4MB against `CAPTURE_MAX_UPLOAD_BYTES` of
+ *      22MB, leaving headroom for the `.txt`/`.ics` files that can share a note. 18 pages
+ *      would be 21.6MB, which clears the cap by less than one page — too close to a number
+ *      a person can push against.
+ *   2. THE FUNCTION. Transcription runs inside `POST /api/capture/jobs`, whose
+ *      `maxDuration` is 300s, at `TRANSCRIBE_CONCURRENCY = 3`. 12 pages is four waves where
+ *      8 was three; the extra wave is tens of seconds against a five-minute budget that
+ *      also has to cover extraction under `autoQueue`.
+ *   3. THE BILL. A page is a vision call against the user's own key. 12 is roughly a
+ *      scanned meeting agenda or a photographed notebook spread; past that the honest
+ *      answer is a second note, not a bigger one.
+ *
+ * NOT the number of pages in a PDF somebody has. A long report still truncates — see
+ * `capScanPages`, whose `dropped` count exists so that truncation is always said out loud.
  */
-export const MAX_SCAN_PAGES = 8;
+export const MAX_SCAN_PAGES = 12;
+
+/**
+ * The most a prepared set of pages can weigh, and the reason the sorting dialog can size a
+ * note it has not encoded yet.
+ *
+ * A picked file's size on disk says almost nothing about what it costs to upload: a 5MB
+ * phone photo re-encodes to well under `SCAN_TARGET_BYTES`, and a 2MB PDF explodes into
+ * twelve pages that weigh far more than it did. Both directions matter — one blocks a drop
+ * that would have been fine, the other waves through one that will not fit — so
+ * `estimatePreparedBytes` prices the visual half of a note at this bound instead of at what
+ * the file manager reports. See `src/lib/capture/prepare-upload.ts`.
+ */
+export const SCAN_PAGE_BUDGET_BYTES = MAX_SCAN_PAGES * SCAN_TARGET_BYTES;
 
 export type ScanFailure =
   | "unsupported-type"
@@ -180,9 +217,16 @@ export function estimateDecodedBytes(base64Length: number): number {
 
 export type PageCap = { kept: number; dropped: number };
 
-/** How many of `count` pages we will actually read, and how many fall off the end. */
-export function capScanPages(count: number): PageCap {
-  const kept = Math.max(0, Math.min(count, MAX_SCAN_PAGES));
+/**
+ * How many of `count` pages we will actually read, and how many fall off the end.
+ *
+ * `budget` is for the caller that has already spent part of the allowance on other files in
+ * the same note — a bin holding four photos and a PDF has eight pages left for the PDF, not
+ * twelve. It is clamped to `MAX_SCAN_PAGES`, so no caller can talk its way past the cap.
+ */
+export function capScanPages(count: number, budget = MAX_SCAN_PAGES): PageCap {
+  const allowed = Math.max(0, Math.min(budget, MAX_SCAN_PAGES));
+  const kept = Math.max(0, Math.min(count, allowed));
   return { kept, dropped: Math.max(0, count - kept) };
 }
 

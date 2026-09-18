@@ -71,7 +71,6 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     homeToken,
     peekPersonId,
     peekToken,
-    positionOverrides,
     selection,
     hoveredId,
     onSelect,
@@ -96,8 +95,8 @@ export function GraphCanvasMobile(props: GraphChartProps) {
   const readyRef = useRef(false);
 
   const index = useMemo(
-    () => buildSkyIndex(layout, positionOverrides),
-    [layout, positionOverrides]
+    () => buildSkyIndex(layout),
+    [layout]
   );
   const indexRef = useRef(index);
 
@@ -229,10 +228,10 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     (animated: boolean) => {
       const pane = paneRef.current;
       if (pane.width < 2) return;
-      const camera = fitStarsToPane(layout.nodes, positionOverrides, pane, HOME_INSET);
+      const camera = fitStarsToPane(layout.nodes, pane, HOME_INSET);
       flyTo(camera, animated ? CAMERA_MS.move : 0);
     },
-    [flyTo, layout.nodes, positionOverrides]
+    [flyTo, layout.nodes]
   );
 
   // --- sizing -------------------------------------------------------------

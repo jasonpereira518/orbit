@@ -1,5 +1,6 @@
 import { AdminPageHeader, AdminPanel } from "@/components/admin/primitives";
 import {
+  PreviewUnreleasedButton,
   SurfaceToggles,
   ViewAsUserButton,
 } from "@/components/admin/surface-toggles";
@@ -8,6 +9,7 @@ import { ConstellationFilterPanel } from "@/components/admin/constellation-filte
 import { getConstellationConfig } from "@/lib/constellation-config";
 import {
   getHiddenSurfaceKeys,
+  isPreviewingUnreleased,
   isViewingAsUser,
 } from "@/lib/surface-visibility";
 import { surfacesOfKind } from "@/lib/surfaces";
@@ -30,11 +32,13 @@ export const metadata = { title: "Admin · Product" };
  */
 export default async function AdminProductPage() {
   const adminUserId = await requireAdminPage();
-  const [hidden, viewingAsUser, constellation] = await Promise.all([
-    getHiddenSurfaceKeys(),
-    isViewingAsUser(adminUserId),
-    getConstellationConfig(),
-  ]);
+  const [hidden, viewingAsUser, previewingUnreleased, constellation] =
+    await Promise.all([
+      getHiddenSurfaceKeys(),
+      isViewingAsUser(adminUserId),
+      isPreviewingUnreleased(adminUserId),
+      getConstellationConfig(),
+    ]);
 
   const hiddenKeys = [...hidden];
   const count = hidden.size;
@@ -65,6 +69,17 @@ export default async function AdminProductPage() {
             {viewingAsUser
               ? "You are currently browsing Orbit as a general user. Hidden surfaces are gone for you too until you stop."
               : "Opens the app with every toggle below applied to you as well, so you see exactly what a general user sees. Lasts until you stop or close the browser, and changes nothing for anyone else."}
+          </p>
+        </AdminPanel>
+
+        <AdminPanel
+          title="Unreleased pages"
+          action={<PreviewUnreleasedButton active={previewingUnreleased} />}
+        >
+          <p className="text-xs text-muted-foreground">
+            {previewingUnreleased
+              ? "You are seeing the real pages behind every coming-soon screen. Everyone else still gets coming-soon until you stop."
+              : "Pages marked coming-soon (see src/lib/surfaces.ts) are closed to admins by default, same as everyone else. Turn this on to build against the real page instead. Lasts until you stop or close the browser, and changes nothing for anyone else."}
           </p>
         </AdminPanel>
 

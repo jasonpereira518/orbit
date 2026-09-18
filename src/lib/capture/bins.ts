@@ -32,6 +32,14 @@ export type StagedFile = {
   name: string;
   size: number;
   /**
+   * The browser's mime type for the file, carried for the same reason `lastModified` is:
+   * pricing a note's upload needs to know a PDF from a photo from a `.md`, and reaching
+   * into a side map of `File`s to find out is a staleness bug waiting to happen. May be
+   * empty — engines leave it blank for plenty of real files, which is why
+   * `classifyScanFile` falls back to the extension.
+   */
+  type: string;
+  /**
    * The file's own mtime, carried here rather than looked up in a side map. Everything that
    * seeds a bin's date reads it while rendering, and a ref read during render is a staleness
    * bug waiting for the render that does not follow the write.
@@ -234,8 +242,29 @@ export type PlannedUpload = {
   label: string;
   fileIds: string[];
   anchorIso: string | null;
+  /** What the person picked, added up. The honest number to show beside a list of files. */
   bytes: number;
+  /**
+   * What the request will weigh once the files have been prepared — the number the size cap
+   * is checked against, and usually not the one above.
+   *
+   * They differ because preparation is not a copy: photos are re-encoded DOWN (five 5MB
+   * whiteboard shots become about 6MB) and a PDF is rasterized UP (2MB becomes a dozen
+   * pages). Checking `bytes` would refuse the first and wave through the second, so this
+   * exists to be checked while `bytes` stays what a file manager would report. See
+   * `estimatePreparedBytes` in `src/lib/capture/prepare-upload.ts` for how it is priced.
+   */
+  uploadBytes: number;
 };
+
+/**
+ * How much one note will weigh once prepared. Injected rather than imported so this module
+ * stays free of mime-type knowledge — and so a caller with no preparation step at all (a
+ * test, say) gets the sum of the sizes, which is what it would have had before.
+ */
+export type WeighUpload = (files: readonly StagedFile[]) => number;
+
+const sumSizes: WeighUpload = (files) => files.reduce((n, f) => n + f.size, 0);
 
 /**
  * What pressing Read will actually upload: one entry per bin, then one per leftover file.
@@ -245,26 +274,40 @@ export type PlannedUpload = {
  */
 export function planUploads(
   state: SorterState,
-  seed: (file: StagedFile) => { name: string; anchorIso: string | null }
+  seed: (file: StagedFile) => { name: string; anchorIso: string | null },
+  weigh: WeighUpload = sumSizes
 ): PlannedUpload[] {
-  const sizeOf = (ids: readonly string[]) =>
-    ids.reduce((n, id) => n + (fileById(state, id)?.size ?? 0), 0);
+  const filesOf = (ids: readonly string[]) =>
+    ids.map((id) => fileById(state, id)).filter((f): f is StagedFile => Boolean(f));
 
   const fromBins = state.bins
     .filter((b) => b.fileIds.length > 0)
-    .map<PlannedUpload>((b) => ({
-      binId: b.id,
-      label: b.name.trim() || fileById(state, b.fileIds[0]!)?.name || "Untitled note",
-      fileIds: [...b.fileIds],
-      anchorIso: b.anchorIso,
-      bytes: sizeOf(b.fileIds),
-    }));
+    .map<PlannedUpload>((b) => {
+      const files = filesOf(b.fileIds);
+      return {
+        binId: b.id,
+        label: b.name.trim() || fileById(state, b.fileIds[0]!)?.name || "Untitled note",
+        fileIds: [...b.fileIds],
+        anchorIso: b.anchorIso,
+        bytes: files.reduce((n, f) => n + f.size, 0),
+        uploadBytes: weigh(files),
+      };
+    });
 
   const loose = state.trayIds.flatMap<PlannedUpload>((id) => {
     const file = fileById(state, id);
     if (!file) return [];
     const { name, anchorIso } = seed(file);
-    return [{ binId: null, label: name, fileIds: [id], anchorIso, bytes: file.size }];
+    return [
+      {
+        binId: null,
+        label: name,
+        fileIds: [id],
+        anchorIso,
+        bytes: file.size,
+        uploadBytes: weigh([file]),
+      },
+    ];
   });
 
   return [...fromBins, ...loose];
@@ -277,12 +320,15 @@ export function planUploads(
  * for bins: the cap is on the request, and four photos that each fit can add up to one that
  * does not. Reported rather than auto-split — splitting a bin would silently make two
  * meetings out of the one the person just said was one.
+ *
+ * Against `uploadBytes`, never `bytes`: the cap applies to the request that is actually
+ * sent, and preparation moves that number in both directions. See `PlannedUpload`.
  */
 export function oversizedUploads(
   uploads: readonly PlannedUpload[],
   maxBytes: number
 ): PlannedUpload[] {
-  return uploads.filter((u) => u.bytes > maxBytes);
+  return uploads.filter((u) => u.uploadBytes > maxBytes);
 }
 
 /**

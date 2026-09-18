@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getCampaign } from "@/actions/outreach";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
 import { CampaignEditor } from "@/components/outreach/campaign-editor";
 import { CampaignWorkspace } from "@/components/outreach/campaign-workspace";
@@ -16,6 +17,11 @@ export default async function OutreachCampaignPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // See `OutreachPage` for why this comes before the paywall, and `pageVisibilityGate`'s
+  // doc comment for why the layout-level check alone is not enough.
+  const gate = await pageVisibilityGate("page.outreach");
+  if (gate) return gate;
+
   const { id } = await params;
   const { canUseOutreach } = await getEntitlements(await requireUserId());
   if (!canUseOutreach) return <OutreachLocked />;

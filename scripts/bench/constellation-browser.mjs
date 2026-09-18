@@ -36,22 +36,16 @@ const trace = argv.includes("--trace");
  * only — it answers "which part of the sky costs the frames", not "is the chart fast".
  */
 const ABLATIONS = {
-  // Emulates scoping the rotation's custom property: the write to React Flow's root is dropped.
-  norot: `const sp = CSSStyleDeclaration.prototype.setProperty; CSSStyleDeclaration.prototype.setProperty = function (k, ...r) { if (k === "--galaxy-rot") return; return sp.call(this, k, ...r); };`,
-  nonebula: `.react-flow__node-nebula{display:none!important}`,
-  noglow: `.react-flow__node-contact *{box-shadow:none!important}`,
+  nonebula: `.constellation-nebula-wash{display:none!important}`,
+  nodust: `.react-flow__node-starDust{display:none!important}`,
   noanim: `*,*::before,*::after{animation:none!important}`,
   nostarfield: `.constellation-starfield{display:none!important}`,
+  notwinkle: `.constellation-twinkle-group{animation:none!important}`,
   nolabels: `.react-flow__node-contact p{display:none!important}`,
+  noclusternames: `.react-flow__node-clusterLabel{display:none!important}`,
+  noedgelayer: `.constellation-stage .react-flow__edges{will-change:auto!important}`,
   noedges: `.react-flow__edges,.react-flow__edge{display:none!important}`,
-  // Candidate fixes, priced the same way before being written for real.
-  vpwill: `.react-flow__viewport{will-change:transform!important}`,
-  nofill: `.constellation-planet-enter{animation-fill-mode:backwards!important}`,
-  nobreathe: `.constellation-nebula{animation:none!important}`,
   novpwill: `.constellation-stage .react-flow__viewport{will-change:auto!important}`,
-  nocomet: `.constellation-comet{animation:none!important}`,
-  notwinkle: `.constellation-starfield span{animation:none!important}`,
-  nospinwill: `[data-galaxy-spin]{will-change:auto!important}`,
 };
 const ablate = (flag("--ablate") ?? "").split("+").filter(Boolean);
 const ablationPrelude = ablate
@@ -76,7 +70,9 @@ try {
 window.__ready = null;
 (function poll() {
   const el = document.querySelector(".constellation-stage");
-  if (el && el.style.opacity === "1" && document.querySelector(".react-flow__node-contact")) {
+  // Any node, not a contact star: a large sky opens in the summary view, which mounts clusters
+  // and one canvas of dots rather than stars.
+  if (el && el.style.opacity === "1" && document.querySelector(".react-flow__node")) {
     window.__ready = performance.now();
     return;
   }
@@ -157,10 +153,11 @@ window.__kit = (() => {
     };
   }
 
-  /** Visible contact stars, nearest the centre first. */
+  /** Visible hover targets — stars, or clusters in the summary view — nearest the centre first. */
   function visibleStars(limit = 40) {
     const vw = innerWidth, vh = innerHeight;
-    return [...document.querySelectorAll(".react-flow__node-contact")]
+    const stars = document.querySelectorAll(".react-flow__node-contact");
+    return [...(stars.length ? stars : document.querySelectorAll(".react-flow__node-clusterLabel"))]
       .map((el) => ({ el, r: el.getBoundingClientRect() }))
       .filter(({ r }) => r.width > 0 && r.left > 0 && r.top > 0 && r.right < vw && r.bottom < vh)
       .sort((a, b) => Math.hypot(a.r.left - vw / 2, a.r.top - vh / 2) - Math.hypot(b.r.left - vw / 2, b.r.top - vh / 2))
@@ -202,9 +199,28 @@ window.__kit = (() => {
     };
   }
 
+  const currentZoom = () => { const v = document.querySelector(".react-flow__viewport"); const m = v && getComputedStyle(v).transform.match(/matrix\\(([^,]+)/); return m ? Number(m[1]) : 1; };
+
+  /**
+   * Wheel in at the centre, one tick a frame, until the camera reaches the target, then hold. A
+   * large sky opens far out, so this is how the close-up view — real stars, labels, lines — gets
+   * measured at all, and its frames include the cost of crossing into it.
+   */
+  function zoomTo(target) {
+    let c;
+    return {
+      start() { c = center(); },
+      step() {
+        if (currentZoom() >= target) return;
+        pane().dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, view: window, clientX: c.x, clientY: c.y, deltaY: -60, deltaMode: 0 }));
+      },
+    };
+  }
+
   function dom() {
     return {
       contactNodes: document.querySelectorAll(".react-flow__node-contact").length,
+    summary: Boolean(document.querySelector(".react-flow__node-starDust")),
       allNodes: document.querySelectorAll(".react-flow__node").length,
       edges: document.querySelectorAll(".react-flow__edge").length,
       elements: document.getElementsByTagName("*").length,
@@ -212,7 +228,7 @@ window.__kit = (() => {
     };
   }
 
-  return { phase, idle, pan, zoom, hover, search, dom };
+  return { phase, idle, pan, zoom, zoomTo, hover, search, dom };
 })();
 `;
 
@@ -291,6 +307,22 @@ async function metrics(cdp) {
   };
 }
 
+/**
+ * Composited layers right now, as the Layers panel counts them. The number GPU memory follows:
+ * too many and Chrome starts evicting tiles, which is what showed as the sidebar flashing blank.
+ */
+async function layerCount(cdp) {
+  const tree = new Promise((resolve) => {
+    cdp.onEvent("LayerTree.layerTreeDidChange", (p) => {
+      if (p.layers) resolve(p.layers.length);
+    });
+  });
+  await cdp.send("LayerTree.enable");
+  const count = await Promise.race([tree, cdp.sleep(3000).then(() => null)]);
+  await cdp.send("LayerTree.disable");
+  return count;
+}
+
 async function gcMetrics(cdp) {
   await cdp.send("HeapProfiler.collectGarbage");
   await cdp.sleep(300);
@@ -332,7 +364,11 @@ async function runSize(n) {
     // Let the intro hand over and the enter animations finish before timing anything.
     await cdp.sleep(3500);
     const gpu = await cdp.evaluate(`(() => { const gl = document.createElement("canvas").getContext("webgl"); const ext = gl && gl.getExtension("WEBGL_debug_renderer_info"); return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "none"; })()`);
-    const settled = { ...(await cdp.evaluate("__kit.dom()")), ...(await gcMetrics(cdp)) };
+    const settled = {
+      ...(await cdp.evaluate("__kit.dom()")),
+      ...(await gcMetrics(cdp)),
+      layers: await layerCount(cdp),
+    };
 
     const run = (expr) => (trace ? traced(cdp, expr) : evaluateWithin(cdp, expr));
     const phases = [];
@@ -343,6 +379,12 @@ async function runSize(n) {
     phases.push(await run(`__kit.phase("search", 3000, __kit.search("google"))`));
     // Clear the search so the soak starts from the unfiltered sky.
     await evaluateWithin(cdp, `__kit.phase("search-clear", 1500, __kit.search(""))`);
+    // Close up: wheel in to 0.3 (the crossing is in its frames), let it settle, and measure there.
+    phases.push(await run(`__kit.phase("zoomin", 4000, __kit.zoomTo(0.3))`));
+    await cdp.sleep(1500);
+    const closeUp = await cdp.evaluate("__kit.dom()");
+    phases.push({ ...(await run(`__kit.phase("pan@0.3", 5000, __kit.pan())`)), stars: closeUp.contactNodes, zoomAt: closeUp.zoom });
+    phases.push(await run(`__kit.phase("hover@0.3", 4000, __kit.hover())`));
     const after = { ...(await cdp.evaluate("__kit.dom()")), ...(await gcMetrics(cdp)) };
 
     let soakRun = null;
@@ -385,11 +427,12 @@ for (const n of sizes) {
     continue;
   }
   results.push(r);
-  console.log(`control ${r.controlFps}fps · gpu ${r.gpu} · revealed in ${r.mount.mountToRevealMs}ms (${r.settled.contactNodes} star DOM nodes, zoom ${r.settled.zoom}, heap ${r.settled.heapMB}MB, ${r.settled.domNodes} DOM nodes)`);
+  console.log(`control ${r.controlFps}fps · gpu ${r.gpu} · revealed in ${r.mount.mountToRevealMs}ms (${r.settled.contactNodes} star DOM nodes${r.settled.summary ? " [summary]" : ""}, ${r.settled.layers} layers, zoom ${r.settled.zoom}, heap ${r.settled.heapMB}MB, ${r.settled.domNodes} DOM nodes)`);
   for (const p of r.phases) {
     console.log(
       `   ${p.phase.padEnd(7)} ${String(p.fps).padStart(5)} fps  p50 ${String(p.p50).padStart(5)}  p95 ${String(p.p95).padStart(6)}  max ${String(p.max).padStart(6)}  jank ${String(p.jankPct).padStart(5)}%  ` +
-        `longtasks ${String(p.longTaskMs).padStart(5)}ms  commits ${String(p.commits).padStart(3)} / ${String(p.commitMs).padStart(5)}ms (max ${p.commitMax})`
+        `longtasks ${String(p.longTaskMs).padStart(5)}ms  commits ${String(p.commits).padStart(3)} / ${String(p.commitMs).padStart(5)}ms (max ${p.commitMax})` +
+        (p.stars !== undefined ? `  [${p.stars} stars at zoom ${p.zoomAt}]` : "")
     );
   }
   if (trace) for (const p of r.phases) console.log(`   trace ${p.phase.padEnd(7)} ${JSON.stringify(p.trace)}`);

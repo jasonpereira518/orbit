@@ -38,6 +38,7 @@ function entry(id: string, over: Partial<FanoutEntry> = {}): FanoutEntry {
     jobId: null,
     anchorIso: null,
     error: null,
+    notice: null,
     retryAt: null,
     attempts: 0,
     ...over,

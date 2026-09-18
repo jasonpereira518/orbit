@@ -4,7 +4,7 @@
  * WHAT THIS GUARDS. Scanning re-encodes every page to JPEG before upload, and that one
  * step is load-bearing for three separate things: it is the only reason an iPhone HEIC
  * ever reaches OpenAI or Anthropic in a format they can read, it is what keeps a full
- * 8-page scan inside the server-action body limit, and it is what stops a 12MP photo from
+ * full scan inside the server-action body limit, and it is what stops a 12MP photo from
  * being uploaded whole over phone data. If the ladder stops shrinking, or the classifier
  * stops recognising a `.HEIC` with an empty mime type, all three regress quietly — the
  * upload still succeeds and the model just returns worse text.
@@ -17,6 +17,7 @@ import {
   SCAN_OUTPUT_MIME,
   SCAN_PAGE_ASPECT,
   SCAN_QUALITY_LADDER,
+  SCAN_PAGE_BUDGET_BYTES,
   SCAN_TARGET_BYTES,
   capScanPages,
   classifyScanFile,
@@ -114,9 +115,19 @@ function main() {
 
   console.log("\nA full scan fits inside the upload budget...");
   const worstCase = SCAN_TARGET_BYTES * MAX_SCAN_PAGES;
-  check("8 pages at the byte target stay under the user-facing file budget",
+  // The ceiling `MAX_SCAN_PAGES` is chosen against. Asserted rather than left to the comment
+  // beside it, because raising the cap is a one-token edit and this is the thing it breaks:
+  // every page rides in ONE request, so the budget is the product, not the per-page target.
+  check(`${MAX_SCAN_PAGES} pages at the byte target stay under the user-facing file budget`,
     worstCase < CAPTURE_MAX_UPLOAD_BYTES,
     `${worstCase} vs ${CAPTURE_MAX_UPLOAD_BYTES}`);
+  // And with room left over for the .txt/.ics files that can share a note with the pages —
+  // a budget that only just fits is one a person can push a calendar invite past.
+  check("  with room left for the text that can share the note",
+    worstCase < CAPTURE_MAX_UPLOAD_BYTES * 0.8,
+    `${worstCase} vs ${Math.round(CAPTURE_MAX_UPLOAD_BYTES * 0.8)}`);
+  check("  and SCAN_PAGE_BUDGET_BYTES is that same product, not a second opinion",
+    SCAN_PAGE_BUDGET_BYTES === worstCase, String(SCAN_PAGE_BUDGET_BYTES));
   check("...and so does their base64 encoding, which is what actually travels",
     estimateBase64Length(worstCase) < CAPTURE_MAX_UPLOAD_BYTES * 1.34 + 1,
     String(estimateBase64Length(worstCase)));
@@ -129,9 +140,22 @@ function main() {
     capScanPages(20).kept === MAX_SCAN_PAGES && capScanPages(20).dropped === 20 - MAX_SCAN_PAGES);
   check("zero pages is not negative", capScanPages(0).kept === 0 && capScanPages(0).dropped === 0);
 
+  // A note is one request, so the budget is shared by everything in it: a bin holding four
+  // photos leaves eight pages for the PDF beside them, not twelve.
+  const shared = capScanPages(20, MAX_SCAN_PAGES - 4);
+  check("a caller that has already spent part of the budget gets the rest",
+    shared.kept === MAX_SCAN_PAGES - 4, String(shared.kept));
+  check("  and the pages it could not take are still counted as dropped",
+    shared.dropped === 20 - (MAX_SCAN_PAGES - 4), String(shared.dropped));
+  check("a spent budget takes nothing", capScanPages(5, 0).kept === 0 && capScanPages(5, 0).dropped === 5);
+  // The clamp is what stops a caller talking its way past the cap it was given.
+  check("no caller can ask for more than the cap",
+    capScanPages(100, 999).kept === MAX_SCAN_PAGES, String(capScanPages(100, 999).kept));
+  check("  nor for a negative one", capScanPages(5, -3).kept === 0);
+
   console.log("\nPartial success is reported honestly...");
   check("a clean run reads as a plain count", scanSourceLabel(8, 8) === "photos:8");
-  // The failure this exists for: claiming 8 pages when one came back empty.
+  // The failure this exists for: claiming a full count when one page came back empty.
   check("a partial run shows the shortfall", scanSourceLabel(7, 8) === "photos:7/8");
   check("an unreadable page leaves a visible gap in the corpus",
     pageUnreadableMarker(3) === "[Page 3 could not be read]");

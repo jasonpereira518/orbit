@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { useReducedMotion } from "motion/react";
 import { MessageSquarePlus, Sparkles } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import {
@@ -22,7 +21,8 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
-import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { FEEDBACK_SURFACE_KEY, isHrefComingSoon, isHrefHidden } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { MobileCaptureButton } from "@/components/layout/mobile-capture-button";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
@@ -59,7 +59,16 @@ export function MobileNav({
    */
   const morePanelRef = useRef<HTMLDivElement | null>(null);
   const moreOpenedByKeyboard = useRef(false);
-  const reducedMotion = useReducedMotion();
+  /**
+   * Not motion's own `useReducedMotion`, which reads the preference during render: it is
+   * `null` on the server and already `true` in the first client render. Capture's
+   * `whileTap` is what motion turns into a `tabindex` on the rendered span, so the server
+   * sent the attribute, a reduced-motion client rendered without it, and React called the
+   * tree mismatched on every load. This hook answers `false` on both sides and only learns
+   * the preference in an effect, so hydration matches and the tap feedback drops away a
+   * tick later. It also follows the setting if it changes, which motion's hook does not.
+   */
+  const reducedMotion = usePrefersReducedMotion();
 
   /**
    * Both lists, filtered, BEFORE anything derives an index from them.
@@ -590,6 +599,11 @@ export function MobileNav({
                 >
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}
+                  {isHrefComingSoon(item.href) && (
+                    <span className="rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning">
+                      Soon
+                    </span>
+                  )}
                   <NavPendingDot className="top-1/2 right-3 -translate-y-1/2" />
                 </Link>
               );

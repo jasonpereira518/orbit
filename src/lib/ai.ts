@@ -1059,7 +1059,7 @@ Rules:
  * How many pages we transcribe at once.
  *
  * Three is a compromise against the provider rate limits a BYOK key is likeliest to have:
- * it collapses an 8-page scan from eight round trips to three, while staying far enough
+ * it collapses a full scan from one round trip per page to a third of that, while staying far enough
  * under per-minute request caps that a burst does not turn into a 429 storm that fails
  * more pages than the serial version would have.
  */

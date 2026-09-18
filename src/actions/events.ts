@@ -254,7 +254,7 @@ export async function enrichEventFromUrl(
     await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
-      return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
+      return { ok: false, error: error.message };
     }
     throw error;
   }

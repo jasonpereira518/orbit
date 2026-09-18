@@ -47,6 +47,16 @@ export type FanoutEntry = {
   /** YYYY-MM-DD. Set in the sorting dialog, before the run starts. */
   anchorIso: string | null;
   error: string | null;
+  /**
+   * Something true about a note that went up anyway — a PDF read only to the page cap, or
+   * one photo of five that would not decode.
+   *
+   * Separate from `error` because the note SUCCEEDED, and folding the two together would
+   * mean either colouring a queued row as a failure or saying nothing at all. Saying
+   * nothing is the worse half: a note silently missing its last eighteen pages is
+   * indistinguishable, a month later, from a meeting where nothing was decided.
+   */
+  notice: string | null;
   /** Epoch ms this entry may next be attempted. Only set while `waiting`. */
   retryAt: number | null;
   attempts: number;
@@ -59,7 +69,7 @@ export const FALLBACK_RETRY_MS = 15_000;
 export const MAX_FANOUT_ATTEMPTS = 4;
 
 export type UploadOutcome =
-  | { ok: true; jobId: string }
+  | { ok: true; jobId: string; notice?: string | null }
   | { ok: false; error: string; status: number; retryAfterSec: number | null };
 
 export type FanoutSummary = {
@@ -119,7 +129,15 @@ export function applyOutcome(
 ): FanoutEntry {
   const attempts = entry.attempts + 1;
   if (outcome.ok) {
-    return { ...entry, status: "queued", jobId: outcome.jobId, error: null, retryAt: null, attempts };
+    return {
+      ...entry,
+      status: "queued",
+      jobId: outcome.jobId,
+      error: null,
+      notice: outcome.notice ?? null,
+      retryAt: null,
+      attempts,
+    };
   }
 
   // 429 is the only status worth waiting on. A 400 or 413 is about this file and will say

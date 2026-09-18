@@ -14,6 +14,7 @@ import { ContactProfileOverview } from "@/components/contacts/contact-profile-ov
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
 import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
 import { ContactOpportunitiesSection } from "@/components/contacts/contact-opportunities-section";
+import { ContactJobMatchesSection } from "@/components/contacts/contact-job-matches-section";
 import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
 import { Reveal } from "@/components/motion/reveal";
@@ -33,6 +34,7 @@ import {
 } from "@/lib/contact-brief";
 import { listContactMentions } from "@/lib/contact-mentions";
 import { listOpportunitiesForContact } from "@/lib/contact-opportunities";
+import { listJobMatchesForContact } from "@/lib/jobs/contact-matches";
 import { getContactProfile } from "@/lib/contact-profile";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
@@ -86,6 +88,12 @@ export default async function ContactDetailPage({
   const opportunitiesPromise = userIdPromise
     .then((u) => listOpportunitiesForContact(u, id))
     .catch(() => []);
+  // Same mandatory `.catch` as its neighbours — started before the first await, so an
+  // unhandled rejection would race `notFound()` into the error boundary. The fallback is an
+  // empty result rather than null: a feed outage should cost this section, not the page.
+  const jobMatchesPromise = userIdPromise
+    .then((u) => listJobMatchesForContact(u, id))
+    .catch(() => ({ rows: [], hasMore: false }));
   const briefPromise = userIdPromise
     .then((u) => getContactBrief(u, id))
     .catch(() => null);
@@ -387,6 +395,17 @@ export default async function ContactDetailPage({
         />
       </Suspense>
 
+      {/* Directly after Opportunities, because it is downstream of one: a match exists only
+          because an open internship or referral opportunity named this person's company.
+          Reading them in the other order would present a job board that had appeared on
+          somebody's profile for no stated reason.
+
+          No fallback: renders nothing when empty, and a skeleton that collapses into
+          nothing reads as a glitch. */}
+      <Suspense fallback={null}>
+        <StreamedJobMatches data={jobMatchesPromise} contactName={displayName} />
+      </Suspense>
+
       {/* No fallback here: this section renders nothing when empty, and a
           skeleton that can collapse into nothing reads as a glitch. */}
       <Suspense fallback={null}>
@@ -517,6 +536,22 @@ async function StreamedOpportunities({
           createdBy: o.createdBy,
         }))}
       />
+    </div>
+  );
+}
+
+async function StreamedJobMatches({
+  data,
+  contactName,
+}: {
+  data: Promise<Awaited<ReturnType<typeof listJobMatchesForContact>>>;
+  contactName: string;
+}) {
+  const { rows, hasMore } = await data;
+  if (!rows.length) return null;
+  return (
+    <div className="reveal-mount">
+      <ContactJobMatchesSection contactName={contactName} matches={rows} hasMore={hasMore} />
     </div>
   );
 }

@@ -6,7 +6,7 @@
  * depends on lives in `scan-image.ts`, which is DOM-free and separately tested.
  *
  * EVERY PAGE LEAVES HERE AS A JPEG, whatever arrived. That is what makes an iPhone HEIC
- * readable by OpenAI and Anthropic, what keeps an 8-page scan inside the request body
+ * readable by OpenAI and Anthropic, what keeps a full scan inside the request body
  * limit, and what stops a 12MP photo being uploaded whole over phone data. See the header
  * of `scan-image.ts` for the full reasoning.
  */
@@ -255,7 +255,16 @@ export async function normalizeImageFile(file: File): Promise<ScanPage> {
  * this codebase does not use. It also means a PDF gets the same per-page concurrency and
  * per-page failure isolation as a stack of photos, for free.
  */
-export async function rasterizePdf(file: File): Promise<{ pages: ScanPage[]; dropped: number }> {
+export async function rasterizePdf(
+  file: File,
+  /**
+   * Pages this PDF may contribute, when a caller has already spent part of the budget on
+   * other files in the same note. Passed rather than left to the caller to slice, because
+   * slicing afterwards means rendering and JPEG-encoding pages only to throw them away —
+   * and encoding is the expensive half.
+   */
+  budget = MAX_SCAN_PAGES
+): Promise<{ pages: ScanPage[]; dropped: number }> {
   // Dynamically imported so pdfjs is fetched only when someone actually picks a PDF.
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -270,7 +279,7 @@ export async function rasterizePdf(file: File): Promise<{ pages: ScanPage[]; dro
   const doc = await loadingTask.promise;
   try {
     if (doc.numPages === 0) throw new ScanError("empty-pdf");
-    const { kept, dropped } = capScanPages(doc.numPages);
+    const { kept, dropped } = capScanPages(doc.numPages, budget);
 
     const pages: ScanPage[] = [];
     for (let n = 1; n <= kept; n++) {
