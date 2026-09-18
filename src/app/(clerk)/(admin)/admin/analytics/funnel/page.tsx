@@ -7,6 +7,7 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { TrafficTabs } from "@/components/admin/traffic-tabs";
+import { FunnelParkingPanel } from "@/components/admin/product-health-panels";
 import {
   MIN_RATE_DENOMINATOR,
   RANGES,
@@ -128,6 +129,10 @@ export default async function AdminFunnelPage({
             </AdminTable>
           )}
         </AdminPanel>
+
+        {/* The funnel says how many made it; this says where the rest stopped. Current
+            state, not the selected range — an account parked at step 2 is parked now. */}
+        <FunnelParkingPanel />
 
         <AdminPanel title="How to read this">
           <ul className="space-y-2 py-1 text-sm text-muted-foreground">

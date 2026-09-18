@@ -135,6 +135,17 @@
   --chart-3: #7aa896;
   --chart-4: #c4a35a;
   --chart-5: #8b5e3c;
+  /* Categorical series for multi-line admin charts (Growth). Separate from --chart-*,
+     which is a tonal teal ramp: fine for one or two series, but as a categorical set it
+     fails the chroma floor and two steps sit under 3:1 on the card. These five pass the
+     dataviz validator in both themes on both --card and --background — lightness band,
+     chroma, adjacent CVD separation, normal-vision floor, 3:1 contrast. Re-run it before
+     changing any value. Order is fixed; a series keeps its slot when others are hidden. */
+  --series-1: #008c7c;
+  --series-2: #e0662f;
+  --series-3: #2a6fd6;
+  --series-4: #b38200;
+  --series-5: #7a52c7;
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
@@ -259,6 +270,12 @@
   --chart-3: #7d8ee8;
   --chart-4: #f7d071;
   --chart-5: #f08a63;
+  /* Same five hues, stepped for the dark surface — validated as their own set. */
+  --series-1: #1a9e90;
+  --series-2: #d9612b;
+  --series-3: #4f86e3;
+  --series-4: #b8860b;
+  --series-5: #8e76e6;
   --import-connections: #9b9ff5;
   --import-messages: #f0956f;
   --import-calendar: #e2b45f;

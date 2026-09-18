@@ -255,6 +255,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ops-sweep": "pglite",
   "smoke-admin-analytics": "pglite",
   "smoke-page-load-timing": "pglite",
+  "smoke-growth-trends": "pglite",
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",
   "smoke-plan-card-copy": "pure",
