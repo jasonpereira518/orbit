@@ -36,8 +36,8 @@ import {
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 
-/** Statuses the Done view shows. `completed` is a legacy spelling of `done`. */
-const DONE_STATUSES = ["done", "completed"];
+/** Statuses the Done view shows. (`completed`, a legacy spelling, was migrated in schema v66.) */
+const DONE_STATUSES = ["done"];
 
 /**
  * `dueDayOf` in SQL: a date-only value (UTC midnight or noon, exactly) keeps its UTC date;

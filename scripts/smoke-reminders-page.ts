@@ -50,7 +50,7 @@ const ZONES = ["America/Los_Angeles", "UTC", "Asia/Tokyo"];
 
 const KINDS: ReminderActionKind[] = ["call", "email", "meet", "task", "follow_up"];
 const TYPES = ["manual", "capture", "post_meeting", "generated", "ai_suggested", "extracted_date"];
-const STATUSES = ["pending", "pending", "pending", "done", "completed", "dismissed"];
+const STATUSES = ["pending", "pending", "pending", "done", "done", "dismissed"];
 
 type Seeded = {
   id: string;
@@ -190,7 +190,7 @@ async function main() {
 
   // ── Reference answers. ──
   const isPending = (s: Seeded) => s.status === "pending";
-  const isDone = (s: Seeded) => s.status === "done" || s.status === "completed";
+  const isDone = (s: Seeded) => s.status === "done";
 
   function sourceMatch(s: Seeded, src: ReminderSource) {
     switch (src) {

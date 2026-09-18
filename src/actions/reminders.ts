@@ -781,9 +781,7 @@ export async function deleteReminderAction(id: string) {
 function validDismissSnapshot(snap: DismissSnapshot): boolean {
   return (
     typeof snap?.reminderId === "string" &&
-    // "completed" is the legacy spelling of done; a dismiss can have overwritten either.
-    (REMINDER_STATUSES.has(snap.previousStatus) ||
-      snap.previousStatus === "completed")
+    REMINDER_STATUSES.has(snap.previousStatus)
   );
 }
 

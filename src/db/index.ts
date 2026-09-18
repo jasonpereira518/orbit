@@ -1567,7 +1567,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 65 = launch Phase 4 polish: no DDL. Two idempotent data migrations at the end of
 // `alters` — calendar feed tokens hashed in place, li-event interactions tagged ai_derived.
-export const SCHEMA_VERSION = 65;
+//
+// 66 = the reminders redesign: no DDL. One idempotent data migration at the end of `alters`
+// folds the legacy `completed` reminder status into `done`. Checked against every remote
+// branch on Sep 18 2026: none claimed anything above main's 65.
+export const SCHEMA_VERSION = 66;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2987,6 +2991,10 @@ const alters = [
   // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
   `UPDATE interactions SET source = 'ai_derived'
     WHERE external_id LIKE 'li-event:%' AND source IS DISTINCT FROM 'ai_derived'`,
+  // Schema v66: `completed` was an early spelling of a done reminder. Every reader matched
+  // both; after this only `done` exists, and the reminders query matches that alone.
+  // Idempotent: nothing writes `completed` to reminders any more.
+  `UPDATE reminders SET status = 'done' WHERE status = 'completed'`,
 ];
 
 /**

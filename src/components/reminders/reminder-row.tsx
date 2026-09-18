@@ -92,7 +92,7 @@ export const ReminderRow = memo(function ReminderRow({
 }) {
   const due = dueLabelFor(item.dueDay, today);
   const KindIcon = KIND_ICONS[item.actionKind];
-  const isDone = item.status === "done" || item.status === "completed";
+  const isDone = item.status === "done";
   const stop = (e: MouseEvent) => e.stopPropagation();
 
   function onKeyDown(e: KeyboardEvent<HTMLLIElement>) {

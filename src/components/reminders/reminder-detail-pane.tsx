@@ -55,7 +55,7 @@ export function ReminderDetailPane({
   const due = dueLabelFor(item.dueDay, today);
   // Bumped by Cancel: remounting the form is how its edits are discarded.
   const [formKey, setFormKey] = useState(0);
-  const isDone = item.status === "done" || item.status === "completed";
+  const isDone = item.status === "done";
 
   // Stable while the row is unchanged: the form re-initializes whenever `initial` changes
   // identity, and a new object on every parent render would wipe what's being typed.
