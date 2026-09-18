@@ -2602,6 +2602,8 @@ html[data-celebration-handoff] [data-app-logo] {
   }
   [data-route-progress="done"] .route-progress-fill {
     transition: opacity 120ms linear;
+  }
+}
 
 /* How much room the contacts A-Z rail reserves beside the content column. The rail
  * is thinner below `md` (28px on phones) than on desktop (36px), so the gutter follows
