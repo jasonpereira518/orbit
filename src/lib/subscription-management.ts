@@ -63,12 +63,14 @@ export const SUBSCRIPTION_COPY = {
   alreadyOnPeriod: "You’re already on that billing period",
   cancelPending: "Resume your subscription first, then switch billing",
   paymentDeclined: "Your card was declined — update it under Manage billing, then try again",
+  switchInSettings: "You’re on Orbit Pro — switch to Lifetime from Settings, where you can see what changes",
 } as const;
 
 export type SubscriptionStripe = {
   list: (customer: string) => Promise<Stripe.Subscription[]>;
   update: (id: string, params: Stripe.SubscriptionUpdateParams) => Promise<Stripe.Subscription>;
   preview: (params: Stripe.InvoiceCreatePreviewParams) => Promise<Pick<Stripe.Invoice, "total" | "currency">>;
+  cancel: (id: string, params: Stripe.SubscriptionCancelParams) => Promise<unknown>;
 };
 
 function liveStripe(): SubscriptionStripe {
@@ -77,6 +79,7 @@ function liveStripe(): SubscriptionStripe {
       (await getStripe().subscriptions.list({ customer, status: "all", limit: 20 })).data,
     update: (id, params) => getStripe().subscriptions.update(id, params),
     preview: (params) => getStripe().invoices.createPreview(params),
+    cancel: (id, params) => getStripe().subscriptions.cancel(id, params),
   };
 }
 
@@ -287,35 +290,31 @@ export async function changeBillingPeriod(
 /* ---------------------------------------------------------- Pro → Lifetime -------- */
 
 /**
- * Checkout Session metadata marking a Lifetime purchase made from the plan card's
- * "Switch to Lifetime". Only those purchases end the Pro subscription: someone who buys
- * Lifetime from the pricing page while subscribed may be keeping Pro on purpose (it is the
- * only thing that carries hosted enrichment), and that was never this code's call to undo.
+ * One plan at a time: once Lifetime is granted, any live Pro subscription is canceled on the
+ * spot — no renewal, no refund of the rest of the period, and Pro's extras stop with it
+ * (`getEntitlements` no longer unions them into Lifetime). The switch dialog and
+ * `startLifetimeCheckout` say so before anyone pays.
+ *
+ * Called from every path that grants Lifetime (the webhook, verify-on-return, the AI gate's
+ * own check), so whichever lands first does the work and the rest find nothing to cancel.
+ * Never throws: the Lifetime grant has already landed, and failing the webhook over this
+ * would retry a purchase that succeeded. A failure is logged for the operator; the
+ * subscription's next renewal would be the visible symptom.
  */
-export const REPLACES_SUBSCRIPTION_METADATA_KEY = "orbit_replaces_subscription";
-
-export function replacesSubscription(session: { metadata?: Stripe.Metadata | null }): boolean {
-  return session.metadata?.[REPLACES_SUBSCRIPTION_METADATA_KEY] === "1";
-}
-
-/**
- * After a switch-to-Lifetime purchase is granted, stop Pro renewing. At period end, not now:
- * the period is paid for, and Lifetime covers everything after it anyway. Idempotent, so the
- * webhook and the verify-on-return path can both call it. Never throws: the Lifetime grant
- * has already landed, and failing the webhook over this would retry a purchase that succeeded.
- */
-export async function endSubscriptionAfterLifetime(
+export async function endProForLifetime(
   userId: string,
   deps: { stripe?: SubscriptionStripe } = {}
-): Promise<"scheduled" | "none" | "error"> {
+): Promise<"canceled" | "none" | "error"> {
   try {
     const customer = await getStripeCustomerId(userId);
     if (!customer) return "none";
     const client = deps.stripe ?? liveStripe();
-    const sub = pickProSubscription(await client.list(customer));
-    if (!sub) return "none";
-    if (!sub.cancel_at_period_end) await client.update(sub.id, { cancel_at_period_end: true });
-    return "scheduled";
+    const live = (await client.list(customer)).filter((s) => pickProSubscription([s]) !== null);
+    if (live.length === 0) return "none";
+    for (const sub of live) {
+      await client.cancel(sub.id, { prorate: false, invoice_now: false });
+    }
+    return "canceled";
   } catch (err) {
     console.error("Ending Pro after a Lifetime purchase did not complete:", err);
     return "error";

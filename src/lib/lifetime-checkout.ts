@@ -153,6 +153,9 @@ export async function confirmLifetimeCheckout(
       for (const booking of decision.bookings) {
         await recordBillingEvent({ source: "stripe", ...booking });
       }
+      // One plan at a time — see `endProForLifetime`.
+      const { endProForLifetime } = await import("@/lib/subscription-management");
+      await endProForLifetime(userId);
     }
   } else if (verdict.kind === "expired" || verdict.kind === "refused") {
     await clearPendingLifetimeCheckout(userId, sessionId);

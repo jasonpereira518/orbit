@@ -8,7 +8,6 @@ import {
   recordBillingEventStrict,
 } from "@/lib/billing-events";
 import { resolveChargePurpose } from "@/lib/stripe-charge-purpose";
-import { replacesSubscription } from "@/lib/subscription-management";
 import { checkoutSessionVerdict, syntheticCheckoutEvent } from "@/lib/checkout-confirm";
 import {
   decideStripeEvent,
@@ -196,7 +195,7 @@ export async function confirmCheckoutForUser(
   userId: string,
   sessionId: string,
   deps: { retrieve: (sessionId: string) => Promise<Stripe.Checkout.Session>; now?: Date }
-): Promise<{ status: "applied" | "skipped"; reason?: string; replacesSubscription?: boolean }> {
+): Promise<{ status: "applied" | "skipped"; reason?: string; grantedLifetime?: boolean }> {
   const session = await deps.retrieve(sessionId);
   const now = deps.now ?? new Date();
   const verdict = checkoutSessionVerdict(session, {
@@ -213,6 +212,6 @@ export async function confirmCheckoutForUser(
   await applyStripeDecision(decision);
   return {
     status: "applied",
-    replacesSubscription: decision.mirror?.type === "lifetime" && replacesSubscription(session),
+    grantedLifetime: decision.mirror?.type === "lifetime",
   };
 }

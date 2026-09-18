@@ -469,6 +469,7 @@ function LifetimeDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   priceUsd: number;
+  /** The paid-through date the switch forfeits. */
   endsOn: string | null;
 }) {
   const [pending, start] = useTransition();
@@ -487,14 +488,17 @@ function LifetimeDialog({
         <DialogHeader>
           <DialogTitle>Switch to Orbit Lifetime?</DialogTitle>
           <DialogDescription>
-            Pay ${priceUsd} once and keep Orbit for good. Once it’s paid, your Pro subscription stops renewing — you
-            won’t be charged for it again{endsOn ? `, and its last paid day is ${endsOn}` : ""}.
+            Pay ${priceUsd} once and keep Orbit for good. An account has one plan at a time, so Lifetime replaces Pro
+            the moment it’s paid.
           </DialogDescription>
         </DialogHeader>
-        <p className="rounded-xl border border-border/70 bg-muted/40 p-3 text-sm text-muted-foreground">
-          One difference: Lifetime runs contact enrichment on your own Apollo key rather than Orbit’s. Everything else
-          in Pro is included.
-        </p>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+          <li>
+            Your Pro subscription is canceled right away and won’t renew.
+            {endsOn ? ` The days left until ${endsOn} aren’t refunded.` : " The rest of this period isn’t refunded."}
+          </li>
+          <li>Contact enrichment moves to your own Apollo key. Everything else in Pro is included.</li>
+        </ul>
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}

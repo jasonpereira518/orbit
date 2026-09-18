@@ -1,6 +1,6 @@
 /**
  * A Pro subscriber can cancel, undo it, and switch monthly ↔ annual from the plan card — on
- * their own subscription only — and a switch-to-Lifetime purchase stops Pro renewing.
+ * their own subscription only — and a Lifetime purchase cancels Pro on the spot (one plan at a time).
  *
  * Stripe is a fake: every call is recorded, so the checks read what would have been sent.
  *
@@ -60,6 +60,7 @@ function fakeStripe(subs: Stripe.Subscription[]) {
     list: [] as string[],
     update: [] as Array<{ id: string; params: Stripe.SubscriptionUpdateParams }>,
     preview: [] as Stripe.InvoiceCreatePreviewParams[],
+    cancel: [] as Array<{ id: string; params: Stripe.SubscriptionCancelParams }>,
   };
   const state = { subs: [...subs], previewTotal: 4520, updateError: null as unknown };
   return {
@@ -89,6 +90,12 @@ function fakeStripe(subs: Stripe.Subscription[]) {
       preview: async (params: Stripe.InvoiceCreatePreviewParams) => {
         calls.preview.push(params);
         return { total: state.previewTotal, currency: "usd" };
+      },
+      cancel: async (id: string, params: Stripe.SubscriptionCancelParams) => {
+        calls.cancel.push({ id, params });
+        if (state.updateError) throw state.updateError;
+        state.subs = state.subs.map((s) => (s.id === id ? ({ ...s, status: "canceled" } as Stripe.Subscription) : s));
+        return {};
       },
     },
   };
@@ -201,23 +208,40 @@ run(async () => {
       !broken.ok && broken.error === sm.SUBSCRIPTION_COPY.unavailable);
   }
 
-  console.log("\nSwitch to Lifetime");
+  console.log("\nLifetime replaces Pro");
   {
-    check("only sessions from the switch flow replace the subscription",
-      sm.replacesSubscription({ metadata: { orbit_replaces_subscription: "1" } }) &&
-        !sm.replacesSubscription({ metadata: { orbit_plan: "lifetime" } }) &&
-        !sm.replacesSubscription({ metadata: null }));
-    const f = fakeStripe([fakeSub()]);
-    const r = await sm.endSubscriptionAfterLifetime(SUBSCRIBER, { stripe: f.stripe });
-    check("stops Pro renewing at period end", r === "scheduled" && f.calls.update[0]?.params.cancel_at_period_end === true);
-    await sm.endSubscriptionAfterLifetime(SUBSCRIBER, { stripe: f.stripe });
-    check("idempotent: the webhook arriving second changes nothing", f.calls.update.length === 1);
-    f.state.subs = [];
-    check("no subscription left is fine", (await sm.endSubscriptionAfterLifetime(SUBSCRIBER, { stripe: f.stripe })) === "none");
+    const other = fakeSub({ id: "sub_other_product", metadata: { orbit_plan: "something_else" } } as never);
+    const f = fakeStripe([other, fakeSub()]);
+    const r = await sm.endProForLifetime(SUBSCRIBER, { stripe: f.stripe });
+    check("cancels Pro immediately", r === "canceled" && f.calls.cancel.length === 1 && f.calls.cancel[0].id === "sub_smoke",
+      JSON.stringify(f.calls.cancel));
+    check("with no proration credit or final invoice",
+      f.calls.cancel[0]?.params.prorate === false && f.calls.cancel[0]?.params.invoice_now === false);
+    check("leaves another product's subscription alone", !f.calls.cancel.some((c) => c.id === "sub_other_product"));
+    check("never schedules instead of canceling", f.calls.update.length === 0);
+    check("idempotent: the webhook arriving second finds nothing",
+      (await sm.endProForLifetime(SUBSCRIBER, { stripe: f.stripe })) === "none" && f.calls.cancel.length === 1);
+    const pending = fakeStripe([fakeSub({ cancel_at_period_end: true } as never)]);
+    await sm.endProForLifetime(SUBSCRIBER, { stripe: pending.stripe });
+    check("a subscription already set to end is canceled now too", pending.calls.cancel.length === 1);
+    check("an account with no Stripe customer is fine",
+      (await sm.endProForLifetime(FREE, { stripe: fakeStripe([fakeSub()]).stripe })) === "none");
     const failing = fakeStripe([fakeSub()]);
     failing.state.updateError = new Error("boom");
     check("never throws: the Lifetime grant already landed",
-      (await sm.endSubscriptionAfterLifetime(SUBSCRIBER, { stripe: failing.stripe })) === "error");
+      (await sm.endProForLifetime(SUBSCRIBER, { stripe: failing.stripe })) === "error");
+  }
+
+  console.log("\nOne plan at a time");
+  {
+    const { getEntitlements } = await import("../src/lib/entitlements");
+    await db.update(userSettings).set({ lifetimePurchasedAt: new Date() }).where(eq(userSettings.userId, SUBSCRIBER));
+    const ent = await getEntitlements(SUBSCRIBER);
+    check("Lifetime plus a leftover live subscription resolves to Lifetime alone",
+      ent.plan === "lifetime" && ent.source === "lifetime" && ent.canUseHostedEnrichment === false, JSON.stringify(ent));
+    const f = fakeStripe([fakeSub()]);
+    const r = await sm.cancelSubscription(SUBSCRIBER, { stripe: f.stripe });
+    check("and the card no longer treats it as a subscription", !r.ok && f.calls.list.length === 0);
   }
 
   check("copy follows the house voice",

@@ -27,11 +27,10 @@ import { setCompedPlan, setPendingLifetimeCheckout } from "@/lib/user-settings";
 import { reportError } from "@/lib/report-error";
 import { withReference } from "@/lib/errors";
 import {
-  REPLACES_SUBSCRIPTION_METADATA_KEY,
   SUBSCRIPTION_COPY,
   cancelSubscription as cancelSubscriptionFor,
   changeBillingPeriod as changeBillingPeriodFor,
-  endSubscriptionAfterLifetime,
+  endProForLifetime,
   getStripeCustomerId,
   getSubscriptionDetails as getSubscriptionDetailsFor,
   previewBillingPeriodChange as previewBillingPeriodChangeFor,
@@ -70,17 +69,19 @@ export async function startLifetimeCheckout(
     return { error: "You already have Orbit Lifetime." };
   }
 
-  // Switching from Pro: the purchase goes on the subscription's own Stripe customer, so the
-  // grant (which records the session's customer) keeps pointing at the subscription that
-  // `endSubscriptionAfterLifetime` then stops renewing.
-  let replaceCustomer: string | null = null;
-  if (replaceSubscription) {
-    if (entitlements.source !== "subscription") {
-      return { error: SUBSCRIPTION_COPY.noSubscription };
-    }
-    replaceCustomer = await getStripeCustomerId(userId);
-    if (!replaceCustomer) return { error: SUBSCRIPTION_COPY.noSubscription };
+  // One plan at a time. A Pro subscriber can only buy Lifetime through the switch dialog in
+  // Settings, which tells them Pro ends on the spot with no refund; a checkout from anywhere
+  // else is refused and pointed there, so nobody pays for Lifetime without having read that.
+  const switchingFromPro = entitlements.source === "subscription";
+  if (switchingFromPro && !replaceSubscription) {
+    return { error: SUBSCRIPTION_COPY.switchInSettings };
   }
+
+  // Reuse the account's Stripe customer when it has one. The Lifetime grant records the
+  // session's customer, and a fresh one would orphan the link to a Pro subscription that
+  // `endProForLifetime` then has to find and cancel.
+  const existingCustomer = await getStripeCustomerId(userId);
+  if (switchingFromPro && !existingCustomer) return { error: SUBSCRIPTION_COPY.noSubscription };
 
   const baseUrl = getAppBaseUrl();
   const profile = await getCurrentUserProfile();
@@ -92,20 +93,18 @@ export async function startLifetimeCheckout(
       // How the webhook knows who paid. Checkout collects its own email, which need not
       // match the Orbit account, so the Clerk id is the only reliable link.
       client_reference_id: userId,
-      metadata: {
-        [LIFETIME_METADATA_KEY]: LIFETIME_METADATA_VALUE,
-        ...(replaceCustomer ? { [REPLACES_SUBSCRIPTION_METADATA_KEY]: "1" } : {}),
-      },
-      // Prefills the email without forcing it — the customer can still change it.
-      ...(replaceCustomer
-        ? { customer: replaceCustomer }
+      metadata: { [LIFETIME_METADATA_KEY]: LIFETIME_METADATA_VALUE },
+      // A known customer carries its own email; otherwise prefill it without forcing it —
+      // the customer can still change it.
+      ...(existingCustomer
+        ? { customer: existingCustomer }
         : { customer_email: profile?.email || undefined }),
       // The plan card here already reads "Orbit Lifetime" once the webhook lands, so this
       // page confirms the purchase without needing a bespoke success screen. `upgraded`
       // arms the celebration watcher's fast poll; `session_id` (Stripe fills the template)
       // lets it confirm the payment with Stripe directly, before the webhook lands.
       success_url: `${baseUrl}/settings?upgraded=lifetime&session_id={CHECKOUT_SESSION_ID}#settings-plan`,
-      cancel_url: replaceCustomer ? `${baseUrl}/settings#settings-plan` : `${baseUrl}/pricing`,
+      cancel_url: switchingFromPro ? `${baseUrl}/settings#settings-plan` : `${baseUrl}/pricing`,
     });
 
     if (!session.url) return { error: "Stripe did not return a checkout URL." };
@@ -321,7 +320,7 @@ export async function confirmCheckoutSession(
         }),
     });
     if (result.status === "applied") {
-      if (result.replacesSubscription) await endSubscriptionAfterLifetime(userId);
+      if (result.grantedLifetime) await endProForLifetime(userId);
       return { status: "granted" };
     }
   } catch (err) {
