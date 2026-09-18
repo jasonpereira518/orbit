@@ -141,7 +141,7 @@ export async function GET(_req: Request, { params }: Params) {
 
       let photoUrl: string | null = null;
       if (linkedinUrl) {
-        photoUrl = await fetchLinkedInPhotoUrl(contactId, linkedinUrl);
+        photoUrl = await fetchLinkedInPhotoUrl(contactId, linkedinUrl, userId);
       }
       // Same ladder as the backfill: an email-only contact must resolve here too,
       // or on-demand rows would silently never fill in for them.

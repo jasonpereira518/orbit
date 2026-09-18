@@ -1,8 +1,12 @@
 import { del } from "@vercel/blob";
-import { eq, getTableName, inArray, sql } from "drizzle-orm";
+import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { deleteAvatarBlobs } from "@/lib/avatar-blob";
+import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
 import {
+  actionItems,
   aiSuggestions,
   apiIdempotencyKeys,
   apiKeys,
@@ -10,16 +14,22 @@ import {
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
-  ignoredPeople,
+  capturePhotos,
+  chatMessages,
   chatThreads,
   closenessCohorts,
   companies,
+  contactBriefs,
   contactEmbeddings,
+  contactExperiences,
   contactIdentities,
   contactMerges,
+  contactProfiles,
   contacts,
   contactTags,
+  dataPurgeRuns,
   duplicateSuggestions,
+  embeddingFailures,
   errorEvents,
   eventAliases,
   eventAttendees,
@@ -31,7 +41,10 @@ import {
   feedbackScreenshots,
   gateEvents,
   gmailConnections,
+  ignoredPeople,
+  importJobRows,
   imports,
+  interactionMentions,
   interactions,
   meetingSessions,
   meetingTranscriptSegments,
@@ -42,12 +55,14 @@ import {
   pageViews,
   planUpgradeEvents,
   recruiterMessages,
+  recruiters,
   recruiterScanState,
   reminderLists,
   reminders,
   suggestedReminders,
   tags,
   targetCompanies,
+  type DataPurgeRunRow,
   usageEvents,
   userGoals,
   userRecruiterLinks,
@@ -55,12 +70,19 @@ import {
   webhookEndpoints,
 } from "@/db/schema";
 import { purgeCapturePhotosForUser } from "@/lib/capture-photos";
-import { recomputeRecruiterRating } from "@/lib/recruiters";
+import { recomputeRecruiterRating,
+  RECRUITER_DELETED_CREATOR,
+  rederiveSharedRecruiterPii,
+} from "@/lib/recruiters";
 import {
   DATA_CATEGORY_IDS,
   DATA_CATEGORY_META,
   expandCategories,
   type DataCategory,
+  PURGE_MAX_ATTEMPTS,
+  planPurgeSteps,
+  type PurgeStepKey,
+  isDataCategory,
 } from "@/lib/data-categories";
 
 export {
@@ -115,7 +137,42 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * A Clerk id is inert once the account is gone. `error_events`, by contrast, is data about
  * the user rather than about the operator, so it IS purged (by `activity`).
  */
+/** One dataset of a category's export: a page of this user's rows, snake_case keys. */
+export type ExportSource = {
+  name: string;
+  page: (userId: string, limit: number, offset: number) => SQL;
+  transform?: (row: Record<string, unknown>) => Record<string, unknown>;
+};
+
+/** Every row of `table` whose `user_id` is this user, in a stable order. */
+export function ownRowsSource(table: PgTable, orderBy = "id"): ExportSource {
+  const name = getTableName(table);
+  return {
+    name,
+    page: (userId, limit, offset) =>
+      sql`SELECT * FROM ${sql.identifier(name)} WHERE user_id = ${userId} ORDER BY ${sql.identifier(orderBy)} LIMIT ${limit} OFFSET ${offset}`,
+  };
+}
+
+const own = ownRowsSource;
+const joined = (name: string, page: ExportSource["page"]): ExportSource => ({ name, page });
+const withUrl = (source: ExportSource, prefix: string): ExportSource => ({
+  ...source,
+  transform: (row) => ({ ...row, url: `${prefix}${String(row.id)}` }),
+});
+const contactsSource: ExportSource = {
+  ...own(contacts),
+  // Inline bytes and public Blob URLs become the owner-only avatar route.
+  transform: (row) => {
+    const url = typeof row.profile_image_url === "string" ? row.profile_image_url : null;
+    const proxied = url && (url.startsWith("data:") || url.includes(".public.blob.vercel-storage.com"));
+    return { ...row, profile_image_url: proxied ? `/api/avatars/${String(row.id)}` : url };
+  },
+};
+
 type CategoryStep = {
+  /** What this category exports — one dataset per table, same boundary as the delete. */
+  exports: ExportSource[];
   /**
    * User-scoped tables whose rows are counted for the figure beside the checkbox. Join
    * tables with no `user_id` of their own (`contact_tags`) are deleted by the step but
@@ -127,14 +184,17 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
+    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id")],
     counts: [aiSuggestions, contactEmbeddings, closenessCohorts],
     run: async (db, userId) => {
+      await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, userId));
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
       await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
     },
   },
   notes: {
+    exports: [own(interactions), own(noteBatches), own(interactionMentions), own(actionItems), own(meetingSessions), own(meetingTranscriptSegments), own(captureJobs), own(captureHandoffs), own(ignoredPeople), withUrl(own(capturePhotos), "/api/capture/photos/")],
     counts: [
       interactions,
       noteBatches,
@@ -175,6 +235,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   reminders: {
+    exports: [own(reminders), own(reminderLists), own(suggestedReminders)],
     counts: [reminders, reminderLists, suggestedReminders],
     run: async (db, userId) => {
       // Before `reminders` (and before `contacts`, further down): its FKs are `set null`,
@@ -185,12 +246,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   imports: {
+    exports: [own(imports), own(importJobRows)],
     counts: [imports],
     run: async (db, userId) => {
       await db.delete(imports).where(eq(imports.userId, userId));
     },
   },
   connections: {
+    exports: [own(gmailConnections), own(outlookConnections), own(calendarSubscriptions), own(eventProviderConnections)],
     counts: [
       gmailConnections,
       outlookConnections,
@@ -198,8 +261,20 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       eventProviderConnections,
     ],
     run: async (db, userId) => {
+      // Read before the delete: once the row is gone there is nothing to revoke with.
+      const googleGrants = await db
+        .select({
+          refreshTokenEncrypted: gmailConnections.refreshTokenEncrypted,
+          accessTokenEncrypted: gmailConnections.accessTokenEncrypted,
+        })
+        .from(gmailConnections)
+        .where(eq(gmailConnections.userId, userId));
       await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
       await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
+      // Best-effort and time-boxed (see oauth-revoke.ts): a Google outage must never
+      // block an erasure. Outlook has no per-app revoke endpoint; Luma keys and Eventbrite
+      // tokens have none Orbit can call.
+      for (const grant of googleGrants) await revokeGoogleGrant(grant);
       await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
       // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as
       // the Gmail/Outlook rows above, and it must not outlive the account.
@@ -209,6 +284,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   events: {
+    exports: [own(events), own(eventAttendees), own(eventCompanies), own(eventAliases)],
     counts: [events, eventAttendees],
     run: async (db, userId) => {
       // Before `contacts`: `event_attendees.contact_id` is `on delete set null`, so deleting
@@ -230,30 +306,36 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   goals: {
+    exports: [own(userGoals)],
     counts: [userGoals],
     run: async (db, userId) => {
       await db.delete(userGoals).where(eq(userGoals.userId, userId));
     },
   },
   chat: {
+    exports: [own(chatThreads), own(chatMessages)],
     counts: [chatThreads],
     run: async (db, userId) => {
       await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
     },
   },
   recruiters: {
+    exports: [
+      joined("user_recruiter_links", (userId, limit, offset) => sql`SELECT l.*, r.full_name AS recruiter_full_name, r.firm AS recruiter_firm FROM user_recruiter_links l JOIN recruiters r ON r.id = l.recruiter_id WHERE l.user_id = ${userId} ORDER BY l.id LIMIT ${limit} OFFSET ${offset}`),
+      own(recruiterMessages),
+      own(recruiterScanState),
+    ],
     counts: [userRecruiterLinks, recruiterMessages],
     run: async (db, userId) => {
       // `recruiters.avg_rating` / `rating_count` / `log_count` are denormalized counters over
       // `user_recruiter_links`, and nothing recomputes them on delete. Without the recompute
       // below, every deletion permanently inflates those counters on each recruiter the user
       // had linked — the shared directory would drift further from the truth every time.
-      const linkedRecruiterIds = (
-        await db.query.userRecruiterLinks.findMany({
-          where: eq(userRecruiterLinks.userId, userId),
-          columns: { recruiterId: true },
-        })
-      ).map((l) => l.recruiterId);
+      const departingLinks = await db.query.userRecruiterLinks.findMany({
+        where: eq(userRecruiterLinks.userId, userId),
+        columns: { recruiterId: true, email: true, phone: true, linkedinUrl: true },
+      });
+      const linkedRecruiterIds = departingLinks.map((l) => l.recruiterId);
 
       // The drafts and sent messages themselves, which carry `subject` and `body` — the
       // user's own prose to a named third party — plus the Gmail message and thread ids that
@@ -267,6 +349,24 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(recruiterMessages).where(eq(recruiterMessages.userId, userId));
       await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, userId));
 
+      // Third-party PII nobody else holds: a canonical row whose only links were this user's.
+      const ids = [...new Set(linkedRecruiterIds)];
+      if (ids.length > 0) {
+        await db.execute(sql`
+          DELETE FROM recruiters r
+           WHERE r.id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+             AND NOT EXISTS (SELECT 1 FROM user_recruiter_links l WHERE l.recruiter_id = r.id)
+        `);
+      }
+      await db
+        .update(recruiters)
+        .set({ createdByUserId: RECRUITER_DELETED_CREATOR })
+        .where(eq(recruiters.createdByUserId, userId));
+      // What this user contributed to rows others still use leaves with them.
+      for (const link of departingLinks) {
+        await rederiveSharedRecruiterPii(link.recruiterId, { withdrawn: link }).catch(() => {});
+      }
+
       for (const recruiterId of new Set(linkedRecruiterIds)) {
         // Best-effort: a stale counter must not block deleting someone's data.
         await recomputeRecruiterRating(recruiterId).catch(() => {});
@@ -277,6 +377,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   api: {
+    exports: [own(apiKeys), own(webhookEndpoints), own(outboundWebhookDeliveries), own(apiIdempotencyKeys, "idempotency_key")],
     counts: [apiKeys, webhookEndpoints, outboundWebhookDeliveries, apiIdempotencyKeys],
     run: async (db, userId) => {
       // `api_keys` matters most: a key that outlives the data it reaches is a live credential
@@ -294,6 +395,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   activity: {
+    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews)],
     counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents],
     run: async (db, userId) => {
       await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
@@ -323,6 +425,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   feedback: {
+    exports: [own(feedback), withUrl(own(feedbackScreenshots), "/api/feedback/screenshots/")],
     counts: [feedback, feedbackScreenshots],
     run: async (db, userId) => {
       // Both are personal — one is literally the user's own words — so erasure means
@@ -353,18 +456,43 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   outreach: {
+    exports: [
+      own(outreachCampaigns),
+      joined("outreach_prospects", (userId, limit, offset) => sql`SELECT p.* FROM outreach_prospects p JOIN outreach_campaigns c ON c.id = p.campaign_id WHERE c.user_id = ${userId} ORDER BY p.id LIMIT ${limit} OFFSET ${offset}`),
+      joined("outreach_messages", (userId, limit, offset) => sql`SELECT m.* FROM outreach_messages m JOIN outreach_prospects p ON p.id = m.prospect_id JOIN outreach_campaigns c ON c.id = p.campaign_id WHERE c.user_id = ${userId} ORDER BY m.id LIMIT ${limit} OFFSET ${offset}`),
+    ],
     counts: [outreachCampaigns],
     run: async (db, userId) => {
       await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
     },
   },
   contacts: {
+    exports: [
+      contactsSource,
+      own(companies),
+      own(contactMerges),
+      own(contactIdentities),
+      own(duplicateSuggestions),
+      own(targetCompanies),
+      own(contactBriefs, "contact_id"),
+      own(contactProfiles),
+      own(contactExperiences),
+      joined("contact_tags", (userId, limit, offset) => sql`SELECT ct.* FROM contact_tags ct JOIN contacts c ON c.id = ct.contact_id WHERE c.user_id = ${userId} ORDER BY ct.id LIMIT ${limit} OFFSET ${offset}`),
+    ],
     // The `implies` list in `DATA_CATEGORY_META` is what stops this step from quietly
     // exceeding a partial request: `interactions`, `reminders`, `contact_embeddings` and
     // `contact_tags` are all `on delete cascade` from `contacts` and go the moment a
     // contact does, ticked or not.
     counts: [contacts, companies, contactMerges],
     run: async (db, userId) => {
+      // Read before anything goes: the contact rows and merge snapshots are the only record
+      // of which Blob objects are this user's. The objects have no foreign key to cascade.
+      const photoRows = await db.execute(sql`
+        SELECT profile_image_url AS url FROM contacts WHERE user_id = ${userId} AND profile_image_url LIKE '%.public.blob.vercel-storage.com/avatars/%'
+        UNION
+        SELECT loser_snapshot->>'profile_image_url' AS url FROM contact_merges WHERE user_id = ${userId} AND loser_snapshot->>'profile_image_url' LIKE '%.public.blob.vercel-storage.com/avatars/%'
+      `);
+      const photoUrls = rowsOf<{ url: string }>(photoRows).map((r) => r.url);
       // Duplicate-prevention rows. `contact_identities` and `duplicate_suggestions` do
       // cascade from `contacts`, but they are deleted explicitly for the same reason
       // `event_attendees` is: they carry their own `user_id`, so `smoke-purge` requires
@@ -394,15 +522,19 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // leave behind.
       await db.delete(targetCompanies).where(eq(targetCompanies.userId, userId));
       await db.delete(companies).where(eq(companies.userId, userId));
+      // After the rows: a Blob outage leaves orphaned objects, never undeleted people.
+      await deleteAvatarBlobs(photoUrls);
     },
   },
   tags: {
+    exports: [own(tags)],
     counts: [tags],
     run: async (db, userId) => {
       await db.delete(tags).where(eq(tags.userId, userId));
     },
   },
   preferences: {
+    exports: [own(userSettings)],
     counts: [],
     run: async () => {
       // Handled by `purgeUserSettings` at the end of `purgeUserData`, not here: what survives
@@ -412,6 +544,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
 };
+
+export function exportSourcesFor(category: DataCategory): readonly ExportSource[] {
+  return STEPS[category].exports;
+}
+
+export function countedTableNames(category: DataCategory): string[] {
+  return STEPS[category].counts.map(getTableName);
+}
 
 /**
  * Everything on `user_settings` that is NOT the user's own content, and so survives a
@@ -475,6 +615,7 @@ const PRESERVED_SETTINGS_COLUMNS = {
   subscriptionPlan: true,
   subscriptionStatus: true,
   subscriptionPeriodEnd: true,
+  subscriptionEventAt: true,
   compedNote: true,
   compedAt: true,
   compedBy: true,
@@ -483,6 +624,9 @@ const PRESERVED_SETTINGS_COLUMNS = {
   suspendedBy: true,
   createdAt: true,
   lastActiveAt: true,
+  termsAcceptedAt: true,
+  termsVersion: true,
+  timelineBackfillEnabled: true,
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
@@ -498,60 +642,137 @@ async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) 
   }
 }
 
+export type PurgeOutcome = { runId: string | null; completed: PurgeStepKey[] };
+
+/** Thrown when a step fails; the run stays `running` for `resumeStrandedPurges`. */
+export class PurgeIncompleteError extends Error {
+  readonly runId: string;
+  readonly completed: PurgeStepKey[];
+  readonly pending: PurgeStepKey[];
+  constructor(runId: string, completed: PurgeStepKey[], pending: PurgeStepKey[], cause: unknown) {
+    super(`Purge ${runId} stopped with ${pending.length} step(s) left`, { cause });
+    this.name = "PurgeIncompleteError";
+    this.runId = runId;
+    this.completed = completed;
+    this.pending = pending;
+  }
+}
+
+/** A run touched more recently than this is assumed to still be in flight. */
+export const PURGE_RESUME_AFTER_MS = 10 * 60 * 1000;
+const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
+  if (key === "billing") {
+    await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
+    return;
+  }
+  if (key === "preferences") {
+    await purgeUserSettings(db, userId, keepSettings);
+    return;
+  }
+  await STEPS[key].run(db, userId);
+}
+
+async function executePurgeRun(db: Db, run: DataPurgeRunRow): Promise<PurgeOutcome> {
+  const plan = planPurgeSteps(run.categories, run.fullPurge);
+  const done = new Set<string>(run.completedSteps);
+  for (const key of plan) {
+    if (done.has(key)) continue;
+    try {
+      await runPurgeStep(db, run.targetUserId, key, run.keepSettings);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await db
+        .update(dataPurgeRuns)
+        .set({ lastError: `${key}: ${message}`.slice(0, 500) })
+        .where(eq(dataPurgeRuns.id, run.id));
+      throw new PurgeIncompleteError(
+        run.id,
+        plan.filter((k) => done.has(k)),
+        plan.filter((k) => !done.has(k)),
+        err
+      );
+    }
+    done.add(key);
+    await db
+      .update(dataPurgeRuns)
+      .set({ completedSteps: plan.filter((k) => done.has(k)) })
+      .where(eq(dataPurgeRuns.id, run.id));
+  }
+  await db
+    .update(dataPurgeRuns)
+    .set({ status: "done", finishedAt: new Date(), lastError: null })
+    .where(eq(dataPurgeRuns.id, run.id));
+  return { runId: run.id, completed: plan };
+}
+
 /**
- * Delete Orbit data for a user (does not delete the Clerk account).
+ * (keep the existing doc comment here, plus:)
  *
- * With no `only`, this is the full purge: every step in `STEPS`, in `DATA_CATEGORY_META` order, plus the
- * two account-level steps below. `scripts/smoke-purge.ts` asserts that leaves nothing behind,
- * table by table. See `STEPS` for what each step covers and what is deliberately
- * left alone.
- *
- * `only` runs just the listed categories (already expanded through `implies` here, so a
- * caller cannot ask for a delete the database will silently exceed). The two account-level
- * steps are full-purge-only:
- *
- *   - `billing_events` is ANONYMISED, not deleted — Orbit's accounting record of what was
- *     charged, refunded and earned. Financial records have to survive a customer leaving,
- *     and deleting them would silently rewrite revenue history, so a month already reported
- *     would change months later. Nulling `user_id` severs the link to the person while
- *     leaving the money intact, which is what "no longer identifiable" asks for.
- *     (`scripts/smoke-purge.ts` counts rows `WHERE user_id = ...`, so this satisfies its
- *     no-leak assertion honestly rather than by exemption.) It is skipped for a partial
- *     delete because the account is still live: severing a subscription from its customer
- *     because they cleared their chat history would be a billing incident.
- *   - `user_settings` is partially reset — see `PRESERVED_SETTINGS_COLUMNS`. Runs for a
- *     partial delete too, but only when `preferences` is among the chosen categories.
- *
- * `keepSettings: false` (used only by the admin console's hard-delete, which also removes the
- * Clerk login) lets `user_settings` be deleted outright — the "entire account" case, where
- * none of the preserved columns is meant to survive.
+ * RESUMABLE. Every call is recorded in `data_purge_runs` before anything is deleted, and each
+ * finished step is written back. A throw leaves the run `running` with its `last_error`, and
+ * `resumeStrandedPurges` (the nightly job) re-runs what is left. neon-http has no
+ * transactions, so this ledger is what stands in for one.
  */
 export async function purgeUserData(
   userId: string,
   opts: { keepSettings?: boolean; only?: readonly DataCategory[] } = {}
-) {
+): Promise<PurgeOutcome> {
   const keepSettings = opts.keepSettings ?? true;
   const selected = opts.only
     ? expandCategories(opts.only)
     : new Set<DataCategory>(DATA_CATEGORY_IDS);
-  const isFullPurge = selected.size === DATA_CATEGORY_IDS.length;
+  if (selected.size === 0) return { runId: null, completed: [] };
+  const fullPurge = selected.size === DATA_CATEGORY_IDS.length;
   const db = await getDb();
 
-  for (const { id } of DATA_CATEGORY_META) {
-    if (!selected.has(id)) continue;
-    await STEPS[id].run(db, userId);
-  }
+  const [run] = await db
+    .insert(dataPurgeRuns)
+    .values({ targetUserId: userId, categories: [...selected], keepSettings, fullPurge })
+    .returning();
+  return executePurgeRun(db, run);
+}
 
-  if (isFullPurge) {
+/** The nightly backstop: finish stranded runs, give up on hopeless ones, prune old ones. */
+export async function resumeStrandedPurges(opts: { now: Date; limit?: number }) {
+  const db = await getDb();
+  const stats = { found: 0, finished: 0, stillFailing: 0, gaveUp: 0, pruned: 0 };
+  const idleSince = new Date(opts.now.getTime() - PURGE_RESUME_AFTER_MS);
+  const runs = await db
+    .select()
+    .from(dataPurgeRuns)
+    .where(and(eq(dataPurgeRuns.status, "running"), lt(dataPurgeRuns.lastAttemptAt, idleSince)))
+    .orderBy(asc(dataPurgeRuns.lastAttemptAt))
+    .limit(opts.limit ?? 10);
+  stats.found = runs.length;
+
+  for (const run of runs) {
+    if (run.attempts >= PURGE_MAX_ATTEMPTS) {
+      await db.update(dataPurgeRuns).set({ status: "failed" }).where(eq(dataPurgeRuns.id, run.id));
+      stats.gaveUp += 1;
+      continue;
+    }
+    const attempts = run.attempts + 1;
     await db
-      .update(billingEvents)
-      .set({ userId: null })
-      .where(eq(billingEvents.userId, userId));
+      .update(dataPurgeRuns)
+      .set({ attempts, lastAttemptAt: opts.now })
+      .where(eq(dataPurgeRuns.id, run.id));
+    try {
+      await executePurgeRun(db, { ...run, attempts });
+      stats.finished += 1;
+    } catch {
+      stats.stillFailing += 1;
+    }
   }
 
-  if (selected.has("preferences")) {
-    await purgeUserSettings(db, userId, keepSettings);
-  }
+  const pruneBefore = new Date(opts.now.getTime() - PURGE_RUN_RETENTION_MS);
+  const pruned = await db
+    .delete(dataPurgeRuns)
+    .where(and(eq(dataPurgeRuns.status, "done"), lt(dataPurgeRuns.finishedAt, pruneBefore)))
+    .returning();
+  stats.pruned = pruned.length;
+  return stats;
 }
 
 /**
@@ -590,4 +811,24 @@ export async function getDataFootprint(
     );
   }
   return footprint;
+}
+
+/**
+ * A purge's result in the shape the settings dialog shows: categories only (the billing step
+ * is bookkeeping, not something the user picked), and a stop reported as data rather than a
+ * throw, because a thrown server-action error reaches production only as a digest.
+ */
+export async function deletionOutcome(
+  runPurge: () => Promise<PurgeOutcome>
+): Promise<{ deleted: DataCategory[]; pending: DataCategory[] }> {
+  try {
+    const outcome = await runPurge();
+    return { deleted: outcome.completed.filter(isDataCategory), pending: [] };
+  } catch (err) {
+    if (!(err instanceof PurgeIncompleteError)) throw err;
+    return {
+      deleted: err.completed.filter(isDataCategory),
+      pending: err.pending.filter(isDataCategory),
+    };
+  }
 }

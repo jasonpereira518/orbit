@@ -50,6 +50,7 @@ import { getValidAccessToken } from "@/lib/gmail";
 import type { EventProviderSyncCursor } from "@/db/schema";
 import type { FetchPageDeps } from "@/lib/events/guarded-fetch";
 import type { ProviderAttendee, ProviderEvent, ProviderPage } from "@/lib/events/types";
+import { reportAndContinue, reportError } from "@/lib/report-error";
 
 /** Matches `CONNECTIONS_PER_RUN` in the calendar scheduler. */
 const CONNECTIONS_PER_RUN = 5;
@@ -245,14 +246,19 @@ export async function runEventSyncPass(
         error instanceof EventbriteAuthError ||
         error instanceof IcsFeedGoneError
       ) {
-        await markNeedsReauth(conn.id, (error as Error).message).catch(() => {});
+        await markNeedsReauth(conn.id, (error as Error).message).catch(
+          reportAndContinue({ where: "job.event-sync.mark-reauth", userId: conn.userId }, undefined)
+        );
         continue;
       }
+      // Retryable, so it backs off and tries again; reported (throttled) so a provider that
+      // fails for everyone is visible across accounts, which a per-row sync_error is not.
+      reportError(error, { where: "job.event-sync", userId: conn.userId, level: "warning", extra: { provider: conn.provider } });
       await markEventSyncResult(conn.id, {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
         retryable: true,
-      }).catch(() => {});
+      }).catch(reportAndContinue({ where: "job.event-sync.mark-result", userId: conn.userId }, undefined));
     }
   }
 

@@ -30,19 +30,20 @@ import {
   opportunityChecked,
   opportunityKey,
   opportunityKindFor,
+  reminderFactsFor,
+  saveTimeMergeTarget,
   setAsidePeople,
 } from "@/lib/capture/review-reducer";
-import { clampCloseness } from "@/lib/capture/closeness";
 import type { CaptureJobResult, CaptureSavedSummary } from "@/lib/capture/types";
 
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
-import { friendlyError } from "@/lib/errors";
+import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 import { upsertIgnoredPeople, type IgnoredPersonInput } from "@/lib/ignored-people";
 import { getMeetingSession, getNoteBatchForUser, markMeetingSessionSaved, toNoteBatchMeeting } from "@/lib/meeting-sessions";
 import { meetingExtrasFromDigest } from "@/lib/meeting-extras";
-import { captureSourceKinds, followUpDaysFor, shouldCreateFollowUp } from "@/lib/note-batches";
+import { captureSourceKinds } from "@/lib/note-batches";
 import { attachCapturePhotos } from "@/lib/capture-photos";
 import {
   saveNoteBatch,
@@ -109,9 +110,15 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     const result: CaptureJobResult = rest;
     await settleCaptureJob(id, token, { status: "ready", result, sourceText, sourceHash, error: null });
   } catch (err) {
+    // The job row keeps the person's copy; the real error is reported with its reference
+    // so "Couldn’t read those notes" is never the only trace of what went wrong.
     await settleCaptureJob(id, token, {
       status: "failed",
-      error: friendlyError(err, TOAST_COPY.notesReadFailed),
+      error: reportedFailure(err, TOAST_COPY.notesReadFailed, {
+        where: "job.capture.parse",
+        userId: row.userId,
+        extra: { jobId: id, sourceKind: row.sourceKind },
+      }).error,
     });
   }
   return getCaptureJobById(id);
@@ -150,24 +157,35 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
 
     // The photos this capture was read from, claimed for its batch so the history can show
     // them. Idempotent: an attached photo is not claimable twice.
-    if (row.photoIds.length) await attachCapturePhotos(userId, out.batchId, row.photoIds).catch(() => 0);
-
-    if (row.meetingSessionId) {
-      await markMeetingSessionSaved(userId, row.meetingSessionId, out.batchId).catch(() => null);
+    // Everything below is follow-on work the save does not depend on, so a failure never
+    // fails the save — but each is reported (throttled) instead of vanishing.
+    const followOn = (step: string) => ({ where: `job.capture.save.${step}`, userId, extra: { jobId: id } });
+    if (row.photoIds.length) {
+      await attachCapturePhotos(userId, out.batchId, row.photoIds).catch(reportAndContinue(followOn("photos"), 0));
     }
 
-    await upsertIgnoredPeople(userId, ignoredRowsFor(row, out)).catch(() => null);
+    if (row.meetingSessionId) {
+      await markMeetingSessionSaved(userId, row.meetingSessionId, out.batchId).catch(
+        reportAndContinue(followOn("meeting"), null)
+      );
+    }
+
+    await upsertIgnoredPeople(userId, ignoredRowsFor(row, out)).catch(reportAndContinue(followOn("ignored"), null));
 
     if (deps.enrich !== false) {
-      await kickEmbeddingBackfill(userId).catch(() => null);
+      await kickEmbeddingBackfill(userId).catch(reportAndContinue(followOn("embeddings"), null));
       for (const contactId of out.contactIds) {
-        await generateAndStoreContactBrief(userId, contactId).catch(() => null);
+        await generateAndStoreContactBrief(userId, contactId).catch(reportAndContinue(followOn("brief"), null));
       }
     }
   } catch (err) {
     await settleCaptureJob(id, token, {
       status: "failed",
-      error: friendlyError(err, "Couldn’t save those people — try again?"),
+      error: reportedFailure(err, "Couldn’t save those people — try again?", {
+        where: "job.capture.save",
+        userId: row.userId,
+        extra: { jobId: id },
+      }).error,
     });
   }
   return getCaptureJobById(id);
@@ -251,19 +269,25 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
         company: parsed.company,
         title: parsed.role,
       })[0];
-      if (top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE) mergeContactId = top.contact.id;
+      mergeContactId = saveTimeMergeTarget(
+        item,
+        decision,
+        top ? { id: top.contact.id, confidence: top.confidence } : null,
+        DUPLICATE_MERGE_CONFIDENCE
+      );
     }
-    const closeness = clampCloseness(decision.relationshipScore, clampCloseness(parsed.relationship_score_suggestion));
+    const facts = reminderFactsFor(item, decision);
     return {
       notes: item.notes,
       parsed,
       mergeContactId,
-      createReminder: shouldCreateFollowUp(closeness, parsed.relevance, Boolean(parsed.follow_up_recommendation)),
-      relationshipScore: closeness,
+      createReminder: facts.createReminder,
+      relationshipScore: facts.closeness,
       tagNames: decision.tagNames?.length ? decision.tagNames : parsed.tags,
       // A rhythm the person stated outranks both the model's inference and the closeness
-      // table — they said the interval out loud.
-      followUpDays: followUpDaysFor(closeness, parsed.follow_up_days, item.cadence?.days),
+      // table — they said the interval out loud. `reminderFactsFor` applies it, so the
+      // Save button's reminder count uses the same interval.
+      followUpDays: facts.followUpDays,
       cadenceDays: item.cadence?.days ?? null,
       cadencePhrase: item.cadence?.phrase ?? null,
       interactionDate: item.interactionDate,

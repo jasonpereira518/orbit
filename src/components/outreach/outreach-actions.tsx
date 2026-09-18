@@ -97,7 +97,11 @@ export function OutreachActions({
   function handleSend() {
     start(async () => {
       try {
-        await sendOutreachMessageAction(messageId);
+        const res = await sendOutreachMessageAction(messageId);
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
         toast.success(`${channelLabel(channel)} sent`);
         setDangerOpen(false);
         refresh();

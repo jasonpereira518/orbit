@@ -16,12 +16,15 @@ import {
 } from "@/actions/events";
 
 async function ConnectionsSection() {
-  const { connections, eventbriteConfigured, googleConnected } = await getEventConnections();
+  const { connections, eventbriteConfigured, googleConnected, googleMailGranted, googleCalendarGranted } =
+    await getEventConnections();
   return (
     <EventConnectionsCard
       connections={connections}
       eventbriteConfigured={eventbriteConfigured}
       googleConnected={googleConnected}
+      googleMailGranted={googleMailGranted}
+      googleCalendarGranted={googleCalendarGranted}
     />
   );
 }

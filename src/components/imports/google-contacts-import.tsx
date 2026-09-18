@@ -10,6 +10,8 @@ import {
 } from "@/actions/gmail";
 import { previewGoogleContacts, type GoogleContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
+import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
@@ -37,6 +39,18 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
     job?.kind === "google_contacts" && job.status === "running" ? job : null;
   const importProgress = googleJob?.progress ?? null;
   const busy = pending || job?.status === "running";
+  // One handler for the header link and the button: both start the same contacts consent.
+  const connect = () =>
+    start(async () => {
+      try {
+        const { url } = await startGmailOAuth({ purpose: "contacts", returnTo });
+        window.location.href = url;
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+      }
+    });
+  // The status knows the stored grant; the preview result can narrow it further.
+  const contactsGranted = contactsScopeGranted && (status?.canImportContacts ?? true);
 
   // Clear local review UI once this job finishes (toast handled globally by
   // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
@@ -71,6 +85,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
       params.delete("google");
       params.delete("gmail");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
       // The current path, not a hardcoded one: this card also lives in Settings.
       window.history.replaceState(
@@ -82,13 +97,14 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
       getGmailConnectionStatus().then(setStatus).catch(() => {});
     } else if (google === "error") {
       {
-        const oauth = describeOAuthReason(params.get("reason"), "Google");
+        const oauth = describeOAuthReason(params.get("reason"), "Google", params.get("purpose"));
         if (oauth.cancelled) toast.message(oauth.message);
         else toast.error(oauth.message);
       }
       params.delete("google");
       params.delete("gmail");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
       // The current path, not a hardcoded one: this card also lives in Settings.
       window.history.replaceState(
@@ -128,27 +144,30 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
         <div>
           <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {status.connected
-              ? `Connected as ${status.emailAddress}${!contactsScopeGranted ? " — reconnect to grant contacts access" : ""}`
-              : "Connect your Google account to import contacts directly."}
+            {status.status === "needs_reauth"
+              ? `${SESSION_EXPIRED_LINE} to import contacts again`
+              : status.connected
+                ? `Connected as ${status.emailAddress}${!contactsGranted ? " — reconnect to grant contacts access" : ""}`
+                : "Connect your Google account to import contacts directly."}
           </p>
+          {status.status === "disarmed" ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
+              <span>{calendarPauseLine(status.syncError)}</span>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={connect}>
+                Reconnect Google
+              </Button>
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
-          {!status.connected || !contactsScopeGranted ? (
+          {!status.connected || !contactsGranted ? (
             <Button
               disabled={busy}
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const { url } = await startGmailOAuth(returnTo);
-                    window.location.href = url;
-                  } catch (err) {
-                    toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-                  }
-                })
-              }
+              onClick={connect}
             >
-              {status.connected ? "Reconnect Google" : "Connect Google"}
+              {status.connected || status.status === "needs_reauth"
+                ? "Reconnect Google"
+                : "Connect Google"}
             </Button>
           ) : (
             <>
@@ -179,23 +198,21 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
               >
                 {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
               </Button>
-              <Button
-                variant="outline"
+              <DisconnectAccountDialog
+                provider="gmail"
                 disabled={busy}
-                onClick={() =>
+                onConfirm={(opts) =>
                   start(async () => {
-                    await disconnectGmail();
+                    await disconnectGmail(opts);
                     setPeople([]);
                     setLoaded(false);
                     setStatus(null);
-                    toast.success("Google disconnected");
+                    toast.success(opts.alsoDelete ? "Google disconnected and its recruiter data deleted" : "Google disconnected");
                     router.refresh();
                     getGmailConnectionStatus().then(setStatus).catch(() => {});
                   })
                 }
-              >
-                Disconnect
-              </Button>
+              />
             </>
           )}
         </div>

@@ -17,6 +17,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import type { RejectedCounts } from "@/lib/date-commitment-extract";
+import { skippedNoteText } from "@/lib/capture/skipped-note";
 
 export type ReviewablePerson = { key: string; name: string };
 
@@ -30,7 +32,7 @@ export function SuggestedRemindersReview({
   /** Accepted people from this same capture, for the contact picker. */
   people: ReviewablePerson[];
   onChange: (next: SuggestionReviewItem[]) => void;
-  skipped?: { relative: number; unverifiable: number; past: number } | null;
+  skipped?: RejectedCounts | null;
 }) {
   if (!items.length) {
     return <SkippedNote skipped={skipped} />;
@@ -202,30 +204,8 @@ function SourceLine({ item }: { item: SuggestionReviewItem }) {
  * Surfaces what the extractor threw away, so it's visible that Orbit is being
  * deliberately careful rather than looking like it simply missed things.
  */
-function SkippedNote({
-  skipped,
-}: {
-  skipped?: { relative: number; unverifiable: number; past: number } | null;
-}) {
-  if (!skipped) return null;
-  const parts: string[] = [];
-  if (skipped.relative) {
-    parts.push(
-      `${skipped.relative} unrecognized ${skipped.relative === 1 ? "phrase" : "phrases"} ("in a fortnight")`
-    );
-  }
-  if (skipped.past) {
-    parts.push(`${skipped.past} past ${skipped.past === 1 ? "date" : "dates"}`);
-  }
-  if (skipped.unverifiable) {
-    parts.push(`${skipped.unverifiable} unverified`);
-  }
-  if (!parts.length) return null;
-
-  return (
-    <p className="text-xs text-muted-foreground">
-      Skipped {parts.join(", ")}. Orbit only schedules dates it can verify or resolve
-      with confidence.
-    </p>
-  );
+function SkippedNote({ skipped }: { skipped?: RejectedCounts | null }) {
+  const text = skippedNoteText(skipped);
+  if (!text) return null;
+  return <p className="text-xs text-muted-foreground">{text}</p>;
 }

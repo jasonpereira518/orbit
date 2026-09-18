@@ -62,14 +62,15 @@ function makeQueue() {
   const results: number[] = [];
   const statuses: string[] = [];
   const fatals: QueueFatal[] = [];
+  const messages: string[] = [];
   const queue = new MeetingUploadQueue({
     sessionId: "00000000-0000-4000-8000-000000000001",
     recorderId: "rec-1",
     onResult: (r) => results.push(r.seq),
     onStatus: (seq, status) => statuses.push(`${seq}:${status}`),
-    onFatal: (code) => fatals.push(code),
+    onFatal: (code, message) => { fatals.push(code); messages.push(message); },
   });
-  return { queue, results, statuses, fatals };
+  return { queue, results, statuses, fatals, messages };
 }
 
 async function main() {
@@ -137,19 +138,23 @@ async function main() {
   }
 
   // ── Responses that mean stop ────────────────────────────────────────────────────────
-  for (const [status, code] of [
-    [409, "taken-over"],
-    [410, "gone"],
-    [422, "no-transcription-key"],
-    [401, "signed-out"],
+  for (const [status, code, body] of [
+    [409, "taken-over", { error: "no" }],
+    [410, "gone", { error: "no" }],
+    [422, "no-transcription-key", { error: "no", code: "no-transcription-key" }],
+    [422, "transcription-refused", { error: "OpenAI says your account is out of credit — top up with them, then try again", code: "transcription-quota" }],
+    [401, "signed-out", { error: "no" }],
   ] as const) {
-    const f = stubFetch(() => ({ status, body: { error: "no" } }));
-    const { queue, fatals } = makeQueue();
+    const f = stubFetch(() => ({ status, body }));
+    const { queue, fatals, messages } = makeQueue();
     await queue.enqueue(chunk(0));
     await queue.enqueue(chunk(1));
     await queue.drain(2_000);
     check(`${status} stops the queue as "${code}"`, fatals.join() === code && f.requests.length === 1, `${fatals} after ${f.requests.length}`);
     check(`…and keeps the chunks for a later recorder`, queue.backlog === 2);
+    if (code === "transcription-refused") {
+      check("…passing the server's copy through", messages.at(-1) === body.error, String(messages.at(-1)));
+    }
     queue.dispose();
   }
 

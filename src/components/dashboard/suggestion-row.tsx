@@ -148,6 +148,7 @@ export function SuggestionRow({
         <Button
           size="icon"
           variant="ghost"
+          aria-label={`Dismiss suggestion for ${contactName}`}
           disabled={pending}
           className="shrink-0"
           onClick={() =>

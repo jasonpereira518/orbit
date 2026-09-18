@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Resend } from "resend";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 import { planetLabel, type WelcomePlanet } from "@/lib/welcome-planets";
@@ -443,11 +444,24 @@ async function deliver(
     });
     if (error) {
       console.error(`[interest-list] Resend rejected the ${kind} email`, error);
+      await recordErrorEvent({
+        source: ERROR_SOURCES.resendRejected,
+        kind: `interest.${kind}`,
+        message: error,
+        context: { phase: "rejected", name: error.name },
+      });
       return false;
     }
     return true;
   } catch (err) {
     console.error(`[interest-list] Failed to send the ${kind} email`, err);
+    // recordErrorEvent never throws, so deliver keeps its "never throws" contract.
+    await recordErrorEvent({
+      source: ERROR_SOURCES.resendRejected,
+      kind: `interest.${kind}`,
+      message: err,
+      context: { phase: "threw" },
+    });
     return false;
   }
 }

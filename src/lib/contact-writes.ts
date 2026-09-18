@@ -883,19 +883,19 @@ export async function logInteractionForUser(
   options?: ContactWriteOptions
 ) {
   const db = await getDb();
-  const { parseInteractionDateFromNotes } = await import(
+  const { clampSameDayToNow, parseInteractionDateFromNotes } = await import(
     "@/lib/interaction-date"
   );
 
+  // A date-only value is a day, stored at noon — except today, which must not be stored
+  // in the future (see `clampSameDayToNow`).
   const parsedDate =
     input.interactionDate instanceof Date
       ? input.interactionDate
       : input.interactionDate
-        ? new Date(
-            input.interactionDate.length <= 10
-              ? `${input.interactionDate}T12:00:00`
-              : input.interactionDate
-          )
+        ? input.interactionDate.length <= 10
+          ? clampSameDayToNow(input.interactionDate, new Date(`${input.interactionDate}T12:00:00`))
+          : new Date(input.interactionDate)
         : null;
   let when =
     parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;

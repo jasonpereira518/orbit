@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { MEETING_CHUNK_MAX_BYTES } from "@/lib/capture-limits";
-import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
+import { chunkFailureResponse } from "@/lib/meeting-chunk-errors";
+import { reportedFailure } from "@/lib/report-error";
 import { isPaywallError } from "@/lib/entitlements";
 import { ingestMeetingChunk } from "@/lib/meeting-sessions";
 import { requireUserForSurface } from "@/lib/plan-guards";
@@ -27,7 +29,8 @@ export const maxDuration = 120;
  * cross-site `fetch` that does is preflighted and refused.
  *
  * Responses the recorder acts on: 200 stored (possibly a repeat), 409 another tab owns the
- * session, 410 the meeting was saved or discarded, 413 too big, 422 no transcription key
+ * session, 410 the meeting was saved or discarded, 413 too big, 422 no usable
+ * transcription key — missing, rejected, out of credit or unknown model (stop retrying)
  * (stop retrying), 429 with Retry-After, 502 transcription failed (retry).
  */
 type Params = { params: Promise<{ id: string }> };
@@ -103,19 +106,19 @@ export async function POST(request: Request, ctx: Params) {
       duplicate: result.duplicate,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "";
-    // No key is not a transient failure: retrying every chunk of an hour-long call against
-    // it would be a thousand identical errors. 422 tells the recorder to stop and say so.
-    if (isMissingAiApiKeyError(message)) {
-      return NextResponse.json(
-        { error: MISSING_AI_API_KEY_MESSAGE, code: "no-transcription-key" },
-        { status: 422 }
-      );
+    // A key problem is terminal to the recorder: no key, one the provider refuses, an
+    // empty balance or a model it does not have fail every later chunk identically.
+    const refusal = chunkFailureResponse(err);
+    if (refusal.status === 422) {
+      return NextResponse.json(refusal.body, { status: 422 });
     }
-    return NextResponse.json(
-      { error: friendlyError(err, "Couldn’t transcribe that part of the meeting") },
-      { status: 502 }
-    );
+    // Anything else is retried by the recorder; report it so a failing provider is visible.
+    const failure = reportedFailure(err, "Couldn’t transcribe that part of the meeting", {
+      where: "route.meeting-chunk",
+      userId,
+      extra: { sessionId: id },
+    });
+    return NextResponse.json({ error: failure.error, ref: failure.ref }, { status: 502 });
   }
 }
 

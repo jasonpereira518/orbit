@@ -113,7 +113,7 @@ export async function parseProfileFields(
 
   const parsed = profileSchema.safeParse(parseAiJson(content));
   if (!parsed.success) {
-    console.warn("[parse-profile] unparseable response", content.slice(0, 300));
+    console.warn("[parse-profile] unparseable response", { chars: content.length });
     return { ...empty, degradedReason: "ai_error" };
   }
 

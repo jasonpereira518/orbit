@@ -4,6 +4,7 @@ import {
   requireUserId,
 } from "@/lib/auth";
 import { claimPendingPlanUpgrade } from "@/lib/plan-upgrade-events";
+import { reportError } from "@/lib/report-error";
 
 /**
  * Claims one upgrade moment for this account. POST is intentional: claiming is the durable
@@ -21,7 +22,7 @@ export async function POST() {
     if (error instanceof UnauthorizedError) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
-    console.error("Could not claim plan upgrade celebration:", error);
-    return Response.json({ error: "Could not load plan upgrade" }, { status: 500 });
+    const ref = reportError(error, { where: "route.plan-upgrades.claim" });
+    return Response.json({ error: "Couldn’t load the plan upgrade", ref }, { status: 500 });
   }
 }

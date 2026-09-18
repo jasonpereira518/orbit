@@ -10,8 +10,8 @@ import { requireUserId } from "@/lib/auth";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
 
 // Page-level, because it governs the server actions called from this page: summarizing an
-// hour-long meeting is a map-reduce over several model calls. The (main) layout's 300 is
-// a stopgap slated to go back to 60; this page needs its own.
+// hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
+// this page needs its own.
 export const maxDuration = 300;
 
 export default async function CapturePage({

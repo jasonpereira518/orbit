@@ -2,6 +2,7 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { PUBLIC_ROUTES } from "@/lib/public-routes";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { API_SIGNED_OUT_BODY, API_SIGNED_OUT_STATUS, isApiPath } from "@/lib/api-signed-out";
 import { isLocalhost } from "@/lib/demo-account";
 import {
   ATTRIBUTION_COOKIE,
@@ -96,7 +97,19 @@ export default configured
   ? clerkMiddleware(
       async (auth, req) => {
         if (!isPublicRoute(req)) {
-          await auth.protect();
+          if (isApiPath(new URL(req.url).pathname)) {
+            // API callers get JSON, never a redirect: a followed 307 hands them the sign-in
+            // page as a 200 they cannot tell from success. `auth.protect()` is skipped here
+            // because it treats every request inside the proxy as a page navigation.
+            // Pending sessions read as signed out, as protect() would treat them.
+            const { userId } = await auth();
+            if (!userId) {
+              return NextResponse.json(API_SIGNED_OUT_BODY, { status: API_SIGNED_OUT_STATUS });
+            }
+          } else {
+            // Pages — and the server-action POSTs made to them — keep Clerk's behaviour.
+            await auth.protect();
+          }
         }
         return withPathname(req);
       },

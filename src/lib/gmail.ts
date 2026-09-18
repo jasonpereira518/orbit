@@ -3,51 +3,17 @@ import { getDb } from "@/db";
 import { gmailConnections } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
+import {
+  GOOGLE_SCOPES,
+  googleScopesFor,
+  hasScope,
+  unionScopes,
+  type GooglePurpose,
+} from "@/lib/google-scopes";
 
-const GOOGLE_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
+export { hasGmailReadScope } from "@/lib/google-scopes";
+import { googleFetchWithRetry as gmailFetchWithRetry } from "@/lib/google-fetch";
 
-/**
- * Gmail's "Units per minute per user" quota is cost-based, not request-count-based, so a
- * heavy scan can trip it well before any individual endpoint's own rate limit. A 403 for
- * that reason (`rateLimitExceeded` / `quotaExceeded` / `userRateLimitExceeded`, distinct
- * from a genuine permission-denied 403) and any 429 are transient and worth waiting out
- * rather than failing the whole scan.
- */
-const GMAIL_MAX_RETRIES = 5;
-
-async function isRetryableGmailResponse(res: Response): Promise<boolean> {
-  if (res.status === 429) return true;
-  if (res.status !== 403) return false;
-  const text = await res.clone().text();
-  return /rateLimitExceeded|quotaExceeded|userRateLimitExceeded/i.test(text);
-}
-
-/**
- * Wraps `fetch` with exponential backoff (plus jitter) on quota/rate-limit responses,
- * honoring `Retry-After` when Google sends one. A fresh `AbortSignal.timeout` is created
- * per attempt — reusing one across retries would leave later attempts pre-aborted.
- */
-async function gmailFetchWithRetry(
-  url: string | URL,
-  init: { method?: string; headers?: HeadersInit; body?: BodyInit; timeoutMs: number }
-): Promise<Response> {
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
-      method: init.method,
-      headers: init.headers,
-      body: init.body,
-      signal: AbortSignal.timeout(init.timeoutMs),
-    });
-    if (res.ok || attempt >= GMAIL_MAX_RETRIES || !(await isRetryableGmailResponse(res))) {
-      return res;
-    }
-    const retryAfterSeconds = Number(res.headers.get("retry-after"));
-    const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-      ? retryAfterSeconds * 1000
-      : Math.min(30_000, 500 * 2 ** attempt) + Math.random() * 250;
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-}
 
 /**
  * Sending as the user, rather than through Orbit's own Resend domain, is what makes a
@@ -58,7 +24,7 @@ async function gmailFetchWithRetry(
  * security assessment. Adding it here also invalidates existing consents — every
  * already-connected user must reconnect, which is why `hasSendScope` exists.
  */
-const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+const GMAIL_SEND_SCOPE = GOOGLE_SCOPES.gmailSend;
 
 /**
  * Read-only access to the user's calendar, for continuous meeting sync.
@@ -69,39 +35,28 @@ const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
  * scopes would — but, exactly like the send scope, it does not retroactively apply to consents
  * already granted, which is why `hasCalendarScope` exists.
  */
-const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+const GOOGLE_CALENDAR_SCOPE = GOOGLE_SCOPES.calendar;
 
-const GMAIL_SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  GMAIL_SEND_SCOPE,
-  "https://www.googleapis.com/auth/userinfo.email",
-  GOOGLE_CONTACTS_SCOPE,
-  GOOGLE_CALENDAR_SCOPE,
-  "openid",
-].join(" ");
+// No module-wide scope list any more: each entry point asks for its own scope through
+// `googleScopesFor(purpose)` in src/lib/google-scopes.ts (audit B5).
 
-/** True once a connection has re-consented to the People API scope. */
+/** True once a connection has consented to the People API scope. */
 export function hasContactsScope(scopes: string | null | undefined) {
-  return Boolean(scopes?.includes(GOOGLE_CONTACTS_SCOPE));
+  return hasScope(scopes, GOOGLE_SCOPES.contacts);
 }
 
-/** True once a connection has re-consented to sending. Connections made before the
- *  send scope shipped return false and must reconnect before they can send. */
+/** True once a connection has consented to sending. */
 export function hasSendScope(scopes: string | null | undefined) {
-  return Boolean(scopes?.includes(GMAIL_SEND_SCOPE));
+  return hasScope(scopes, GMAIL_SEND_SCOPE);
 }
 
 /**
- * True once a connection has re-consented to calendar access.
- *
- * The scheduler must check this before claiming a Google connection for calendar sync: a
- * token minted before this scope shipped is still perfectly valid for Gmail and Contacts, and
- * will keep working — but every Calendar API call it makes returns 403. Without the probe
- * that surfaces as a stream of failures on healthy connections, walking them up the backoff
- * ladder for a problem only the user can fix by reconnecting.
+ * True once a connection has consented to calendar access. The scheduler must check this
+ * before claiming a Google connection for calendar sync: a token without the scope works
+ * for Gmail and Contacts but every Calendar API call returns 403.
  */
 export function hasCalendarScope(scopes: string | null | undefined) {
-  return Boolean(scopes?.includes(GOOGLE_CALENDAR_SCOPE));
+  return hasScope(scopes, GOOGLE_CALENDAR_SCOPE);
 }
 
 /** Canonical Gmail OAuth callback path — must match Google Cloud authorized redirect URIs. */
@@ -173,7 +128,7 @@ export function getGmailOAuthConfigSummary(): {
   };
 }
 
-export function buildGmailAuthUrl(state: string) {
+export function buildGmailAuthUrl(state: string, purpose: GooglePurpose) {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   if (!clientId) throw new Error("GOOGLE_CLIENT_ID is not configured");
   const redirectUri = getGoogleRedirectUri();
@@ -182,15 +137,18 @@ export function buildGmailAuthUrl(state: string) {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: GMAIL_SCOPES,
+    scope: googleScopesFor(purpose).join(" "),
     access_type: "offline",
     prompt: "consent",
+    // Incremental authorization: the new token also covers what this person granted
+    // earlier, so asking for calendar later does not drop contacts.
+    include_granted_scopes: "true",
     state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
 
-type TokenResponse = {
+export type TokenResponse = {
   access_token: string;
   refresh_token?: string;
   expires_in?: number;
@@ -282,7 +240,7 @@ export async function upsertGmailConnection(
         accessTokenEncrypted: accessEnc,
         refreshTokenEncrypted: refreshEnc,
         tokenExpiresAt: expiresAt,
-        scopes: tokens.scope || GMAIL_SCOPES,
+        scopes: unionScopes(existing.scopes, tokens.scope),
         status: "active",
         // Re-arm: this is the only path from needs_reauth back to active, so it is also
         // the only place a disarmed connection can rejoin the sync schedule.
@@ -304,13 +262,47 @@ export async function upsertGmailConnection(
       accessTokenEncrypted: accessEnc,
       refreshTokenEncrypted: refreshEnc,
       tokenExpiresAt: expiresAt,
-      scopes: tokens.scope || GMAIL_SCOPES,
+      scopes: unionScopes(null, tokens.scope),
       status: "active",
       nextSyncAt: new Date(),
     })
     .returning();
   return created;
 }
+
+/**
+ * Stores a refreshed access token — and only the token.
+ *
+ * A refresh is not a reconnect. `upsertGmailConnection` re-arms calendar sync (resets
+ * `next_sync_at`, `sync_failures`, `sync_error`) because the OAuth callback is the one place
+ * a person proves they want the connection back. Running that on every hourly refresh meant
+ * calendar-sync backoff never converged and a connection the scheduler had disarmed was
+ * re-armed by any unrelated Gmail action. Status is not touched either: a refresh only
+ * happens on an `active` row.
+ *
+ * Google usually omits `refresh_token` on a refresh; when it does rotate one, keep it.
+ */
+export async function storeRefreshedGmailToken(
+  userId: string,
+  tokens: TokenResponse
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(gmailConnections)
+    .set({
+      accessTokenEncrypted: encrypt(tokens.access_token),
+      ...(tokens.refresh_token
+        ? { refreshTokenEncrypted: encrypt(tokens.refresh_token) }
+        : {}),
+      tokenExpiresAt: tokens.expires_in
+        ? new Date(Date.now() + tokens.expires_in * 1000)
+        : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(gmailConnections.userId, userId));
+}
+
+const GMAIL_SESSION_EXPIRED = "Gmail session expired — reconnect";
 
 /**
  * Marks a connection as needing reconnection. Best-effort: health telemetry must never
@@ -347,7 +339,21 @@ async function touchLastSynced(conn: { id: string; lastSyncedAt: Date | null }) 
   }
 }
 
-export async function getValidAccessToken(userId: string): Promise<string> {
+/**
+ * A usable access token, refreshing when it would expire within `minValidityMs`.
+ *
+ * `minValidityMs` defaults to a minute. A caller that will keep using the token for a
+ * long, time-boxed job (the recruiter scan) asks for its whole budget instead, so the token
+ * cannot expire half-way through a page of fetches.
+ *
+ * A dead grant is thrown as `ReauthRequiredError` itself, not re-wrapped: the sync scheduler
+ * decides retryable-or-not on the class, and a plain `Error` made it retry — re-arming the
+ * row `markNeedsReauth` had just parked.
+ */
+export async function getValidAccessToken(
+  userId: string,
+  opts: { minValidityMs?: number } = {}
+): Promise<string> {
   const db = await getDb();
   // No `status` predicate here on purpose. Filtering it out would make a needs_reauth row
   // invisible and turn a precise "session expired — reconnect" into a wrong
@@ -357,12 +363,13 @@ export async function getValidAccessToken(userId: string): Promise<string> {
   });
   if (!conn) throw new Error("Gmail is not connected");
   if (conn.status !== "active") {
-    throw new Error("Gmail session expired — reconnect");
+    throw new ReauthRequiredError(GMAIL_SESSION_EXPIRED);
   }
 
+  const minValidityMs = opts.minValidityMs ?? 60_000;
   const expiresSoon =
     conn.tokenExpiresAt &&
-    conn.tokenExpiresAt.getTime() < Date.now() + 60_000;
+    conn.tokenExpiresAt.getTime() < Date.now() + minValidityMs;
 
   if (!expiresSoon) {
     await touchLastSynced(conn);
@@ -371,7 +378,7 @@ export async function getValidAccessToken(userId: string): Promise<string> {
 
   if (!conn.refreshTokenEncrypted) {
     await markNeedsReauth(userId);
-    throw new Error("Gmail session expired — reconnect");
+    throw new ReauthRequiredError(GMAIL_SESSION_EXPIRED);
   }
 
   let refreshed;
@@ -380,21 +387,22 @@ export async function getValidAccessToken(userId: string): Promise<string> {
   } catch (err) {
     if (err instanceof ReauthRequiredError) {
       await markNeedsReauth(userId);
-      throw new Error("Gmail session expired — reconnect");
+      throw new ReauthRequiredError(GMAIL_SESSION_EXPIRED);
     }
     throw err;
   }
 
-  // The upsert resets status to "active", which is the only path back from needs_reauth.
-  await upsertGmailConnection(userId, refreshed, conn.emailAddress);
+  await storeRefreshedGmailToken(userId, refreshed);
   await touchLastSynced({ id: conn.id, lastSyncedAt: null });
   return refreshed.access_token;
 }
 
 export async function fetchGoogleProfileEmail(accessToken: string) {
-  const res = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+  const res = await gmailFetchWithRetry("https://www.googleapis.com/oauth2/v2/userinfo", {
     headers: { Authorization: `Bearer ${accessToken}` },
+    timeoutMs: 10_000,
   });
+  // "profile" stays in this message: the callback's classifyOAuthFailure keys on it.
   if (!res.ok) throw new Error("Failed to load Google profile");
   const data = (await res.json()) as { email?: string };
   if (!data.email) throw new Error("Google account has no email");
@@ -438,8 +446,9 @@ export async function fetchGooglePeopleContacts(
     url.searchParams.set("pageSize", "200");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-    const res = await fetch(url, {
+    const res = await gmailFetchWithRetry(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      timeoutMs: 30_000,
     });
     if (!res.ok) {
       const text = await res.text();
@@ -778,6 +787,9 @@ export async function fetchGmailHeaders(
           timeoutMs: 10_000,
         }
       );
+      // A 401 is the session, not the message. Returning null here used to count a whole
+      // page of expired-token failures as "scanned, nothing recruiter-shaped".
+      if (res.status === 401) throw new ReauthRequiredError("Gmail session expired — reconnect");
       if (!res.ok) return null;
       const msg = (await res.json()) as RawGmailMessage;
       const internal = Number(msg.internalDate);
@@ -793,7 +805,8 @@ export async function fetchGmailHeaders(
         listId: headerValue(msg, "List-Id"),
         precedence: headerValue(msg, "Precedence"),
       } satisfies GmailHeaderSummary;
-    } catch {
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
       return null;
     }
   });

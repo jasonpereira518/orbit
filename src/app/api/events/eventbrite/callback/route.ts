@@ -30,6 +30,10 @@ export async function GET(request: Request) {
   const redirect = new URL("/events", url.origin);
 
   if (denied) {
+    // A cancelled consent ends the flow: consume the state cookie as the Gmail callback
+    // does, rather than leaving it replayable until it expires. Throws on a mismatch —
+    // after deleting the cookie, which is all this is for.
+    await consumeEventbriteOAuthState(state).catch(() => null);
     // Otherwise invisible: the reason goes to the browser in a query param and nothing is
     // persisted, so a user repeatedly failing to connect leaves no server-side trace.
     await recordErrorEvent({
@@ -74,9 +78,10 @@ export async function GET(request: Request) {
     redirect.searchParams.set("eventbrite", "connected");
     return NextResponse.redirect(redirect);
   } catch (err) {
+    const kind = classifyOAuthFailure(err);
     await recordErrorEvent({
       source: ERROR_SOURCES.oauthEventbriteCallback,
-      kind: classifyOAuthFailure(err),
+      kind,
       message: err,
     });
     redirect.searchParams.set("eventbrite", "error");
@@ -84,8 +89,9 @@ export async function GET(request: Request) {
       "reason",
       // A code, not the message. The full error is already in recordErrorEvent above;
       // in the URL it only leaked token-endpoint bodies into a toast, browser history
-      // and access logs.
-      "oauth_failed"
+      // and access logs. The one code worth its own copy is a person's own fixable
+      // mistake: no organization.
+      kind === "no_organization" ? "no_organization" : "oauth_failed"
     );
     return NextResponse.redirect(redirect);
   }

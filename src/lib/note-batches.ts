@@ -137,7 +137,6 @@ function clampLevel(value: number | null | undefined): 1 | 2 | 3 | 4 | 5 | null 
   const n = Math.round(value);
   return (n < 1 ? 1 : n > 5 ? 5 : n) as 1 | 2 | 3 | 4 | 5;
 }
-export const COLLISION_WINDOW_DAYS = 3;
 export const NOTE_INTERACTION_EXTERNAL_ID_PREFIX = "notes:";
 
 /** Re-pasting the same note for the same contact must not log a second interaction. */
@@ -173,8 +172,153 @@ export function titlesCollide(a: string, b: string) {
   return Boolean(na) && Boolean(nb) && (na === nb || na.includes(nb) || nb.includes(na));
 }
 
-export function withinCollisionWindow(a: Date, b: Date, days = COLLISION_WINDOW_DAYS) {
-  return Math.abs(a.getTime() - b.getTime()) <= days * 86_400_000;
+/**
+ * Words that say when or to whom, not what. "Follow up with Priya next week about the PM
+ * role" and "Follow up with Priya about the PM role" are one task; the difference is timing.
+ */
+const TITLE_NOISE = new Set([
+  "a", "an", "the", "to", "with", "about", "for", "on", "of", "and", "re", "at", "in", "by", "up",
+  "my", "me", "her", "his", "him", "their", "them", "she", "he", "they", "it",
+  "next", "this", "week", "weeks", "month", "today", "tomorrow", "soon", "later",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+]);
+
+function titleWords(s: string): Set<string> {
+  return new Set(
+    normalizeTitle(s)
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 1 && !TITLE_NOISE.has(w))
+  );
+}
+
+/**
+ * The same thing to do, worded differently: substring-equal (the old `titlesCollide`
+ * rule), or at least 80% of the shorter title's content words appear in the longer one.
+ */
+export function titlesNearDuplicate(a: string, b: string): boolean {
+  if (titlesCollide(a, b)) return true;
+  const wa = titleWords(a);
+  const wb = titleWords(b);
+  if (!wa.size || !wb.size) return false;
+  const [small, large] = wa.size <= wb.size ? [wa, wb] : [wb, wa];
+  let shared = 0;
+  for (const w of small) if (large.has(w)) shared += 1;
+  return shared / small.size >= 0.8;
+}
+
+/** How far after a window reminder's default date a dated commitment may land and still replace it. */
+export const SUPERSEDE_AFTER_DAYS = 7;
+
+/**
+ * The save's collision rule, shared with the review's reminder count. A `window` draft (an
+ * action item or the fallback follow-up) carries a date Orbit chose, not one the user said,
+ * so it yields to a dated draft for the same contact with a near-duplicate title whose date
+ * is earlier than the window date or at most `SUPERSEDE_AFTER_DAYS` after it. The audit's
+ * pair — Sep 21 from "next week" against the Sep 29 default — is 8 days EARLIER, which is
+ * why this is not a symmetric window. Dated drafts are never dropped here.
+ */
+export function dropSupersededWindowDrafts<
+  T extends { title: string; dueDate: Date; dateBasis: ReminderDateBasis | null }
+>(drafts: readonly T[], contactOf: (d: T) => string | null): T[] {
+  const limitMs = SUPERSEDE_AFTER_DAYS * 86_400_000;
+  return drafts.filter((d) => {
+    if (d.dateBasis !== "window") return true;
+    return !drafts.some(
+      (other) =>
+        other !== d &&
+        other.dateBasis !== "window" &&
+        contactOf(other) === contactOf(d) &&
+        titlesNearDuplicate(other.title, d.title) &&
+        other.dueDate.getTime() - d.dueDate.getTime() <= limitMs
+    );
+  });
+}
+
+export type PlannedReminder = {
+  kind: "action_item" | "dated" | "follow_up";
+  /** The person's lowercased name — contacts have no ids before the save. */
+  contactKey: string | null;
+  title: string;
+  dueDate: Date;
+  dateBasis: ReminderDateBasis;
+};
+export type ReminderPlanParticipant = {
+  name: string | null;
+  actionItems: readonly string[];
+  createReminder: boolean;
+  followUpDays: number | null;
+  followUpTitle: string | null;
+};
+export type ReminderPlanCommitment = { title: string; dueDateIso: string; dateBasis: ReminderDateBasis; personName: string | null };
+
+/** Mirrors `MAX_ACTION_ITEMS_PER_INTERACTION` in src/lib/action-items.ts, which reaches @/db and cannot be imported here. */
+const PLAN_MAX_ACTION_ITEMS = 10;
+
+function planNameKey(name: string | null | undefined): string | null {
+  return name?.trim().toLowerCase() || null;
+}
+function planIsoNoon(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0, 0);
+}
+function planDayKey(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Every reminder `saveNoteBatch` would write for a fresh batch, without a database: step 1a
+ * (one window reminder per distinct action item), step 2 (dated commitments, bound to a
+ * participant by name), step 3 (the fallback follow-up for a person with no other draft),
+ * step 4 (`dropSupersededWindowDrafts`) and step 5's itemHash de-duplication. Meeting digest
+ * items are not planned; callers add their tick count. `smoke-capture-reminder-count`
+ * proves this equals what the save writes.
+ */
+export function planReminders(input: {
+  anchorIso: string;
+  participants: readonly ReminderPlanParticipant[];
+  commitments: readonly ReminderPlanCommitment[];
+}): PlannedReminder[] {
+  const anchor = planIsoNoon(input.anchorIso);
+  const names = new Set(input.participants.map((p) => planNameKey(p.name)).filter((k): k is string => Boolean(k)));
+  const drafts: PlannedReminder[] = [];
+
+  for (const p of input.participants) {
+    const key = planNameKey(p.name);
+    const seen = new Set<string>();
+    for (const raw of p.actionItems) {
+      const text = raw.replace(/^ +| +$/g, "");
+      const lowered = text.toLowerCase();
+      if (!text || seen.has(lowered)) continue;
+      if (seen.size >= PLAN_MAX_ACTION_ITEMS) break;
+      seen.add(lowered);
+      drafts.push({ kind: "action_item", contactKey: key, title: text, dueDate: windowDueDate(anchor), dateBasis: "window" });
+    }
+  }
+  for (const c of input.commitments) {
+    const key = planNameKey(c.personName);
+    drafts.push({ kind: "dated", contactKey: key && names.has(key) ? key : null, title: c.title, dueDate: planIsoNoon(c.dueDateIso), dateBasis: c.dateBasis });
+  }
+  for (const p of input.participants) {
+    const key = planNameKey(p.name);
+    if (!p.createReminder || !key || drafts.some((d) => d.contactKey === key)) continue;
+    drafts.push({
+      kind: "follow_up",
+      contactKey: key,
+      title: p.followUpTitle || `Follow up with ${p.name}`,
+      dueDate: windowDueDate(anchor, p.followUpDays || DEFAULT_FOLLOW_UP_WINDOW_DAYS),
+      dateBasis: "window",
+    });
+  }
+
+  const hashes = new Set<string>();
+  return dropSupersededWindowDrafts(drafts, (d) => d.contactKey).filter((d) => {
+    if (d.kind === "action_item") return true;
+    const hash = `${planDayKey(d.dueDate)}|${d.title.trim().toLowerCase()}`;
+    if (hashes.has(hash)) return false;
+    hashes.add(hash);
+    return true;
+  });
 }
 
 /**

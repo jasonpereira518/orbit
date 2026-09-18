@@ -50,6 +50,7 @@ import {
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
+import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 import {
   AVATARS_UPDATED_EVENT,
   type AvatarsUpdatedDetail,
@@ -565,7 +566,7 @@ export function ContactsList({
                             )}
                           </div>
 
-                          <div className="flex shrink-0 items-center gap-1">
+                          <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-4">
                             <ClosenessChip
                               closeness={c.closeness}
                               relationshipScore={c.relationshipScore}
@@ -578,7 +579,7 @@ export function ContactsList({
                                 variant="ghost"
                                 size="icon-sm"
                                 aria-label={`Open ${c.fullName} on LinkedIn`}
-                                className="shrink-0 text-muted-foreground"
+                                className="tap-target relative shrink-0 text-muted-foreground"
                                 onClick={(e: MouseEvent<HTMLButtonElement>) => {
                                   e.preventDefault();
                                   e.stopPropagation();
@@ -683,8 +684,7 @@ export function ContactsList({
             <DialogHeader>
               <DialogTitle>Delete {confirmContact?.fullName}?</DialogTitle>
               <DialogDescription>
-                This removes the contact and their interaction history. This
-                cannot be undone.
+                {CONTACT_DELETE_EXPLAINER}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2 sm:gap-2">
@@ -979,7 +979,7 @@ function FollowUpRowButton({
           }
           className={cn(
             buttonVariants({ variant: "ghost", size: "icon-sm" }),
-            "relative shrink-0 text-muted-foreground",
+            "tap-target relative shrink-0 text-muted-foreground",
             overdue && "text-chart-4 hover:text-chart-4"
           )}
           onClick={(e) => {
@@ -1052,7 +1052,7 @@ function DeleteRowButton({
         onClick();
       }}
       className={cn(
-        "shrink-0 text-muted-foreground",
+        "tap-target relative shrink-0 text-muted-foreground",
         "hover:bg-destructive/10 hover:text-destructive",
         "focus-visible:bg-destructive/10 focus-visible:text-destructive"
       )}

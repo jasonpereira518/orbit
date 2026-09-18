@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { aiSuggestions, contacts, interactions } from "@/db/schema";
 import { completeJson } from "@/lib/ai";
 import { upsertContactEmbedding } from "@/lib/search";
+import { reportUnlessQuiet } from "@/lib/report-error";
 
 const threadEnrichSchema = z.object({
   summary: z.string(),
@@ -126,7 +127,9 @@ export async function enrichContactsFromMessages(
     let enriched;
     try {
       enriched = await summarizeThread(userId, contact.fullName, transcript);
-    } catch {
+    } catch (err) {
+      // Skipped rather than failing the import; reported unless it is the person's own key.
+      reportUnlessQuiet(err, { where: "job.message-enrichment", userId, extra: { contactId: contact.id } });
       skipped++;
       continue;
     }

@@ -148,50 +148,45 @@ export function CalendarFeedSettings() {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Input
-              readOnly
-              value={
-                revealed ? status.url! : maskUrl(status.url!)
-              }
-              onFocus={(e) => e.currentTarget.select()}
-              className="font-mono text-xs"
-              aria-label="Calendar feed URL"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setRevealed((v) => !v)}
-              >
-                {revealed ? "Hide" : "Reveal"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(status.url!);
-                  toast.success(TOAST_COPY.copied);
-                }}
-              >
-                Copy link
-              </Button>
-              <a
-                href={status.webcalUrl!}
-                className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
-              >
-                Add to Apple Calendar
-              </a>
-              <a
-                href={status.googleAddUrl!}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
-              >
-                Add to Google Calendar
-              </a>
+          {status.url ? (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Copy this link now — Orbit won’t show it again.</p>
+              <Input
+                readOnly
+                value={revealed ? status.url : maskUrl(status.url)}
+                onFocus={(e) => e.currentTarget.select()}
+                className="font-mono text-xs"
+                aria-label="Calendar feed URL"
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setRevealed((v) => !v)}>
+                  {revealed ? "Hide" : "Reveal"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(status.url!);
+                    toast.success(TOAST_COPY.copied);
+                  }}
+                >
+                  Copy link
+                </Button>
+                <a href={status.webcalUrl!} className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent">
+                  Add to Apple Calendar
+                </a>
+                <a href={status.googleAddUrl!} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent">
+                  Add to Google Calendar
+                </a>
+              </div>
             </div>
-          </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Your calendar feed is on. Orbit keeps only a fingerprint of its link, so it can’t
+              show the link again. To add it to another device, regenerate it below — the old
+              link stops working.
+            </p>
+          )}
 
           <p className="text-xs text-muted-foreground">
             {status.lastFetchedAt

@@ -11,7 +11,13 @@ import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
 import type { SessionRetriever } from "@/lib/lifetime-checkout";
 import type { Plan } from "@/lib/plan-limits";
-import { transcribeWithWispr, type WisprTranscribeInput } from "@/lib/wispr";
+import {
+  recordWisprKeyRejected,
+  transcribeWithWispr,
+  transcribeWithWisprOutcome,
+  type WisprOutcome,
+  type WisprTranscribeInput,
+} from "@/lib/wispr";
 import {
   AI_PROVIDERS,
   resolveAiModel,
@@ -211,6 +217,22 @@ export function transcribeWithWisprGrant(
   input: WisprTranscribeInput,
 ): Promise<string | null> {
   return transcribeWithWispr(keyFor(grant, "wispr"), input);
+}
+
+/** Like `transcribeWithWisprGrant`, but says WHICH failure: a rejected key is not an empty answer. */
+export function transcribeWithWisprOutcomeGrant(
+  grant: AiGrant<"wispr">,
+  input: WisprTranscribeInput,
+): Promise<WisprOutcome> {
+  return transcribeWithWisprOutcome(keyFor(grant, "wispr"), input);
+}
+
+/**
+ * Remembers that Wispr refused this grant's key — by fingerprint, never the key — so
+ * Settings can say "this key". Here rather than in ai.ts because only the gate holds keys.
+ */
+export function recordWisprGrantRejected(userId: string, grant: AiGrant<"wispr">, status: number): Promise<void> {
+  return recordWisprKeyRejected(userId, keyFor(grant, "wispr"), status);
 }
 
 /**

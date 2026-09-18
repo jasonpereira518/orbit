@@ -192,6 +192,8 @@ async function seed() {
     recruiterId: recruiter.id,
     personalRating: 5,
   });
+  // Another user's link: the shared row must survive a link delete and its counters come down.
+  await db.insert(schema.userRecruiterLinks).values({ userId: "smoke-purge-selective-other", recruiterId: recruiter.id });
   await recomputeRecruiterRating(recruiter.id);
   return recruiter.id;
 }
