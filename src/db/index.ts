@@ -1570,9 +1570,10 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 65 = launch Phase 4 polish: no DDL. Two idempotent data migrations at the end of
 // `alters` — calendar feed tokens hashed in place, li-event interactions tagged ai_derived.
 //
-// 67 = page_views.load_ms + nav_type, the page-load timing the navigation-speed work is
-// measured by. 66 is claimed by the unpushed reminders-page-layout worktree.
-export const SCHEMA_VERSION = 67;
+// 68 = page_views.load_ms + nav_type, the page-load timing the navigation-speed work is
+// measured by. Built as 67; renumbered because the reminders redesign (PR #220) claims 66
+// and 67 and its preview may already have stamped the shared preview database with either.
+export const SCHEMA_VERSION = 68;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3031,7 +3032,7 @@ const alters = [
   // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
   `UPDATE interactions SET source = 'ai_derived'
     WHERE external_id LIKE 'li-event:%' AND source IS DISTINCT FROM 'ai_derived'`,
-  // v67: page-load timing on the traffic pipeline (src/lib/nav-timing.ts).
+  // v68: page-load timing on the traffic pipeline (src/lib/nav-timing.ts).
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS load_ms integer`,
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
 ];
