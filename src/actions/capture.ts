@@ -34,6 +34,14 @@ import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
 } from "@/lib/duplicates";
+import { resolvePastedLinkedInProfiles } from "@/lib/linkedin-capture";
+import {
+  extractLinkedInProfileRefs,
+  isLinkedInOnlyPaste,
+  linkedInFactsBlock,
+  linkedInOnlyNoteText,
+  parsedNoteFromLinkedInPerson,
+} from "@/lib/linkedin-paste";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
@@ -186,6 +194,135 @@ export async function ingestCaptureMedia(input: {
   }
 }
 
+/**
+ * Collapse seed people from every source (calendar, email, the locked profile, pasted
+ * LinkedIn URLs) into one entry per person, keeping the first non-empty value of each
+ * field. A plain concat would hand the model the same attendee twice, once with a role and
+ * once without; a plain de-dupe would drop whichever copy carried the profile fields.
+ */
+function mergeSeedPeople(
+  seeds: NonNullable<CaptureParseHints["seedPeople"]>
+): NonNullable<CaptureParseHints["seedPeople"]> {
+  const byKey = new Map<string, (typeof seeds)[number]>();
+  for (const seed of seeds) {
+    const name = seed.name?.trim() || "";
+    const email = seed.email?.trim() || "";
+    if (!name && !email) continue;
+    // Email identifies a person outright; a bare name only matches another bare name.
+    const key = email ? `email:${email.toLowerCase()}` : `name:${name.toLowerCase()}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { ...seed });
+      continue;
+    }
+    byKey.set(key, {
+      name: existing.name?.trim() || seed.name || null,
+      email: existing.email?.trim() || seed.email || null,
+      linkedinUrl: existing.linkedinUrl?.trim() || seed.linkedinUrl || null,
+      title: existing.title?.trim() || seed.title || null,
+      company: existing.company?.trim() || seed.company || null,
+    });
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * The no-model path: pasted profile URLs straight to review cards.
+ *
+ * Returns the same shape as the parsed path — same items, same hash contract, same save
+ * action — so a URL-logged person goes through review, dedupe and saving exactly like a
+ * person the model found. The only thing skipped is the reading.
+ */
+async function parsePastedLinkedInProfiles(
+  userId: string,
+  refs: ReturnType<typeof extractLinkedInProfileRefs>
+) {
+  const { people, degraded, dropped } = await resolvePastedLinkedInProfiles(
+    userId,
+    refs
+  );
+  const named = people.filter((p) => p.name?.trim());
+  if (!named.length) {
+    return {
+      ok: false as const,
+      error:
+        "Could not read a name from that LinkedIn URL. Add the person's name to the notes and try again.",
+    };
+  }
+
+  const db = await getDb();
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+  const duplicateIndex = buildDuplicateIndex(existing);
+
+  const items: BulkNotePersonPreview[] = named.map((person, index) => {
+    const parsed = parsedNoteFromLinkedInPerson(person);
+    const duplicates = findDuplicateCandidatesIndexed(duplicateIndex, {
+      fullName: parsed.name,
+      email: parsed.email,
+      linkedinUrl: parsed.linkedin_url,
+      company: parsed.company,
+      title: parsed.role,
+    }).slice(0, 5);
+    const top = duplicates[0];
+    return {
+      key: `${index}-${person.slug}`,
+      notes: linkedInOnlyNoteText(person),
+      parsed,
+      duplicates: duplicates.map((d) => ({
+        id: d.contact.id,
+        fullName: d.contact.fullName,
+        company: d.contact.company,
+        title: d.contact.title,
+        reason: d.reason,
+        confidence: d.confidence,
+      })),
+      suggestedMergeId: top && top.confidence >= 0.85 ? top.contact.id : null,
+      sharedNoteTexts: [],
+      interactionDate: null,
+      interactionType: "note",
+    };
+  });
+
+  // One canonical corpus per set of URLs, so the same profile pasted twice — in any
+  // formatting — hashes the same and does not log a second interaction.
+  const sourceText = named
+    .map((person) => linkedInOnlyNoteText(person))
+    .join("\n\n---\n\n");
+
+  return {
+    ok: true as const,
+    items,
+    sharedNotes: [] as SharedNoteContext[],
+    interactionDate: null,
+    interactionType: "note",
+    anchorIso: isoDay(new Date()),
+    anchorBasis: "upload" as const,
+    hints: {
+      seedPeople: named.map((p) => ({
+        name: p.name,
+        email: p.email,
+        linkedinUrl: p.url,
+        title: p.title,
+        company: p.company,
+      })),
+    } satisfies CaptureParseHints,
+    sourceText,
+    sourceHash: hashSourceNote(sourceText),
+    suggestedReminders: [] as SuggestedReminderPreview[],
+    suggestionsSkipped: emptyCommitmentResult().rejected as RejectedCounts,
+    mentions: [] as PreviewMention[],
+    linkedinLookup: {
+      found: named.length,
+      resolved: named.filter((p) => p.source === "apollo").length,
+      guessed: named.filter((p) => p.source === "url").length,
+      degraded,
+      dropped,
+    },
+  };
+}
+
 export async function parseBulkCaptureNotes(
   notes: string,
   hints?: CaptureParseHints | null
@@ -197,12 +334,49 @@ export async function parseBulkCaptureNotes(
       return { ok: false as const, error: "Notes are required" };
     }
 
+    const profileRefs = extractLinkedInProfileRefs(notes);
+
+    // Paste a profile URL and nothing else and there is no prose to read — the model pass
+    // would be a round-trip and a charge to learn nothing the URL doesn't already say. It
+    // also means this works with no AI key at all, which is the only reason "paste a
+    // LinkedIn URL" is a dependable way in rather than one more thing gated on setup.
+    if (profileRefs.length && isLinkedInOnlyPaste(notes)) {
+      return await parsePastedLinkedInProfiles(userId, profileRefs);
+    }
+
     // Auto-detect pasted ICS / email forwards when caller didn't supply hints.
     const detected = normalizePastedCaptureText(notes);
-    const seedPeople = [
+
+    // URLs sitting inside real notes: resolve them first so the model attaches a role and
+    // company to the right person instead of guessing from a slug, or leaving the URL as
+    // the only thing it knows about them.
+    const linkedin = profileRefs.length
+      ? await resolvePastedLinkedInProfiles(userId, profileRefs)
+      : null;
+
+    /**
+     * Only profiles that actually resolved may speak into a note.
+     *
+     * A slug-derived name is a reading of a URL, and the notes already name the person in
+     * their own words — asserting "Name: Sfounder" next to "met Marcus at the summit"
+     * invites the model to split one person into two. The URL itself is in the prose
+     * verbatim either way, so nothing is lost by staying quiet.
+     */
+    const resolvedProfiles = (linkedin?.people || []).filter(
+      (p) => p.source === "apollo"
+    );
+
+    const seedPeople = mergeSeedPeople([
       ...(hints?.seedPeople || []),
       ...(detected.hints.seedPeople || []),
-    ];
+      ...resolvedProfiles.map((p) => ({
+        name: p.name,
+        email: p.email,
+        linkedinUrl: p.url,
+        title: p.title,
+        company: p.company,
+      })),
+    ]);
     const mergedHints: CaptureParseHints = {
       eventDate: hints?.eventDate || detected.hints.eventDate || null,
       seedPeople: seedPeople.length ? seedPeople : undefined,
@@ -210,11 +384,18 @@ export async function parseBulkCaptureNotes(
         hints?.interactionType || detected.hints.interactionType || null,
     };
 
-    const corpus =
+    const baseCorpus =
       detected.sources.includes("calendar") ||
       detected.sources.includes("email")
         ? detected.text
         : notes;
+
+    // Folded into the corpus, not just the hints: the facts end up on the saved note too,
+    // which is where the provenance of a role nobody typed belongs.
+    const factsBlock = linkedInFactsBlock(resolvedProfiles);
+    const corpus = factsBlock
+      ? `${baseCorpus}\n\n---\n\n${factsBlock}`
+      : baseCorpus;
 
     // Run both extractions concurrently. The commitment pass is failure-isolated:
     // contact extraction is the core value and must survive a bad dates response.
@@ -372,6 +553,17 @@ export async function parseBulkCaptureNotes(
       suggestedReminders: suggestedRemindersPreview,
       suggestionsSkipped: commitmentResult.rejected as RejectedCounts,
       mentions,
+      linkedinLookup: linkedin
+        ? {
+            found: linkedin.people.length,
+            resolved: resolvedProfiles.length,
+            // Nothing is guessed on this path: an unresolved URL contributes no fields,
+            // because the notes themselves already say who the person is.
+            guessed: 0,
+            degraded: linkedin.degraded,
+            dropped: linkedin.dropped,
+          }
+        : null,
     };
   } catch (err) {
     const { toUserFacingError } = await import("@/lib/errors");
