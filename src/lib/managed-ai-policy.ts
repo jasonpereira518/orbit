@@ -27,10 +27,15 @@ export type AiKeySource = "personal" | "managed";
  * included — runs on a key the user saved in Settings, never on Orbit's or a developer's.
  *
  * A code constant, not an env var, on purpose: no deployment, preview or laptop can switch
- * Orbit's keys on by accident. With this false, `managedEligibility` is null for everyone and
- * `ai-access.ts` never reads a managed or local AI key from the environment, so the managed
- * branches below are dormant rather than deleted — turning managed AI on later is this flag
- * plus the public copy (pricing, /privacy, /terms), which currently promises BYOK everywhere.
+ * Orbit's keys on by accident. With this false, no deployed account of any plan reaches a key
+ * it did not save, and the managed branches below are dormant rather than deleted — turning
+ * managed AI on later is this flag plus the public copy (pricing, /privacy, /terms), which
+ * currently promises BYOK everywhere.
+ *
+ * The ONE exception is `next dev`: a localhost demo account still runs on whatever AI keys
+ * are in the developer's own `.env.local`, as local development always did. It never spends
+ * Orbit's money, because there is no Orbit key to spend — see `localDevAiEnabled` in
+ * `ai-access.ts` for the three conditions that keep it off every deployment.
  */
 export const MANAGED_AI_ENABLED: boolean = false;
 
@@ -54,7 +59,9 @@ export type AiAccessDenial =
 export type ManagedEligibility = "lifetime" | "demo" | null;
 
 export function managedEligibility(plan: Plan, isDemo: boolean): ManagedEligibility {
-  if (!MANAGED_AI_ENABLED) return null;
+  // Managed AI off: Lifetime is BYOK like everyone else, and "demo" means one thing only —
+  // a localhost dev server with a key in `.env.local` (`ai-access.ts` decides that).
+  if (!MANAGED_AI_ENABLED) return isDemo ? "demo" : null;
   if (plan === "lifetime") return "lifetime";
   if (isDemo) return "demo";
   return null;
@@ -86,6 +93,9 @@ export const MANAGED_DEFAULT_MODELS: Record<AiProvider, string> = {
 };
 
 export function managedModel(provider: AiProvider, requested: string | null | undefined): string {
+  // The allowlist protects Orbit's money. With managed AI off the only key behind this path
+  // is the developer's own, so `next dev` keeps running whatever model Settings asks for.
+  if (!MANAGED_AI_ENABLED) return requested || MANAGED_DEFAULT_MODELS[provider];
   if (requested && MANAGED_MODELS[provider].includes(requested)) return requested;
   return MANAGED_DEFAULT_MODELS[provider];
 }

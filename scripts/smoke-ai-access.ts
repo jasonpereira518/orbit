@@ -14,7 +14,9 @@
  *
  * While `MANAGED_AI_ENABLED` is false (managed AI has not shipped), 3 and 4 are replaced by
  * `byokOnly()`: with every managed AND local-dev key set, no account of any plan — Lifetime,
- * comped, demo — gets anything but its own key on the wire.
+ * comped, showcase-demo — gets anything but its own key on the wire, and the one exception
+ * (`next dev` on the developer's `.env.local`) is proved to need NODE_ENV=development and
+ * no VERCEL, so no deployment can reach it.
  *
  * Run: npx tsx scripts/smoke-ai-access.ts
  */
@@ -214,15 +216,22 @@ function purePolicy() {
   if (MANAGED_AI_ENABLED) {
     check("Lifetime and demo are eligible", managedEligibility("lifetime", false) === "lifetime" && managedEligibility("free", true) === "demo");
   } else {
-    check("managed AI is off: no plan is eligible, not even Lifetime or demo",
-      managedEligibility("lifetime", false) === null && managedEligibility("lifetime", true) === null && managedEligibility("free", true) === null);
+    check("managed AI is off: no plan is eligible, not even Lifetime",
+      managedEligibility("lifetime", false) === null && managedEligibility("free", false) === null);
+    check("…and 'demo' is the localhost dev-key path only", managedEligibility("free", true) === "demo");
   }
   check("a demo account with no key anywhere is told to add one — it was never promised Orbit's AI",
     pick(facts({ eligibility: "demo", managed: { gemini: false, openai: false, anthropic: false } })) === "refused:key_required");
 
   console.log("\nManaged keys run managed models");
-  check("an expensive model on Orbit's key is downgraded",
-    pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro" })) === "managed:gemini:gemini-3.5-flash");
+  // The allowlist protects Orbit's money; with managed AI off the only key behind that path
+  // is the developer's own, so `next dev` runs the model Settings asks for.
+  check(
+    MANAGED_AI_ENABLED
+      ? "an expensive model on Orbit's key is downgraded"
+      : "managed AI off: the local dev key runs the model that was asked for",
+    pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro" })) ===
+      (MANAGED_AI_ENABLED ? "managed:gemini:gemini-3.5-flash" : "managed:gemini:gemini-2.5-pro"));
   check("…the same model on their own key is theirs to choose",
     pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro", personal: own })) === "personal:gemini:gemini-2.5-pro");
   check("an Anthropic user on Lifetime with only a managed Gemini key runs on Gemini",
@@ -301,6 +310,7 @@ const U = {
   proNone: "smoke-aia-pro-none",
   compNone: "smoke-aia-comp-none",
   demoNone: "smoke-aia-demo-none",
+  localDev: "smoke-aia-local-dev",
   buyer: "smoke-aia-buyer",
   keeper: "smoke-aia-keeper",
   capped: "smoke-aia-capped",
@@ -529,6 +539,13 @@ async function transitions() {
   check("someone else's session id grants nothing", replay.kind === "refused");
 }
 
+/** `NODE_ENV` is readonly in the Node types; the gate reads it at call time either way. */
+function setNodeEnv(value: string | undefined) {
+  const env = process.env as Record<string, string | undefined>;
+  if (value === undefined) delete env.NODE_ENV;
+  else env.NODE_ENV = value;
+}
+
 /**
  * Managed AI is off: every plan is BYOK. Sets every key Orbit or a developer could hold —
  * the explicit managed names, the bare local-dev names with `VERCEL` unset so the local
@@ -537,7 +554,11 @@ async function transitions() {
 async function byokOnly() {
   const db = await getDb();
   const DEV_KEY = "dev-laptop-gemini-key";
-  const saved = { VERCEL: process.env.VERCEL, DEMO: process.env.DEMO_ACCOUNT_USER_ID };
+  const saved = {
+    VERCEL: process.env.VERCEL,
+    DEMO: process.env.DEMO_ACCOUNT_USER_ID,
+    NODE_ENV: process.env.NODE_ENV,
+  };
   delete process.env.VERCEL;
   for (const p of ["GEMINI", "OPENAI", "ANTHROPIC", "WISPR"]) {
     process.env[`ORBIT_MANAGED_${p}_API_KEY`] = MANAGED;
@@ -550,6 +571,7 @@ async function byokOnly() {
     await account(U.lifetimeNone, { lifetimePurchasedAt: PAST });
     await account(U.compNone, { compedPlan: "lifetime" });
     await account(U.demoNone, {});
+    await account(U.localDev, {});
     await account(U.proNone, { subscriptionPlan: "orbit", subscriptionStatus: "active" });
     await account(U.freeNone, {});
     await account(U.freeOwn, ownKey());
@@ -596,6 +618,40 @@ async function byokOnly() {
     check("refused as key_required, never upgrade_pending", err?.reason === "key_required", err);
     check("…without a Stripe round trip", !asked);
 
+    console.log("\nLocalhost still runs on the developer's .env.local");
+    setNodeEnv("development");
+    check("…and only then does a key count as configured", Object.values(managedKeysConfigured()).every(Boolean));
+    let local = await lastSent(() => json(U.localDev));
+    check("`next dev`: the key from .env.local went on the wire", local.req?.key === DEV_KEY, local.req?.key ?? local.err);
+    await account(U.localDev, { aiModel: "gemini-2.5-pro" });
+    local = await lastSent(() => json(U.localDev));
+    check("…at the model Settings asks for, with no allowance to ration it",
+      /models\/gemini-2\.5-pro:/.test(local.req?.url ?? ""), local.req?.url ?? local.err);
+    const localStatus = await getAiAccessStatus(U.localDev);
+    check("…and the UI says AI will run, with no allowance to show",
+      localStatus.ready && localStatus.source === "managed" && localStatus.allowance === null, JSON.stringify(localStatus));
+    await db.update(userSettings).set(ownKey()).where(eq(userSettings.userId, U.localDev));
+    local = await lastSent(() => json(U.localDev));
+    check("a saved key still wins over .env.local", local.req?.key === USER_KEY, local.req?.key ?? local.err);
+
+    process.env.ORBIT_DEMO_MANAGED_AI = "off";
+    await account(U.localDev, {});
+    local = await lastSent(() => json(U.localDev));
+    check("ORBIT_DEMO_MANAGED_AI=off: localhost sees what a deployment sees",
+      isAiAccessError(local.err) && (local.err as AiAccessError).reason === "key_required" && local.count === 0, local.err);
+    delete process.env.ORBIT_DEMO_MANAGED_AI;
+
+    process.env.VERCEL = "1";
+    local = await lastSent(() => json(U.localDev));
+    check("a Vercel runtime never reaches .env.local, whatever NODE_ENV says",
+      isAiAccessError(local.err) && local.count === 0, local.req?.key ?? local.err);
+    delete process.env.VERCEL;
+    setNodeEnv("production");
+    local = await lastSent(() => json(U.localDev));
+    check("neither does a production build off Vercel",
+      isAiAccessError(local.err) && local.count === 0, local.req?.key ?? local.err);
+    setNodeEnv(undefined);
+
     console.log("\nA grant cannot be forged");
     const forged = Object.freeze({ provider: "gemini", model: "x", source: "managed", keyOwner: "orbit", operation: "x" }) as AiGrant;
     let threw = false;
@@ -615,6 +671,7 @@ async function byokOnly() {
     else process.env.VERCEL = saved.VERCEL;
     if (saved.DEMO === undefined) delete process.env.DEMO_ACCOUNT_USER_ID;
     else process.env.DEMO_ACCOUNT_USER_ID = saved.DEMO;
+    setNodeEnv(saved.NODE_ENV);
   }
 }
 

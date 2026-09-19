@@ -96,7 +96,9 @@ above. Vercel Pro crons remove the rule entirely.
 
 ## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
 
-**Currently off.** `MANAGED_AI_ENABLED = false` in `src/lib/managed-ai-policy.ts`: AI is bring-your-own-key on every plan, Lifetime and localhost demo accounts included, and no `ORBIT_MANAGED_*` or bare `GEMINI_API_KEY`-style variable is read. Setting one does nothing. Turning managed AI on is that flag plus the public copy (pricing, `/privacy`, `/terms`, which bumps `TERMS_VERSION`). The rest of this section describes the dormant path.
+**Currently off.** `MANAGED_AI_ENABLED = false` in `src/lib/managed-ai-policy.ts`: AI is bring-your-own-key on every deployed plan, Lifetime included, and no `ORBIT_MANAGED_*` variable is read anywhere. Setting one does nothing. Turning managed AI on is that flag plus the public copy (pricing, `/privacy`, `/terms`, which bumps `TERMS_VERSION`). The rest of this section describes the dormant path.
+
+**The one exception is `next dev`**, which runs AI on the bare `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `WISPR_API_KEY` names in the developer's `.env.local` (`localDevAiEnabled` in `ai-access.ts`: managed AI off, `VERCEL` unset, `NODE_ENV=development` — a deployment is none of these). A key saved in Settings still wins, and `ORBIT_DEMO_MANAGED_AI=off` turns it off to see the production BYOK states.
 
 AI is bring-your-own-key on every plan except Lifetime. A Lifetime account with no key of its own runs on Orbit's managed keys, and only `src/lib/ai-access.ts` can issue one (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client).
 
