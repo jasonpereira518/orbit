@@ -15,6 +15,7 @@ import {
   captureHandoffs,
   captureJobs,
   capturePhotos,
+  aiResultCache,
   chatMessages,
   chatThreads,
   closenessCohorts,
@@ -184,9 +185,12 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id")],
+    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id"), own(aiResultCache)],
     counts: [aiSuggestions, contactEmbeddings, closenessCohorts],
     run: async (db, userId) => {
+      // Remembered AI answers (recruiter verdicts, profile reads, drafts): derived from this
+      // person's mail and contacts, and rebuilt on the next ask.
+      await db.delete(aiResultCache).where(eq(aiResultCache.userId, userId));
       await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, userId));
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));

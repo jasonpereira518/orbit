@@ -45,6 +45,8 @@ if (process.env.DATABASE_URL) {
 }
 // The synthetic user must not count as a localhost demo account riding managed keys.
 process.env.ORBIT_DEMO_MANAGED_AI = "off";
+// Measure the model, not the answer cache: run 2 of a case must call the model again.
+process.env.ORBIT_AI_RESULT_CACHE = "off";
 
 type Args = {
   provider: AiProvider;

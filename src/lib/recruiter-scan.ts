@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { completeJson, parseAiJson } from "@/lib/ai";
+import { parseAiJson } from "@/lib/ai";
+import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import type { GmailMessageContent } from "@/lib/gmail";
 
 /**
@@ -69,7 +70,10 @@ export async function classifyRecruiterSender(
     messages: GmailMessageContent[];
   }
 ): Promise<RecruiterScanResult> {
-  const content = await completeJson(userId, {
+  // Re-scans see the same senders again, and an overlap window re-reads the last two days of
+  // mail on purpose. A sender whose rendered mail is byte-identical gets the verdict it got
+  // last time instead of another model call; one new message changes the prompt and the key.
+  const content = await cachedCompleteJson(userId, {
     operation: "recruiter.scan",
     // Low temperature: this is an extraction task, and the summary is stored as fact.
     temperature: 0.2,
@@ -92,6 +96,9 @@ Return JSON: {"is_recruiter": boolean, "confidence": number between 0 and 1, "fu
 Firm guessed from the email domain: ${input.firmGuess || "unknown"}
 
 ${renderMessages(input.messages)}`,
+  }, {
+    ttlDays: 90,
+    accept: (raw) => recruiterScanSchema.safeParse(parseAiJson(raw)).success,
   });
 
   const parsed = recruiterScanSchema.parse(parseAiJson(content));

@@ -9,7 +9,7 @@ import "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-capture-jobs";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-capture-jobs";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { captureJobs, contactOpportunities, contacts, ignoredPeople, noteBatches, reminders, userSettings } from "../src/db/schema";
 import {
@@ -202,6 +202,41 @@ async function main() {
   const queued = await queueCaptureJobRow(USER, media.id, { inputText: "Edited transcript." });
   check("Extract on a transcribed job queues it with the edited text", queued?.status === "queued" && queued.inputText === "Edited transcript.");
   check("a wrong user cannot queue it", (await queueCaptureJobRow("nope", media.id, {})) === null);
+
+  console.log("\nHeartbeat…");
+  {
+    // Four minutes of silence pass in the middle of a long parse: back-date the claim, then
+    // ask whether a stall sweep could take it over.
+    const backdate = (id: string) =>
+      db.update(captureJobs).set({ updatedAt: new Date(Date.now() - CAPTURE_CLAIM_STALE_MS - 1000) }).where(eq(captureJobs.id, id));
+
+    const silent = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "A long note, no heartbeat." });
+    let stolenWithout: unknown = null;
+    await runCaptureJobById(silent.id, {
+      parse: async (_u, corpus) => {
+        await backdate(silent.id);
+        stolenWithout = await claimCaptureJob(silent.id, "extracting");
+        return fakeParse(corpus);
+      },
+      enrich: false,
+    });
+    check("control: a silent long parse CAN be re-claimed mid-flight", stolenWithout !== null);
+
+    const beating = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "A long note that reports progress." });
+    let stolenWith: unknown = "not tried";
+    await runCaptureJobById(beating.id, {
+      parse: async (_u, corpus, _h, opts) => {
+        await backdate(beating.id);
+        await opts?.onProgress?.(); // one of the parse's model calls just finished
+        stolenWith = await claimCaptureJob(beating.id, "extracting");
+        return fakeParse(corpus);
+      },
+      enrich: false,
+    });
+    check("a heartbeat between model calls keeps the claim, so the parse is never paid for twice", stolenWith === null);
+    check("and the parse still lands", (await db.query.captureJobs.findFirst({ where: eq(captureJobs.id, beating.id) }))?.status === "ready");
+    await db.delete(captureJobs).where(inArray(captureJobs.id, [silent.id, beating.id]));
+  }
 
   console.log("\nFailure and discard…");
   const broken = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "x" });

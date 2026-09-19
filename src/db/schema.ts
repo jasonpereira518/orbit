@@ -1286,6 +1286,13 @@ export const contactBriefs = pgTable("contact_briefs", {
    */
   nextStep: text("next_step"),
   model: text("model"),
+  /**
+   * sha256 of what the model was asked (system prompt + assembled inputs). A regeneration
+   * whose inputs hash the same returns this brief instead of paying for the same answer
+   * (`generateAndStoreContactBrief`). Null for the deterministic no-model fallback, which
+   * must be replaced as soon as a model can run.
+   */
+  inputHash: text("input_hash"),
 });
 
 /** One entry on a LinkedIn profile: a job, or a school. */
@@ -2341,6 +2348,31 @@ export const usageEvents = pgTable(
     index("usage_events_user_created_idx").on(t.userId, t.createdAt),
     index("usage_events_created_idx").on(t.createdAt),
     index("usage_events_model_idx").on(t.provider, t.model),
+  ]
+);
+
+/**
+ * AI answers keyed by exactly what was asked (`src/lib/ai-result-cache.ts`).
+ *
+ * For call sites whose answer is a pure function of their inputs and gets asked again: the
+ * recruiter classifier on a re-scan, the extension re-reading a profile it read yesterday,
+ * a follow-up draft sheet reopened. `input_hash` covers the operation's prompt version and
+ * every input, so a changed prompt or new mail is a miss by construction. Pruned after 30
+ * days by the process-stalled sweep; per-user, and purged with the account's AI data.
+ */
+export const aiResultCache = pgTable(
+  "ai_result_cache",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    operation: text("operation").notNull(),
+    inputHash: text("input_hash").notNull(),
+    result: jsonb("result").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("ai_result_cache_key_uidx").on(t.userId, t.operation, t.inputHash),
+    index("ai_result_cache_created_idx").on(t.createdAt),
   ]
 );
 

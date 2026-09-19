@@ -104,6 +104,10 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
       // a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
       mentionPicks: row.mentionPicks ?? [],
       now: deps.now,
+      // Keep the claim alive between the parse's model calls: a long two-pass parse used to
+      // outlast CAPTURE_CLAIM_STALE_MS in silence and get re-claimed — and re-billed — while
+      // still running.
+      onProgress: () => heartbeatCaptureJob(id, token),
     });
     await heartbeatCaptureJob(id, token);
     const { sourceText, sourceHash, ...rest } = parsed;

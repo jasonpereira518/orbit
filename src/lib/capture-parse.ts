@@ -16,6 +16,7 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import {
   parseMultiPersonNotesWithAI,
+  type ParseProgress,
   type CaptureParseHints,
   type ParsedNote,
   type SharedNoteContext,
@@ -71,6 +72,11 @@ export type CaptureParseOptions = {
   mentionPicks?: readonly MentionPick[];
   /** Injectable clock, for the smoke suite. */
   now?: Date;
+  /**
+   * Called after each model call of the people parse. The capture runner heartbeats its
+   * claim here so a long multi-call parse is never mistaken for a dead one and run twice.
+   */
+  onProgress?: ParseProgress;
 };
 
 export const NO_PEOPLE_OR_DATES_MESSAGE = "No people or dates found in those notes";
@@ -154,7 +160,7 @@ export async function runCaptureParse(
   // lookup only depends on userId, so it doesn't need to wait on either AI call.
   const today = opts.now ?? new Date();
   const [personParse, rawCommitments, existing] = await Promise.all([
-    parseMultiPersonNotesWithAI(userId, corpus, mergedHints),
+    parseMultiPersonNotesWithAI(userId, corpus, mergedHints, { onProgress: opts.onProgress }),
     fetchRawCommitments(userId, corpus, {
       today,
       knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],

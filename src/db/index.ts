@@ -327,7 +327,8 @@ CREATE TABLE IF NOT EXISTS contact_briefs (
   recent_discussions jsonb NOT NULL DEFAULT '[]',
   generated_at timestamptz NOT NULL DEFAULT now(),
   basis_interaction_id uuid,
-  model text
+  model text,
+  input_hash text
 );
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -677,6 +678,16 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS ai_result_cache (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  operation text NOT NULL,
+  input_hash text NOT NULL,
+  result jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_result_cache_key_uidx ON ai_result_cache(user_id, operation, input_hash);
+CREATE INDEX IF NOT EXISTS ai_result_cache_created_idx ON ai_result_cache(created_at);
 CREATE TABLE IF NOT EXISTS plan_upgrade_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1592,7 +1603,12 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // (never extracted into contacts). Built as 34, then 63, before this branch merged main's DDL
 // through 69; renumbered past every claim (checked against all remote branches and local
 // worktrees on Sep 18 2026: none above 69).
-export const SCHEMA_VERSION = 70;
+//
+// 71 = the AI cost work's first schema: contact_briefs.input_hash (skip a brief regeneration
+// whose inputs did not change) and the ai_result_cache table (recruiter verdicts, extension
+// profile reads, follow-up drafts keyed by exactly what was asked). Checked against every
+// remote branch and local worktree on Sep 19 2026: none above 70.
+export const SCHEMA_VERSION = 71;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3065,6 +3081,8 @@ const alters = [
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
   // Schema v70: chat context note.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS context_note text`,
+  // Schema v71: a brief remembers what it was asked, so an unchanged regeneration is free.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS input_hash text`,
 ];
 
 /**

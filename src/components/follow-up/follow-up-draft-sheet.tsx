@@ -53,7 +53,9 @@ export function FollowUpDraftSheet({
       try {
         const [options, result] = await Promise.all([
           getContactFollowUpSendOptions(contactId),
-          draftContactFollowUp(contactId),
+          // Opening the sheet shows the draft already written for this context; only
+          // Regenerate below pays for a new one.
+          draftContactFollowUp(contactId, { reuse: true }),
         ]);
         if (session !== sessionRef.current) return;
         setSendOptions(options);

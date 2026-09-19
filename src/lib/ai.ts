@@ -1203,6 +1203,22 @@ function normalizeSharedNotes(
     .filter((s) => s.person_names.length >= 2);
 }
 
+/**
+ * Called after each model call inside a multi-call parse. A long two-pass parse is a
+ * chain of sequential calls, and the capture runner's claim goes stale after four minutes
+ * of silence — at which point the page poll or the stall sweep re-claims the job and runs
+ * the whole parse AGAIN, in parallel, on the person's key. The runner heartbeats here.
+ */
+export type ParseProgress = () => void | Promise<void>;
+
+async function beat(onProgress: ParseProgress | undefined): Promise<void> {
+  try {
+    await onProgress?.();
+  } catch {
+    // A missed heartbeat must never fail the parse it is reporting on.
+  }
+}
+
 async function parseMultiPersonSinglePass(
   userId: string,
   notes: string,
@@ -1280,6 +1296,7 @@ async function parseMultiPersonTwoPass(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
+  onProgress?: ParseProgress,
 ): Promise<ParsedMultiPersonNotes> {
   const sliced = notes.slice(0, 100_000);
   const identityRaw = await completeJson(userId, {
@@ -1315,6 +1332,7 @@ Rules:
 - Anyone only referred to — a cofounder, a boss, "she'll intro me to Raj", a speaker they watched — is a MENTION. Put them in mentions[] with the sentence fragment as context and near_person = the participant whose section mentioned them. Do NOT create a people[] entry for them unless the notes give real profile detail (role, company, contact info); if you do, set presence "mentioned".`,
   });
 
+  await beat(onProgress);
   const identity = multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
   const peopleIds = identity.people.filter((p) => p.name?.trim());
 
@@ -1398,6 +1416,7 @@ Rules:
 - REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").`,
     });
 
+    await beat(onProgress);
     const batchParsed = personDetailBatchSchema.parse(JSON.parse(batchRaw));
     for (let j = 0; j < batch.length; j++) {
       const requested = batch[j]!;
@@ -1448,6 +1467,7 @@ Rules:
             system:
               "Return strict JSON with source_excerpt = the person-specific portion of the notes. Never return the whole dump.",
           });
+          await beat(onProgress);
           const retry = parseAiJson<{ source_excerpt?: string }>(retryRaw);
           if (retry.source_excerpt?.trim()) {
             merged.source_excerpt = retry.source_excerpt.trim();
@@ -1473,19 +1493,21 @@ export async function parseMultiPersonNotesWithAI(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
+  opts: { onProgress?: ParseProgress } = {},
 ): Promise<ParsedMultiPersonNotes> {
   const useTwoPass =
     notes.length >= TWO_PASS_CHAR_THRESHOLD ||
     (hints?.seedPeople?.length || 0) >= 5;
 
   if (useTwoPass) {
-    return parseMultiPersonTwoPass(userId, notes, hints);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress);
   }
 
   const single = await parseMultiPersonSinglePass(userId, notes, hints);
+  await beat(opts.onProgress);
   // Escalate to two-pass when many people came back (token pressure risk).
   if (single.people.length > DETAIL_BATCH_SIZE) {
-    return parseMultiPersonTwoPass(userId, notes, hints);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress);
   }
   return single;
 }
@@ -1510,10 +1532,13 @@ export async function createEmbedding(userId: string, text: string) {
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
         if (backend === "openai") {
           const client = openaiClient(grant);
+          // maxRetries 0: `withRateLimitBackoff` around this call already retries a rate
+          // limit, and the SDK's own two retries stacked under it made one throttled batch
+          // up to twelve requests.
           const res = await client.embeddings.create({
             model: OPENAI_EMBEDDING_MODEL,
             input,
-          }, { signal: aiSignal() });
+          }, { signal: aiSignal(), maxRetries: 0 });
           report(tokensFromOpenAi(res));
           const values = res.data[0]?.embedding;
           if (!values?.length) throw new Error("Empty embedding response");
@@ -1560,10 +1585,11 @@ export async function createEmbeddingsBatch(
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
         if (backend === "openai") {
           const client = openaiClient(grant);
+          // maxRetries 0 for the same reason as `createEmbedding`: the backoff wrapper owns retries.
           const res = await client.embeddings.create({
             model: OPENAI_EMBEDDING_MODEL,
             input: inputs,
-          }, { signal: aiSignal() });
+          }, { signal: aiSignal(), maxRetries: 0 });
           report(tokensFromOpenAi(res));
           const values = res.data
             .slice()
