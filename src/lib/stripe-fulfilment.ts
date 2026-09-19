@@ -195,7 +195,7 @@ export async function confirmCheckoutForUser(
   userId: string,
   sessionId: string,
   deps: { retrieve: (sessionId: string) => Promise<Stripe.Checkout.Session>; now?: Date }
-): Promise<{ status: "applied" | "skipped"; reason?: string }> {
+): Promise<{ status: "applied" | "skipped"; reason?: string; grantedLifetime?: boolean }> {
   const session = await deps.retrieve(sessionId);
   const now = deps.now ?? new Date();
   const verdict = checkoutSessionVerdict(session, {
@@ -210,5 +210,8 @@ export async function confirmCheckoutForUser(
     return { status: "skipped", reason: decision.reason ?? "ignored" };
   }
   await applyStripeDecision(decision);
-  return { status: "applied" };
+  return {
+    status: "applied",
+    grantedLifetime: decision.mirror?.type === "lifetime",
+  };
 }
