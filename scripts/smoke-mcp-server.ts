@@ -93,6 +93,22 @@ async function rpc(
   return { status: res.status, body };
 }
 
+/** Call a tool and parse the JSON its single text block carries. */
+async function call(
+  token: string,
+  name: string,
+  args: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const res = await rpc(token, "tools/call", { name, arguments: args });
+  const content = (res.body.result as { content?: Array<{ text: string }> })?.content;
+  if (!content?.[0]?.text) return { error: JSON.stringify(res.body).slice(0, 200) };
+  try {
+    return JSON.parse(content[0].text) as Record<string, unknown>;
+  } catch {
+    return { raw: content[0].text.slice(0, 200) };
+  }
+}
+
 const INITIALIZE = {
   protocolVersion: "2025-06-18",
   capabilities: {},
@@ -244,7 +260,7 @@ run(async () => {
   });
   const firstCreateBody = JSON.parse(
     (firstCreate.body.result as { content: Array<{ text: string }> }).content[0].text
-  ) as { created: boolean };
+  ) as { created: boolean; contactId: string };
   check(
     "create_contact creates a new contact",
     firstCreateBody.created === true,
@@ -264,6 +280,102 @@ run(async () => {
     "create_contact reports a match instead of creating a duplicate",
     dupeCreateBody.created === false && dupeCreateBody.matched === true,
     JSON.stringify(dupeCreateBody)
+  );
+
+  // --- The tool surface stays read-broad, write-careful, never-delete -----------------------
+  check(
+    "no tool can delete or merge anything",
+    !tools.some((t) => /delete|remove|merge|purge|archive/i.test(t)),
+    tools.join(",")
+  );
+  check(
+    "no tool can send anything",
+    !tools.some((t) => /send|email|sms|message_/i.test(t)),
+    tools.join(",")
+  );
+
+  // --- The new tools actually run ------------------------------------------------------------
+  const contactId = firstCreateBody.contactId;
+
+  const updated = await call(writeKey, "update_contact", {
+    contactId,
+    title: "Rear Admiral",
+    notes: "Wrote the first compiler.",
+  });
+  check("update_contact writes the allowlisted fields", updated.updated === true, JSON.stringify(updated));
+
+  const noted = await call(writeKey, "add_note", {
+    contactId,
+    note: "Mentioned she is hiring.",
+    externalId: "smoke-note-1",
+  });
+  check("add_note appends to the timeline", noted.added === true, JSON.stringify(noted));
+  const notedAgain = await call(writeKey, "add_note", {
+    contactId,
+    note: "Mentioned she is hiring.",
+    externalId: "smoke-note-1",
+  });
+  check(
+    "add_note with the same externalId does not double-write",
+    notedAgain.added === false,
+    JSON.stringify(notedAgain)
+  );
+
+  const reminder = await call(writeKey, "create_reminder", {
+    title: "Send Grace the deck",
+    contactId,
+    dueDate: new Date(Date.now() + 86_400_000).toISOString(),
+  });
+  check("create_reminder creates one", reminder.created === true, JSON.stringify(reminder));
+
+  const listed2 = await call(readKey, "list_reminders", { view: "upcoming", limit: 50 });
+  const reminderRows = (listed2.reminders ?? []) as Array<{ id: string; title: string }>;
+  check(
+    "list_reminders returns the new reminder",
+    reminderRows.some((r) => r.id === reminder.reminderId),
+    JSON.stringify(reminderRows).slice(0, 200)
+  );
+
+  const completed = await call(writeKey, "complete_reminder", {
+    reminderId: reminder.reminderId,
+  });
+  check("complete_reminder completes it", completed.completed === true, JSON.stringify(completed));
+  const missing = await call(writeKey, "complete_reminder", {
+    reminderId: "00000000-0000-4000-8000-000000000000",
+  });
+  check(
+    "completing a reminder that is not the caller's fails cleanly",
+    typeof missing.error === "string",
+    JSON.stringify(missing)
+  );
+
+  const followUp = await call(writeKey, "schedule_follow_up", { contactId, days: 3 });
+  check("schedule_follow_up dates the contact", followUp.scheduled === true, JSON.stringify(followUp));
+
+  const overview = await call(readKey, "get_network_overview", {});
+  check(
+    "get_network_overview reports numbers, not dashboard copy",
+    Array.isArray((overview.overview as { stats?: unknown[] })?.stats) &&
+      !JSON.stringify(overview).includes("Gravity well"),
+    JSON.stringify(overview).slice(0, 160)
+  );
+
+  // --- A free plan may connect, and sees the same tools -------------------------------------
+  // The connector is the funnel, so this is a product decision the suite should hold onto:
+  // if MCP ever silently becomes paid again, this fails.
+  await db.execute(sql`
+    UPDATE user_settings SET comped_plan = NULL, comped_at = NULL WHERE user_id = ${USER}
+  `);
+  const freeInit = await rpc(writeKey, "initialize", INITIALIZE);
+  check("a free plan can still connect", freeInit.status === 200, String(freeInit.status));
+  const freeTools = await rpc(writeKey, "tools/list");
+  const freeToolNames = (
+    (freeTools.body.result as { tools?: Array<{ name: string }> })?.tools ?? []
+  ).map((t) => t.name);
+  check(
+    "a free plan sees the write tools too",
+    freeToolNames.includes("create_reminder"),
+    freeToolNames.join(",")
   );
 
   // --- Sanitisation of agent-written text ------------------------------------------------------

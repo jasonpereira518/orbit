@@ -69,7 +69,7 @@ export class ApiAuthError extends Error {
  */
 export async function requireApiCaller(
   request: Request,
-  opts: { scope: ApiKeyScope; token?: string }
+  opts: { scope: ApiKeyScope; token?: string; surface?: "api" | "mcp" }
 ): Promise<ApiCaller> {
   const token = opts.token ?? bearerFrom(request.headers.get("authorization"));
   if (!token) {
@@ -107,7 +107,7 @@ export async function requireApiCaller(
     );
   }
 
-  await assertAccountUsable(row.userId);
+  await assertAccountUsable(row.userId, { surface: opts.surface });
 
   return { userId: row.userId, keyId: row.id, prefix: row.prefix, scopes };
 }
@@ -119,17 +119,24 @@ export async function requireApiCaller(
  * OAuth token, which has no `api_keys` row — and a suspended account must be refused on both
  * paths or the check is decorative.
  */
-export async function assertAccountUsable(userId: string): Promise<void> {
+export async function assertAccountUsable(
+  userId: string,
+  opts: { surface?: "api" | "mcp" } = {}
+): Promise<void> {
   const settings = await ensureUserSettings(userId);
   if (settings.suspendedAt) {
     throw new ApiAuthError("suspended", "This Orbit account is suspended.");
   }
 
   const entitlements = await getEntitlements(userId);
-  if (!entitlements.canUseApi) {
+  // The MCP server is free on every plan; the REST API and webhooks are not. Two flags
+  // rather than one so that making the connector free cannot quietly open the paid surfaces
+  // beside it — see `canUseMcp` in `entitlements.ts`.
+  const allowed = opts.surface === "mcp" ? entitlements.canUseMcp : entitlements.canUseApi;
+  if (!allowed) {
     throw new ApiAuthError(
       "payment_required",
-      "The Orbit API, webhooks and MCP server are available on Orbit Pro and Orbit Lifetime."
+      "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime."
     );
   }
 }

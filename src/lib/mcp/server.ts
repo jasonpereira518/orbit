@@ -38,7 +38,19 @@ import { hybridSearchContacts } from "@/lib/hybrid-search";
 import { findOrgRosters } from "@/lib/chat-roster";
 import { getDashboardData } from "@/lib/reminders";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
-import { createContactForUser } from "@/lib/contact-writes";
+import { getNetworkStats } from "@/lib/network-stats";
+import { queryRemindersPage } from "@/lib/reminders-page-query";
+import { getInboxListId } from "@/lib/reminder-lists";
+import { completeReminder, snoozeReminder } from "@/lib/reminders";
+import {
+  createReminderForUser,
+  scheduleContactFollowUpForUser,
+} from "@/lib/reminder-writes";
+import {
+  createContactForUser,
+  logNoteInteractionForUser,
+  updateContactForUser,
+} from "@/lib/contact-writes";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { findConfidentDuplicate } from "@/lib/contact-resolve";
 import type { ApiKeyScope } from "@/lib/api/keys";
@@ -228,6 +240,81 @@ export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[
     }
   );
 
+  server.registerTool(
+    "list_reminders",
+    {
+      title: "List reminders",
+      description:
+        "The user's reminders and to-dos: what is due today, what is coming up, what has no " +
+        "date, and what is already done. Use due_followups instead for people going cold.",
+      inputSchema: {
+        view: z
+          .enum(["today", "upcoming", "anytime", "done"])
+          .default("today")
+          .describe("today includes anything overdue."),
+        contactId: z.string().uuid().optional().describe("Only this person's reminders."),
+        query: z.string().max(200).optional().describe("Match the title or contact name."),
+        limit: z.number().int().min(1).max(50).default(20),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ view, contactId, query, limit }) => {
+      const db = await getDb();
+      const inboxId = await getInboxListId(userId);
+      // UTC, not the user's zone: an assistant request carries no `orbit-tz` cookie, and
+      // guessing a zone would put a reminder in the wrong day rather than admit it. Every
+      // row carries its own `dueDate`, so a model can say "tomorrow" correctly anyway.
+      const page = await queryRemindersPage(
+        db,
+        userId,
+        { view, listId: null, contactId, q: query, limit, tz: "UTC" },
+        { inboxId }
+      );
+      return fenced(
+        "reminders",
+        page.items.map((r) => ({
+          id: r.id,
+          title: r.title,
+          description: r.description,
+          dueDate: r.dueDate,
+          status: r.status,
+          kind: r.actionKind,
+          contactId: r.contactId,
+          contactName: r.contactName,
+        }))
+      );
+    }
+  );
+
+  server.registerTool(
+    "get_network_overview",
+    {
+      title: "Network overview",
+      description:
+        "How big the user's network is and how it is doing right now: totals, inner circle, " +
+        "recent activity, what is overdue. Good for a weekly review or a first question.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      const [stats, dashboard] = await Promise.all([
+        getNetworkStats(userId),
+        getDashboardData(userId),
+      ]);
+      // The headline copy is written for a dashboard card ("Gravity well detected"), which
+      // would read as nonsense quoted back by an assistant. Only the numbers cross over.
+      return fenced("overview", {
+        stats: stats.items.map((i) => ({ label: i.label, value: i.value })),
+        dueFollowUpCount: dashboard.dueFollowUps.length,
+        recentContacts: dashboard.dueFollowUps.slice(0, 5).map((c) => ({
+          contactId: c.id,
+          name: c.fullName,
+          company: c.company,
+        })),
+      });
+    }
+  );
+
   // --------------------------------------------------------------- write tools
 
   if (canWrite) {
@@ -271,6 +358,202 @@ export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[
         ]);
         await finalizeIngest(ctx);
         return textResult({ logged: stats.interactionsLogged > 0 });
+      }
+    );
+
+    server.registerTool(
+      "update_contact",
+      {
+        title: "Update a contact",
+        description:
+          "Change what Orbit knows about someone — their role, company, location, how the " +
+          "user met them, or the notes on their profile.",
+        inputSchema: {
+          contactId: z.string().uuid(),
+          fullName: z.string().min(1).max(200).optional(),
+          company: z.string().max(200).optional(),
+          title: z.string().max(200).optional(),
+          location: z.string().max(200).optional(),
+          email: z.string().email().optional(),
+          linkedinUrl: z.string().max(500).optional(),
+          notes: z.string().max(5000).optional().describe("Replaces the existing notes."),
+          howMet: z.string().max(500).optional(),
+        },
+        annotations: { destructiveHint: false, idempotentHint: true },
+      },
+      async ({ contactId, ...fields }) => {
+        const db = await getDb();
+        const existing = await db.query.contacts.findFirst({
+          where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+          columns: { id: true },
+        });
+        if (!existing) return textResult({ error: "No such contact." });
+
+        // An allowlist, spelled out field by field rather than spread from the arguments.
+        // The tool's own schema already bounds this, but `updateContactForUser` accepts a
+        // much wider `ContactInput` — including fields an agent has no business setting —
+        // and the next person to widen the schema should have to come here to do it.
+        const patch = {
+          ...(fields.fullName !== undefined ? { fullName: fields.fullName } : {}),
+          ...(fields.company !== undefined ? { company: fields.company } : {}),
+          ...(fields.title !== undefined ? { title: fields.title } : {}),
+          ...(fields.location !== undefined ? { location: fields.location } : {}),
+          ...(fields.email !== undefined ? { email: fields.email } : {}),
+          ...(fields.linkedinUrl !== undefined ? { linkedinUrl: fields.linkedinUrl } : {}),
+          ...(fields.notes !== undefined ? { notes: sanitizeAgentText(fields.notes) } : {}),
+          ...(fields.howMet !== undefined ? { howMet: sanitizeAgentText(fields.howMet) } : {}),
+        };
+        if (Object.keys(patch).length === 0) {
+          return textResult({ updated: false, error: "Nothing to change." });
+        }
+
+        // `skipRevalidate` for the same reason as create_contact: a tool call has no page.
+        await updateContactForUser(userId, contactId, patch, { skipRevalidate: true });
+        return textResult({ updated: true, contactId, fields: Object.keys(patch) });
+      }
+    );
+
+    server.registerTool(
+      "add_note",
+      {
+        title: "Add a note about someone",
+        description:
+          "Append a dated note to a person's timeline — something the user learned, said or " +
+          "wants to remember. Use log_interaction instead when they actually spoke.",
+        inputSchema: {
+          contactId: z.string().uuid(),
+          note: z.string().min(1).max(5000),
+          occurredAt: z.string().datetime().optional(),
+          externalId: z
+            .string()
+            .max(200)
+            .optional()
+            .describe("Pass a stable id to make a retry idempotent."),
+        },
+        annotations: { destructiveHint: false, idempotentHint: true },
+      },
+      async ({ contactId, note, occurredAt, externalId }) => {
+        const db = await getDb();
+        const contact = await db.query.contacts.findFirst({
+          where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+          columns: { id: true },
+        });
+        if (!contact) return textResult({ error: "No such contact." });
+
+        const { created } = await logNoteInteractionForUser(
+          userId,
+          {
+            contactId,
+            interactionType: "note",
+            interactionDate: occurredAt ? new Date(occurredAt) : new Date(),
+            rawNotes: sanitizeAgentText(note),
+            source: "mcp",
+            externalId: `mcp:note:${externalId ?? `${contactId}:${Date.now()}`}`,
+          },
+          { skipRevalidate: true }
+        );
+        return textResult({ added: created, contactId });
+      }
+    );
+
+    server.registerTool(
+      "create_reminder",
+      {
+        title: "Create a reminder",
+        description:
+          "Add a to-do, optionally about a person and optionally with a due date. " +
+          "Undated reminders live in Anytime.",
+        inputSchema: {
+          title: z.string().min(1).max(200),
+          description: z.string().max(2000).optional(),
+          contactId: z.string().uuid().optional(),
+          dueDate: z
+            .string()
+            .datetime()
+            .optional()
+            .describe("ISO timestamp. Omit for no date."),
+        },
+        annotations: { destructiveHint: false },
+      },
+      async ({ title, description, contactId, dueDate }) => {
+        if (contactId) {
+          const db = await getDb();
+          const contact = await db.query.contacts.findFirst({
+            where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+            columns: { id: true },
+          });
+          if (!contact) return textResult({ error: "No such contact." });
+        }
+        const row = await createReminderForUser(userId, {
+          title: sanitizeAgentText(title),
+          description: description ? sanitizeAgentText(description) : undefined,
+          contactId,
+          dueDate,
+          reminderType: "manual",
+        });
+        return textResult({ created: true, reminderId: row?.id ?? null });
+      }
+    );
+
+    server.registerTool(
+      "complete_reminder",
+      {
+        title: "Complete a reminder",
+        description: "Mark a reminder done. Find its id with list_reminders.",
+        inputSchema: { reminderId: z.string().uuid() },
+        // Not destructive: completing is reversible in the UI, and nothing is deleted.
+        annotations: { destructiveHint: false, idempotentHint: true },
+      },
+      async ({ reminderId }) => {
+        const snapshot = await completeReminder(userId, reminderId);
+        if (!snapshot) return textResult({ error: "No such reminder." });
+        return textResult({ completed: true, reminderId });
+      }
+    );
+
+    server.registerTool(
+      "snooze_reminder",
+      {
+        title: "Snooze a reminder",
+        description: "Push a reminder out by a number of days, from today.",
+        inputSchema: {
+          reminderId: z.string().uuid(),
+          days: z.number().int().min(1).max(90).default(7),
+        },
+        annotations: { destructiveHint: false, idempotentHint: true },
+      },
+      async ({ reminderId, days }) => {
+        const snapshot = await snoozeReminder(userId, reminderId, days);
+        if (!snapshot) return textResult({ error: "No such reminder." });
+        return textResult({ snoozed: true, reminderId, days });
+      }
+    );
+
+    server.registerTool(
+      "schedule_follow_up",
+      {
+        title: "Schedule a follow-up",
+        description:
+          "Put someone back on the user's calendar in a number of days. Reuses their pending " +
+          "reminder if they already have one, rather than creating a second.",
+        inputSchema: {
+          contactId: z.string().uuid(),
+          days: z.number().int().min(1).max(90).default(7),
+        },
+        annotations: { destructiveHint: false, idempotentHint: true },
+      },
+      async ({ contactId, days }) => {
+        try {
+          const result = await scheduleContactFollowUpForUser(userId, contactId, days);
+          return textResult({
+            scheduled: true,
+            contactId,
+            dueDate: result.dueDate,
+            reminderId: result.reminder?.id ?? null,
+          });
+        } catch {
+          return textResult({ error: "No such contact." });
+        }
       }
     );
 

@@ -26,6 +26,7 @@ import {
   touchApiKeyLastUsed,
 } from "@/lib/api/auth";
 import { deferTelemetry } from "@/lib/api/http";
+import { getEntitlements } from "@/lib/entitlements";
 import type { ApiKeyScope } from "@/lib/api/keys";
 import { buildOrbitMcpServer } from "@/lib/mcp/server";
 import { resourceMetadataUrl, verifyOAuthCaller } from "@/lib/mcp/oauth";
@@ -78,12 +79,16 @@ export async function handleMcpRequest(
     // from an older connector.
     const oauth = opts.token ? null : await verifyOAuthCaller();
     if (oauth) {
-      await assertAccountUsable(oauth.userId);
+      await assertAccountUsable(oauth.userId, { surface: "mcp" });
       caller = { userId: oauth.userId, keyId: null, scopes: oauth.scopes };
     } else {
       // "read" here: individual write tools are gated inside the server by the key's scopes,
       // so a read-only key connects successfully and simply sees fewer tools.
-      const key = await requireApiCaller(request, { scope: "read", token: opts.token });
+      const key = await requireApiCaller(request, {
+        scope: "read",
+        token: opts.token,
+        surface: "mcp",
+      });
       caller = { userId: key.userId, keyId: key.keyId, scopes: key.scopes };
     }
   } catch (err) {
@@ -100,8 +105,15 @@ export async function handleMcpRequest(
     return jsonRpcError(-32603, "Authentication failed.", 500);
   }
 
+  // `getEntitlements` is request-cached, so this is the same read the auth check above
+  // already paid for.
+  const entitlements = await getEntitlements(caller.userId);
   try {
-    await consumeBucket("mcp", caller.userId, RATE_LIMITS.mcp);
+    await consumeBucket(
+      "mcp",
+      caller.userId,
+      entitlements.plan === "free" ? RATE_LIMITS.mcpFree : RATE_LIMITS.mcp
+    );
   } catch (err) {
     if (err instanceof RateLimitedError) {
       return jsonRpcError(-32000, err.message, 429);
