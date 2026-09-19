@@ -37,6 +37,7 @@ import {
   managedWindow,
   nothingUsable,
   MANAGED_AI_BUDGET,
+  MANAGED_AI_ENABLED,
   MANAGED_PROVIDER_ORDER,
   UNPRICED_CALL_MICROS,
   type AiAccessDenial,
@@ -118,8 +119,12 @@ const LOCAL_ENV: Record<KeyedProvider, string> = {
   wispr: "WISPR_API_KEY",
 };
 
-/** `ORBIT_MANAGED_AI=off` — the emergency stop. Every Lifetime account falls back to BYOK. */
+/**
+ * `ORBIT_MANAGED_AI=off` — the emergency stop. Every Lifetime account falls back to BYOK.
+ * Always on while `MANAGED_AI_ENABLED` is false: managed AI has not shipped.
+ */
 export function managedAiSwitchedOff(): boolean {
+  if (!MANAGED_AI_ENABLED) return true;
   return process.env.ORBIT_MANAGED_AI?.trim().toLowerCase() === "off";
 }
 
@@ -151,6 +156,7 @@ export function managedEnvVar(provider: KeyedProvider): string {
  * — the same shape as `ORBIT_DEMO_DATA=off` for onboarding.
  */
 function demoCountsAsManaged(userId: string): boolean {
+  if (!MANAGED_AI_ENABLED) return false;
   if (process.env.ORBIT_DEMO_MANAGED_AI?.trim().toLowerCase() === "off") return false;
   return isDemoAccount(userId);
 }
@@ -354,6 +360,7 @@ export class AiAccess {
     // Only an account about to be refused is worth a Stripe round trip: not on Lifetime,
     // no key of its own, and a Lifetime checkout opened recently.
     if (
+      MANAGED_AI_ENABLED &&
       plan !== "lifetime" &&
       row?.lifetimeCheckoutSessionId &&
       !hasAnyPersonalKey(row) &&

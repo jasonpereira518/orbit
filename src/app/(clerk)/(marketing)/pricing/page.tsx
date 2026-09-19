@@ -47,7 +47,7 @@ const TRUST = [
   {
     icon: KeyRound,
     title: "No markup on AI",
-    body: "Free and Pro run on your own provider key, billed to you at cost. Lifetime includes AI on Orbit's keys. We never resell tokens.",
+    body: "Every plan runs on your own provider key, billed to you at cost. We never resell tokens.",
   },
 ];
 
@@ -113,8 +113,8 @@ export default async function PricingPage() {
           <Reveal className="reveal-celestial" delay={90}>
             <p className="mx-auto mt-5 max-w-[46ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
               Past that, five dollars a month keeps every contact, follow-up,
-              and warm intro in one place. AI runs on your own key at cost —
-              we never mark it up — or comes included with Lifetime.
+              and warm intro in one place. AI always runs on your own key, at
+              cost — we never mark it up.
             </p>
           </Reveal>
         </section>

@@ -23,6 +23,18 @@ import type { Plan } from "@/lib/plan-limits";
 export type AiKeySource = "personal" | "managed";
 
 /**
+ * MANAGED AI IS OFF. Until it ships, every AI call on every plan — Lifetime and demo accounts
+ * included — runs on a key the user saved in Settings, never on Orbit's or a developer's.
+ *
+ * A code constant, not an env var, on purpose: no deployment, preview or laptop can switch
+ * Orbit's keys on by accident. With this false, `managedEligibility` is null for everyone and
+ * `ai-access.ts` never reads a managed or local AI key from the environment, so the managed
+ * branches below are dormant rather than deleted — turning managed AI on later is this flag
+ * plus the public copy (pricing, /privacy, /terms), which currently promises BYOK everywhere.
+ */
+export const MANAGED_AI_ENABLED: boolean = false;
+
+/**
  * Why AI cannot run for this account right now.
  *
  *  - `key_required`         not on Lifetime and no key of their own for what was asked
@@ -42,6 +54,7 @@ export type AiAccessDenial =
 export type ManagedEligibility = "lifetime" | "demo" | null;
 
 export function managedEligibility(plan: Plan, isDemo: boolean): ManagedEligibility {
+  if (!MANAGED_AI_ENABLED) return null;
   if (plan === "lifetime") return "lifetime";
   if (isDemo) return "demo";
   return null;

@@ -12,6 +12,10 @@
  *      buying, refund/revoke mid-session, the allowance running out, the kill switch, a
  *      managed key the provider refuses, and a paid checkout whose webhook has not landed.
  *
+ * While `MANAGED_AI_ENABLED` is false (managed AI has not shipped), 3 and 4 are replaced by
+ * `byokOnly()`: with every managed AND local-dev key set, no account of any plan — Lifetime,
+ * comped, demo — gets anything but its own key on the wire.
+ *
  * Run: npx tsx scripts/smoke-ai-access.ts
  */
 import "./smoke/_env";
@@ -43,6 +47,7 @@ import {
   geminiClient,
   getAiAccessStatus,
   isAiAccessError,
+  managedKeysConfigured,
   resolveAiAccess,
   runOnGrant,
   type AiGrant,
@@ -54,6 +59,7 @@ import {
 } from "../src/lib/ai-access-copy";
 import {
   MANAGED_AI_BUDGET,
+  MANAGED_AI_ENABLED,
   MANAGED_MODELS,
   chooseCompletionKey,
   chooseEmbeddingKey,
@@ -205,7 +211,12 @@ function purePolicy() {
   check("non-Lifetime + no key + managed keys configured → still refused", pick(facts({ managed: { gemini: true, openai: true, anthropic: true } })) === "refused:key_required");
   check("Lifetime + no key + no managed key → managed_unavailable", pick(facts({ eligibility: "lifetime", managed: { gemini: false, openai: false, anthropic: false } })) === "refused:managed_unavailable");
   check("Pro resolves to no managed eligibility", managedEligibility("orbit", false) === null && managedEligibility("free", false) === null);
-  check("Lifetime and demo are eligible", managedEligibility("lifetime", false) === "lifetime" && managedEligibility("free", true) === "demo");
+  if (MANAGED_AI_ENABLED) {
+    check("Lifetime and demo are eligible", managedEligibility("lifetime", false) === "lifetime" && managedEligibility("free", true) === "demo");
+  } else {
+    check("managed AI is off: no plan is eligible, not even Lifetime or demo",
+      managedEligibility("lifetime", false) === null && managedEligibility("lifetime", true) === null && managedEligibility("free", true) === null);
+  }
   check("a demo account with no key anywhere is told to add one — it was never promised Orbit's AI",
     pick(facts({ eligibility: "demo", managed: { gemini: false, openai: false, anthropic: false } })) === "refused:key_required");
 
@@ -289,6 +300,7 @@ const U = {
   freeNone: "smoke-aia-free-none",
   proNone: "smoke-aia-pro-none",
   compNone: "smoke-aia-comp-none",
+  demoNone: "smoke-aia-demo-none",
   buyer: "smoke-aia-buyer",
   keeper: "smoke-aia-keeper",
   capped: "smoke-aia-capped",
@@ -518,6 +530,95 @@ async function transitions() {
 }
 
 /**
+ * Managed AI is off: every plan is BYOK. Sets every key Orbit or a developer could hold —
+ * the explicit managed names, the bare local-dev names with `VERCEL` unset so the local
+ * fallback would be live, and a showcase demo account — and proves none reaches the wire.
+ */
+async function byokOnly() {
+  const db = await getDb();
+  const DEV_KEY = "dev-laptop-gemini-key";
+  const saved = { VERCEL: process.env.VERCEL, DEMO: process.env.DEMO_ACCOUNT_USER_ID };
+  delete process.env.VERCEL;
+  for (const p of ["GEMINI", "OPENAI", "ANTHROPIC", "WISPR"]) {
+    process.env[`ORBIT_MANAGED_${p}_API_KEY`] = MANAGED;
+    process.env[`${p}_API_KEY`] = DEV_KEY;
+  }
+  process.env.DEMO_ACCOUNT_USER_ID = U.demoNone;
+
+  try {
+    await account(U.lifetimeOwn, { lifetimePurchasedAt: PAST, ...ownKey() });
+    await account(U.lifetimeNone, { lifetimePurchasedAt: PAST });
+    await account(U.compNone, { compedPlan: "lifetime" });
+    await account(U.demoNone, {});
+    await account(U.proNone, { subscriptionPlan: "orbit", subscriptionStatus: "active" });
+    await account(U.freeNone, {});
+    await account(U.freeOwn, ownKey());
+
+    console.log("\nManaged AI is off: every plan is bring-your-own-key");
+    check("no managed key counts as configured, whatever the environment holds",
+      Object.values(managedKeysConfigured()).every((v) => !v));
+
+    const keyless = [U.lifetimeNone, U.compNone, U.demoNone, U.proNone, U.freeNone];
+    const audio = { mimeType: "audio/webm", base64: Buffer.from("fake audio").toString("base64") };
+    for (const u of keyless) {
+      let r = await lastSent(() => json(u));
+      check(`${u}: completion refused as key_required, nothing sent`,
+        isAiAccessError(r.err) && (r.err as AiAccessError).reason === "key_required" && r.count === 0, r.req?.key ?? r.err);
+      r = await lastSent(() => createEmbedding(u, "a contact"));
+      check(`${u}: embedding refused, nothing sent`, isAiAccessError(r.err) && r.count === 0, r.req?.key ?? r.err);
+      r = await lastSent(() => transcribeAudioWithAI(u, audio));
+      check(`${u}: transcription refused, nothing sent`, isAiAccessError(r.err) && r.count === 0, r.req?.key ?? r.err);
+      const s = await getAiAccessStatus(u);
+      check(`${u}: the UI is told to add a key`, !s.ready && s.reason === "key_required" && s.source === null && s.allowance === null, JSON.stringify(s));
+      const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, u) });
+      check(`${u}: the notification alert agrees`, aiReadyFromSettings(u, row ?? null) === false);
+    }
+
+    for (const u of [U.lifetimeOwn, U.freeOwn]) {
+      const r = await lastSent(() => json(u));
+      check(`${u}: their own key went on the wire`, r.req?.key === USER_KEY, r.req?.key ?? r.err);
+    }
+    await settle();
+    const owners = await db.select({ o: usageEvents.keyOwner }).from(usageEvents).where(inArray(usageEvents.userId, Object.values(U)));
+    check("no usage row names Orbit as the payer", owners.length > 0 && owners.every((x) => x.o === "user"), owners.map((x) => x.o).join(","));
+    check("neither Orbit's nor the developer's key ever went on the wire", sent.every((x) => x.key !== MANAGED && x.key !== DEV_KEY));
+
+    console.log("\nA just-paid Lifetime checkout does not ask Stripe for AI");
+    await account(U.pending, { lifetimeCheckoutSessionId: "cs_test_paid", lifetimeCheckoutStartedAt: new Date() });
+    let asked = false;
+    const access = await resolveAiAccess(U.pending, {
+      retrieveSession: async () => {
+        asked = true;
+        throw new Error("the gate should not look up a checkout");
+      },
+    });
+    const err = await refusal(access.completion("chat.answer"));
+    check("refused as key_required, never upgrade_pending", err?.reason === "key_required", err);
+    check("…without a Stripe round trip", !asked);
+
+    console.log("\nA grant cannot be forged");
+    const forged = Object.freeze({ provider: "gemini", model: "x", source: "managed", keyOwner: "orbit", operation: "x" }) as AiGrant;
+    let threw = false;
+    try {
+      geminiClient(forged);
+    } catch {
+      threw = true;
+    }
+    check("a hand-built grant gets no client", threw);
+  } finally {
+    for (const p of ["GEMINI", "OPENAI", "ANTHROPIC", "WISPR"]) {
+      delete process.env[`${p}_API_KEY`];
+      delete process.env[`ORBIT_MANAGED_${p}_API_KEY`];
+    }
+    process.env.ORBIT_MANAGED_GEMINI_API_KEY = MANAGED;
+    if (saved.VERCEL === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = saved.VERCEL;
+    if (saved.DEMO === undefined) delete process.env.DEMO_ACCOUNT_USER_ID;
+    else process.env.DEMO_ACCOUNT_USER_ID = saved.DEMO;
+  }
+}
+
+/**
  * `run-smoke` shares one PGlite directory across scripts, and the ops sweep and admin
  * readers scan every account — so the Lifetime accounts, managed usage and managed-failure
  * events this script creates would open alerts in `smoke-ops-sweep` if left behind.
@@ -537,8 +638,12 @@ run(async () => {
   purePolicy();
   await cleanup();
   try {
-    await realGate();
-    await transitions();
+    if (MANAGED_AI_ENABLED) {
+      await realGate();
+      await transitions();
+    } else {
+      await byokOnly();
+    }
   } finally {
     await cleanup();
   }

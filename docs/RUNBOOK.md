@@ -94,7 +94,9 @@ above. Vercel Pro crons remove the rule entirely.
 | `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is outrunning what Lifetime brought in. `/admin/billing/costs` → "On Orbit's AI keys". Lower `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
 | `ai.managed_cap_hit` | Info: accounts used their whole monthly allowance. A rising count means the cap is too tight for real use. |
 
-## Managed AI keys (Orbit Lifetime)
+## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
+
+**Currently off.** `MANAGED_AI_ENABLED = false` in `src/lib/managed-ai-policy.ts`: AI is bring-your-own-key on every plan, Lifetime and localhost demo accounts included, and no `ORBIT_MANAGED_*` or bare `GEMINI_API_KEY`-style variable is read. Setting one does nothing. Turning managed AI on is that flag plus the public copy (pricing, `/privacy`, `/terms`, which bumps `TERMS_VERSION`). The rest of this section describes the dormant path.
 
 AI is bring-your-own-key on every plan except Lifetime. A Lifetime account with no key of its own runs on Orbit's managed keys, and only `src/lib/ai-access.ts` can issue one (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client).
 

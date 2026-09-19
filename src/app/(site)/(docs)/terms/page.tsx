@@ -246,42 +246,15 @@ export default function TermsPage() {
             offers, and any given integration may be removed from Orbit if it
             becomes impractical to maintain.
           </p>
-          <p>
-            On Orbit Lifetime, AI features can also run on Orbit&apos;s own
-            provider accounts instead of a key you supply — see AI features
-            below.
-          </p>
         </DocSection>
 
         <DocSection id="ai" index={8} title="AI features">
           <p>
             AI features are optional, and nothing is sent until you use one.
             When you do, relevant content from your Orbit data is sent to an AI
-            provider so it can generate a response. Which account pays for it
-            depends on your plan:
-          </p>
-          <ul>
-            <li>
-              <strong>Free Plan and Orbit Pro.</strong>{" "}
-              AI runs on an API key you
-              supply, and that provider bills you directly.
-            </li>
-            <li>
-              <strong>Orbit Lifetime.</strong>{" "}
-              AI runs on Orbit&apos;s own
-              provider accounts, at no extra charge, up to a monthly allowance —
-              your usage this month is shown in Settings. Once it is used, AI
-              needs a key of your own until the allowance resets at the start of
-              the next month (UTC). If you add a key of your own, Orbit uses it
-              instead of its accounts, with no allowance, and that provider bills
-              you directly.
-            </li>
-          </ul>
-          <p>
-            For AI on its own accounts, Orbit chooses the provider and model and
-            may change them. It may also pause that AI temporarily — during a
-            provider outage, for example, or to stop abuse — in which case a key
-            of your own keeps working.
+            provider you selected so it can generate a response. On every plan,
+            including Orbit Pro and Orbit Lifetime, AI runs on an API key you
+            supply, and that provider bills you directly.
           </p>
           <p>
             Some AI work runs in the background: search indexing, and — only if
@@ -356,9 +329,7 @@ export default function TermsPage() {
             <li>
               <strong>AI, enrichment, and sending costs are separate.</strong>{" "}
               Where a feature runs on your own provider key, that provider bills
-              you directly and no Orbit plan covers it. The one exception is AI
-              on Orbit Lifetime, which Orbit covers up to the monthly allowance
-              described in AI features.
+              you directly and no Orbit plan covers it.
             </li>
           </ul>
           <p>
