@@ -22,6 +22,7 @@
  * are validated against the transcript, not the corpus, in `parseBulkCaptureNotes` — so a
  * date the digest invented cannot become a reminder.
  */
+import type { AiOperationId } from "@/lib/ai-operations";
 import { z } from "zod";
 import type { MeetingDigest } from "@/db/schema";
 
@@ -321,7 +322,7 @@ export function buildMeetingCorpus(digest: MeetingDigest, meta: MeetingMeta): st
 
 export type CompleteJsonFn = (
   userId: string,
-  input: { system: string; user: string; maxOutputTokens?: number; operation?: string; temperature?: number }
+  input: { system: string; user: string; maxOutputTokens?: number; operation: AiOperationId; temperature?: number }
 ) => Promise<string>;
 
 export type AnalyzeInput = {
@@ -404,7 +405,7 @@ async function callDigest(
   userId: string,
   system: string,
   user: string,
-  operation: string
+  operation: AiOperationId
 ): Promise<RawMeetingDigest> {
   const raw = await complete(userId, {
     system,

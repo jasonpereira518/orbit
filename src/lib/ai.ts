@@ -50,6 +50,7 @@ import {
   type SplitResult,
 } from "@/lib/chat-stream-protocol";
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
+import type { AiOperationId } from "@/lib/ai-operations";
 import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
 
 export type { AiProvider, EmbeddingBackend };
@@ -286,6 +287,12 @@ const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
 const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 
+/** Exported for `smoke-ai-operations.ts`, which holds every reachable model to a price row. */
+export const EMBEDDING_MODELS: Record<EmbeddingBackend, string> = {
+  gemini: GEMINI_EMBEDDING_MODEL,
+  openai: OPENAI_EMBEDDING_MODEL,
+};
+
 /**
  * Cheapest usable model per provider, for accuracy-stage calls (query
  * understanding, rerank) where the user's configured model would be overkill.
@@ -322,7 +329,7 @@ export const VISION_MODELS: Record<AiProvider, string> = {
  * Lifetime with this month's allowance spent. Call sites that only need to know whether AI
  * would run (and must not throw) use `getAiCapability` instead.
  */
-export async function getAiConfig(userId: string, operation = "completeJson") {
+export async function getAiConfig(userId: string, operation: AiOperationId) {
   const access = await resolveAiAccess(userId);
   const grant = await access.completion(operation);
   return {
@@ -507,13 +514,13 @@ export async function completeJson(
     user: string;
     temperature?: number;
     maxOutputTokens?: number;
-    /** Call-site label for usage telemetry, e.g. "capture.parse". */
-    operation?: string;
+    /** Call-site id for usage telemetry and the managed allowance, e.g. "capture.parse". */
+    operation: AiOperationId;
     /** "fast" routes to FAST_MODELS[provider] instead of the user's configured model. */
     speed?: "fast";
   },
 ): Promise<string> {
-  const operation = input.operation ?? "completeJson";
+  const { operation } = input;
   const grant = await (await resolveAiAccess(userId)).completion(operation);
   const { provider, keyOwner } = grant;
   const model = input.speed === "fast" ? FAST_MODELS[provider] : grant.model;
@@ -603,7 +610,7 @@ export async function completeMultimodalJson(
   userId: string,
   input: MultimodalInput,
 ): Promise<string> {
-  const operation = input.operation ?? "completeMultimodalJson";
+  const { operation } = input;
   const grant = await (await resolveAiAccess(userId)).completion(operation);
   // Resolved out here, not inside, so usage telemetry records the model that actually ran.
   const model = input.speed === "vision" ? VISION_MODELS[grant.provider] : grant.model;
@@ -625,8 +632,8 @@ type MultimodalInput = {
   parts: MultimodalPart[];
   temperature?: number;
   maxOutputTokens?: number;
-  /** Call-site label for usage telemetry. */
-  operation?: string;
+  /** Call-site id for usage telemetry and the managed allowance. */
+  operation: AiOperationId;
   /** "vision" routes to VISION_MODELS[provider] instead of the user's configured model. */
   speed?: "vision";
 };
@@ -794,7 +801,7 @@ export type TranscribeOptions = {
   /** Return `{ text: "" }` for silence instead of throwing "Empty transcription". */
   allowEmpty?: boolean;
   /** `usage_events.operation`. Defaults to `capture.transcribe.audio`. */
-  operation?: string;
+  operation?: AiOperationId;
 };
 
 /** How much of `contextText` to carry over. About two sentences. */
@@ -1809,7 +1816,7 @@ async function streamText(
     user: string;
     temperature?: number;
     maxOutputTokens?: number;
-    operation: string;
+    operation: AiOperationId;
     signal?: AbortSignal;
   },
   onDelta: (delta: string) => void

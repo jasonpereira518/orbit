@@ -1,4 +1,5 @@
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
+import { BACKGROUND_AI_OPERATIONS } from "@/lib/ai-operations";
 import type { Plan } from "@/lib/plan-limits";
 
 /**
@@ -81,10 +82,19 @@ export function managedModel(provider: AiProvider, requested: string | null | un
  * THE CAP. A one-time payment funding open-ended inference is only safe with a ceiling, so
  * every managed call counts against a monthly allowance per account (calendar month, UTC).
  *
- * The NUMBERS are a pricing decision, not an engineering one. Jason chose $1.00 a month
- * (Sep 16 2026, over $0.50 and $2.50): roughly 140 chat answers or 200 note captures on
- * Gemini 3.5 Flash. At that ceiling the $25 intro price covers two years of maximal use and
- * the $75 standard price six; typical use is far lower. Change it here, and only here.
+ * The NUMBERS are a pricing decision, not an engineering one. Jason chose $1.00 a month on
+ * Sep 16 2026 (over $0.50 and $2.50), sized as roughly 140 chat answers or 200 note captures
+ * on Gemini 3.5 Flash. That sizing used a price table that had 3.5 Flash at $0.30/$2.50;
+ * Google charges $1.50/$9.00, and thinking tokens (billed as output) were not counted at
+ * all. So the "$1" cap was really letting ~$4–5 of provider spend through.
+ *
+ * On Sep 19 2026 Jason chose to KEEP that call count rather than shrink it: the prices were
+ * corrected and the cap raised to $5.00, which is the same ~140 answers / ~200 captures
+ * metered honestly. It is an interim figure — the cost-optimization plan (thinking control,
+ * caching, cheaper tiers) lowers the cost per call, and the cap is re-derived from the
+ * eval's measured per-call cost once that lands. At $5.00 of maximal use a month, the $25
+ * intro price covers five months and the $75 standard price fifteen; typical use is far
+ * lower, and the runway alert below watches the aggregate. Change it here, and only here.
  *
  *  - `monthlyCostMicros`  estimated provider spend, from `usage_events.estimated_cost_micros`
  *  - `monthlyCalls`       a runaway-loop guard that holds even where cost is unknown
@@ -92,7 +102,7 @@ export function managedModel(provider: AiProvider, requested: string | null | un
  *                         LinkedIn import cannot spend the allowance a person needs for chat
  */
 export const MANAGED_AI_BUDGET = {
-  monthlyCostMicros: 1_000_000,
+  monthlyCostMicros: 5_000_000,
   monthlyCalls: 2_000,
   backgroundShare: 0.5,
 } as const;
@@ -122,12 +132,7 @@ export const UNPRICED_CALL_MICROS: Record<"transcription" | "embedding" | "other
  * Operations that are bulk work running on the user's behalf rather than something they
  * are waiting on. They stop at `backgroundShare` of the allowance.
  */
-export const BACKGROUND_OPERATIONS: ReadonlySet<string> = new Set([
-  "import.enrich",
-  "import.linkedin.timeline",
-  "recruiter.scan",
-  "search.embed.batch",
-]);
+export const BACKGROUND_OPERATIONS: ReadonlySet<string> = BACKGROUND_AI_OPERATIONS;
 
 /**
  * When the ops sweep speaks up about managed spend (`src/lib/ops-alerts.ts`).
@@ -135,10 +140,11 @@ export const BACKGROUND_OPERATIONS: ReadonlySet<string> = new Set([
  * The per-account cap bounds any ONE account; these watch the aggregate, which the cap
  * bounds only by `accounts × cap`. `runwayYears` is the unit-economics line: if the last 30
  * days' managed spend, annualised, would consume every Lifetime dollar ever booked in fewer
- * than this many years, the pricing is not covering the promise.
+ * than this many years, the pricing is not covering the promise. `dailySpikeMicros` is five
+ * accounts' whole monthly allowance in one day — it moved with the cap (Sep 19 2026).
  */
 export const MANAGED_AI_ALERTS = {
-  dailySpikeMicros: 5_000_000,
+  dailySpikeMicros: 25_000_000,
   runwayYears: 4,
   /** Below this 30-day spend the runway figure is noise, not a trend. */
   runwayMinSpendMicros: 1_000_000,

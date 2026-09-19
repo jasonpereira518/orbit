@@ -37,6 +37,7 @@ import { getDb } from "../src/db";
 import { billingEvents, errorEvents, rateLimitBuckets, usageEvents, userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { priceFor } from "../src/lib/ai-pricing";
+import type { AiOperationId } from "../src/lib/ai-operations";
 import {
   AiAccessError,
   aiReadyFromSettings,
@@ -319,7 +320,7 @@ async function lastSent(fn: () => Promise<unknown>): Promise<{ result: unknown; 
   return { result, err, req: sent.length > before ? sent[sent.length - 1] : null, count: sent.length - before };
 }
 
-const json = (userId: string, operation = "capture.parse") =>
+const json = (userId: string, operation: AiOperationId = "capture.parse") =>
   completeJson(userId, { system: "Return JSON.", user: "hi", operation });
 
 /** Usage rows are written fire-and-forget; give them a tick to land. */

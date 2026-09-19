@@ -104,6 +104,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-embedding-rate-limit-backoff": "pure",
   "smoke-provider-keys-stripped": "pure",
   "smoke-fast-model": "pure",
+  "smoke-ai-operations": "pure",
+  "smoke-eval-ai-score": "pure",
   "smoke-feedback-image": "pure",
   "smoke-follow-up-cadence": "pure",
   "smoke-gmail-batch": "pure",

@@ -94,8 +94,11 @@ function main() {
     /ORBIT_MANAGED_AI=off/.test(find(managed({ configured: false, switchedOff: true }), "ai.managed_unconfigured")?.detail ?? ""));
   check("no Lifetime accounts, no key → nothing to say",
     !find(managed({ configured: false, lifetimeAccounts: 0 }), "ai.managed_unconfigured"));
-  check("$5 in a day → ai.managed_spend_spike",
-    Boolean(find(managed({ spentLast24hMicros: 5_000_000 }), "ai.managed_spend_spike")));
+  // Five accounts' whole monthly allowance in one day ($25 since the Sep 19 2026 cap raise).
+  check("five allowances' worth in a day → ai.managed_spend_spike",
+    Boolean(find(managed({ spentLast24hMicros: 25_000_000 }), "ai.managed_spend_spike")));
+  check("one account maxing out in a day is not a spike",
+    !find(managed({ spentLast24hMicros: 5_000_000 }), "ai.managed_spend_spike"));
   check("a pace that eats Lifetime revenue in under four years → ai.managed_runway",
     // $10 in 30 days ≈ $122/yr against $75 booked ≈ 0.6 years.
     Boolean(find(managed({ spentLast30dMicros: 10_000_000, lifetimeCashCents: 7_500 }), "ai.managed_runway")));

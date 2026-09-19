@@ -37,6 +37,8 @@ run(async () => {
     { ...base, userId: USER, operation: "search.embed", kind: "embedding", createdAt: daysAgo(4) },
     { ...base, userId: USER, operation: "capture.parse", inputTokens: 9, outputTokens: 9, estimatedCostMicros: 999_999, createdAt: daysAgo(40) },
     { ...base, userId: OTHER, operation: "chat.answer", estimatedCostMicros: 123_456, createdAt: daysAgo(1) },
+    // A Lifetime call on Orbit's managed key: metered against the allowance, never "your key".
+    { ...base, userId: USER, operation: "chat.answer", keyOwner: "orbit", estimatedCostMicros: 77_777, createdAt: daysAgo(1) },
   ]);
 
   const summary = await loadUsageSummary(USER, { now: NOW });
@@ -48,6 +50,7 @@ run(async () => {
   check("a failed call is not called unpriced", byOp.get("chat.answer")?.unpricedCalls === 0);
   check("the window excludes a 40-day-old row", summary.totalCalls === 5, `${summary.totalCalls}`);
   check("another user's rows never count", summary.totalCostMicros === 6600, `${summary.totalCostMicros}`);
+  check("calls on Orbit's managed key never count as the person's own", byOp.get("chat.answer")?.costMicros === 5000, `${byOp.get("chat.answer")?.costMicros}`);
   check("totals carry the unpriced count", summary.unpricedCalls === 1);
   check("known operations get a readable label", byOp.get("capture.parse")?.label === "Capture: reading notes");
 
