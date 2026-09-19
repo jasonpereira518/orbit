@@ -50,7 +50,9 @@ import {
   type SplitResult,
 } from "@/lib/chat-stream-protocol";
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
-import type { AiOperationId } from "@/lib/ai-operations";
+import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
+import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
+import type { ThinkingConfig } from "@google/genai";
 import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
 
 export type { AiProvider, EmbeddingBackend };
@@ -70,6 +72,15 @@ export {
  * 60 s pages that host these calls.
  */
 export const AI_CALL_TIMEOUT_MS = 45_000;
+
+/**
+ * The Gemini thinking dial for an operation, as a spreadable `config` fragment: nothing at
+ * all unless the registry sets a level AND the model offers one (`ai-request-options.ts`).
+ */
+function geminiThinking(model: string, operation: string): { thinkingConfig?: ThinkingConfig } {
+  const cfg = geminiThinkingConfig(model, aiOperationThinking(operation));
+  return cfg ? { thinkingConfig: cfg as ThinkingConfig } : {};
+}
 
 /** A fresh signal per call; a shared one would abort every later call once it fired. */
 export function aiSignal(ms = AI_CALL_TIMEOUT_MS): AbortSignal {
@@ -560,6 +571,7 @@ export async function completeJson(
               maxOutputTokens,
               responseMimeType: "application/json",
               systemInstruction: system,
+              ...geminiThinking(model, operation),
             },
           });
           report(tokensFromGemini(response));
@@ -572,8 +584,7 @@ export async function completeJson(
           const client = openaiClient(grant);
           const response = await client.chat.completions.create({
             model,
-            temperature,
-            max_tokens: maxOutputTokens,
+            ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(operation) }),
             response_format: { type: "json_object" },
             messages: [
               { role: "system", content: system },
@@ -698,6 +709,7 @@ async function completeMultimodalJsonInner(
           maxOutputTokens,
           responseMimeType: "application/json",
           systemInstruction: system,
+          ...geminiThinking(model, input.operation),
         },
       });
       report(tokensFromGemini(response));
@@ -732,8 +744,7 @@ async function completeMultimodalJsonInner(
       ];
       const response = await client.chat.completions.create({
         model,
-        temperature,
-        max_tokens: maxOutputTokens,
+        ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
@@ -1006,6 +1017,7 @@ export async function transcribeAudioWithAI(
             temperature: 0.1,
             maxOutputTokens: 4096,
             responseMimeType: "application/json",
+            ...geminiThinking(model, operation),
           },
         });
         report(tokensFromGemini(response));
@@ -1908,6 +1920,7 @@ async function streamText(
             temperature,
             maxOutputTokens,
             systemInstruction: input.system,
+            ...geminiThinking(model, input.operation),
           },
         });
         let last: unknown = null;
@@ -1921,8 +1934,7 @@ async function streamText(
         const stream = await client.chat.completions.create(
           {
             model,
-            temperature,
-            max_tokens: maxOutputTokens,
+            ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
             stream: true,
             stream_options: { include_usage: true },
             messages: [

@@ -14,6 +14,7 @@ import { getDb } from "../src/db";
 import { userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { completeJson, parseMultiPersonNotesWithAI } from "../src/lib/ai";
+import { AI_OPERATIONS } from "../src/lib/ai-operations";
 
 const USER = "smoke-shared-prefix-user";
 
@@ -146,6 +147,34 @@ async function main() {
   const single = sent[1];
   check("three people → one batch, no cache write it would never read", JSON.stringify(single.body).indexOf("cache_control") < 0);
   check("  and the notes are still in the prompt", userText(single).startsWith("FULL NOTES:\n"));
+
+  console.log("\nThinking levels reach the wire only when the registry sets one");
+  {
+    const spec = AI_OPERATIONS["capture.parse.details"] as { thinking?: string };
+    const bodyOf = async (provider: "gemini" | "openai", model?: string) => {
+      await setProvider(provider);
+      if (model) {
+        const db = await getDb();
+        await db.update(userSettings).set({ aiModel: model }).where(eq(userSettings.userId, USER));
+      }
+      sent.length = 0;
+      await call(false);
+      return JSON.stringify(sent[0].body);
+    };
+
+    spec.thinking = undefined;
+    check("gemini: no level set → no thinkingConfig", !(await bodyOf("gemini")).includes("thinkingConfig"));
+    spec.thinking = "low";
+    check("gemini: a registry level reaches the request", (await bodyOf("gemini")).includes('"thinkingLevel":"LOW"'));
+    const classic = JSON.parse(await bodyOf("openai"));
+    check("openai gpt-4o-mini: unchanged request (temperature, max_tokens)", "temperature" in classic && "max_tokens" in classic && !("reasoning_effort" in classic));
+    const reasoning = JSON.parse(await bodyOf("openai", "gpt-5-mini"));
+    check(
+      "openai gpt-5-mini: effort sent, no temperature, max_completion_tokens",
+      reasoning.reasoning_effort === "low" && !("temperature" in reasoning) && "max_completion_tokens" in reasoning
+    );
+    spec.thinking = undefined;
+  }
 
   await getDb().then((db) => db.delete(userSettings).where(eq(userSettings.userId, USER)));
   if (failures > 0) {

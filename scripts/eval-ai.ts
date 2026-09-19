@@ -20,15 +20,20 @@
  * through the AI gate, so every model is reachable (Orbit's managed keys would pin the model
  * to the managed allowlist). The ordinary `GEMINI_API_KEY`-style names are deliberately
  * ignored and stripped: a developer's `.env.local` key must never be spent by just running a
- * script. A full run costs roughly a dollar or two per provider.
+ * script. To spend them on purpose, name the file: `--keys-from ../../.env.local` reads its
+ * `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `WISPR_API_KEY` as the eval
+ * keys (an `ORBIT_EVAL_*` variable still wins). A full run costs roughly a dollar or two per
+ * provider.
  *
  * SAFETY. `./smoke/_env` removes `DATABASE_URL` (never the shared Neon database) and points
  * PGlite at a throwaway directory, so this never contends with a dev server.
  */
 import "./smoke/_env";
+import { parse as parseEnv } from "dotenv";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -57,6 +62,7 @@ type Args = {
   label: string;
   out: string;
   compare?: string;
+  keysFrom?: string;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -82,17 +88,23 @@ function parseArgs(argv: string[]): Args {
     label,
     out: get("--out") ?? join("docs", "ai-evals", `${date}-${label.replace(/[^\w.-]+/g, "_")}.json`),
     compare: get("--compare"),
+    keysFrom: get("--keys-from"),
   };
 }
 
-/** The eval's keys, by provider — only the `ORBIT_EVAL_*` names (see the header). */
-function evalKeys() {
-  const read = (name: string) => process.env[name]?.trim() || null;
+/**
+ * The eval's keys, by provider: the `ORBIT_EVAL_*` variables, else — only when the run
+ * names a file with `--keys-from` — that file's ordinary provider keys (see the header).
+ */
+function evalKeys(keysFrom?: string) {
+  const file: Record<string, string> = keysFrom ? parseEnv(readFileSync(keysFrom, "utf8")) : {};
+  const read = (evalName: string, fileName: string) =>
+    process.env[evalName]?.trim() || file[fileName]?.trim() || null;
   return {
-    gemini: read("ORBIT_EVAL_GEMINI_KEY"),
-    openai: read("ORBIT_EVAL_OPENAI_KEY"),
-    anthropic: read("ORBIT_EVAL_ANTHROPIC_KEY"),
-    wispr: read("ORBIT_EVAL_WISPR_KEY"),
+    gemini: read("ORBIT_EVAL_GEMINI_KEY", "GEMINI_API_KEY"),
+    openai: read("ORBIT_EVAL_OPENAI_KEY", "OPENAI_API_KEY"),
+    anthropic: read("ORBIT_EVAL_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"),
+    wispr: read("ORBIT_EVAL_WISPR_KEY", "WISPR_API_KEY"),
   };
 }
 
@@ -112,7 +124,18 @@ async function setUpUser(args: Args, keys: ReturnType<typeof evalKeys>) {
     .onConflictDoUpdate({ target: userSettings.userId, set: values });
 }
 
-type CostRow = { operation: string; model: string; calls: number; failures: number; costMicros: number; unpriced: number };
+type CostRow = {
+  operation: string;
+  model: string;
+  calls: number;
+  failures: number;
+  inputTokens: number;
+  /** Includes thinking tokens, which bill as output. */
+  outputTokens: number;
+  cachedInputTokens: number;
+  costMicros: number;
+  unpriced: number;
+};
 
 async function usageSince(since: Date): Promise<CostRow[]> {
   // Usage rows are written fire-and-forget; let the last ones land.
@@ -124,6 +147,9 @@ async function usageSince(since: Date): Promise<CostRow[]> {
       model: usageEvents.model,
       calls: sql<number>`count(*)::int`,
       failures: sql<number>`(count(*) filter (where ${usageEvents.success} = 0))::int`,
+      inputTokens: sql<number>`coalesce(sum(${usageEvents.inputTokens}), 0)::float8`,
+      outputTokens: sql<number>`coalesce(sum(${usageEvents.outputTokens}), 0)::float8`,
+      cachedInputTokens: sql<number>`coalesce(sum(${usageEvents.cachedInputTokens}), 0)::float8`,
       costMicros: sql<number>`coalesce(sum(${usageEvents.estimatedCostMicros}), 0)::float8`,
       unpriced: sql<number>`(count(*) filter (where ${usageEvents.estimatedCostMicros} is null and ${usageEvents.success} = 1))::int`,
     })
@@ -135,6 +161,9 @@ async function usageSince(since: Date): Promise<CostRow[]> {
     model: r.model,
     calls: Number(r.calls),
     failures: Number(r.failures),
+    inputTokens: Number(r.inputTokens),
+    outputTokens: Number(r.outputTokens),
+    cachedInputTokens: Number(r.cachedInputTokens),
     costMicros: Number(r.costMicros),
     unpriced: Number(r.unpriced),
   }));
@@ -201,10 +230,14 @@ export type EvalReport = {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const keys = evalKeys();
+  const keys = evalKeys(args.keysFrom);
   if (!keys[args.provider]) {
-    throw new Error(`Set ORBIT_EVAL_${args.provider.toUpperCase()}_KEY to evaluate ${args.provider}.`);
+    throw new Error(
+      `Set ORBIT_EVAL_${args.provider.toUpperCase()}_KEY (or pass --keys-from <env file>) to evaluate ${args.provider}.`
+    );
   }
+  const present = Object.entries(keys).filter(([, v]) => v).map(([k]) => k);
+  console.log(`eval-ai: keys for ${present.join(", ")}${args.keysFrom ? ` (from ${args.keysFrom})` : ""}`);
   await setUpUser(args, keys);
 
   console.log(`eval-ai: ${args.label} — ${args.provider} / ${args.model}, ${args.runs} run(s), tasks: ${args.tasks.join(", ")}`);
@@ -296,6 +329,18 @@ async function main() {
   }
   process.exit(0);
 }
+
+/**
+ * The throwaway database holds the eval keys (encrypted, but with the local default secret),
+ * so it goes when the run does. Only a directory `./smoke/_env` made under the temp dir.
+ */
+function removeScratchDatabase() {
+  const dir = process.env.ORBIT_PGLITE_DIR;
+  if (dir && dir.startsWith(tmpdir()) && dir.includes("orbit-smoke-")) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+process.on("exit", removeScratchDatabase);
 
 main().catch((err) => {
   console.error(err);

@@ -10,6 +10,7 @@
  *
  * Pure and client-importable: no `@/db`, no env, no SDKs.
  */
+import type { ThinkingLevel } from "@/lib/ai-request-options";
 
 /**
  * Which model an operation runs on.
@@ -30,6 +31,12 @@ type OperationSpec = {
   /** In words a person would use — the settings usage card shows this. */
   label: string;
   tier: AiTier;
+  /**
+   * How hard a thinking model should think, where the model has a dial (`ai-request-options`).
+   * Absent = the provider's default, which for Gemini 3.x is to think at length. Set only
+   * where the eval (`scripts/eval-ai.ts`) showed the lower level loses nothing.
+   */
+  thinking?: ThinkingLevel;
   /**
    * Bulk work running on the person's behalf rather than something they are waiting on.
    * On Orbit's managed keys it stops at `MANAGED_AI_BUDGET.backgroundShare` of the month.
@@ -97,6 +104,10 @@ export function aiOperationLabel(operation: string): string {
 
 export function aiOperationTier(operation: AiOperationId): AiTier {
   return AI_OPERATIONS[operation].tier;
+}
+
+export function aiOperationThinking(operation: string): ThinkingLevel | undefined {
+  return isAiOperationId(operation) ? (AI_OPERATIONS[operation] as OperationSpec).thinking : undefined;
 }
 
 export const BACKGROUND_AI_OPERATIONS: ReadonlySet<string> = new Set(

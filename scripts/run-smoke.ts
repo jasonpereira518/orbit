@@ -105,6 +105,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-provider-keys-stripped": "pure",
   "smoke-fast-model": "pure",
   "smoke-ai-operations": "pure",
+  "smoke-ai-request-options": "pure",
   "smoke-eval-ai-score": "pure",
   "smoke-feedback-image": "pure",
   "smoke-follow-up-cadence": "pure",
