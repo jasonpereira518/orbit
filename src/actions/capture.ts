@@ -34,6 +34,11 @@ import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
 } from "@/lib/duplicates";
+import { resolveAvatarNow } from "@/lib/avatar-backfill";
+import {
+  downloadAndPersistAvatar,
+  fetchLinkedInPhotoUrl,
+} from "@/lib/contact-avatar";
 import { resolvePastedLinkedInProfiles } from "@/lib/linkedin-capture";
 import {
   extractLinkedInProfileRefs,
@@ -607,6 +612,19 @@ export async function confirmBulkCapture(
     mentions: batch.mentions ?? [],
     skipped: batch.skipped,
   });
+
+  // One person logged → fetch their photo before returning, so they arrive on the contact
+  // with a face rather than a placeholder that fills in on some later page load. Only for
+  // a single contact: a batch of them is what the background backfill is for, and it is
+  // also the case where the wait would be felt. Scheduling this in `after()` instead would
+  // land the photo after the page it belongs on has already rendered.
+  if (out.contactIds.length === 1) {
+    const db = await getDb();
+    await resolveAvatarNow(db, userId, out.contactIds[0]!, {
+      persistRemote: downloadAndPersistAvatar,
+      resolveLinkedIn: fetchLinkedInPhotoUrl,
+    });
+  }
 
   // The lib skipped embeddings and summaries (it must run outside a request scope for the
   // smoke suite); this is the request scope, so schedule them here.

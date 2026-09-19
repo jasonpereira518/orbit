@@ -56,6 +56,45 @@ export type AvatarCandidate = {
 };
 
 /**
+ * Wall-clock budget for resolving ONE photo inline, on the save that created the contact.
+ *
+ * Much tighter than {@link AVATAR_BACKFILL_BUDGET_MS}: this one is in front of a person
+ * waiting on a save, not a background tick on an already-rendered page. If the lookup
+ * doesn't answer inside it the save returns anyway and the ordinary backfill picks the
+ * contact up on the next page they open — a missing photo is never worth a slow save.
+ */
+export const AVATAR_INLINE_BUDGET_MS = 6_000;
+
+/**
+ * The one contact, if it still needs a photo at all.
+ *
+ * Goes through the same `needsWorkPredicate` the batch uses rather than re-deciding in JS:
+ * a contact that already has a durable photo, or has no LinkedIn URL to look one up from,
+ * must cost nothing here.
+ */
+export async function findAvatarCandidateById(
+  db: Db,
+  userId: string,
+  contactId: string
+): Promise<AvatarCandidate | null> {
+  const [row] = await db
+    .select({
+      id: contacts.id,
+      linkedinUrl: contacts.linkedinUrl,
+      remoteUrl: sql<string | null>`CASE WHEN ${storedKind} = 'remote' THEN ${contacts.profileImageUrl} ELSE NULL END`,
+    })
+    .from(contacts)
+    .where(and(eq(contacts.id, contactId), needsWorkPredicate(userId, [])))
+    .limit(1);
+  if (!row) return null;
+  return {
+    id: row.id,
+    linkedinUrl: row.linkedinUrl?.trim() || null,
+    remoteUrl: row.remoteUrl?.trim() || null,
+  };
+}
+
+/**
  * Up to `limit` contacts that still need a photo, cheapest work first: remote→durable
  * caching costs no Microlink quota, so it sorts ahead of LinkedIn lookups.
  */
@@ -117,6 +156,71 @@ export type AvatarBatchResult = {
   /** Set when the photo store itself is broken — the whole run should stop. */
   storageError: string | null;
 };
+
+/**
+ * Resolve one contact's photo right now, on the request that created them.
+ *
+ * The backfill exists because resolving photos is slow and quota-limited, so it is worth
+ * amortizing across page visits — but that reasoning is about *batches*. When a single
+ * person is logged, waiting is the whole cost of the feature: they land on that contact
+ * and the face is missing for no reason a person can see. One lookup is cheap enough to
+ * pay for inline.
+ *
+ * Deliberately total: it returns whether a photo landed and never throws. Rate limits, a
+ * broken photo store and a profile with no findable picture all mean the same thing to the
+ * caller — carry on without a photo and let the ordinary backfill try again later.
+ */
+export async function resolveAvatarNow(
+  db: Db,
+  userId: string,
+  contactId: string,
+  deps: Pick<AvatarBatchDeps, "persistRemote" | "resolveLinkedIn"> & {
+    deadline?: number;
+  }
+): Promise<boolean> {
+  try {
+    const candidate = await findAvatarCandidateById(db, userId, contactId);
+    if (!candidate) return false;
+
+    const deadline = deps.deadline ?? Date.now() + AVATAR_INLINE_BUDGET_MS;
+    const save = async (id: string, photoUrl: string) => {
+      await db
+        .update(contacts)
+        .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+        .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
+    };
+
+    const work = runAvatarBackfillBatch([candidate], {
+      deadline,
+      persistRemote: deps.persistRemote,
+      resolveLinkedIn: deps.resolveLinkedIn,
+      save,
+    });
+
+    /**
+     * The batch's own deadline is checked BEFORE it starts a contact, which bounds a run
+     * of many and bounds nothing at all for a run of one — the single lookup would still
+     * take however long its two HTTP calls take. Racing the timer is what actually holds
+     * the save to the budget.
+     *
+     * The losing lookup is abandoned, not cancelled: if it finishes before the invocation
+     * ends it still writes the photo, which is strictly better than dropping it. Either
+     * way the contact is left in a state the ordinary backfill will pick up.
+     */
+    const timer = new Promise<null>((resolve) => {
+      const t = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()));
+      (t as { unref?: () => void }).unref?.();
+    });
+
+    const result = await Promise.race([work, timer]);
+    return result !== null && result.saved > 0;
+  } catch {
+    // Total on purpose: a rate limit, a broken photo store and a profile with no findable
+    // picture all mean the same thing to the caller. None of them is a reason the contact
+    // should fail to be created, and the backfill surfaces a real storage fault later.
+    return false;
+  }
+}
 
 export async function runAvatarBackfillBatch(
   candidates: AvatarCandidate[],
