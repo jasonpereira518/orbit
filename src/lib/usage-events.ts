@@ -54,6 +54,11 @@ export type UsageMeta = {
    * accounts only) — and the meter the managed allowance reads. Always `grant.keyOwner`.
    */
   keyOwner: "user" | "orbit";
+  /**
+   * Sent through a provider Batch API (`src/lib/ai-batch.ts`), which bills at half price.
+   * Not a column: the ledger stores what it cost, and that is where the halving belongs.
+   */
+  batch?: boolean;
 };
 
 type UsageRecord = UsageMeta &
@@ -90,6 +95,7 @@ export function recordUsage(rec: UsageRecord): void {
           cachedInputTokens: rec.cachedInputTokens,
           cacheWriteTokens: rec.cacheWriteTokens,
           audioInputTokens: rec.audioInputTokens,
+          batch: rec.batch,
         }),
         success: rec.success ? 1 : 0,
         errorKind: rec.errorKind ?? null,

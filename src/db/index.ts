@@ -688,6 +688,28 @@ CREATE TABLE IF NOT EXISTS ai_result_cache (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ai_result_cache_key_uidx ON ai_result_cache(user_id, operation, input_hash);
 CREATE INDEX IF NOT EXISTS ai_result_cache_created_idx ON ai_result_cache(created_at);
+CREATE TABLE IF NOT EXISTS ai_batch_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  operation text NOT NULL,
+  provider text NOT NULL,
+  model text NOT NULL,
+  key_owner text NOT NULL DEFAULT 'user',
+  provider_batch_id text NOT NULL,
+  status text NOT NULL DEFAULT 'submitted',
+  request_count integer NOT NULL,
+  est_cost_micros integer,
+  payload jsonb NOT NULL DEFAULT '{}',
+  provider_meta jsonb,
+  attempts integer NOT NULL DEFAULT 0,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS ai_batch_jobs_user_idx ON ai_batch_jobs(user_id, status);
+CREATE INDEX IF NOT EXISTS ai_batch_jobs_status_idx ON ai_batch_jobs(status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_batch_jobs_provider_batch_uidx ON ai_batch_jobs(provider, provider_batch_id);
 CREATE TABLE IF NOT EXISTS plan_upgrade_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1608,7 +1630,10 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // whose inputs did not change) and the ai_result_cache table (recruiter verdicts, extension
 // profile reads, follow-up drafts keyed by exactly what was asked). Checked against every
 // remote branch and local worktree on Sep 19 2026: none above 70.
-export const SCHEMA_VERSION = 71;
+//
+// 72 = ai_batch_jobs: background AI work submitted to a provider's Batch API (half price,
+// results minutes to a day later). Checked against every remote branch on Sep 19 2026.
+export const SCHEMA_VERSION = 72;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the

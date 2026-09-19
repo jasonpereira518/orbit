@@ -2352,6 +2352,54 @@ export const usageEvents = pgTable(
 );
 
 /**
+ * One submitted provider batch (`src/lib/ai-batch.ts`).
+ *
+ * Background work — LinkedIn enrichment, timeline events, the recruiter scan — is nobody's
+ * foreground, and every provider bills a batch at half price. The trade is latency: results
+ * arrive minutes to a day later, so the work has to survive being left half-done, which is
+ * what this row is. It holds what the results have to be mapped back onto (`payload`), what
+ * the provider needs deleting afterwards (`provider_meta`), and the estimate the managed
+ * allowance reserves while the batch is in flight.
+ */
+export const aiBatchJobs = pgTable(
+  "ai_batch_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** The `operation` every request in this batch records, e.g. "recruiter.scan". */
+    operation: text("operation").notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic">().notNull(),
+    model: text("model").notNull(),
+    /** Whose key paid, exactly as `usage_events` means it. */
+    keyOwner: text("key_owner").$type<"user" | "orbit">().notNull(),
+    /** The provider's own id for the batch. */
+    providerBatchId: text("provider_batch_id").notNull(),
+    /**
+     * submitted → the provider has it; applied → results written back; failed/cancelled are
+     * terminal and hand the work back to the feature's ordinary path.
+     */
+    status: text("status").$type<"submitted" | "applied" | "failed" | "cancelled">().notNull().default("submitted"),
+    requestCount: integer("request_count").notNull(),
+    /** Pessimistic estimate at batch prices; the managed allowance counts it while in flight. */
+    estCostMicros: integer("est_cost_micros"),
+    /** What the applier needs to map each `custom_id` back onto (contact ids, sender rows…). */
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    /** Provider-side leftovers to delete once results are in (OpenAI's input/output files). */
+    providerMeta: jsonb("provider_meta").$type<Record<string, string>>(),
+    attempts: integer("attempts").notNull().default(0),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("ai_batch_jobs_user_idx").on(t.userId, t.status),
+    index("ai_batch_jobs_status_idx").on(t.status, t.createdAt),
+    uniqueIndex("ai_batch_jobs_provider_batch_uidx").on(t.provider, t.providerBatchId),
+  ]
+);
+
+/**
  * AI answers keyed by exactly what was asked (`src/lib/ai-result-cache.ts`).
  *
  * For call sites whose answer is a pure function of their inputs and gets asked again: the
