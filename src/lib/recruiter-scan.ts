@@ -61,6 +61,47 @@ function renderMessages(messages: GmailMessageContent[]) {
     .join("\n\n");
 }
 
+export const RECRUITER_SYSTEM = `You classify email senders as recruiters and summarize the user's relationship with them.
+
+A recruiter is someone whose role in these emails is hiring or sourcing candidates: in-house talent acquisition, agency recruiters, headhunters, sourcers, or a hiring manager doing outreach about a specific opening.
+
+NOT recruiters: job-board blasts and newsletters (LinkedIn Jobs, Indeed, Hired, Otta), automated applicant-tracking notifications (Greenhouse, Lever, Workday), colleagues, vendors, sales outreach, and anyone merely discussing employment in passing.
+
+Rules:
+- Judge only from the messages provided. Never invent a firm, role, or event.
+- "summary" is 2-3 sentences, written to the user in second person, covering what the recruiter wanted, what happened, and where it stands. State the outcome plainly, including rejections and silence.
+- "companies_mentioned" are the hiring companies discussed, not the recruiter's agency unless it is also the employer.
+- "roles_discussed" are concrete job titles.
+- If unsure whether they are a recruiter, set is_recruiter false and confidence low.
+
+Return JSON: {"is_recruiter": boolean, "confidence": number between 0 and 1, "full_name": string|null, "firm": string|null, "companies_mentioned": string[], "roles_discussed": string[], "summary": string|null}`;
+
+export function buildRecruiterUserPrompt(input: {
+  senderName: string;
+  senderEmail: string;
+  firmGuess: string | null;
+  messages: GmailMessageContent[];
+}): string {
+  return `Sender: ${input.senderName} <${input.senderEmail}>
+Firm guessed from the email domain: ${input.firmGuess || "unknown"}
+
+${renderMessages(input.messages)}`;
+}
+
+/** The model's answer as a verdict. Throws when it is not the shape it promised. */
+export function recruiterResultFromContent(content: string): RecruiterScanResult {
+  const parsed = recruiterScanSchema.parse(parseAiJson(content));
+  return {
+    isRecruiter: parsed.is_recruiter,
+    confidence: parsed.confidence ?? (parsed.is_recruiter ? 0.7 : 0),
+    fullName: parsed.full_name?.trim() || null,
+    firm: parsed.firm?.trim() || null,
+    companiesMentioned: parsed.companies_mentioned,
+    rolesDiscussed: parsed.roles_discussed,
+    summary: parsed.summary?.trim() || null,
+  };
+}
+
 export async function classifyRecruiterSender(
   userId: string,
   input: {
@@ -78,38 +119,12 @@ export async function classifyRecruiterSender(
     // Low temperature: this is an extraction task, and the summary is stored as fact.
     temperature: 0.2,
     maxOutputTokens: 700,
-    system: `You classify email senders as recruiters and summarize the user's relationship with them.
-
-A recruiter is someone whose role in these emails is hiring or sourcing candidates: in-house talent acquisition, agency recruiters, headhunters, sourcers, or a hiring manager doing outreach about a specific opening.
-
-NOT recruiters: job-board blasts and newsletters (LinkedIn Jobs, Indeed, Hired, Otta), automated applicant-tracking notifications (Greenhouse, Lever, Workday), colleagues, vendors, sales outreach, and anyone merely discussing employment in passing.
-
-Rules:
-- Judge only from the messages provided. Never invent a firm, role, or event.
-- "summary" is 2-3 sentences, written to the user in second person, covering what the recruiter wanted, what happened, and where it stands. State the outcome plainly, including rejections and silence.
-- "companies_mentioned" are the hiring companies discussed, not the recruiter's agency unless it is also the employer.
-- "roles_discussed" are concrete job titles.
-- If unsure whether they are a recruiter, set is_recruiter false and confidence low.
-
-Return JSON: {"is_recruiter": boolean, "confidence": number between 0 and 1, "full_name": string|null, "firm": string|null, "companies_mentioned": string[], "roles_discussed": string[], "summary": string|null}`,
-    user: `Sender: ${input.senderName} <${input.senderEmail}>
-Firm guessed from the email domain: ${input.firmGuess || "unknown"}
-
-${renderMessages(input.messages)}`,
+    system: RECRUITER_SYSTEM,
+    user: buildRecruiterUserPrompt(input),
   }, {
     ttlDays: 90,
     accept: (raw) => recruiterScanSchema.safeParse(parseAiJson(raw)).success,
   });
 
-  const parsed = recruiterScanSchema.parse(parseAiJson(content));
-
-  return {
-    isRecruiter: parsed.is_recruiter,
-    confidence: parsed.confidence ?? (parsed.is_recruiter ? 0.7 : 0),
-    fullName: parsed.full_name?.trim() || null,
-    firm: parsed.firm?.trim() || null,
-    companiesMentioned: parsed.companies_mentioned,
-    rolesDiscussed: parsed.roles_discussed,
-    summary: parsed.summary?.trim() || null,
-  };
+  return recruiterResultFromContent(content);
 }

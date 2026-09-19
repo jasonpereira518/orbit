@@ -171,6 +171,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ai-result-cache": "pglite",
   "smoke-ai-shared-prefix": "pglite",
   "smoke-ai-batch": "pglite",
+  "smoke-recruiter-scan-batch": "pglite",
   "smoke-api-keys": "pglite",
   "smoke-api-routes": "pglite",
   "smoke-apollo-hosted-budget": "pglite",

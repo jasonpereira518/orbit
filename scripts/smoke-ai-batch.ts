@@ -11,9 +11,11 @@ import "./smoke/_env";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { aiBatchJobs, contacts, interactions, userSettings, usageEvents } from "../src/db/schema";
+import { isNotNull } from "drizzle-orm";
 import { encrypt } from "../src/lib/crypto";
 import { listPendingBatchJobs, pollAiBatch } from "../src/lib/ai-batch";
 import { runAiBatchSweep } from "../src/lib/ai-batch-apply";
+import { runLinkedInTimelineBackfill } from "../src/lib/linkedin-timeline-backfill";
 import { enrichContactsFromMessagesBatched } from "../src/lib/message-enrichment";
 import { managedUsageThisMonth } from "../src/lib/ai-access";
 
@@ -36,17 +38,25 @@ type Provider = "gemini" | "openai" | "anthropic";
 let batchDone = false;
 /** Flipped to make the provider refuse the submission. */
 let refuseSubmit = false;
+/** Makes the provider report the batch as failed rather than finished. */
+let batchFails = false;
+/** Answer with timeline events instead of an enrichment summary. */
+let timelineAnswer = false;
 let submitted: { provider: Provider; body: unknown } | null = null;
 /** Providers hand out a fresh id per batch; the table's unique index expects that. */
 let batchSeq = 0;
 const deleted: string[] = [];
-const ANSWER = JSON.stringify({
+const TIMELINE_ANSWER = JSON.stringify({
+  events: [{ type: "meeting", summary: "Coffee to talk it through", dateHint: "next Tuesday", sourceMessageIndex: 1 }],
+});
+const ENRICH_ANSWER = JSON.stringify({
   summary: "You and Ada have been trading notes about her infra team.",
   key_facts: ["Runs the platform team at Larkspur"],
   open_loops: ["She owes you an intro to her CTO"],
   relationship_score_suggestion: 4,
   topics: ["infrastructure"],
 });
+const answer = () => (timelineAnswer ? TIMELINE_ANSWER : ENRICH_ANSWER);
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -70,7 +80,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     return Response.json({
       name: url.split("/").pop() ?? "batches/abc",
       metadata: {
-        state: batchDone ? "BATCH_STATE_SUCCEEDED" : "BATCH_STATE_RUNNING",
+        state: batchFails ? "BATCH_STATE_FAILED" : batchDone ? "BATCH_STATE_SUCCEEDED" : "BATCH_STATE_RUNNING",
         model: "models/gemini-3.5-flash",
         ...(batchDone
           ? {
@@ -79,7 +89,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
                   inlinedResponses: [
                     {
                       response: {
-                        candidates: [{ content: { parts: [{ text: ANSWER }] } }],
+                        candidates: [{ content: { parts: [{ text: answer() }] } }],
                         usageMetadata: { promptTokenCount: 900, candidatesTokenCount: 60, thoughtsTokenCount: 40 },
                       },
                     },
@@ -97,7 +107,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     if (/\/files\/.*\/content/.test(url)) {
       const line = JSON.stringify({
         custom_id: "c0",
-        response: { status_code: 200, body: { choices: [{ message: { content: ANSWER } }], usage: { prompt_tokens: 900, completion_tokens: 60 } } },
+        response: { status_code: 200, body: { choices: [{ message: { content: answer() } }], usage: { prompt_tokens: 900, completion_tokens: 60 } } },
       });
       return new Response(line, { headers: { "content-type": "application/jsonl" } });
     }
@@ -112,7 +122,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     }
     return Response.json({
       id: "batch_1",
-      status: batchDone ? "completed" : "in_progress",
+      status: batchFails ? "failed" : batchDone ? "completed" : "in_progress",
       ...(batchDone ? { output_file_id: "file-out" } : {}),
     });
   }
@@ -124,7 +134,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         custom_id: "c0",
         result: {
           type: "succeeded",
-          message: { content: [{ type: "text", text: ANSWER }], usage: { input_tokens: 800, output_tokens: 60, cache_read_input_tokens: 100, cache_creation_input_tokens: 0 } },
+          message: { content: [{ type: "text", text: answer() }], usage: { input_tokens: 800, output_tokens: 60, cache_read_input_tokens: 100, cache_creation_input_tokens: 0 } },
         },
       });
       return new Response(line, { headers: { "content-type": "application/x-jsonl" } });
@@ -139,7 +149,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     }
     return Response.json({
       id: "msgbatch_1",
-      processing_status: batchDone ? "ended" : "in_progress",
+      processing_status: batchFails ? "canceling" : batchDone ? "ended" : "in_progress",
       // The SDK reads the results from this url, so an ended batch must carry one.
       ...(batchDone ? { results_url: `${url.replace(/\/$/, "")}/results` } : {}),
     });
@@ -221,6 +231,77 @@ async function main() {
     if (provider === "gemini") {
       check("gemini: thinking tokens count as output (60 + 40)", rows[0]?.outputTokens === 100, String(rows[0]?.outputTokens));
     }
+  }
+
+  console.log("\nTimeline events: queued as a batch, the reach-out written at once");
+  {
+    await account(USER, "gemini");
+    batchDone = false;
+    refuseSubmit = false;
+    const contact = await contactWithThread(USER);
+    // A second message: one message is a reach-out and never reaches the model.
+    await db.insert(interactions).values({
+      userId: USER,
+      contactId: contact.id,
+      interactionType: "linkedin_message",
+      interactionDate: new Date("2026-09-03"),
+      direction: "out",
+      rawNotes: "Thank you! Could we grab coffee next Tuesday to talk it through?",
+    });
+    await db.update(userSettings).set({ timelineBackfillEnabled: 1 }).where(eq(userSettings.userId, USER));
+
+    const run = await runLinkedInTimelineBackfill(USER);
+    check("the thread is counted as processed", run.contactsProcessed === 1, JSON.stringify(run));
+    const derived = async () =>
+      db.query.interactions.findMany({
+        where: and(eq(interactions.userId, USER), eq(interactions.contactId, contact.id), isNotNull(interactions.externalId)),
+      });
+    const afterSubmit = await derived();
+    check("the rule-based reach-out is written at submit time", afterSubmit.some((e) => e.interactionType === "reach_out"));
+    check("  which takes the contact out of the pending set", run.remaining === 0, String(run.remaining));
+
+    // Nothing is claimed twice while the batch is in flight.
+    const second = await runLinkedInTimelineBackfill(USER);
+    check("a second pass claims nothing while the batch is out", second.contactsProcessed === 0, JSON.stringify(second));
+
+    timelineAnswer = true;
+    batchDone = true;
+    const swept = await runAiBatchSweep();
+    check("the finished batch is applied", swept.applied === 1, JSON.stringify(swept));
+    const afterApply = await derived();
+    check("the model's meeting event lands on the thread", afterApply.some((e) => e.interactionType === "meeting"), JSON.stringify(afterApply.map((e) => e.interactionType)));
+    timelineAnswer = false;
+  }
+
+  console.log("\nA timeline batch that will never answer falls back to keywords");
+  {
+    await account(USER, "gemini");
+    batchDone = false;
+    const contact = await contactWithThread(USER);
+    await db.insert(interactions).values({
+      userId: USER,
+      contactId: contact.id,
+      interactionType: "linkedin_message",
+      interactionDate: new Date("2026-09-03"),
+      direction: "out",
+      rawNotes: "Coffee next Tuesday would be lovely — shall we meet at your office?",
+    });
+    await db.update(userSettings).set({ timelineBackfillEnabled: 1 }).where(eq(userSettings.userId, USER));
+    await runLinkedInTimelineBackfill(USER);
+
+    // The provider gives up on it, exactly as an expired batch does.
+    batchFails = true;
+    const swept = await runAiBatchSweep();
+    batchFails = false;
+    check("the failed batch is counted as failed", swept.failed === 1, JSON.stringify(swept));
+    const events = await db.query.interactions.findMany({
+      where: and(eq(interactions.userId, USER), eq(interactions.contactId, contact.id), isNotNull(interactions.externalId)),
+    });
+    check(
+      "the thread still gets its keyword-matched events rather than nothing",
+      events.some((e) => e.interactionType === "in_person" || e.interactionType === "meeting"),
+      JSON.stringify(events.map((e) => e.interactionType))
+    );
   }
 
   console.log("\nWhen batching is not available, the work still happens");
