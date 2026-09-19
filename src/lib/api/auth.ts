@@ -107,20 +107,31 @@ export async function requireApiCaller(
     );
   }
 
-  const settings = await ensureUserSettings(row.userId);
+  await assertAccountUsable(row.userId);
+
+  return { userId: row.userId, keyId: row.id, prefix: row.prefix, scopes };
+}
+
+/**
+ * The two account-level refusals that apply however the caller authenticated.
+ *
+ * Separate from the key lookup above because the MCP server also reaches here with a Clerk
+ * OAuth token, which has no `api_keys` row — and a suspended account must be refused on both
+ * paths or the check is decorative.
+ */
+export async function assertAccountUsable(userId: string): Promise<void> {
+  const settings = await ensureUserSettings(userId);
   if (settings.suspendedAt) {
     throw new ApiAuthError("suspended", "This Orbit account is suspended.");
   }
 
-  const entitlements = await getEntitlements(row.userId);
+  const entitlements = await getEntitlements(userId);
   if (!entitlements.canUseApi) {
     throw new ApiAuthError(
       "payment_required",
       "The Orbit API, webhooks and MCP server are available on Orbit Pro and Orbit Lifetime."
     );
   }
-
-  return { userId: row.userId, keyId: row.id, prefix: row.prefix, scopes };
 }
 
 /**

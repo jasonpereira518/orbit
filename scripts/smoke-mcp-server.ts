@@ -16,6 +16,7 @@ import { getDb } from "../src/db";
 import { generateApiKey } from "../src/lib/api/keys";
 import { sanitizeAgentText } from "../src/lib/mcp/sanitize";
 import { POST } from "../src/app/api/mcp/route";
+import { POST as TOKEN_POST } from "../src/app/api/mcp/[token]/route";
 
 const USER = "mcp-smoke-user";
 
@@ -26,12 +27,14 @@ function check(label: string, ok: boolean, detail = "") {
 }
 
 let rpcId = 0;
-async function rpc(
+
+function jsonRpcRequest(
+  url: string,
   token: string | null,
   method: string,
-  params: Record<string, unknown> = {},
-  extraHeaders: Record<string, string> = {}
-): Promise<{ status: number; body: Record<string, unknown> }> {
+  params: Record<string, unknown>,
+  extraHeaders: Record<string, string>
+): Request {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     // The transport requires the client to declare what it accepts.
@@ -39,14 +42,43 @@ async function rpc(
     ...extraHeaders,
   };
   if (token) headers.authorization = `Bearer ${token}`;
+  return new Request(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
+  });
+}
 
-  const res = await POST(
-    new Request("https://orbit.test/api/mcp", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
-    })
+/** The raw Response, for the assertions that are about headers rather than the body. */
+async function rawPost(
+  token: string | null,
+  method: string,
+  params: Record<string, unknown> = {},
+  extraHeaders: Record<string, string> = {}
+): Promise<Response> {
+  return POST(jsonRpcRequest("https://orbit.test/api/mcp", token, method, params, extraHeaders));
+}
+
+/** The deprecated `/api/mcp/[token]` route, whose credential is a path segment. */
+async function tokenRoutePost(
+  token: string,
+  method: string,
+  params: Record<string, unknown> = {}
+): Promise<number> {
+  const res = await TOKEN_POST(
+    jsonRpcRequest(`https://orbit.test/api/mcp/${token}`, null, method, params, {}),
+    { params: Promise.resolve({ token }) }
   );
+  return res.status;
+}
+
+async function rpc(
+  token: string | null,
+  method: string,
+  params: Record<string, unknown> = {},
+  extraHeaders: Record<string, string> = {}
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await rawPost(token, method, params, extraHeaders);
   const text = await res.text();
   let body: Record<string, unknown> = {};
   try {
@@ -67,12 +99,15 @@ const INITIALIZE = {
   clientInfo: { name: "smoke", version: "1.0.0" },
 };
 
-async function mintKey(scopes: Array<"read" | "write">): Promise<string> {
+async function mintKey(
+  scopes: Array<"read" | "write">,
+  kind: "api" | "mcp_url" = "api"
+): Promise<string> {
   const db = await getDb();
-  const key = generateApiKey();
+  const key = generateApiKey(kind);
   await db.execute(sql`
     INSERT INTO api_keys (user_id, name, kind, prefix, key_hash, scopes)
-    VALUES (${USER}, 'mcp smoke', 'api', ${key.prefix}, ${key.keyHash},
+    VALUES (${USER}, 'mcp smoke', ${kind}, ${key.prefix}, ${key.keyHash},
             ${JSON.stringify(scopes)}::jsonb)
   `);
   return key.token;
@@ -108,6 +143,46 @@ run(async () => {
     origin: "https://evil.example",
   });
   check("a request carrying an Origin header is refused", withOrigin.status === 403, String(withOrigin.status));
+
+  // --- OAuth discovery -----------------------------------------------------------------------
+  // A 401 without this header leaves a connecting client with nothing to do: it is the header
+  // that turns "refused" into "here is where to sign in", and so the whole one-click install.
+  const noAuthResponse = await rawPost(null, "initialize", INITIALIZE);
+  const challenge = noAuthResponse.headers.get("www-authenticate") ?? "";
+  check(
+    "a 401 advertises the resource metadata URL",
+    challenge.includes("resource_metadata=") &&
+      challenge.includes("/.well-known/oauth-protected-resource/api/mcp"),
+    challenge || "(no header)"
+  );
+  check(
+    "the 401 message does not demand an API key",
+    !JSON.stringify(noAuth.body).toLowerCase().includes("api key"),
+    JSON.stringify(noAuth.body).slice(0, 140)
+  );
+  // An OAuth bearer is not key-shaped, so the key path must not try to look it up. With Clerk
+  // unconfigured in smoke, verification returns null and this lands on the same 401.
+  const oauthShaped = await rpc("oat_" + "a".repeat(40), "initialize", INITIALIZE);
+  check(
+    "an OAuth-shaped bearer is refused cleanly, not crashed on",
+    oauthShaped.status === 401,
+    String(oauthShaped.status)
+  );
+
+  // --- A revoked key stops working -------------------------------------------------------------
+  const revokedKey = await mintKey(["read"]);
+  await db.execute(
+    sql`UPDATE api_keys SET revoked_at = now() WHERE user_id = ${USER} AND prefix = ${revokedKey.split("_").slice(0, 3).join("_")}`
+  );
+  const revoked = await rpc(revokedKey, "initialize", INITIALIZE);
+  check("a revoked key is refused", revoked.status === 401, String(revoked.status));
+
+  // --- The deprecated path-token route still works ---------------------------------------------
+  // It is deprecated, not removed: the keys already pasted into people's connectors have to
+  // keep working, and nothing else in this suite covers that route at all.
+  const urlKey = await mintKey(["read"], "mcp_url");
+  const viaPath = await tokenRoutePost(urlKey, "initialize", INITIALIZE);
+  check("the path-token route still authenticates", viaPath === 200, String(viaPath));
 
   // --- Protocol ----------------------------------------------------------------------------
   const init = await rpc(writeKey, "initialize", INITIALIZE);

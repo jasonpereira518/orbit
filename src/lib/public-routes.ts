@@ -56,6 +56,11 @@ export const PUBLIC_ROUTES = [
   // The key check is fail-closed and rejects a malformed bearer before any database work.
   "/api/v1(.*)",
   "/api/mcp(.*)",
+  // OAuth discovery for the MCP server. These must be readable by a client that has never
+  // authenticated — discovering how to sign in is the whole point — and they are fetched
+  // before any token exists, so a 302 to /sign-in here stops the connect flow at step one.
+  // They expose two public URLs and no user data (`src/lib/mcp/oauth.ts`).
+  "/.well-known/(.*)",
   // Genuinely public: browsers POST Content-Security-Policy violation reports here with
   // no session. The handler stores nothing but a directive and a URI, throttled.
   "/api/csp-report",
