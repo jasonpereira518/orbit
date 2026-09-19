@@ -306,8 +306,25 @@ export async function endProForLifetime(
   deps: { stripe?: SubscriptionStripe } = {}
 ): Promise<"canceled" | "none" | "error"> {
   try {
-    const customer = await getStripeCustomerId(userId);
-    if (!customer) return "none";
+    // Only ask Stripe when the mirror says there is a subscription that could still bill:
+    // most Lifetime buyers never subscribed, and they should not cost a Stripe call.
+    const db = await getDb();
+    const row = await db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+      columns: {
+        stripeCustomerId: true,
+        subscriptionPlan: true,
+        subscriptionStatus: true,
+        subscriptionPeriodEnd: true,
+      },
+    });
+    const customer = row?.stripeCustomerId?.trim();
+    if (!customer || row?.subscriptionPlan !== "orbit") return "none";
+    const mayStillBill =
+      row.subscriptionStatus === "active" ||
+      row.subscriptionStatus === "past_due" ||
+      (row.subscriptionPeriodEnd?.getTime() ?? 0) > Date.now();
+    if (!mayStillBill) return "none";
     const client = deps.stripe ?? liveStripe();
     const live = (await client.list(customer)).filter((s) => pickProSubscription([s]) !== null);
     if (live.length === 0) return "none";

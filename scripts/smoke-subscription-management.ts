@@ -40,7 +40,7 @@ function fakeSub(over: Partial<Stripe.Subscription> & { price?: string; interval
     cancel_at_period_end: false,
     cancel_at: null,
     metadata: { orbit_plan: "orbit" },
-    customer: "cus_smoke_sub",
+    customer: "cus_smoke_subman",
     items: {
       data: [
         {
@@ -111,10 +111,10 @@ run(async () => {
   const db = await getDb();
   for (const id of [SUBSCRIBER, LIFETIME, FREE]) await ensureUserSettings(id);
   await db.update(userSettings)
-    .set({ stripeCustomerId: "cus_smoke_sub", subscriptionPlan: "orbit", subscriptionStatus: "active", subscriptionPeriodEnd: new Date(PERIOD_END * 1000) })
+    .set({ stripeCustomerId: "cus_smoke_subman", subscriptionPlan: "orbit", subscriptionStatus: "active", subscriptionPeriodEnd: new Date(PERIOD_END * 1000) })
     .where(eq(userSettings.userId, SUBSCRIBER));
   await db.update(userSettings)
-    .set({ stripeCustomerId: "cus_smoke_life", lifetimePurchasedAt: new Date() })
+    .set({ stripeCustomerId: "cus_smoke_subman_life", lifetimePurchasedAt: new Date() })
     .where(eq(userSettings.userId, LIFETIME));
 
   console.log("The subscriber sees their own subscription");
@@ -123,7 +123,7 @@ run(async () => {
     const ended = fakeSub({ id: "sub_old", created: 50, status: "canceled" } as never);
     const f = fakeStripe([ended, other, fakeSub()]);
     const res = await sm.getSubscriptionDetails(SUBSCRIBER, { stripe: f.stripe });
-    check("looked up through their own customer id", f.calls.list[0] === "cus_smoke_sub", f.calls.list.join());
+    check("looked up through their own customer id", f.calls.list[0] === "cus_smoke_subman", f.calls.list.join());
     check("picked the live Pro subscription, not another product's or an ended one",
       res.ok && res.subscription.period === "monthly" && res.subscription.amountCents === 500, JSON.stringify(res));
     check("renewal date is the period end", res.ok && res.subscription.periodEnd === PERIOD_END);
@@ -224,6 +224,9 @@ run(async () => {
     const pending = fakeStripe([fakeSub({ cancel_at_period_end: true } as never)]);
     await sm.endProForLifetime(SUBSCRIBER, { stripe: pending.stripe });
     check("a subscription already set to end is canceled now too", pending.calls.cancel.length === 1);
+    const lapsed = fakeStripe([fakeSub()]);
+    check("an account that never subscribed never reaches Stripe",
+      (await sm.endProForLifetime(LIFETIME, { stripe: lapsed.stripe })) === "none" && lapsed.calls.list.length === 0);
     check("an account with no Stripe customer is fine",
       (await sm.endProForLifetime(FREE, { stripe: fakeStripe([fakeSub()]).stripe })) === "none");
     const failing = fakeStripe([fakeSub()]);
