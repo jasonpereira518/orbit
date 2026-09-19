@@ -2,7 +2,7 @@
 // built from a grant that module issued, never from a key read here.
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { buildWisprContext } from "@/lib/wispr";
 import { nothingUsable } from "@/lib/managed-ai-policy";
 import {
@@ -518,6 +518,15 @@ export async function completeJson(
     operation: AiOperationId;
     /** "fast" routes to FAST_MODELS[provider] instead of the user's configured model. */
     speed?: "fast";
+    /**
+     * A leading part of the user message that other calls in the same job repeat byte for
+     * byte — the full notes every capture detail batch re-reads. The model sees exactly
+     * `sharedPrefix + user` either way; what changes is the bill. Anthropic caches it
+     * explicitly (a read is 10% of input, a write 125%, so pass this ONLY when at least one
+     * more call will reuse it within five minutes); OpenAI and Gemini cache a repeated
+     * prefix on their own, and `cacheKey` routes OpenAI's lookups to the same cache.
+     */
+    sharedPrefix?: { text: string; cacheKey: string };
   },
 ): Promise<string> {
   const { operation } = input;
@@ -527,6 +536,8 @@ export async function completeJson(
   const temperature = input.temperature ?? 0.2;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
+  const prefix = input.sharedPrefix?.text ?? "";
+  const userText = prefix + input.user;
 
   return runOnGrant(grant, withUsage(
     {
@@ -543,7 +554,7 @@ export async function completeJson(
           const client = geminiClient(grant);
           const response = await client.models.generateContent({
             model,
-            contents: input.user,
+            contents: userText,
             config: { abortSignal: aiSignal(),
               temperature,
               maxOutputTokens,
@@ -566,8 +577,9 @@ export async function completeJson(
             response_format: { type: "json_object" },
             messages: [
               { role: "system", content: system },
-              { role: "user", content: input.user },
+              { role: "user", content: userText },
             ],
+            ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
           }, { signal: aiSignal() });
           report(tokensFromOpenAi(response));
           const content = response.choices[0]?.message?.content;
@@ -582,7 +594,18 @@ export async function completeJson(
           // Claude 4.7 and later reject sampling parameters with a 400.
           ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
           system,
-          messages: [{ role: "user", content: input.user }],
+          messages: [
+            {
+              role: "user",
+              // The breakpoint caches system + prefix together; the per-call tail follows.
+              content: prefix
+                ? [
+                    { type: "text", text: prefix, cache_control: { type: "ephemeral" } },
+                    { type: "text", text: input.user },
+                  ]
+                : input.user,
+            },
+          ],
         }, { signal: aiSignal() });
         report(tokensFromAnthropic(response));
         const block = response.content.find((b) => b.type === "text");
@@ -977,7 +1000,9 @@ export async function transcribeAudioWithAI(
               ],
             },
           ],
-          config: { abortSignal: aiSignal(),
+          // The transcription deadline, like Whisper's: at 45 s a long voice note was cut off
+          // mid-transcription and sent again whole — billed for the same audio twice.
+          config: { abortSignal: aiSignal(TRANSCRIBE_TIMEOUT_MS),
             temperature: 0.1,
             maxOutputTokens: 4096,
             responseMimeType: "application/json",
@@ -1381,13 +1406,22 @@ Rules:
 
   const detailed: ParsedPersonNote[] = [];
 
+  // Every detail batch re-reads the same notes. Worth caching only when a second batch will
+  // read them (see `sharedPrefix`): one batch would pay the cache write and never the read.
+  const notesPrefix = `FULL NOTES:\n${sliced}\n\nSHARED CONTEXT (do not copy wholesale into every source_excerpt):\n${sharedBlock || "(none)"}\n\n`;
+  const sharedPrefix =
+    peopleIds.length > DETAIL_BATCH_SIZE
+      ? { text: notesPrefix, cacheKey: `capture.details:${createHash("sha256").update(notesPrefix).digest("hex").slice(0, 32)}` }
+      : undefined;
+
   for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
     const batch = peopleIds.slice(i, i + DETAIL_BATCH_SIZE);
     const batchRaw = await completeJson(userId, {
       operation: "capture.parse.details",
       temperature: 0.2,
       maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
-      user: `FULL NOTES:\n${sliced}\n\nSHARED CONTEXT (do not copy wholesale into every source_excerpt):\n${sharedBlock || "(none)"}\n\nEXTRACT FULL DETAILS FOR THESE PEOPLE ONLY:\n${batch
+      ...(sharedPrefix ? { sharedPrefix } : {}),
+      user: `${sharedPrefix ? "" : notesPrefix}EXTRACT FULL DETAILS FOR THESE PEOPLE ONLY:\n${batch
         .map(
           (p, idx) =>
             `${idx + 1}. ${p.name}${p.email ? ` <${p.email}>` : ""}${p.company ? ` @ ${p.company}` : ""}${p.role ? ` — ${p.role}` : ""}`,
