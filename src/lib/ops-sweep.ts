@@ -1,6 +1,9 @@
-import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
-import { getDb } from "@/db";
-import { cronRuns, errorEvents, imports, opsAlertState } from "@/db/schema";
+import { oldestDueAgeMs } from "@/lib/provider-connections";
+import { probeStatementTimeout } from "@/lib/health";
+import { and, desc, eq, gt, inArray, isNotNull, like, or, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
+import { contacts, cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns, rateLimitBuckets } from "@/db/schema";
+import { RATE_LIMITS } from "@/lib/rate-limit";
 import { aiErrorBreakdown } from "@/lib/admin-health";
 import {
   OUR_ERROR_KINDS,
@@ -12,13 +15,17 @@ import { deriveCronRunState, finishCronRun, startCronRun, type CronRunStatus } f
 import { getEnvReport } from "@/lib/env";
 import { ERROR_SOURCES } from "@/lib/error-events";
 import {
+  PARTIAL_STREAK,
   evaluateOpsConditions,
   planTransitions,
   type OpsAlertRow,
   type OpsCondition,
   type OpsSnapshot,
 } from "@/lib/ops-alerts";
+import { loadManagedAiOpsFacts } from "@/lib/managed-ai-ops";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
+import { prunePageViews } from "@/lib/page-views";
+import { reportError } from "@/lib/report-error";
 
 export type { OpsDelivery } from "@/lib/ops-notify";
 
@@ -46,23 +53,38 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const [
     lastNightly,
     lastSyncRun,
+    lastJobFeedRun,
     webhooks,
     issues,
     outreach,
     aiGroups,
     errorsLastHour,
     failedImports,
+    lastDrain,
+    backfillAgg,
+    unattributedAgg,
+    backlogAgg,
+    refusalRes,
+    disarmedRes,
+    budgetAgg,
+    managedAi,
   ] = await Promise.all([
       db
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "imports.process-stalled"))
         .orderBy(desc(cronRuns.startedAt))
-        .limit(1),
+        .limit(PARTIAL_STREAK),
       db
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "sync.run"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "jobs.feed-sweep"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
       recentWebhookOutcomes(5, now),
@@ -78,13 +100,69 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select({ n: sql<number>`count(*)::int` })
         .from(imports)
         .where(and(eq(imports.status, "failed"), gt(imports.updatedAt, dayAgo))),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "webhooks.drain"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select({
+          accounts: sql<number>`count(distinct ${errorEvents.userId})::int`,
+          kinds: sql<string | null>`string_agg(distinct ${errorEvents.kind}, ',')`,
+        })
+        .from(errorEvents)
+        .where(and(eq(errorEvents.source, ERROR_SOURCES.backfillFailed), gt(errorEvents.createdAt, dayAgo))),
+      db
+        .select({ kind: errorEvents.kind, n: sql<number>`count(*)::int` })
+        .from(errorEvents)
+        .where(and(eq(errorEvents.source, ERROR_SOURCES.stripeUnattributed), gt(errorEvents.createdAt, dayAgo)))
+        .groupBy(errorEvents.kind),
+      db
+        .select({
+          // Single-table select, so the unprefixed column in the template is unambiguous.
+          accounts: sql<number>`(count(distinct ${contacts.userId}) filter (where ${contacts.embeddingStaleAt} < now() - interval '6 hours'))::int`,
+          oldest: sql<string | Date | null>`min(${contacts.embeddingStaleAt})`,
+        })
+        .from(contacts)
+        .where(isNotNull(contacts.embeddingStaleAt)),
+      // One statement for both provider-refusal signals Phase 3a hands over.
+      db.execute(sql`
+        SELECT
+          (SELECT count(*) FROM embedding_failures WHERE failed_at > now() - interval '24 hours')::int AS unembeddable,
+          (SELECT count(DISTINCT user_id) FROM usage_events
+            WHERE error_kind = 'quota' AND created_at > now() - interval '24 hours')::int AS quota_accounts
+      `),
+      db.execute(sql`
+        SELECT count(*)::int AS n FROM gmail_connections
+         WHERE status = 'active' AND next_sync_at IS NULL AND sync_error IS NOT NULL
+           AND scopes LIKE '%calendar.readonly%'
+      `),
+      // `consumeBucket` increments before it refuses, so count > limit inside the window
+      // means at least one request was refused. Thresholds come from RATE_LIMITS, never literals.
+      db
+        .select({ bucket: rateLimitBuckets.bucket, count: rateLimitBuckets.count })
+        .from(rateLimitBuckets)
+        .where(
+          and(
+            or(like(rateLimitBuckets.bucket, "avatarSource.shared:%"), like(rateLimitBuckets.bucket, "apollo.%")),
+            gt(rateLimitBuckets.windowStartedAt, dayAgo)
+          )
+        ),
+      loadManagedAiOpsFacts(now),
     ]);
+
+  const [stuckPurgeRow] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(dataPurgeRuns)
+    .where(eq(dataPurgeRuns.status, "failed"));
 
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
   const perfSlow = bySource.get(ERROR_SOURCES.perfSlow) ?? 0;
   const stripeCheckout = bySource.get(ERROR_SOURCES.stripeCheckout) ?? 0;
+  const resendRejected = bySource.get(ERROR_SOURCES.resendRejected) ?? 0;
   const otherErrors = [...bySource.entries()]
-    .filter(([source]) => source !== ERROR_SOURCES.perfSlow)
+    .filter(([source]) => source !== ERROR_SOURCES.perfSlow && source !== ERROR_SOURCES.backfillFailed)
     .reduce((sum, [, n]) => sum + n, 0);
 
   const outages = new Map<string, { provider: string | null; errorKind: string; accounts: number }>();
@@ -97,8 +175,18 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     }
   }
 
+  // Production only: PGlite and preview branches report Postgres's default of 0, which would
+  // open this condition in every local sweep and smoke run.
+  const statementTimeout =
+    process.env.VERCEL_ENV === "production" ? await probeStatementTimeout().catch(() => null) : null;
+  const syncOldestDueAgeMs = await oldestDueAgeMs("google", now).catch(() => null);
+
+  const refusals = rowsOf<{ unembeddable: number; quota_accounts: number }>(refusalRes)[0];
+
   const nightly = lastNightly[0];
   const syncRun = lastSyncRun[0];
+  const drainRun = lastDrain[0];
+  const jobFeedRun = lastJobFeedRun[0];
   return {
     cron: {
       processStalled: {
@@ -109,9 +197,31 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         lastStartedAt: syncRun?.startedAt ?? null,
         lastState: syncRun ? deriveCronRunState(syncRun, now) : null,
       },
+      drain: {
+        lastStartedAt: drainRun?.startedAt ?? null,
+        lastState: drainRun ? deriveCronRunState(drainRun, now) : null,
+      },
+      jobFeed: {
+        lastStartedAt: jobFeedRun?.startedAt ?? null,
+        lastState: jobFeedRun ? deriveCronRunState(jobFeedRun, now) : null,
+      },
+    },
+    processStalledRecent: lastNightly.map((r) => deriveCronRunState(r, now)),
+    backfillFailures24h: {
+      accounts: backfillAgg[0]?.accounts ?? 0,
+      kinds: backfillAgg[0]?.kinds ? backfillAgg[0].kinds.split(",") : [],
+    },
+    embeddingBacklog: {
+      accounts: backlogAgg[0]?.accounts ?? 0,
+      oldestAt: backlogAgg[0]?.oldest ? new Date(backlogAgg[0].oldest) : null,
+    },
+    stripeUnattributed24h: {
+      fulfilments: unattributedAgg.filter((r) => r.kind.startsWith("checkout.session.")).reduce((sum, r) => sum + r.n, 0),
+      other: unattributedAgg.filter((r) => !r.kind.startsWith("checkout.session.")).reduce((sum, r) => sum + r.n, 0),
     },
     webhooks,
     stripeCheckoutErrorsLastHour: stripeCheckout,
+    resendRejectedLastHour: resendRejected,
     wedgedImports: issues.wedged,
     failedImportsLast24h: failedImports[0]?.n ?? 0,
     outreach: { overdue: outreach.overdue, oldestOverdueDays: outreach.oldestOverdueDays },
@@ -119,12 +229,33 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     errorEventsLastHour: otherErrors,
     perfSlowLastHour: perfSlow,
     missingRequiredEnv: getEnvReport().missingRequired,
+    missingExpectedEnv: getEnvReport().missingExpected,
+    statementTimeout,
+    syncOldestDueAgeMs,
+    calendarDisarmed: Number(rowsOf<{ n: number }>(disarmedRes)[0]?.n ?? 0),
+    sharedBudgets: {
+      avatarSourcesExhausted: budgetAgg
+        .filter((r) => r.bucket.startsWith("avatarSource.shared:") && r.count > RATE_LIMITS.avatarSourceShared.limit)
+        .map((r) => r.bucket.slice("avatarSource.shared:".length))
+        .sort(),
+      apolloCapHits: budgetAgg.filter(
+        (r) =>
+          (r.bucket.startsWith("apollo.search:") && r.count > RATE_LIMITS.apolloSearch.limit) ||
+          (r.bucket.startsWith("apollo.enrich:") && r.count > RATE_LIMITS.apolloEnrich.limit)
+      ).length,
+    },
+    aiRefusals24h: {
+      unembeddable: Number(refusals?.unembeddable ?? 0),
+      quotaAccounts: Number(refusals?.quota_accounts ?? 0),
+    },
     deploy: deploy
       ? { prodSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null, ...deploy }
       : null,
     reauthNeeded: issues.needsReauth,
     wedgedSyncs: issues.syncWedged,
     failingSyncs: issues.syncFailing,
+    stuckPurges: stuckPurgeRow?.n ?? 0,
+    managedAi,
   };
 }
 
@@ -145,8 +276,10 @@ async function pingHeartbeat(): Promise<void> {
   if (!url) return;
   try {
     await fetch(url, { method: "GET", signal: AbortSignal.timeout(5_000) });
-  } catch {
-    // The monitor will notice the gap if this keeps failing; nothing to do here.
+  } catch (err) {
+    // The monitor will notice the gap if this keeps failing. Reported (throttled) so the
+    // cause is on record when it does.
+    reportError(err, { where: "job.ops-sweep.heartbeat", level: "warning" });
   }
 }
 
@@ -158,6 +291,8 @@ export type OpsSweepResult = {
   recovered: string[];
   active: string[];
   deliveryFailures: number;
+  /** Conditions whose Slack message failed this sweep. Their state is persisted regardless. */
+  undelivered: string[];
 };
 
 async function loadPreviousRows(): Promise<OpsAlertRow[]> {
@@ -210,6 +345,7 @@ export async function runOpsSweep(options: {
     recovered: [],
     active: [],
     deliveryFailures: 0,
+    undelivered: [],
   };
 
   try {
@@ -222,62 +358,64 @@ export async function runOpsSweep(options: {
     const previous = await loadPreviousRows();
     const plan = planTransitions(previous, conditions, now);
 
+    const prevById = new Map(previous.map((r) => [r.id, r]));
     const detailOf = (c: OpsCondition) => ({ title: c.title, detail: c.detail, href: c.href ?? null });
+    const markNotified = (id: string) =>
+      db
+        .update(opsAlertState)
+        .set({ lastNotifiedAt: now, notifyCount: sql`${opsAlertState.notifyCount} + 1`, updatedAt: now })
+        .where(eq(opsAlertState.id, id));
 
+    // State is written BEFORE delivery; delivery only stamps `last_notified_at`. The old order
+    // (deliver, then persist) left `ops_alert_state` empty whenever Slack was unset or down —
+    // so /admin/health showed nothing at exactly the moment nothing reached a phone either.
     for (const c of plan.open) {
-      try {
-        await deliver({ kind: "open", condition: c });
-      } catch {
-        // Left un-persisted on purpose: it opens again next sweep.
-        result.deliveryFailures += 1;
-        continue;
-      }
+      const prev = prevById.get(c.id);
+      // A retry of an undelivered open keeps its opening time; a fresh open or an escalation
+      // starts the clock again.
+      const openedAt = prev && prev.active && prev.severity === c.severity ? prev.openedAt : now;
       await db
         .insert(opsAlertState)
         .values({
-          id: c.id,
-          severity: c.severity,
-          active: true,
-          openedAt: now,
-          lastSeenAt: now,
-          lastNotifiedAt: now,
-          notifyCount: 1,
-          detail: detailOf(c),
-          updatedAt: now,
+          id: c.id, severity: c.severity, active: true, openedAt, lastSeenAt: now,
+          lastNotifiedAt: null, notifyCount: 0, detail: detailOf(c), updatedAt: now,
         })
         .onConflictDoUpdate({
           target: opsAlertState.id,
           set: {
-            severity: c.severity,
-            active: true,
-            openedAt: now,
-            lastSeenAt: now,
-            lastNotifiedAt: now,
-            notifyCount: sql`${opsAlertState.notifyCount} + 1`,
-            detail: detailOf(c),
-            updatedAt: now,
+            severity: c.severity, active: true, openedAt, lastSeenAt: now,
+            lastNotifiedAt: null, detail: detailOf(c), updatedAt: now,
           },
         });
+      try {
+        await deliver({ kind: "open", condition: c });
+      } catch (err) {
+        // Reported, because a delivery that fails is the alerting path itself failing — the
+        // one alert Slack can never carry.
+        reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "open", condition: c.id } });
+        result.deliveryFailures += 1;
+        result.undelivered.push(c.id);
+        continue;
+      }
+      await markNotified(c.id);
       result.opened.push(c.id);
     }
 
     for (const c of plan.remind) {
-      try {
-        await deliver({ kind: "remind", condition: c });
-      } catch {
-        result.deliveryFailures += 1;
-        continue;
-      }
       await db
         .update(opsAlertState)
-        .set({
-          lastSeenAt: now,
-          lastNotifiedAt: now,
-          notifyCount: sql`${opsAlertState.notifyCount} + 1`,
-          detail: detailOf(c),
-          updatedAt: now,
-        })
+        .set({ lastSeenAt: now, detail: detailOf(c), updatedAt: now })
         .where(eq(opsAlertState.id, c.id));
+      try {
+        await deliver({ kind: "remind", condition: c });
+      } catch (err) {
+        // `last_notified_at` is untouched, so the reminder is due again next sweep.
+        reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "remind", condition: c.id } });
+        result.deliveryFailures += 1;
+        result.undelivered.push(c.id);
+        continue;
+      }
+      await markNotified(c.id);
       result.reminded.push(c.id);
     }
 
@@ -289,20 +427,29 @@ export async function runOpsSweep(options: {
     }
 
     for (const row of plan.recover) {
+      // Closed first and unconditionally: the page must stop showing a condition that is gone.
+      // A recovery message lost to a Slack outage is not retried — the open did reach Slack,
+      // and /admin/health shows it closed.
+      await db.update(opsAlertState).set({ active: false, updatedAt: now }).where(eq(opsAlertState.id, row.id));
+      result.recovered.push(row.id);
+      if (row.lastNotifiedAt === null) continue; // nobody was told it opened
       try {
         await deliver({ kind: "recover", condition: conditionFromRow(row) });
-      } catch {
+      } catch (err) {
+        reportError(err, { where: "job.ops-sweep.deliver", extra: { kind: "recover", condition: row.id } });
         result.deliveryFailures += 1;
-        continue;
+        result.undelivered.push(row.id);
       }
-      await db
-        .update(opsAlertState)
-        .set({ active: false, updatedAt: now })
-        .where(eq(opsAlertState.id, row.id));
-      result.recovered.push(row.id);
     }
 
     if (result.deliveryFailures > 0) result.status = "partial";
+
+    // Retention for `page_views`, the one table that grows with traffic rather than with
+    // the customer base. It rides along here because this is the only thing that already
+    // runs on a schedule; a failed prune must not turn an alert sweep into a failed run,
+    // so it is caught and reported as a count of zero.
+    const prunedViews = await prunePageViews(now).catch(() => 0);
+
     await finishCronRun(run, {
       status: result.status,
       stats: {
@@ -312,6 +459,7 @@ export async function runOpsSweep(options: {
         reminded: result.reminded.length,
         recovered: result.recovered.length,
         deliveryFailures: result.deliveryFailures,
+        prunedPageViews: prunedViews,
       },
     });
     await heartbeat();

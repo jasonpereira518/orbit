@@ -6,8 +6,8 @@
  * network latency into it would make Orbit's alert cadence hostage to how slow a customer's
  * endpoint happens to be today.
  *
- * Driven by the existing ten-minute GitHub Actions schedule. Vercel Hobby's single cron slot
- * belongs to `/api/imports/process-stalled`.
+ * Driven by the ten-minute GitHub Actions schedule in .github/workflows/ops.yml, the only
+ * scheduler.
  */
 import { NextResponse } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
@@ -17,6 +17,7 @@ import {
   emitDueFollowupEvents,
   purgeExpiredIdempotencyKeys,
 } from "@/lib/webhooks/dispatch";
+import { reportAndContinue, reportError } from "@/lib/report-error";
 
 export const maxDuration = 60;
 
@@ -34,12 +35,14 @@ export async function POST(request: Request) {
     // Queue "this relationship has gone cold" events BEFORE draining, so anything queued here
     // goes out in the same run. Deduplicated per contact per day by its deterministic event
     // id, so a ten-minute sweep does not become 144 identical webhooks.
-    const emitted = await emitDueFollowupEvents().catch(() => ({ users: 0, events: 0 }));
+    const emitted = await emitDueFollowupEvents().catch(
+      reportAndContinue({ where: "job.webhooks-drain.emit" }, { users: 0, events: 0 })
+    );
 
     // 40s of a 60s budget, leaving room for the emit above, the ledger write and the purge.
     const stats = await drainDueDeliveries({ budgetMs: 40_000, max: 200 });
     await purgeExpiredIdempotencyKeys(new Date(Date.now() - IDEMPOTENCY_RETENTION_MS)).catch(
-      () => null
+      reportAndContinue({ where: "job.webhooks-drain.purge-idempotency" }, null)
     );
     await finishCronRun(handle, {
       status: stats.failed > 0 ? "partial" : "ok",
@@ -47,7 +50,8 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ ok: true, ...stats, ...emitted });
   } catch (err) {
+    const ref = reportError(err, { where: "job.webhooks-drain" });
     await finishCronRun(handle, { status: "failed", error: err });
-    return NextResponse.json({ error: "drain failed" }, { status: 500 });
+    return NextResponse.json({ error: "drain failed", ref }, { status: 500 });
   }
 }

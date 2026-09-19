@@ -36,6 +36,7 @@ import {
   getIntroRun,
   markGraphViewportReady,
   registerIntroHost,
+  subscribe,
   suppressIntro,
 } from "../src/lib/graph/intro-signal";
 import { STAGE_CHART_Z, STAGE_INTRO_Z } from "../src/lib/graph/stage-layers";
@@ -46,6 +47,7 @@ import {
   WARP_STAR_SCALE,
 } from "../src/lib/graph/starfield-scale";
 import { CHRONO_OUT, IGNITION_FRACTIONS } from "../src/lib/warp/chrono";
+import { readFileSync } from "node:fs";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -316,6 +318,33 @@ async function runChecks() {
   check("no run is started by a ready signal alone", getIntroRun().status === "idle");
   release();
 
+  /**
+   * The canvas renderer suppresses the intro outright, and suppression has to hold for
+   * the whole life of the page — not just against the two predictive triggers.
+   *
+   * This is the same shape as the `?warp=off` bug the file already guards: "off" blocked
+   * both predictions and then the safety net fired 1.2s later anyway. On a phone that
+   * would put a 520-star warp canvas on screen alongside the chart canvas, in the exact
+   * window this whole renderer exists to keep clear.
+   */
+  console.log("\nThe canvas renderer never warps…");
+  __resetIntroForTests();
+  const releaseCanvas = registerIntroHost();
+  suppressIntro();
+  check(
+    "a suppressed intro refuses every reason",
+    !beginIntro("layout-cost") && !beginIntro("cold-chunk") && !beginIntro("forced")
+  );
+  markGraphViewportReady();
+  check("...and starts nothing on the ready signal", getIntroRun().status === "idle");
+  await sleep(INTRO_LATE_MS + 60);
+  check(
+    "...and the late fallback stays dead too",
+    getIntroRun().status === "idle",
+    "suppression must cancel the safety net, not just the predictions"
+  );
+  releaseCanvas();
+
   console.log("\nThe minimum beat…");
   __resetIntroForTests();
   const release2 = registerIntroHost();
@@ -401,6 +430,55 @@ async function runChecks() {
     "a near-miss settle must not start a warp and then hold it for the beat"
   );
   release5();
+
+  /**
+   * The warp that never ended.
+   *
+   * The host's effect is torn down and re-run on every dev mount (StrictMode) and on any real
+   * remount. The teardown resets the bus to idle — but the host used to unsubscribe FIRST, so
+   * it never heard the reset: its own copy of the run stayed "running" while the bus was idle,
+   * the chart's ready signal found nothing to end, and the stars flew forever over a finished
+   * chart. Reproduced in the browser every time on a cold /dashboard → /graph click.
+   */
+  console.log("\nA host that remounts mid-run…");
+  __resetIntroForTests();
+  let heard = getIntroRun();
+  const stopListening = subscribe((next) => {
+    heard = next;
+  });
+  const releaseFirst = registerIntroHost();
+  beginIntro("cold-chunk");
+  // The old teardown order: stop listening, then release.
+  stopListening();
+  releaseFirst();
+  check(
+    "a subscriber that left before the release never hears the reset",
+    heard.status === "running" && getIntroRun().status === "idle",
+    "so the host must re-read the bus on resubscribe (useSyncExternalStore), not keep its own copy"
+  );
+  const releaseSecond = registerIntroHost();
+  // The remounted host decides again; a carried-over "already decided" left it with no run.
+  check("the remounted host can start a fresh run", beginIntro("cold-chunk") === true);
+  markGraphViewportReady();
+  await sleep(INTRO_MIN_BEAT_MS + 80);
+  check(
+    "and the chart's ready signal ends it",
+    getIntroRun().status === "arriving" || getIntroRun().status === "done"
+  );
+  await sleep(INTRO_ARRIVING_MS + 80);
+  check("all the way to done", getIntroRun().status === "done");
+  releaseSecond();
+
+  const hostSource = readFileSync(
+    new URL("../src/components/graph/constellation-intro.tsx", import.meta.url),
+    "utf8"
+  );
+  check(
+    "the host reads the bus through useSyncExternalStore",
+    /useSyncExternalStore\(\s*subscribe,\s*getIntroRun/.test(hostSource) &&
+      !/import\s*\{[^}]*\b(useState|useRef)\b[^}]*\}\s*from\s*"react"/.test(hostSource),
+    "a useState copy of the run is what went stale"
+  );
 }
 
 runChecks()

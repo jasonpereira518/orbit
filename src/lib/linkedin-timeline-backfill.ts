@@ -63,12 +63,21 @@
  */
 import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { interactions } from "@/db/schema";
+import { interactions, userSettings } from "@/db/schema";
+import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { internalFetch } from "@/lib/internal-auth";
 import {
   extractLinkedInTimelineEvents,
   type LinkedInTimelineEvent,
 } from "@/lib/linkedin-timeline-events";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import {
+  TIMELINE_MIN_MESSAGES_FOR_AI,
+  qualifiesForTimelineAi,
+  usableTimelineMessageCount,
+  utcDayKey,
+} from "@/lib/timeline-cost";
+import { reportError } from "@/lib/report-error";
 
 /** Contacts claimed per pass. */
 const CLAIM_SIZE = 100;
@@ -143,8 +152,10 @@ export async function kickLinkedInTimelineBackfill(userId: string) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ userId }),
     });
-  } catch {
-    // Best-effort — the cron backstop picks up anything still pending.
+  } catch (err) {
+    // Best-effort — the cron backstop picks up anything still pending. Reported (throttled)
+    // so a kick that always fails — a wrong APP_BASE_URL, a rotated CRON_SECRET — is visible.
+    reportError(err, { where: "job.timeline-backfill.kick", userId, level: "warning" });
   }
 }
 
@@ -153,6 +164,26 @@ export async function pendingTimelineContactCount(userId: string): Promise<numbe
   const db = await getDb();
   const result = await db.execute(sql`
     SELECT count(*)::int AS n ${PENDING_TIMELINE_CONTACTS} AND c.user_id = ${userId}
+  `);
+  return Number(rowsOf<{ n: number }>(result)[0]?.n ?? 0);
+}
+
+/**
+ * Pending contacts whose thread would cost a model call — what the import card's estimate
+ * multiplies. Same predicate as the claim, plus the extractor's own skip rule.
+ */
+export async function pendingTimelineAiContactCount(userId: string): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT count(*)::int AS n ${PENDING_TIMELINE_CONTACTS}
+      AND c.user_id = ${userId}
+      AND (
+        SELECT count(*) FROM interactions q
+         WHERE q.user_id = c.user_id
+           AND q.contact_id = c.id
+           AND q.interaction_type = 'linkedin_message'
+           AND btrim(coalesce(q.raw_notes, '')) <> ''
+      ) >= ${TIMELINE_MIN_MESSAGES_FOR_AI}
   `);
   return Number(rowsOf<{ n: number }>(result)[0]?.n ?? 0);
 }
@@ -167,6 +198,10 @@ export async function usersWithPendingTimelineEvents(limit: number): Promise<str
   const db = await getDb();
   const result = await db.execute(sql`
     SELECT DISTINCT c.user_id ${PENDING_TIMELINE_CONTACTS}
+      AND EXISTS (
+        SELECT 1 FROM user_settings us
+         WHERE us.user_id = c.user_id AND us.timeline_backfill_enabled = 1
+      )
     LIMIT ${limit}
   `);
   return rowsOf<{ user_id: string }>(result).map((r) => r.user_id);
@@ -184,12 +219,37 @@ export async function usersWithPendingTimelineEvents(limit: number): Promise<str
 export async function runLinkedInTimelineBackfill(
   userId: string,
   extract: typeof extractLinkedInTimelineEvents = extractLinkedInTimelineEvents,
-  budgetMs: number = TIME_BUDGET_MS
-): Promise<{ contactsProcessed: number; eventsCreated: number; remaining: number }> {
+  budgetMs: number = TIME_BUDGET_MS,
+  opts: { dailyCap?: number; now?: Date } = {}
+): Promise<{
+  contactsProcessed: number;
+  eventsCreated: number;
+  remaining: number;
+  capped: boolean;
+  enabled: boolean;
+}> {
   const db = await getDb();
   const start = Date.now();
   let contactsProcessed = 0;
   let eventsCreated = 0;
+  let capped = false;
+
+  // Opt-in (audit A6): the work costs the user's own AI key, so it never starts unasked.
+  const settings = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { timelineBackfillEnabled: true },
+  });
+  if ((settings?.timelineBackfillEnabled ?? 0) !== 1) {
+    return {
+      contactsProcessed: 0,
+      eventsCreated: 0,
+      remaining: await pendingTimelineContactCount(userId),
+      capped: false,
+      enabled: false,
+    };
+  }
+  const dailyCap = opts.dailyCap ?? RATE_LIMITS.timelineBackfillDaily.limit;
+  const bucketKey = `${userId}:${utcDayKey(opts.now ?? new Date())}`;
 
   /**
    * Contacts this pass has already attempted.
@@ -203,7 +263,7 @@ export async function runLinkedInTimelineBackfill(
    */
   const attempted = new Set<string>();
 
-  while (Date.now() - start < budgetMs) {
+  claiming: while (Date.now() - start < budgetMs) {
     const claimed = rowsOf<{ id: string }>(
       await db.execute(sql`
         SELECT c.id ${PENDING_TIMELINE_CONTACTS} AND c.user_id = ${userId}
@@ -230,6 +290,17 @@ export async function runLinkedInTimelineBackfill(
         limit: MESSAGE_LIMIT,
       });
       if (msgs.length === 0) continue;
+
+      // Only a thread that will reach the model spends from the daily allowance.
+      if (qualifiesForTimelineAi(usableTimelineMessageCount(msgs.map((m) => m.rawNotes)))) {
+        try {
+          await consumeBucket("timelineBackfill", bucketKey, { limit: dailyCap, windowSec: 86_400 });
+        } catch (err) {
+          if (!isRateLimitedError(err)) throw err;
+          capped = true;
+          break claiming;
+        }
+      }
 
       // Uncaught on purpose, matching `runEmbeddingBackfill`'s two phases: a failure here
       // must leave the contact without `li-event:` rows so the next pass retries it.
@@ -270,7 +341,7 @@ export async function runLinkedInTimelineBackfill(
             contactId,
             interactionType: ev.interactionType,
             interactionDate: ev.interactionDate,
-            source: "linkedin_messages",
+            source: AI_DERIVED_SOURCE,
             externalId: ev.externalId,
             rawNotes: ev.rawNotes,
             aiSummary: ev.summary,
@@ -297,5 +368,7 @@ export async function runLinkedInTimelineBackfill(
     contactsProcessed,
     eventsCreated,
     remaining: await pendingTimelineContactCount(userId),
+    capped,
+    enabled: true,
   };
 }

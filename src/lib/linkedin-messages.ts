@@ -1,11 +1,15 @@
 import Papa from "papaparse";
-import type { Contact } from "@/db/schema";
 import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
   linkedinSlug,
+  type DuplicateSubject,
 } from "@/lib/duplicates";
-import { csvGet } from "@/lib/linkedin-connections";
+import {
+  LinkedInExportError,
+  csvGet,
+  looksLikeConnectionsExport,
+} from "@/lib/linkedin-connections";
 import { personNameFromSlug } from "@/lib/linkedin-paste";
 
 export type LinkedInMessageRow = {
@@ -156,7 +160,15 @@ export function parseLinkedInMessagesCsv(csvText: string): {
   });
 
   if (parsed.errors.length && !parsed.data.length) {
-    throw new Error(parsed.errors[0]?.message || "Failed to parse messages CSV");
+    throw new LinkedInExportError(
+      "Couldn’t read that file as a CSV — download messages.csv from LinkedIn again and upload it as it is"
+    );
+  }
+
+  if (looksLikeConnectionsExport(parsed.meta.fields || [])) {
+    throw new LinkedInExportError(
+      "This looks like a Connections export, not Messages — upload it on the Connections tab instead"
+    );
   }
 
   const messages = parsed.data
@@ -384,7 +396,7 @@ function resolveNameForUrl(
 
 export function resolveConversations(
   messages: ParsedLinkedInMessage[],
-  existing: Contact[],
+  existing: DuplicateSubject[],
   selfLinkedInUrl?: string | null
 ): ConversationResolution[] {
   const selfUrl = inferSelfLinkedInUrl(messages, selfLinkedInUrl);

@@ -3,6 +3,18 @@ const BROKEN_AVATAR_HOSTS = [
   "static.licdn.com/aero",
 ];
 
+/**
+ * Hosts that only ever serve a generic placeholder, so fetching them server-side
+ * cannot yield a real headshot.
+ *
+ * Deliberately NOT the same list as {@link BROKEN_AVATAR_HOSTS}, which answers a
+ * different question: whether a *stored* value is safe to hand the browser.
+ * `unavatar.io` is unusable to render (anonymous per-browser rate limits) but is
+ * perfectly fetchable from the server — it is our free LinkedIn resolver. Adding
+ * it here would silently kill that tier.
+ */
+const PLACEHOLDER_IMAGE_HOSTS = ["static.licdn.com/aero"];
+
 /** Host suffix for our Vercel Blob avatar store. */
 const BLOB_AVATAR_HOST_SUFFIX = ".public.blob.vercel-storage.com";
 
@@ -12,6 +24,21 @@ export function isUnusableAvatarUrl(url: string | null | undefined): boolean {
   const u = url.trim();
   if (u.startsWith("data:image/")) return false;
   return BROKEN_AVATAR_HOSTS.some((h) => u.includes(h));
+}
+
+/**
+ * True when fetching this URL server-side could not possibly yield a real headshot,
+ * so the download is not worth attempting.
+ *
+ * This is the *fetch* guard. {@link isUnusableAvatarUrl} is the *render* guard.
+ * Conflating the two is what made the Unavatar tier dead code: the resolver built a
+ * `unavatar.io` URL and the download path rejected it for being unrenderable, even
+ * though nothing ever stores that URL — the bytes are persisted inline or to Blob.
+ */
+export function isUnfetchableImageUrl(url: string | null | undefined): boolean {
+  const u = url?.trim();
+  if (!u) return true;
+  return PLACEHOLDER_IMAGE_HOSTS.some((h) => u.includes(h));
 }
 
 /**

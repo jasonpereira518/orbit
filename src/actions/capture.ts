@@ -1,156 +1,70 @@
 "use server";
 
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
-import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { getDb } from "@/db";
-import { contacts, type ReminderActionKind } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import type { RejectedCounts } from "@/lib/date-commitment-extract";
+import { hashSourceNote } from "@/lib/suggested-reminder-utils";
+import type { CaptureParseHints } from "@/lib/ai";
+import { runCaptureParse } from "@/lib/capture-parse";
+import { captureSourceKinds } from "@/lib/note-batches";
 import {
-  fetchRawCommitments,
-  validateCommitments,
-  emptyCommitmentResult,
-  type RejectedCounts,
-} from "@/lib/date-commitment-extract";
-import type { DateBasis } from "@/lib/relative-date";
-import { hashSourceNote, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
-import {
-  parseMultiPersonNotesWithAI,
-  type CaptureParseHints,
-  type ParsedNote,
-  type SharedNoteContext,
-} from "@/lib/ai";
-import {
+  captureImageFiles,
   normalizeCaptureInput,
-  normalizePastedCaptureText,
   type CaptureMediaFile,
 } from "@/lib/capture-ingest";
+import {
+  attachCapturePhotos,
+  discardCapturePhotos,
+  storeCapturePhotos,
+  type StoredCapturePhoto,
+} from "@/lib/capture-photos";
+import {
+  CAPTURE_HISTORY_PAGE,
+  listCaptureHistoryFor,
+  type CaptureHistoryPage,
+} from "@/lib/capture-history";
 import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
 } from "@/lib/capture-limits";
-import {
-  buildDuplicateIndex,
-  findDuplicateCandidatesIndexed,
-} from "@/lib/duplicates";
+import { getDb } from "@/db";
 import { resolveAvatarNow } from "@/lib/avatar-backfill";
-import {
-  downloadAndPersistAvatar,
-  fetchLinkedInPhotoUrl,
-} from "@/lib/contact-avatar";
-import { resolvePastedLinkedInProfiles } from "@/lib/linkedin-capture";
-import {
-  extractLinkedInProfileRefs,
-  isLinkedInOnlyPaste,
-  linkedInFactsBlock,
-  linkedInOnlyNoteText,
-  parsedNoteFromLinkedInPerson,
-} from "@/lib/linkedin-paste";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
-import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
-import type { PreviewMention } from "@/lib/note-batches";
 import {
   saveNoteBatch,
+  type MeetingExtraReminderInput,
   type NoteBatchCommitmentInput,
   type NoteBatchMentionInput,
   type NoteBatchParticipantInput,
 } from "@/lib/note-batch-save";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
+import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import {
+  getMeetingSession,
+  getNoteBatchForUser,
+  markMeetingSessionSaved,
+  toNoteBatchMeeting,
+} from "@/lib/meeting-sessions";
+import type { NoteBatchMeeting } from "@/db/schema";
+import { actionFailure } from "@/lib/action-failure";
 
-export type BulkNoteDuplicate = {
-  id: string;
-  fullName: string;
-  company: string | null;
-  title: string | null;
-  reason: string;
-  confidence: number;
-};
-
-export type BulkNotePersonPreview = {
-  key: string;
-  notes: string;
-  parsed: ParsedNote;
-  duplicates: BulkNoteDuplicate[];
-  suggestedMergeId: string | null;
-  /** Shared group/event notes folded into this person's save payload. */
-  sharedNoteTexts: string[];
-  interactionDate: string | null;
-  interactionType: string | null;
-};
-
-/** A dated commitment awaiting the user's review, shaped for the client. */
-export type SuggestedReminderPreview = {
-  key: string;
-  title: string;
-  description: string | null;
-  rawDatePhrase: string;
-  /** YYYY-MM-DD, so the date input round-trips without timezone drift. */
-  dueDateIso: string;
-  yearInferred: boolean;
-  personName: string | null;
-  actionKind: ReminderActionKind;
-  confidenceScore: number;
-  sourceExcerpt: string;
-  dateBasis: DateBasis;
-  anchorIso: string;
-};
-
-function namesMatch(a: string, b: string) {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
-}
-
-
-function sharedNotesForPerson(
-  personName: string | null,
-  sharedNotes: SharedNoteContext[]
-): SharedNoteContext[] {
-  if (!personName?.trim()) return [];
-  return sharedNotes.filter((s) =>
-    s.person_names.some((n) => namesMatch(n, personName))
-  );
-}
-
-/** Compose person-specific excerpt with any shared group context. */
-function composePersonNotes(
-  sourceExcerpt: string | null | undefined,
-  sharedForPerson: SharedNoteContext[],
-  fallbackNotes: string
-): string {
-  const personal = sourceExcerpt?.trim() || "";
-  const sharedBlock = sharedForPerson
-    .map((s) => s.text.trim())
-    .filter(Boolean)
-    .join("\n\n");
-
-  if (sharedBlock && personal) {
-    return `${sharedBlock}\n\n---\n\n${personal}`;
-  }
-  return personal || sharedBlock || fallbackNotes;
-}
-
-function mergeTopics(
-  personTopics: string[] | undefined,
-  shared: SharedNoteContext[]
-): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const t of [
-    ...(personTopics || []),
-    ...shared.flatMap((s) => s.topics || []),
-  ]) {
-    const key = t.trim().toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(t.trim());
-  }
-  return out;
-}
+export type {
+  BulkNoteDuplicate,
+  BulkNotePersonPreview,
+  SuggestedReminderPreview,
+} from "@/lib/capture/types";
 
 /**
  * Ingest voice / photos / calendar / email into normalized capture text.
- * Media is processed ephemerally and not stored.
+ *
+ * Audio, calendar and email files are read and dropped. Photos are also kept — shrunk,
+ * stripped of metadata, and unattached until a save claims them — so the capture history
+ * can show the original next to what was pulled out of it (see `src/lib/capture-photos.ts`).
+ * The ids come back as `photos`; the panel hands them to `confirmBulkCapture`.
  */
 export async function ingestCaptureMedia(input: {
   text?: string;
@@ -176,161 +90,72 @@ export async function ingestCaptureMedia(input: {
     if (uploadBytes > CAPTURE_MAX_UPLOAD_BYTES) {
       return {
         ok: false as const,
-        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}. Try fewer or smaller files.`,
+        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer or smaller files`,
       };
     }
 
-    const normalized = await normalizeCaptureInput(userId, {
-      text: input.text,
-      files: input.files,
-    });
+    // Kept alongside the transcription rather than after it: re-encoding and uploading eight
+    // photos is seconds of work that has no reason to queue behind a model call. Settled,
+    // not raced, so a transcription failure can still find and discard what was stored.
+    const images = captureImageFiles(input.files);
+    const [normalizedResult, storedResult] = await Promise.allSettled([
+      normalizeCaptureInput(userId, {
+        text: input.text,
+        files: input.files,
+      }),
+      storeCapturePhotos(
+        userId,
+        images.map((img) => ({ filename: img.filename, base64: img.base64 }))
+      ),
+    ]);
+    const photos: StoredCapturePhoto[] =
+      storedResult.status === "fulfilled" ? storedResult.value : [];
+    if (normalizedResult.status === "rejected") {
+      // No text means nothing can be saved to claim these, so do not leave them for the
+      // prune to find tomorrow.
+      await discardCapturePhotos(
+        userId,
+        photos.map((p) => p.id)
+      ).catch(() => {});
+      throw normalizedResult.reason;
+    }
+    const normalized = normalizedResult.value;
 
     return {
       ok: true as const,
       text: normalized.text,
       hints: normalized.hints,
       sources: normalized.sources,
+      transcriptionEngine: normalized.transcriptionEngine ?? null,
+      photos,
+      /** Photos that were read but could not be kept, so the panel can say so. */
+      photosNotKept: Math.max(0, images.length - photos.length),
     };
   } catch (err) {
+    // Data, not a throw — so never stripped in production. See `friendlyError`.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: await actionFailure(err, TOAST_COPY.fileReadFailed, "capture.ingest-capture-media"),
     };
   }
 }
+
+export type BulkParseOptions = {
+  /** See `CaptureParseOptions.meetingSessionId` in `src/lib/capture-parse.ts`. */
+  meetingSessionId?: string | null;
+  /** Contacts named with `@`. Re-sanitised here: this is a server action, so it is a boundary. */
+  mentionPicks?: MentionPick[] | null;
+};
 
 /**
- * Collapse seed people from every source (calendar, email, the locked profile, pasted
- * LinkedIn URLs) into one entry per person, keeping the first non-empty value of each
- * field. A plain concat would hand the model the same attendee twice, once with a role and
- * once without; a plain de-dupe would drop whichever copy carried the profile fields.
+ * Parse inside a request, for callers with no durable job behind them (the chat side
+ * sheet, onboarding, `log-interaction-sheet.tsx`). The /capture page runs the same
+ * pipeline through `runCaptureJobById` instead, so a reload does not lose the parse.
  */
-function mergeSeedPeople(
-  seeds: NonNullable<CaptureParseHints["seedPeople"]>
-): NonNullable<CaptureParseHints["seedPeople"]> {
-  const byKey = new Map<string, (typeof seeds)[number]>();
-  for (const seed of seeds) {
-    const name = seed.name?.trim() || "";
-    const email = seed.email?.trim() || "";
-    if (!name && !email) continue;
-    // Email identifies a person outright; a bare name only matches another bare name.
-    const key = email ? `email:${email.toLowerCase()}` : `name:${name.toLowerCase()}`;
-    const existing = byKey.get(key);
-    if (!existing) {
-      byKey.set(key, { ...seed });
-      continue;
-    }
-    byKey.set(key, {
-      name: existing.name?.trim() || seed.name || null,
-      email: existing.email?.trim() || seed.email || null,
-      linkedinUrl: existing.linkedinUrl?.trim() || seed.linkedinUrl || null,
-      title: existing.title?.trim() || seed.title || null,
-      company: existing.company?.trim() || seed.company || null,
-    });
-  }
-  return [...byKey.values()];
-}
-
-/**
- * The no-model path: pasted profile URLs straight to review cards.
- *
- * Returns the same shape as the parsed path — same items, same hash contract, same save
- * action — so a URL-logged person goes through review, dedupe and saving exactly like a
- * person the model found. The only thing skipped is the reading.
- */
-async function parsePastedLinkedInProfiles(
-  userId: string,
-  refs: ReturnType<typeof extractLinkedInProfileRefs>
-) {
-  const { people, degraded, dropped } = await resolvePastedLinkedInProfiles(
-    userId,
-    refs
-  );
-  const named = people.filter((p) => p.name?.trim());
-  if (!named.length) {
-    return {
-      ok: false as const,
-      error:
-        "Could not read a name from that LinkedIn URL. Add the person's name to the notes and try again.",
-    };
-  }
-
-  const db = await getDb();
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-  });
-  const duplicateIndex = buildDuplicateIndex(existing);
-
-  const items: BulkNotePersonPreview[] = named.map((person, index) => {
-    const parsed = parsedNoteFromLinkedInPerson(person);
-    const duplicates = findDuplicateCandidatesIndexed(duplicateIndex, {
-      fullName: parsed.name,
-      email: parsed.email,
-      linkedinUrl: parsed.linkedin_url,
-      company: parsed.company,
-      title: parsed.role,
-    }).slice(0, 5);
-    const top = duplicates[0];
-    return {
-      key: `${index}-${person.slug}`,
-      notes: linkedInOnlyNoteText(person),
-      parsed,
-      duplicates: duplicates.map((d) => ({
-        id: d.contact.id,
-        fullName: d.contact.fullName,
-        company: d.contact.company,
-        title: d.contact.title,
-        reason: d.reason,
-        confidence: d.confidence,
-      })),
-      suggestedMergeId: top && top.confidence >= 0.85 ? top.contact.id : null,
-      sharedNoteTexts: [],
-      interactionDate: null,
-      interactionType: "note",
-    };
-  });
-
-  // One canonical corpus per set of URLs, so the same profile pasted twice — in any
-  // formatting — hashes the same and does not log a second interaction.
-  const sourceText = named
-    .map((person) => linkedInOnlyNoteText(person))
-    .join("\n\n---\n\n");
-
-  return {
-    ok: true as const,
-    items,
-    sharedNotes: [] as SharedNoteContext[],
-    interactionDate: null,
-    interactionType: "note",
-    anchorIso: isoDay(new Date()),
-    anchorBasis: "upload" as const,
-    hints: {
-      seedPeople: named.map((p) => ({
-        name: p.name,
-        email: p.email,
-        linkedinUrl: p.url,
-        title: p.title,
-        company: p.company,
-      })),
-    } satisfies CaptureParseHints,
-    sourceText,
-    sourceHash: hashSourceNote(sourceText),
-    suggestedReminders: [] as SuggestedReminderPreview[],
-    suggestionsSkipped: emptyCommitmentResult().rejected as RejectedCounts,
-    mentions: [] as PreviewMention[],
-    linkedinLookup: {
-      found: named.length,
-      resolved: named.filter((p) => p.source === "apollo").length,
-      guessed: named.filter((p) => p.source === "url").length,
-      degraded,
-      dropped,
-    },
-  };
-}
-
 export async function parseBulkCaptureNotes(
   notes: string,
-  hints?: CaptureParseHints | null
+  hints?: CaptureParseHints | null,
+  opts: BulkParseOptions = {}
 ) {
   try {
     const userId = await requireUserId();
@@ -338,243 +163,17 @@ export async function parseBulkCaptureNotes(
     if (!notes.trim()) {
       return { ok: false as const, error: "Notes are required" };
     }
-
-    const profileRefs = extractLinkedInProfileRefs(notes);
-
-    // Paste a profile URL and nothing else and there is no prose to read — the model pass
-    // would be a round-trip and a charge to learn nothing the URL doesn't already say. It
-    // also means this works with no AI key at all, which is the only reason "paste a
-    // LinkedIn URL" is a dependable way in rather than one more thing gated on setup.
-    if (profileRefs.length && isLinkedInOnlyPaste(notes)) {
-      return await parsePastedLinkedInProfiles(userId, profileRefs);
-    }
-
-    // Auto-detect pasted ICS / email forwards when caller didn't supply hints.
-    const detected = normalizePastedCaptureText(notes);
-
-    // URLs sitting inside real notes: resolve them first so the model attaches a role and
-    // company to the right person instead of guessing from a slug, or leaving the URL as
-    // the only thing it knows about them.
-    const linkedin = profileRefs.length
-      ? await resolvePastedLinkedInProfiles(userId, profileRefs)
-      : null;
-
-    /**
-     * Only profiles that actually resolved may speak into a note.
-     *
-     * A slug-derived name is a reading of a URL, and the notes already name the person in
-     * their own words — asserting "Name: Sfounder" next to "met Marcus at the summit"
-     * invites the model to split one person into two. The URL itself is in the prose
-     * verbatim either way, so nothing is lost by staying quiet.
-     */
-    const resolvedProfiles = (linkedin?.people || []).filter(
-      (p) => p.source === "apollo"
-    );
-
-    const seedPeople = mergeSeedPeople([
-      ...(hints?.seedPeople || []),
-      ...(detected.hints.seedPeople || []),
-      ...resolvedProfiles.map((p) => ({
-        name: p.name,
-        email: p.email,
-        linkedinUrl: p.url,
-        title: p.title,
-        company: p.company,
-      })),
-    ]);
-    const mergedHints: CaptureParseHints = {
-      eventDate: hints?.eventDate || detected.hints.eventDate || null,
-      seedPeople: seedPeople.length ? seedPeople : undefined,
-      interactionType:
-        hints?.interactionType || detected.hints.interactionType || null,
-    };
-
-    const baseCorpus =
-      detected.sources.includes("calendar") ||
-      detected.sources.includes("email")
-        ? detected.text
-        : notes;
-
-    // Folded into the corpus, not just the hints: the facts end up on the saved note too,
-    // which is where the provenance of a role nobody typed belongs.
-    const factsBlock = linkedInFactsBlock(resolvedProfiles);
-    const corpus = factsBlock
-      ? `${baseCorpus}\n\n---\n\n${factsBlock}`
-      : baseCorpus;
-
-    // Run both extractions concurrently. The commitment pass is failure-isolated:
-    // contact extraction is the core value and must survive a bad dates response.
-    const today = new Date();
-    const [personParse, rawCommitments] = await Promise.all([
-      parseMultiPersonNotesWithAI(userId, corpus, mergedHints),
-      fetchRawCommitments(userId, corpus, {
-        today,
-        knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
-      }).catch(() => [] as Awaited<ReturnType<typeof fetchRawCommitments>>),
-    ]);
-
-    const { people, shared_notes, interaction_date } = personParse;
-    // people[] mixes two roles: participants (actually talked to) and mentions demoted into
-    // people[] because the note gave them real profile detail. Only participants get a
-    // review card; demoted mentions fold into mention resolution below.
-    const participants = people.filter((p) => p.presence !== "mentioned");
-    const demoted = people.filter((p) => p.presence === "mentioned");
-    // The anchor is the date the notes are ABOUT: what the people pass found, else the
-    // calendar/email hint, else the upload moment. Relative phrases count from it.
-    const anchorSource = interaction_date || mergedHints.eventDate || null;
-    const anchor = anchorSource ? isoDayToLocalNoon(anchorSource) : today;
-    const anchorBasis: "note" | "hint" | "upload" = interaction_date
-      ? "note"
-      : mergedHints.eventDate
-        ? "hint"
-        : "upload";
-    const commitmentResult = (() => {
-      try {
-        return validateCommitments(rawCommitments, corpus, { today, anchor });
-      } catch {
-        return emptyCommitmentResult();
-      }
-    })();
-
-    const db = await getDb();
-    const existing = await db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
+    const result = await runCaptureParse(userId, notes, hints, {
+      meetingSessionId: opts.meetingSessionId,
+      mentionPicks: sanitizeMentionPicks(opts.mentionPicks ?? []),
     });
-
-    const defaultDate = interaction_date || mergedHints.eventDate || null;
-    const interactionType = mergedHints.interactionType || "meeting_note";
-
-    // One index for every person in the note, rather than a fresh scan of the whole
-    // contact list per person.
-    const duplicateIndex = buildDuplicateIndex(existing);
-
-    const items: BulkNotePersonPreview[] = participants.map((person, index) => {
-      const { source_excerpt, ...parsedBase } = person;
-      const sharedForPerson = sharedNotesForPerson(
-        parsedBase.name,
-        shared_notes
-      );
-
-      const parsed: ParsedNote = {
-        ...parsedBase,
-        met_at:
-          parsedBase.met_at ||
-          sharedForPerson.find((s) => s.met_at)?.met_at ||
-          null,
-        topics: mergeTopics(parsedBase.topics, sharedForPerson),
-        interaction_date: parsedBase.interaction_date || defaultDate,
-      };
-
-      const duplicates = findDuplicateCandidatesIndexed(duplicateIndex, {
-        fullName: parsed.name,
-        email: parsed.email,
-        linkedinUrl: parsed.linkedin_url,
-        company: parsed.company,
-        title: parsed.role,
-      }).slice(0, 5);
-
-      const top = duplicates[0];
-      const suggestedMergeId =
-        top && top.confidence >= 0.85 ? top.contact.id : null;
-
-      return {
-        key: `${index}-${parsed.name || "person"}`,
-        notes: composePersonNotes(source_excerpt, sharedForPerson, corpus),
-        parsed,
-        duplicates: duplicates.map((d) => ({
-          id: d.contact.id,
-          fullName: d.contact.fullName,
-          company: d.contact.company,
-          title: d.contact.title,
-          reason: d.reason,
-          confidence: d.confidence,
-        })),
-        suggestedMergeId,
-        sharedNoteTexts: sharedForPerson.map((s) => s.text),
-        interactionDate: parsed.interaction_date,
-        interactionType,
-      };
-    });
-
-    const candidates: MentionCandidate[] = [
-      ...personParse.mentions.map((m) => ({ name: m.name, context: m.context, nearPerson: m.near_person })),
-      // A demoted mention with no usable name has nothing to resolve against — the
-      // non-null assertion below would otherwise hand `resolveMentions` a null name.
-      ...demoted
-        .filter((p) => p.name?.trim())
-        .map((p) => ({ name: p.name!.trim(), context: p.summary, company: p.company, nearPerson: null })),
-    ];
-    const { resolved, unresolved } = resolveMentions(
-      existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title })),
-      candidates,
-      { excludeContactIds: items.map((i) => i.suggestedMergeId).filter((id): id is string => Boolean(id)) }
-    );
-    const mentions: PreviewMention[] = [
-      ...resolved.map((m) => ({ text: m.text, context: m.context, nearPerson: m.nearPerson, contactId: m.contactId, confidence: m.confidence, matchedBy: m.matchedBy })),
-      ...unresolved.map((m) => ({ text: m.text, context: m.context, nearPerson: m.nearPerson, contactId: null, confidence: 0, matchedBy: null })),
-    ];
-
-    // A note can legitimately carry dates but no people ("Board review 15th of October"),
-    // so only fail when both extractions came back empty.
-    // Mentions alone are not saveable: they hang on a participant's interaction.
-    if (!participants.length && !commitmentResult.commitments.length) {
-      return {
-        ok: false as const,
-        error: "No people or dates found in those notes",
-      };
-    }
-
-    const sourceHash = hashSourceNote(corpus);
-    const suggestedRemindersPreview: SuggestedReminderPreview[] =
-      commitmentResult.commitments.map((c, index) => ({
-        key: `${index}-${c.rawDatePhrase}`,
-        title: c.title,
-        description: c.description,
-        rawDatePhrase: c.rawDatePhrase,
-        dueDateIso: isoDay(c.dueDate),
-        yearInferred: c.yearInferred,
-        personName: c.personName,
-        actionKind: c.actionKind,
-        confidenceScore: c.confidenceScore,
-        sourceExcerpt: c.sourceExcerpt,
-        dateBasis: c.dateBasis,
-        anchorIso: c.anchorIso,
-      }));
-
-    return {
-      ok: true as const,
-      items,
-      sharedNotes: shared_notes,
-      interactionDate: defaultDate,
-      interactionType,
-      anchorIso: isoDay(anchor),
-      anchorBasis,
-      hints: mergedHints,
-      // Computed server-side and echoed back on save, so the client can't forge a hash
-      // that would collide with (or evade) another note's dedupe key. sourceText is
-      // echoed too: confirmBulkCapture recomputes the hash from it to detect tampering.
-      sourceText: corpus,
-      sourceHash,
-      suggestedReminders: suggestedRemindersPreview,
-      suggestionsSkipped: commitmentResult.rejected as RejectedCounts,
-      mentions,
-      linkedinLookup: linkedin
-        ? {
-            found: linkedin.people.length,
-            resolved: resolvedProfiles.length,
-            // Nothing is guessed on this path: an unresolved URL contributes no fields,
-            // because the notes themselves already say who the person is.
-            guessed: 0,
-            degraded: linkedin.degraded,
-            dropped: linkedin.dropped,
-          }
-        : null,
-    };
+    return { ok: true as const, ...result };
   } catch (err) {
-    const { toUserFacingError } = await import("@/lib/errors");
+    // Data, not a throw — so never stripped in production, and `toUserFacingError` put
+    // raw text such as "Failed to parse AI JSON: {…" in front of the person verbatim.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: await actionFailure(err, TOAST_COPY.notesReadFailed, "capture.parse-bulk-capture-notes"),
     };
   }
 }
@@ -591,6 +190,12 @@ export async function confirmBulkCapture(
     commitments: NoteBatchCommitmentInput[];
     mentions?: NoteBatchMentionInput[];
     skipped: RejectedCounts;
+    /** Ids `ingestCaptureMedia` returned for this capture's photos. */
+    photoIds?: string[];
+    /** `ingestCaptureMedia`'s `sources` labels, for the history's icons. */
+    sources?: string[];
+    /** A recorded meeting being saved: which one, and the digest items ticked as reminders. */
+    meeting?: { sessionId: string; extraReminders: MeetingExtraReminderInput[] } | null;
   }
 ) {
   const userId = await requireUserId();
@@ -599,6 +204,23 @@ export async function confirmBulkCapture(
   // could collide with (or evade) another note's dedupe keys.
   const sourceHash = hashSourceNote(batch.sourceText);
   if (sourceHash !== batch.sourceHash) throw new Error("Note text changed since parsing; re-run extraction");
+
+  // The digest is read from the session, never taken from the client: it is what the
+  // results page will show as "what this meeting was", and it must be what the model said.
+  let meetingSummary: NoteBatchMeeting | null = null;
+  if (batch.meeting) {
+    const session = await getMeetingSession(userId, batch.meeting.sessionId);
+    if (!session) throw new Error("That meeting no longer exists");
+    if (session.status === "saved" && session.noteBatchId) {
+      // A double-click, or a second tab. The first save is the save.
+      const existing = await getNoteBatchForUser(userId, session.noteBatchId);
+      if (existing) {
+        return { batchId: existing.id, created: 0, updated: 0, contactIds: [], remindersCreated: 0, result: existing.result };
+      }
+    }
+    if (!session.digest) throw new Error("Analyze the meeting before saving it");
+    meetingSummary = toNoteBatchMeeting(session);
+  }
 
   const out = await saveNoteBatch(userId, {
     sourceText: batch.sourceText,
@@ -611,18 +233,37 @@ export async function confirmBulkCapture(
     commitments: batch.commitments,
     mentions: batch.mentions ?? [],
     skipped: batch.skipped,
+    inputSources: captureSourceKinds([
+      ...(batch.sources ?? []),
+      ...(batch.photoIds?.length ? ["photos"] : []),
+    ]),
+    meeting:
+      batch.meeting && meetingSummary
+        ? { summary: meetingSummary, extraReminders: batch.meeting.extraReminders.slice(0, 40) }
+        : null,
   });
+
+  // After the save, not inside it: a photo is a record of where the notes came from, and a
+  // failure to claim one must not roll back contacts and reminders the person just reviewed.
+  if (batch.photoIds?.length) {
+    await attachCapturePhotos(userId, out.batchId, batch.photoIds).catch(() => 0);
+  }
+
+  if (batch.meeting) {
+    await markMeetingSessionSaved(userId, batch.meeting.sessionId, out.batchId);
+  }
 
   // One person logged → fetch their photo before returning, so they arrive on the contact
   // with a face rather than a placeholder that fills in on some later page load. Only for
-  // a single contact: a batch of them is what the background backfill is for, and it is
-  // also the case where the wait would be felt. Scheduling this in `after()` instead would
-  // land the photo after the page it belongs on has already rendered.
+  // a single contact: a batch of them is what the background backfill is for, and one is
+  // also the case where the missing face is most obvious. Before `revalidatePath` and not
+  // in `after()`: scheduled later, the photo lands after the page it belongs on rendered.
+  // The /capture page saves through `runCaptureJobById`, which does the same thing.
   if (out.contactIds.length === 1) {
     const db = await getDb();
     await resolveAvatarNow(db, userId, out.contactIds[0]!, {
       persistRemote: downloadAndPersistAvatar,
-      resolveLinkedIn: fetchLinkedInPhotoUrl,
+      resolveLinkedIn: (id, url) => fetchLinkedInPhotoUrl(id, url, userId),
     });
   }
 
@@ -643,4 +284,16 @@ export async function confirmBulkCapture(
   revalidatePath("/graph");
   for (const id of out.contactIds) revalidatePath(`/contacts/${id}`);
   return out;
+}
+
+/**
+ * One page of the capture history, newest first. `cursor` is the previous page's
+ * `nextCursor`; omit it for the first page.
+ */
+export async function listCaptureHistory(
+  cursor?: string | null,
+  limit: number = CAPTURE_HISTORY_PAGE
+): Promise<CaptureHistoryPage> {
+  const userId = await requireUserId();
+  return listCaptureHistoryFor(userId, { cursor, limit });
 }

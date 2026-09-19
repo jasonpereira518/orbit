@@ -37,6 +37,26 @@ export type PastedLinkedInPerson = {
 };
 
 /**
+ * Why a paste came back with slug guesses instead of profile data. Null means the lookup
+ * ran; every value here is a reason the *user* can act on, which is why it is carried out
+ * to the panel rather than logged and forgotten.
+ */
+export type LinkedInLookupDegradation = "no_key" | "plan" | "error" | null;
+
+/** What a paste's profile URLs produced, for the notice the review step shows. */
+export type LinkedInLookupSummary = {
+  /** Profile URLs found in the paste and looked up. */
+  found: number;
+  /** How many came back as real profile matches. */
+  resolved: number;
+  /** How many contributed a name read off the slug instead. Always 0 on the prose path. */
+  guessed: number;
+  degraded: LinkedInLookupDegradation;
+  /** Profiles past {@link MAX_PASTED_LINKEDIN_PROFILES}, dropped before any lookup. */
+  dropped: number;
+};
+
+/**
  * How many pasted profiles one capture will look up. Past this the paste is almost
  * certainly an exported list, which belongs in Imports where it can be resumed — and each
  * profile past the cap is a paid Apollo credit spent on a guess.
@@ -219,6 +239,11 @@ export function parsedNoteFromLinkedInPerson(
     opportunities: [],
     shared_interests: [],
     suggested_next_message: null,
+    // A URL says who someone is; it does not discuss anything. There is nothing to score
+    // against the user's goals and nothing the conversation could imply, because there
+    // was no conversation.
+    relevance: null,
+    implied_next_steps: [],
     // A profile match is a fact about the person; a slug is a reading of a URL. The card
     // surfaces the difference rather than letting a guessed name look confirmed.
     confidence: guessed ? 0.4 : 0.9,

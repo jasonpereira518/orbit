@@ -3,8 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Check, Clock } from "lucide-react";
-import { toast } from "@/lib/toast";
-import { markReminderDone, snoozeReminderAction } from "@/actions/reminders";
+import { runToastAction } from "@/lib/toast";
+import {
+  markReminderDone,
+  reopenReminderAction,
+  snoozeReminderAction,
+  unsnoozeReminderAction,
+} from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -25,19 +30,24 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
   const [pending, start] = useTransition();
 
   return (
-    <div className="flex gap-1">
+    <div className="flex gap-1 pointer-coarse:gap-4">
       <Button
         size="icon-sm"
         variant="ghost"
         disabled={pending}
         aria-label="Mark done"
+        className="tap-target relative"
         title="Mark done"
         onClick={() =>
-          start(async () => {
-            await markReminderDone(id);
-            toast.success("Marked done");
-            router.refresh();
-          })
+          start(() =>
+            runToastAction({
+              run: () => markReminderDone(id),
+              success: "Marked done",
+              failure: "Couldn’t mark that done — try again?",
+              refresh: () => router.refresh(),
+              undo: (snap) => (snap ? () => reopenReminderAction(snap) : null),
+            }).then(() => undefined)
+          )
         }
       >
         <Check className="h-3.5 w-3.5" />
@@ -46,14 +56,19 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
         size="icon-sm"
         variant="ghost"
         disabled={pending}
-        aria-label="Snooze 7 days"
-        title="Snooze 7 days"
+        aria-label="Snooze for a week"
+        className="tap-target relative"
+        title="Snooze for a week"
         onClick={() =>
-          start(async () => {
-            await snoozeReminderAction(id, 7);
-            toast.success("Snoozed 7 days");
-            router.refresh();
-          })
+          start(() =>
+            runToastAction({
+              run: () => snoozeReminderAction(id, 7),
+              success: "Snoozed for a week",
+              failure: "Couldn’t snooze that — try again?",
+              refresh: () => router.refresh(),
+              undo: (snap) => (snap ? () => unsnoozeReminderAction(snap) : null),
+            }).then(() => undefined)
+          )
         }
       >
         <Clock className="h-3.5 w-3.5" />

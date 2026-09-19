@@ -3,36 +3,33 @@
 import { motion } from "motion/react";
 import { Check, Clock } from "lucide-react";
 import type { PreviewProps } from "@/components/onboarding/tour-config";
+import { reminderTypeLabel, reminderTypeStyle } from "@/lib/reminder-display";
 import { cn } from "@/lib/utils";
 
-const TYPE_STYLES: Record<string, string> = {
-  "AI suggested": "bg-violet-500/15 text-violet-800 dark:text-violet-200",
-  Task: "bg-muted text-muted-foreground",
-  "Post-meeting": "bg-sky-500/15 text-sky-800 dark:text-sky-200",
-};
-
+// Provenance chips come from the same table the real page uses, so the tour can't drift.
 const reminders = [
   {
     title: "Follow up with Priya Nair",
-    type: "AI suggested",
+    type: "ai_suggested",
     due: "Overdue 2 days",
     overdue: true,
   },
   {
     title: "Call recruiter re: offer",
-    type: "Task",
-    due: "Due in 3 days",
+    type: "manual",
+    due: "Today",
     overdue: false,
   },
   {
     title: "Send notes from coffee chat",
-    type: "Post-meeting",
-    due: "Due tomorrow",
+    type: "post_meeting",
+    due: "Today",
     overdue: false,
   },
 ];
 
-const STATUS_FILTERS = ["Active", "Done", "All"];
+/** The page's smart views, in rail order. */
+const VIEWS = ["Today", "Upcoming", "Done"];
 
 export function RemindersPreview({ reducedMotion }: PreviewProps) {
   return (
@@ -45,12 +42,12 @@ export function RemindersPreview({ reducedMotion }: PreviewProps) {
           data-tour-hotspot="status"
           className="flex rounded-lg border border-border/70 bg-muted/40 p-0.5 text-[10px] font-medium"
         >
-          {STATUS_FILTERS.map((label) => (
+          {VIEWS.map((label) => (
             <span
               key={label}
               className={cn(
                 "rounded-md px-2 py-1",
-                label === "Active"
+                label === "Today"
                   ? "bg-background text-primary shadow-sm"
                   : "text-muted-foreground"
               )}
@@ -76,10 +73,10 @@ export function RemindersPreview({ reducedMotion }: PreviewProps) {
               <span
                 className={cn(
                   "rounded-full px-2 py-0.5 text-[9px] font-medium uppercase tracking-wide",
-                  TYPE_STYLES[r.type]
+                  reminderTypeStyle(r.type)
                 )}
               >
-                {r.type}
+                {reminderTypeLabel(r.type)}
               </span>
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-2">
