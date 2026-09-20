@@ -11,7 +11,7 @@
  * data, and is fetched by a browser-side client (claude.ai) from its own origin. That is a
  * different surface from `/api/mcp` itself, which refuses any request carrying an `Origin`.
  */
-import { clerkIssuerUrl, mcpResourceUrl } from "@/lib/mcp/oauth";
+import { clerkIssuerUrl, connectDocsUrl, mcpResourceUrl } from "@/lib/mcp/oauth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ const CORS = {
   "access-control-allow-headers": "*",
 };
 
-export async function GET() {
+export async function GET(request: Request) {
   const issuer = clerkIssuerUrl();
   if (!issuer) {
     // No Clerk, no authorization server to point at — which is the normal state of a local
@@ -35,16 +35,19 @@ export async function GET() {
 
   return new Response(
     JSON.stringify({
-      resource: mcpResourceUrl(),
+      resource: mcpResourceUrl(request),
       authorization_servers: [issuer],
       bearer_methods_supported: ["header"],
       resource_name: "Orbit",
-      resource_documentation: "https://orbit.so/connect",
+      resource_documentation: connectDocsUrl(request),
     }),
     {
       headers: {
         "content-type": "application/json",
-        "cache-control": "public, max-age=3600",
+        // The body now names the host that asked, so a shared cache must key on it —
+        // otherwise a preview could be served production's document, or the reverse.
+        "cache-control": "public, max-age=300",
+        vary: "host, x-forwarded-host",
         ...CORS,
       },
     }

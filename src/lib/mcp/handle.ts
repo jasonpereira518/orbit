@@ -51,9 +51,11 @@ function jsonRpcError(
  * ChatGPT fetch the resource metadata, find Clerk, and start the sign-in flow — which is the
  * entire difference between "paste an API key" and "click Connect".
  */
-function unauthorized(message: string): Response {
+function unauthorized(message: string, request: Request): Response {
   return jsonRpcError(-32001, message, 401, {
-    "www-authenticate": `Bearer realm="orbit", resource_metadata="${resourceMetadataUrl()}"`,
+    // Derived from the request, so a preview deployment points at its own metadata rather
+    // than production's — see `resourceBaseUrl`.
+    "www-authenticate": `Bearer realm="orbit", resource_metadata="${resourceMetadataUrl(request)}"`,
   });
 }
 
@@ -99,7 +101,8 @@ export async function handleMcpRequest(
       // tell a Claude user to go and find an API key they do not need.
       const missing = err.reason === "missing" || err.reason === "malformed";
       return unauthorized(
-        missing ? "Sign in to Orbit to connect this assistant." : err.message
+        missing ? "Sign in to Orbit to connect this assistant." : err.message,
+        request
       );
     }
     return jsonRpcError(-32603, "Authentication failed.", 500);

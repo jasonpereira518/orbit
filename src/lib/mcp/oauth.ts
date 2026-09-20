@@ -41,14 +41,44 @@ import type { ApiKeyScope } from "@/lib/api/keys";
 /** The scopes an OAuth-connected assistant holds. See the header for why this is flat. */
 export const OAUTH_CALLER_SCOPES: ApiKeyScope[] = ["read", "write"];
 
+/**
+ * The origin a client is actually talking to.
+ *
+ * NOT `getAppBaseUrl()`, which prefers the production URL by design — correct for a calendar
+ * feed someone pastes into Google once, wrong here. RFC 9728 has the client check that the
+ * `resource` it was handed matches the server it dialled, so a preview deployment answering
+ * with the production URL fails that check and the connector never gets past discovery.
+ *
+ * The host comes from the request, which is attacker-controllable in general, so it is used
+ * only when it is a Vercel preview host. Anything else falls back to the configured base URL,
+ * which means an injected `Host` header can never redirect discovery somewhere else.
+ */
+export function resourceBaseUrl(request?: Request): string {
+  const configured = getAppBaseUrl();
+  if (!request) return configured;
+
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  if (!host) return configured;
+  if (host === new URL(configured).host) return configured;
+  // Preview deployments are reached by two different names — the immutable deployment URL
+  // and the branch alias — so matching the suffix covers both without enumerating either.
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.vercel\.app$/i.test(host)) return `https://${host}`;
+  return configured;
+}
+
 /** The MCP resource identifier, as it appears in protected-resource metadata. */
-export function mcpResourceUrl(): string {
-  return `${getAppBaseUrl()}/api/mcp`;
+export function mcpResourceUrl(request?: Request): string {
+  return `${resourceBaseUrl(request)}/api/mcp`;
 }
 
 /** Where a client looks to discover how to authenticate. Sent on every 401. */
-export function resourceMetadataUrl(): string {
-  return `${getAppBaseUrl()}/.well-known/oauth-protected-resource/api/mcp`;
+export function resourceMetadataUrl(request?: Request): string {
+  return `${resourceBaseUrl(request)}/.well-known/oauth-protected-resource/api/mcp`;
+}
+
+/** The setup guide, on whichever deployment answered. */
+export function connectDocsUrl(request?: Request): string {
+  return `${resourceBaseUrl(request)}/connect`;
 }
 
 /**

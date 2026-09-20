@@ -176,6 +176,28 @@ run(async () => {
     !JSON.stringify(noAuth.body).toLowerCase().includes("api key"),
     JSON.stringify(noAuth.body).slice(0, 140)
   );
+  // Discovery must name the deployment the client actually dialled. A preview answering with
+  // production's URL fails the client's own RFC 9728 check, and the connector never gets past
+  // discovery — which is invisible locally, where both are the same host.
+  const previewChallenge = (
+    await rawPost(null, "initialize", INITIALIZE, {
+      "x-forwarded-host": "orbit-git-branch-xyz.vercel.app",
+    })
+  ).headers.get("www-authenticate");
+  check(
+    "a preview host gets its own metadata URL",
+    previewChallenge?.includes("https://orbit-git-branch-xyz.vercel.app/.well-known/") === true,
+    previewChallenge ?? "(none)"
+  );
+  const spoofedChallenge = (
+    await rawPost(null, "initialize", INITIALIZE, { "x-forwarded-host": "evil.example" })
+  ).headers.get("www-authenticate");
+  check(
+    "an injected host is ignored, not echoed",
+    spoofedChallenge?.includes("evil.example") === false,
+    spoofedChallenge ?? "(none)"
+  );
+
   // An OAuth bearer is not key-shaped, so the key path must not try to look it up. With Clerk
   // unconfigured in smoke, verification returns null and this lands on the same 401.
   const oauthShaped = await rpc("oat_" + "a".repeat(40), "initialize", INITIALIZE);
