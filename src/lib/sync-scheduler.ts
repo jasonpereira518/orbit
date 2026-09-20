@@ -34,6 +34,12 @@ import {
   oldestDueAgeMs,
   type ClaimedConnection,
 } from "@/lib/provider-connections";
+import {
+  claimDueConnectorConnections,
+  disarmConnectorSync,
+  markConnectorSyncResult,
+} from "@/lib/connectors/connections";
+import { connectorById } from "@/lib/connectors/registry";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import {
   claimDueCalendarSubscriptions,
@@ -132,6 +138,10 @@ export type SyncRunStats = {
   eventConnectionsSynced: number;
   eventConnectionsFailed: number;
   eventRostersFetched: number;
+  /** Connections claimed from `connector_connections` — every connector but Google/Outlook. */
+  connectorClaimed: number;
+  connectorSynced: number;
+  connectorFailed: number;
   /** Events found in a calendar or feed rather than added by hand. */
   discoveryCreated: number;
   discoveryAttached: number;
@@ -161,6 +171,9 @@ function emptyRunStats(): SyncRunStats {
     eventConnectionsSynced: 0,
     eventConnectionsFailed: 0,
     eventRostersFetched: 0,
+    connectorClaimed: 0,
+    connectorSynced: 0,
+    connectorFailed: 0,
     discoveryCreated: 0,
     discoveryAttached: 0,
     discoverySuppressed: 0,
@@ -394,6 +407,63 @@ export async function runSyncPass(
       stats.eventConnectionsFailed++;
       reportError(err, { where: "job.sync.event-connections" });
     }
+  } else {
+    stats.budgetExhausted = true;
+  }
+
+  /**
+   * Family four: every connector that is not Google, Outlook, an ICS feed or an event
+   * provider. Dispatch is by manifest rather than by a `switch`, so adding a connector never
+   * means editing the scheduler.
+   */
+  if (!deadlineReached(deadline)) {
+    const connections = await claimDueConnectorConnections(CONNECTIONS_PER_RUN, now).catch(
+      reportAndContinue(
+        { where: "job.sync.connector-claim" },
+        [] as Awaited<ReturnType<typeof claimDueConnectorConnections>>
+      )
+    );
+    stats.connectorClaimed = connections.length;
+    await runSettledPool(connections, SYNC_CONCURRENCY, async (conn) => {
+      if (deadlineReached(deadline - PER_CONNECTION_BUDGET_MS)) {
+        stats.budgetExhausted = true;
+        await markConnectorSyncResult(conn.id, {
+          ok: true,
+          cursor: conn.cursor,
+          nextSyncAt: now,
+        }).catch(() => null);
+        return;
+      }
+      const manifest = connectorById(conn.connectorId);
+      if (!manifest?.sync) {
+        // A row can outlive the code that made it — a connector removed from the registry,
+        // or one whose row was written before its sync landed. Unschedule it and say so,
+        // rather than counting a failure the user cannot act on.
+        await disarmConnectorSync(
+          conn.id,
+          "This connector is no longer available — reconnect it from Settings.",
+          now
+        ).catch(() => null);
+        return;
+      }
+      try {
+        await manifest.sync(conn.id);
+        stats.connectorSynced++;
+      } catch (err) {
+        stats.connectorFailed++;
+        reportError(err, {
+          where: "job.sync.connector",
+          userId: conn.userId,
+          level: "warning",
+          extra: { connectionId: conn.id, connectorId: conn.connectorId },
+        });
+        await markConnectorSyncResult(conn.id, {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          retryable: true,
+        }).catch(reportAndContinue({ where: "job.sync.connector-mark" }, null));
+      }
+    });
   } else {
     stats.budgetExhausted = true;
   }
