@@ -44,10 +44,19 @@ export function ImportDropzone({
 
   return (
     <section
+      // A convenience target for pointers, not a control: the two buttons inside are the
+      // accessible way in, and they stay the only tab stops. Giving this a role and a
+      // tabindex would add a third stop that does exactly what the first one already does.
+      onClick={() => {
+        if (disabled || busy) return;
+        filesInput.current?.click();
+      }}
       className={cn(
         "rounded-2xl border-2 border-dashed border-border bg-card/40 px-6 py-10 text-center",
         "transition-colors",
-        disabled && "opacity-60",
+        disabled || busy
+          ? "opacity-60"
+          : "cursor-pointer hover:border-primary/40 hover:bg-card/70",
       )}
     >
       <div className="mx-auto flex max-w-md flex-col items-center gap-3">
@@ -66,7 +75,10 @@ export function ImportDropzone({
             type="button"
             variant="outline"
             disabled={disabled || busy}
-            onClick={() => filesInput.current?.click()}
+            onClick={(e) => {
+              e.stopPropagation();
+              filesInput.current?.click();
+            }}
           >
             Choose files
           </Button>
@@ -74,7 +86,10 @@ export function ImportDropzone({
             type="button"
             variant="outline"
             disabled={disabled || busy}
-            onClick={() => folderInput.current?.click()}
+            onClick={(e) => {
+              e.stopPropagation();
+              folderInput.current?.click();
+            }}
           >
             <FolderOpen className="size-4" />
             Choose a folder
