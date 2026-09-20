@@ -2,7 +2,7 @@
 // built from a grant that module issued, never from a key read here.
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { buildWisprContext } from "@/lib/wispr";
 import { nothingUsable } from "@/lib/managed-ai-policy";
 import {
@@ -50,6 +50,10 @@ import {
   type SplitResult,
 } from "@/lib/chat-stream-protocol";
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
+import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
+import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
+import { EMBEDDING_MODELS, modelForOperation } from "@/lib/ai-models";
+import type { ThinkingConfig } from "@google/genai";
 import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
 
 export type { AiProvider, EmbeddingBackend };
@@ -69,6 +73,15 @@ export {
  * 60 s pages that host these calls.
  */
 export const AI_CALL_TIMEOUT_MS = 45_000;
+
+/**
+ * The Gemini thinking dial for an operation, as a spreadable `config` fragment: nothing at
+ * all unless the registry sets a level AND the model offers one (`ai-request-options.ts`).
+ */
+function geminiThinking(model: string, operation: string): { thinkingConfig?: ThinkingConfig } {
+  const cfg = geminiThinkingConfig(model, aiOperationThinking(operation));
+  return cfg ? { thinkingConfig: cfg as ThinkingConfig } : {};
+}
 
 /** A fresh signal per call; a shared one would abort every later call once it fired. */
 export function aiSignal(ms = AI_CALL_TIMEOUT_MS): AbortSignal {
@@ -292,40 +305,17 @@ export type CaptureParseHints = {
 };
 
 const TWO_PASS_CHAR_THRESHOLD = 2500;
-const DETAIL_BATCH_SIZE = 4;
+/**
+ * People per details call. Every batch re-reads the whole note, so a wider batch is fewer
+ * copies of it; too wide and the answer runs into `CAPTURE_MAX_OUTPUT_TOKENS`.
+ */
+const DETAIL_BATCH_SIZE = 6;
 const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 
-const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
-const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
+const GEMINI_EMBEDDING_MODEL = EMBEDDING_MODELS.gemini;
+const OPENAI_EMBEDDING_MODEL = EMBEDDING_MODELS.openai;
 
-/**
- * Cheapest usable model per provider, for accuracy-stage calls (query
- * understanding, rerank) where the user's configured model would be overkill.
- * Values must exist in PROVIDER_MODELS (smoke-fast-model.ts enforces this).
- */
-export const FAST_MODELS: Record<AiProvider, string> = {
-  gemini: "gemini-3.1-flash-lite",
-  openai: "gpt-4o-mini",
-  anthropic: "claude-haiku-4-5",
-};
-
-/**
- * What reads a photograph, regardless of what the user picked for chat.
- *
- * Deliberately NOT `FAST_MODELS`. OCR sits at the root of the capture pipeline: every
- * contact, every dedupe decision and every reminder downstream inherits whatever it got
- * wrong, and because the photo is processed ephemerally and never stored, a misread name
- * cannot be recovered later — there is nothing left to re-read. The lite tiers save a
- * fraction of a cent per page and give up exactly the thing that matters most here, which
- * is dense handwriting. Speed comes from transcribing pages concurrently
- * (`capture-ingest.ts`) and from shrinking them before upload (`scan-image.ts`), never
- * from a weaker pair of eyes.
- */
-export const VISION_MODELS: Record<AiProvider, string> = {
-  gemini: "gemini-3.5-flash",
-  openai: "gpt-4o",
-  anthropic: "claude-sonnet-4-5",
-};
+export { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "@/lib/ai-models";
 
 /**
  * The grant for "the user's model", resolved through the AI gate.
@@ -334,7 +324,7 @@ export const VISION_MODELS: Record<AiProvider, string> = {
  * Lifetime with this month's allowance spent. Call sites that only need to know whether AI
  * would run (and must not throw) use `getAiCapability` instead.
  */
-export async function getAiConfig(userId: string, operation = "completeJson") {
+export async function getAiConfig(userId: string, operation: AiOperationId) {
   const access = await resolveAiAccess(userId);
   const grant = await access.completion(operation);
   return {
@@ -519,19 +509,28 @@ export async function completeJson(
     user: string;
     temperature?: number;
     maxOutputTokens?: number;
-    /** Call-site label for usage telemetry, e.g. "capture.parse". */
-    operation?: string;
-    /** "fast" routes to FAST_MODELS[provider] instead of the user's configured model. */
-    speed?: "fast";
+    /** Call-site id for usage telemetry, the managed allowance, and which model runs it. */
+    operation: AiOperationId;
+    /**
+     * A leading part of the user message that other calls in the same job repeat byte for
+     * byte — the full notes every capture detail batch re-reads. The model sees exactly
+     * `sharedPrefix + user` either way; what changes is the bill. Anthropic caches it
+     * explicitly (a read is 10% of input, a write 125%, so pass this ONLY when at least one
+     * more call will reuse it within five minutes); OpenAI and Gemini cache a repeated
+     * prefix on their own, and `cacheKey` routes OpenAI's lookups to the same cache.
+     */
+    sharedPrefix?: { text: string; cacheKey: string };
   },
 ): Promise<string> {
-  const operation = input.operation ?? "completeJson";
+  const { operation } = input;
   const grant = await (await resolveAiAccess(userId)).completion(operation);
   const { provider, keyOwner } = grant;
-  const model = input.speed === "fast" ? FAST_MODELS[provider] : grant.model;
+  const model = modelForOperation(operation, grant);
   const temperature = input.temperature ?? 0.2;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
+  const prefix = input.sharedPrefix?.text ?? "";
+  const userText = prefix + input.user;
 
   return runOnGrant(grant, withUsage(
     {
@@ -548,12 +547,13 @@ export async function completeJson(
           const client = geminiClient(grant);
           const response = await client.models.generateContent({
             model,
-            contents: input.user,
+            contents: userText,
             config: { abortSignal: aiSignal(),
               temperature,
               maxOutputTokens,
               responseMimeType: "application/json",
               systemInstruction: system,
+              ...geminiThinking(model, operation),
             },
           });
           report(tokensFromGemini(response));
@@ -566,13 +566,13 @@ export async function completeJson(
           const client = openaiClient(grant);
           const response = await client.chat.completions.create({
             model,
-            temperature,
-            max_tokens: maxOutputTokens,
+            ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(operation) }),
             response_format: { type: "json_object" },
             messages: [
               { role: "system", content: system },
-              { role: "user", content: input.user },
+              { role: "user", content: userText },
             ],
+            ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
           }, { signal: aiSignal() });
           report(tokensFromOpenAi(response));
           const content = response.choices[0]?.message?.content;
@@ -587,7 +587,18 @@ export async function completeJson(
           // Claude 4.7 and later reject sampling parameters with a 400.
           ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
           system,
-          messages: [{ role: "user", content: input.user }],
+          messages: [
+            {
+              role: "user",
+              // The breakpoint caches system + prefix together; the per-call tail follows.
+              content: prefix
+                ? [
+                    { type: "text", text: prefix, cache_control: { type: "ephemeral" } },
+                    { type: "text", text: input.user },
+                  ]
+                : input.user,
+            },
+          ],
         }, { signal: aiSignal() });
         report(tokensFromAnthropic(response));
         const block = response.content.find((b) => b.type === "text");
@@ -615,10 +626,10 @@ export async function completeMultimodalJson(
   userId: string,
   input: MultimodalInput,
 ): Promise<string> {
-  const operation = input.operation ?? "completeMultimodalJson";
+  const { operation } = input;
   const grant = await (await resolveAiAccess(userId)).completion(operation);
   // Resolved out here, not inside, so usage telemetry records the model that actually ran.
-  const model = input.speed === "vision" ? VISION_MODELS[grant.provider] : grant.model;
+  const model = modelForOperation(input.operation, grant);
   return runOnGrant(grant, withUsage(
     {
       userId,
@@ -637,10 +648,8 @@ type MultimodalInput = {
   parts: MultimodalPart[];
   temperature?: number;
   maxOutputTokens?: number;
-  /** Call-site label for usage telemetry. */
-  operation?: string;
-  /** "vision" routes to VISION_MODELS[provider] instead of the user's configured model. */
-  speed?: "vision";
+  /** Call-site id for usage telemetry, the managed allowance, and which model runs it. */
+  operation: AiOperationId;
 };
 
 /** Body split out so `completeMultimodalJson` stays a thin instrumented wrapper. */
@@ -680,6 +689,7 @@ async function completeMultimodalJsonInner(
           maxOutputTokens,
           responseMimeType: "application/json",
           systemInstruction: system,
+          ...geminiThinking(model, input.operation),
         },
       });
       report(tokensFromGemini(response));
@@ -714,8 +724,7 @@ async function completeMultimodalJsonInner(
       ];
       const response = await client.chat.completions.create({
         model,
-        temperature,
-        max_tokens: maxOutputTokens,
+        ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
@@ -806,7 +815,7 @@ export type TranscribeOptions = {
   /** Return `{ text: "" }` for silence instead of throwing "Empty transcription". */
   allowEmpty?: boolean;
   /** `usage_events.operation`. Defaults to `capture.transcribe.audio`. */
-  operation?: string;
+  operation?: AiOperationId;
 };
 
 /** How much of `contextText` to carry over. About two sentences. */
@@ -982,10 +991,13 @@ export async function transcribeAudioWithAI(
               ],
             },
           ],
-          config: { abortSignal: aiSignal(),
+          // The transcription deadline, like Whisper's: at 45 s a long voice note was cut off
+          // mid-transcription and sent again whole — billed for the same audio twice.
+          config: { abortSignal: aiSignal(TRANSCRIBE_TIMEOUT_MS),
             temperature: 0.1,
             maxOutputTokens: 4096,
             responseMimeType: "application/json",
+            ...geminiThinking(model, operation),
           },
         });
         report(tokensFromGemini(response));
@@ -1039,7 +1051,6 @@ async function transcribeNotePage(
     temperature: 0.1,
     maxOutputTokens: 8192,
     // OCR quality is load-bearing for everything downstream — see VISION_MODELS.
-    speed: "vision",
     system: `You transcribe networking / meeting notes from photos (handwritten, whiteboard, typed screenshots, business cards).
 Return strict JSON: { "text": string }
 Rules:
@@ -1217,6 +1228,22 @@ function normalizeSharedNotes(
     .filter((s) => s.person_names.length >= 2);
 }
 
+/**
+ * Called after each model call inside a multi-call parse. A long two-pass parse is a
+ * chain of sequential calls, and the capture runner's claim goes stale after four minutes
+ * of silence — at which point the page poll or the stall sweep re-claims the job and runs
+ * the whole parse AGAIN, in parallel, on the person's key. The runner heartbeats here.
+ */
+export type ParseProgress = () => void | Promise<void>;
+
+async function beat(onProgress: ParseProgress | undefined): Promise<void> {
+  try {
+    await onProgress?.();
+  } catch {
+    // A missed heartbeat must never fail the parse it is reporting on.
+  }
+}
+
 async function parseMultiPersonSinglePass(
   userId: string,
   notes: string,
@@ -1290,12 +1317,34 @@ Rules:
   };
 }
 
-async function parseMultiPersonTwoPass(
+/**
+ * The sentence in the notes that names this person, or null.
+ *
+ * Cheap and exact where it works: an excerpt has to be verbatim from the notes anyway, so
+ * finding it by reading is strictly better than paying a model to copy it out. Falls back
+ * to null for a person the note only refers to obliquely ("her cofounder").
+ */
+function sentenceAbout(notes: string, name: string): string | null {
+  const first = name.trim().split(/\s+/)[0];
+  if (!first || first.length < 3) return null;
+  // Sentence-ish: split on terminators and newlines, both of which people use in notes.
+  const pieces = notes.split(/(?<=[.!?])\s+|\n+/);
+  const needle = name.trim().toLowerCase();
+  const firstNeedle = first.toLowerCase();
+  const hit =
+    pieces.find((p) => p.toLowerCase().includes(needle)) ??
+    pieces.find((p) => new RegExp(`\\b${firstNeedle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(p.toLowerCase()));
+  const trimmed = hit?.trim();
+  return trimmed && trimmed.length >= 12 ? trimmed.slice(0, 600) : null;
+}
+
+/** Pass A: who is in these notes. Skipped when a single pass already answered that. */
+async function identifyPeople(
   userId: string,
-  notes: string,
-  hints?: CaptureParseHints | null,
-): Promise<ParsedMultiPersonNotes> {
-  const sliced = notes.slice(0, 100_000);
+  sliced: string,
+  hints: CaptureParseHints | null | undefined,
+  onProgress: ParseProgress | undefined,
+) {
   const identityRaw = await completeJson(userId, {
     operation: "capture.parse.identify",
     temperature: 0.2,
@@ -1329,7 +1378,35 @@ Rules:
 - Anyone only referred to — a cofounder, a boss, "she'll intro me to Raj", a speaker they watched — is a MENTION. Put them in mentions[] with the sentence fragment as context and near_person = the participant whose section mentioned them. Do NOT create a people[] entry for them unless the notes give real profile detail (role, company, contact info); if you do, set presence "mentioned".`,
   });
 
-  const identity = multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
+  await beat(onProgress);
+  await beat(onProgress);
+  return multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
+}
+
+async function parseMultiPersonTwoPass(
+  userId: string,
+  notes: string,
+  hints?: CaptureParseHints | null,
+  onProgress?: ParseProgress,
+  /** People a single pass already found, so an escalation need not pay to identify twice. */
+  known?: ParsedMultiPersonNotes,
+): Promise<ParsedMultiPersonNotes> {
+  const sliced = notes.slice(0, 100_000);
+  const identity = known
+    ? {
+        shared_notes: known.shared_notes,
+        interaction_date: known.interaction_date,
+        met_at: null as string | null,
+        people: known.people.map((p) => ({
+          name: p.name ?? "",
+          email: p.email,
+          company: p.company,
+          role: p.role,
+          presence: p.presence,
+        })),
+        mentions: known.mentions,
+      }
+    : await identifyPeople(userId, sliced, hints, onProgress);
   const peopleIds = identity.people.filter((p) => p.name?.trim());
 
   // Merge seed people that weren't found by name/email.
@@ -1377,13 +1454,22 @@ Rules:
 
   const detailed: ParsedPersonNote[] = [];
 
+  // Every detail batch re-reads the same notes. Worth caching only when a second batch will
+  // read them (see `sharedPrefix`): one batch would pay the cache write and never the read.
+  const notesPrefix = `FULL NOTES:\n${sliced}\n\nSHARED CONTEXT (do not copy wholesale into every source_excerpt):\n${sharedBlock || "(none)"}\n\n`;
+  const sharedPrefix =
+    peopleIds.length > DETAIL_BATCH_SIZE
+      ? { text: notesPrefix, cacheKey: `capture.details:${createHash("sha256").update(notesPrefix).digest("hex").slice(0, 32)}` }
+      : undefined;
+
   for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
     const batch = peopleIds.slice(i, i + DETAIL_BATCH_SIZE);
     const batchRaw = await completeJson(userId, {
       operation: "capture.parse.details",
       temperature: 0.2,
       maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
-      user: `FULL NOTES:\n${sliced}\n\nSHARED CONTEXT (do not copy wholesale into every source_excerpt):\n${sharedBlock || "(none)"}\n\nEXTRACT FULL DETAILS FOR THESE PEOPLE ONLY:\n${batch
+      ...(sharedPrefix ? { sharedPrefix } : {}),
+      user: `${sharedPrefix ? "" : notesPrefix}EXTRACT FULL DETAILS FOR THESE PEOPLE ONLY:\n${batch
         .map(
           (p, idx) =>
             `${idx + 1}. ${p.name}${p.email ? ` <${p.email}>` : ""}${p.company ? ` @ ${p.company}` : ""}${p.role ? ` — ${p.role}` : ""}`,
@@ -1412,6 +1498,7 @@ Rules:
 - REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").`,
     });
 
+    await beat(onProgress);
     const batchParsed = personDetailBatchSchema.parse(JSON.parse(batchRaw));
     for (let j = 0; j < batch.length; j++) {
       const requested = batch[j]!;
@@ -1451,29 +1538,47 @@ Rules:
         source_excerpt: found?.source_excerpt || "",
       };
 
-      // Retry once for empty excerpt on multi-person dumps.
-      if (!merged.source_excerpt.trim() && peopleIds.length > 1) {
-        try {
-          const retryRaw = await completeJson(userId, {
-            operation: "capture.parse.excerpt-retry",
-            temperature: 0.1,
-            maxOutputTokens: 2048,
-            user: `NOTES:\n${sliced}\n\nPerson: ${merged.name}\nReturn JSON { "source_excerpt": string } with ONLY this person's specific slice of the notes.`,
-            system:
-              "Return strict JSON with source_excerpt = the person-specific portion of the notes. Never return the whole dump.",
-          });
-          const retry = parseAiJson<{ source_excerpt?: string }>(retryRaw);
-          if (retry.source_excerpt?.trim()) {
-            merged.source_excerpt = retry.source_excerpt.trim();
-          }
-        } catch {
-          // Keep empty excerpt; caller still has shared context + fields.
-        }
-      }
-
       detailed.push(merged);
     }
   }
+
+  // Excerpts that came back empty. The notes are already in hand, so look for the person's
+  // own sentence first — free, and exact where the note names them. Only whoever is still
+  // empty goes back to the model, and as ONE request: this used to be a call per person,
+  // each carrying the whole note again.
+  const stillEmpty: Array<ParsedPersonNote & { name: string }> = [];
+  for (const person of detailed) {
+    const name = person.name?.trim();
+    if (!name || person.source_excerpt.trim() || peopleIds.length <= 1) continue;
+    const found = sentenceAbout(sliced, name);
+    if (found) person.source_excerpt = found;
+    else stillEmpty.push({ ...person, name });
+  }
+  if (stillEmpty.length > 0) {
+    try {
+      const retryRaw = await completeJson(userId, {
+        operation: "capture.parse.excerpt-retry",
+        temperature: 0.1,
+        maxOutputTokens: 2048,
+        user: `NOTES:\n${sliced}\n\nPeople:\n${stillEmpty.map((p, i) => `${i + 1}. ${p.name}`).join("\n")}\n\nReturn JSON { "excerpts": [{ "name": string, "source_excerpt": string }] } with each person's own slice of the notes.`,
+        system:
+          "Return strict JSON with one entry per requested person: source_excerpt = that person's portion of the notes, copied verbatim. Never return the whole dump. Use an empty string when the notes say nothing specific about them.",
+      });
+      await beat(onProgress);
+      const retry = parseAiJson<{ excerpts?: Array<{ name?: string; source_excerpt?: string }> }>(retryRaw);
+      for (const entry of retry.excerpts ?? []) {
+        const excerpt = entry.source_excerpt?.trim();
+        if (!excerpt) continue;
+        // Back onto the row itself: `stillEmpty` holds copies, made so the name is known
+        // to be present.
+        const target = detailed.find((p) => p.name?.trim().toLowerCase() === entry.name?.trim().toLowerCase());
+        if (target && !target.source_excerpt.trim()) target.source_excerpt = excerpt;
+      }
+    } catch {
+      // Keep the empty excerpts; the caller still has shared context + fields.
+    }
+  }
+
 
   return {
     shared_notes,
@@ -1487,19 +1592,22 @@ export async function parseMultiPersonNotesWithAI(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
+  opts: { onProgress?: ParseProgress } = {},
 ): Promise<ParsedMultiPersonNotes> {
   const useTwoPass =
     notes.length >= TWO_PASS_CHAR_THRESHOLD ||
     (hints?.seedPeople?.length || 0) >= 5;
 
   if (useTwoPass) {
-    return parseMultiPersonTwoPass(userId, notes, hints);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress);
   }
 
   const single = await parseMultiPersonSinglePass(userId, notes, hints);
-  // Escalate to two-pass when many people came back (token pressure risk).
+  await beat(opts.onProgress);
+  // Escalate to two-pass when many people came back (token pressure risk) — reusing the
+  // people this pass already found, rather than paying to identify them a second time.
   if (single.people.length > DETAIL_BATCH_SIZE) {
-    return parseMultiPersonTwoPass(userId, notes, hints);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, single);
   }
   return single;
 }
@@ -1524,10 +1632,13 @@ export async function createEmbedding(userId: string, text: string) {
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
         if (backend === "openai") {
           const client = openaiClient(grant);
+          // maxRetries 0: `withRateLimitBackoff` around this call already retries a rate
+          // limit, and the SDK's own two retries stacked under it made one throttled batch
+          // up to twelve requests.
           const res = await client.embeddings.create({
             model: OPENAI_EMBEDDING_MODEL,
             input,
-          }, { signal: aiSignal() });
+          }, { signal: aiSignal(), maxRetries: 0 });
           report(tokensFromOpenAi(res));
           const values = res.data[0]?.embedding;
           if (!values?.length) throw new Error("Empty embedding response");
@@ -1574,10 +1685,11 @@ export async function createEmbeddingsBatch(
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
         if (backend === "openai") {
           const client = openaiClient(grant);
+          // maxRetries 0 for the same reason as `createEmbedding`: the backoff wrapper owns retries.
           const res = await client.embeddings.create({
             model: OPENAI_EMBEDDING_MODEL,
             input: inputs,
-          }, { signal: aiSignal() });
+          }, { signal: aiSignal(), maxRetries: 0 });
           report(tokensFromOpenAi(res));
           const values = res.data
             .slice()
@@ -1830,13 +1942,14 @@ async function streamText(
     user: string;
     temperature?: number;
     maxOutputTokens?: number;
-    operation: string;
+    operation: AiOperationId;
     signal?: AbortSignal;
   },
   onDelta: (delta: string) => void
 ): Promise<string> {
   const grant = await (await resolveAiAccess(userId)).completion(input.operation);
-  const { provider, model, keyOwner } = grant;
+  const { provider, keyOwner } = grant;
+  const model = modelForOperation(input.operation, grant);
   const temperature = input.temperature ?? 0.3;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   // One deadline per call plus the caller's own abort — a fresh deadline per call, as always.
@@ -1862,6 +1975,7 @@ async function streamText(
             temperature,
             maxOutputTokens,
             systemInstruction: input.system,
+            ...geminiThinking(model, input.operation),
           },
         });
         let last: unknown = null;
@@ -1875,8 +1989,7 @@ async function streamText(
         const stream = await client.chat.completions.create(
           {
             model,
-            temperature,
-            max_tokens: maxOutputTokens,
+            ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(input.operation) }),
             stream: true,
             stream_options: { include_usage: true },
             messages: [

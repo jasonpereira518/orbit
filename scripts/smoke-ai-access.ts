@@ -43,6 +43,7 @@ import { getDb } from "../src/db";
 import { billingEvents, errorEvents, rateLimitBuckets, usageEvents, userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { priceFor } from "../src/lib/ai-pricing";
+import type { AiOperationId } from "../src/lib/ai-operations";
 import {
   AiAccessError,
   aiReadyFromSettings,
@@ -62,6 +63,7 @@ import {
 import {
   MANAGED_AI_BUDGET,
   MANAGED_AI_ENABLED,
+  MANAGED_DEFAULT_MODELS,
   MANAGED_MODELS,
   chooseCompletionKey,
   chooseEmbeddingKey,
@@ -231,11 +233,11 @@ function purePolicy() {
       ? "an expensive model on Orbit's key is downgraded"
       : "managed AI off: the local dev key runs the model that was asked for",
     pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro" })) ===
-      (MANAGED_AI_ENABLED ? "managed:gemini:gemini-3.5-flash" : "managed:gemini:gemini-2.5-pro"));
+      (MANAGED_AI_ENABLED ? `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}` : "managed:gemini:gemini-2.5-pro"));
   check("…the same model on their own key is theirs to choose",
     pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro", personal: own })) === "personal:gemini:gemini-2.5-pro");
   check("an Anthropic user on Lifetime with only a managed Gemini key runs on Gemini",
-    pick(facts({ eligibility: "lifetime", selectedProvider: "anthropic", selectedModel: "claude-opus-4" })) === "managed:gemini:gemini-3.5-flash");
+    pick(facts({ eligibility: "lifetime", selectedProvider: "anthropic", selectedModel: "claude-opus-4" })) === `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}`);
   check("every managed model is priced (an unpriced one would slip under the dollar cap)",
     Object.values(MANAGED_MODELS).flat().every((m) => priceFor(m) !== null));
 
@@ -341,7 +343,7 @@ async function lastSent(fn: () => Promise<unknown>): Promise<{ result: unknown; 
   return { result, err, req: sent.length > before ? sent[sent.length - 1] : null, count: sent.length - before };
 }
 
-const json = (userId: string, operation = "capture.parse") =>
+const json = (userId: string, operation: AiOperationId = "capture.parse") =>
   completeJson(userId, { system: "Return JSON.", user: "hi", operation });
 
 /** Usage rows are written fire-and-forget; give them a tick to land. */
@@ -360,7 +362,11 @@ async function realGate() {
   check("Lifetime + own key: their key went on the wire", r.req?.key === USER_KEY, r.req?.key ?? r.err);
   r = await lastSent(() => json(U.lifetimeNone));
   check("Lifetime + no key: Orbit's managed key went on the wire", r.req?.key === MANAGED, r.req?.key ?? r.err);
-  check("…at the managed model, not the gemini-2.5-pro they picked", /models\/gemini-3\.5-flash:/.test(r.req?.url ?? ""), r.req?.url);
+  check(
+    "…at the managed model, not the gemini-2.5-pro they picked",
+    (r.req?.url ?? "").includes(`models/${MANAGED_DEFAULT_MODELS.gemini}:`),
+    r.req?.url
+  );
   r = await lastSent(() => json(U.freeOwn));
   check("non-Lifetime + own key: their key went on the wire", r.req?.key === USER_KEY, r.req?.key ?? r.err);
   r = await lastSent(() => json(U.freeNone));

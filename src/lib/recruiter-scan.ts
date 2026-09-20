@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { completeJson, parseAiJson } from "@/lib/ai";
+import { parseAiJson } from "@/lib/ai";
+import { cachedCompleteJson } from "@/lib/ai-result-cache";
 
 /**
  * Classification + summarization for one candidate sender found by the Gmail scan.
@@ -73,21 +74,7 @@ function renderMessages(messages: RecruiterScanMessage[]) {
     .join("\n\n");
 }
 
-export async function classifyRecruiterSender(
-  userId: string,
-  input: {
-    senderName: string;
-    senderEmail: string;
-    firmGuess: string | null;
-    messages: RecruiterScanMessage[];
-  }
-): Promise<RecruiterScanResult> {
-  const content = await completeJson(userId, {
-    operation: "recruiter.scan",
-    // Low temperature: this is an extraction task, and the summary is stored as fact.
-    temperature: 0.2,
-    maxOutputTokens: 700,
-    system: `You classify email senders as recruiters and summarize the user's relationship with them.
+export const RECRUITER_SYSTEM = `You classify email senders as recruiters and summarize the user's relationship with them.
 
 A recruiter is someone whose role in these emails is hiring or sourcing candidates: in-house talent acquisition, agency recruiters, headhunters, sourcers, or a hiring manager doing outreach about a specific opening.
 
@@ -100,15 +87,23 @@ Rules:
 - "roles_discussed" are concrete job titles.
 - If unsure whether they are a recruiter, set is_recruiter false and confidence low.
 
-Return JSON: {"is_recruiter": boolean, "confidence": number between 0 and 1, "full_name": string|null, "firm": string|null, "companies_mentioned": string[], "roles_discussed": string[], "summary": string|null}`,
-    user: `Sender: ${input.senderName} <${input.senderEmail}>
+Return JSON: {"is_recruiter": boolean, "confidence": number between 0 and 1, "full_name": string|null, "firm": string|null, "companies_mentioned": string[], "roles_discussed": string[], "summary": string|null}`;
+
+export function buildRecruiterUserPrompt(input: {
+  senderName: string;
+  senderEmail: string;
+  firmGuess: string | null;
+  messages: RecruiterScanMessage[];
+}): string {
+  return `Sender: ${input.senderName} <${input.senderEmail}>
 Firm guessed from the email domain: ${input.firmGuess || "unknown"}
 
-${renderMessages(input.messages)}`,
-  });
+${renderMessages(input.messages)}`;
+}
 
+/** The model's answer as a verdict. Throws when it is not the shape it promised. */
+export function recruiterResultFromContent(content: string): RecruiterScanResult {
   const parsed = recruiterScanSchema.parse(parseAiJson(content));
-
   return {
     isRecruiter: parsed.is_recruiter,
     confidence: parsed.confidence ?? (parsed.is_recruiter ? 0.7 : 0),
@@ -118,4 +113,31 @@ ${renderMessages(input.messages)}`,
     rolesDiscussed: parsed.roles_discussed,
     summary: parsed.summary?.trim() || null,
   };
+}
+
+export async function classifyRecruiterSender(
+  userId: string,
+  input: {
+    senderName: string;
+    senderEmail: string;
+    firmGuess: string | null;
+    messages: RecruiterScanMessage[];
+  }
+): Promise<RecruiterScanResult> {
+  // Re-scans see the same senders again, and an overlap window re-reads the last two days of
+  // mail on purpose. A sender whose rendered mail is byte-identical gets the verdict it got
+  // last time instead of another model call; one new message changes the prompt and the key.
+  const content = await cachedCompleteJson(userId, {
+    operation: "recruiter.scan",
+    // Low temperature: this is an extraction task, and the summary is stored as fact.
+    temperature: 0.2,
+    maxOutputTokens: 700,
+    system: RECRUITER_SYSTEM,
+    user: buildRecruiterUserPrompt(input),
+  }, {
+    ttlDays: 90,
+    accept: (raw) => recruiterScanSchema.safeParse(parseAiJson(raw)).success,
+  });
+
+  return recruiterResultFromContent(content);
 }

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { putAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
+import { internalFetch } from "@/lib/internal-auth";
+import { reportError } from "@/lib/report-error";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   isDurableAvatarUrl,
@@ -15,7 +17,11 @@ export {
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
 
-/** Max raw download we'll attempt before giving up. */
+/**
+ * Max raw download we'll attempt before giving up. Must not exceed the encoder's own input
+ * limit (`AVATAR_ENCODE_MAX_INPUT_BYTES` in `avatar-encode.ts`, which this file may not
+ * import), or the route would 413 a photo we chose to fetch.
+ */
 const MAX_DOWNLOAD_BYTES = 5_000_000;
 /** Target max for the sharp-decode fallback path (raw bytes, unresized). */
 const MAX_PERSIST_BYTES = 220_000;
@@ -369,6 +375,54 @@ export async function downloadImageBytes(
 }
 
 /**
+ * How long one encode round trip may take. It resizes a photo of at most 5MB, but it can
+ * land on a cold function, and its caller is a backfill tick with a 15s budget.
+ */
+const AVATAR_ENCODE_TIMEOUT_MS = 8_000;
+
+/** The bytes are not an image the encoder can decode — the caller keeps them as they are. */
+class UndecodableImageError extends Error {}
+
+/** The encoder route itself failed — not the same thing as an image it cannot decode. */
+class AvatarEncoderUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AvatarEncoderUnavailableError";
+  }
+}
+
+/**
+ * Encode through `/api/avatars/encode`, the one function that carries `sharp`.
+ *
+ * On Vercel `next.config.ts` strips `sharp` from every other function's bundle (it was
+ * over a gigabyte of Functions Storage per deployment), so this is the only way to reach
+ * it from there. Targets `getAppBaseUrl()` via `internalFetch`, like every other internal
+ * kick — which means a preview deployment encodes on production.
+ */
+async function encodeViaRoute(buf: Buffer): Promise<Buffer> {
+  let res: Response;
+  try {
+    res = await internalFetch("/api/avatars/encode", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: new Uint8Array(buf),
+      signal: AbortSignal.timeout(AVATAR_ENCODE_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new AvatarEncoderUnavailableError("The photo encoder could not be reached", {
+      cause: err,
+    });
+  }
+  if (res.status === 422) throw new UndecodableImageError();
+  if (!res.ok) {
+    throw new AvatarEncoderUnavailableError(`The photo encoder answered ${res.status}`);
+  }
+  const out = Buffer.from(await res.arrayBuffer());
+  if (out.byteLength === 0) throw new AvatarEncoderUnavailableError("The photo encoder sent no bytes");
+  return out;
+}
+
+/**
  * Resize/compress to a small square JPEG.
  * LinkedIn CDN photos are often >180KB — we used to drop those entirely.
  */
@@ -377,16 +431,24 @@ async function encodeAvatar(
   contentType: string
 ): Promise<{ buf: Buffer; contentType: string } | null> {
   try {
-    const sharp = (await import("sharp")).default;
-    const out = await sharp(buf)
-      .rotate()
-      .resize(256, 256, { fit: "cover", withoutEnlargement: true })
-      .jpeg({ quality: 82, mozjpeg: true })
-      .toBuffer();
-    if (out.byteLength === 0) return null;
+    // `VERCEL` is exactly what gates the trace exclusion in next.config.ts: where `sharp` is
+    // missing from this function's bundle we go over HTTP, everywhere else (dev, local
+    // builds, tsx scripts) it is called directly.
+    let out: Buffer;
+    if (process.env.VERCEL) {
+      out = await encodeViaRoute(buf);
+    } else {
+      const { encodeAvatarJpeg } = await import("@/lib/avatar-encode");
+      out = await encodeAvatarJpeg(buf);
+    }
     return { buf: out, contentType: "image/jpeg" };
-  } catch {
-    // Fall back to raw bytes when sharp can't decode (rare formats).
+  } catch (err) {
+    // A broken encoder is a fault, and unlike an undecodable image it would otherwise store
+    // full-size photos everywhere with nothing to say so. Report it, then degrade.
+    if (err instanceof AvatarEncoderUnavailableError) {
+      reportError(err, { where: "avatar.encode", level: "warning" });
+    }
+    // Fall back to raw bytes when the image can't be encoded (rare formats).
     if (
       !contentType.startsWith("image/") ||
       buf.byteLength === 0 ||

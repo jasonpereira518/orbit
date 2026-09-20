@@ -22,6 +22,7 @@
  * are validated against the transcript, not the corpus, in `parseBulkCaptureNotes` — so a
  * date the digest invented cannot become a reminder.
  */
+import type { AiOperationId } from "@/lib/ai-operations";
 import { z } from "zod";
 import type { MeetingDigest } from "@/db/schema";
 
@@ -321,7 +322,7 @@ export function buildMeetingCorpus(digest: MeetingDigest, meta: MeetingMeta): st
 
 export type CompleteJsonFn = (
   userId: string,
-  input: { system: string; user: string; maxOutputTokens?: number; operation?: string; temperature?: number }
+  input: { system: string; user: string; maxOutputTokens?: number; operation: AiOperationId; temperature?: number }
 ) => Promise<string>;
 
 export type AnalyzeInput = {
@@ -362,6 +363,7 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
     `- blockers: things stopping progress or waiting on someone/something — an approval, a dependency, missing information.`,
     `- open_questions: questions raised that were NOT answered by the end of the call.`,
     `- participants: people who were on the call ("present": true — they spoke or were spoken to) and people only mentioned ("present": false). Include what you learned about each in "context" (role, company, what they talked about). Do not include the user.`,
+    `- The attendee list below is who was INVITED, not who came. Mark someone "present": true only when the transcript shows them taking part; an invitee who never comes up, or who is said to be away, is "present": false.`,
     `- dated_quotes: sentences copied EXACTLY from the transcript that mention a date, day or deadline. At most ${LIST_CAPS.datedQuotes}.`,
     `- source_excerpt: a short quote (under 25 words) copied EXACTLY from the transcript, or null.`,
     `- notes: the user's own meeting notes, written in the first person as they would jot them down after the call — who was there, what was discussed with whom, what each person cares about or offered, what was agreed, and every follow-up with its timing in the transcript's words. 150-600 words. Plain prose, no headings.`,
@@ -404,7 +406,7 @@ async function callDigest(
   userId: string,
   system: string,
   user: string,
-  operation: string
+  operation: AiOperationId
 ): Promise<RawMeetingDigest> {
   const raw = await complete(userId, {
     system,

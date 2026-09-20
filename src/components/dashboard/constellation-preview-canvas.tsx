@@ -48,7 +48,7 @@ const RESTING: SkyFocusState = {
  * one blit per star and two strokes per line colour, and only while the sky moves.
  */
 type Glow = {
-  stars: { x: number; y: number; color: string; disc: number; alpha: number }[];
+  stars: { x: number; y: number; color: string; disc: number; alpha: number; phase: number }[];
   lines: Map<string, number[]>;
   sun: { x: number; y: number } | null;
 };
@@ -63,6 +63,24 @@ const BLOOM_MAX_PX = 26;
  */
 const LINE_OPACITY = 0.7;
 const BLOOM_SPRITE_PX = 64;
+
+/**
+ * The breathing.
+ *
+ * Only the bloom moves: the star itself and the figure's lines hold still, so the sky reads as
+ * light swelling and fading rather than as dots changing size. One slow cycle, staggered per
+ * star by the golden angle so no two neighbours peak together and the field never pulses as one
+ * — a card that beat in unison would be a heartbeat, which is attention-seeking; this is a sky.
+ */
+const PULSE_MS = 7200;
+/** Share of its resting brightness a star gives up at the bottom of the cycle. */
+const PULSE_DEPTH = 0.36;
+/** The halo widens a little as it brightens, at half the depth. */
+const PULSE_SWELL = 0.5;
+/** ~30fps. A slow fade needs no more, and it halves the cost of animating at all. */
+const PULSE_FRAME_MS = 32;
+/** Irrational turn per star: the stagger never repeats or clumps. */
+const PULSE_STAGGER = 2.39996;
 const bloomCache = new Map<string, HTMLCanvasElement>();
 
 /** One soft disc per star colour, baked once: a frame is a blit per star, never a gradient. */
@@ -87,7 +105,7 @@ function bloomSprite(color: string): HTMLCanvasElement | null {
 }
 
 function buildGlow(index: SkyIndex): Glow {
-  const stars = index.stars.map((s) => {
+  const stars = index.stars.map((s, i) => {
     const visual = starVisual(s.data, false);
     return {
       x: s.x,
@@ -97,6 +115,7 @@ function buildGlow(index: SkyIndex): Glow {
       disc: visual.disc,
       // The loose stars around a figure stay quiet, as they do in the tab.
       alpha: visual.dimmedScatter ? 0.35 : 0.85,
+      phase: i * PULSE_STAGGER,
     };
   });
   const lines = new Map<string, number[]>();
@@ -108,7 +127,16 @@ function buildGlow(index: SkyIndex): Glow {
   return { stars, lines, sun: index.sun ? { x: index.sun.x, y: index.sun.y } : null };
 }
 
-function paintGlow(ctx: CanvasRenderingContext2D, glow: Glow, camera: Camera) {
+/**
+ * `now` is the clock the pulse reads, or null to paint the sky at rest — under reduced motion,
+ * and whenever the card is off screen and the loop has stopped.
+ */
+function paintGlow(
+  ctx: CanvasRenderingContext2D,
+  glow: Glow,
+  camera: Camera,
+  now: number | null
+) {
   ctx.save();
   // Light adds to the sky rather than covering it.
   ctx.globalCompositeOperation = "lighter";
@@ -130,11 +158,15 @@ function paintGlow(ctx: CanvasRenderingContext2D, glow: Glow, camera: Camera) {
     ctx.stroke();
   }
 
+  const turn = now === null ? 0 : (now / PULSE_MS) * Math.PI * 2;
   for (const s of glow.stars) {
     const sprite = bloomSprite(s.color);
     if (!sprite) continue;
-    const r = Math.min(BLOOM_MAX_PX, Math.max(BLOOM_MIN_PX, s.disc * camera.k * BLOOM_SPAN));
-    ctx.globalAlpha = s.alpha;
+    // 1 at rest; between 1 - PULSE_DEPTH and 1 while breathing.
+    const swing = now === null ? 1 : 1 - PULSE_DEPTH * (0.5 - Math.cos(turn + s.phase) / 2);
+    const base = Math.min(BLOOM_MAX_PX, Math.max(BLOOM_MIN_PX, s.disc * camera.k * BLOOM_SPAN));
+    const r = base * (1 + (swing - 1) * PULSE_SWELL);
+    ctx.globalAlpha = s.alpha * swing;
     ctx.drawImage(
       sprite,
       s.x * camera.k + camera.x - r,
@@ -250,6 +282,8 @@ export function ConstellationPreviewCanvas({
   const backgroundRef = useRef<HTMLCanvasElement | null>(null);
   const backdropRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef(0);
+  /** The clock the bloom breathes on, or null when the sky is at rest. See `paintGlow`. */
+  const pulseRef = useRef<number | null>(null);
   const movedRef = useRef(false);
   const [moved, setMoved] = useState(false);
   const prefersReducedMotion = usePrefersReducedMotion();
@@ -294,7 +328,7 @@ export function ConstellationPreviewCanvas({
         (washes.canvas.height / washes.scale) * camera.k
       );
     }
-    paintGlow(bctx, glow, camera);
+    paintGlow(bctx, glow, camera, pulseRef.current);
 
     drawSky(ctx, {
       index: drawn,
@@ -309,6 +343,54 @@ export function ConstellationPreviewCanvas({
       background: backdrop,
     });
   }, [drawn, glow]);
+
+  /**
+   * The breathing loop.
+   *
+   * It is the one thing here that draws when nothing has happened, so it is kept on a short
+   * leash: never under reduced motion, only while the card is actually on screen (a dashboard is
+   * a long page, and rAF already stops dead in a hidden tab), and at ~30fps rather than the
+   * display's rate. Off screen it stops and leaves one resting frame behind, so scrolling back
+   * finds the sky drawn rather than blank.
+   */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || prefersReducedMotion) return;
+    let loop = 0;
+    let lastFrame = 0;
+
+    const tick = (now: number) => {
+      loop = requestAnimationFrame(tick);
+      if (now - lastFrame < PULSE_FRAME_MS) return;
+      lastFrame = now;
+      pulseRef.current = now;
+      draw();
+    };
+    const start = () => {
+      if (loop) return;
+      lastFrame = 0;
+      loop = requestAnimationFrame(tick);
+    };
+    const stop = () => {
+      if (loop) cancelAnimationFrame(loop);
+      loop = 0;
+      // Back to the resting sky, so what is left on screen is not a half-faded frame.
+      pulseRef.current = null;
+      draw();
+    };
+
+    const observer = new IntersectionObserver(
+      ([entry]) => (entry.isIntersecting ? start() : stop()),
+      { rootMargin: "64px" }
+    );
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      if (loop) cancelAnimationFrame(loop);
+      loop = 0;
+      pulseRef.current = null;
+    };
+  }, [draw, prefersReducedMotion]);
 
   /** At most one frame per display refresh, and none at all while nothing moves. */
   const requestDraw = useCallback(() => {

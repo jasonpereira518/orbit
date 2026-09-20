@@ -1,0 +1,38 @@
+{
+  "label": "baseline-transcribe",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash",
+  "date": "2026-09-20T00:26:10.262Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 1,
+  "tasks": {
+    "transcribe": {
+      "cases": 4,
+      "metrics": {
+        "nameRecall": 0.7,
+        "wer": 0.023339702696196438
+      },
+      "misses": [
+        "tx-03-meetup-three-people",
+        "tx-04-dinner-debrief"
+      ],
+      "p50LatencyMs": 2862,
+      "costMicros": 22040,
+      "costPerCaseMicros": 5510,
+      "usage": [
+        {
+          "operation": "capture.transcribe.audio",
+          "model": "gemini-3.5-flash",
+          "calls": 4,
+          "failures": 0,
+          "inputTokens": 2405,
+          "outputTokens": 2048,
+          "cachedInputTokens": 0,
+          "costMicros": 22040,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

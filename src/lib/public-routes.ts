@@ -43,6 +43,9 @@ export const PUBLIC_ROUTES = [
   "/api/imports/(.*)/continue",
   // The capture job runner's internal kick — same gate, same reasons.
   "/api/capture/jobs/(.*)/run",
+  // The photo encoder — the one function that carries `sharp`. Called by the app's own
+  // `fetch` from other functions, which carry no Clerk session; same CRON_SECRET gate.
+  "/api/avatars/encode",
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",

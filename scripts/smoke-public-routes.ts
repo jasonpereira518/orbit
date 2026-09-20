@@ -100,6 +100,7 @@ function main() {
     "/api/imports/process-stalled",
     "/api/imports/imp_abc123/continue",
     "/api/capture/jobs/job_abc123/run",
+    "/api/avatars/encode",
     "/api/embeddings/backfill",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
