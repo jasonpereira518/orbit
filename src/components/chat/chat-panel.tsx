@@ -55,6 +55,8 @@ import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
+import { ChatActivity } from "@/components/chat/chat-activity";
+import type { ChatStep } from "@/lib/chat-stream-protocol";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -124,6 +126,14 @@ type AssistantMessage = {
   recommendations: ChatRecommendation[];
   /** True while the answer is still arriving from `/api/chat`. */
   streaming?: boolean;
+  /**
+   * The stages the server reported for this answer, newest state per stage.
+   *
+   * Kept per message rather than in one panel-level slot so scrolling back through a thread
+   * still shows what each individual answer did, and so a new question cannot overwrite the
+   * record of the previous one.
+   */
+  steps?: ChatStep[];
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -483,6 +493,9 @@ export function ChatPanel() {
                 role: "assistant" as const,
                 answer: row.content,
                 recommendations: row.recommendations || [],
+                // Answers written before this column existed have none, and simply show no
+                // summary rather than a fabricated one.
+                steps: row.activity ?? undefined,
               }
         )
       );
@@ -630,6 +643,20 @@ export function ChatPanel() {
             onRecommendations: (items) => {
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
+            },
+            onStep: (step) => {
+              // The first step arrives before any prose, which is the point: it replaces the
+              // old blank wait. Steps are keyed by id, so a stage finishing updates its own
+              // line in place instead of appending a second copy of itself.
+              ensurePlaceholder();
+              patch((m) => {
+                const steps = m.steps ?? [];
+                const at = steps.findIndex((s) => s.id === step.id);
+                if (at === -1) return { ...m, steps: [...steps, step] };
+                const next = steps.slice();
+                next[at] = step;
+                return { ...m, steps: next };
+              });
             },
             onDone: (info) => {
               ensurePlaceholder();
@@ -938,11 +965,17 @@ export function ChatPanel() {
                     )
                   )}
 
+                  {/*
+                    Only reachable before the first `step` event lands — which is now within
+                    a few milliseconds of sending, because the route opens the stream before
+                    it starts retrieving. After that the assistant bubble's own ChatActivity
+                    takes over and says what is actually happening.
+                  */}
                   {awaitingFirstToken && (
                     <div className="flex justify-start">
-                      <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
                         <Loader2 className="size-3.5 animate-spin" />
-                        Searching your network…
+                        Starting…
                       </div>
                     </div>
                   )}
@@ -1187,12 +1220,21 @@ const AssistantBubble = memo(function AssistantBubble({
 }: {
   msg: AssistantMessage;
 }) {
+  const steps = msg.steps ?? [];
   return (
+    // No bubble on the assistant side: the answer is the page's content, not a chat turn
+    // from a stranger. The user's own words keep a bubble, so the two are still easy to
+    // tell apart while scanning.
     <div className="flex justify-start">
-      <div className="max-w-[92%] space-y-3">
-        <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm leading-relaxed text-foreground">
-          <ChatMarkdown>{msg.answer}</ChatMarkdown>
-        </div>
+      <div className="w-full max-w-[92%] space-y-3">
+        {steps.length > 0 && (
+          <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} />
+        )}
+        {msg.answer && (
+          <div className="text-sm leading-relaxed text-foreground">
+            <ChatMarkdown>{msg.answer}</ChatMarkdown>
+          </div>
+        )}
         {msg.recommendations.length > 0 && (
           <div className="space-y-2">
             {msg.recommendations.map((r) => (

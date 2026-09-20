@@ -106,9 +106,51 @@ function parseRecommendations(raw: string): Pick<SplitResult, "recommendations" 
 /* Server-sent events                                                          */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * One stage of the work behind an answer, as the user sees it.
+ *
+ * Every step describes work that actually ran: the labels and counts are written on the
+ * server from real results, and a stage that does not run (no org in the question, no
+ * overdue follow-ups) emits nothing at all rather than a "skipped" step. Nothing here is
+ * scripted on a timer — if the wire says "Searched 412 contacts", 412 rows were searched.
+ */
+export type ChatStepKind =
+  | "understand"
+  | "search"
+  | "rank"
+  | "roster"
+  | "attention"
+  | "recruiters"
+  | "attached"
+  | "read"
+  | "answer"
+  | "verify";
+
+/** A record a step touched, so the expanded view can link to the thing itself. */
+export type ChatStepRef = {
+  id: string;
+  name: string;
+  kind: "contact" | "recruiter" | "org";
+};
+
+export type ChatStep = {
+  /** Stable within one answer, so a later update replaces a step rather than appending. */
+  id: string;
+  kind: ChatStepKind;
+  /** A finished sentence, written server-side: "Searching 412 contacts". */
+  label: string;
+  /** The secondary line: which arms ran, which filters were parsed. */
+  detail?: string;
+  status: "active" | "done";
+  /** Wall-clock for the stage, set when it finishes. */
+  ms?: number;
+  refs?: ChatStepRef[];
+};
+
 export type ChatStreamEvent =
   | { type: "answer"; delta: string }
   | { type: "recommendations"; items: unknown[] }
+  | { type: "step"; step: ChatStep }
   | {
       type: "done";
       messageId: string | null;
@@ -124,6 +166,8 @@ export type ChatStreamEvent =
       }>;
       /** One line of context about how the answer was found, e.g. keywords-only search. */
       notice?: string | null;
+      /** Rule-derived next questions — see `deriveFollowUps`. Never model-generated. */
+      followUps?: string[];
     }
   | { type: "error"; message: string };
 

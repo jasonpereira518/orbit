@@ -91,6 +91,60 @@ function main() {
   check("a delta containing a blank line survives framing", all[0].type === "answer" && all[0].delta === "Hello\n\nworld");
   check("nothing is left over after the last event", carry === "");
 
+  console.log("\nStep events ride the same framing...");
+  // Steps are emitted while retrieval runs, interleaved with nothing else, so they have to
+  // survive the same arbitrary chunk boundaries the prose does.
+  const stepWire = formatSse({
+    type: "step",
+    step: {
+      id: "search",
+      kind: "search",
+      label: "Searched 412 contacts",
+      detail: "name and notes, meaning",
+      status: "done",
+      ms: 143,
+      refs: [{ id: "c1", name: "Ada Lovelace", kind: "contact" }],
+    },
+  });
+  check("a step is one data: line", stepWire.split("\n\n").filter(Boolean).length === 1);
+  const stepBack: ChatStreamEvent[] = [];
+  let stepCarry = "";
+  for (const piece of [stepWire.slice(0, 11), stepWire.slice(11, 33), stepWire.slice(33)]) {
+    const parsed = parseSseChunk(piece, stepCarry);
+    stepCarry = parsed.carry;
+    stepBack.push(...parsed.events);
+  }
+  check("a step survives chunk boundaries", stepBack.length === 1 && stepBack[0].type === "step");
+  check(
+    "the step keeps its counts, duration and refs",
+    stepBack[0].type === "step" &&
+      stepBack[0].step.label === "Searched 412 contacts" &&
+      stepBack[0].step.ms === 143 &&
+      stepBack[0].step.refs?.[0]?.name === "Ada Lovelace"
+  );
+
+  const withFollowUps = parseSseChunk(
+    formatSse({
+      type: "done",
+      messageId: "m1",
+      threadId: "t1",
+      title: "Hi",
+      retrieved: [],
+      followUps: ["Who else do I know at Ramp?"],
+    }),
+    ""
+  );
+  check(
+    "done carries follow-ups",
+    withFollowUps.events[0]?.type === "done" &&
+      withFollowUps.events[0].followUps?.[0] === "Who else do I know at Ramp?"
+  );
+  check(
+    "done without follow-ups still parses",
+    parseSseChunk(formatSse({ type: "done", messageId: null, threadId: null, title: null, retrieved: [] }), "")
+      .events[0]?.type === "done"
+  );
+
   console.log("\nA signed-out chat request is named, not parsed as SSE");
   check("the stream itself is a stream",
     classifyChatResponse({ status: 200, ok: true, contentType: "text/event-stream; charset=utf-8" }) === "stream");

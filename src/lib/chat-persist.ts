@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
+import type { ChatStep } from "@/lib/chat-stream-protocol";
 
 const TITLE_MAX = 72;
 
@@ -19,7 +20,12 @@ export async function persistAssistantTurn(
   threadId: string | null,
   existingTitle: string | null,
   question: string,
-  turn: { answer: string; recommendations: ChatRecommendation[] }
+  turn: {
+    answer: string;
+    recommendations: ChatRecommendation[];
+    /** The stages this answer actually ran, so a reloaded thread still shows its work. */
+    activity?: ChatStep[];
+  }
 ): Promise<{ messageId: string | null; title: string | null }> {
   if (!threadId) return { messageId: null, title: existingTitle };
   const db = await getDb();
@@ -31,6 +37,7 @@ export async function persistAssistantTurn(
       role: "assistant",
       content: turn.answer,
       recommendations: turn.recommendations,
+      activity: turn.activity ?? [],
     })
     .returning();
   const title = existingTitle || titleFromQuestion(question);
