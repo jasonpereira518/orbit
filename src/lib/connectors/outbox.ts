@@ -28,16 +28,28 @@
  *
  * and three rules hold everywhere below:
  *
- *   1. One statement claims and locks. `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP
- *      LOCKED LIMIT 1) RETURNING *` selects, locks, stamps and returns the row in a single
- *      round trip — so neon-http's lack of transactions is irrelevant, because there is
- *      nothing to wrap. PGlite runs the statement (SKIP LOCKED included) fine, verified by
- *      running it rather than assumed — but PGlite is one in-process backend that serializes
- *      every query, so no two sessions there ever contend for a row lock and `SKIP LOCKED` is
- *      unobservable locally. Removing it does not fail the smoke suite, and cannot. It earns
- *      its place on Neon, where each statement is its own session: without it a losing
- *      claimer blocks on the winner's row lock for the length of that UPDATE instead of
- *      moving straight to the next due row.
+ *   1. One statement claims and locks. `UPDATE ... WHERE <claimable> AND id = (SELECT ... FOR
+ *      UPDATE SKIP LOCKED LIMIT 1) RETURNING ...` selects, locks, stamps and returns the row
+ *      in a single round trip — so neon-http's lack of transactions is irrelevant, because
+ *      there is nothing to wrap.
+ *
+ *      What makes that claim exclusive is the claimability predicate repeated ON THE OUTER
+ *      UPDATE, not the lock. Under READ COMMITTED a loser that blocks on the winner's row
+ *      re-evaluates the UPDATE's own quals against the winner's new row version (EPQ) once
+ *      the winner commits; `claimed_until` is in the future by then, so the predicate is
+ *      false and the loser updates nothing. Mutual exclusion would therefore hold even if the
+ *      row lock were absent or a later edit dropped `SKIP LOCKED`. The subselect keeps its own
+ *      copy of the predicate so an unclaimable row is not picked in the first place; the outer
+ *      copy is what makes the claim correct when it is.
+ *
+ *      That distinction is load-bearing here because `SKIP LOCKED` is the one part of this
+ *      statement that CANNOT be tested on this project: PGlite is a single in-process backend
+ *      that serializes every query, so two sessions never contend for a row lock and dropping
+ *      the clause fails nothing (confirmed by mutation). It is kept — on Neon, where every
+ *      statement is its own session, it means a losing claimer moves straight to the next due
+ *      row instead of blocking for the length of the winner's UPDATE — but the correctness
+ *      argument deliberately does not depend on it. `scripts/smoke-connector-outbox.ts` pins
+ *      both copies of the predicate with a source guard, since behaviour cannot reach them.
  *   2. Every lease and every schedule is `now() + <interval>` evaluated by the DATABASE. The
  *      previous round leased items against the JavaScript clock captured at drain start; at
  *      the production budget (40s, up to 200 items) an item claimed late was leased into the
@@ -111,6 +123,13 @@ export type EnqueueOutboxInput = {
  * token that matched again. A revived row's `claimed_by` is NULL, and no drain's uuid is
  * NULL, so no stale owner can match it. An in-flight row is `pending`, so this never fires
  * against one anyway.
+ *
+ * Both `nextAttemptAt` writes are `sql\`now()\`` rather than `new Date()`, so rule 2 in the
+ * module header stays absolute: no schedule in this file is taken from the app's clock. The
+ * effect is small — "due now" either way, and skew could only ever delay a first attempt —
+ * but a rule with one quiet exception is a rule the next reader cannot trust, and the next
+ * reader is the person who has to reason about whether a timestamp is safe to compare against
+ * the database's `now()`.
  */
 export async function enqueueOutbox(input: EnqueueOutboxInput): Promise<{ id: string } | null> {
   const db = await getDb();
@@ -124,7 +143,7 @@ export async function enqueueOutbox(input: EnqueueOutboxInput): Promise<{ id: st
       entityId: input.entityId,
       payload: input.payload,
       status: "pending",
-      nextAttemptAt: new Date(),
+      nextAttemptAt: sql`now()`,
     })
     .onConflictDoUpdate({
       target: [
@@ -141,7 +160,7 @@ export async function enqueueOutbox(input: EnqueueOutboxInput): Promise<{ id: st
         attempts: 0,
         lastError: null,
         deliveredAt: null,
-        nextAttemptAt: new Date(),
+        nextAttemptAt: sql`now()`,
         claimedBy: null,
         claimedUntil: null,
       },
@@ -339,15 +358,22 @@ export async function drainOutbox(opts: {
     const worker = crypto.randomUUID();
 
     // ONE statement: it selects the oldest claimable row, locks it against any concurrent
-    // claimer (`FOR UPDATE SKIP LOCKED` — so a competing drain skips past rather than
-    // blocking behind it), stamps ownership and the attempt on it, and returns it. There is
-    // no window between "found it" and "took it" for a second drain to squeeze into, and
-    // nothing to wrap in a transaction, which matters because neon-http has none.
+    // claimer, stamps ownership and the attempt on it, and returns it. There is no window
+    // between "found it" and "took it" for a second drain to squeeze into, and nothing to
+    // wrap in a transaction, which matters because neon-http has none.
     //
     // A row is claimable when it is pending, due, and unowned — `claimed_until IS NULL OR
     // claimed_until < now()`, which is also how a crashed drain's row comes back on its own
     // without a reaper. `now()` here is the DATABASE's clock for both the lease and the
     // liveness check, so the two can never be read against different clocks.
+    //
+    // That predicate appears TWICE, on purpose. In the subselect it stops an owned row from
+    // being picked. On the outer UPDATE it is what actually enforces exclusion: a loser that
+    // blocks on this row re-checks the UPDATE's quals against the winner's committed row
+    // version, sees a future `claimed_until`, and updates nothing. `FOR UPDATE SKIP LOCKED`
+    // below is a performance measure on top of that — it lets a loser move on instead of
+    // blocking — and is deliberately NOT what correctness rests on, because it is the one
+    // clause this project's PGlite cannot exercise. See the module header.
     const claimed = rowsOf<ClaimedRow>(
       await db.execute(sql`
         UPDATE connector_outbox
@@ -355,7 +381,8 @@ export async function drainOutbox(opts: {
                claimed_until = now() + (${leaseSeconds}::double precision * interval '1 second'),
                attempts = attempts + 1,
                last_attempted_at = now()
-         WHERE id = (
+         WHERE (claimed_until IS NULL OR claimed_until < now())
+           AND id = (
            SELECT id FROM connector_outbox
             WHERE status = 'pending'
               AND next_attempt_at IS NOT NULL

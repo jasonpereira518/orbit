@@ -11,6 +11,7 @@
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
+import { readFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { connectorOutbox, externalLinks } from "../src/db/schema";
@@ -788,6 +789,81 @@ run(async () => {
   );
   await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-anchor-slow"));
   await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-anchor-fail"));
+
+  console.log("\na leased row is not claimable, even when its retry is due");
+  // The claimability predicate, exercised end to end: a row can be due for a retry and still
+  // be owned by somebody. This is the property the staggered-drain section relies on but only
+  // ever demonstrated indirectly, through two racing drains.
+  await enqueueOutbox({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-leased",
+    payload: { title: "owned by someone else" },
+  });
+  await db.execute(
+    sql`UPDATE connector_outbox
+           SET next_attempt_at = now() - interval '1 hour',
+               claimed_by = gen_random_uuid(),
+               claimed_until = now() + interval '1 hour'
+         WHERE entity_id = 'rem-leased'`
+  );
+  let leasedDeliverCalls = 0;
+  const leasedStats = await drainOutbox({
+    budgetMs: 5_000,
+    max: 10,
+    deliver: async () => {
+      leasedDeliverCalls++;
+      return { ok: true, remoteId: "should-not-happen" };
+    },
+  });
+  check("a leased row is not attempted", leasedStats.attempted === 0, JSON.stringify(leasedStats));
+  check("deliver was never invoked for it", leasedDeliverCalls === 0);
+  const [leasedRow] = await db
+    .select()
+    .from(connectorOutbox)
+    .where(eq(connectorOutbox.entityId, "rem-leased"));
+  check("its attempt count is untouched", leasedRow?.attempts === 0, String(leasedRow?.attempts));
+  await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-leased"));
+
+  console.log("\nthe claim keeps the safety properties PGlite cannot exercise (source guard)");
+  // These three are assertions about the SQL TEXT, not about behaviour, and they are here
+  // because the behaviour is not reachable from this harness:
+  //
+  //   - PGlite is one in-process backend that serializes every query, so two sessions never
+  //     contend for a row lock. Nothing here can distinguish a claim that is safe only
+  //     because of `FOR UPDATE SKIP LOCKED` from one that is safe without it. Dropping
+  //     SKIP LOCKED passes every behavioural check in this file — confirmed by mutation.
+  //   - app and database share a clock in this harness, so a lease computed in JavaScript is
+  //     indistinguishable from one computed by the database. That mutation passes too.
+  //
+  // A source guard is a weak instrument and it is used here only where the strong one cannot
+  // reach. It is mutation-tested like everything else: removing either predicate, or moving
+  // the lease onto a JavaScript clock, fails one of these.
+  const outboxSrc = readFileSync("src/lib/connectors/outbox.ts", "utf8");
+  const CLAIMABLE = "(claimed_until IS NULL OR claimed_until < now())";
+  // Anchored at `SET claimed_by`, the first line of the claim statement itself, so the module
+  // header's prose description of the same SQL cannot satisfy the guard.
+  const stmt = outboxSrc.slice(outboxSrc.indexOf("SET claimed_by"));
+  const subselectAt = stmt.indexOf("AND id = (");
+  const outerHalf = subselectAt >= 0 ? stmt.slice(0, subselectAt) : "";
+  const innerHalf = subselectAt >= 0 ? stmt.slice(subselectAt) : "";
+  check(
+    "the claimability predicate is on the outer UPDATE, so mutual exclusion does not rest on SKIP LOCKED",
+    outerHalf.includes(CLAIMABLE),
+    subselectAt < 0 ? "no `AND id = (` found in the claim statement" : "outer half lacks it"
+  );
+  check(
+    "and still inside the subselect, so an unclaimable row is never picked in the first place",
+    innerHalf.includes(CLAIMABLE)
+  );
+  // Read off the whole statement, not `outerHalf`, so that removing the subselect anchor
+  // fails only the two checks it actually concerns rather than cascading into this one.
+  check(
+    "the lease is anchored by the database, not by a JavaScript clock",
+    stmt.includes("claimed_until = now() +")
+  );
 
   console.log("\nrecordExternalLink updates in place rather than duplicating");
   await recordExternalLink({
