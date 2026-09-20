@@ -113,14 +113,13 @@ export function cachedCompleteJson(
   input: Parameters<typeof completeJson>[1],
   opts: CacheOptions<string>
 ): Promise<string> {
-  const { system, user, speed, temperature, maxOutputTokens, sharedPrefix } = input;
+  const { system, user, temperature, maxOutputTokens, sharedPrefix } = input;
   return withAiResultCache(
     userId,
     input.operation,
     {
       system,
       user: `${sharedPrefix?.text ?? ""}${user}`,
-      speed: speed ?? null,
       temperature: temperature ?? null,
       maxOutputTokens: maxOutputTokens ?? null,
     },

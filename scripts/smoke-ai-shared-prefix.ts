@@ -131,17 +131,18 @@ async function main() {
 
   await setProvider("anthropic");
   sent.length = 0;
-  const six = ["Ada Byron", "Grace Hopper", "Alan Turing", "Edsger Dijkstra", "Barbara Liskov", "Donald Knuth"];
-  replies = [identify(six), details(six.slice(0, 4)), details(six.slice(4))];
+  // More than DETAIL_BATCH_SIZE, so the notes are read by two calls and worth caching.
+  const many = ["Ada Byron", "Grace Hopper", "Alan Turing", "Edsger Dijkstra", "Barbara Liskov", "Donald Knuth", "Karen Sparck Jones", "Tony Hoare"];
+  replies = [identify(many), details(many.slice(0, 6)), details(many.slice(6))];
   const parsed = await parseMultiPersonNotesWithAI(USER, notes);
   const detailCalls = sent.slice(1);
   const blocks = detailCalls.map((s) => (s.body.messages as Array<{ content: Array<{ text: string; cache_control?: unknown }> | string }>)[0].content);
-  check("six people → two detail batches", detailCalls.length === 2, String(detailCalls.length));
+  check("more people than one batch → two detail calls", detailCalls.length === 2, String(detailCalls.length));
   check("  each carries the same cached notes block", blocks.every((b) => Array.isArray(b) && Boolean(b[0].cache_control)) && JSON.stringify((blocks[0] as Array<{ text: string }>)[0].text) === JSON.stringify((blocks[1] as Array<{ text: string }>)[0].text));
-  check("  and the parse still returns everyone", parsed.people.length === 6);
+  check("  and the parse still returns everyone", parsed.people.length === 8, String(parsed.people.length));
 
   sent.length = 0;
-  const three = six.slice(0, 3);
+  const three = many.slice(0, 3);
   replies = [identify(three), details(three)];
   await parseMultiPersonNotesWithAI(USER, notes);
   const single = sent[1];

@@ -98,7 +98,12 @@ export const userSettings = pgTable("user_settings", {
    * complete, so it never participates in provider/model selection. See `src/lib/wispr.ts`.
    */
   wisprApiKeyEncrypted: text("wispr_api_key_encrypted"),
-  aiModel: text("ai_model").default("gemini-3.5-flash"),
+  aiModel: text("ai_model").default("gemini-3.8-flash"),
+  /**
+   * The model this account was moved OFF when a default changed under it, so Settings can
+   * say so once and offer the old one back. Null for everyone who chose their own.
+   */
+  aiModelMigratedFrom: text("ai_model_migrated_from"),
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),

@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
   wispr_api_key_encrypted text,
-  ai_model text DEFAULT 'gemini-3.5-flash',
+  ai_model text DEFAULT 'gemini-3.8-flash',
+  ai_model_migrated_from text,
   onboarding_completed_at timestamptz,
   first_name text,
   last_name text,
@@ -1633,7 +1634,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 72 = ai_batch_jobs: background AI work submitted to a provider's Batch API (half price,
 // results minutes to a day later). Checked against every remote branch on Sep 19 2026.
-export const SCHEMA_VERSION = 72;
+//
+// 73 = user_settings.ai_model_migrated_from, plus the move of accounts on the old Gemini
+// default (3.5 Flash) to 3.8 Flash — half the price, and the eval in docs/ai-evals/ found
+// nothing lost. Checked against every remote branch on Sep 19 2026.
+export const SCHEMA_VERSION = 73;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3108,6 +3113,14 @@ const alters = [
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS context_note text`,
   // Schema v71: a brief remembers what it was asked, so an unchanged regeneration is free.
   `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS input_hash text`,
+  // Schema v73: the Gemini default moved to 3.8 Flash — newer, and half the price of 3.5
+  // Flash. Accounts still carrying the OLD DEFAULT move with it and are told so once;
+  // anyone who chose a model themselves is left alone. `ai_model_migrated_from IS NULL`
+  // keeps this from re-migrating someone who read the notice and picked 3.5 Flash again.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_model_migrated_from text`,
+  `ALTER TABLE user_settings ALTER COLUMN ai_model SET DEFAULT 'gemini-3.8-flash'`,
+  `UPDATE user_settings SET ai_model_migrated_from = ai_model, ai_model = 'gemini-3.8-flash'
+     WHERE ai_model = 'gemini-3.5-flash' AND ai_model_migrated_from IS NULL`,
 ];
 
 /**

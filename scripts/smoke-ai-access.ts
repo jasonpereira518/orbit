@@ -55,6 +55,7 @@ import {
 } from "../src/lib/ai-access-copy";
 import {
   MANAGED_AI_BUDGET,
+  MANAGED_DEFAULT_MODELS,
   MANAGED_MODELS,
   chooseCompletionKey,
   chooseEmbeddingKey,
@@ -212,11 +213,11 @@ function purePolicy() {
 
   console.log("\nManaged keys run managed models");
   check("an expensive model on Orbit's key is downgraded",
-    pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro" })) === "managed:gemini:gemini-3.5-flash");
+    pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro" })) === `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}`);
   check("…the same model on their own key is theirs to choose",
     pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro", personal: own })) === "personal:gemini:gemini-2.5-pro");
   check("an Anthropic user on Lifetime with only a managed Gemini key runs on Gemini",
-    pick(facts({ eligibility: "lifetime", selectedProvider: "anthropic", selectedModel: "claude-opus-4" })) === "managed:gemini:gemini-3.5-flash");
+    pick(facts({ eligibility: "lifetime", selectedProvider: "anthropic", selectedModel: "claude-opus-4" })) === `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}`);
   check("every managed model is priced (an unpriced one would slip under the dollar cap)",
     Object.values(MANAGED_MODELS).flat().every((m) => priceFor(m) !== null));
 
@@ -339,7 +340,11 @@ async function realGate() {
   check("Lifetime + own key: their key went on the wire", r.req?.key === USER_KEY, r.req?.key ?? r.err);
   r = await lastSent(() => json(U.lifetimeNone));
   check("Lifetime + no key: Orbit's managed key went on the wire", r.req?.key === MANAGED, r.req?.key ?? r.err);
-  check("…at the managed model, not the gemini-2.5-pro they picked", /models\/gemini-3\.5-flash:/.test(r.req?.url ?? ""), r.req?.url);
+  check(
+    "…at the managed model, not the gemini-2.5-pro they picked",
+    (r.req?.url ?? "").includes(`models/${MANAGED_DEFAULT_MODELS.gemini}:`),
+    r.req?.url
+  );
   r = await lastSent(() => json(U.freeOwn));
   check("non-Lifetime + own key: their key went on the wire", r.req?.key === USER_KEY, r.req?.key ?? r.err);
   r = await lastSent(() => json(U.freeNone));

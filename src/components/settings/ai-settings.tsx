@@ -58,6 +58,11 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const [keyError, setKeyError] = useState<string | null>(null);
   const [wisprKey, setWisprKey] = useState("");
   const [model, setModel] = useState(initialSettings.aiModel);
+  /**
+   * Set when a default changed under this account (`ai_model_migrated_from`). Shown once,
+   * beside the model it moved to; saving anything clears it server-side.
+   */
+  const movedFrom = initialSettings.aiModelMigratedFrom;
   const [customModel, setCustomModel] = useState(
     !PROVIDER_MODELS[initialSettings.aiProvider].some(
       (m) => m.value === initialSettings.aiModel
@@ -231,6 +236,19 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             </Button>
           </div>
         )}
+        {movedFrom && model === DEFAULT_MODELS[provider] ? (
+          <p className="text-xs text-muted-foreground">
+            Moved from {modelLabel(provider, movedFrom)} to {modelLabel(provider, model)}: newer, and
+            about half the price per token.{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2 hover:text-ink"
+              onClick={() => setModel(movedFrom)}
+            >
+              Switch back
+            </button>
+          </p>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap gap-2">

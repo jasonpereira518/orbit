@@ -62,13 +62,13 @@ export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["gemini", "openai"
  * would record no cost and slip under the dollar cap (`smoke-ai-access.ts` enforces this).
  */
 export const MANAGED_MODELS: Record<AiProvider, readonly string[]> = {
-  gemini: ["gemini-3.5-flash", "gemini-3.1-flash-lite"],
+  gemini: ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
   openai: ["gpt-4o-mini", "gpt-4.1-mini"],
   anthropic: ["claude-haiku-4-5"],
 };
 
 export const MANAGED_DEFAULT_MODELS: Record<AiProvider, string> = {
-  gemini: "gemini-3.5-flash",
+  gemini: "gemini-3.8-flash",
   openai: "gpt-4o-mini",
   anthropic: "claude-haiku-4-5",
 };
@@ -89,12 +89,16 @@ export function managedModel(provider: AiProvider, requested: string | null | un
  * all. So the "$1" cap was really letting ~$4–5 of provider spend through.
  *
  * On Sep 19 2026 Jason chose to KEEP that call count rather than shrink it: the prices were
- * corrected and the cap raised to $5.00, which is the same ~140 answers / ~200 captures
- * metered honestly. It is an interim figure — the cost-optimization plan (thinking control,
- * caching, cheaper tiers) lowers the cost per call, and the cap is re-derived from the
- * eval's measured per-call cost once that lands. At $5.00 of maximal use a month, the $25
- * intro price covers five months and the $75 standard price fifteen; typical use is far
- * lower, and the runway alert below watches the aggregate. Change it here, and only here.
+ * corrected and the cap raised to $5.00 as an interim figure, pending measurement.
+ *
+ * It is now MEASURED. The eval (docs/ai-evals/, Sep 19 2026) puts a chat answer — question
+ * understanding, reranking, the embedding and the answer itself — at about $0.0025 on the
+ * managed default, and a note capture at about $0.0086. The promise in the line above,
+ * ~140 answers or ~200 captures, therefore costs about $0.35 or about $1.72, so $2.00
+ * covers either with room and the cap comes back DOWN from the interim $5.00. At $2.00 of
+ * maximal use a month the $25 intro price covers a year and the $75 standard price three;
+ * typical use is far lower, and the runway alert below watches the aggregate. Change it
+ * here, and only here.
  *
  *  - `monthlyCostMicros`  estimated provider spend, from `usage_events.estimated_cost_micros`
  *  - `monthlyCalls`       a runaway-loop guard that holds even where cost is unknown
@@ -102,7 +106,7 @@ export function managedModel(provider: AiProvider, requested: string | null | un
  *                         LinkedIn import cannot spend the allowance a person needs for chat
  */
 export const MANAGED_AI_BUDGET = {
-  monthlyCostMicros: 5_000_000,
+  monthlyCostMicros: 2_000_000,
   monthlyCalls: 2_000,
   backgroundShare: 0.5,
 } as const;
@@ -141,10 +145,10 @@ export const BACKGROUND_OPERATIONS: ReadonlySet<string> = BACKGROUND_AI_OPERATIO
  * bounds only by `accounts × cap`. `runwayYears` is the unit-economics line: if the last 30
  * days' managed spend, annualised, would consume every Lifetime dollar ever booked in fewer
  * than this many years, the pricing is not covering the promise. `dailySpikeMicros` is five
- * accounts' whole monthly allowance in one day — it moved with the cap (Sep 19 2026).
+ * accounts' whole monthly allowance in one day; it moves with the cap.
  */
 export const MANAGED_AI_ALERTS = {
-  dailySpikeMicros: 25_000_000,
+  dailySpikeMicros: 10_000_000,
   runwayYears: 4,
   /** Below this 30-day spend the runway figure is noise, not a trend. */
   runwayMinSpendMicros: 1_000_000,

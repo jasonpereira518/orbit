@@ -8,6 +8,15 @@
  *     --provider anthropic --model claude-sonnet-5 --runs 2 \
  *     --compare docs/ai-evals/2026-09-19-anthropic-claude-sonnet-4-5.json
  *
+ * A candidate is a JSON file passed with `--config`, applied to the registry and the tier
+ * maps before anything runs:
+ *   { "model": "gemini-3.8-flash",            // the user's model for this run
+ *     "thinking": { "*": "minimal",           // per operation, or "*" for every one
+ *                   "chat.answer": "low" },
+ *     "tiers": { "recruiter.scan": "fast" },  // move an operation to another tier
+ *     "fastModels": { "gemini": "gemini-3.5-flash-lite" },
+ *     "visionModels": { "gemini": "gemini-3.8-flash" } }
+ *
  * Flags: --provider gemini|openai|anthropic (default gemini) · --model <id> (default: the
  * provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,digest
  * (default all) · --runs N (default 1; use 2+ for a gate decision — models are not
@@ -41,6 +50,9 @@ import { usageEvents, userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { DEFAULT_MODELS, resolveAiProvider, type AiProvider } from "../src/lib/ai-providers";
 import { FIXTURE_DIR, TASKS, TASK_NAMES, type TaskName, type TaskResult } from "./lib/eval-ai-tasks";
+import { AI_OPERATIONS, AI_OPERATION_IDS, type AiOperationId, type AiTier } from "../src/lib/ai-operations";
+import { FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
+import type { ThinkingLevel } from "../src/lib/ai-request-options";
 import { gate, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
 
 const USER = "eval-ai-user";
@@ -63,6 +75,15 @@ type Args = {
   out: string;
   compare?: string;
   keysFrom?: string;
+  config?: string;
+};
+
+type CandidateConfig = {
+  model?: string;
+  thinking?: Record<string, ThinkingLevel>;
+  tiers?: Record<string, AiTier>;
+  fastModels?: Partial<Record<AiProvider, string>>;
+  visionModels?: Partial<Record<AiProvider, string>>;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -89,7 +110,37 @@ function parseArgs(argv: string[]): Args {
     out: get("--out") ?? join("docs", "ai-evals", `${date}-${label.replace(/[^\w.-]+/g, "_")}.json`),
     compare: get("--compare"),
     keysFrom: get("--keys-from"),
+    config: get("--config"),
   };
+}
+
+/**
+ * Applies a candidate to the code the eval is about to run.
+ *
+ * By mutation, deliberately: the tier maps and the operation registry are what production
+ * reads, so a candidate that passes here is a candidate that ships by editing those same
+ * values — there is no separate configuration path that could disagree with them.
+ */
+function applyCandidate(config: CandidateConfig): string[] {
+  const applied: string[] = [];
+  for (const [op, level] of Object.entries(config.thinking ?? {})) {
+    const targets = op === "*" ? AI_OPERATION_IDS : [op as AiOperationId];
+    for (const id of targets) (AI_OPERATIONS[id] as { thinking?: ThinkingLevel }).thinking = level;
+    applied.push(`thinking ${op}=${level}`);
+  }
+  for (const [op, tier] of Object.entries(config.tiers ?? {})) {
+    (AI_OPERATIONS[op as AiOperationId] as { tier: AiTier }).tier = tier;
+    applied.push(`tier ${op}=${tier}`);
+  }
+  for (const [provider, model] of Object.entries(config.fastModels ?? {})) {
+    FAST_MODELS[provider as AiProvider] = model;
+    applied.push(`fast ${provider}=${model}`);
+  }
+  for (const [provider, model] of Object.entries(config.visionModels ?? {})) {
+    VISION_MODELS[provider as AiProvider] = model;
+    applied.push(`vision ${provider}=${model}`);
+  }
+  return applied;
 }
 
 /**
@@ -212,6 +263,8 @@ export type EvalReport = {
   commit: string | null;
   fixtures: string;
   runs: number;
+  /** The candidate applied to the registry for this run, if any. */
+  candidate?: CandidateConfig;
   tasks: Partial<
     Record<
       TaskName,
@@ -230,6 +283,12 @@ export type EvalReport = {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const candidate: CandidateConfig = args.config
+    ? (JSON.parse(readFileSync(args.config, "utf8")) as CandidateConfig)
+    : {};
+  if (candidate.model) args.model = candidate.model;
+  const applied = applyCandidate(candidate);
+  if (applied.length) console.log(`eval-ai: candidate — ${applied.join(", ")}`);
   const keys = evalKeys(args.keysFrom);
   if (!keys[args.provider]) {
     throw new Error(
@@ -249,6 +308,7 @@ async function main() {
     commit: gitCommit(),
     fixtures: fixtureDigest(),
     runs: args.runs,
+    ...(applied.length ? { candidate } : {}),
     tasks: {},
   };
 

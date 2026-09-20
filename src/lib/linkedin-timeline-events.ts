@@ -189,7 +189,6 @@ export async function extractLinkedInTimelineEvents(
       operation: "import.linkedin.timeline",
       // The fast tier (FAST_MODELS in ai.ts), not the user's chat model: extraction of at
       // most eight short events does not need it, and this runs once per conversation.
-      speed: "fast",
       temperature: 0.1,
       system: prompt.system,
       user: prompt.user,

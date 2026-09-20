@@ -52,6 +52,7 @@ import {
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
 import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
 import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
+import { EMBEDDING_MODELS, modelForOperation } from "@/lib/ai-models";
 import type { ThinkingConfig } from "@google/genai";
 import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
 
@@ -292,46 +293,17 @@ export type CaptureParseHints = {
 };
 
 const TWO_PASS_CHAR_THRESHOLD = 2500;
-const DETAIL_BATCH_SIZE = 4;
+/**
+ * People per details call. Every batch re-reads the whole note, so a wider batch is fewer
+ * copies of it; too wide and the answer runs into `CAPTURE_MAX_OUTPUT_TOKENS`.
+ */
+const DETAIL_BATCH_SIZE = 6;
 const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 
-const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
-const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
+const GEMINI_EMBEDDING_MODEL = EMBEDDING_MODELS.gemini;
+const OPENAI_EMBEDDING_MODEL = EMBEDDING_MODELS.openai;
 
-/** Exported for `smoke-ai-operations.ts`, which holds every reachable model to a price row. */
-export const EMBEDDING_MODELS: Record<EmbeddingBackend, string> = {
-  gemini: GEMINI_EMBEDDING_MODEL,
-  openai: OPENAI_EMBEDDING_MODEL,
-};
-
-/**
- * Cheapest usable model per provider, for accuracy-stage calls (query
- * understanding, rerank) where the user's configured model would be overkill.
- * Values must exist in PROVIDER_MODELS (smoke-fast-model.ts enforces this).
- */
-export const FAST_MODELS: Record<AiProvider, string> = {
-  gemini: "gemini-3.1-flash-lite",
-  openai: "gpt-4o-mini",
-  anthropic: "claude-haiku-4-5",
-};
-
-/**
- * What reads a photograph, regardless of what the user picked for chat.
- *
- * Deliberately NOT `FAST_MODELS`. OCR sits at the root of the capture pipeline: every
- * contact, every dedupe decision and every reminder downstream inherits whatever it got
- * wrong, and because the photo is processed ephemerally and never stored, a misread name
- * cannot be recovered later — there is nothing left to re-read. The lite tiers save a
- * fraction of a cent per page and give up exactly the thing that matters most here, which
- * is dense handwriting. Speed comes from transcribing pages concurrently
- * (`capture-ingest.ts`) and from shrinking them before upload (`scan-image.ts`), never
- * from a weaker pair of eyes.
- */
-export const VISION_MODELS: Record<AiProvider, string> = {
-  gemini: "gemini-3.5-flash",
-  openai: "gpt-4o",
-  anthropic: "claude-sonnet-4-5",
-};
+export { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "@/lib/ai-models";
 
 /**
  * The grant for "the user's model", resolved through the AI gate.
@@ -525,10 +497,8 @@ export async function completeJson(
     user: string;
     temperature?: number;
     maxOutputTokens?: number;
-    /** Call-site id for usage telemetry and the managed allowance, e.g. "capture.parse". */
+    /** Call-site id for usage telemetry, the managed allowance, and which model runs it. */
     operation: AiOperationId;
-    /** "fast" routes to FAST_MODELS[provider] instead of the user's configured model. */
-    speed?: "fast";
     /**
      * A leading part of the user message that other calls in the same job repeat byte for
      * byte — the full notes every capture detail batch re-reads. The model sees exactly
@@ -543,7 +513,7 @@ export async function completeJson(
   const { operation } = input;
   const grant = await (await resolveAiAccess(userId)).completion(operation);
   const { provider, keyOwner } = grant;
-  const model = input.speed === "fast" ? FAST_MODELS[provider] : grant.model;
+  const model = modelForOperation(operation, grant);
   const temperature = input.temperature ?? 0.2;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
@@ -647,7 +617,7 @@ export async function completeMultimodalJson(
   const { operation } = input;
   const grant = await (await resolveAiAccess(userId)).completion(operation);
   // Resolved out here, not inside, so usage telemetry records the model that actually ran.
-  const model = input.speed === "vision" ? VISION_MODELS[grant.provider] : grant.model;
+  const model = modelForOperation(input.operation, grant);
   return runOnGrant(grant, withUsage(
     {
       userId,
@@ -666,10 +636,8 @@ type MultimodalInput = {
   parts: MultimodalPart[];
   temperature?: number;
   maxOutputTokens?: number;
-  /** Call-site id for usage telemetry and the managed allowance. */
+  /** Call-site id for usage telemetry, the managed allowance, and which model runs it. */
   operation: AiOperationId;
-  /** "vision" routes to VISION_MODELS[provider] instead of the user's configured model. */
-  speed?: "vision";
 };
 
 /** Body split out so `completeMultimodalJson` stays a thin instrumented wrapper. */
@@ -1071,7 +1039,6 @@ async function transcribeNotePage(
     temperature: 0.1,
     maxOutputTokens: 8192,
     // OCR quality is load-bearing for everything downstream — see VISION_MODELS.
-    speed: "vision",
     system: `You transcribe networking / meeting notes from photos (handwritten, whiteboard, typed screenshots, business cards).
 Return strict JSON: { "text": string }
 Rules:
@@ -1329,13 +1296,34 @@ Rules:
   };
 }
 
-async function parseMultiPersonTwoPass(
+/**
+ * The sentence in the notes that names this person, or null.
+ *
+ * Cheap and exact where it works: an excerpt has to be verbatim from the notes anyway, so
+ * finding it by reading is strictly better than paying a model to copy it out. Falls back
+ * to null for a person the note only refers to obliquely ("her cofounder").
+ */
+function sentenceAbout(notes: string, name: string): string | null {
+  const first = name.trim().split(/\s+/)[0];
+  if (!first || first.length < 3) return null;
+  // Sentence-ish: split on terminators and newlines, both of which people use in notes.
+  const pieces = notes.split(/(?<=[.!?])\s+|\n+/);
+  const needle = name.trim().toLowerCase();
+  const firstNeedle = first.toLowerCase();
+  const hit =
+    pieces.find((p) => p.toLowerCase().includes(needle)) ??
+    pieces.find((p) => new RegExp(`\\b${firstNeedle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(p.toLowerCase()));
+  const trimmed = hit?.trim();
+  return trimmed && trimmed.length >= 12 ? trimmed.slice(0, 600) : null;
+}
+
+/** Pass A: who is in these notes. Skipped when a single pass already answered that. */
+async function identifyPeople(
   userId: string,
-  notes: string,
-  hints?: CaptureParseHints | null,
-  onProgress?: ParseProgress,
-): Promise<ParsedMultiPersonNotes> {
-  const sliced = notes.slice(0, 100_000);
+  sliced: string,
+  hints: CaptureParseHints | null | undefined,
+  onProgress: ParseProgress | undefined,
+) {
   const identityRaw = await completeJson(userId, {
     operation: "capture.parse.identify",
     temperature: 0.2,
@@ -1370,7 +1358,34 @@ Rules:
   });
 
   await beat(onProgress);
-  const identity = multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
+  await beat(onProgress);
+  return multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
+}
+
+async function parseMultiPersonTwoPass(
+  userId: string,
+  notes: string,
+  hints?: CaptureParseHints | null,
+  onProgress?: ParseProgress,
+  /** People a single pass already found, so an escalation need not pay to identify twice. */
+  known?: ParsedMultiPersonNotes,
+): Promise<ParsedMultiPersonNotes> {
+  const sliced = notes.slice(0, 100_000);
+  const identity = known
+    ? {
+        shared_notes: known.shared_notes,
+        interaction_date: known.interaction_date,
+        met_at: null as string | null,
+        people: known.people.map((p) => ({
+          name: p.name ?? "",
+          email: p.email,
+          company: p.company,
+          role: p.role,
+          presence: p.presence,
+        })),
+        mentions: known.mentions,
+      }
+    : await identifyPeople(userId, sliced, hints, onProgress);
   const peopleIds = identity.people.filter((p) => p.name?.trim());
 
   // Merge seed people that weren't found by name/email.
@@ -1502,30 +1517,47 @@ Rules:
         source_excerpt: found?.source_excerpt || "",
       };
 
-      // Retry once for empty excerpt on multi-person dumps.
-      if (!merged.source_excerpt.trim() && peopleIds.length > 1) {
-        try {
-          const retryRaw = await completeJson(userId, {
-            operation: "capture.parse.excerpt-retry",
-            temperature: 0.1,
-            maxOutputTokens: 2048,
-            user: `NOTES:\n${sliced}\n\nPerson: ${merged.name}\nReturn JSON { "source_excerpt": string } with ONLY this person's specific slice of the notes.`,
-            system:
-              "Return strict JSON with source_excerpt = the person-specific portion of the notes. Never return the whole dump.",
-          });
-          await beat(onProgress);
-          const retry = parseAiJson<{ source_excerpt?: string }>(retryRaw);
-          if (retry.source_excerpt?.trim()) {
-            merged.source_excerpt = retry.source_excerpt.trim();
-          }
-        } catch {
-          // Keep empty excerpt; caller still has shared context + fields.
-        }
-      }
-
       detailed.push(merged);
     }
   }
+
+  // Excerpts that came back empty. The notes are already in hand, so look for the person's
+  // own sentence first — free, and exact where the note names them. Only whoever is still
+  // empty goes back to the model, and as ONE request: this used to be a call per person,
+  // each carrying the whole note again.
+  const stillEmpty: Array<ParsedPersonNote & { name: string }> = [];
+  for (const person of detailed) {
+    const name = person.name?.trim();
+    if (!name || person.source_excerpt.trim() || peopleIds.length <= 1) continue;
+    const found = sentenceAbout(sliced, name);
+    if (found) person.source_excerpt = found;
+    else stillEmpty.push({ ...person, name });
+  }
+  if (stillEmpty.length > 0) {
+    try {
+      const retryRaw = await completeJson(userId, {
+        operation: "capture.parse.excerpt-retry",
+        temperature: 0.1,
+        maxOutputTokens: 2048,
+        user: `NOTES:\n${sliced}\n\nPeople:\n${stillEmpty.map((p, i) => `${i + 1}. ${p.name}`).join("\n")}\n\nReturn JSON { "excerpts": [{ "name": string, "source_excerpt": string }] } with each person's own slice of the notes.`,
+        system:
+          "Return strict JSON with one entry per requested person: source_excerpt = that person's portion of the notes, copied verbatim. Never return the whole dump. Use an empty string when the notes say nothing specific about them.",
+      });
+      await beat(onProgress);
+      const retry = parseAiJson<{ excerpts?: Array<{ name?: string; source_excerpt?: string }> }>(retryRaw);
+      for (const entry of retry.excerpts ?? []) {
+        const excerpt = entry.source_excerpt?.trim();
+        if (!excerpt) continue;
+        // Back onto the row itself: `stillEmpty` holds copies, made so the name is known
+        // to be present.
+        const target = detailed.find((p) => p.name?.trim().toLowerCase() === entry.name?.trim().toLowerCase());
+        if (target && !target.source_excerpt.trim()) target.source_excerpt = excerpt;
+      }
+    } catch {
+      // Keep the empty excerpts; the caller still has shared context + fields.
+    }
+  }
+
 
   return {
     shared_notes,
@@ -1551,9 +1583,10 @@ export async function parseMultiPersonNotesWithAI(
 
   const single = await parseMultiPersonSinglePass(userId, notes, hints);
   await beat(opts.onProgress);
-  // Escalate to two-pass when many people came back (token pressure risk).
+  // Escalate to two-pass when many people came back (token pressure risk) — reusing the
+  // people this pass already found, rather than paying to identify them a second time.
   if (single.people.length > DETAIL_BATCH_SIZE) {
-    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, single);
   }
   return single;
 }
@@ -1894,7 +1927,8 @@ async function streamText(
   onDelta: (delta: string) => void
 ): Promise<string> {
   const grant = await (await resolveAiAccess(userId)).completion(input.operation);
-  const { provider, model, keyOwner } = grant;
+  const { provider, keyOwner } = grant;
+  const model = modelForOperation(input.operation, grant);
   const temperature = input.temperature ?? 0.3;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   // One deadline per call plus the caller's own abort — a fresh deadline per call, as always.

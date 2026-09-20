@@ -16,6 +16,7 @@ import {
   isAiOperationId,
 } from "../src/lib/ai-operations";
 import { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
+import { modelForOperation } from "../src/lib/ai-models";
 import { AI_PROVIDERS, DEFAULT_MODELS, PROVIDER_MODELS } from "../src/lib/ai-providers";
 import { MANAGED_DEFAULT_MODELS, MANAGED_MODELS } from "../src/lib/managed-ai-policy";
 import { priceFor } from "../src/lib/ai-pricing";
@@ -64,31 +65,35 @@ console.log("Every emitted operation id is registered");
   }
 }
 
-console.log("\nRecorded tiers match the call sites");
+console.log("\nThe registry's tier is what picks the model");
 {
-  // Until routing moves into the registry, `speed: "fast"` / `speed: "vision"` at the call
-  // site is what actually picks the model. An operation id within a few lines of one of
-  // those must be registered on that tier, and each fast/vision operation must have one.
-  const nearSpeed = new Map<string, Set<string>>();
-  for (const { text } of files) {
-    for (const m of text.matchAll(/speed:\s*"(fast|vision)"/g)) {
-      const window = text.slice(Math.max(0, m.index! - 600), m.index! + 600);
-      for (const op of window.matchAll(/operation:\s*"([a-z][\w.-]*)"/g)) {
-        if (!nearSpeed.has(op[1])) nearSpeed.set(op[1], new Set());
-        nearSpeed.get(op[1])!.add(m[1]);
-      }
-    }
-  }
+  // `modelForOperation` is the only thing that answers "which model runs this", so these
+  // are the routing rules themselves, not a copy of them.
+  const own = { provider: "gemini" as const, model: "gemini-2.5-pro", keyOwner: "user" as const };
+  check("a `user` operation runs the person's own model", modelForOperation("chat.answer", own) === "gemini-2.5-pro");
+  check("a `fast` operation runs the fast tier", modelForOperation("chat.rerank", own) === FAST_MODELS.gemini);
+  check("a `vision` operation runs the vision tier", modelForOperation("capture.transcribe.page", own) === VISION_MODELS.gemini);
+
+  // Nobody is moved onto a DEARER model by a tier that exists to save money.
+  const thrifty = { provider: "gemini" as const, model: "gemini-3.1-flash-lite", keyOwner: "user" as const };
+  check(
+    "someone already on a cheaper model than the tier keeps theirs",
+    modelForOperation("capture.transcribe.page", thrifty) === "gemini-3.1-flash-lite"
+  );
+
+  // On Orbit's key every tier resolves through the managed allowlist. Vision used to reach
+  // past it, and gpt-4o is 16x gpt-4o-mini.
+  const managed = { provider: "openai" as const, model: "gpt-4o-mini", keyOwner: "orbit" as const };
+  const visionOnOrbit = modelForOperation("capture.transcribe.page", managed);
+  check(
+    `vision on Orbit's key stays on the allowlist (${visionOnOrbit})`,
+    MANAGED_MODELS.openai.includes(visionOnOrbit)
+  );
   for (const id of AI_OPERATION_IDS) {
     const tier = AI_OPERATIONS[id].tier;
     if (tier !== "fast" && tier !== "vision") continue;
-    check(`${id} (${tier}) is routed ${tier} at its call site`, nearSpeed.get(id)?.has(tier) === true);
-  }
-  for (const [id, speeds] of nearSpeed) {
-    if (!isAiOperationId(id)) continue;
-    for (const speed of speeds) {
-      check(`${id} next to speed "${speed}" is registered ${speed}`, AI_OPERATIONS[id].tier === speed);
-    }
+    const chosen = modelForOperation(id, { provider: "gemini", model: "gemini-3.5-flash", keyOwner: "orbit" });
+    check(`${id} on Orbit's key resolves to an allowed model`, MANAGED_MODELS.gemini.includes(chosen), chosen);
   }
 }
 
