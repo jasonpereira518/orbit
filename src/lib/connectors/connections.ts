@@ -253,7 +253,36 @@ export async function upsertConnectorConnection(
     .values(values)
     .onConflictDoUpdate({
       target: [connectorConnections.userId, connectorConnections.connectorId],
-      set: values,
+      // Most OAuth2 providers hand back a refresh token only on first consent, so a later
+      // reconnect or token refresh that does not resupply one must not erase the one on
+      // file — Task 6's `refreshAccessToken` returns exactly that shape. `label`,
+      // `accountRef` and `scopes` follow the same "keep what's stored unless a new value
+      // shows up" rule. Mirrors `upsertEventConnection` in `src/lib/events/connections.ts`,
+      // which COALESCEs the same four columns against `excluded`.
+      set: {
+        authKind: sql`excluded.auth_kind`,
+        label: sql`coalesce(excluded.label, ${connectorConnections.label})`,
+        accountRef: sql`coalesce(excluded.account_ref, ${connectorConnections.accountRef})`,
+        // Unconditionally overwritten, not coalesced: a reconnect that supplies a new
+        // secret must replace the old one. The auth-kind split in `values` above already
+        // nulls out whichever of these two columns no longer applies, so a switch between
+        // `api_key` and `oauth2` never leaves a stale secret behind in the other column.
+        apiKeyEncrypted: sql`excluded.api_key_encrypted`,
+        accessTokenEncrypted: sql`excluded.access_token_encrypted`,
+        refreshTokenEncrypted: sql`coalesce(excluded.refresh_token_encrypted, ${connectorConnections.refreshTokenEncrypted})`,
+        tokenExpiresAt: sql`excluded.token_expires_at`,
+        scopes: sql`coalesce(excluded.scopes, ${connectorConnections.scopes})`,
+        capabilities: sql`excluded.capabilities`,
+        // Reconnect-clears-stale-state: a fresh grant means none of the old run's error
+        // state still describes this row.
+        status: values.status,
+        syncStatus: values.syncStatus,
+        syncStartedAt: values.syncStartedAt,
+        syncError: values.syncError,
+        syncFailures: values.syncFailures,
+        nextSyncAt: sql`excluded.next_sync_at`,
+        updatedAt: sql`excluded.updated_at`,
+      },
     })
     // Bare `.returning()`, not `.returning({ ... })` — an explicit field selector defeats
     // Drizzle's overload resolution after `.onConflictDoUpdate()` against the union `Db`

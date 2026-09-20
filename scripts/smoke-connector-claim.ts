@@ -16,6 +16,7 @@ import {
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
 import { SYNC_LEASE_MS } from "../src/lib/provider-connections";
+import { decryptOrNull } from "../src/lib/crypto";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -74,6 +75,81 @@ run(async () => {
   await disarmConnectorSync(conn.id, "needs attention");
   const [disarmed] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, conn.id));
   check("disarming unschedules the connection", disarmed?.nextSyncAt === null);
+
+  console.log("\nupsert coalesce semantics (reconnect keeps unresupplied fields)");
+  const COALESCE_CONNECTOR = "asana";
+  const first = await upsertConnectorConnection({
+    userId: USER,
+    connectorId: COALESCE_CONNECTOR,
+    authKind: "oauth2",
+    accessToken: "access-1",
+    refreshToken: "refresh-1",
+    label: "Acme Workspace",
+    scopes: "tasks:read",
+  });
+
+  // A reconnect / token refresh that supplies only a new access token — the shape
+  // Task 6's `refreshAccessToken` produces when the provider does not re-issue a
+  // refresh token.
+  const reup = await upsertConnectorConnection({
+    userId: USER,
+    connectorId: COALESCE_CONNECTOR,
+    authKind: "oauth2",
+    accessToken: "access-2",
+  });
+  check("coalesce: reupsert updates the same row", reup.id === first.id);
+
+  const [row1] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, first.id));
+  check("coalesce: label survives when not resupplied", row1?.label === "Acme Workspace");
+  check("coalesce: scopes survive when not resupplied", row1?.scopes === "tasks:read");
+  check(
+    "coalesce: refresh token survives when not resupplied",
+    decryptOrNull(row1?.refreshTokenEncrypted ?? null) === "refresh-1"
+  );
+  check(
+    "coalesce: access token is replaced with the new value",
+    decryptOrNull(row1?.accessTokenEncrypted ?? null) === "access-2"
+  );
+
+  // A reconnect that DOES supply new label/scopes must still replace them.
+  await upsertConnectorConnection({
+    userId: USER,
+    connectorId: COALESCE_CONNECTOR,
+    authKind: "oauth2",
+    accessToken: "access-3",
+    label: "New Workspace",
+    scopes: "tasks:write",
+  });
+  const [row2] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, first.id));
+  check("coalesce: label is replaced when resupplied", row2?.label === "New Workspace");
+  check("coalesce: scopes are replaced when resupplied", row2?.scopes === "tasks:write");
+
+  console.log("\nauth-kind switch nulls the column that no longer applies");
+  await upsertConnectorConnection({
+    userId: USER,
+    connectorId: COALESCE_CONNECTOR,
+    authKind: "api_key",
+    accessToken: "api-key-1",
+  });
+  const [row3] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, first.id));
+  check("switching to api_key nulls the old oauth access token", row3?.accessTokenEncrypted === null);
+  check(
+    "switching to api_key stores the new secret as an api key",
+    decryptOrNull(row3?.apiKeyEncrypted ?? null) === "api-key-1"
+  );
+
+  await upsertConnectorConnection({
+    userId: USER,
+    connectorId: COALESCE_CONNECTOR,
+    authKind: "oauth2",
+    accessToken: "access-4",
+  });
+  const [row4] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, first.id));
+  check("switching back to oauth2 nulls the api key", row4?.apiKeyEncrypted === null);
+  check(
+    "switching back to oauth2 stores the new secret as an access token",
+    decryptOrNull(row4?.accessTokenEncrypted ?? null) === "access-4"
+  );
 
   await db.delete(connectorConnections).where(eq(connectorConnections.userId, USER));
 
