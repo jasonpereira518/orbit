@@ -4352,8 +4352,14 @@ export type ExternalLink = typeof externalLinks.$inferSelect;
  * Pending writes to other people's systems.
  *
  * Deliberately the same shape and the same retry rules as `outbound_webhook_deliveries`: an
- * at-least-once queue with a jittered ladder and a dead state. The unique index is what makes
- * enqueue idempotent — a retried server action cannot put two tasks in someone's Reminders.
+ * at-least-once queue with a jittered ladder and a dead state. The unique index only keeps a
+ * still-`pending` row from being queued twice — a retried server action against an action
+ * already in flight is a no-op. It does NOT block re-queuing a `delivered` or `dead` row:
+ * `enqueueOutbox` revives those in place with a fresh payload (see its own doc comment),
+ * because a completed follow-up must be re-sendable and a provider outage must not
+ * permanently poison the key. What stops two DRAINS from both sending the same claimed row
+ * is the drain's own claim-with-lease (see `drainOutbox` in `src/lib/connectors/outbox.ts`),
+ * not this index.
  */
 export const connectorOutbox = pgTable(
   "connector_outbox",

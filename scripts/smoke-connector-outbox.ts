@@ -254,10 +254,10 @@ run(async () => {
   });
   const timeoutStarted = Date.now();
   const timeoutStats = await drainOutbox({
-    // Small on purpose: the per-item bound is min(the module's own ceiling, remaining
-    // budget), so a tight budget here forces the timeout path without waiting on the
-    // module's full internal ceiling.
-    budgetMs: 400,
+    // Above ITEM_BUDGET_FLOOR_MS (2s) so the item is actually claimed rather than skipped by
+    // the NEW-1 floor guard, but still well under the module's own 15s ceiling, so a tight
+    // budget here forces the timeout path without waiting on the full internal ceiling.
+    budgetMs: 3_000,
     max: 10,
     deliver: () => new Promise(() => {}), // deliberately never resolves
   });
@@ -286,7 +286,7 @@ run(async () => {
     payload: { title: "No connector can take this yet" },
   });
   const nonRetryableStats = await drainOutbox({
-    budgetMs: 2_000,
+    budgetMs: 3_000, // above ITEM_BUDGET_FLOOR_MS; see the timeout test above
     max: 10,
     deliver: async () => ({ ok: false, error: "cannot receive writes yet", retryable: false }),
   });
@@ -301,6 +301,98 @@ run(async () => {
     deadOnArrival?.attempts === 1,
     String(deadOnArrival?.attempts)
   );
+
+  console.log(
+    "\na drain with too little budget left must not claim-then-timeout (NEW-1 regression)"
+  );
+  await enqueueOutbox({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-floor",
+    payload: { title: "tight budget" },
+  });
+  let floorDeliverCalls = 0;
+  const floorStats = await drainOutbox({
+    // Far below ITEM_BUDGET_FLOOR_MS. Without the floor guard, this still claims the row (the
+    // deadline check at loop-top only asked "any budget at all," not "enough to be worth it"),
+    // then hands `deliver` a near-zero timeout — so a perfectly healthy 500ms delivery below
+    // gets charged a failed attempt for a call that never had a chance to finish.
+    budgetMs: 50,
+    max: 10,
+    deliver: async () => {
+      floorDeliverCalls++;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return { ok: true, remoteId: "remote-floor" };
+    },
+  });
+  check("nothing was attempted", floorStats.attempted === 0, JSON.stringify(floorStats));
+  check("deliver was never invoked", floorDeliverCalls === 0);
+  const [untouchedFloor] = await db
+    .select()
+    .from(connectorOutbox)
+    .where(eq(connectorOutbox.entityId, "rem-floor"));
+  check("attempts stayed at zero", untouchedFloor?.attempts === 0, String(untouchedFloor?.attempts));
+  check("still pending", untouchedFloor?.status === "pending");
+  check("no error was recorded", untouchedFloor?.lastError === null);
+  // Done with this one: clear it so it doesn't linger as a due row for a later section.
+  await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-floor"));
+
+  console.log(
+    "\ntwo overlapping drains over one due row must call deliver exactly once (NEW-2 regression)"
+  );
+  await enqueueOutbox({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-race",
+    payload: { title: "raced" },
+  });
+  let raceDeliverCalls = 0;
+  const raceHandled: string[] = [];
+  // Models the reviewer's probe: one drain claims the row and is mid-delivery (slow on
+  // purpose) when a second, independently-timed drain starts its own SELECT over the same
+  // due row. The attempts-only CAS does not protect against this — the second drain reads
+  // the fresh, post-claim `attempts` value and its own CAS matches it — only a lease that
+  // pushes `nextAttemptAt` into the future closes it.
+  const slowDrain = drainOutbox({
+    budgetMs: 5_000,
+    max: 10,
+    deliver: async (item) => {
+      raceDeliverCalls++;
+      raceHandled.push(`slow:${item.entityId}@attempt${item.attempts}`);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return { ok: true, remoteId: "remote-race-slow" };
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const fastDrain = drainOutbox({
+    budgetMs: 5_000,
+    max: 10,
+    deliver: async (item) => {
+      raceDeliverCalls++;
+      raceHandled.push(`fast:${item.entityId}@attempt${item.attempts}`);
+      return { ok: true, remoteId: "remote-race-fast" };
+    },
+  });
+  const [slowStats, fastStats] = await Promise.all([slowDrain, fastDrain]);
+  check(
+    "deliver was invoked exactly once across both drains",
+    raceDeliverCalls === 1,
+    JSON.stringify({ raceDeliverCalls, raceHandled })
+  );
+  check(
+    "exactly one of the two drains delivered it",
+    slowStats.delivered + fastStats.delivered === 1,
+    JSON.stringify({ slowStats, fastStats })
+  );
+  const [racedRow] = await db
+    .select()
+    .from(connectorOutbox)
+    .where(eq(connectorOutbox.entityId, "rem-race"));
+  check("the row ends delivered exactly once", racedRow?.status === "delivered");
 
   console.log("\nrecordExternalLink updates in place rather than duplicating");
   await recordExternalLink({

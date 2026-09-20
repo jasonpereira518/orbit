@@ -131,6 +131,33 @@ export type OutboxDrainStats = { attempted: number; delivered: number; failed: n
 const PER_ITEM_DELIVER_TIMEOUT_MS = 15_000;
 
 /**
+ * How long a claim reserves a row before another drain may pick it up.
+ *
+ * Comfortably longer than `PER_ITEM_DELIVER_TIMEOUT_MS` on purpose: the claimed window has to
+ * cover the deliver call itself PLUS the claim/lookup round trips that happen before it and
+ * the status-update write that happens after it, so the lease outliving just the timeout by a
+ * small margin would leave no slack for that overhead. Double the deliver timeout is that
+ * margin. See the CAS comment in `drainOutbox` for what this does and does not guarantee.
+ */
+const CLAIM_LEASE_MS = 30_000;
+
+/**
+ * The minimum remaining budget worth claiming a row for.
+ *
+ * The claim and the external-link lookup are each a neon-http round trip — reproduced in
+ * production at roughly 60-160ms combined. Without a floor, a drain running low on budget
+ * would claim a row (burning an attempt via the CAS below), then immediately hand `deliver`
+ * a timeout of whatever sliver of budget is left — sometimes 0 — so a perfectly healthy
+ * delivery gets charged a failed attempt for a call that was never given a chance to run.
+ * 500ms covers that round-trip pair with margin; 1500ms on top is the shortest window a real
+ * delivery could plausibly complete in. Below the sum, the item is left for the next drain
+ * instead of being claimed and immediately timed out.
+ */
+const MIN_ROUND_TRIP_BUDGET_MS = 500;
+const MIN_DELIVER_WINDOW_MS = 1_500;
+const ITEM_BUDGET_FLOOR_MS = MIN_ROUND_TRIP_BUDGET_MS + MIN_DELIVER_WINDOW_MS;
+
+/**
  * Races `deliver` against a timeout and reports a timeout as an ordinary failed attempt —
  * never a throw, never a hang. This bounds how long the CALLER waits; it cannot cancel
  * whatever `deliver` is actually doing underneath (no AbortSignal crosses this boundary,
@@ -181,21 +208,33 @@ export async function drainOutbox(opts: {
     .limit(opts.max);
 
   for (const row of due) {
-    if (Date.now() >= deadline) break;
+    // Not just "is there any budget left" — is there enough left to be worth claiming this
+    // row for. Claiming and then immediately handing `deliver` a near-zero timeout charges a
+    // perfectly healthy item a failed attempt for a call that never ran; better to leave it
+    // untouched for the next drain than to burn its attempts count on a starved timeout.
+    if (deadline - Date.now() < ITEM_BUDGET_FLOOR_MS) break;
 
-    // Compare-and-swap claim. A manual curl racing the ten-minute cron (ops.yml's
-    // `cancel-in-progress: false` only keeps two SCHEDULED runs from overlapping) can select
-    // this same row before either writer has touched it. This UPDATE only succeeds for
-    // whichever caller still sees `status = 'pending'` AND `attempts` at the value it read;
-    // the loser's WHERE matches zero rows and it moves on. That is a narrowing of the
-    // double-delivery window, not a close of it — a webhook's duplicate POST is absorbed by
-    // its event id, but nothing here would stop a second CONCURRENT winner from also
-    // slipping through if it read its snapshot before this UPDATE committed. What this DOES
-    // rule out is the case that actually happened without it: two full passes over the same
-    // due row, each calling `deliver` and each thinking it was the only one.
+    // Claim-with-lease. A manual curl racing the ten-minute cron (ops.yml's
+    // `cancel-in-progress: false` only keeps two SCHEDULED runs from overlapping) — or any
+    // two drains staggered by more than a few hundred ms — can both consider this row due.
+    // The `attempts` guard alone only stops two callers that read the SAME stale snapshot;
+    // it does NOT stop a second drain that runs its own SELECT after this UPDATE has already
+    // committed, because that second SELECT sees the fresh, post-claim `attempts` value and
+    // its CAS succeeds against it. Pushing `nextAttemptAt` out to `now + CLAIM_LEASE_MS` in
+    // this SAME statement is what closes that gap: a claimed row no longer matches the `due`
+    // query's `nextAttemptAt <= now` filter at all, for any drain, until the lease expires or
+    // the delivery below overwrites `nextAttemptAt` on success or failure (both paths do,
+    // unconditionally). This is a lease, not a lock: if a delivery somehow outlives the lease
+    // (it shouldn't — the lease is double `PER_ITEM_DELIVER_TIMEOUT_MS`), a later drain can
+    // still claim and redeliver it. At-least-once semantics, not exactly-once — stated
+    // plainly because that is the true guarantee, not "this can never double-send."
     const [claimed] = await db
       .update(connectorOutbox)
-      .set({ attempts: row.attempts + 1, lastAttemptedAt: now })
+      .set({
+        attempts: row.attempts + 1,
+        lastAttemptedAt: now,
+        nextAttemptAt: new Date(now.getTime() + CLAIM_LEASE_MS),
+      })
       .where(
         and(
           eq(connectorOutbox.id, row.id),
