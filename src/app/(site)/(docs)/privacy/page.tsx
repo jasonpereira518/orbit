@@ -293,6 +293,15 @@ export default function PrivacyPage() {
             the relevant content with those providers, where it is governed by their own terms and
             privacy policies.
           </p>
+          <p>
+            <strong>Assistants you connect yourself.</strong> If you connect Orbit to Claude,
+            ChatGPT or another assistant, whatever it reads from Orbit goes to that assistant&rsquo;s
+            provider under their privacy policy, not ours — the same as if you had copied the
+            text into their chat window. Orbit sends nothing on its own: a connected assistant
+            can draft a message, but it waits for you to read and approve it before anything
+            leaves. You can disconnect an assistant from its own settings, and revoke any API
+            key from Orbit&rsquo;s.
+          </p>
         </DocSection>
 
         <DocSection id="ai" index={7} title="AI processing">

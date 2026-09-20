@@ -15,6 +15,9 @@ export const PUBLIC_ROUTES = [
   // matched here — actions POST to the page's own URL, so a public page covers them.
   "/interest",
   "/privacy",
+  // How to connect an assistant. A setup guide whose whole audience is people deciding
+  // whether to sign up, so it must be readable signed out.
+  "/connect",
   "/terms",
   "/contact",
   "/sign-in(.*)",
