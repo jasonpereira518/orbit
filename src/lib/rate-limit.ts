@@ -131,8 +131,19 @@ export const RATE_LIMITS = {
   apiWrite: { limit: 60, windowSec: 60 },
   /** Event ingestion. Fewer, because each request carries a batch of up to 500 events. */
   apiIngest: { limit: 30, windowSec: 60 },
-  /** MCP tool calls. An agent can loop far faster than a person can click. */
-  mcp: { limit: 60, windowSec: 60 },
+  /**
+   * MCP tool calls on a paid plan. An agent can loop far faster than a person can click, and
+   * a single chat turn now fans out over several tools — search, then a contact, then a
+   * reminder — so the ceiling is per conversation rather than per question.
+   */
+  mcp: { limit: 120, windowSec: 60 },
+  /**
+   * MCP tool calls on the free plan. Lower because the connector is free on every plan and
+   * this is the one surface an unpaid account can drive continuously. Generous enough that a
+   * real conversation never touches it: a person asking questions produces a handful of calls
+   * a minute, and a loop producing thirty is a runaway, not a user.
+   */
+  mcpFree: { limit: 30, windowSec: 60 },
   /** One provider sync run per connection per window — see `sync-scheduler.ts`. */
   providerSync: { limit: 4, windowSec: 3600 },
   /**

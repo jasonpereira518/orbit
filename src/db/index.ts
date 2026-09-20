@@ -826,6 +826,26 @@ CREATE TABLE IF NOT EXISTS ops_alert_state (
   detail jsonb NOT NULL DEFAULT '{}',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS agent_send_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  channel text NOT NULL DEFAULT 'email',
+  to_email text NOT NULL,
+  subject text,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  client_name text,
+  error_message text,
+  delivery_id text,
+  decided_at timestamptz,
+  sent_at timestamptz,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_send_requests_user_status_idx ON agent_send_requests(user_id, status, created_at);
+CREATE INDEX IF NOT EXISTS agent_send_requests_contact_idx ON agent_send_requests(contact_id);
 CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   bucket text PRIMARY KEY,
   window_started_at timestamptz NOT NULL DEFAULT now(),
@@ -1641,7 +1661,15 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 73 = user_settings.ai_model_migrated_from, plus the move of accounts on the old Gemini
 // default (3.5 Flash) to 3.8 Flash — half the price, and the eval in docs/ai-evals/ found
 // nothing lost. Checked against every remote branch on Sep 19 2026.
-export const SCHEMA_VERSION = 73;
+//
+// 77 = agent_send_requests: messages an assistant drafted through MCP, held until the user
+// approves them in Orbit. Built as 73, which main then took for the AI model migration above
+// — and because BOTH sides wrote `SCHEMA_VERSION = 73`, that line merged silently with no
+// conflict, which would have left every database main had already stamped 73 skipping this
+// table forever. Renumbered past 74-76, claimed by the unpushed integrations-strategy
+// worktree (connector_connections, external_links + connector_outbox, and the outbox lease).
+// Checked against every remote branch and local worktree on Sep 20 2026.
+export const SCHEMA_VERSION = 77;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3026,6 +3054,9 @@ const alters = [
     WHERE status = 'active' AND next_sync_at IS NULL AND sync_status IS NULL`,
   // Schema v31: the connector platform. The CREATE TABLEs above land on a fresh database;
   // these repair an existing one, which is why every index appears in both places.
+  `CREATE TABLE IF NOT EXISTS agent_send_requests (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL, channel text NOT NULL DEFAULT 'email', to_email text NOT NULL, subject text, body text NOT NULL, status text NOT NULL DEFAULT 'pending', client_name text, error_message text, delivery_id text, decided_at timestamptz, sent_at timestamptz, expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS agent_send_requests_user_status_idx ON agent_send_requests(user_id, status, created_at)`,
+  `CREATE INDEX IF NOT EXISTS agent_send_requests_contact_idx ON agent_send_requests(contact_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash)`,
   `CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS api_idempotency_uidx ON api_idempotency_keys(user_id, idempotency_key)`,
