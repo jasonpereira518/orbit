@@ -29,6 +29,9 @@ import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
 } from "@/lib/capture-limits";
+import { getDb } from "@/db";
+import { resolveAvatarNow } from "@/lib/avatar-backfill";
+import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import {
   saveNoteBatch,
@@ -248,6 +251,20 @@ export async function confirmBulkCapture(
 
   if (batch.meeting) {
     await markMeetingSessionSaved(userId, batch.meeting.sessionId, out.batchId);
+  }
+
+  // One person logged → fetch their photo before returning, so they arrive on the contact
+  // with a face rather than a placeholder that fills in on some later page load. Only for
+  // a single contact: a batch of them is what the background backfill is for, and one is
+  // also the case where the missing face is most obvious. Before `revalidatePath` and not
+  // in `after()`: scheduled later, the photo lands after the page it belongs on rendered.
+  // The /capture page saves through `runCaptureJobById`, which does the same thing.
+  if (out.contactIds.length === 1) {
+    const db = await getDb();
+    await resolveAvatarNow(db, userId, out.contactIds[0]!, {
+      persistRemote: downloadAndPersistAvatar,
+      resolveLinkedIn: (id, url) => fetchLinkedInPhotoUrl(id, url, userId),
+    });
   }
 
   // The lib skipped embeddings and summaries (it must run outside a request scope for the

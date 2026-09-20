@@ -36,6 +36,8 @@ import {
 } from "@/lib/capture/review-reducer";
 import type { CaptureJobResult, CaptureSavedSummary } from "@/lib/capture/types";
 
+import { resolveAvatarNow } from "@/lib/avatar-backfill";
+import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
@@ -177,6 +179,18 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
     await upsertIgnoredPeople(userId, ignoredRowsFor(row, out)).catch(reportAndContinue(followOn("ignored"), null));
 
     if (deps.enrich !== false) {
+      // One person logged → fetch their photo now, so they arrive on the contact with a
+      // face rather than a placeholder that fills in on some later page load. Only for a
+      // single contact: a batch of them is what the background backfill is for, and one
+      // is also the case where the missing face is most obvious.
+      if (out.contactIds.length === 1) {
+        const db = await getDb();
+        await resolveAvatarNow(db, userId, out.contactIds[0]!, {
+          persistRemote: downloadAndPersistAvatar,
+          resolveLinkedIn: (id, url) => fetchLinkedInPhotoUrl(id, url, userId),
+        }).catch(reportAndContinue(followOn("avatar"), false));
+      }
+
       await kickEmbeddingBackfill(userId).catch(reportAndContinue(followOn("embeddings"), null));
       for (const contactId of out.contactIds) {
         await generateAndStoreContactBrief(userId, contactId).catch(reportAndContinue(followOn("brief"), null));

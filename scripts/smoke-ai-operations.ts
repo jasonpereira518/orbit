@@ -18,7 +18,7 @@ import {
 import { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
 import { modelForOperation } from "../src/lib/ai-models";
 import { AI_PROVIDERS, DEFAULT_MODELS, PROVIDER_MODELS } from "../src/lib/ai-providers";
-import { MANAGED_DEFAULT_MODELS, MANAGED_MODELS } from "../src/lib/managed-ai-policy";
+import { MANAGED_AI_ENABLED, MANAGED_DEFAULT_MODELS, MANAGED_MODELS } from "../src/lib/managed-ai-policy";
 import { priceFor } from "../src/lib/ai-pricing";
 
 let failures = 0;
@@ -81,19 +81,31 @@ console.log("\nThe registry's tier is what picks the model");
     modelForOperation("capture.transcribe.page", thrifty) === "gemini-3.1-flash-lite"
   );
 
-  // On Orbit's key every tier resolves through the managed allowlist. Vision used to reach
-  // past it, and gpt-4o is 16x gpt-4o-mini.
-  const managed = { provider: "openai" as const, model: "gpt-4o-mini", keyOwner: "orbit" as const };
-  const visionOnOrbit = modelForOperation("capture.transcribe.page", managed);
+  // On Orbit's key a tier must not reach past the managed allowlist — vision used to, and
+  // gpt-4o is 16x gpt-4o-mini. The account below is ON the vision tier's own model, so the
+  // "keep the cheaper model" rule above cannot be what decides; only the allowlist can.
+  //
+  // With MANAGED_AI_ENABLED off (where it stands today) the only key behind this path is
+  // the developer's own on `next dev`, so there is no allowlist to enforce and the tier's
+  // own model runs.
+  const onOrbit = { provider: "openai" as const, model: "gpt-4o", keyOwner: "orbit" as const };
+  const visionOnOrbit = modelForOperation("capture.transcribe.page", onOrbit);
   check(
-    `vision on Orbit's key stays on the allowlist (${visionOnOrbit})`,
-    MANAGED_MODELS.openai.includes(visionOnOrbit)
+    MANAGED_AI_ENABLED
+      ? `vision on Orbit's key stays on the allowlist (${visionOnOrbit})`
+      : `managed AI off: vision runs the tier's own model (${visionOnOrbit})`,
+    MANAGED_AI_ENABLED ? MANAGED_MODELS.openai.includes(visionOnOrbit) : visionOnOrbit === VISION_MODELS.openai,
+    visionOnOrbit
   );
   for (const id of AI_OPERATION_IDS) {
     const tier = AI_OPERATIONS[id].tier;
     if (tier !== "fast" && tier !== "vision") continue;
-    const chosen = modelForOperation(id, { provider: "gemini", model: "gemini-3.5-flash", keyOwner: "orbit" });
-    check(`${id} on Orbit's key resolves to an allowed model`, MANAGED_MODELS.gemini.includes(chosen), chosen);
+    const chosen = modelForOperation(id, { provider: "gemini", model: "gemini-2.5-pro", keyOwner: "orbit" });
+    check(
+      `${id} on Orbit's key resolves to a priced model`,
+      priceFor(chosen) !== null && (!MANAGED_AI_ENABLED || MANAGED_MODELS.gemini.includes(chosen)),
+      chosen
+    );
   }
 }
 

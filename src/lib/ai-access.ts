@@ -5,7 +5,7 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
 import { decryptOrNull } from "@/lib/crypto";
-import { isDemoAccount } from "@/lib/demo-account";
+import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
@@ -37,6 +37,7 @@ import {
   managedWindow,
   nothingUsable,
   MANAGED_AI_BUDGET,
+  MANAGED_AI_ENABLED,
   MANAGED_PROVIDER_ORDER,
   UNPRICED_CALL_MICROS,
   type AiAccessDenial,
@@ -118,12 +119,20 @@ const LOCAL_ENV: Record<KeyedProvider, string> = {
   wispr: "WISPR_API_KEY",
 };
 
-/** `ORBIT_MANAGED_AI=off` — the emergency stop. Every Lifetime account falls back to BYOK. */
+/**
+ * `ORBIT_MANAGED_AI=off` — the emergency stop. Every Lifetime account falls back to BYOK.
+ * Always on while `MANAGED_AI_ENABLED` is false: managed AI has not shipped.
+ */
 export function managedAiSwitchedOff(): boolean {
+  if (!MANAGED_AI_ENABLED) return true;
   return process.env.ORBIT_MANAGED_AI?.trim().toLowerCase() === "off";
 }
 
 function managedKey(provider: KeyedProvider): string | null {
+  // Managed AI off: the local-dev names are the only ones read, and only on a dev server.
+  if (!MANAGED_AI_ENABLED) {
+    return localDevAiEnabled() ? process.env[LOCAL_ENV[provider]]?.trim() || null : null;
+  }
   if (managedAiSwitchedOff()) return null;
   const explicit = process.env[MANAGED_ENV[provider]]?.trim();
   if (explicit) return explicit;
@@ -146,12 +155,33 @@ export function managedEnvVar(provider: KeyedProvider): string {
 }
 
 /**
+ * LOCALHOST ONLY — `next dev` runs AI on the keys in the developer's own `.env.local`, the
+ * way local development always worked, so a fresh clone can capture a note without pasting a
+ * key into Settings first. It is the only path left to a key the account did not save.
+ *
+ * Three conditions, all required, and none of them settable by a deployment: managed AI is
+ * off (with it on, these names are Orbit's own managed keys and the plan rule applies), the
+ * process is not a Vercel runtime, and `NODE_ENV` is development — which `next build` and
+ * every deployment are not. `ORBIT_DEMO_MANAGED_AI=off` still turns it off, which is how the
+ * production BYOK states are seen on a laptop.
+ */
+function localDevAiEnabled(): boolean {
+  if (MANAGED_AI_ENABLED) return false;
+  if (process.env.ORBIT_DEMO_MANAGED_AI?.trim().toLowerCase() === "off") return false;
+  return !process.env.VERCEL && isLocalhost();
+}
+
+/**
  * Demo accounts count as Lifetime (see `managed-ai-policy.ts`).
  * `ORBIT_DEMO_MANAGED_AI=off` switches that off, so the BYOK states can be seen on `next dev`
  * — the same shape as `ORBIT_DEMO_DATA=off` for onboarding.
+ *
+ * With managed AI off this narrows to the localhost case: the showcase account
+ * (`DEMO_ACCOUNT_USER_ID`) is a deployed account, and no deployment pays for AI.
  */
 function demoCountsAsManaged(userId: string): boolean {
   if (process.env.ORBIT_DEMO_MANAGED_AI?.trim().toLowerCase() === "off") return false;
+  if (!MANAGED_AI_ENABLED) return localDevAiEnabled() && isDemoAccount(userId);
   return isDemoAccount(userId);
 }
 
@@ -378,6 +408,7 @@ export class AiAccess {
     // Only an account about to be refused is worth a Stripe round trip: not on Lifetime,
     // no key of its own, and a Lifetime checkout opened recently.
     if (
+      MANAGED_AI_ENABLED &&
       plan !== "lifetime" &&
       row?.lifetimeCheckoutSessionId &&
       !hasAnyPersonalKey(row) &&
@@ -464,7 +495,9 @@ export class AiAccess {
     const key = source === "personal" ? this.personal[provider] : this.managed[provider];
     // Unreachable when the policy and the maps agree; a refusal beats a crash if they don't.
     if (!key) throw this.refusal(nothingUsable(this.eligibility).reason);
-    if (source === "managed") {
+    // The allowance is Orbit's spend ceiling. On a dev server the "managed" key is the
+    // developer's own, so there is nothing to ration and no usage query to pay for.
+    if (source === "managed" && MANAGED_AI_ENABLED) {
       const usage = await managedUsageThisMonth(this.userId);
       if (!managedCallAllowed(usage, operation)) throw this.refusal("managed_limit");
     }
@@ -604,9 +637,10 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   const choice = chooseCompletionKey(facts);
   const now = new Date();
 
-  const allowance = access.eligibility
-    ? allowanceFrom(await managedUsageThisMonth(userId, now), now)
-    : null;
+  const allowance =
+    access.eligibility && MANAGED_AI_ENABLED
+      ? allowanceFrom(await managedUsageThisMonth(userId, now), now)
+      : null;
 
   let reason: AiAccessDenial | null = null;
   if (!choice.ok) {

@@ -7,8 +7,8 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  * TERMS_VERSION is what `user_settings.terms_version` records at acceptance. Change it (and
  * LEGAL_LAST_UPDATED) in the same commit as any material change to /terms or /privacy.
  */
-export const TERMS_VERSION = "2026-09-16";
-export const LEGAL_LAST_UPDATED = "September 16, 2026";
+export const TERMS_VERSION = "2026-09-19";
+export const LEGAL_LAST_UPDATED = "September 19, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
