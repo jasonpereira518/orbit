@@ -127,10 +127,18 @@ export function classifyByName(name: string): Classification | null {
   const ext = extensionOf(base);
 
   if (ext === ".ics" || ext === ".ical" || ext === ".ifb") {
-    return { target: "calendar_ics", confidence: "certain", reason: "a calendar file" };
+    return {
+      target: "calendar_ics",
+      confidence: "certain",
+      reason: "a calendar file",
+    };
   }
   if (ext === ".vcf" || ext === ".vcard") {
-    return { target: "contacts_file", confidence: "certain", reason: "a contact card file" };
+    return {
+      target: "contacts_file",
+      confidence: "certain",
+      reason: "a contact card file",
+    };
   }
   if (ext !== ".csv") return null;
 
@@ -148,8 +156,15 @@ export function classifyByName(name: string): Classification | null {
       reason: "your LinkedIn messages",
     };
   }
-  if (/contacts?\.csv$/.test(base) || /^(google|outlook|icloud|apple)[ _-]/.test(base)) {
-    return { target: "contacts_file", confidence: "guess", reason: "a contacts file" };
+  if (
+    /contacts?\.csv$/.test(base) ||
+    /^(google|outlook|icloud|apple)[ _-]/.test(base)
+  ) {
+    return {
+      target: "contacts_file",
+      confidence: "guess",
+      reason: "a contacts file",
+    };
   }
   return null;
 }
@@ -159,11 +174,20 @@ function looksLikeCalendarCsv(fields: string[]): boolean {
   const lower = fields.map((f) => f.trim().toLowerCase());
   const has = (...keys: string[]) => keys.some((k) => lower.includes(k));
   const titled = has("subject", "title", "summary", "event");
-  const timed = has("start", "start date", "starts", "dtstart", "date", "start time");
+  const timed = has(
+    "start",
+    "start date",
+    "starts",
+    "dtstart",
+    "date",
+    "start time",
+  );
   if (titled && timed) return true;
   // Outlook's export leads with attendee columns; a file with those and a start is a calendar
   // even when its title column is named something we do not list.
-  return timed && has("attendees", "required attendees", "organizer", "organiser");
+  return (
+    timed && has("attendees", "required attendees", "organizer", "organiser")
+  );
 }
 
 /**
@@ -174,10 +198,18 @@ export function classifyByHead(head: string): Classification | null {
   const trimmed = head.replace(/^﻿/, "").trimStart();
 
   if (/^BEGIN:VCALENDAR/i.test(trimmed) || /^BEGIN:VEVENT/im.test(trimmed)) {
-    return { target: "calendar_ics", confidence: "certain", reason: "a calendar file" };
+    return {
+      target: "calendar_ics",
+      confidence: "certain",
+      reason: "a calendar file",
+    };
   }
   if (/^BEGIN:VCARD/i.test(trimmed)) {
-    return { target: "contacts_file", confidence: "certain", reason: "contact cards" };
+    return {
+      target: "contacts_file",
+      confidence: "certain",
+      reason: "contact cards",
+    };
   }
 
   // The preamble strip is load-bearing: a real Connections.csv opens with three `Notes:` lines,
@@ -202,10 +234,18 @@ export function classifyByHead(head: string): Classification | null {
   // Calendar before contacts: a calendar CSV often carries an organizer email, which the
   // contacts recogniser is permissive enough to accept.
   if (looksLikeCalendarCsv(fields)) {
-    return { target: "calendar_csv", confidence: "likely", reason: "a calendar export" };
+    return {
+      target: "calendar_csv",
+      confidence: "likely",
+      reason: "a calendar export",
+    };
   }
   if (looksLikeContactsCsv(fields)) {
-    return { target: "contacts_file", confidence: "likely", reason: "a contacts file" };
+    return {
+      target: "contacts_file",
+      confidence: "likely",
+      reason: "a contacts file",
+    };
   }
   return null;
 }
@@ -215,7 +255,9 @@ async function readHead(file: File): Promise<string> {
   const slice = file.slice(0, HEAD_BYTES);
   const text = await slice.text();
   const lines = text.split(/\r?\n/);
-  return lines.length > HEAD_LINES ? lines.slice(0, HEAD_LINES).join("\n") : text;
+  return lines.length > HEAD_LINES
+    ? lines.slice(0, HEAD_LINES).join("\n")
+    : text;
 }
 
 /**
@@ -240,24 +282,30 @@ async function classifyFile(entry: DroppedFile): Promise<Detected> {
 
   const best = byHead ?? classifyByName(file.name);
   if (!best) {
-    return { ...base, target: "unknown", confidence: "guess", reason: "not something Orbit reads" };
+    return {
+      ...base,
+      target: "unknown",
+      confidence: "guess",
+      reason: "not something Orbit reads",
+    };
   }
   return { ...base, ...best };
 }
 
 /** Names inside a LinkedIn archive worth extracting. Everything else in it is noise. */
-const ZIP_MEMBERS: { pattern: RegExp; target: ImportTarget; reason: string }[] = [
-  {
-    pattern: /(^|\/)connections\.csv$/i,
-    target: "linkedin_connections",
-    reason: "your LinkedIn connections",
-  },
-  {
-    pattern: /(^|\/)messages\.csv$/i,
-    target: "linkedin_messages",
-    reason: "your LinkedIn messages",
-  },
-];
+const ZIP_MEMBERS: { pattern: RegExp; target: ImportTarget; reason: string }[] =
+  [
+    {
+      pattern: /(^|\/)connections\.csv$/i,
+      target: "linkedin_connections",
+      reason: "your LinkedIn connections",
+    },
+    {
+      pattern: /(^|\/)messages\.csv$/i,
+      target: "linkedin_messages",
+      reason: "your LinkedIn messages",
+    },
+  ];
 
 /**
  * Pull the parts of a ZIP worth importing.
@@ -270,7 +318,7 @@ async function expandZip(entry: DroppedFile): Promise<Detected[]> {
   const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(await entry.file.arrayBuffer());
   const members = Object.values(zip.files).filter(
-    (f) => !f.dir && !isIgnorableFile(baseName(f.name))
+    (f) => !f.dir && !isIgnorableFile(baseName(f.name)),
   );
 
   const out: Detected[] = [];
@@ -292,8 +340,12 @@ async function expandZip(entry: DroppedFile): Promise<Detected[]> {
   // A ZIP holding exactly one CSV and none of LinkedIn's names: sniff it, since somebody
   // zipped a single export rather than downloading an archive.
   if (!out.length) {
-    const csvs = members.filter((m) => extensionOf(baseName(m.name)) === ".csv");
-    const ics = members.filter((m) => [".ics", ".ical"].includes(extensionOf(baseName(m.name))));
+    const csvs = members.filter(
+      (m) => extensionOf(baseName(m.name)) === ".csv",
+    );
+    const ics = members.filter((m) =>
+      [".ics", ".ical"].includes(extensionOf(baseName(m.name))),
+    );
     const only = csvs.length === 1 ? csvs[0] : ics.length === 1 ? ics[0] : null;
     if (only) {
       const text = await only.async("string");
@@ -341,7 +393,7 @@ export type DetectOptions = {
  */
 export async function detectImportFiles(
   files: readonly DroppedFile[],
-  options: DetectOptions = {}
+  options: DetectOptions = {},
 ): Promise<DetectionResult> {
   const { maxBytes, truncated = false } = options;
 
@@ -359,7 +411,9 @@ export async function detectImportFiles(
   const recognised = detected.filter((d) => d.target !== "unknown");
   const skipped: Detected[] = [];
 
-  const oversize = recognised.filter((d) => maxBytes != null && d.bytes > maxBytes);
+  const oversize = recognised.filter(
+    (d) => maxBytes != null && d.bytes > maxBytes,
+  );
   for (const d of oversize) {
     skipped.push({ ...d, reason: "too big to import in one go" });
   }
@@ -375,7 +429,10 @@ export async function detectImportFiles(
     const [winner, ...rest] = [...candidates].sort((a, b) => b.bytes - a.bytes);
     staged.push(winner);
     for (const other of rest) {
-      skipped.push({ ...other, reason: "a bigger file of the same kind was used instead" });
+      skipped.push({
+        ...other,
+        reason: "a bigger file of the same kind was used instead",
+      });
     }
   }
 

@@ -28,7 +28,10 @@ export type DropEntry = {
   name: string;
   file?: (ok: (file: File) => void, fail?: (err: unknown) => void) => void;
   createReader?: () => {
-    readEntries: (ok: (entries: DropEntry[]) => void, fail?: (err: unknown) => void) => void;
+    readEntries: (
+      ok: (entries: DropEntry[]) => void,
+      fail?: (err: unknown) => void,
+    ) => void;
   };
 };
 
@@ -66,18 +69,21 @@ function entryFile(entry: DropEntry): Promise<File | null> {
     // it, and "this one file could not be read" is not something the person can act on.
     entry.file!(
       (file) => resolve(file),
-      () => resolve(null)
+      () => resolve(null),
     );
   });
 }
 
 function readBatch(reader: {
-  readEntries: (ok: (entries: DropEntry[]) => void, fail?: (err: unknown) => void) => void;
+  readEntries: (
+    ok: (entries: DropEntry[]) => void,
+    fail?: (err: unknown) => void,
+  ) => void;
 }): Promise<DropEntry[]> {
   return new Promise((resolve) => {
     reader.readEntries(
       (entries) => resolve(entries),
-      () => resolve([])
+      () => resolve([]),
     );
   });
 }
@@ -111,7 +117,7 @@ async function walk(
   path: string,
   depth: number,
   out: DroppedFile[],
-  limits: DropLimits
+  limits: DropLimits,
 ): Promise<void> {
   if (out.length >= limits.maxFiles) return;
 
@@ -154,7 +160,7 @@ export type DropReadResult = {
 export async function readDroppedEntries(
   items: readonly DropEntry[],
   fallback: readonly File[] = [],
-  limits: DropLimits = DEFAULT_DROP_LIMITS
+  limits: DropLimits = DEFAULT_DROP_LIMITS,
 ): Promise<DropReadResult> {
   const out: DroppedFile[] = [];
   for (const entry of items) {
@@ -200,7 +206,10 @@ export function entriesFromDataTransfer(dt: DataTransfer): DropEntry[] {
  * The picker gives `webkitRelativePath` as "folder/sub/notes.md"; the tray wants "folder/sub"
  * so it can show where a file came from without repeating its name.
  */
-export function pathFromRelative(relativePath: string | undefined, name: string): string {
+export function pathFromRelative(
+  relativePath: string | undefined,
+  name: string,
+): string {
   if (!relativePath) return "";
   const trimmed = relativePath.endsWith(`/${name}`)
     ? relativePath.slice(0, -1 * (name.length + 1))
