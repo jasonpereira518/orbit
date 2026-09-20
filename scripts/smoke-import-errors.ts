@@ -136,6 +136,16 @@ check(
   "no output is empty",
   allOutputs.every((o) => o.trim().length > 0),
 );
+check(
+  "no line uses the em-dash connector twice",
+  !allOutputs.some((o) => o.split(" — ").length > 2),
+  allOutputs.find((o) => o.split(" — ").length > 2) ?? "",
+);
+check(
+  "a calendar failure is never described as an import",
+  !/import/i.test(icsFailureLine("something unrecognisable")),
+  icsFailureLine("something unrecognisable"),
+);
 
 console.log("Copy completeness");
 const CODES: ImportFailureCode[] = [

@@ -54,7 +54,7 @@ export const IMPORT_FAILURE_COPY: Record<ImportFailureCode, ImportFailureCopy> =
   {
     contact_limit: {
       cause: "Your plan’s contact limit was reached partway through",
-      next: "Everyone up to the limit was imported — upgrade to bring in the rest",
+      next: "Everyone up to the limit was imported, and upgrading brings in the rest",
       fix: { label: "See plans", href: "/settings?section=settings-plan" },
     },
     needs_reconnect: {
@@ -72,11 +72,11 @@ export const IMPORT_FAILURE_COPY: Record<ImportFailureCode, ImportFailureCopy> =
     },
     provider_unavailable: {
       cause: "The other service couldn’t be reached",
-      next: "That’s usually temporary — try again shortly",
+      next: "That’s usually temporary, so try again shortly",
     },
     timeout: {
       cause: "The import took longer than it was allowed",
-      next: "Try again — if it’s a very large file, split it and import the parts",
+      next: "Try again, and split the file into parts if it’s a very large one",
     },
     bad_file: {
       cause: "Part of that file couldn’t be read",
@@ -84,11 +84,11 @@ export const IMPORT_FAILURE_COPY: Record<ImportFailureCode, ImportFailureCopy> =
     },
     row_conflict: {
       cause: "Some rows clashed with contacts you already have",
-      next: "Everything else was imported — the rest is listed below",
+      next: "Everything else was imported, and the rest is listed below",
     },
     database: {
       cause: "Orbit couldn’t save part of this import",
-      next: "Nothing was lost — start the import again",
+      next: "Nothing was lost, so start the import again",
     },
     stalled: {
       cause: "The import stopped partway and couldn’t pick itself back up",
@@ -96,7 +96,7 @@ export const IMPORT_FAILURE_COPY: Record<ImportFailureCode, ImportFailureCopy> =
     },
     unknown: {
       cause: "This import didn’t finish",
-      next: "Try it again — if it keeps happening, send us the reference below",
+      next: "Try it again, and send us the reference below if it keeps happening",
     },
   };
 
@@ -227,5 +227,13 @@ export function icsFailureLine(raw: string | null | undefined): string {
   if (/\b404\b|not found/i.test(message)) {
     return "That calendar link no longer works — paste a fresh one";
   }
-  return importFailureLine(message);
+  // Deliberately not `importFailureLine`: a subscription is a feed Orbit checks on a clock,
+  // not a file someone imported, and the import copy's nouns are wrong for it.
+  const code = classifyImportError(message);
+  if (code === "rate_limited")
+    return "That calendar asked Orbit to slow down — it’ll try again shortly";
+  if (code === "timeout" || code === "provider_unavailable") {
+    return "That calendar couldn’t be reached — Orbit will try again shortly";
+  }
+  return "That calendar couldn’t be read on the last try — check the link is still shared";
 }
