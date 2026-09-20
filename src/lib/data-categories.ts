@@ -96,7 +96,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "recruiters",
     label: "Recruiter links and messages",
     description:
-      "Recruiters you linked yourself to, your ratings of them, your drafts and sent messages, and the Gmail scan's watermark of how far it has read. The shared recruiter directory itself stays.",
+      "Recruiters you linked yourself to, your ratings of them, your drafts and sent messages, and the Gmail and Outlook scans' record of how far they have read. The shared recruiter directory itself stays.",
   },
   {
     id: "api",
@@ -209,14 +209,15 @@ export type DisconnectProvider = "gmail" | "outlook";
 /**
  * What "Also delete what Orbit imported from this account" deletes, as whole categories
  * from the registry above, so the dialog can show each one's own label and description.
- * Only categories an account actually fills and that stay within it: Gmail feeds the
- * recruiter scan; Outlook feeds only contacts, and the `contacts` category is every contact.
+ * Only categories an account actually fills and that stay within it: Gmail and Outlook both
+ * feed the recruiter scan. Neither offers `contacts` — that category is every contact, not
+ * "the ones this account imported".
  */
 export const DISCONNECT_DELETE_CATEGORIES: Readonly<
   Record<DisconnectProvider, readonly DataCategory[]>
 > = {
   gmail: ["recruiters"],
-  outlook: [],
+  outlook: ["recruiters"],
 };
 
 /** Where a user removes Orbit's Outlook access themselves (no app-side revoke exists). */

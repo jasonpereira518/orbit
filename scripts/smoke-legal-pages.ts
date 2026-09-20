@@ -42,6 +42,13 @@ for (const name of ["Clerk", "Vercel", "Neon", "Stripe", "Resend", "Twilio", "Ap
   check(`${name} is listed`, privacy.includes(`name: "${name}`));
 }
 
+console.log("Microsoft");
+check("Outlook mail is no longer said to go unread", !privacy.includes("Orbit does not read Outlook mail"));
+check("Microsoft is no longer said to be contacts-only", !privacy.includes("used only to import Outlook contacts"));
+check("the Microsoft row names contacts, calendar and mail", /name: "Microsoft"[^\n]*contacts[^\n]*calendar[^\n]*mail/.test(privacy));
+check("Microsoft permissions are described as read-only and per feature", privacy.includes("one read-only permission per feature you turn on"));
+check("the Outlook recruiter scan is described", privacy.includes("<strong>Outlook.</strong>"));
+
 console.log("Corrections that must not regress");
 check("photos are no longer said to be discarded", !privacy.includes("then discarded"));
 check("the console is no longer said to show only metadata", !privacy.includes("not the people in your"));

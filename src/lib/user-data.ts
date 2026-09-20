@@ -1,6 +1,7 @@
 import { cancelBatchJobsFor } from "@/lib/ai-batch";
 import { del } from "@vercel/blob";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
@@ -385,6 +386,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // The recruiter scan's watermark. Not derived from `gmail_connections`, so it
       // survives a disconnect/reconnect on purpose — but it must not survive the account.
       await db.delete(recruiterScanState).where(eq(recruiterScanState.userId, userId));
+      // The Outlook scan's watermark is not a row of its own: it is the newest completed scan
+      // job's frozen start time (`lastCompletedScanStart`). Left behind, "disconnect and delete
+      // what was imported" would remove the recruiters but keep the record of having read the
+      // mailbox, and the next Outlook scan would run incrementally — never re-reading the
+      // history it just deleted. The rows cascade to `import_job_rows`.
+      await db
+        .delete(imports)
+        .where(and(eq(imports.userId, userId), eq(imports.importType, OUTLOOK_SCAN_IMPORT_TYPE)));
     },
   },
   api: {

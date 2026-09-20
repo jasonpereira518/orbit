@@ -194,6 +194,25 @@ run(async () => {
   `);
   const synced = await loadCoverageSources("coverage-user");
   check("a synced calendar scope does count as coverage", synced.calendarConnected);
+
+  // Microsoft echoes Graph scopes as a short name, a full URI, in any case; and the test is an
+  // exact token, so a look-alike is not coverage.
+  const outlookCoverage = async (userId: string, scopes: string, synced = true) => {
+    await db.execute(sql`DELETE FROM outlook_connections WHERE user_id = ${userId}`);
+    await db.execute(sql`
+      INSERT INTO outlook_connections (user_id, email_address, access_token_encrypted, status, scopes, last_synced_at)
+      VALUES (${userId}, ${userId + "@example.com"}, 'enc', 'active', ${scopes}, ${synced ? new Date() : null})
+    `);
+    return (await loadCoverageSources(userId)).calendarConnected;
+  };
+  check("a short-name Microsoft calendar grant is coverage", await outlookCoverage("cov-ms-short", "openid Calendars.Read"));
+  check("a full-URI Microsoft calendar grant is coverage", await outlookCoverage("cov-ms-uri", "https://graph.microsoft.com/Calendars.Read"));
+  check("a lower-case Microsoft calendar grant is coverage", await outlookCoverage("cov-ms-lower", "openid https://graph.microsoft.com/calendars.read"));
+  check("a Microsoft calendar grant that never synced is not coverage", !(await outlookCoverage("cov-ms-unsynced", "Calendars.Read", false)));
+  check("a Microsoft look-alike scope is not coverage", !(await outlookCoverage("cov-ms-lookalike", "Calendars.ReadWrite https://graph.microsoft.com/Calendars.Read.Shared")));
+  check("a Microsoft contacts-only grant is not calendar coverage", !(await outlookCoverage("cov-ms-contacts", "https://graph.microsoft.com/Contacts.Read")));
+  await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'cov-ms-%'`);
+
   const stranger = await loadCoverageSources("nobody-at-all");
   check("an unconnected user has no coverage", !stranger.mailConnected && !stranger.calendarConnected);
 

@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { parseAiJson } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
-import type { GmailMessageContent } from "@/lib/gmail";
 
 /**
  * Classification + summarization for one candidate sender found by the Gmail scan.
@@ -45,7 +44,21 @@ export const RECRUITER_CONFIDENCE_FLOOR = 0.6;
 /** Most recent messages only — enough to characterize a relationship, few enough to stay cheap. */
 const MAX_MESSAGES_PER_SENDER = 5;
 
-function renderMessages(messages: GmailMessageContent[]) {
+/**
+ * The structural minimum the classifier reads from a message: subject, body-or-snippet, and
+ * the date for the "(2026-01-04)" tag. Deliberately NOT `GmailMessageContent` — that type
+ * carries Gmail's `to` and bulk-mail header fields, and typing the classifier against it
+ * forced every other mail provider to invent values for fields this function never touches.
+ * Any provider's message content satisfies this by shape.
+ */
+export type RecruiterScanMessage = {
+  subject: string;
+  snippet: string;
+  body?: string;
+  internalDate: number | null;
+};
+
+function renderMessages(messages: RecruiterScanMessage[]) {
   return messages
     .slice(0, MAX_MESSAGES_PER_SENDER)
     .map((m, i) => {
@@ -80,7 +93,7 @@ export function buildRecruiterUserPrompt(input: {
   senderName: string;
   senderEmail: string;
   firmGuess: string | null;
-  messages: GmailMessageContent[];
+  messages: RecruiterScanMessage[];
 }): string {
   return `Sender: ${input.senderName} <${input.senderEmail}>
 Firm guessed from the email domain: ${input.firmGuess || "unknown"}
@@ -108,7 +121,7 @@ export async function classifyRecruiterSender(
     senderName: string;
     senderEmail: string;
     firmGuess: string | null;
-    messages: GmailMessageContent[];
+    messages: RecruiterScanMessage[];
   }
 ): Promise<RecruiterScanResult> {
   // Re-scans see the same senders again, and an overlap window re-reads the last two days of

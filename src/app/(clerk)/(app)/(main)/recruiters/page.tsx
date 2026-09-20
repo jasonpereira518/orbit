@@ -6,6 +6,7 @@ import {
   listMyRecruiters,
 } from "@/actions/recruiters";
 import { getGmailConnectionStatus, getGmailScanStatus } from "@/actions/gmail";
+import { getOutlookConnectionStatus, getOutlookScanStatus } from "@/actions/outlook";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { RecruitersLocked } from "@/components/locked-feature";
@@ -15,6 +16,7 @@ import {
   RecruiterSearch,
 } from "@/components/recruiters/recruiter-list";
 import { GmailImportPanel } from "@/components/recruiters/gmail-import-panel";
+import { OutlookImportPanel } from "@/components/recruiters/outlook-import-panel";
 import { RecruiterSharingToggle } from "@/components/recruiters/sharing-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -37,13 +39,15 @@ export default async function RecruitersPage({
   const tab = params.tab === "discover" ? "discover" : "mine";
   const q = params.q || "";
 
-  const [{ enabled: sharing }, mine, gmail, scan] = await Promise.all([
+  const [{ enabled: sharing }, mine, gmail, scan, outlook, outlookScan] = await Promise.all([
     getRecruiterSharing(),
     listMyRecruiters(),
     getGmailConnectionStatus(),
     // Seeds the panel so a scan already running on the server shows progress on load,
     // rather than looking idle until the first poll returns.
     getGmailScanStatus(),
+    getOutlookConnectionStatus(),
+    getOutlookScanStatus(),
   ]);
 
   // Returns [] for a private viewer, so this is safe to call unconditionally.
@@ -91,6 +95,9 @@ export default async function RecruitersPage({
       <div className="space-y-6">
         <RecruiterSharingToggle enabled={sharing} />
         <GmailImportPanel connection={gmail} initialScan={scan} />
+        {/* The Outlook callback defaults to /imports (the contacts import lives there), so the
+            scan panel says where it wants to land. */}
+        <OutlookImportPanel connection={outlook} initialScan={outlookScan} returnTo="/recruiters" />
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex rounded-lg border border-border/70 bg-card p-0.5 text-sm">

@@ -3,15 +3,48 @@ import { getDb } from "@/db";
 import { outlookConnections } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
+import { graphFetchWithRetry } from "@/lib/graph-fetch";
+import {
+  hasCalendarScope as msHasCalendarScope,
+  hasContactsScope as msHasContactsScope,
+  hasMailScope as msHasMailScope,
+  microsoftScopesFor,
+  unionScopes,
+  type MicrosoftPurpose,
+} from "@/lib/microsoft-scopes";
 
-const MICROSOFT_SCOPES = [
-  "openid",
-  "profile",
-  "email",
-  "offline_access",
-  "https://graph.microsoft.com/Contacts.Read",
-  "https://graph.microsoft.com/User.Read",
-].join(" ");
+// No module-wide scope list any more: each entry point asks for its own scope through
+// `microsoftScopesFor(purpose)` in src/lib/microsoft-scopes.ts (audit B5, Microsoft side).
+
+/**
+ * True once a connection has been granted the Contacts.Read scope. Exact-token, normalized
+ * (short name / full URI / any case) — see `microsoft-scopes.ts`.
+ */
+export function hasContactsScope(scopes: string | null | undefined) {
+  return msHasContactsScope(scopes);
+}
+
+/**
+ * True once a connection has been granted calendar access.
+ *
+ * The scheduler must check this before claiming an Outlook connection for calendar sync:
+ * a token minted without this scope is still perfectly valid for Contacts and will keep
+ * working — but every Calendar API call it makes returns 403. Without the probe that
+ * surfaces as a stream of failures on healthy connections, walking them up the backoff
+ * ladder for a problem only the user can fix by reconnecting.
+ *
+ * Normalized on purpose: Microsoft echoes granted scopes as short names or full URIs, in
+ * any case, so a case-sensitive URI substring test could read a real grant as "no calendar
+ * scope" and silently disarm sync for that user.
+ */
+export function hasCalendarScope(scopes: string | null | undefined) {
+  return msHasCalendarScope(scopes);
+}
+
+/** True once a connection has been granted mail access, which the recruiter scan needs. */
+export function hasMailScope(scopes: string | null | undefined) {
+  return msHasMailScope(scopes);
+}
 
 /** Canonical Outlook OAuth callback path — must match the Azure app's redirect URI. */
 export const OUTLOOK_CALLBACK_PATH = "/api/outlook/callback";
@@ -86,7 +119,16 @@ export function getOutlookOAuthConfigSummary(): {
   };
 }
 
-export function buildMicrosoftAuthUrl(state: string) {
+/**
+ * `alreadyGranted` is the scopes stored on the person's existing connection (or absent for a
+ * first connect): Microsoft has no incremental-consent flag, so the request names what they
+ * already enabled alongside the new scope — see `microsoftScopesFor`.
+ */
+export function buildMicrosoftAuthUrl(
+  state: string,
+  purpose: MicrosoftPurpose,
+  alreadyGranted?: string | null
+) {
   const clientId = process.env.MICROSOFT_CLIENT_ID?.trim();
   if (!clientId) throw new Error("MICROSOFT_CLIENT_ID is not configured");
   const redirectUri = getMicrosoftRedirectUri();
@@ -96,7 +138,7 @@ export function buildMicrosoftAuthUrl(state: string) {
     redirect_uri: redirectUri,
     response_type: "code",
     response_mode: "query",
-    scope: MICROSOFT_SCOPES,
+    scope: microsoftScopesFor(purpose, alreadyGranted).join(" "),
     prompt: "consent",
     state,
   });
@@ -201,7 +243,7 @@ export async function upsertOutlookConnection(
         accessTokenEncrypted: accessEnc,
         refreshTokenEncrypted: refreshEnc,
         tokenExpiresAt: expiresAt,
-        scopes: tokens.scope || MICROSOFT_SCOPES,
+        scopes: unionScopes(existing.scopes, tokens.scope),
         status: "active",
         // Re-arm: this is the only path from needs_reauth back to active, so it is also
         // the only place a disarmed connection can rejoin the sync schedule.
@@ -223,7 +265,7 @@ export async function upsertOutlookConnection(
       accessTokenEncrypted: accessEnc,
       refreshTokenEncrypted: refreshEnc,
       tokenExpiresAt: expiresAt,
-      scopes: tokens.scope || MICROSOFT_SCOPES,
+      scopes: unionScopes(null, tokens.scope),
       status: "active",
       nextSyncAt: new Date(),
     })
@@ -292,7 +334,10 @@ async function touchLastSynced(conn: { id: string; lastSyncedAt: Date | null }) 
   }
 }
 
-export async function getValidAccessToken(userId: string): Promise<string> {
+export async function getValidAccessToken(
+  userId: string,
+  opts: { minValidityMs?: number } = {}
+): Promise<string> {
   const db = await getDb();
   // No `status` predicate here on purpose. Filtering it out would make a needs_reauth row
   // invisible and turn a precise "session expired — reconnect" into a wrong
@@ -305,9 +350,12 @@ export async function getValidAccessToken(userId: string): Promise<string> {
     throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
   }
 
+  // A long-running caller (the recruiter scan) asks for a token that outlives its whole
+  // invocation, so it is not minted with two minutes left and expired half-way through a page.
+  const minValidityMs = opts.minValidityMs ?? 60_000;
   const expiresSoon =
     conn.tokenExpiresAt &&
-    conn.tokenExpiresAt.getTime() < Date.now() + 60_000;
+    conn.tokenExpiresAt.getTime() < Date.now() + minValidityMs;
 
   if (!expiresSoon) {
     await touchLastSynced(conn);
@@ -410,4 +458,292 @@ export async function fetchOutlookContacts(
   }
 
   return people.filter((p) => p.fullName.trim());
+}
+
+/**
+ * Graph search-syntax adaptation of Gmail's `RECRUITER_QUERY_TERMS` — the same terms.
+ *
+ * Best-effort, not a byte-for-byte equivalent: Graph's `$search` on `/me/messages` takes a
+ * single quoted KQL string tested against subject/body/sender, whereas Gmail's `q` supports a
+ * full boolean grammar. This narrows the mailbox sweep the same way Gmail's query does —
+ * cheaply, and recall-biased — before `looksLikeRecruiter` and the classifier both get a
+ * veto downstream. Phrases are backslash-escaped because they sit inside the outer quotes.
+ */
+const OUTLOOK_RECRUITER_TERMS = [
+  "recruiter",
+  '\\"talent acquisition\\"',
+  "sourcer",
+  "staffing",
+  '\\"job opportunity\\"',
+  '\\"open role\\"',
+  '\\"reaching out\\"',
+  "headhunter",
+  '\\"your background\\"',
+  '\\"role at\\"',
+].join(" OR ");
+
+/** Kept for callers that want the unbounded whole-mailbox query. */
+export const OUTLOOK_RECRUITER_SEARCH_QUERY = `"${OUTLOOK_RECRUITER_TERMS}"`;
+
+/** KQL wants a plain `YYYY-MM-DD`. */
+function kqlDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Builds the discovery query. The window is the single largest cost lever in the scan, so it
+ * goes into the query as a KQL `received>=` restriction rather than being filtered after the
+ * fetch. Graph does not allow `$filter` alongside `$search` on messages, which is why the date
+ * lives inside the search string; the processor ALSO drops anything older than the window
+ * client-side, so a query the service reads loosely can only cost work, never widen the scan.
+ */
+export function buildOutlookRecruiterQuery(opts: { after?: Date | null } = {}): string {
+  const inner = opts.after
+    ? `received>=${kqlDate(opts.after)} AND (${OUTLOOK_RECRUITER_TERMS})`
+    : OUTLOOK_RECRUITER_TERMS;
+  return `"${inner}"`;
+}
+
+/** Graph messages don't need a separate thread id for this use case. */
+export type OutlookMessageRef = { id: string };
+
+const GRAPH_MESSAGES = "https://graph.microsoft.com/v1.0/me/messages";
+
+/**
+ * Microsoft allows a small number of concurrent requests per mailbox; past it Graph answers
+ * 429. Four is that ceiling, not a tuning knob.
+ */
+const GRAPH_MAIL_CONCURRENCY = 4;
+
+/**
+ * One page of message ids from Microsoft Graph.
+ *
+ * Graph pagination hands back a full `@odata.nextLink` URL rather than a bare token, so —
+ * unlike Gmail's `pageToken` — the caller stores and refetches that whole URL directly on
+ * the next page. Simpler and correct for Graph's pagination model; there is no separate
+ * token to reconstruct the query string from.
+ *
+ * Note for the record: `$search` over messages is capped by Graph at the newest ~1000 hits,
+ * sorted by date. A very large keyword-matching mailbox is therefore read newest-first and
+ * truncated at that cap, where Gmail's list keeps paging.
+ */
+export async function listOutlookMessagePage(
+  accessToken: string,
+  opts: { query: string; skipToken?: string | null; top?: number }
+): Promise<{ messages: OutlookMessageRef[]; nextLink: string | null }> {
+  const url =
+    opts.skipToken ||
+    `${GRAPH_MESSAGES}?$search=${encodeURIComponent(opts.query)}&$top=${opts.top ?? 200}&$select=id`;
+
+  const res = await graphFetchWithRetry(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      // $search requires this header (or an equivalent ConsistencyLevel) on /me/messages.
+      ConsistencyLevel: "eventual",
+    },
+    timeoutMs: 30_000,
+  });
+  if (res.status === 401) throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
+  if (!res.ok) {
+    throw new Error(`Outlook message list failed: ${(await res.text()).slice(0, 200)}`);
+  }
+  const data = (await res.json()) as {
+    value?: OutlookMessageRef[];
+    "@odata.nextLink"?: string;
+  };
+  return {
+    messages: data.value || [],
+    nextLink: data["@odata.nextLink"] || null,
+  };
+}
+
+/**
+ * Ids of the folders Gmail's `-in:spam -in:trash` would have removed: Junk Email and Deleted
+ * Items. Graph cannot exclude a folder inside `$search`, so the caller drops messages whose
+ * `folderId` is in this set once it has their headers. A folder an account does not have
+ * (404) simply contributes nothing.
+ */
+export async function fetchOutlookExcludedFolderIds(accessToken: string): Promise<Set<string>> {
+  const ids = new Set<string>();
+  for (const name of ["junkemail", "deleteditems"]) {
+    const res = await graphFetchWithRetry(
+      `https://graph.microsoft.com/v1.0/me/mailFolders/${name}?$select=id`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 10_000 }
+    );
+    if (res.status === 401) throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
+    if (res.status === 404) continue;
+    if (!res.ok) {
+      throw new Error(`Outlook folder lookup failed: ${(await res.text()).slice(0, 200)}`);
+    }
+    const data = (await res.json()) as { id?: string };
+    if (data.id) ids.add(data.id);
+  }
+  return ids;
+}
+
+export type OutlookHeaderSummary = {
+  id: string;
+  from: string;
+  subject: string;
+  snippet: string;
+  internalDate: number | null;
+  /** The message's folder — compared against `fetchOutlookExcludedFolderIds`. */
+  folderId: string;
+  /**
+   * Bulk-mail markers, read from `internetMessageHeaders`. Graph only returns that collection
+   * when it is named in `$select`, so it rides on the per-message fetch this function already
+   * makes; asking for it on the list endpoint would ship every header of every hit.
+   */
+  listUnsubscribe: string;
+  listId: string;
+  precedence: string;
+};
+
+/** What the classifier reads: a header summary plus the (trimmed) plain-text body. */
+export type OutlookMessageContent = Omit<
+  OutlookHeaderSummary,
+  "folderId" | "listUnsubscribe" | "listId" | "precedence"
+> & { body: string };
+
+type GraphMessage = {
+  id?: string;
+  subject?: string;
+  bodyPreview?: string;
+  receivedDateTime?: string;
+  parentFolderId?: string;
+  from?: { emailAddress?: { name?: string; address?: string } };
+  body?: { contentType?: string; content?: string };
+  internetMessageHeaders?: Array<{ name?: string; value?: string }>;
+};
+
+function graphHeader(msg: GraphMessage, name: string): string {
+  return (
+    msg.internetMessageHeaders?.find((h) => h.name?.toLowerCase() === name.toLowerCase())
+      ?.value || ""
+  );
+}
+
+/**
+ * `from` reconstructed as `"Name <email>"` from Graph's `{ emailAddress: { name, address } }`
+ * shape — exactly the string form `parseFromHeader` already parses.
+ */
+function graphFrom(msg: GraphMessage): string {
+  const address = msg.from?.emailAddress?.address || "";
+  const name = msg.from?.emailAddress?.name || "";
+  return address ? (name ? `${name} <${address}>` : address) : "";
+}
+
+function graphDate(msg: GraphMessage): number | null {
+  const received = msg.receivedDateTime ? Date.parse(msg.receivedDateTime) : NaN;
+  return Number.isFinite(received) ? received : null;
+}
+
+/** Bounded-concurrency fetch, mirroring Gmail's `mapWithConcurrency`. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker())
+  );
+  return out;
+}
+
+/**
+ * Batch-fetch headers for a page of message refs, shaped like Gmail's `GmailHeaderSummary`
+ * so `parseFromHeader`/`looksLikeRecruiter` (from `recruiter-detect.ts`) work unchanged.
+ *
+ * A 401 is the session, not the message — thrown as `ReauthRequiredError` so a page of
+ * expired-token answers is not counted as "scanned, nothing recruiter-shaped".
+ */
+export async function fetchOutlookMessageHeaders(
+  accessToken: string,
+  refs: OutlookMessageRef[],
+  concurrency = GRAPH_MAIL_CONCURRENCY
+): Promise<OutlookHeaderSummary[]> {
+  const results = await mapWithConcurrency(refs, concurrency, async (ref) => {
+    try {
+      const res = await graphFetchWithRetry(
+        `${GRAPH_MESSAGES}/${encodeURIComponent(ref.id)}?$select=id,subject,from,bodyPreview,receivedDateTime,parentFolderId,internetMessageHeaders`,
+        { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 10_000 }
+      );
+      if (res.status === 401) throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
+      if (!res.ok) return null;
+      const msg = (await res.json()) as GraphMessage;
+      return {
+        id: ref.id,
+        from: graphFrom(msg),
+        subject: msg.subject || "",
+        snippet: msg.bodyPreview || "",
+        internalDate: graphDate(msg),
+        folderId: msg.parentFolderId || "",
+        listUnsubscribe: graphHeader(msg, "List-Unsubscribe"),
+        listId: graphHeader(msg, "List-Id"),
+        precedence: graphHeader(msg, "Precedence"),
+      } satisfies OutlookHeaderSummary;
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
+      return null;
+    }
+  });
+  return results.filter((r): r is OutlookHeaderSummary => r !== null);
+}
+
+/**
+ * Full plain-text content for the few messages the classifier reads per sender — Gmail's
+ * `fetchGmailMessages`. `Prefer: outlook.body-content-type="text"` makes Graph do the
+ * HTML-to-text conversion; if it hands back HTML anyway the tags are stripped here.
+ */
+export async function fetchOutlookMessages(
+  accessToken: string,
+  ids: string[],
+  concurrency = GRAPH_MAIL_CONCURRENCY
+): Promise<OutlookMessageContent[]> {
+  const results = await mapWithConcurrency(ids, concurrency, async (id) => {
+    try {
+      const res = await graphFetchWithRetry(
+        `${GRAPH_MESSAGES}/${encodeURIComponent(id)}?$select=id,subject,from,bodyPreview,receivedDateTime,body`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Prefer: 'outlook.body-content-type="text"',
+          },
+          timeoutMs: 15_000,
+        }
+      );
+      if (res.status === 401) throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
+      if (!res.ok) return null;
+      const msg = (await res.json()) as GraphMessage;
+      const raw = msg.body?.content || "";
+      const text =
+        msg.body?.contentType?.toLowerCase() === "html"
+          ? raw
+              .replace(/<style[\s\S]*?<\/style>/gi, " ")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/\s+/g, " ")
+          : raw;
+      return {
+        id,
+        from: graphFrom(msg),
+        subject: msg.subject || "",
+        snippet: msg.bodyPreview || "",
+        internalDate: graphDate(msg),
+        // Trimmed hard: quoted reply chains add nothing the classifier needs.
+        body: text.trim().slice(0, 4000),
+      } satisfies OutlookMessageContent;
+    } catch (err) {
+      if (err instanceof ReauthRequiredError) throw err;
+      return null;
+    }
+  });
+  return results.filter((r): r is OutlookMessageContent => r !== null);
 }
