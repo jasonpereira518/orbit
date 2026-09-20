@@ -10,6 +10,8 @@
  *
  * Pure: no network, no database. Run: npx tsx scripts/smoke-chat-stream.ts
  */
+import { CHAT_SIGNED_OUT_MESSAGE, classifyChatResponse } from "../src/lib/chat-stream-client";
+import { API_SIGNED_OUT_BODY, API_SIGNED_OUT_STATUS, isApiPath } from "../src/lib/api-signed-out";
 import {
   RECOMMENDATIONS_MARKER,
   createAnswerSplitter,
@@ -88,6 +90,27 @@ function main() {
   check("events re-assemble across arbitrary chunk boundaries", all.length === 3 && all[0].type === "answer" && all[2].type === "done", JSON.stringify(all));
   check("a delta containing a blank line survives framing", all[0].type === "answer" && all[0].delta === "Hello\n\nworld");
   check("nothing is left over after the last event", carry === "");
+
+  console.log("\nA signed-out chat request is named, not parsed as SSE");
+  check("the stream itself is a stream",
+    classifyChatResponse({ status: 200, ok: true, contentType: "text/event-stream; charset=utf-8" }) === "stream");
+  check("a 401 is signed out", classifyChatResponse({ status: 401, ok: false, contentType: "application/json" }) === "signed_out");
+  check("a followed redirect to the sign-in page (200 text/html) is signed out",
+    classifyChatResponse({ status: 200, ok: true, contentType: "text/html; charset=utf-8" }) === "signed_out");
+  check("a 200 with no content type is signed out, not an empty stream",
+    classifyChatResponse({ status: 200, ok: true, contentType: null }) === "signed_out");
+  check("a paywall 403 keeps its own JSON error", classifyChatResponse({ status: 403, ok: false, contentType: "application/json" }) === "error");
+  check("a rate limit 429 keeps its own JSON error", classifyChatResponse({ status: 429, ok: false, contentType: "application/json" }) === "error");
+  check("the signed-out copy follows the house voice",
+    CHAT_SIGNED_OUT_MESSAGE === "You’re signed out — sign in again to keep chatting");
+
+  console.log("\nWhich paths the proxy answers with JSON");
+  check("/api/chat is an API path", isApiPath("/api/chat"));
+  check("/api itself is", isApiPath("/api"));
+  check("/apiary is not", !isApiPath("/apiary"));
+  check("/dashboard is not", !isApiPath("/dashboard"));
+  check("the body is a 401 with a readable error and a machine code",
+    API_SIGNED_OUT_STATUS === 401 && API_SIGNED_OUT_BODY.code === "signed_out" && !API_SIGNED_OUT_BODY.error.includes("'"));
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

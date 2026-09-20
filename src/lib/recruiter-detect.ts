@@ -11,7 +11,7 @@
 const RECRUITER_TITLE_RE =
   /\b(recruiter|talent\s*acquisition|sourcer|staffing|headhunter|talent\s*partner|technical\s*recruiter)\b/i;
 
-const AGENCY_DOMAIN_HINTS = [
+export const AGENCY_DOMAIN_HINTS = [
   "robertwalters",
   "michaelpage",
   "hays",

@@ -63,7 +63,6 @@ export function ContactRelatedPeople({
                       contactId={person.id}
                       firstName={person.firstName}
                       fullName={person.fullName}
-                      linkedinUrl={person.linkedinUrl}
                       profileImageUrl={person.profileImageUrl}
                       size="default"
                       className="size-10"

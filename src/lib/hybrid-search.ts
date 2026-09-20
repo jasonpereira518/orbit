@@ -7,6 +7,7 @@ import {
 } from "@/db";
 import { contacts, contactEmbeddings } from "@/db/schema";
 import { normalizeCompanyKey } from "@/lib/company-name";
+import { applyNameMatchPolicy } from "@/lib/contact-search-rank";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { cosineSimilarity } from "@/lib/ai";
 
@@ -46,6 +47,8 @@ export type RankedContact = {
   notes: string | null;
   aiSummary: string | null;
   keyFacts: string[];
+  /** The `contacts.opportunities` mirror, so "who can refer me?" is answerable by keyword. */
+  opportunities: string[];
   relationshipScore: number;
   priorityLevel: number;
   closenessTier: string | null;
@@ -578,7 +581,9 @@ export async function hybridSearchContacts(
     return rows.map((h) => ({ ...h, relevance: max > 0 ? h.rrfScore / max : 0 }));
   };
 
-  let results = normalizeToOwnMax(hydrated);
+  // Name matches first for a one-word lookup, and a note that merely mentions the name
+  // does not sit beside the person it names. See `applyNameMatchPolicy`.
+  let results = applyNameMatchPolicy(normalizeToOwnMax(hydrated), options.query);
 
   // Recall guard: an over-narrow filter should widen, not starve. Filtered
   // hits stay first (spec-mandated order); backfill is appended after them,
@@ -640,6 +645,7 @@ async function hydrate(
       notes: true,
       aiSummary: true,
       keyFacts: true,
+      opportunities: true,
       relationshipScore: true,
       priorityLevel: true,
       closenessTier: true,
@@ -665,6 +671,7 @@ async function hydrate(
       notes: row.notes,
       aiSummary: row.aiSummary,
       keyFacts: row.keyFacts ?? [],
+      opportunities: row.opportunities ?? [],
       relationshipScore: row.relationshipScore ?? 0,
       priorityLevel: row.priorityLevel ?? 0,
       closenessTier: row.closenessTier,

@@ -24,6 +24,7 @@
  *    connection is broken", and counting it as a failure would walk a perfectly healthy
  *    connection up the backoff ladder and eventually disarm it.
  */
+import { googleFetchWithRetry } from "@/lib/google-fetch";
 import type { ParsedCalendarEvent } from "@/lib/calendar-import";
 import { classifyCalendarEvent, counterpartsOf } from "@/lib/calendar-classify";
 import { calendarExternalIdBase } from "@/lib/ingest/external-id";
@@ -73,6 +74,15 @@ type GoogleEvent = {
   end?: { dateTime?: string; date?: string };
   attendees?: GoogleAttendee[];
   organizer?: { email?: string; displayName?: string; self?: boolean };
+  /** Where the event came from, when another app created it — a Luma or Partiful page. */
+  source?: { url?: string; title?: string };
+  /**
+   * Google's own privacy switch. False means the organiser chose to hide the guest list from
+   * guests, and the API still returns it to the calendar owner — so honouring it is on us.
+   */
+  guestsCanSeeOtherGuests?: boolean;
+  /** Set when Google truncated the guest list; what came back is not the whole room. */
+  attendeesOmitted?: boolean;
 };
 
 type GoogleEventsPage = {
@@ -126,6 +136,13 @@ export function toParsedEvent(raw: GoogleEvent): ParsedCalendarEvent | null {
     organizer: raw.organizer
       ? { name: raw.organizer.displayName || "", email: raw.organizer.email || "" }
       : null,
+    url: raw.source?.url || null,
+    status: raw.status || null,
+    // Two ways the guest list is not ours to keep: the organiser hid it, or Google itself
+    // truncated it. Either way, storing what we happen to have been handed would be storing
+    // other people's contact details they did not agree to share with this room.
+    guestsVisible: raw.guestsCanSeeOtherGuests !== false && raw.attendeesOmitted !== true,
+    selfResponse: (raw.attendees || []).find((a) => a.self)?.responseStatus ?? null,
   };
 }
 
@@ -163,7 +180,6 @@ export type FetchPageOptions = {
 export async function fetchCalendarPage(opts: FetchPageOptions): Promise<CalendarFetchResult> {
   const { accessToken, cursor } = opts;
   const now = opts.now ?? new Date();
-  const doFetch = opts.fetchImpl ?? fetch;
 
   const params = new URLSearchParams({
     singleEvents: "true",
@@ -182,8 +198,11 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
   // first sync restarts from the beginning every run and never reaches its last page.
   if (cursor?.pageToken) params.set("pageToken", cursor.pageToken);
 
-  const res = await doFetch(`${CALENDAR_API}?${params}`, {
+  const res = await googleFetchWithRetry(`${CALENDAR_API}?${params}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    // Well inside the scheduler's 60-second per-connection budget.
+    timeoutMs: 20_000,
+    fetchImpl: opts.fetchImpl,
   });
 
   if (res.status === 410) throw new CalendarSyncTokenExpiredError();

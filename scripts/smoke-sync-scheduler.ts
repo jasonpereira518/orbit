@@ -51,31 +51,22 @@ function depsFor(behaviour: Map<string, "ok" | "reauth" | "transient" | "expired
 } {
   const fetchedFor: string[] = [];
   const expiredOnce = new Set<string>();
-  const stubGetAccessToken = async (userId: string) => {
-    if (behaviour.get(userId) === "reauth") throw new ReauthRequiredError("dead grant");
-    return `stub-token:${userId}`;
-  };
-  const stubFetchPage = async ({ accessToken }: { accessToken: string }) => {
-    const userId = String(accessToken).replace(/^stub-token:/, "");
-    fetchedFor.push(userId);
-    const mode = behaviour.get(userId);
-    if (mode === "transient") throw new Error("Google Calendar 503: upstream unavailable");
-    if (mode === "expired" && !expiredOnce.has(userId)) {
-      expiredOnce.add(userId);
-      throw new CalendarSyncTokenExpiredError();
-    }
-    return emptyPage();
-  };
-  // This script only ever seeds `gmail_connections` rows, so the Microsoft side of each
-  // deps object is never exercised — it is wired to the same stubs purely so `SyncDeps`
-  // type-checks. `runSyncPass` claiming zero due `outlook_connections` rows every call
-  // means these are dead code for this script's purposes, not a gap in coverage: the
-  // Microsoft claim+loop block shares 100% of its logic with the Google one tested below.
   const deps: SyncDeps = {
-    getGoogleAccessToken: stubGetAccessToken,
-    fetchGooglePage: stubFetchPage,
-    getMicrosoftAccessToken: stubGetAccessToken,
-    fetchMicrosoftPage: async (opts) => stubFetchPage(opts),
+    getAccessToken: async (userId: string) => {
+      if (behaviour.get(userId) === "reauth") throw new ReauthRequiredError("dead grant");
+      return `stub-token:${userId}`;
+    },
+    fetchPage: async ({ accessToken }) => {
+      const userId = String(accessToken).replace(/^stub-token:/, "");
+      fetchedFor.push(userId);
+      const mode = behaviour.get(userId);
+      if (mode === "transient") throw new Error("Google Calendar 503: upstream unavailable");
+      if (mode === "expired" && !expiredOnce.has(userId)) {
+        expiredOnce.add(userId);
+        throw new CalendarSyncTokenExpiredError();
+      }
+      return emptyPage();
+    },
   };
   return { deps, fetchedFor };
 }
@@ -251,6 +242,150 @@ run(async () => {
       row.next_sync_at !== null,
       String(row.next_sync_at)
     );
+  }
+
+  // --- A platform invite becomes an EVENT, and never a fabricated meeting ------------------------
+  //
+  // The bug this pins cost the user real data: `counterpartsOf` treats the organiser as a
+  // counterpart, so a 200-person Luma party looked like a 1:1 with `invites@lu.ma` — creating
+  // a contact named "invites", logging a meeting nobody attended, and scheduling a follow-up
+  // nudge to a mailbox. Both halves have to hold at once, which is why this lives here rather
+  // than in either feature's own script.
+  await clearAll();
+  {
+    const db = await getDb();
+    const USER = "sched-discovery";
+    await db.execute(sql`DELETE FROM event_aliases WHERE user_id = ${USER}`);
+    await db.execute(sql`DELETE FROM event_attendees WHERE user_id = ${USER}`);
+    await db.execute(sql`DELETE FROM events WHERE user_id = ${USER}`);
+    await db.execute(sql`DELETE FROM contacts WHERE user_id = ${USER}`);
+    await db.execute(sql`DELETE FROM interactions WHERE user_id = ${USER}`);
+
+    await seed(USER);
+    const { deps } = depsFor(new Map([[USER, "ok" as const]]));
+    // The event page the enrichment pass will read, served from here rather than the
+    // internet: a suite that actually fetches lu.ma is slow, flaky and impolite.
+    const page = `<html><head>
+      <title>AI Tinkerers SF — the real title</title>
+      <script type="application/ld+json">${JSON.stringify({
+        "@type": "Event",
+        name: "AI Tinkerers SF",
+        startDate: "2026-06-01T11:00:00-07:00",
+        location: { "@type": "Place", name: "Shack15", address: { addressLocality: "San Francisco" } },
+      })}</script>
+    </head><body></body></html>`;
+
+    const withInvite: SyncDeps = {
+      ...deps,
+      eventPageFetch: (async () =>
+        new Response(page, {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        })) as unknown as typeof fetch,
+      fetchPage: async () =>
+        emptyPage({
+          selfEmails: [`${USER}@example.com`],
+          events: [
+            {
+              uid: "gcal-luma-party",
+              summary: "AI Tinkerers SF",
+              description: "RSVP: https://lu.ma/ai-tinkerers-sched",
+              location: "Shack15",
+              start: new Date("2026-06-01T18:00:00.000Z"),
+              end: new Date("2026-06-01T21:00:00.000Z"),
+              organizer: { name: "Luma", email: "invites@lu.ma" },
+              attendees: [
+                { name: "You", email: `${USER}@example.com` },
+                { name: "Ada Lovelace", email: "ada@analytical.io" },
+              ],
+            },
+          ],
+        }),
+    };
+
+    const stats = await runSyncPass({ deps: withInvite });
+    check("the invite becomes an event", stats.discoveryCreated === 1, JSON.stringify(stats));
+    check("and no meeting is logged from it", stats.interactionsLogged === 0, String(stats.interactionsLogged));
+    check("and no contact is created", stats.contactsCreated === 0, String(stats.contactsCreated));
+
+    const counts = rowsOf<{ events: number; contacts: number; attendees: number }>(
+      await db.execute(sql`
+        SELECT (SELECT count(*)::int FROM events WHERE user_id = ${USER})          AS events,
+               (SELECT count(*)::int FROM contacts WHERE user_id = ${USER})        AS contacts,
+               (SELECT count(*)::int FROM event_attendees WHERE user_id = ${USER}) AS attendees
+      `)
+    )[0]!;
+    check("exactly one event row", counts.events === 1, String(counts.events));
+    check("the other guest is on its roster", counts.attendees === 1, String(counts.attendees));
+    check("the contacts table is untouched", counts.contacts === 0, String(counts.contacts));
+
+    // Re-running the same page must not produce a second event.
+    await db.execute(sql`UPDATE gmail_connections SET next_sync_at = now() - interval '1 minute' WHERE user_id = ${USER}`);
+    const again = await runSyncPass({ deps: withInvite });
+    check("a second pass attaches rather than duplicating", again.discoveryCreated === 0, JSON.stringify(again));
+    const after = rowsOf<{ n: number }>(
+      await db.execute(sql`SELECT count(*)::int AS n FROM events WHERE user_id = ${USER}`)
+    )[0]!.n;
+    check("still one event", after === 1, String(after));
+
+    // The point of the whole queue: a calendar line says "AI Tinkerers SF", and the page
+    // behind its link says where, when and what it actually is — with nobody there to press
+    // Refresh.
+    check("the page was read in the background", again.enrichFetched === 1, JSON.stringify(again));
+    const enriched = rowsOf<{ city: string | null; enrich_due_at: Date | null }>(
+      await db.execute(sql`SELECT city, enrich_due_at FROM events WHERE user_id = ${USER}`)
+    )[0]!;
+    check("and its details landed", enriched.city === "San Francisco", String(enriched.city));
+    check("and it left the queue", enriched.enrich_due_at === null);
+  }
+
+  // --- Microsoft: a real grant is not read as "no calendar scope" ---------------------------------
+  //
+  // Microsoft echoes Graph scopes as short names or full URIs, in any case. A case-sensitive
+  // full-URI substring test read a genuine "Calendars.Read" as no calendar and disarmed the
+  // connection — silently, for a user who had done everything right.
+  await clearAll();
+  {
+    const db = await getDb();
+    await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-ms-%'`);
+    await db.execute(sql`UPDATE outlook_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-ms-%'`);
+    const seedMs = async (userId: string, scopes: string): Promise<string> => {
+      const inserted = await db.execute(sql`
+        INSERT INTO outlook_connections
+          (user_id, email_address, access_token_encrypted, status, scopes, next_sync_at, sync_failures)
+        VALUES (${userId}, ${userId + "@example.com"}, 'enc', 'active', ${scopes}, ${new Date(Date.now() - 60_000)}, 0)
+        RETURNING id
+      `);
+      return rowsOf<{ id: string }>(inserted)[0].id;
+    };
+    const readMs = async (id: string) =>
+      rowsOf<{ next_sync_at: string | Date | null; sync_error: string | null }>(
+        await db.execute(sql`SELECT next_sync_at, sync_error FROM outlook_connections WHERE id = ${id}`)
+      )[0];
+
+    const shortId = await seedMs("sched-ms-short", "openid Calendars.Read");
+    const uriId = await seedMs("sched-ms-uri", "https://graph.microsoft.com/calendars.read openid");
+    const contactsId = await seedMs("sched-ms-contacts", "https://graph.microsoft.com/Contacts.Read");
+    const lookalikeId = await seedMs("sched-ms-lookalike", "Calendars.ReadWrite");
+
+    const fetchedFor: string[] = [];
+    const { deps } = depsFor(new Map());
+    deps.getMicrosoftAccessToken = async (userId: string) => `stub-token:${userId}`;
+    deps.fetchMicrosoftPage = async ({ accessToken }) => {
+      fetchedFor.push(String(accessToken).replace(/^stub-token:/, ""));
+      return emptyPage();
+    };
+    const stats = await runSyncPass({ deps });
+    check("both calendar grants are synced, whatever their form", stats.synced === 2, JSON.stringify(stats));
+    check("a short-form Calendars.Read is fetched", fetchedFor.includes("sched-ms-short"), JSON.stringify(fetchedFor));
+    check("a mixed-case full-URI grant is fetched", fetchedFor.includes("sched-ms-uri"), JSON.stringify(fetchedFor));
+    check("a short-form grant is rescheduled, not disarmed", (await readMs(shortId)).next_sync_at !== null);
+    check("its sync_error stays empty", (await readMs(shortId)).sync_error === null, String((await readMs(shortId)).sync_error));
+    check("a mixed-case full-URI grant is rescheduled, not disarmed", (await readMs(uriId)).next_sync_at !== null);
+    check("a contacts-only connection is skipped", stats.skippedNoScope === 2, JSON.stringify(stats));
+    check("…and disarmed with a reason the user can act on", (await readMs(contactsId)).next_sync_at === null && /reconnect/i.test((await readMs(contactsId)).sync_error ?? ""));
+    check("a look-alike scope is not calendar access", (await readMs(lookalikeId)).next_sync_at === null && !fetchedFor.includes("sched-ms-lookalike"));
+    await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-ms-%'`);
   }
 
   // --- An unarmed connection is never picked up ---------------------------------------------------

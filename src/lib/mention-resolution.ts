@@ -11,9 +11,15 @@ import {
   findDuplicateCandidatesIndexed,
   type DuplicateSubject,
 } from "@/lib/duplicates";
+import type { MentionPick } from "@/lib/mentions/mention-picks";
 
 export type MentionCandidate = { name: string; context: string | null; company?: string | null; nearPerson?: string | null };
-export type MentionMatchedBy = "exact_name" | "name_company" | "first_name_unique";
+export type MentionMatchedBy =
+  | "exact_name"
+  | "name_company"
+  | "first_name_unique"
+  /** The user chose them from the `@` menu. Not a guess, and never re-litigated. */
+  | "user_pick";
 export type ResolvedMention = { text: string; context: string | null; nearPerson: string | null; contactId: string; confidence: number; matchedBy: MentionMatchedBy };
 export type UnresolvedMention = { text: string; context: string | null; nearPerson: string | null };
 
@@ -98,4 +104,67 @@ export function resolveMentions(
     unresolved.push(base);
   }
   return { resolved, unresolved };
+}
+
+/**
+ * A pick is a contact the user chose from a menu, so it is not a match to be made.
+ *
+ * Three rules, and each exists because of a specific way this goes wrong without it:
+ *
+ *   A PICK IS NEVER RE-LITIGATED. The three tiers above exist to guess who a name in the
+ *   prose refers to. Running them over a name the user pointed at can only disagree with
+ *   them, and disagreeing with the person who clicked is not a feature.
+ *
+ *   A PICKED NAME LEAVES THE FUZZY POOL. Otherwise `@Sam` and a tier-3 unique-first-name
+ *   hit on the word "Sam" elsewhere in the note both resolve, and the two rows collapse
+ *   under the unique index on `interaction_mentions` — so the save reports two mentions and
+ *   writes one. Both spellings leave it: the token may be a disambiguated variant ("Chris
+ *   Doyle" beside "Chris"), while the note spells the person's real name.
+ *
+ *   A PICK WHO IS ALREADY A PARTICIPANT IS NOT ALSO A MENTION. `excludeContactIds` is the
+ *   batch's participants, and `runCaptureParse` now lets a pick BE one (it overrides the
+ *   duplicate matcher for the person it names). `saveNoteBatch` drops such a mention anyway;
+ *   dropping it here too stops the review screen offering someone as "also mentioned" while
+ *   they are standing on their own card above it.
+ *
+ * Ownership is checked here rather than where the payload arrives, because `subjects` IS
+ * the caller's own contact list: an id missing from it was either forged or deleted between
+ * the pick and the save, and both mean the same thing — there is nobody to link to. Checking
+ * at the boundary instead would cost a second query for no additional safety.
+ */
+export function resolveMentionsWithPicks(
+  subjects: DuplicateSubject[],
+  mentions: MentionCandidate[],
+  picks: readonly MentionPick[],
+  ctx?: { excludeContactIds?: Iterable<string> }
+): { resolved: ResolvedMention[]; unresolved: UnresolvedMention[] } {
+  const owned = new Map(subjects.map((s) => [s.id, s]));
+  const excluded = new Set(ctx?.excludeContactIds ?? []);
+  const seenIds = new Set<string>();
+  const pickedNames = new Set<string>();
+  const fromPicks: ResolvedMention[] = [];
+  for (const pick of picks) {
+    const subject = owned.get(pick.id);
+    if (!subject || seenIds.has(pick.id)) continue;
+    seenIds.add(pick.id);
+    // Outside the `excluded` check on purpose: a participant's name having an answer is
+    // exactly why the tiers must not have another go at it further down.
+    for (const name of [pick.name, subject.fullName]) {
+      const norm = normalizeName(name);
+      if (norm) pickedNames.add(norm);
+    }
+    if (excluded.has(pick.id)) continue;
+    fromPicks.push({
+      text: pick.name,
+      context: null,
+      nearPerson: null,
+      contactId: pick.id,
+      confidence: 1,
+      matchedBy: "user_pick",
+    });
+  }
+
+  const rest = mentions.filter((m) => !pickedNames.has(normalizeName(m.name ?? "")));
+  const { resolved, unresolved } = resolveMentions(subjects, rest, ctx);
+  return { resolved: [...fromPicks, ...resolved], unresolved };
 }

@@ -42,6 +42,7 @@ import {
   claimDueConnections,
   disarmSync,
   markSyncResult,
+  oldestDueAgeMs,
   type ClaimedConnection,
 } from "@/lib/provider-connections";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
@@ -52,6 +53,11 @@ import {
 import { ReauthRequiredError } from "@/lib/errors";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { runEventSyncPass } from "@/lib/events/sync";
+import { runEnrichmentPass } from "@/lib/events/enrich-queue";
+import { backfillPersonKeys } from "@/lib/events/people-store";
+import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
+import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
+import { reportAndContinue, reportError } from "@/lib/report-error";
 
 /** Matches the import engine's budget, and leaves headroom under the 300s function ceiling. */
 export const SYNC_TIME_BUDGET_MS = 4.5 * 60 * 1000;
@@ -66,8 +72,30 @@ export const SYNC_TIME_BUDGET_MS = 4.5 * 60 * 1000;
  */
 export const PER_CONNECTION_BUDGET_MS = 60 * 1000;
 
-/** Claimed per run. Small because each one can take up to a minute. */
-export const CONNECTIONS_PER_RUN = 5;
+/** Claimed per run. Four run at once, each bounded by PER_CONNECTION_BUDGET_MS. */
+export const CONNECTIONS_PER_RUN = 20;
+
+/** Connections synced in parallel. Each is a different user's calendar and ingest context. */
+export const SYNC_CONCURRENCY = 4;
+
+/**
+ * Runs `worker` over `items` with at most `limit` in flight, settling every item — the
+ * Promise.allSettled guarantee without starting all twenty at once. Never rejects.
+ */
+export async function runSettledPool<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      await worker(item).catch(() => undefined);
+    }
+  });
+  await Promise.allSettled(lanes);
+}
 
 /** ICS feeds claimed per run. Cheaper than an API sync — one HTTP GET and a parse. */
 export const ICS_SUBSCRIPTIONS_PER_RUN = 10;
@@ -82,15 +110,29 @@ export const SYNC_INTERVAL_MS = 30 * 60 * 1000;
  * real Google grant. Production passes nothing and gets the real implementations.
  */
 export type SyncDeps = {
-  getGoogleAccessToken: typeof getValidGoogleAccessToken;
-  fetchGooglePage: typeof fetchGoogleCalendarPage;
-  getMicrosoftAccessToken: typeof getValidOutlookAccessToken;
-  fetchMicrosoftPage: typeof fetchMicrosoftCalendarPage;
+  getAccessToken: typeof getValidGoogleAccessToken;
+  fetchPage: typeof fetchGoogleCalendarPage;
+  /**
+   * The Microsoft pair. Optional, defaulting to the real implementations, so a test that only
+   * seeds Google connections (every one that predates Outlook calendar sync) need not stub a
+   * provider it never claims. The Google pair keeps its original names for the same reason:
+   * renaming them would mean editing every test that builds a `SyncDeps`.
+   */
+  getMicrosoftAccessToken?: typeof getValidOutlookAccessToken;
+  fetchMicrosoftPage?: typeof fetchMicrosoftCalendarPage;
+  /**
+   * How the enrichment pass reads an event's public page.
+   *
+   * Injectable for the same reason the two above are, and with a sharper edge: without it a
+   * smoke test that seeds an event with a URL makes a real outbound request to whatever host
+   * the fixture named. A test suite that quietly fetches lu.ma is both slow and rude.
+   */
+  eventPageFetch?: typeof fetch;
 };
 
 const DEFAULT_DEPS: SyncDeps = {
-  getGoogleAccessToken: getValidGoogleAccessToken,
-  fetchGooglePage: fetchGoogleCalendarPage,
+  getAccessToken: getValidGoogleAccessToken,
+  fetchPage: fetchGoogleCalendarPage,
   getMicrosoftAccessToken: getValidOutlookAccessToken,
   fetchMicrosoftPage: fetchMicrosoftCalendarPage,
 };
@@ -111,7 +153,17 @@ export type SyncRunStats = {
   eventConnectionsSynced: number;
   eventConnectionsFailed: number;
   eventRostersFetched: number;
+  /** Events found in a calendar or feed rather than added by hand. */
+  discoveryCreated: number;
+  discoveryAttached: number;
+  /** Reports refused because the user had already dismissed or deleted that event. */
+  discoverySuppressed: number;
+  /** Background reads of discovered events' public pages. */
+  enrichFetched: number;
+  enrichFailed: number;
   budgetExhausted: boolean;
+  /** How overdue the oldest due connection was when the run started; null when none. */
+  oldestDueAgeMs: number | null;
 };
 
 function emptyRunStats(): SyncRunStats {
@@ -130,7 +182,13 @@ function emptyRunStats(): SyncRunStats {
     eventConnectionsSynced: 0,
     eventConnectionsFailed: 0,
     eventRostersFetched: 0,
+    discoveryCreated: 0,
+    discoveryAttached: 0,
+    discoverySuppressed: 0,
+    enrichFetched: 0,
+    enrichFailed: 0,
     budgetExhausted: false,
+    oldestDueAgeMs: null,
   };
 }
 
@@ -144,7 +202,7 @@ async function syncGoogleCalendar(
   now: Date,
   deps: SyncDeps
 ): Promise<void> {
-  const accessToken = await deps.getGoogleAccessToken(conn.userId);
+  const accessToken = await deps.getAccessToken(conn.userId);
   const ctx = await openIngestContext(conn.userId, {
     source: "google_calendar",
     // A meeting is evidence the user knows this person, so calendar sync populates the
@@ -165,7 +223,7 @@ async function syncGoogleCalendar(
   for (;;) {
     let page;
     try {
-      page = await deps.fetchGooglePage({ accessToken, cursor, now });
+      page = await deps.fetchPage({ accessToken, cursor, now });
     } catch (err) {
       if (err instanceof CalendarSyncTokenExpiredError) {
         // Expected lifecycle event, not a fault: drop both cursors and start the windowed
@@ -183,6 +241,25 @@ async function syncGoogleCalendar(
       stats.eventsIngested += ingested.eventsSeen;
       stats.contactsCreated += ingested.contactsCreated;
       stats.interactionsLogged += ingested.interactionsLogged;
+    }
+
+    // The same page, read for a different question: which of these are Luma/Partiful/
+    // Eventbrite invites rather than meetings? `classifyCalendarEvent` has already refused
+    // those above, so the two readings cannot double-count one entry.
+    //
+    // Never allowed to fail the calendar sync: a discovery error must not cost the user their
+    // meeting history, and the cursor has not advanced yet.
+    try {
+      const discovered = await recordDiscoveryCandidates(
+        conn.userId,
+        calendarEventsToCandidates(page.events, page.selfEmails, "gcal")
+      );
+      stats.discoveryCreated += discovered.created;
+      stats.discoveryAttached += discovered.attached;
+      stats.discoverySuppressed += discovered.suppressed;
+    } catch (err) {
+      // Swallowed deliberately — see above — but reported (throttled), not silent.
+      reportError(err, { where: "job.sync.gcal-discovery", userId: conn.userId, level: "warning" });
     }
 
     cursor = advanceGoogleCalendarCursor(cursor, page);
@@ -223,7 +300,7 @@ async function syncMicrosoftCalendar(
   now: Date,
   deps: SyncDeps
 ): Promise<void> {
-  const accessToken = await deps.getMicrosoftAccessToken(conn.userId);
+  const accessToken = await (deps.getMicrosoftAccessToken ?? getValidOutlookAccessToken)(conn.userId);
   const ctx = await openIngestContext(conn.userId, {
     source: "microsoft_calendar",
     // Same business decision as the Google path — see its comment above.
@@ -236,7 +313,7 @@ async function syncMicrosoftCalendar(
   for (;;) {
     let page;
     try {
-      page = await deps.fetchMicrosoftPage({
+      page = await (deps.fetchMicrosoftPage ?? fetchMicrosoftCalendarPage)({
         accessToken,
         cursor,
         ownerEmail: conn.emailAddress,
@@ -300,22 +377,37 @@ export async function runSyncPass(
 
   // Google and Microsoft both claim in the same pass — the claim and result bookkeeping are
   // provider-agnostic, so each provider is just another claim+loop block below.
+  // Measured before claiming: after the claim, the rows it took are no longer "due". The lag
+  // metric is the worst of the two providers, so a stalled Outlook queue cannot hide behind a
+  // healthy Google one.
+  const [googleLagMs, microsoftLagMs] = await Promise.all([
+    oldestDueAgeMs("google", now).catch(() => null),
+    oldestDueAgeMs("microsoft", now).catch(() => null),
+  ]);
+  stats.oldestDueAgeMs =
+    googleLagMs === null && microsoftLagMs === null
+      ? null
+      : Math.max(googleLagMs ?? 0, microsoftLagMs ?? 0);
   const claimed = await claimDueConnections("google", CONNECTIONS_PER_RUN, now);
   stats.claimed = claimed.length;
 
-  for (const conn of claimed) {
-    // Checked BEFORE each item, never after — a budget tested after the work has already run
-    // bounds nothing.
-    if (deadlineReached(deadline)) {
+  // A connection may START only while a full per-connection budget remains, so four lanes
+  // cannot carry the run past the function ceiling. Checked before each item, never after —
+  // a budget tested after the work has already run bounds nothing.
+  const startCutoff = deadline - PER_CONNECTION_BUDGET_MS;
+
+  // `stats` counters are mutated only between awaits, so lanes cannot lose an increment.
+  await runSettledPool(claimed, SYNC_CONCURRENCY, async (conn) => {
+    if (deadlineReached(startCutoff)) {
       stats.budgetExhausted = true;
-      // Release the claim so the next run picks it up immediately rather than waiting out
-      // the lease.
+      // Released immediately due, so the next run (or the continuation kick) picks it up
+      // rather than waiting out the lease.
       await markSyncResult(conn.provider, conn.id, {
         ok: true,
         cursor: conn.syncCursor,
         nextSyncAt: now,
       }).catch(() => null);
-      continue;
+      return;
     }
 
     // A token minted before the calendar scope shipped is still valid for Gmail and Contacts
@@ -330,7 +422,7 @@ export async function runSyncPass(
         "Calendar access not granted — reconnect Google to enable calendar sync",
         now
       ).catch(() => null);
-      continue;
+      return;
     }
 
     try {
@@ -342,27 +434,34 @@ export async function runSyncPass(
       // `getValidAccessToken` has already written `needs_reauth` (and nulled `next_sync_at`)
       // in the ReauthRequiredError case, so this only records the reason.
       const retryable = !(err instanceof ReauthRequiredError);
+      // A dead grant is the person's to fix and the bell already tells them; anything else is
+      // a fault worth seeing across users, which a per-row `sync_error` never is.
+      if (retryable) {
+        reportError(err, { where: "job.sync.gcal", userId: conn.userId, level: "warning", extra: { connectionId: conn.id } });
+      }
       await markSyncResult(conn.provider, conn.id, {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
         retryable,
-      }).catch(() => null);
+      }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
     }
-  }
+  });
 
-  // Microsoft, same structure as the Google block above.
+  // Microsoft: the same lane as Google above — same pool, same start cutoff, same reporting.
+  // Claimed after the Google pool drains, so `startCutoff` (not the claim) is what keeps the
+  // combined run inside the function ceiling.
   const claimedMicrosoft = await claimDueConnections("microsoft", CONNECTIONS_PER_RUN, now);
   stats.claimed += claimedMicrosoft.length;
 
-  for (const conn of claimedMicrosoft) {
-    if (deadlineReached(deadline)) {
+  await runSettledPool(claimedMicrosoft, SYNC_CONCURRENCY, async (conn) => {
+    if (deadlineReached(startCutoff)) {
       stats.budgetExhausted = true;
       await markSyncResult(conn.provider, conn.id, {
         ok: true,
         cursor: conn.syncCursor,
         nextSyncAt: now,
       }).catch(() => null);
-      continue;
+      return;
     }
 
     // Same reasoning as the Google branch: a token minted before the calendar scope
@@ -376,7 +475,7 @@ export async function runSyncPass(
         "Calendar access not granted — reconnect Outlook to enable calendar sync",
         now
       ).catch(() => null);
-      continue;
+      return;
     }
 
     try {
@@ -385,13 +484,16 @@ export async function runSyncPass(
     } catch (err) {
       stats.failed++;
       const retryable = !(err instanceof ReauthRequiredError);
+      if (retryable) {
+        reportError(err, { where: "job.sync.outlook-calendar", userId: conn.userId, level: "warning", extra: { connectionId: conn.id } });
+      }
       await markSyncResult(conn.provider, conn.id, {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
         retryable,
-      }).catch(() => null);
+      }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
     }
-  }
+  });
 
   // ICS subscriptions are a third claimable source, in the same pass.
   //
@@ -401,7 +503,7 @@ export async function runSyncPass(
   // subscribed and then stopped opening `/imports` silently stopped syncing.
   if (!deadlineReached(deadline)) {
     const subs = await claimDueCalendarSubscriptions(ICS_SUBSCRIPTIONS_PER_RUN, now).catch(
-      () => []
+      reportAndContinue({ where: "job.sync.ics-claim" }, [] as Awaited<ReturnType<typeof claimDueCalendarSubscriptions>>)
     );
     stats.icsClaimed = subs.length;
     for (const sub of subs) {
@@ -412,11 +514,12 @@ export async function runSyncPass(
       try {
         await syncCalendarSubscription(sub.userId, sub.id);
         stats.icsSynced++;
-      } catch {
+      } catch (err) {
         // The claim already moved `last_synced_at`, so a failing feed waits out the stale
         // window rather than being re-fetched every run. Counted, never rethrown — one dead
-        // ICS URL must not stop the rest.
+        // ICS URL must not stop the rest — and reported (throttled).
         stats.icsFailed++;
+        reportError(err, { where: "job.sync.ics", userId: sub.userId, level: "warning", extra: { subscriptionId: sub.id } });
       }
     }
   }
@@ -426,15 +529,44 @@ export async function runSyncPass(
   // contact without a human saying so — and is safe to cut short and resume next run.
   if (!deadlineReached(deadline)) {
     try {
-      const eventStats = await runEventSyncPass(now);
+      const eventStats = await runEventSyncPass(now, {
+        deadline,
+        feedDeps: deps.eventPageFetch ? { fetch: deps.eventPageFetch } : undefined,
+      });
       stats.eventConnectionsClaimed = eventStats.claimed;
       stats.eventConnectionsSynced = eventStats.synced;
       stats.eventConnectionsFailed = eventStats.failed;
       stats.eventRostersFetched = eventStats.attendeesUpserted;
-    } catch {
+    } catch (err) {
       // Never rethrown, for the same reason as everything else in this function: a failure in
       // one provider must not lose the run's ledger row for the others.
       stats.eventConnectionsFailed++;
+      reportError(err, { where: "job.sync.event-connections" });
+    }
+  } else {
+    stats.budgetExhausted = true;
+  }
+
+  // Person keys for rows written before the column existed. A bounded slice per pass: it is
+  // pure catch-up work, and the panel it feeds is simply thinner until it finishes.
+  await backfillPersonKeys(2000).catch(reportAndContinue({ where: "job.sync.person-keys" }, 0));
+
+  // Reading discovered events' public pages comes LAST of all, and deliberately so: every
+  // pass above creates or updates data the user is waiting on, while this one makes rows that
+  // already exist better. It takes whatever budget is left and stops mid-queue without
+  // consequence — the claims it did not use are simply still due next time.
+  if (!deadlineReached(deadline)) {
+    try {
+      const enrichStats = await runEnrichmentPass({
+        now,
+        deadline,
+        deps: deps.eventPageFetch ? { fetch: deps.eventPageFetch } : undefined,
+      });
+      stats.enrichFetched = enrichStats.enriched;
+      stats.enrichFailed = enrichStats.failed;
+    } catch (err) {
+      stats.enrichFailed++;
+      reportError(err, { where: "job.sync.event-enrich" });
     }
   } else {
     stats.budgetExhausted = true;

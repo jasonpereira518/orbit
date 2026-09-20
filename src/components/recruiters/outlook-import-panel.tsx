@@ -18,7 +18,12 @@ import {
   updateBackgroundJob,
 } from "@/lib/background-jobs";
 import { Button } from "@/components/ui/button";
+import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { toast } from "@/lib/toast";
+import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -44,12 +49,27 @@ function phaseLabel(scan: OutlookScanStatus) {
 export function OutlookImportPanel({
   connection,
   initialScan,
+  returnTo,
 }: {
   connection: OutlookConnectionStatus;
   initialScan: OutlookScanStatus | null;
+  /** Where Microsoft sends the user back to. Omitted, the callback defaults to /imports. */
+  returnTo?: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  // One handler for the header link and the button. The recruiter scan asks for mail access;
+  // a paused calendar sync is reconnected as "calendar", which was already granted, so
+  // fixing it never asks for mail.
+  const connect = (purpose: MicrosoftPurpose = "recruiter_scan") =>
+    start(async () => {
+      try {
+        const { url } = await startOutlookOAuth({ purpose, returnTo });
+        window.location.href = url;
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+      }
+    });
   const [scan, setScan] = useState<OutlookScanStatus | null>(initialScan);
   const jobIdRef = useRef<string | null>(null);
 
@@ -102,12 +122,20 @@ export function OutlookImportPanel({
       toast.success("Outlook connected");
       router.refresh();
     } else if (outlook === "error") {
-      toast.error(params.get("reason") || "Outlook connection failed");
+      const oauth = describeOAuthReason(params.get("reason"), "Outlook", params.get("purpose"));
+      if (oauth.cancelled) toast.message(oauth.message);
+      else toast.error(oauth.message);
     }
     params.delete("outlook");
     params.delete("reason");
+    params.delete("purpose");
     const next = params.toString();
-    window.history.replaceState(null, "", `/recruiters${next ? `?${next}` : ""}`);
+    // The current path, not a hardcoded one: the callback returns to wherever it was started.
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+    );
   }, [router]);
 
   useEffect(() => {
@@ -128,7 +156,8 @@ export function OutlookImportPanel({
                 : "No recruiters found in your mailbox"
             );
           } else if (next.status === "failed") {
-            toast.error(next.errorMessage || "Scan failed");
+            // The stored scan error can be a raw Graph API body.
+            toast.error(friendlyError(next.errorMessage, "The scan didn’t finish — try again?"));
           }
           router.refresh();
         }
@@ -177,29 +206,31 @@ export function OutlookImportPanel({
             Outlook
           </h2>
           <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
-            {connection.connected
-              ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
-              : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
+            {connection.status === "needs_reauth"
+              ? `${SESSION_EXPIRED_LINE} to scan your mailbox again.`
+              : connection.connected && connection.hasMailScope
+                ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
+                : connection.connected
+                  ? `Connected as ${connection.emailAddress}, without permission to read mail. Allow mail access to scan for recruiters.`
+                  : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
           </p>
+          {connection.status === "disarmed" ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
+              <span>{calendarPauseLine(connection.syncError, "Microsoft")}</span>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={pending} onClick={() => connect("calendar")}>
+                Reconnect Microsoft
+              </Button>
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
-          {!connection.connected ? (
-            <Button
-              disabled={pending}
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const { url } = await startOutlookOAuth();
-                    window.location.href = url;
-                  } catch (err) {
-                    toast.error(
-                      err instanceof Error ? err.message : "OAuth failed"
-                    );
-                  }
-                })
-              }
-            >
-              Connect Outlook
+          {!connection.connected || !connection.hasMailScope ? (
+            <Button disabled={pending} onClick={() => connect()}>
+              {connection.status === "needs_reauth"
+                ? "Reconnect Microsoft"
+                : connection.connected
+                  ? "Allow mail access"
+                  : "Connect Outlook"}
             </Button>
           ) : (
             <>
@@ -208,7 +239,12 @@ export function OutlookImportPanel({
                 onClick={() =>
                   start(async () => {
                     try {
-                      const { importId } = await startOutlookRecruiterScan();
+                      const started = await startOutlookRecruiterScan();
+                      if (!started.ok) {
+                        toast.error(started.error);
+                        return;
+                      }
+                      const { importId } = started.value;
                       const next = await getOutlookScanStatus(importId);
                       if (next) {
                         setScan(next);
@@ -217,7 +253,7 @@ export function OutlookImportPanel({
                       toast.success("Scan started — this can take a few minutes");
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not start scan"
+                        friendlyError(err, "Couldn’t start the scan — try again?")
                       );
                     }
                   })
@@ -225,20 +261,18 @@ export function OutlookImportPanel({
               >
                 {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
               </Button>
-              <Button
-                variant="outline"
+              <DisconnectAccountDialog
+                provider="outlook"
                 disabled={pending || running}
-                onClick={() =>
+                onConfirm={(opts) =>
                   start(async () => {
-                    await disconnectOutlook();
+                    await disconnectOutlook(opts);
                     setScan(null);
-                    toast.success("Outlook disconnected");
+                    toast.success(opts.alsoDelete ? "Outlook disconnected and its recruiter data deleted" : "Outlook disconnected");
                     router.refresh();
                   })
                 }
-              >
-                Disconnect
-              </Button>
+              />
             </>
           )}
         </div>
@@ -257,7 +291,7 @@ export function OutlookImportPanel({
               onClick={() =>
                 start(async () => {
                   await cancelOutlookRecruiterScan(scan.importId);
-                  toast.success("Scan cancelled");
+                  toast.success("Scan stopped");
                   const next = await getOutlookScanStatus(scan.importId);
                   if (next) {
                     setScan(next);

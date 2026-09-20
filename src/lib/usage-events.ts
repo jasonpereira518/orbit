@@ -25,13 +25,25 @@ export type TokenCounts = {
   cachedInputTokens?: number | null;
 };
 
+/**
+ * Who was billed for a call.
+ *
+ * A superset of `AiProvider`, not the same type. Wispr transcribes and does not complete,
+ * so it never takes part in provider/model selection and must not be assignable where an
+ * `AiProvider` is expected — but its calls still cost money and still belong in the ledger.
+ */
+export type UsageProvider = AiProvider | "wispr";
+
 export type UsageMeta = {
   userId: string;
   operation: string;
-  provider: AiProvider;
+  provider: UsageProvider;
   model: string;
   kind: UsageKind;
-  /** Whose API key paid. "orbit" only ever happens off-Vercel — prod is strictly BYOK. */
+  /**
+   * Whose API key paid. "orbit" = a managed key the AI gate issued (Lifetime or demo
+   * accounts only) — and the meter the managed allowance reads. Always `grant.keyOwner`.
+   */
   keyOwner: "user" | "orbit";
 };
 
@@ -96,7 +108,15 @@ export function recordUsage(rec: UsageRecord): void {
  */
 export async function withUsage<T>(
   meta: UsageMeta,
-  run: (report: (tokens: TokenCounts) => void) => Promise<T>
+  run: (report: (tokens: TokenCounts) => void) => Promise<T>,
+  opts: {
+    /**
+     * The caller's own abort — a client that closed the tab. When it has fired, the
+     * failure is `cancelled`: nobody broke, and filed as `other` it would read as Orbit's
+     * fault in `OUR_ERROR_KINDS`.
+     */
+    cancelSignal?: AbortSignal;
+  } = {}
 ): Promise<T> {
   const started = Date.now();
   let tokens: TokenCounts = {};
@@ -118,7 +138,7 @@ export async function withUsage<T>(
       ...meta,
       ...tokens,
       success: false,
-      errorKind: classifyAiError(err),
+      errorKind: opts.cancelSignal?.aborted ? "cancelled" : classifyAiError(err),
       durationMs: Date.now() - started,
     });
     throw err;
