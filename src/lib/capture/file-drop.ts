@@ -83,6 +83,23 @@ function readBatch(reader: {
 }
 
 /**
+ * How much of a tree to read.
+ *
+ * Defaults are the capture tray's, which is what every existing caller wants. Imports pass a
+ * larger file cap: an unzipped LinkedIn archive folder holds dozens of CSVs and sits close
+ * enough to 60 that the default would silently drop the ones that matter.
+ */
+export type DropLimits = {
+  maxFiles: number;
+  maxDepth: number;
+};
+
+export const DEFAULT_DROP_LIMITS: DropLimits = {
+  maxFiles: MAX_DROP_FILES,
+  maxDepth: MAX_DROP_DEPTH,
+};
+
+/**
  * Walk one entry, depth-first, appending into `out`.
  *
  * Breadth-first would have been fine too; depth-first is chosen because it keeps a folder's
@@ -93,9 +110,10 @@ async function walk(
   entry: DropEntry,
   path: string,
   depth: number,
-  out: DroppedFile[]
+  out: DroppedFile[],
+  limits: DropLimits
 ): Promise<void> {
-  if (out.length >= MAX_DROP_FILES) return;
+  if (out.length >= limits.maxFiles) return;
 
   if (entry.isFile) {
     if (isIgnorableFile(entry.name)) return;
@@ -104,7 +122,7 @@ async function walk(
     return;
   }
 
-  if (!entry.isDirectory || depth >= MAX_DROP_DEPTH) return;
+  if (!entry.isDirectory || depth >= limits.maxDepth) return;
   const reader = entry.createReader?.();
   if (!reader) return;
 
@@ -114,8 +132,8 @@ async function walk(
     // The empty batch IS the end-of-directory signal. There is no other one.
     if (!entries.length) return;
     for (const child of entries) {
-      if (out.length >= MAX_DROP_FILES) return;
-      await walk(child, childPath, depth + 1, out);
+      if (out.length >= limits.maxFiles) return;
+      await walk(child, childPath, depth + 1, out, limits);
     }
   }
 }
@@ -135,12 +153,13 @@ export type DropReadResult = {
  */
 export async function readDroppedEntries(
   items: readonly DropEntry[],
-  fallback: readonly File[] = []
+  fallback: readonly File[] = [],
+  limits: DropLimits = DEFAULT_DROP_LIMITS
 ): Promise<DropReadResult> {
   const out: DroppedFile[] = [];
   for (const entry of items) {
-    if (out.length >= MAX_DROP_FILES) break;
-    await walk(entry, "", 0, out);
+    if (out.length >= limits.maxFiles) break;
+    await walk(entry, "", 0, out, limits);
   }
 
   // Only when the browser gave us NO entries at all — not merely when the entries yielded
@@ -149,14 +168,14 @@ export async function readDroppedEntries(
   // as a note called "q1".
   if (!items.length && fallback.length) {
     for (const file of fallback) {
-      if (out.length >= MAX_DROP_FILES) break;
+      if (out.length >= limits.maxFiles) break;
       if (isIgnorableFile(file.name)) continue;
       out.push({ file, path: "" });
     }
     return { files: out, truncated: fallback.length > out.length };
   }
 
-  return { files: out, truncated: out.length >= MAX_DROP_FILES };
+  return { files: out, truncated: out.length >= limits.maxFiles };
 }
 
 /**

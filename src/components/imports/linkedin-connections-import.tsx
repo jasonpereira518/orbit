@@ -11,6 +11,7 @@ import {
   BusyHint,
   ImportFilePicker,
   ImportWarningBanner,
+  readLinkedInArchive,
 } from "@/components/imports/import-utils";
 
 const LARGE_FILE_WARNING_BYTES = 15 * 1024 * 1024;
@@ -90,7 +91,7 @@ export function LinkedInConnectionsImport() {
       </div>
 
       <ImportFilePicker
-        accept=".csv,text/csv"
+        accept=".csv,.zip,text/csv,application/zip"
         disabled={busy}
         fileName={fileName}
         onFile={(file) => {
@@ -101,8 +102,8 @@ export function LinkedInConnectionsImport() {
           }
           start(async () => {
             try {
-              setFileName(file.name);
-              const text = await file.text();
+              const { text, fileName: name } = await readLinkedInArchive(file, "connections");
+              setFileName(name);
               setCsvText(text);
               const res = await previewLinkedInCsv(text);
               // `UserFacingError`, not `Error`: these messages were written to be read
