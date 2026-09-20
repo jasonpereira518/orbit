@@ -1225,6 +1225,35 @@ CREATE TABLE IF NOT EXISTS connector_connections (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id);
 CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS external_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  entity_type text NOT NULL,
+  entity_id text NOT NULL,
+  remote_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_links_entity_uidx ON external_links(user_id, connector_id, entity_type, entity_id);
+CREATE TABLE IF NOT EXISTS connector_outbox (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  action text NOT NULL,
+  entity_type text NOT NULL,
+  entity_id text NOT NULL,
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz,
+  last_error text,
+  last_attempted_at timestamptz,
+  delivered_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS connector_outbox_action_uidx ON connector_outbox(user_id, connector_id, action, entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS connector_outbox_due_idx ON connector_outbox(status, next_attempt_at);
 CREATE TABLE IF NOT EXISTS contact_identities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1624,7 +1653,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //      71-73 were already claimed on other branches (checked against every remote branch and
 //      local worktree on Sep 19 2026: both ai-api-optimization and mcp-server-vision-5e9a07
 //      are at 73, the highest found).
-export const SCHEMA_VERSION = 74;
+//
+// 75 = external_links + connector_outbox: at-least-once write-back to other systems, with
+//      the remote id recorded so a re-send updates instead of duplicating. Re-checked against
+//      every remote and local branch on Sep 20 2026: 74 (this branch) was the highest found.
+export const SCHEMA_VERSION = 75;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3105,6 +3138,12 @@ const alters = [
   `CREATE TABLE IF NOT EXISTS connector_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, auth_kind text NOT NULL, label text, account_ref text, api_key_encrypted text, access_token_encrypted text, refresh_token_encrypted text, token_expires_at timestamptz, scopes text, capabilities jsonb NOT NULL DEFAULT '[]'::jsonb, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id)`,
   `CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v75: connector write-back. Same both-places rule as v74 above.
+  `CREATE TABLE IF NOT EXISTS external_links (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, entity_type text NOT NULL, entity_id text NOT NULL, remote_id text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS external_links_entity_uidx ON external_links(user_id, connector_id, entity_type, entity_id)`,
+  `CREATE TABLE IF NOT EXISTS connector_outbox (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, action text NOT NULL, entity_type text NOT NULL, entity_id text NOT NULL, payload jsonb NOT NULL, status text NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0, next_attempt_at timestamptz, last_error text, last_attempted_at timestamptz, delivered_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS connector_outbox_action_uidx ON connector_outbox(user_id, connector_id, action, entity_type, entity_id)`,
+  `CREATE INDEX IF NOT EXISTS connector_outbox_due_idx ON connector_outbox(status, next_attempt_at)`,
 ];
 
 /**

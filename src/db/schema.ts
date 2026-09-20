@@ -4313,6 +4313,85 @@ export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
 export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
 export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
 export type ConnectorConnection = typeof connectorConnections.$inferSelect;
+
+/**
+ * What an Orbit row is called in someone else's system.
+ *
+ * Write-back needs this to be an update rather than a duplicate the second time: without a
+ * recorded remote id, re-sending a follow-up creates a second task. Keyed by connection, so
+ * disconnecting and reconnecting starts clean rather than pointing at rows the new grant may
+ * not even be able to see.
+ */
+export const externalLinks = pgTable(
+  "external_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    /** `reminder` | `interaction` | `contact` — the Orbit side. */
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    /** The provider's id for the same thing. */
+    remoteId: text("remote_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("external_links_entity_uidx").on(
+      t.userId,
+      t.connectorId,
+      t.entityType,
+      t.entityId
+    ),
+  ]
+);
+
+export type ExternalLink = typeof externalLinks.$inferSelect;
+
+/**
+ * Pending writes to other people's systems.
+ *
+ * Deliberately the same shape and the same retry rules as `outbound_webhook_deliveries`: an
+ * at-least-once queue with a jittered ladder and a dead state. The unique index is what makes
+ * enqueue idempotent — a retried server action cannot put two tasks in someone's Reminders.
+ */
+export const connectorOutbox = pgTable(
+  "connector_outbox",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    /** `writeTask` | `logActivity` | `writeContact`, matching the manifest's capabilities. */
+    action: text("action").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    payload: jsonb("payload").notNull(),
+    status: text("status")
+      .$type<"pending" | "delivered" | "failed" | "dead">()
+      .default("pending")
+      .notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    /** First 200 characters only, like every other error column here. */
+    lastError: text("last_error"),
+    lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("connector_outbox_action_uidx").on(
+      t.userId,
+      t.connectorId,
+      t.action,
+      t.entityType,
+      t.entityId
+    ),
+    // The drain's only scan.
+    index("connector_outbox_due_idx").on(t.status, t.nextAttemptAt),
+  ]
+);
+
+export type ConnectorOutboxRow = typeof connectorOutbox.$inferSelect;
 export type EventAlias = typeof eventAliases.$inferSelect;
 export type EventCompany = typeof eventCompanies.$inferSelect;
 export type TargetCompany = typeof targetCompanies.$inferSelect;

@@ -498,6 +498,23 @@ async function seed() {
     accessTokenEncrypted: "ciphertext-hubspot-access",
     refreshTokenEncrypted: "ciphertext-hubspot-refresh",
   });
+  // Maps this user's rows into someone else's system; must not outlive the connection.
+  await db.insert(schema.externalLinks).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    entityType: "reminder",
+    entityId: "rem-1",
+    remoteId: "remote-1",
+  });
+  // A pending write, possibly still carrying an unsent payload.
+  await db.insert(schema.connectorOutbox).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-1",
+    payload: { title: "Follow up" },
+  });
 
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({

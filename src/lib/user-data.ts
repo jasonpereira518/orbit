@@ -20,6 +20,7 @@ import {
   closenessCohorts,
   companies,
   connectorConnections,
+  connectorOutbox,
   contactBriefs,
   contactEmbeddings,
   contactExperiences,
@@ -38,6 +39,7 @@ import {
   eventProviderConnections,
   events,
   extensionUsage,
+  externalLinks,
   feedback,
   feedbackScreenshots,
   gateEvents,
@@ -260,6 +262,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(calendarSubscriptions),
       own(eventProviderConnections),
       own(connectorConnections),
+      own(externalLinks),
+      own(connectorOutbox),
     ],
     counts: [
       gmailConnections,
@@ -267,6 +271,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       calendarSubscriptions,
       eventProviderConnections,
       connectorConnections,
+      externalLinks,
+      connectorOutbox,
     ],
     run: async (db, userId) => {
       // Read before the delete: once the row is gone there is nothing to revoke with.
@@ -293,6 +299,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // that is not Gmail or Outlook. Same class of secret as the rows above, and it must
       // not outlive the account.
       await db.delete(connectorConnections).where(eq(connectorConnections.userId, userId));
+      // The outbox may hold an unsent payload and external_links maps this user's rows into
+      // other systems. Both go with the connection that produced them.
+      await db.delete(connectorOutbox).where(eq(connectorOutbox.userId, userId));
+      await db.delete(externalLinks).where(eq(externalLinks.userId, userId));
     },
   },
   events: {
