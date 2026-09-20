@@ -1,19 +1,20 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { CONSTELLATION_STAGE_HEIGHT } from "@/components/graph/constellation-loading";
 import { predictSlowIntro } from "@/lib/graph/intro-choreography";
 import { STAGE_INTRO_LAYER } from "@/lib/graph/stage-layers";
 import {
   beginIntro,
+  getIdleIntroRun,
   getIntroRun,
   isGraphChunkLoaded,
   registerIntroHost,
   subscribe,
   suppressIntro,
-  type IntroRun,
 } from "@/lib/graph/intro-signal";
+import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
 import { cn } from "@/lib/utils";
 
 /**
@@ -41,63 +42,74 @@ const WarpStage = dynamic(
 );
 
 export function ConstellationIntro() {
-  // Seeded from the bus rather than re-read in the effect: `beginIntro` publishes, and the
-  // subscription is attached before any decision is made, so every subsequent state change
-  // arrives through it. Calling setState synchronously inside the effect would only add a
-  // cascading render for a value we already have.
-  const [run, setRun] = useState<IntroRun>(getIntroRun);
   /**
-   * Whether this visit has already decided. A ref rather than state because a re-render must
-   * not re-ask, and it lives HERE — not in the bus — so that navigating away and back is a
-   * fresh visit and does get an intro, while everything remounting beneath it does not.
+   * Read through `useSyncExternalStore`, not a `useState` fed by `subscribe`.
+   *
+   * That was the warp that never ended. When this effect is torn down and re-run — StrictMode
+   * does it on every dev mount, and any real remount of the host does the same — the teardown
+   * resets the bus to idle, but the component has already unsubscribed by then, so it never
+   * heard. Its state stayed "running", the bus was idle, and the chart's ready signal had no
+   * run to end: the stars flew forever over a finished constellation. `useSyncExternalStore`
+   * re-reads the bus whenever it resubscribes, so this can never disagree with it.
    */
-  const decided = useRef(false);
+  const run = useSyncExternalStore(subscribe, getIntroRun, getIdleIntroRun);
 
   useEffect(() => {
     const release = registerIntroHost();
-    const unsubscribe = subscribe(setRun);
 
-    if (!decided.current) {
-      decided.current = true;
+    // Decided on every mount of the host, never carried across one. Releasing the host resets
+    // the run, so a remount that kept an earlier "already decided" (as a ref once did) was left
+    // with no run and no way to start one. Nothing beneath the host re-runs this effect: it
+    // depends on nothing, so the payload streaming in and the chart remounting leave it alone,
+    // and navigating away and back is a fresh visit.
 
-      // Read the media query directly rather than through `usePrefersReducedMotion`: that hook
-      // returns false on its first render and corrects in an effect, which is exactly long
-      // enough to ship an animation to someone who asked for none.
-      const reduced =
-        typeof window !== "undefined" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Read the media query directly rather than through `usePrefersReducedMotion`: that hook
+    // returns false on its first render and corrects in an effect, which is exactly long
+    // enough to ship an animation to someone who asked for none.
+    const reduced =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-      const forced =
-        typeof window !== "undefined" &&
-        new URLSearchParams(window.location.search).get("warp");
+    const forced =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("warp");
 
-      if (forced === "off") {
-        // Must also kill the late fallback, or "off" only turns off the predictive triggers
-        // and the safety net still fires 1.2s later.
-        suppressIntro();
-      } else if (forced === "force") {
-        beginIntro("forced");
-      } else {
-        // Decision one, made before the chunk request can even start: has the graph module
-        // ever evaluated in this document? `contactCount` is deliberately null — the payload is
-        // still streaming behind the boundary, and "not known yet" must not read as "slow".
-        const { warp, reason } = predictSlowIntro({
-          reduced,
-          chunkLoaded: isGraphChunkLoaded(),
-          contactCount: null,
-          cores:
-            typeof navigator !== "undefined"
-              ? (navigator.hardwareConcurrency ?? null)
-              : null,
-        });
-        if (warp && reason) beginIntro(reason);
-      }
+    /**
+     * Never on the canvas renderer.
+     *
+     * The intro exists to cover React Flow mounting N DOM nodes — `predictSlowIntro`
+     * is a model of exactly that cost. The canvas mount is `getContext("2d")` and one
+     * draw, so the minimum beat would now be ADDING time to a fast load, which is the
+     * failure `scripts/smoke-graph-intro.ts` already guards against. Suppressed rather
+     * than skipped, because suppression also kills the late fallback.
+     */
+    const smallSky =
+      typeof window !== "undefined" &&
+      window.matchMedia(SMALL_SKY_QUERY).matches;
+
+    if (forced === "off" || (smallSky && forced !== "force")) {
+      // Must also kill the late fallback, or "off" only turns off the predictive triggers
+      // and the safety net still fires 1.2s later.
+      suppressIntro();
+    } else if (forced === "force") {
+      beginIntro("forced");
+    } else {
+      // Decision one, made before the chunk request can even start: has the graph module
+      // ever evaluated in this document? `contactCount` is deliberately null — the payload is
+      // still streaming behind the boundary, and "not known yet" must not read as "slow".
+      const { warp, reason } = predictSlowIntro({
+        reduced,
+        chunkLoaded: isGraphChunkLoaded(),
+        contactCount: null,
+        cores:
+          typeof navigator !== "undefined"
+            ? (navigator.hardwareConcurrency ?? null)
+            : null,
+      });
+      if (warp && reason) beginIntro(reason);
     }
 
-    return () => {
-      unsubscribe();
-      release();
-    };
+    return release;
   }, []);
 
   if (run.status === "idle" || run.status === "done") return null;

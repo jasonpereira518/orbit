@@ -19,7 +19,8 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
-import { SCHEMA_VERSION, reconcileSchema } from "../src/db";
+import { BUILD_MIGRATION_LOCK_WAIT_MS, SCHEMA_VERSION, reconcileSchema } from "../src/db";
+import { checkMigrationTarget, type VercelEnv } from "../src/lib/env";
 import { schemaCoverage } from "./lib/schema-coverage";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
 import { mergeConfidentDuplicates } from "../src/lib/duplicate-sweep";
@@ -30,9 +31,21 @@ async function main() {
     console.error("migrate: DATABASE_URL is unset in a Vercel build — refusing to guess.");
     process.exit(1);
   }
+
+  // Before anything touches the database: is this build even allowed to migrate what it is
+  // pointed at? A preview build sharing production's DATABASE_URL would otherwise run the
+  // DDL and both backfills below against live customer data.
+  const verdict = checkMigrationTarget(process.env, {
+    vercelEnv: process.env.VERCEL_ENV as VercelEnv,
+  });
+  if (!verdict.allowed) {
+    console.error(`migrate: refusing to migrate. ${verdict.reason}`);
+    process.exit(1);
+  }
+  if (verdict.unarmed) console.warn(`migrate: warn  ${verdict.reason}`);
   console.log(`migrate: reconciling schema version ${SCHEMA_VERSION} on ${target}…`);
 
-  const result = await reconcileSchema();
+  const result = await reconcileSchema({ lockWaitMs: BUILD_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "sweep" });
   if (result.failed.length > 0) {
     console.error(`migrate: ${result.failed.length} DDL statement(s) failed:`);
     for (const f of result.failed) console.error(`  ✗ ${f.statement}\n      ${f.message}`);

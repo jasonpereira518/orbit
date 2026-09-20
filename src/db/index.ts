@@ -10,6 +10,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.5-flash',
   onboarding_completed_at timestamptz,
   first_name text,
@@ -58,17 +60,23 @@ CREATE TABLE IF NOT EXISTS user_settings (
   signup_attributed_at timestamptz,
   comped_plan text,
   lifetime_purchased_at timestamptz,
+  lifetime_checkout_session_id text,
+  lifetime_checkout_started_at timestamptz,
   stripe_customer_id text,
   subscription_plan text,
   subscription_status text,
   subscription_period_end timestamptz,
   subscription_monthly_cents integer,
   subscription_interval text,
+  subscription_event_at timestamptz,
   comped_note text,
   comped_at timestamptz,
   comped_by text,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
+  terms_accepted_at timestamptz,
+  terms_version text,
+  timeline_backfill_enabled integer NOT NULL DEFAULT 0,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
@@ -103,6 +111,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   x_handle text,
   website text,
   profile_image_url text,
+  profile_image_checked_at timestamp,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
   source text,
@@ -179,6 +188,8 @@ CREATE TABLE IF NOT EXISTS reminder_lists (
   name_normalized text NOT NULL,
   position integer NOT NULL DEFAULT 0,
   is_inbox integer NOT NULL DEFAULT 0,
+  icon text,
+  color text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS reminder_lists_user_idx ON reminder_lists(user_id);
@@ -238,11 +249,29 @@ CREATE TABLE IF NOT EXISTS note_batches (
   anchor_basis text NOT NULL DEFAULT 'upload',
   status text NOT NULL DEFAULT 'saved',
   result jsonb NOT NULL,
+  input_sources jsonb NOT NULL DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now(),
   undone_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS note_batches_user_created_idx ON note_batches(user_id, created_at);
 CREATE INDEX IF NOT EXISTS note_batches_user_source_idx ON note_batches(user_id, source_hash);
+CREATE TABLE IF NOT EXISTS capture_photos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  note_batch_id uuid REFERENCES note_batches(id) ON DELETE CASCADE,
+  position integer NOT NULL DEFAULT 0,
+  file_name text,
+  storage text NOT NULL,
+  blob_url text,
+  inline_data text,
+  content_type text NOT NULL,
+  byte_size integer NOT NULL,
+  width integer,
+  height integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS capture_photos_batch_idx ON capture_photos(note_batch_id, position);
+CREATE INDEX IF NOT EXISTS capture_photos_user_created_idx ON capture_photos(user_id, created_at);
 CREATE TABLE IF NOT EXISTS interaction_mentions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -270,6 +299,30 @@ CREATE TABLE IF NOT EXISTS action_items (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS action_items_user_item_hash_uidx ON action_items(user_id, item_hash);
 CREATE INDEX IF NOT EXISTS action_items_user_contact_status_idx ON action_items(user_id, contact_id, status);
+CREATE TABLE IF NOT EXISTS contact_opportunities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  label text NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  direction text,
+  source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL,
+  note_batch_id uuid,
+  source_excerpt text,
+  due_date timestamptz,
+  raw_date_phrase text,
+  confidence_score integer,
+  created_by text NOT NULL DEFAULT 'user',
+  item_hash text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  closed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS contact_opportunities_user_contact_idx ON contact_opportunities(user_id, contact_id, status);
+CREATE INDEX IF NOT EXISTS contact_opportunities_user_status_due_idx ON contact_opportunities(user_id, status, due_date);
+CREATE INDEX IF NOT EXISTS contact_opportunities_status_kind_idx ON contact_opportunities(status, kind);
+CREATE UNIQUE INDEX IF NOT EXISTS contact_opportunities_user_item_hash_uidx ON contact_opportunities(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS contact_briefs (
   contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
   user_id text NOT NULL,
@@ -330,6 +383,15 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   content text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS embedding_failures (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_type text NOT NULL,
+  source_id text NOT NULL,
+  error_kind text,
+  failed_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS embedding_failures_source_uidx ON embedding_failures(user_id, source_type, source_id);
 CREATE TABLE IF NOT EXISTS contact_profiles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -463,6 +525,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   title text,
+  context_note text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -475,6 +538,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   role text NOT NULL,
   content text NOT NULL,
   recommendations jsonb,
+  attached_contacts jsonb DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
@@ -490,6 +554,7 @@ CREATE TABLE IF NOT EXISTS recruiters (
   email_normalized text,
   linkedin_url text,
   phone text,
+  created_by_user_id text,
   avg_rating integer NOT NULL DEFAULT 0,
   rating_count integer NOT NULL DEFAULT 0,
   log_count integer NOT NULL DEFAULT 0,
@@ -517,6 +582,9 @@ CREATE TABLE IF NOT EXISTS user_recruiter_links (
   last_email_at timestamptz,
   email_count integer NOT NULL DEFAULT 0,
   gmail_thread_id text,
+  email text,
+  phone text,
+  linkedin_url text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -541,6 +609,17 @@ CREATE TABLE IF NOT EXISTS recruiter_messages (
 CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status);
 CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id);
 CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at);
+CREATE TABLE IF NOT EXISTS recruiter_scan_state (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  last_scan_at timestamptz,
+  last_full_scan_at timestamptz,
+  prompt_version integer NOT NULL DEFAULT 1,
+  window_months integer NOT NULL DEFAULT 24,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_scan_state_user_idx ON recruiter_scan_state(user_id);
 CREATE TABLE IF NOT EXISTS gmail_connections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -601,6 +680,23 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS plan_upgrade_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  plan text NOT NULL,
+  source text NOT NULL,
+  event_key text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS admin_provider_snapshots (
+  provider text PRIMARY KEY,
+  status text NOT NULL,
+  summary jsonb DEFAULT '{}',
+  error_kind text,
+  checked_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_audit_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_user_id text NOT NULL,
@@ -701,6 +797,60 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   count integer NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS job_feed_sources (
+  id text PRIMARY KEY,
+  label text NOT NULL,
+  url text NOT NULL,
+  season text NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  etag text,
+  last_modified text,
+  last_fetched_at timestamptz,
+  last_changed_at timestamptz,
+  last_max_date_updated integer NOT NULL DEFAULT 0,
+  last_status text,
+  last_error text,
+  consecutive_failures integer NOT NULL DEFAULT 0,
+  bytes_last_fetched integer,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS job_postings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_id text NOT NULL REFERENCES job_feed_sources(id) ON DELETE CASCADE,
+  external_id text NOT NULL,
+  company_name text NOT NULL,
+  company_key text NOT NULL,
+  company_url text,
+  title text NOT NULL,
+  url text NOT NULL,
+  terms jsonb NOT NULL DEFAULT '[]',
+  locations jsonb NOT NULL DEFAULT '[]',
+  active boolean NOT NULL DEFAULT true,
+  is_visible boolean NOT NULL DEFAULT true,
+  sponsorship text,
+  date_posted timestamptz NOT NULL,
+  date_updated timestamptz NOT NULL,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS job_postings_source_external_uidx ON job_postings(source_id, external_id);
+CREATE INDEX IF NOT EXISTS job_postings_company_key_idx ON job_postings(company_key, date_posted);
+CREATE INDEX IF NOT EXISTS job_postings_date_updated_idx ON job_postings(date_updated);
+CREATE TABLE IF NOT EXISTS job_posting_matches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  posting_id uuid NOT NULL REFERENCES job_postings(id) ON DELETE CASCADE,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  opportunity_id uuid,
+  company_key text NOT NULL,
+  match_kind text NOT NULL,
+  suggestion_id uuid,
+  status text NOT NULL DEFAULT 'notified',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS job_posting_matches_user_posting_contact_uidx ON job_posting_matches(user_id, posting_id, contact_id);
+CREATE INDEX IF NOT EXISTS job_posting_matches_user_created_idx ON job_posting_matches(user_id, created_at);
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL DEFAULT 'clerk',
@@ -719,6 +869,28 @@ CREATE INDEX IF NOT EXISTS webhook_deliveries_created_idx ON webhook_deliveries(
 CREATE INDEX IF NOT EXISTS webhook_deliveries_event_idx ON webhook_deliveries(event_id);
 CREATE INDEX IF NOT EXISTS webhook_deliveries_target_idx ON webhook_deliveries(target_user_id);
 CREATE INDEX IF NOT EXISTS webhook_deliveries_type_created_idx ON webhook_deliveries(event_type, created_at);
+CREATE TABLE IF NOT EXISTS stripe_processed_events (
+  event_id text PRIMARY KEY,
+  event_type text NOT NULL,
+  processed_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS data_purge_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  target_user_id text NOT NULL,
+  categories jsonb NOT NULL DEFAULT '[]',
+  keep_settings boolean NOT NULL DEFAULT true,
+  full_purge boolean NOT NULL DEFAULT false,
+  completed_steps jsonb NOT NULL DEFAULT '[]',
+  status text NOT NULL DEFAULT 'running',
+  attempts integer NOT NULL DEFAULT 1,
+  last_error text,
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  last_attempt_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS data_purge_runs_status_attempt_idx ON data_purge_runs(status, last_attempt_at);
+CREATE INDEX IF NOT EXISTS data_purge_runs_target_idx ON data_purge_runs(target_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS user_settings_stripe_customer_uidx ON user_settings(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS error_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -778,11 +950,15 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   unsubscribed_at timestamptz,
   welcome_planet text,
   follow_up_sent_at timestamptz,
+  share_token text,
+  referred_by_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token);
+CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id);
 CREATE TABLE IF NOT EXISTS broadcasts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   subject text NOT NULL,
@@ -927,6 +1103,9 @@ CREATE TABLE IF NOT EXISTS events (
   provider text,
   provider_event_id text,
   description text,
+  organizer_name text,
+  organizer_url text,
+  attendance_mode text,
   cover_image_url text,
   cover_source_url text,
   theme_color text,
@@ -934,10 +1113,47 @@ CREATE TABLE IF NOT EXISTS events (
   theme_locked integer NOT NULL DEFAULT 0,
   attendee_count integer,
   notes text,
+  discovered_via text,
+  rsvp_status text,
+  role_source text,
+  dismissed_at timestamptz,
+  enrich_due_at timestamptz,
+  enrich_attempts integer NOT NULL DEFAULT 0,
   enriched_at timestamptz,
   enrich_error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  role text NOT NULL,
+  source text NOT NULL,
+  evidence text,
+  dismissed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS target_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  priority integer NOT NULL DEFAULT 2,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_aliases (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  value text NOT NULL,
+  event_id uuid REFERENCES events(id) ON DELETE SET NULL,
+  source text NOT NULL,
+  evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS event_attendees (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -953,6 +1169,9 @@ CREATE TABLE IF NOT EXISTS event_attendees (
   attendee_role text,
   source text NOT NULL DEFAULT 'paste',
   external_ref text,
+  ai_note jsonb,
+  person_key_kind text,
+  person_key_value text,
   spoke_to integer NOT NULL DEFAULT 0,
   contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
   converted_at timestamptz,
@@ -1016,6 +1235,121 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS meeting_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  title text,
+  attendees jsonb NOT NULL DEFAULT '[]',
+  capture_surface text,
+  includes_mic integer NOT NULL DEFAULT 1,
+  recorder_id text,
+  status text NOT NULL DEFAULT 'recording',
+  started_at timestamptz NOT NULL DEFAULT now(),
+  ended_at timestamptz,
+  duration_ms integer NOT NULL DEFAULT 0,
+  last_seq integer NOT NULL DEFAULT -1,
+  digest jsonb,
+  digest_error text,
+  note_batch_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS meeting_transcript_segments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id uuid NOT NULL REFERENCES meeting_sessions(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  seq integer NOT NULL,
+  start_ms integer NOT NULL,
+  end_ms integer NOT NULL,
+  text text NOT NULL,
+  engine text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq);
+CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id);
+CREATE TABLE IF NOT EXISTS capture_handoffs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  token_hash text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  transcript text,
+  page_count integer NOT NULL DEFAULT 0,
+  sources text,
+  error text,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS capture_handoffs_token_uidx ON capture_handoffs(token_hash);
+CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expires_at);
+CREATE TABLE IF NOT EXISTS capture_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_kind text NOT NULL,
+  status text NOT NULL DEFAULT 'queued',
+  entry_point text NOT NULL DEFAULT 'capture',
+  seed_contact_id uuid,
+  input_text text,
+  input_hints jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ingested_blocks jsonb NOT NULL DEFAULT '[]'::jsonb,
+  sources jsonb NOT NULL DEFAULT '[]'::jsonb,
+  photo_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  transcription_engine text,
+  source_text text,
+  source_hash text,
+  meeting_session_id uuid,
+  result jsonb,
+  decisions jsonb NOT NULL DEFAULT '{}'::jsonb,
+  claim_token text,
+  claimed_at timestamptz,
+  note_batch_id uuid,
+  error text,
+  stall_resumes integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS capture_jobs_user_status_idx ON capture_jobs(user_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS capture_jobs_stall_idx ON capture_jobs(status, updated_at);
+CREATE TABLE IF NOT EXISTS ignored_people (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  name_key text NOT NULL,
+  display_name text NOT NULL,
+  reason text NOT NULL,
+  context text,
+  company text,
+  capture_job_id uuid,
+  note_batch_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ignored_people_user_name_uidx ON ignored_people(user_id, name_key);
+CREATE TABLE IF NOT EXISTS page_views (
+  id uuid PRIMARY KEY,
+  visitor_hash text NOT NULL,
+  session_id text NOT NULL,
+  user_id text,
+  route text NOT NULL,
+  referrer_host text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  country text,
+  region text,
+  city text,
+  device text NOT NULL,
+  is_bot boolean NOT NULL DEFAULT false,
+  dwell_ms integer,
+  load_ms integer,
+  nav_type text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
+CREATE INDEX IF NOT EXISTS page_views_route_created_idx ON page_views(route, created_at);
+CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, created_at);
+CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
+CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1073,12 +1407,234 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * duplicates being created), contact_merges (a merged contact archived whole, so the
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
+ * v34 = chat_messages.attached_contacts: the people attached to a chat question (#141).
+ * v35 = the last-interaction index the chat composer's person pickers order on (#141).
+ * v36 = user_settings.wispr_api_key_encrypted: the voice-note transcription key (#161).
+ * v38 = capture_handoffs: the phone-to-desktop scanning handoff (#143). Written as 33,
+ * then 34, and moved each time another branch landed first with that number. It skips
+ * 37 instead of taking the next free integer, because 37 is #146's open claim. (36 was
+ * skipped too while it was unsafe: #146's pre-merge preview builds stamped it onto the
+ * production database with different DDL. #141's v35 deploy re-stamped that database
+ * before #161 took 36, so #161's DDL still ran.) A number some database may already hold
+ * is the one choice that silently skips this table, so the next free integer was not free.
+ * v39 = events revision: organizer_name, organizer_url, attendance_mode on events. Also
+ * built as 33 and moved when duplicate prevention landed first — the fifth collision, and
+ * the same rule: re-using 33 would have left those columns unapplied on every database
+ * main had already stamped.
+ * v40 = contact photo cooldown (#146): contacts.profile_image_checked_at. This PR has been
+ * 33, 36 and 37 in turn. 37 was reserved for it (#152 skipped past it to 39), but it can't
+ * be reused now: this branch's own preview stamped 37 onto the preview database with DDL
+ * that predates #152's columns, so a 37 carrying them would skip on that database. 38 is
+ * claimed by the scan-notes branch. Also worth knowing: until Sep 11 2026 Preview shared
+ * Production's DATABASE_URL, so preview builds stamped production directly. Previews now
+ * migrate their own Neon project.
+ * v41 and this branch's own 40 = capture_handoffs again, renumbered as main's DDL was
+ * merged in (#161's column, then #152's). Neither reached main, and this branch's 40 is not
+ * main's v40 above: two different DDL sets carried that number, so neither 40 nor 41 is
+ * safe to reuse. Merging another branch's DDL is a DDL change, so it takes a new number:
+ * a database a pre-merge build already stamped would otherwise skip the merged-in columns
+ * (this worktree's own did, and every user_settings read failed).
+ * v42 = meeting capture (#163): meeting_sessions, meeting_transcript_segments.
+ * v43 = capture_handoffs with #146's v40 column merged in. Never reached main.
+ * v45 = capture_handoffs with #163's v42 tables merged in. Builds of this branch pushed at 43
+ * lack those tables, so 43 cannot carry them. 44 is claimed by admin-console-page-metrics.
+ * v47 = page_views (first-party traffic analytics). Built as 33, then carried 44 and 46 on
+ * its branch, moving each time main's DDL merged in (meeting capture, then scan notes):
+ * this PR's previews stamped each of those numbers without the merged-in tables, so
+ * neither can carry them. 44 and 46 are burned for the same reason 40, 41 and 43 are.
+ * v49 = capture history (#164): the capture_photos table and note_batches.input_sources.
+ * Built as 41, then 46 (see v47 — burned by the page_views branch too), then 48 — which
+ * the event-platform branch below also landed on independently. Same DDL-change rule:
+ * two branches on one number means one of them silently never runs its migration.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
- * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
+ * too, renumber and regenerate scripts/schema-ddl.lock.json rather than reusing 34.)
  */
-export const SCHEMA_VERSION = 33;
+// Pick a number above anything ANY branch has claimed and anything a database may already
+// be stamped with, not just one above main. A repeated version is the one real failure
+// mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
+// collision means one branch's DDL never runs. The changelog above says which numbers are
+// taken and why 44 is skipped.
+// 34 and 35 are this branch's, above main's 33 (duplicate prevention, #148). 33 was
+// skipped here deliberately while it was still claimed by unmerged branches — a repeated
+// version is the one real failure mode this counter has, since the alters are all
+// `IF NOT EXISTS` and concatenate harmlessly on merge but a collision means one branch's
+// DDL never runs. That skip is why this merge resolved to a number rather than a clash.
+//
+// Two bumps on this branch because the guard requires one per DDL change: 34 added
+// `chat_messages.attached_contacts`, 35 the last-interaction index the composer's pickers
+// order on.
+//
+// 39 is the events revision (PR #152): organizer_name, organizer_url, attendance_mode on
+// events. Built as 33, moved to 34 when #148 took 33, and moved again here because while it
+// waited 34-36 landed on main and 37 and 38 were claimed by open branches. Every step was
+// the same rule — a shared number means one branch's DDL silently never runs.
+//
+// 40 = event discovery: discovered_via, rsvp_status, role_source, dismissed_at,
+// enrich_due_at and enrich_attempts on events, plus the event_aliases table and its unique
+// index. If another branch lands 40 first, renumber to the next free value and regenerate
+// scripts/schema-ddl.lock.json rather than reusing it.
+//
+// 41 = cross-event identity: person_key_kind/person_key_value on event_attendees and the
+// index the "people you keep seeing" aggregate groups on.
+//
+// 42 = companies at events: the event_companies and target_companies tables, events.kind,
+// user_settings.schools, and the generated company_key on event_attendees (in SCALE_DDL,
+// with the indexes, because a generated column must exist before an index can read it).
+//
+// 43 = the repair for a v40 mistake: the `event_aliases` entry in `alters` had three
+// CREATE TABLEs spliced into one string, which PGlite and Neon both reject as "multiple
+// commands" — so on any database that already existed, `event_aliases` was never created and
+// discovery would have failed on its first write. A version bump is the only thing that
+// re-runs the sweep on an instance already stamped 40, 41 or 42.
+//
+// 46 = everything above (the event-platform work, built as 40-43) renumbered past main's
+// 40-45 and the 44 that admin-console-page-metrics has claimed. Those four numbers carried
+// different DDL on main — contact photo cooldown, capture handoffs, meeting capture — so
+// reusing any of them would have left this branch's tables unapplied on every database main
+// had already stamped. None of 40-43 as built here ever reached a deployed database.
+//
+// 48 = the same event-platform DDL again, with main's v47 (page_views) merged in. 46 cannot
+// carry it twice over: the traffic-analytics branch's previews stamped 46, and so did this
+// PR's own preview (#168) — with the event tables but without page_views. 47 is main's.
+//
+// 49 = capture history (#164): the capture_photos table and note_batches.input_sources.
+// Landed on 48 independently of the event-platform branch above — two different DDL sets
+// cannot share one number, so this one moves again.
+//
+// 50 = user_settings.desktop_notifications_enabled, so the desktop-notification preference
+// syncs across devices instead of living only in one browser's localStorage.
+// 51 = capture jobs (the /capture redesign): capture_jobs (with photo_ids), ignored_people,
+// and capture_handoffs.capture_job_id. Built as 50 before #164 merged, then 51 once #164
+// took 49 and settings-page-improvements took 50.
+// 52 = the same capture tables, re-stamped: the preview database was stamped 51 by this
+// branch BEFORE main's 50 (desktop_notifications_enabled) was merged in, so a database at
+// 51 must still pick up that column. Nothing is new at 52; the bump only forces the pass.
+// 53 = recruiter scan v2: recruiter_scan_state (per-user watermark so a bounded, incremental
+// Gmail query replaces the full-mailbox walk that was blowing the Gmail "Total Query Cost"
+// quota). Built as 34 before this branch merged main's DDL through 52.
+// 54 = provider status + upgrade celebrations: admin_provider_snapshots,
+// plan_upgrade_events and their three indexes. Built on 49, renumbered to 51 when main
+// took 49 (capture history) and 50 (desktop notifications), to 53 when main took 51 and
+// 52 for the capture redesign, and now to 54 because main's recruiter scan v2 landed on
+// 53 first. Note the shape of that collision: both sides wrote `SCHEMA_VERSION = 53`, so
+// git merged that line without a conflict and only the changelog above it clashed. The
+// number agreeing is exactly what makes reuse silent — a database stamped 53 by a
+// recruiter-scan build would skip this branch's two tables and nothing would fail.
+//
+// 55 = interest_list_signups.share_token + referred_by_id, the share link and referral
+// moons behind the /interest boarding pass. Built as 52, then 54, before this merge of
+// main revealed 54 was ALSO the provider-status branch's number — the same silent
+// collision described above, one entry later. Both sides again agreed on the literal
+// `SCHEMA_VERSION = 54`, so only this changelog conflicted; a database already at 54 from
+// either branch still needs this table's two columns, hence one more bump rather than
+// reusing the number either side shipped it under.
+//
+// 58 = user_settings.terms_accepted_at, terms_version and timeline_backfill_enabled (launch
+// Phase 1: recorded Terms consent and the opt-in LinkedIn timeline backfill). 56 is claimed by
+// three open branches (calendar enrichment, both outreach redesigns) and 57 by the AI-key
+// gating branch, whose columns are different — and whose bump was still UNPUSHED, so the
+// "scan every remote branch" rule could not see it. Two branches sharing a number is the
+// trap in docs: a database stamped 57 by that branch would never run these ALTERs.
+//
+// 59 = launch Phase 2: user_settings.subscription_event_at (the Stripe ordering clock) and
+// the partial unique index on user_settings.stripe_customer_id, stripe_processed_events
+// (webhook dedupe), data_purge_runs (the resumable deletion ledger), and
+// recruiters.created_by_user_id plus user_recruiter_links.email/phone/linkedin_url with
+// their one-time PII backfill in alters.
+// 60 = embedding_failures, the backfill's mark for rows the provider refused on their
+// own, so one poison row stops failing its batch every hour (launch phase 3a).
+//
+// 61 = user_settings.lifetime_checkout_session_id + lifetime_checkout_started_at, the pending
+// Lifetime checkout the AI gate asks Stripe about before refusing a just-paid account. Built
+// as 57; renumbered past every open claim at PR time — 56 (calendar-contact-enrichment,
+// outreach-redesign ×2) and 58/59/60 (the launch-p1/p2/p3 stack). A database stamped by any
+// of those must still pick these columns up, which only a higher number guarantees.
+//
+// 62 = the meeting-notes workflow, in ONE bump: contact_opportunities (typed opportunity
+// capture, replacing the untyped contacts.opportunities array, which survives as a derived
+// mirror); job_feed_sources / job_postings / job_posting_matches (the internship feed that
+// turns a posting at a watched company into a suggestion); contacts.cadence_days/_phrase/
+// _source/_set_at (a rhythm the notes stated); reminders.origin/confidence_score (explicit
+// vs. inferred next steps); contact_briefs.next_step; capture_jobs.batch_group_id/
+// source_label/mention_picks (one uploaded file = one meeting, plus the contacts an @-pick
+// named); and contacts.search_tsv REBUILT to include opportunities at weight C, so a
+// referral is findable by keyword and not only by the semantic arm.
+//
+// Built as 56 and 57 — two bumps, because the search_tsv rebuild redefines a generated
+// column and a database already stamped 56 would have skipped it. Collapsed back to one on
+// merging main, which had moved to 61: no database can ever have been stamped 62, so the
+// whole set arrives together and the split has nothing left to protect. Renumbered past
+// main's 61 and past the 56/58/59/60 claims its comment above records.
+//
+// 64 = merging main (61, 62) into the launch stack (58, 59, 60). No DDL of its own. A
+// database stamped 62 by main never ran 58-60's statements, and one stamped 60 by the launch
+// stack never ran 61-62's, so only a number above both makes each pick up the other. 63 is
+// claimed by the unpushed onboarding-flow-revision worktree, the same trap 57 was.
+//
+// 65 = launch Phase 4 polish: no DDL. Two idempotent data migrations at the end of
+// `alters` — calendar feed tokens hashed in place, li-event interactions tagged ai_derived.
+//
+// 66 = the reminders redesign: no DDL. One idempotent data migration at the end of `alters`
+// folds the legacy `completed` reminder status into `done`. Checked against every remote
+// branch on Sep 18 2026: none claimed anything above main's 65.
+//
+// 67 = reminder_lists.icon / .color, for the list editor. Its own bump rather than folded into
+// 66: PR #220's preview build may already have stamped its preview database 66, which would
+// then skip these columns. Checked against every remote branch on Sep 18 2026.
+//
+// 68 = page_views.load_ms + nav_type, the page-load timing the navigation-speed work is
+// measured by (PR #222). Built as 67; renumbered past #220's 66 and 67.
+//
+// 69 = merging main (66, 67) into #222 (68). No DDL of its own. #222's preview builds stamped
+// the shared preview database 68 WITHOUT 67's reminder_lists columns, so a merged build at
+// 68 would skip them there; only a number above both makes every database pick up both.
+//
+// 70 = chat_threads.context_note: freeform context the user types for one chat conversation
+// (never extracted into contacts). Built as 34, then 63, before this branch merged main's DDL
+// through 69; renumbered past every claim (checked against all remote branches and local
+// worktrees on Sep 18 2026: none above 69).
+export const SCHEMA_VERSION = 70;
+
+/**
+ * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
+ * SCALE_DDL ADD below (whitespace aside). `applyScaleSchema` compares the stored expression
+ * against it; `scripts/smoke-linkedin-slug-guard.ts` asserts the two cannot drift.
+ */
+export const LINKEDIN_SLUG_EXPRESSION =
+  "lower(nullif(split_part(split_part(split_part(split_part(coalesce(linkedin_url, \'\'), \'/in/\', 2), \'?\', 1), \'#\', 1), \'/\', 1), \'\'))";
+
+/** The rewrite SCALE_DDL performs when that expression changes. Matched by exact text. */
+export const DROP_LINKEDIN_SLUG_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS linkedin_slug";
+
+/** Postgres re-renders stored expressions (casts, upper-case keywords, parentheses). */
+export function normalizeGeneratedExpression(expr: string): string {
+  return expr.toLowerCase().replace(/::text/g, "").replace(/[\s()]/g, "");
+}
+
+/** Whether the stored linkedin_slug expression differs from LINKEDIN_SLUG_EXPRESSION. */
+export function linkedinSlugNeedsRewrite(stored: string | null): boolean {
+  if (stored === null) return false; // no column yet: the ADD creates it
+  return normalizeGeneratedExpression(stored) !== normalizeGeneratedExpression(LINKEDIN_SLUG_EXPRESSION);
+}
+
+/** The stored expression, null when there is no such column, undefined when unreadable. */
+async function storedLinkedinSlugExpression(run: StatementRunner): Promise<string | null | undefined> {
+  try {
+    const result = await run(
+      `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
+         FROM pg_attribute a
+         JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+        WHERE a.attrelid = to_regclass(\'public.contacts\')
+          AND a.attname = \'linkedin_slug\'
+          AND NOT a.attisdropped`
+    );
+    return rowsOf<{ expr: string | null }>(result)[0]?.expr ?? null;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1090,7 +1646,42 @@ export const SCHEMA_VERSION = 33;
  * Ordering matters: generated columns before the indexes that read them.
  */
 export const SCALE_DDL: string[] = [
+  // --- v62: meeting-notes workflow ---------------------------------------------------
+  //
+  // A cadence the notes actually stated ("check in monthly"). Days, because every consumer
+  // already works in days. Only the NEXT occurrence is ever scheduled off it — see the
+  // column comment in schema.ts for why this is not an RRULE and not a recurring series.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS cadence_days integer`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS cadence_phrase text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS cadence_source text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS cadence_set_at timestamptz`,
+  // Whether the notes SAID a reminder or Orbit inferred it. Existing rows default to
+  // 'explicit', which is correct: implied items did not exist before this column did.
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS origin text NOT NULL DEFAULT 'explicit'`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS confidence_score integer`,
+  // The brief's single "what to do next" clause.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS next_step text`,
+  // Multi-file capture: one file = one meeting = one job, grouped by batch_group_id.
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS batch_group_id uuid`,
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS source_label text`,
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS mention_picks jsonb NOT NULL DEFAULT '[]'`,
+  `CREATE INDEX IF NOT EXISTS capture_jobs_user_batch_idx ON capture_jobs(user_id, batch_group_id)`,
+
   // --- Generated columns -----------------------------------------------------------
+  //
+  // An attendee's employer, normalised. MUST stay byte-identical to `normalizeCompanyKey`
+  // in `src/lib/company-name.ts`: the company panel groups a roster by this column and then
+  // compares the result against keys computed in JavaScript, so a disagreement does not
+  // throw — it silently splits "Stripe" and "Stripe, Inc." into two companies on one page.
+  //
+  // Generated rather than written, because it derives from a column five different
+  // acquisition paths write, and one of them would eventually forget.
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS company_key text
+     GENERATED ALWAYS AS (
+       nullif(trim(regexp_replace(regexp_replace(lower(company), '[^a-z0-9\\s]', ' ', 'g'), '\\s+', ' ', 'g')), '')
+     ) STORED`,
+  `CREATE INDEX IF NOT EXISTS event_attendees_company_key_idx
+     ON event_attendees(user_id, company_key) WHERE company_key IS NOT NULL`,
   //
   // Last-name sort key. This is the keyset-pagination ordering column, and it must agree
   // exactly with what the UI would have computed — `lastNameSortKey` in
@@ -1129,11 +1720,30 @@ export const SCALE_DDL: string[] = [
   //
   // Tags are not here: they live in their own table and a generated column may only read
   // its own row. Tag matches are an EXISTS subquery in the search predicate instead.
+  //
+  // `opportunities` IS here, at weight C, and that is the point of the drop below. It is the
+  // denormalised mirror of `contact_opportunities` ("Referral — could forward my resume"), and
+  // without it the one search people specifically come back to Orbit to run — "who can refer
+  // me?" — matched only through the semantic arm, which is a ranking, not a guarantee. C
+  // rather than D because an opportunity is a deliberate classification of what a
+  // relationship can produce, not incidental prose.
+  //
+  // `::text` renders the jsonb array including its brackets and quotes; the 'simple'
+  // tokenizer discards those and keeps the words, which is all this needs. A subquery over
+  // `jsonb_array_elements_text` would read better and is not allowed in a generated column.
+  //
+  // Dropped first because a generated column's expression cannot be altered in place —
+  // `ADD COLUMN IF NOT EXISTS` against an existing column is a silent no-op, so a database
+  // that already has `search_tsv` would never pick the new expression up. Same reasoning as
+  // `linkedin_slug` above. Cheap to redo: the column is derived, Postgres refills it, the
+  // dependent GIN index is dropped with it and recreated by `contacts_search_gin` further
+  // down this list, and this only runs when `SCHEMA_VERSION` changes.
+  `ALTER TABLE contacts DROP COLUMN IF EXISTS search_tsv`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS search_tsv tsvector
      GENERATED ALWAYS AS (
        setweight(to_tsvector('simple', coalesce(full_name, '') || ' ' || coalesce(preferred_name, '')), 'A') ||
        setweight(to_tsvector('simple', coalesce(company, '') || ' ' || coalesce(school, '') || ' ' || coalesce(title, '')), 'B') ||
-       setweight(to_tsvector('simple', coalesce(email, '') || ' ' || coalesce(location, '') || ' ' || coalesce(how_met, '') || ' ' || coalesce(met_context, '') || ' ' || coalesce(industry, '')), 'C') ||
+       setweight(to_tsvector('simple', coalesce(email, '') || ' ' || coalesce(location, '') || ' ' || coalesce(how_met, '') || ' ' || coalesce(met_context, '') || ' ' || coalesce(industry, '') || ' ' || coalesce(opportunities::text, '')), 'C') ||
        setweight(to_tsvector('simple', coalesce(ai_summary, '') || ' ' || coalesce(notes, '')), 'D')
      ) STORED`,
 
@@ -1181,6 +1791,10 @@ export const SCALE_DDL: string[] = [
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
+  // For the composer's pickers, which open on "who have I actually spoken to lately"
+  // rather than whoever is alphabetically first. `updated_at` is the wrong column for
+  // that — editing a contact is not talking to them.
+  `CREATE INDEX IF NOT EXISTS contacts_user_last_interaction_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
@@ -1310,6 +1924,13 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS duplicate_suggestions_pending_idx
      ON duplicate_suggestions(user_id, confidence DESC)
      WHERE status = 'pending'`,
+
+  // --- Capture history ---------------------------------------------------------------
+  //
+  // How a capture's notes arrived (typed, voice, photos...), for the history list's icons.
+  // Here rather than only in the CREATE TABLE above, which never adds a column to a
+  // note_batches table that already exists.
+  `ALTER TABLE note_batches ADD COLUMN IF NOT EXISTS input_sources jsonb NOT NULL DEFAULT '[]'`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -1357,7 +1978,13 @@ async function runStatements(
  * added once the duplicate pairs already in the table are gone.
  */
 export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFailure[]) {
-  await runStatements(run, SCALE_DDL, "scale DDL", failed);
+  // The linkedin_slug DROP rewrites every contacts row under an exclusive lock, so it runs
+  // only when the stored expression is not the declared one (or cannot be read — then the
+  // old unconditional behaviour is the safe default).
+  const stored = await storedLinkedinSlugExpression(run);
+  const rewriteSlug = stored === undefined || linkedinSlugNeedsRewrite(stored);
+  const statements = rewriteSlug ? SCALE_DDL : SCALE_DDL.filter((s) => s !== DROP_LINKEDIN_SLUG_STATEMENT);
+  await runStatements(run, statements, "scale DDL", failed);
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
   // `ensureReady`), so local search finally behaves like production — unlike pgvector,
@@ -1405,11 +2032,14 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
 }
 
 /**
- * Whether the recorded schema version already matches this build.
+ * Whether the recorded schema version already covers this build.
  *
- * One SELECT standing in for the whole DDL sweep. Anything unexpected (no table yet, a
- * fresh database, a permissions problem) answers "no" and the caller does the full pass —
- * being wrong here costs a slow boot, never a wrong schema.
+ * One SELECT standing in for the whole DDL sweep. AT OR ABOVE counts as current: above is a
+ * rollback — a newer deployment migrated the database and this older one is serving — and
+ * re-running the older sweep inside a user request would only cost time and then (before
+ * `recordSchemaVersion` learned GREATEST) write the lower number back. Anything unexpected
+ * (no table yet, a fresh database, a permissions problem) answers "no" and the caller does
+ * the full pass — being wrong here costs a slow boot, never a wrong schema.
  */
 export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
   try {
@@ -1418,14 +2048,82 @@ export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
          id integer PRIMARY KEY DEFAULT 1,
          version integer NOT NULL,
          applied_at timestamptz NOT NULL DEFAULT now(),
+         fingerprint text,
          CONSTRAINT schema_migrations_single_row CHECK (id = 1)
        )`
     );
+    const result = await run(`SELECT version, fingerprint FROM schema_migrations WHERE id = 1`);
+    const row = rowsOf<{ version: number | string; fingerprint: string | null }>(result)[0];
+    return isSchemaCurrent(row ? { version: Number(row.version), fingerprint: row.fingerprint ?? null } : null);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A hash of every statement in `DDL`, `SCALE_DDL` and `alters` (which spreads
+ * `ADMIN_V2_STATEMENTS`), whitespace-collapsed. Recorded beside SCHEMA_VERSION: two
+ * branches that both shipped the same number with different statements disagree here, so
+ * the second one's statements run instead of being skipped by a matching integer.
+ *
+ * DDL embedded in code (`migratePgvector`, `ensureColumn` calls) is not hashed; changing
+ * that still needs a version bump, as today.
+ */
+let fingerprintMemo: string | undefined;
+export function schemaFingerprint(): string {
+  if (!fingerprintMemo) {
+    const statements = [DDL, ...SCALE_DDL, ...alters]
+      .map((s) => s.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    fingerprintMemo = createHash("sha256").update(statements.join("\n")).digest("hex");
+  }
+  return fingerprintMemo;
+}
+
+/** The decision `schemaIsCurrent` makes from the recorded row. Pure. */
+export function isSchemaCurrent(recorded: { version: number; fingerprint: string | null } | null): boolean {
+  if (!recorded || !Number.isFinite(recorded.version)) return false;
+  // A newer build migrated this database and an older one is serving (a rollback): never
+  // re-sweep with older DDL — the never-downgrade rule.
+  if (recorded.version > SCHEMA_VERSION) return true;
+  if (recorded.version < SCHEMA_VERSION) return false;
+  return recorded.fingerprint === schemaFingerprint();
+}
+
+/**
+ * `schemaIsCurrent` + `detectExtensions` in a single statement, for the path every cold
+ * start takes. On neon-http each statement is its own HTTPS request, and the slow way is
+ * three in sequence (CREATE TABLE IF NOT EXISTS, the version read, the extension read)
+ * ahead of the first query a visitor is waiting on.
+ *
+ * Only ever answers "yes, current — and here are the extensions". Anything else (the
+ * table is missing, no row, a version behind, a read error) returns false and the caller
+ * falls through to the original slow path, which is what creates the table and migrates.
+ * So a wrong answer here can cost a round trip, never a skipped migration.
+ */
+async function schemaIsCurrentFast(run: StatementRunner): Promise<boolean> {
+  try {
     const result = await run(
-      `SELECT version FROM schema_migrations WHERE id = 1`
+      `SELECT m.version,
+              m.fingerprint,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS has_vector,
+              EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS has_trigram
+         FROM schema_migrations m
+        WHERE m.id = 1`
     );
-    const rows = rowsOf<{ version: number | string }>(result);
-    return Number(rows[0]?.version) === SCHEMA_VERSION;
+    const row = rowsOf<{
+      version: number | string;
+      fingerprint: string | null;
+      has_vector: boolean;
+      has_trigram: boolean;
+    }>(result)[0];
+    if (!row) return false;
+    if (!isSchemaCurrent({ version: Number(row.version), fingerprint: row.fingerprint ?? null })) {
+      return false;
+    }
+    globalForDb.orbitPgvector = Boolean(row.has_vector);
+    globalForDb.orbitTrigram = Boolean(row.has_trigram);
+    return true;
   } catch {
     return false;
   }
@@ -1456,11 +2154,18 @@ async function detectExtensions(run: StatementRunner) {
 
 export async function recordSchemaVersion(run: StatementRunner) {
   try {
+    // Databases stamped before the fingerprint existed lack the column. Idempotent.
+    await run(`ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS fingerprint text`);
+    // Never downgrades: a rollback that sweeps must not overwrite a newer build's stamp.
+    // The fingerprint is hex, so inlining it is safe.
     await run(
-      `INSERT INTO schema_migrations (id, version, applied_at)
-       VALUES (1, ${SCHEMA_VERSION}, now())
+      `INSERT INTO schema_migrations (id, version, applied_at, fingerprint)
+       VALUES (1, ${SCHEMA_VERSION}, now(), '${schemaFingerprint()}')
        ON CONFLICT (id) DO UPDATE
-         SET version = EXCLUDED.version, applied_at = EXCLUDED.applied_at`
+         SET version = EXCLUDED.version,
+             applied_at = EXCLUDED.applied_at,
+             fingerprint = EXCLUDED.fingerprint
+         WHERE schema_migrations.version <= EXCLUDED.version`
     );
   } catch (err) {
     // A boot that cannot record its version just re-runs the idempotent sweep next time.
@@ -1510,6 +2215,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "ai_provider", "text DEFAULT 'gemini'");
   await ensureColumn(client, "user_settings", "openai_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "anthropic_api_key_encrypted", "text");
+  // v48 (event platform). Both also appear in `alters` above; `smoke-schema-ddl` requires them in BOTH places,
+  // because a local database created before either existed only ever sees this list.
+  await ensureColumn(client, "user_settings", "schools", "jsonb DEFAULT '[]'::jsonb");
+  await ensureColumn(client, "events", "kind", "text");
   await ensureColumn(client, "contacts", "preferred_name", "text");
   await ensureColumn(client, "contacts", "website", "text");
   await ensureColumn(client, "interactions", "external_id", "text");
@@ -1544,6 +2253,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "timestamptz NOT NULL DEFAULT now()"
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
+  await ensureColumn(client, "user_settings", "wispr_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -1560,8 +2270,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "desktop_notified_ids",
     "jsonb DEFAULT '[]'"
   );
+  await ensureColumn(client, "user_settings", "desktop_notifications_enabled", "boolean");
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
+  await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
   await ensureColumn(
     client,
     "user_settings",
@@ -1623,6 +2335,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "recruiter_sharing",
     "integer NOT NULL DEFAULT 0"
   );
+  await ensureColumn(client, "user_settings", "terms_accepted_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "terms_version", "text");
+  await ensureColumn(client, "user_settings", "timeline_backfill_enabled", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
     client,
     "user_recruiter_links",
@@ -1720,6 +2435,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
   await ensureColumn(client, "user_settings", "comped_by", "text");
   await ensureColumn(client, "user_settings", "last_active_at", "timestamptz");
+  // v61: the pending Lifetime checkout the AI gate verifies with Stripe before refusing.
+  await ensureColumn(client, "user_settings", "lifetime_checkout_session_id", "text");
+  await ensureColumn(client, "user_settings", "lifetime_checkout_started_at", "timestamptz");
 
   // Clerk identity mirror. Columns rather than a new table, so they ride along on every
   // query that already reads `user_settings` — the admin roster gets a display name and an
@@ -1820,6 +2538,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "status_changed_at", "timestamptz");
   await ensureColumn(client, "feedback", "status_changed_by", "text");
   await ensureColumn(client, "feedback", "resolution_note", "text");
+  // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
+  await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
+  await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -1847,6 +2568,9 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
   `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
   `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+  `CREATE INDEX IF NOT EXISTS plan_upgrade_events_claim_idx ON plan_upgrade_events(user_id, claimed_at, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS plan_upgrade_events_pending_uidx ON plan_upgrade_events(user_id, plan) WHERE claimed_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS admin_provider_snapshots_expires_idx ON admin_provider_snapshots(expires_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
   `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
   `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
@@ -1989,6 +2713,43 @@ async function migratePgvector(run: StatementRunner) {
 const alters = [
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
+  // The events feature landed whole at v32, so these are its first incremental columns.
+  // CREATE TABLE IF NOT EXISTS above is a no-op on a database that already has the table,
+  // which is why every new column has to appear in both places.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_url text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS attendance_mode text`,
+  // v48 (event platform), discovery. `discovered_via` is separate from `source` because enrichment
+  // overwrites `source` with 'page' the moment it reads the event's own link — so `source`
+  // cannot answer "where did this event come from", which is exactly what the card's badge
+  // and the re-add rules need.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS discovered_via text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS rsvp_status text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS role_source text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS dismissed_at timestamptz`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_due_at timestamptz`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_attempts integer NOT NULL DEFAULT 0`,
+  // v48 (event platform), cross-event identity. `identity_key` cannot answer "same person at another event":
+  // it keys on the string it was given, so two spellings of one LinkedIn URL are two keys.
+  // Changing it would break the unique index every stored roster row depends on.
+  // v48 (event platform), companies at events. `kind` is what makes a career fair rank recruiters above
+  // founders — the same person is a different opportunity at a different kind of event.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS kind text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS schools jsonb DEFAULT '[]'::jsonb`,
+  // One line each, deliberately: PGlite runs every entry in this array through the extended
+  // query protocol, which rejects a statement it reads as more than one command — and a
+  // multi-line CREATE TABLE here trips that, while the identical text in the template above
+  // is fine because that path splits on ';' first.
+  `CREATE TABLE IF NOT EXISTS event_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, role text NOT NULL, source text NOT NULL, evidence text, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE TABLE IF NOT EXISTS target_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, priority integer NOT NULL DEFAULT 2, note text, created_at timestamptz NOT NULL DEFAULT now())`,
+  // v48 (event platform) as well: the cached one-line "why" and opener, keyed by a hash of what produced it.
+  // v51: the phone scan handoff appends its pages to a capture job instead of holding a transcript.
+  `ALTER TABLE capture_handoffs ADD COLUMN IF NOT EXISTS capture_job_id uuid`,
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS photo_ids jsonb NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS ai_note jsonb`,
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_kind text`,
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_value text`,
+  `CREATE TABLE IF NOT EXISTS event_aliases (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, kind text NOT NULL, value text NOT NULL, event_id uuid REFERENCES events(id) ON DELETE SET NULL, source text NOT NULL, evidence jsonb NOT NULL DEFAULT '{}'::jsonb, first_seen_at timestamptz NOT NULL DEFAULT now(), last_seen_at timestamptz NOT NULL DEFAULT now())`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
@@ -2007,6 +2768,7 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wispr_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
@@ -2014,9 +2776,13 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_from_number text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notified_ids jsonb DEFAULT '[]'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notifications_enabled boolean`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
+  // v61: the pending Lifetime checkout the AI gate verifies with Stripe before refusing.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_checkout_session_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_checkout_started_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS yc_mode_enabled boolean DEFAULT false`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS estimated_monthly_churn_pct real`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stripe_customer_id text`,
@@ -2056,6 +2822,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
@@ -2100,6 +2867,11 @@ const alters = [
   // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
+  // v54: the share link and referral tracking behind the /interest boarding pass.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referred_by_id uuid`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_token_uidx ON interest_list_signups(share_token)`,
+  `CREATE INDEX IF NOT EXISTS interest_list_signups_referred_by_idx ON interest_list_signups(referred_by_id)`,
 
   // Feedback triage. The table shipped long before anything wrote to it, so every existing
   // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
@@ -2113,10 +2885,14 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS terms_version text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS timeline_backfill_enabled integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS shared_to_pool integer NOT NULL DEFAULT 1`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,
@@ -2227,6 +3003,71 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
   `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v42: meeting capture. Same rule as v31/v32 — every index in both places. The
+  // unique index is what makes a re-uploaded chunk a no-op rather than a repeated line.
+  `CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq)`,
+  `CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id)`,
+  // Schema v48 (event platform): discovery.
+  //
+  // `event_aliases_user_kind_value_uidx` is the whole dedup story. Three sources can report
+  // the same event within one pass — a calendar invite, a Luma feed entry and a confirmation
+  // email — and each knows a different key for it. One unique index gives them a single
+  // winner even when they race, and a row whose `event_id` is NULL is a tombstone that says
+  // "this one was dismissed or deleted", which is what stops the next sync re-adding it.
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_aliases_user_kind_value_uidx ON event_aliases(user_id, kind, value)`,
+  `CREATE INDEX IF NOT EXISTS event_aliases_event_idx ON event_aliases(event_id) WHERE event_id IS NOT NULL`,
+  // The enrichment queue's claim: a partial index, because the overwhelming majority of
+  // events are not waiting to be read.
+  `CREATE INDEX IF NOT EXISTS events_enrich_due_idx ON events(enrich_due_at) WHERE enrich_due_at IS NOT NULL`,
+  // Schema v48 (event platform): "who do I keep running into". The aggregate groups a user's whole roster
+  // history by this, so it is the one index standing between that panel and a full scan.
+  `CREATE INDEX IF NOT EXISTS event_attendees_person_idx ON event_attendees(user_id, person_key_kind, person_key_value) WHERE person_key_value IS NOT NULL`,
+  // Schema v48 (event platform): companies at events.
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_companies_event_company_role_uidx ON event_companies(event_id, company_id, role)`,
+  `CREATE INDEX IF NOT EXISTS event_companies_user_company_idx ON event_companies(user_id, company_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS target_companies_user_company_uidx ON target_companies(user_id, company_id)`,
+  // Launch Phase 2. Columns first, then the one-time recruiter PII backfill, whose statements
+  // read the columns they fill. Each backfill statement only fills what is still null, so a
+  // re-run on any later version bump changes nothing.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_event_at timestamptz`,
+  `ALTER TABLE recruiters ADD COLUMN IF NOT EXISTS created_by_user_id text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS phone text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS linkedin_url text`,
+  // The creator is the earliest link written within 120 seconds of the canonical row (the same window as the Phase 0 runtime rule), since
+  // upsertCanonicalRecruiter and ensureUserLink run back to back in one request.
+  `UPDATE recruiters r SET created_by_user_id = f.user_id FROM (SELECT DISTINCT ON (l.recruiter_id) l.recruiter_id, l.user_id FROM user_recruiter_links l JOIN recruiters r2 ON r2.id = l.recruiter_id WHERE l.created_at <= r2.created_at + interval '120 seconds' ORDER BY l.recruiter_id, l.created_at) f WHERE r.id = f.recruiter_id AND r.created_by_user_id IS NULL`,
+  // The creator, or the only linker, is who put the shared details there, so they go onto that link.
+  // Anything else stays on the shared row only: its contributor cannot be determined.
+  `UPDATE user_recruiter_links l SET email = COALESCE(l.email, r.email), phone = COALESCE(l.phone, r.phone), linkedin_url = COALESCE(l.linkedin_url, r.linkedin_url) FROM recruiters r WHERE r.id = l.recruiter_id AND (r.email IS NOT NULL OR r.phone IS NOT NULL OR r.linkedin_url IS NOT NULL) AND (l.user_id = r.created_by_user_id OR NOT EXISTS (SELECT 1 FROM user_recruiter_links o WHERE o.recruiter_id = l.recruiter_id AND o.id <> l.id))`,
+  // A Gmail-scan link matched this row by the sender address first, so that address is almost
+  // always the one in this user's own mailbox.
+  `UPDATE user_recruiter_links l SET email = r.email FROM recruiters r WHERE r.id = l.recruiter_id AND l.source = 'gmail' AND l.email IS NULL AND r.email IS NOT NULL`,
+  // Launch Phase 4: calendar feed tokens are stored as their SHA-256, hex, matching
+  // hashCalendarFeedToken in src/lib/calendar-feed.ts. Idempotent: live tokens are
+  // 43-character base64url, so a stored 64-hex value is already a hash and is left alone.
+  `UPDATE user_settings
+      SET calendar_feed_token = encode(sha256(convert_to(calendar_feed_token, 'UTF8')), 'hex')
+    WHERE calendar_feed_token IS NOT NULL AND calendar_feed_token !~ '^[0-9a-f]{64}$'`,
+  // Launch Phase 4: LinkedIn timeline events a model inferred are tagged ai_derived, so
+  // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
+  `UPDATE interactions SET source = 'ai_derived'
+    WHERE external_id LIKE 'li-event:%' AND source IS DISTINCT FROM 'ai_derived'`,
+  // Schema v66: `completed` was an early spelling of a done reminder. Every reader matched
+  // both; after this only `done` exists, and the reminders query matches that alone.
+  // Idempotent: nothing writes `completed` to reminders any more.
+  `UPDATE reminders SET status = 'done' WHERE status = 'completed'`,
+  // Schema v67: a reminder list's icon and colour, chosen from its right-click editor.
+  // Keys into src/lib/reminder-list-style.ts; NULL means the default (Inbox tray / list glyph,
+  // no tint), so existing lists need no backfill.
+  `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS icon text`,
+  `ALTER TABLE reminder_lists ADD COLUMN IF NOT EXISTS color text`,
+  // v68: page-load timing on the traffic pipeline (src/lib/nav-timing.ts).
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS load_ms integer`,
+  `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
+  // Schema v70: chat context note.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS context_note text`,
 ];
 
 /**
@@ -2339,10 +3180,38 @@ async function ensureReady(): Promise<void> {
       schemaReconciled = undefined;
       globalForDb.orbitPglite = await open();
     }
+    simulateNetworkLatency(globalForDb.orbitPglite);
   }
 
   globalForDb.orbitDrizzlePglite ??= (await import("drizzle-orm/pglite")).drizzle;
   await globalForDb.orbitPglite.waitReady;
+}
+
+/**
+ * LOCAL MEASUREMENT ONLY: `ORBIT_SIM_DB_LATENCY_MS=20` makes every PGlite statement wait
+ * that long before it runs, the way each neon-http statement in production is its own
+ * HTTPS round trip. Local PGlite answers in microseconds, so without this a page that
+ * awaits eight queries one after another is exactly as fast as one that runs them all at
+ * once — and the difference is the whole cost of a slow page in production. With it, a
+ * loader's wall time is roughly (sequential depth × latency), which is what
+ * `scripts/smoke-page-depth.ts` and `scripts/dev/nav-timing.mjs` measure.
+ *
+ * The delay is applied before the statement is queued, so concurrent statements wait in
+ * parallel just as concurrent HTTPS requests would. Never reachable in production: this is
+ * the PGlite branch, which only runs without a `DATABASE_URL`.
+ */
+function simulateNetworkLatency(client: PGlite) {
+  const ms = Number(process.env.ORBIT_SIM_DB_LATENCY_MS);
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  const marked = client as PGlite & { orbitSimLatency?: boolean };
+  if (marked.orbitSimLatency) return;
+  marked.orbitSimLatency = true;
+  const query = client.query.bind(client);
+  const sleep = () => new Promise((resolve) => setTimeout(resolve, ms));
+  client.query = (async (...args: Parameters<PGlite["query"]>) => {
+    await sleep();
+    return query(...args);
+  }) as PGlite["query"];
 }
 
 /**
@@ -2383,11 +3252,124 @@ async function ready(): Promise<void> {
   await globalForDb.orbitReady;
 }
 
+/** How long a builder may hold the migration lease before another may steal it. */
+const MIGRATION_LEASE_MS = 5 * 60 * 1000;
+/** How long `scripts/migrate.ts` waits for another builder's lease before sweeping anyway. */
+export const BUILD_MIGRATION_LOCK_WAIT_MS = 3 * 60 * 1000;
+/**
+ * How long a runtime cold start (`getDb()`) waits. Pages stop at 60 s, so the build wait
+ * would kill the request; on timeout the runtime path does NOT sweep — the holder is
+ * migrating, and racing it is what the lease prevents.
+ */
+export const RUNTIME_MIGRATION_LOCK_WAIT_MS = 20 * 1000;
+const MIGRATION_LOCK_POLL_MS = 2000;
+
+/**
+ * Serialises the DDL sweep across concurrent builders.
+ *
+ * NOT `pg_advisory_lock`. That is the obvious answer and it is wrong here: an advisory lock
+ * is scoped to a *session*, and on `neon-http` every statement is its own HTTPS request with
+ * no session behind it, so the lock would be released the instant the statement returned.
+ * `pg_advisory_xact_lock` fails for the same reason — each statement is its own transaction.
+ * What works over a sessionless driver is a lease row, which is what this is.
+ *
+ * Why it is needed at all: the statements are individually idempotent, but two of the
+ * sequences are not safe to interleave. `migratePgvector` adds a column and then builds an
+ * HNSW index over it, and the embeddings dedupe deletes duplicate rows and then builds a
+ * unique index over what is left — one builder deleting while another indexes is a failed
+ * build at best. Two builds racing is not hypothetical: a production deploy and a preview
+ * build, or two pushes in a minute, both call this.
+ *
+ * Never fails the caller. If the lease is not won within `options.waitMs`, `options.onTimeout`
+ * decides: the build sweeps anyway (the pre-lease behaviour — a lock that can turn a deploy
+ * into a hard failure when a previous builder died holding it would be a worse trade than the
+ * race it prevents), a runtime cold start serves without sweeping.
+ */
+async function withMigrationLock<T>(
+  run: StatementRunner,
+  body: () => Promise<T>,
+  options: { waitMs: number; onTimeout: () => Promise<T> }
+): Promise<T> {
+  // The lease table has to exist before the sweep that creates every other table, so it is
+  // created here rather than in the DDL. Concurrent `CREATE TABLE IF NOT EXISTS` can still
+  // raise a duplicate-key error from the catalog insert; that means it exists, which is all
+  // we wanted.
+  const holder = randomUUID();
+  let held = false;
+  try {
+    await run(
+      `CREATE TABLE IF NOT EXISTS schema_migration_lock (
+         id integer PRIMARY KEY DEFAULT 1,
+         holder text NOT NULL,
+         acquired_at timestamptz NOT NULL DEFAULT now(),
+         expires_at timestamptz NOT NULL,
+         CONSTRAINT schema_migration_lock_single_row CHECK (id = 1)
+       )`
+    );
+  } catch {
+    // Already there, or raced. Either way the acquire below is the real test.
+  }
+
+  const deadline = Date.now() + options.waitMs;
+  while (Date.now() < deadline) {
+    try {
+      // Wins only when the row is absent or the previous holder's lease has expired. The
+      // WHERE on the DO UPDATE is what makes this a lock rather than a last-writer-wins
+      // stamp: a live lease makes the upsert affect no rows, so RETURNING is empty.
+      const result = await run(
+        `INSERT INTO schema_migration_lock (id, holder, acquired_at, expires_at)
+         VALUES (1, '${holder}', now(), now() + interval '${MIGRATION_LEASE_MS} milliseconds')
+         ON CONFLICT (id) DO UPDATE
+           SET holder = EXCLUDED.holder,
+               acquired_at = EXCLUDED.acquired_at,
+               expires_at = EXCLUDED.expires_at
+           WHERE schema_migration_lock.expires_at < now()
+         RETURNING holder`
+      );
+      if (rowsOf<{ holder: string }>(result).length > 0) {
+        held = true;
+        break;
+      }
+    } catch (err) {
+      // Cannot even attempt the lease. Proceeding unlocked is the old behaviour, and the
+      // sweep is idempotent; blocking the build over the lock itself is the worse failure.
+      console.warn("[db] migration lease unavailable; sweeping without it\n", err);
+      return body();
+    }
+    await new Promise((resolve) => setTimeout(resolve, MIGRATION_LOCK_POLL_MS));
+  }
+
+  if (!held) return options.onTimeout();
+
+  try {
+    return await body();
+  } finally {
+    try {
+      // Scoped to our own holder id: if our lease expired and someone else took it, this
+      // must not release theirs.
+      await run(
+        `DELETE FROM schema_migration_lock WHERE id = 1 AND holder = '${holder}'`
+      );
+    } catch {
+      // The lease expires on its own. Nothing here is worth failing a build over.
+    }
+  }
+}
+
 export type SchemaReconcileResult = {
   version: number;
   /** False when the recorded version already matched and nothing ran. */
   applied: boolean;
   failed: SchemaFailure[];
+  /** True when a runtime caller gave up on another holder's lease and did not sweep. */
+  lockTimedOut?: boolean;
+};
+
+export type ReconcileOptions = {
+  /** Default BUILD_MIGRATION_LOCK_WAIT_MS. */
+  lockWaitMs?: number;
+  /** When another holder keeps the lease past `lockWaitMs`: "sweep" (build, default) or "skip" (runtime). */
+  onLockTimeout?: "sweep" | "skip";
 };
 
 /**
@@ -2396,7 +3378,7 @@ export type SchemaReconcileResult = {
  * The whole sweep is idempotent, but "idempotent" is not "free": on `neon-http` every
  * statement is a separate HTTPS request, so replaying ~165 of them is the single largest
  * cost in a cold start. Confirm the recorded version first and skip the lot when it
- * already matches. A version mismatch — or any error reading it — takes the full pass.
+ * already matches. A version behind this build — or any error reading it — takes the full pass; a version ahead of it (a rollback) is left alone.
  *
  * The version is recorded ONLY when nothing failed. A sweep that logged a failure and
  * recorded the version anyway is how an index went missing from production for a month
@@ -2405,12 +3387,18 @@ export type SchemaReconcileResult = {
  * runs this ahead of `next build` and refuses to deploy on any failure, so in practice a
  * runtime boot only ever sees the no-op path.
  */
-export async function reconcileSchema(): Promise<SchemaReconcileResult> {
+export async function reconcileSchema(options: ReconcileOptions = {}): Promise<SchemaReconcileResult> {
   await ready();
   const neonSql = globalForDb.orbitNeonSql;
   const run: StatementRunner = neonSql
     ? (statement) => neonSql.query(statement)
     : (statement) => globalForDb.orbitPglite!.query(statement);
+
+  // Every cold start lands here before its first real query, so the common case — the build
+  // already migrated — has to be ONE round trip, not three.
+  if (await schemaIsCurrentFast(run)) {
+    return { version: SCHEMA_VERSION, applied: false, failed: [] };
+  }
 
   if (await schemaIsCurrent(run)) {
     // pgvector/pg_trgm availability lives in module state, not in the database, so it
@@ -2419,21 +3407,44 @@ export async function reconcileSchema(): Promise<SchemaReconcileResult> {
     return { version: SCHEMA_VERSION, applied: false, failed: [] };
   }
 
-  const failed = neonSql
-    ? await migrateNeon(neonSql)
-    : await migratePglite(globalForDb.orbitPglite!);
-  for (const f of failed) {
-    console.error(`[db] DDL statement failed: ${f.statement}\n`, f.message);
-  }
-  if (failed.length === 0) await recordSchemaVersion(run);
-  return { version: SCHEMA_VERSION, applied: true, failed };
+  const lockWaitMs = options.lockWaitMs ?? BUILD_MIGRATION_LOCK_WAIT_MS;
+  const sweep = async (): Promise<SchemaReconcileResult> => {
+    // Re-check inside the lock. Whoever held it before us may have just finished the very
+    // sweep we were about to run — this is the whole reason the lock is worth taking.
+    if (await schemaIsCurrent(run)) {
+      await detectExtensions(run);
+      return { version: SCHEMA_VERSION, applied: false, failed: [] };
+    }
+
+    const failed = neonSql
+      ? await migrateNeon(neonSql)
+      : await migratePglite(globalForDb.orbitPglite!);
+    for (const f of failed) {
+      console.error(`[db] DDL statement failed: ${f.statement}\n`, f.message);
+    }
+    if (failed.length === 0) await recordSchemaVersion(run);
+    return { version: SCHEMA_VERSION, applied: true, failed };
+  };
+
+  return withMigrationLock(run, sweep, {
+    waitMs: lockWaitMs,
+    onTimeout: async () => {
+      if ((options.onLockTimeout ?? "sweep") === "sweep") {
+        console.warn(`[db] another builder has held the migration lease for ${lockWaitMs}ms; sweeping anyway`);
+        return sweep();
+      }
+      console.warn(`[db] migration lease busy for ${lockWaitMs}ms; serving without sweeping while the holder migrates`);
+      await detectExtensions(run);
+      return { version: SCHEMA_VERSION, applied: false, failed: [], lockTimedOut: true };
+    },
+  });
 }
 
 export async function getDb(): Promise<Db> {
   await ready();
 
   if (!schemaReconciled) {
-    schemaReconciled = reconcileSchema()
+    schemaReconciled = reconcileSchema({ lockWaitMs: RUNTIME_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "skip" })
       .then(() => undefined)
       .catch((err) => {
         schemaReconciled = undefined;
