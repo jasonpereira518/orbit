@@ -47,13 +47,20 @@ const nextConfig: NextConfig = {
   ...(process.env.VERCEL
     ? {
         outputFileTracingExcludes: {
-          "/*": ["./node_modules/@electric-sql/pglite/**/*"],
+          "/*": [
+            "./node_modules/@electric-sql/pglite/**/*",
+            "./node_modules/sharp/**/*",
+            "./node_modules/@img/**/*",
+          ],
         },
       }
     : {}),
   // The ticket-image route reads its fonts and the planet art from disk at request time;
   // without this the deploy bundle omits them and the route 500s only in production.
   outputFileTracingIncludes: {
+    ...(process.env.VERCEL
+      ? { "/api/avatars/encode": ["./node_modules/sharp/**/*", "./node_modules/@img/**/*"] }
+      : {}),
     "/api/interest-list/ticket-image": [
       "./src/app/api/interest-list/ticket-image/fonts/*",
       "./public/landing/planets/*.png",
