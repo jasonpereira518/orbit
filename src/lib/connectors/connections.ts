@@ -1,5 +1,17 @@
 /**
- * The only module that names `connector_connections`.
+ * The only module that READS OR WRITES `connector_connections` in the normal course of
+ * business — `src/lib/user-data.ts` names the table too, in the three places account
+ * deletion has to (its export list, its count list and its delete), which is a purge
+ * registry's job and not a second access path.
+ *
+ * ── Before the first connect route ships ───────────────────────────────────────────────────
+ *
+ * `upsertConnectorConnection` defaults `nextSyncAt` to NOW, which arms the connection for the
+ * next sync pass. That is only safe once the connector's manifest entry has a `sync`: the
+ * scheduler disarms an armed connection whose manifest has none, with "This connector is no
+ * longer available — reconnect it from Settings," which a user who just connected it cannot
+ * act on. So a connect route either ships its `sync` in the same change or passes
+ * `nextSyncAt: null` and arms the row when the sync lands. See `ConnectorManifest.sync`.
  *
  * Mirrors `src/lib/events/connections.ts`, which solves the same problem for event
  * providers, and borrows its lease, failure ceiling and backoff from
@@ -163,6 +175,42 @@ export async function markConnectorSyncResult(
       updatedAt: now,
     })
     .where(eq(connectorConnections.id, id));
+}
+
+/**
+ * Close out a run that returned without recording anything — the scheduler's success
+ * backstop, and the other half of the contract on `ConnectorManifest.sync`.
+ *
+ * Guarded on the row still being `syncing`: a sync that called `markConnectorSyncResult`
+ * itself has already left it `idle` or `error`, and this must not reopen that decision. That
+ * guard is also why this deliberately does NOT write `sync_cursor` — the only value it could
+ * write is the stale one the claim read, so a sync that stored a fresh cursor and then, say,
+ * failed on a later page would have it silently rolled back.
+ *
+ * Without it, a connector whose `sync` records nothing left the row `sync_status = 'syncing'`
+ * with `next_sync_at` unchanged and `last_synced_at` NULL: due again on the very next pass,
+ * forever, and "never synced" in the settings UI. Nothing in P0 hits that path (no manifest
+ * entry has a `sync` yet), which is exactly why it has to be settled before P1 writes one.
+ */
+export async function markConnectorSyncSucceeded(
+  id: string,
+  now: Date = new Date()
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(connectorConnections)
+    .set({
+      syncStatus: "idle",
+      syncStartedAt: null,
+      syncError: null,
+      syncFailures: 0,
+      lastSyncedAt: now,
+      nextSyncAt: new Date(now.getTime() + CONNECTOR_SYNC_INTERVAL_MS),
+      updatedAt: now,
+    })
+    .where(
+      and(eq(connectorConnections.id, id), eq(connectorConnections.syncStatus, "syncing"))
+    );
 }
 
 /** Stop scheduling this connection. Only reconnecting, or a capability change, re-arms it. */

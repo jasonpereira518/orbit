@@ -37,6 +37,19 @@ function check(label: string, ok: boolean, detail = "") {
 const REAL_DEV_SECRET = "orbit-dev-secret-change-me-in-prod";
 
 /**
+ * The domain-separation label `oauth.ts` derives its signing subkey with, hardcoded here for
+ * the same reason `REAL_DEV_SECRET` is: reproducing the real signature independently is what
+ * makes the hand-signed checks below meaningful. Changing the label in the module without
+ * changing it here fails these checks, which is correct — it is a signature-format change
+ * that invalidates every state in flight.
+ */
+const STATE_HMAC_LABEL = "orbit:connector-oauth-state:v1";
+
+function stateKey(secret: string): Buffer {
+  return createHmac("sha256", secret).update(STATE_HMAC_LABEL).digest();
+}
+
+/**
  * Sign a state payload directly, bypassing `signOAuthState` entirely — including its own
  * sanitizing call to `safeReturnTo`. This is the only way to prove that `parseOAuthState`
  * sanitizes independently on the way OUT: `signOAuthState` already sanitizes on the way in,
@@ -59,7 +72,7 @@ function signRawState(fields: {
     iat: fields.iat ?? Date.now(),
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const mac = createHmac("sha256", fields.secret ?? REAL_DEV_SECRET)
+  const mac = createHmac("sha256", stateKey(fields.secret ?? REAL_DEV_SECRET))
     .update(encoded)
     .digest("base64url");
   return `${encoded}.${mac}`;

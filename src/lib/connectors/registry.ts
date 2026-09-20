@@ -1,17 +1,30 @@
 /**
  * Every connector Orbit offers, as data.
  *
- * The scheduler, the settings status action, the integrations dialog, the account alerts and
- * the purge registry all derive from this list rather than each keeping their own. Before it
- * existed, `runSyncPass` hardcoded three sync families, `INTEGRATION_TABS` hardcoded nine
- * tabs and `getIntegrationStatuses` hardcoded six lookups — three lists that drifted
- * independently, which is the drift `sections.ts` already warns about in its own header.
+ * TWO consumers derive from this list today, and only two:
  *
- * Deliberately free of `@/db` and `next/*` imports: a client component renders this catalog,
- * and a client component that reaches `@/db` fails the build with a `node:fs` chunking error
- * that names neither file. The sync function is a dynamic import for the same reason — the
- * manifest can be loaded without pulling a database driver into the browser bundle.
+ *   - `runSyncPass`'s connector family (`src/lib/sync-scheduler.ts`), which dispatches by
+ *     manifest instead of the `switch` over three hardcoded sync families it used to be.
+ *   - The settings status action (`src/actions/integrations.ts`), through
+ *     `CONNECTOR_STATUS_LOOKUP_IDS` in `./status.ts`, which used to hardcode six lookups.
+ *
+ * Everything else still keeps its own list, deliberately: `INTEGRATION_TABS`
+ * (`src/components/settings/sections.ts`) is untouched by P0 and belongs to the Integrations
+ * UI plan, `src/lib/account-alerts.ts` never mentions connectors at all, and the purge
+ * registry (`src/lib/user-data.ts`) is an explicit table list because it deletes TABLES, not
+ * connectors — several connectors share one table and one connector (`google`) spans two.
+ * `purgeCategory` below records which of its categories erases a connector's data, so the
+ * two can be checked against each other without pretending one generates the other.
+ *
+ * No client component renders this catalog yet — the dialog that will is the UI plan's. The
+ * no-database rule stands anyway, because that is the component this file exists to be
+ * loadable from: a client component that reaches `@/db` fails the build with a `node:fs`
+ * chunking error that names neither file. Hence no `@/db` and no `next/*` import here, and
+ * hence `sync` being a function the scheduler resolves rather than a static import of a
+ * module that would drag a database driver into the browser bundle.
  */
+import type { DataCategory } from "@/lib/data-categories";
+import type { FeatureKey } from "@/lib/entitlements";
 
 export type ConnectorFamily =
   | "people"
@@ -25,29 +38,61 @@ export type ConnectorFamily =
   | "automation";
 
 /**
- * How Orbit holds the credential.
+ * How Orbit holds the credential — which is also WHERE it holds it, and that is the half a
+ * new connector's author actually has to get right.
  *
- * `provider_oauth` means the connection lives in `gmail_connections` / `outlook_connections`
- * and is reached through `provider-connections.ts`; `oauth2` means it lives in the generic
- * `connector_connections` table. The distinction is historical and deliberate — see that
- * module's header for why the two legacy tables are not being migrated.
+ *   - `provider_oauth` lives in `gmail_connections` / `outlook_connections`, reached through
+ *     `provider-connections.ts`. Historical and deliberate; that module's header says why
+ *     the two legacy tables are not being migrated.
+ *   - `event_provider` lives in `event_provider_connections`, reached through
+ *     `src/lib/events/connections.ts`. It names a STORE, not a mechanism: Eventbrite
+ *     authenticates with OAuth2 and Luma with an API key, and both land in that one table
+ *     because the events pipeline already owned them before this registry existed. Anyone
+ *     building the Eventbrite or Luma connect route must reconnect the EXISTING row through
+ *     `upsertEventConnection`, never mint a second credential for the same provider in
+ *     `connector_connections`.
+ *   - `oauth2`, `api_key` and `dav_password` live in the generic `connector_connections`
+ *     table, reached through `./connections.ts`. These are the three `./connections.ts` can
+ *     claim, and the reason every connector carrying one has `purgeCategory: "connections"`.
+ *   - `orbit_api_key` is the reverse direction: the credential is one of ORBIT's own keys
+ *     (`api_keys`), which the user pastes into Zapier or an Apple Shortcut so THAT system can
+ *     call Orbit. Nothing of the provider's is stored, and the key goes with the `api`
+ *     purge category, not `connections`.
+ *   - `settings_key` is a provider key on `user_settings` — Apollo's, shared with Outreach
+ *     rather than owned by this registry. It goes with `preferences`.
+ *   - `ics_url` is a feed URL on `calendar_subscriptions`; `file`, `extension` and `none`
+ *     hold no credential at all.
+ *
+ * Getting this wrong is not cosmetic: registering Eventbrite as `oauth2` told a P1 author to
+ * build a second credential store for a provider Orbit is already connected to, and an auth
+ * kind whose store does not match its `purgeCategory` is a claim that an encrypted token
+ * survives an account deletion it does not survive. `scripts/smoke-connector-registry.ts`
+ * checks the pairing.
  */
 export type ConnectorAuthKind =
   | "provider_oauth"
+  | "event_provider"
   | "oauth2"
   | "api_key"
   | "dav_password"
   | "ics_url"
   | "file"
   | "extension"
-  | "api_token"
+  | "orbit_api_key"
+  | "settings_key"
   | "none";
 
+/**
+ * A capability id is also an `OutboxAction` for every `direction: "write"` entry — the outbox
+ * row's `action` column carries exactly this string (see `./outbox.ts` and the `action`
+ * comment on `connectorOutbox` in `src/db/schema.ts`). They are singular for that reason:
+ * `writeTask` writes ONE task, per queued follow-up.
+ */
 export type ConnectorCapabilityId =
   | "importContacts"
   | "syncPeople"
   | "syncEvents"
-  | "writeTasks"
+  | "writeTask"
   | "logActivity"
   | "writeContact"
   | "enrich";
@@ -69,15 +114,56 @@ export type ConnectorManifest = {
   capabilities: ConnectorCapability[];
   /** `planned` renders as a Request card and never syncs. */
   availability: "available" | "planned";
-  /** The entitlement flag name in `src/lib/entitlements.ts`, or null for always-on. */
-  entitlement: "sync" | "api" | "extension" | "recruiters" | null;
+  /**
+   * The entitlement flag name in `src/lib/entitlements.ts`, or null for always-on.
+   *
+   * Typed against `FeatureKey` itself — a type-only import, erased at build, so it cannot
+   * drag the database into a client bundle — rather than a second copy of those strings.
+   */
+  entitlement: FeatureKey | null;
   /** The `RATE_LIMITS` bucket a sync run consumes, or null when it makes no outbound call. */
   rateBucket: "providerSync" | "eventEnrich" | null;
+  /**
+   * The `DATA_CATEGORY_META` category whose purge step deletes this connector's rows.
+   *
+   * Declared per connector rather than derived, because the purge registry deletes tables and
+   * a connector is not a table: `google` spans `gmail_connections` AND `calendar_subscriptions`,
+   * `luma`/`eventbrite` share `event_provider_connections`, and `apollo` is a column on
+   * `user_settings`. A new connector whose credentials land somewhere no category covers is
+   * the failure this field exists to make visible — `scripts/smoke-connector-registry.ts`
+   * checks it, and `scripts/smoke-purge.ts` catches the table half.
+   */
+  purgeCategory: DataCategory;
   /** Search aliases so "iCloud" finds Apple Contacts and "Teams" finds Outlook Calendar. */
   aliases?: string[];
   /**
-   * One sync pass for one connection. Dynamically imported by the scheduler so this module
-   * stays loadable from a client component.
+   * One sync pass for one connection, resolved by the scheduler so this module stays
+   * loadable from a client component.
+   *
+   * ── Who records the outcome ────────────────────────────────────────────────────────────
+   *
+   * The scheduler owns FAILURE: a throw is caught, reported, and marked retryable via
+   * `markConnectorSyncResult`. It also owns SUCCESS, but only as a backstop —
+   * `markConnectorSyncSucceeded` runs after a clean return and is guarded on the row still
+   * being `syncing`, so it never touches a row this function already resolved.
+   *
+   * That means: if the sync has a cursor to store, or wants a cadence other than
+   * `CONNECTOR_SYNC_INTERVAL_MS`, it MUST call `markConnectorSyncResult(id, { ok: true,
+   * cursor, nextSyncAt })` itself — the backstop deliberately does not write `sync_cursor`,
+   * because the only value it could write is the stale one the claim already read. If it has
+   * neither, returning is enough and the backstop closes the row out.
+   *
+   * Returning without either — which is what P0 leaves behind, since no manifest entry has a
+   * `sync` yet — used to leave the row `sync_status = 'syncing'` with `next_sync_at`
+   * unchanged and `last_synced_at` NULL: under a 10-minute lease and a 15-minute cron it
+   * re-synced every single pass, forever, while the settings UI said "never synced".
+   *
+   * ── Before the first connect route ships ───────────────────────────────────────────────
+   *
+   * A connect route must either ship its connector's `sync` in the same change, or write the
+   * connection with `nextSyncAt: null`. A row that is armed for a connector with no `sync`
+   * is disarmed by the very next pass with "This connector is no longer available — reconnect
+   * it from Settings," which is a lie the user cannot act on.
    */
   sync?: (connectionId: string) => Promise<void>;
 };
@@ -111,6 +197,7 @@ const CONNECTOR_MANIFESTS = [
     availability: "available",
     entitlement: "sync",
     rateBucket: "providerSync",
+    purgeCategory: "connections",
     aliases: ["gmail", "google contacts", "google calendar"],
     capabilities: [
       read("importContacts", "Import Google Contacts", ["https://www.googleapis.com/auth/contacts.readonly"]),
@@ -125,6 +212,7 @@ const CONNECTOR_MANIFESTS = [
     availability: "available",
     entitlement: "sync",
     rateBucket: "providerSync",
+    purgeCategory: "connections",
     aliases: ["microsoft", "office", "outlook people"],
     capabilities: [read("importContacts", "Import Outlook contacts", ["Contacts.Read"])],
   },
@@ -136,6 +224,7 @@ const CONNECTOR_MANIFESTS = [
     availability: "available",
     entitlement: null,
     rateBucket: null,
+    purgeCategory: "imports",
     capabilities: [read("importContacts", "Import a connections export")],
   },
   {
@@ -146,6 +235,7 @@ const CONNECTOR_MANIFESTS = [
     availability: "available",
     entitlement: "sync",
     rateBucket: null,
+    purgeCategory: "connections",
     aliases: ["ics", "webcal"],
     capabilities: [read("syncEvents", "Log meetings from a calendar feed")],
   },
@@ -153,40 +243,53 @@ const CONNECTOR_MANIFESTS = [
     id: "luma",
     label: "Luma",
     family: "events",
-    auth: "api_key",
+    // An API key, but NOT in `connector_connections`: it is already stored (encrypted) in
+    // `event_provider_connections` by the events pipeline. See `ConnectorAuthKind`.
+    auth: "event_provider",
     availability: "available",
     entitlement: "sync",
     rateBucket: "eventEnrich",
+    purgeCategory: "connections",
     capabilities: [read("syncEvents", "Import events and guest lists")],
   },
   {
     id: "eventbrite",
     label: "Eventbrite",
     family: "events",
-    auth: "oauth2",
+    // OAuth2 on the wire, but the access token lives in `event_provider_connections`
+    // (src/lib/events/connections.ts:281), not in `connector_connections`. Registering it as
+    // `oauth2` told a P1 author to build a second credential store for a provider that is
+    // already connected. See `ConnectorAuthKind`.
+    auth: "event_provider",
     availability: "available",
     entitlement: "sync",
     rateBucket: "eventEnrich",
+    purgeCategory: "connections",
     capabilities: [read("syncEvents", "Import events and attendees")],
   },
   {
     id: "apollo",
     label: "Apollo",
     family: "enrichment",
-    auth: "api_key",
+    // The key lives on `user_settings`, shared with Outreach — not in
+    // `connector_connections`. See `ConnectorAuthKind`.
+    auth: "settings_key",
     availability: "available",
     entitlement: null,
     rateBucket: null,
+    purgeCategory: "preferences",
     capabilities: [read("enrich", "Look up work history and contact details")],
   },
   {
     id: "zapier",
     label: "Zapier & Make",
     family: "automation",
-    auth: "api_token",
+    // Inbound: the user pastes an Orbit API key into Zapier. Nothing of Zapier's is stored.
+    auth: "orbit_api_key",
     availability: "available",
     entitlement: "api",
     rateBucket: null,
+    purgeCategory: "api",
     aliases: ["make", "n8n", "webhooks"],
     capabilities: [
       read("syncEvents", "Send events into Orbit"),
@@ -201,6 +304,7 @@ const CONNECTOR_MANIFESTS = [
     availability: "planned",
     entitlement: "sync",
     rateBucket: "providerSync",
+    purgeCategory: "connections",
     aliases: ["icloud", "carddav"],
     capabilities: [read("syncPeople", "Keep iCloud contacts in sync")],
   },
@@ -212,6 +316,7 @@ const CONNECTOR_MANIFESTS = [
     availability: "planned",
     entitlement: "sync",
     rateBucket: "providerSync",
+    purgeCategory: "connections",
     aliases: ["icloud", "caldav"],
     capabilities: [read("syncEvents", "Log meetings from iCloud Calendar")],
   },
@@ -219,12 +324,15 @@ const CONNECTOR_MANIFESTS = [
     id: "apple_reminders",
     label: "Apple Reminders",
     family: "tasks",
-    auth: "api_token",
+    // Reminders has no cloud API to hold a credential for: the integration is a Shortcut
+    // calling Orbit with an Orbit API key, same shape as Zapier.
+    auth: "orbit_api_key",
     availability: "planned",
     entitlement: "api",
     rateBucket: null,
+    purgeCategory: "api",
     aliases: ["shortcuts", "icloud"],
-    capabilities: [write("writeTasks", "Create a reminder for each follow-up")],
+    capabilities: [write("writeTask", "Create a reminder for each follow-up")],
   },
   {
     id: "hubspot",
@@ -234,6 +342,7 @@ const CONNECTOR_MANIFESTS = [
     availability: "planned",
     entitlement: "sync",
     rateBucket: "providerSync",
+    purgeCategory: "connections",
     capabilities: [
       read("syncPeople", "Import the contacts you own"),
       read("syncEvents", "Import logged engagements"),
@@ -249,6 +358,7 @@ const CONNECTOR_MANIFESTS = [
     availability: "planned",
     entitlement: "sync",
     rateBucket: "providerSync",
+    purgeCategory: "connections",
     capabilities: [
       read("importContacts", "Import a people database"),
       write("writeContact", "Mirror contacts into a Notion database"),
@@ -273,7 +383,19 @@ export function connectorsByFamily(family: ConnectorFamily): ConnectorManifest[]
   return CONNECTORS.filter((c) => c.family === family);
 }
 
+/**
+ * Whether the scheduler may run this manifest's sync.
+ *
+ * Exported as a predicate, not just applied inline below, because P0 ships no `sync` at all:
+ * every assertion about `syncableConnectors()`'s OUTPUT is vacuous while the catalog's answer
+ * is the empty list, however the rule is written — inverting it to `planned` changes nothing
+ * observable. Handed a manifest, it can be tested for real.
+ */
+export function isSyncable(manifest: ConnectorManifest): boolean {
+  return manifest.availability === "available" && typeof manifest.sync === "function";
+}
+
 /** Connectors the scheduler may claim. `planned` entries never have a sync function. */
 export function syncableConnectors(): ConnectorManifest[] {
-  return CONNECTORS.filter((c) => c.availability === "available" && typeof c.sync === "function");
+  return CONNECTORS.filter(isSyncable);
 }

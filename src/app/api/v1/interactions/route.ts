@@ -11,6 +11,15 @@
  * A real incremental-edits pull needs an `updatedAt` column on `interactions` — a schema
  * change (and a write-site audit) out of scope here, and arguably the plugin author's call
  * once they know which of "occurred" or "changed" they actually need.
+ *
+ * FOR P3, before anyone is told to mirror a real workspace with this: it caps at 200 rows
+ * (`interactionsQuery.limit`) and has no pagination — no cursor, no offset, no `has_more`.
+ * `occurred_since` is a LOWER bound under `ORDER BY interaction_date DESC`, so raising it
+ * walks toward the present, not back through the tail: a workspace with more than 200
+ * interactions since the client's cursor simply cannot be mirrored, and the client has no
+ * way to know rows were dropped. Fixing it is additive (a `before`/`cursor` parameter plus
+ * a `has_more` flag), and nothing consumes this route yet, which is the only reason it ships
+ * as it stands.
  */
 import { and, desc, eq, gte } from "drizzle-orm";
 import { getDb } from "@/db";

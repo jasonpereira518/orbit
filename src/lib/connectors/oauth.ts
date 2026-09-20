@@ -64,6 +64,15 @@ export class OAuthTokenError extends Error {
  * The callback route MUST compare `state.userId` against the caller's own authenticated
  * session and reject a mismatch. Never attach the returned grant to `state.userId` on trust
  * alone — that is the one property a signature over `state` cannot provide by itself.
+ *
+ * The `nonce` in `SignedStatePayload` makes each minted state UNIQUE; it does not make it
+ * single-use. Nothing is recorded server-side at signing time and nothing is consumed at the
+ * callback, so a state that leaks — out of a referrer, a proxy log, a shared screenshot of
+ * the authorize URL — stays replayable for the whole 30-minute TTL. That is tolerable only
+ * because the userId comparison above is what actually authorizes the attach; if a callback
+ * ever starts trusting `state` for anything the session cannot confirm, the nonce has to
+ * become a recorded, consumed-on-use value (a row, or a signed cookie set at sign time) and
+ * this comment is the reason.
  */
 export type OAuthState = {
   userId: string;
@@ -108,6 +117,24 @@ function stateSecret(): string {
 }
 
 /**
+ * Domain separation for the state signature.
+ *
+ * `ENCRYPTION_SECRET` is the app's one long-lived key: `src/lib/crypto.ts` encrypts stored
+ * credentials with it, and anything else that needs a MAC would reach for it too. Signing
+ * `state` with the raw key means two unrelated purposes share one signing oracle — a payload
+ * that happens to be valid for both would carry a signature valid for both. Deriving a
+ * per-purpose subkey costs one HMAC and makes that unrepresentable.
+ *
+ * The label is part of the signature, so changing it invalidates every state in flight (30
+ * minutes' worth). Version it rather than editing it.
+ */
+const STATE_HMAC_LABEL = "orbit:connector-oauth-state:v1";
+
+function stateKey(): Buffer {
+  return createHmac("sha256", stateSecret()).update(STATE_HMAC_LABEL).digest();
+}
+
+/**
  * Keep the return path app-relative.
  *
  * An absolute URL in `state` is an open redirect: the provider hands it straight back and
@@ -144,7 +171,7 @@ export function signOAuthState(state: OAuthState): string {
     iat: Date.now(),
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const mac = createHmac("sha256", stateSecret()).update(encoded).digest("base64url");
+  const mac = createHmac("sha256", stateKey()).update(encoded).digest("base64url");
   return `${encoded}.${mac}`;
 }
 
@@ -152,7 +179,7 @@ export function parseOAuthState(raw: string | null | undefined): OAuthState | nu
   if (!raw) return null;
   const [payload, mac] = raw.split(".");
   if (!payload || !mac) return null;
-  const expected = createHmac("sha256", stateSecret()).update(payload).digest("base64url");
+  const expected = createHmac("sha256", stateKey()).update(payload).digest("base64url");
   const a = Buffer.from(mac);
   const b = Buffer.from(expected);
   // timingSafeEqual throws on a buffer-length mismatch rather than returning false, so an

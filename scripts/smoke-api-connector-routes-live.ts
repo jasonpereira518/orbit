@@ -214,6 +214,89 @@ run(async () => {
     JSON.stringify(sinceOffsetBody.interactions)
   );
 
+  // --- GET /v1/interactions: the three contract properties a mirroring client depends on ----
+  //
+  // All three passed a mutation before these checks existed: dropping the `contactId` filter,
+  // flipping `orderBy` to ascending, and hardcoding `.limit(200)` in place of the parsed one.
+  // This is a bearer-key API whose whole point is an incremental pull, so each of them is a
+  // client silently syncing the wrong rows rather than an error anyone would notice.
+  const [contactC] = rowsOf<{ id: string }>(
+    await db.execute(sql`
+      INSERT INTO contacts (user_id, full_name) VALUES (${USER}, 'Katherine Johnson') RETURNING id
+    `)
+  );
+  await db.execute(sql`
+    INSERT INTO interactions (user_id, contact_id, interaction_date, ai_summary)
+    VALUES
+      (${USER}, ${contactC.id}, '2026-05-01T00:00:00Z', 'Katherine, spring'),
+      (${USER}, ${contactC.id}, '2026-09-15T00:00:00Z', 'Katherine, latest')
+  `);
+
+  const byContact = await interactionsGet(
+    req("GET", `https://orbit.test/api/v1/interactions?contactId=${contactC.id}`, key.token)
+  );
+  check("filtering by contactId succeeds", byContact.status === 200, String(byContact.status));
+  const byContactBody = ((await byContact.json()) as Envelope).data as {
+    interactions: { contactId: string; summary: string | null }[];
+  };
+  check(
+    "contactId returns only that contact's interactions",
+    byContactBody.interactions.length === 2 &&
+      byContactBody.interactions.every((i) => i.contactId === contactC.id),
+    JSON.stringify(byContactBody.interactions.map((i) => i.summary))
+  );
+
+  const ordered = await interactionsGet(
+    req("GET", "https://orbit.test/api/v1/interactions?limit=50", key.token)
+  );
+  const orderedBody = ((await ordered.json()) as Envelope).data as {
+    interactions: { occurredAt: string | null }[];
+  };
+  const occurredAts = orderedBody.interactions.map((i) => Date.parse(i.occurredAt ?? ""));
+  check(
+    "the newest interaction comes first",
+    occurredAts.every((t, i) => i === 0 || occurredAts[i - 1] >= t),
+    JSON.stringify(orderedBody.interactions.map((i) => i.occurredAt))
+  );
+  // Ascending order would also be "sorted", so pin the actual head: the most recent row this
+  // user has is the September one, and a client that pages from the top must see it.
+  check(
+    "…and it is the most recent row, not the oldest",
+    occurredAts[0] === Date.parse("2026-09-15T00:00:00.000Z"),
+    orderedBody.interactions[0]?.occurredAt ?? "none"
+  );
+
+  // The cap belongs to the CALLER: `limit` is parsed (1..200, default 50) and a hardcoded
+  // `.limit(200)` in the query ignores it, so a client asking for a page of 1 gets everything.
+  const limited = await interactionsGet(
+    req("GET", "https://orbit.test/api/v1/interactions?limit=1", key.token)
+  );
+  const limitedBody = ((await limited.json()) as Envelope).data as {
+    interactions: { occurredAt: string | null }[];
+  };
+  check(
+    "limit=1 returns exactly one row",
+    limitedBody.interactions.length === 1,
+    String(limitedBody.interactions.length)
+  );
+  check(
+    "…and it is the newest one, so the limit is applied after the ordering",
+    Date.parse(limitedBody.interactions[0]?.occurredAt ?? "") ===
+      Date.parse("2026-09-15T00:00:00.000Z"),
+    limitedBody.interactions[0]?.occurredAt ?? "none"
+  );
+  // The default has to be the schema's 50, not the ceiling: a mutation that hardcodes 200
+  // passes a `limit=1` check only if it ignores the parameter, which the checks above catch,
+  // but a mutation that hardcodes the DEFAULT wrong is invisible without an explicit
+  // out-of-range refusal too.
+  const overLimit = await interactionsGet(
+    req("GET", "https://orbit.test/api/v1/interactions?limit=201", key.token)
+  );
+  check("a limit above the documented maximum is refused", overLimit.status === 400, String(overLimit.status));
+
+  await db.execute(sql`DELETE FROM interactions WHERE contact_id = ${contactC.id}`);
+  await db.execute(sql`DELETE FROM contacts WHERE id = ${contactC.id}`);
+
   // --- POST /v1/notes: the documented character limit is reachable in bytes, not just chars ---
   //
   // `noteBody.text` is bounded at 50,000 CHARACTERS. `readJson`'s default byte cap

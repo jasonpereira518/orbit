@@ -19,7 +19,6 @@ import {
   drainOutbox,
   enqueueOutbox,
   findExternalLink,
-  recordExternalLink,
   MAX_OUTBOX_ATTEMPTS,
   CLAIM_LEASE_MS,
   backoffBoundsMs,
@@ -111,16 +110,39 @@ run(async () => {
   // Drive the resend to delivery too, with a different remote id, to prove the whole path —
   // not just the enqueue — actually works end to end.
   const resendHandled: string[] = [];
+  // THE point of `external_links`, and the one thing nothing here used to assert: a
+  // re-delivery must be handed the remote id the FIRST delivery recorded. Without it the
+  // connector has no way to know the thing already exists, so it creates a SECOND task in
+  // someone's Reminders instead of updating the first — the exact harm named in this module's
+  // header. Mutating `remoteId: link?.remoteId ?? null` to `remoteId: null` in
+  // src/lib/connectors/outbox.ts passed all 79 checks before this one existed.
+  const resendSawRemoteIds: (string | null)[] = [];
   const resendStats = await drainOutbox({
     budgetMs: 5_000,
     max: 10,
     deliver: async (item) => {
       resendHandled.push(item.entityId);
+      resendSawRemoteIds.push(item.remoteId);
       return { ok: true, remoteId: "remote-1-again" };
     },
   });
   check("the resend was delivered", resendStats.delivered === 1, JSON.stringify(resendStats));
   check("the handler saw it again", resendHandled[0] === "rem-1");
+  check(
+    "the re-delivery carries the first delivery's remote id",
+    resendSawRemoteIds[0] === "remote-1",
+    JSON.stringify(resendSawRemoteIds)
+  );
+  // And the drain's link write updates that row in place rather than duplicating it: the
+  // unique key is (user, connector, entity type, entity id), so a second remote id for the
+  // same entity must replace the first, not add a row a later lookup could pick either of.
+  const relinked = await findExternalLink(USER, "apple_reminders", "reminder", "rem-1");
+  check("the newer delivery's remote id wins", relinked?.remoteId === "remote-1-again", String(relinked?.remoteId));
+  const [{ n: linkCount }] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(externalLinks)
+    .where(eq(externalLinks.entityId, "rem-1"));
+  check("only one link row exists for that key", Number(linkCount) === 1, String(linkCount));
 
   console.log("\nfailure backs off rather than dying");
   await enqueueOutbox({
@@ -865,28 +887,22 @@ run(async () => {
     stmt.includes("claimed_until = now() +")
   );
 
-  console.log("\nrecordExternalLink updates in place rather than duplicating");
-  await recordExternalLink({
-    userId: USER,
-    connectorId: "apple_reminders",
-    entityType: "reminder",
-    entityId: "rem-link",
-    remoteId: "first-remote-id",
-  });
-  await recordExternalLink({
-    userId: USER,
-    connectorId: "apple_reminders",
-    entityType: "reminder",
-    entityId: "rem-link",
-    remoteId: "second-remote-id",
-  });
-  const relinked = await findExternalLink(USER, "apple_reminders", "reminder", "rem-link");
-  check("the second call's remote id wins", relinked?.remoteId === "second-remote-id");
-  const [{ n: linkCount }] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(externalLinks)
-    .where(eq(externalLinks.entityId, "rem-link"));
-  check("only one row exists for that key", Number(linkCount) === 1, String(linkCount));
+  console.log("\nexternal_links has exactly one writer, and it is the claim-guarded one");
+  // The unguarded `recordExternalLink` twin is gone (it had no caller): an unclaimed upsert is
+  // how a lapsed owner writes an older remote id over a live owner's newer one. The upsert
+  // behaviour it used to be tested for is covered above, through the drain — which is the only
+  // way it can be reached now. This guard is about the SOURCE, because "no second writer
+  // exists" is not a runtime property of any one call.
+  const linkWrites = outboxSrc.match(/(INSERT INTO external_links|\.insert\(externalLinks\))/g) ?? [];
+  check(
+    "only one statement writes external_links",
+    linkWrites.length === 1,
+    `${linkWrites.length}: ${linkWrites.join(", ")}`
+  );
+  check(
+    "and it is guarded on the claim",
+    /INSERT INTO external_links[\s\S]{0,600}?claimed_by = \$\{input\.worker\}/.test(outboxSrc)
+  );
 
   await db.delete(connectorOutbox).where(eq(connectorOutbox.userId, USER));
   await db.delete(externalLinks).where(eq(externalLinks.userId, USER));

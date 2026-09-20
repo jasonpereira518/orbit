@@ -48,9 +48,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-backup-workflow": "pure",
   "smoke-connection-status": "pure",
   "smoke-connector-oauth": "pure",
-  "smoke-connector-registry": "pure",
   "smoke-api-connector-routes": "pure",
-  "smoke-integration-statuses": "pure",
   "smoke-capture-body-limits": "pure",
   "smoke-capture-planets": "pure",
   "smoke-capture-review-reducer": "pure",
@@ -188,6 +186,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-broadcasts": "pglite",
   "smoke-chat-context": "pglite",
   "smoke-clear-api-key": "pglite",
+  "smoke-connector-registry": "pglite", // imports entitlements + rate-limit, which reach @/db
+  "smoke-integration-statuses": "pglite", // drives getIntegrationStatuses against real rows
   "smoke-connector-claim": "pglite",
   "smoke-connector-outbox": "pglite",
   "smoke-connector-sync-pass": "pglite",

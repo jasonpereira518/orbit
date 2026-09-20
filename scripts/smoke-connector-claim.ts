@@ -12,10 +12,11 @@ import { connectorConnections } from "../src/db/schema";
 import {
   claimDueConnectorConnections,
   disarmConnectorSync,
+  listConnectorConnections,
   markConnectorSyncResult,
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
-import { SYNC_LEASE_MS } from "../src/lib/provider-connections";
+import { MAX_SYNC_FAILURES, SYNC_LEASE_MS } from "../src/lib/provider-connections";
 import { decryptOrNull } from "../src/lib/crypto";
 
 let failures = 0;
@@ -72,9 +73,86 @@ run(async () => {
   check("a retryable failure backs off rather than disarming", failed?.nextSyncAt !== null);
   check("the error is recorded", failed?.syncError === "boom");
 
+  // A non-retryable failure is a CONSENT problem — a revoked grant, a deleted app — and the
+  // only way back is the connect flow. Grinding it up the backoff ladder to MAX_SYNC_FAILURES
+  // just delays telling the user, for hours, while the connection looks merely slow. Dropping
+  // `!outcome.retryable` from the disarm guard in connections.ts passed this whole file before
+  // this check existed: with `failures` at 2, well under MAX_SYNC_FAILURES, the mutant simply
+  // took the backoff branch and nothing looked.
+  await markConnectorSyncResult(conn.id, {
+    ok: false,
+    error: "the user revoked this grant",
+    retryable: false,
+  });
+  const [refused] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, conn.id));
+  check(
+    "a non-retryable failure disarms immediately rather than backing off",
+    refused?.nextSyncAt === null,
+    String(refused?.nextSyncAt?.toISOString())
+  );
+  check("it stays well under the failure ceiling", (refused?.syncFailures ?? 0) < MAX_SYNC_FAILURES, String(refused?.syncFailures));
+  check("and says why", refused?.syncError === "the user revoked this grant", String(refused?.syncError));
+
   await disarmConnectorSync(conn.id, "needs attention");
   const [disarmed] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, conn.id));
   check("disarming unschedules the connection", disarmed?.nextSyncAt === null);
+
+  console.log("\nan api_key connection's secret comes back from the column it was stored in");
+  // The claim reads `access_token_encrypted` for oauth2 and `api_key_encrypted` for everything
+  // else, and `upsertConnectorConnection` writes the matching one. Only the oauth2 half was
+  // covered: forcing the claim to always read `access_token_encrypted` passed every check in
+  // this file, and would have handed EVERY api-key connector a null secret at sync time — a
+  // sync that cannot authenticate, reported as some provider error.
+  const KEY_CONNECTOR = "luma-like";
+  const keyConn = await upsertConnectorConnection({
+    userId: USER,
+    connectorId: KEY_CONNECTOR,
+    authKind: "api_key",
+    accessToken: "secret-api-key",
+    nextSyncAt: new Date(Date.now() - 1000),
+  });
+  const claimedKeys = await claimDueConnectorConnections(10, new Date());
+  const claimedKey = claimedKeys.find((c) => c.id === keyConn.id);
+  check("the api_key connection is claimed", Boolean(claimedKey));
+  check(
+    "its secret comes back decrypted, not null",
+    claimedKey?.accessToken === "secret-api-key",
+    String(claimedKey?.accessToken)
+  );
+  check("and it is reported as an api_key connection", claimedKey?.authKind === "api_key", String(claimedKey?.authKind));
+
+  console.log("\nlistConnectorConnections never returns a secret");
+  // Its own contract ("this feeds the settings UI"), and a live risk on this branch: it
+  // already needed a commit called "Never reveal connector credentials in the admin console".
+  // Widening the projection to `.select()` — the easiest possible edit, and the one that
+  // silently returns every `*_encrypted` column — fails this.
+  const listed = await listConnectorConnections(USER);
+  const keyRow = listed.find((c) => c.connectorId === KEY_CONNECTOR);
+  check("the connection is listed at all", Boolean(keyRow), JSON.stringify(listed.map((c) => c.connectorId)));
+  const SECRET_FIELDS = [
+    "apiKeyEncrypted",
+    "accessTokenEncrypted",
+    "refreshTokenEncrypted",
+    "accessToken",
+    "refreshToken",
+    "apiKey",
+  ];
+  const leakedFields = listed.flatMap((row) =>
+    SECRET_FIELDS.filter((f) => f in (row as Record<string, unknown>))
+  );
+  check("no credential field is on the returned shape", leakedFields.length === 0, leakedFields.join(","));
+  // Value-level too, not just key-level: a field renamed to something innocuous still leaks.
+  const [storedKeyRow] = await db
+    .select()
+    .from(connectorConnections)
+    .where(eq(connectorConnections.id, keyConn.id));
+  const serialized = JSON.stringify(listed);
+  check("the plaintext secret is nowhere in the payload", !serialized.includes("secret-api-key"));
+  check(
+    "and neither is the ciphertext",
+    !serialized.includes(storedKeyRow?.apiKeyEncrypted ?? "no-ciphertext-stored"),
+    String(storedKeyRow?.apiKeyEncrypted).slice(0, 24)
+  );
 
   console.log("\nupsert coalesce semantics (reconnect keeps unresupplied fields)");
   const COALESCE_CONNECTOR = "asana";

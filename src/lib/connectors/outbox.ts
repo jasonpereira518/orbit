@@ -90,6 +90,12 @@ export function backoffBoundsMs(attempt: number): { min: number; max: number } {
   return { min: minutes * 0.8 * 60_000, max: minutes * 1.2 * 60_000 };
 }
 
+/**
+ * One per `direction: "write"` capability in the registry, and spelled identically: these
+ * strings ARE `ConnectorCapabilityId`s (`src/lib/connectors/registry.ts`), and the `action`
+ * column's comment in `src/db/schema.ts` says so. Kept as its own union rather than imported
+ * so this module stays free of the registry, which the drain never needs.
+ */
 export type OutboxAction = "writeTask" | "logActivity" | "writeContact";
 
 export type EnqueueOutboxInput = {
@@ -98,6 +104,17 @@ export type EnqueueOutboxInput = {
   action: OutboxAction;
   entityType: "reminder" | "interaction" | "contact";
   entityId: string;
+  /**
+   * What to send. Empty in P0, because nothing enqueues yet.
+   *
+   * FOR P2, the first change that enqueues anything: the moment this carries what it is
+   * meant to — a follow-up's title, a note's text, a contact's name and email — the column
+   * holds the user's own words about people they know, which is the class of data
+   * `src/lib/admin-redaction.ts` keeps out of the admin console. `connector_outbox.payload`
+   * belongs in `NEVER_REVEALABLE` then, alongside `note_batches.source_text`. It is
+   * deliberately NOT listed today: that guard derives its list from `schema.ts` and listing
+   * a column with nothing in it teaches the next reader that the rule is decorative.
+   */
   payload: Record<string, unknown>;
 };
 
@@ -522,8 +539,15 @@ export async function drainOutbox(opts: {
 }
 
 /**
- * The drain's own link write: the same upsert as `recordExternalLink`, but it only happens
- * while this drain still holds the outbox row's claim.
+ * The ONLY writer of `external_links`, and it writes only while this drain still holds the
+ * outbox row's claim.
+ *
+ * There used to be an unguarded twin (`recordExternalLink`) with no caller. It is deleted
+ * rather than kept: an unclaimed upsert is how a lapsed owner writes an older remote id over
+ * a live owner's newer one, which is the double-delivery this table exists to prevent, and a
+ * P2 author writing the first real connector would have reached for the shorter name. If a
+ * future caller genuinely needs to record a link outside a drain — a backfill, say — it
+ * carries its own exclusion argument in with it rather than inheriting one.
  *
  * `INSERT ... SELECT ... WHERE EXISTS` rather than a read-then-write, because neon-http has no
  * transactions: if the guard is false the SELECT produces no row, so nothing is inserted and
@@ -550,28 +574,6 @@ async function recordExternalLinkOwned(input: {
     ON CONFLICT (user_id, connector_id, entity_type, entity_id)
     DO UPDATE SET remote_id = EXCLUDED.remote_id, updated_at = now()
   `);
-}
-
-export async function recordExternalLink(input: {
-  userId: string;
-  connectorId: string;
-  entityType: string;
-  entityId: string;
-  remoteId: string;
-}): Promise<void> {
-  const db = await getDb();
-  await db
-    .insert(externalLinks)
-    .values({ ...input, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: [
-        externalLinks.userId,
-        externalLinks.connectorId,
-        externalLinks.entityType,
-        externalLinks.entityId,
-      ],
-      set: { remoteId: input.remoteId, updatedAt: new Date() },
-    });
 }
 
 export async function findExternalLink(
