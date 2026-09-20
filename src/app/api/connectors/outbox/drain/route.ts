@@ -28,8 +28,9 @@ export async function POST(request: Request) {
       deliver: async (item) => {
         const manifest = connectorById(item.connectorId);
         if (!manifest) {
-          // The connector was removed. Fail it out rather than retrying forever.
-          return { ok: false, error: "That connector is no longer available" };
+          // The connector was removed. `retryable: false` is what actually fails this out
+          // rather than retrying it for seven rounds — no future attempt finds the manifest.
+          return { ok: false, error: "That connector is no longer available", retryable: false };
         }
         const { deliverOutboxItem } = await import("@/lib/connectors/deliver");
         return deliverOutboxItem(manifest, item);
