@@ -135,7 +135,8 @@ function contact(over: Partial<ContactSnapshot> = {}): ContactSnapshot {
     opportunities: ["Could intro to the infra team"],
     openActionItems: ["Send the intro to Priya on design"],
     aiSummary: null,
-    notesPreview: null,
+    notesPreview:
+      "Met through Priya. Very direct, prefers a written brief before any call. Leaving Acme was about the billing rewrite being cancelled twice.",
     recentInteractions: [
       {
         id: "i1",
@@ -144,8 +145,26 @@ function contact(over: Partial<ContactSnapshot> = {}): ContactSnapshot {
         summary:
           "Coffee in Berlin. Walked through their billing migration and the vendor lock-in problem. Said they'd share the RFC once written.",
       },
+      {
+        id: "i2",
+        interactionType: "email",
+        interactionDate: new Date(Date.now() - 190 * 864e5).toISOString(),
+        summary: "Sent the Anthropic write-up they asked for.",
+      },
+      {
+        id: "i3",
+        interactionType: "reach_out",
+        interactionDate: new Date(Date.now() - 240 * 864e5).toISOString(),
+        summary: null,
+      },
     ],
-    openReminders: [],
+    openReminders: [
+      {
+        id: "r1",
+        title: "Send the payments RFC",
+        dueDate: new Date(Date.now() + 3 * 864e5).toISOString(),
+      },
+    ],
     ...over,
   };
 }
@@ -270,11 +289,25 @@ function States() {
     closeness: 0.15,
     title: null,
     tags: [],
+    notesPreview: null,
+    openReminders: [],
   });
+  // The overdue reminder and the banner are one thing seen twice: Snooze has to
+  // move *that* row, not mint a second one, so the fixture gives them the same
+  // due date the way the server does.
+  const overdueAt = new Date(Date.now() - 21 * 864e5).toISOString();
   const overdue = contact({
     isFollowUpOverdue: true,
-    nextFollowUpAt: new Date(Date.now() - 21 * 864e5).toISOString(),
+    nextFollowUpAt: overdueAt,
     closenessTier: "mid",
+    openReminders: [
+      { id: "r-overdue", title: "Follow up on the RFC", dueDate: overdueAt },
+      {
+        id: "r1",
+        title: "Send the payments RFC",
+        dueDate: new Date(Date.now() + 3 * 864e5).toISOString(),
+      },
+    ],
   });
 
   const changed = panelState({

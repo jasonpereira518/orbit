@@ -57,6 +57,9 @@ export function CaptureView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<MatchCandidate[] | null>(null);
+  /** Set when the contact saved but something attached to it did not. */
+  const [warnings, setWarnings] = useState<string[] | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
 
   const firstName = draft.fields[0]?.value?.trim().split(/\s+/)[0] ?? "";
   const loginWalled = page.warnings.includes("login-wall");
@@ -103,6 +106,16 @@ export function CaptureView({
             ? { inDays: draft.followUpDays }
             : undefined,
       });
+      // Neon's HTTP driver has no cross-statement transactions, so the server
+      // reports a contact that saved while its note or follow-up did not,
+      // rather than pretending the write was atomic. Dropping that on the floor
+      // — which is what happened before — told the user their follow-up was set
+      // when it was not. Hold the transition until they've seen it.
+      if (result.warnings?.length) {
+        setWarnings(result.warnings);
+        setSavedId(result.contact.id);
+        return;
+      }
       onSaved(result.contact.id);
     } catch (err) {
       const apiError = err as ApiError;
@@ -231,7 +244,31 @@ export function CaptureView({
         ) : null}
       </div>
 
-      {error ? (
+      {warnings ? (
+        <div className="border-t border-[var(--border)] bg-[var(--accent)] px-3 py-2">
+          <p className="text-[11px] font-medium text-[var(--foreground)]">
+            Saved {draft.toFields().fullName}, but not everything stuck
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {warnings.map((warning) => (
+              <li
+                key={warning}
+                className="text-[11px] leading-[16px] text-[var(--muted-foreground)]"
+              >
+                {warning}
+              </li>
+            ))}
+          </ul>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            onClick={() => savedId && onSaved(savedId)}
+          >
+            Got it
+          </Button>
+        </div>
+      ) : error ? (
         <div className="border-t border-[var(--border)] bg-[var(--accent)] px-3 py-2">
           <p className="flex items-center gap-1.5 text-[11px] text-[var(--foreground)]">
             {duplicates ? (
