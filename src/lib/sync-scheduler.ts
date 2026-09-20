@@ -22,11 +22,22 @@
  */
 import {
   CalendarSyncTokenExpiredError,
-  advanceCursor,
-  fetchCalendarPage,
+  advanceCursor as advanceGoogleCalendarCursor,
+  fetchCalendarPage as fetchGoogleCalendarPage,
   toNetworkEvents,
 } from "@/lib/connectors/google-calendar";
-import { hasCalendarScope, getValidAccessToken } from "@/lib/gmail";
+import {
+  advanceCursor as advanceMicrosoftCalendarCursor,
+  fetchCalendarPage as fetchMicrosoftCalendarPage,
+} from "@/lib/connectors/microsoft-calendar";
+import {
+  hasCalendarScope as hasGoogleCalendarScope,
+  getValidAccessToken as getValidGoogleAccessToken,
+} from "@/lib/gmail";
+import {
+  hasCalendarScope as hasMicrosoftCalendarScope,
+  getValidAccessToken as getValidOutlookAccessToken,
+} from "@/lib/outlook";
 import {
   claimDueConnections,
   disarmSync,
@@ -71,13 +82,17 @@ export const SYNC_INTERVAL_MS = 30 * 60 * 1000;
  * real Google grant. Production passes nothing and gets the real implementations.
  */
 export type SyncDeps = {
-  getAccessToken: typeof getValidAccessToken;
-  fetchPage: typeof fetchCalendarPage;
+  getGoogleAccessToken: typeof getValidGoogleAccessToken;
+  fetchGooglePage: typeof fetchGoogleCalendarPage;
+  getMicrosoftAccessToken: typeof getValidOutlookAccessToken;
+  fetchMicrosoftPage: typeof fetchMicrosoftCalendarPage;
 };
 
 const DEFAULT_DEPS: SyncDeps = {
-  getAccessToken: getValidAccessToken,
-  fetchPage: fetchCalendarPage,
+  getGoogleAccessToken: getValidGoogleAccessToken,
+  fetchGooglePage: fetchGoogleCalendarPage,
+  getMicrosoftAccessToken: getValidOutlookAccessToken,
+  fetchMicrosoftPage: fetchMicrosoftCalendarPage,
 };
 
 export type SyncRunStats = {
@@ -129,7 +144,7 @@ async function syncGoogleCalendar(
   now: Date,
   deps: SyncDeps
 ): Promise<void> {
-  const accessToken = await deps.getAccessToken(conn.userId);
+  const accessToken = await deps.getGoogleAccessToken(conn.userId);
   const ctx = await openIngestContext(conn.userId, {
     source: "google_calendar",
     // A meeting is evidence the user knows this person, so calendar sync populates the
@@ -150,7 +165,7 @@ async function syncGoogleCalendar(
   for (;;) {
     let page;
     try {
-      page = await deps.fetchPage({ accessToken, cursor, now });
+      page = await deps.fetchGooglePage({ accessToken, cursor, now });
     } catch (err) {
       if (err instanceof CalendarSyncTokenExpiredError) {
         // Expected lifecycle event, not a fault: drop both cursors and start the windowed
@@ -170,7 +185,7 @@ async function syncGoogleCalendar(
       stats.interactionsLogged += ingested.interactionsLogged;
     }
 
-    cursor = advanceCursor(cursor, page);
+    cursor = advanceGoogleCalendarCursor(cursor, page);
 
     // No more pages: the run is complete and `cursor` now holds the fresh syncToken.
     if (!page.nextPageToken) break;
@@ -178,6 +193,77 @@ async function syncGoogleCalendar(
     // Out of time mid-chain. Persisting `pageToken` (which `advanceCursor` just did) is what
     // makes the next run resume here rather than restart, and `next_sync_at = now` makes it
     // immediately due.
+    if (deadlineReached(deadline)) {
+      await finalizeIngest(ctx);
+      await markSyncResult(conn.provider, conn.id, {
+        ok: true,
+        cursor: { calendar: cursor },
+        nextSyncAt: now,
+      });
+      return;
+    }
+  }
+
+  await finalizeIngest(ctx);
+  await markSyncResult(conn.provider, conn.id, {
+    ok: true,
+    cursor: { calendar: cursor },
+    nextSyncAt: new Date(now.getTime() + SYNC_INTERVAL_MS),
+  });
+}
+
+/**
+ * Sync one Microsoft connection's calendar. Mirrors `syncGoogleCalendar` exactly — same
+ * budget/deadline/cursor/error handling structure — calling the Outlook token getter and
+ * the microsoft-calendar connector's `fetchCalendarPage`/`advanceCursor` instead.
+ */
+async function syncMicrosoftCalendar(
+  conn: ClaimedConnection,
+  stats: SyncRunStats,
+  now: Date,
+  deps: SyncDeps
+): Promise<void> {
+  const accessToken = await deps.getMicrosoftAccessToken(conn.userId);
+  const ctx = await openIngestContext(conn.userId, {
+    source: "microsoft_calendar",
+    // Same business decision as the Google path — see its comment above.
+    createsContacts: true,
+  });
+
+  let cursor = conn.syncCursor?.calendar ?? null;
+  const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS);
+
+  for (;;) {
+    let page;
+    try {
+      page = await deps.fetchMicrosoftPage({
+        accessToken,
+        cursor,
+        ownerEmail: conn.emailAddress,
+        now,
+      });
+    } catch (err) {
+      if (err instanceof CalendarSyncTokenExpiredError) {
+        // Expected lifecycle event, not a fault — see failure mode 3 in
+        // `microsoft-calendar.ts`'s header comment.
+        cursor = null;
+        continue;
+      }
+      throw err;
+    }
+
+    const events = toNetworkEvents(page.events, page.selfEmails);
+    if (events.length > 0) {
+      const ingested = await ingestEvents(ctx, events);
+      stats.eventsIngested += ingested.eventsSeen;
+      stats.contactsCreated += ingested.contactsCreated;
+      stats.interactionsLogged += ingested.interactionsLogged;
+    }
+
+    cursor = advanceMicrosoftCalendarCursor(cursor, page);
+
+    if (!page.nextPageToken) break;
+
     if (deadlineReached(deadline)) {
       await finalizeIngest(ctx);
       await markSyncResult(conn.provider, conn.id, {
@@ -212,8 +298,8 @@ export async function runSyncPass(
   const stats = emptyRunStats();
   const deadline = deadlineAfter(options.budgetMs ?? SYNC_TIME_BUDGET_MS);
 
-  // Google only, for now. Microsoft joins by adding its provider here once Outlook's
-  // calendar/mail scopes ship — the claim and result bookkeeping are already provider-agnostic.
+  // Google and Microsoft both claim in the same pass — the claim and result bookkeeping are
+  // provider-agnostic, so each provider is just another claim+loop block below.
   const claimed = await claimDueConnections("google", CONNECTIONS_PER_RUN, now);
   stats.claimed = claimed.length;
 
@@ -236,7 +322,7 @@ export async function runSyncPass(
     // and will keep working — but every Calendar call it makes returns 403. Disarm rather
     // than retry: only the user reconnecting can fix it, and retrying forever would bury the
     // signal under backoff noise.
-    if (!hasCalendarScope(conn.scopes)) {
+    if (!hasGoogleCalendarScope(conn.scopes)) {
       stats.skippedNoScope++;
       await disarmSync(
         conn.provider,
@@ -255,6 +341,49 @@ export async function runSyncPass(
       // A dead grant is permanent until the user reconnects; anything else is worth retrying.
       // `getValidAccessToken` has already written `needs_reauth` (and nulled `next_sync_at`)
       // in the ReauthRequiredError case, so this only records the reason.
+      const retryable = !(err instanceof ReauthRequiredError);
+      await markSyncResult(conn.provider, conn.id, {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        retryable,
+      }).catch(() => null);
+    }
+  }
+
+  // Microsoft, same structure as the Google block above.
+  const claimedMicrosoft = await claimDueConnections("microsoft", CONNECTIONS_PER_RUN, now);
+  stats.claimed += claimedMicrosoft.length;
+
+  for (const conn of claimedMicrosoft) {
+    if (deadlineReached(deadline)) {
+      stats.budgetExhausted = true;
+      await markSyncResult(conn.provider, conn.id, {
+        ok: true,
+        cursor: conn.syncCursor,
+        nextSyncAt: now,
+      }).catch(() => null);
+      continue;
+    }
+
+    // Same reasoning as the Google branch: a token minted before the calendar scope
+    // shipped is still valid for Outlook Contacts and will keep working, but every
+    // Calendar call it makes returns 403.
+    if (!hasMicrosoftCalendarScope(conn.scopes)) {
+      stats.skippedNoScope++;
+      await disarmSync(
+        conn.provider,
+        conn.id,
+        "Calendar access not granted — reconnect Outlook to enable calendar sync",
+        now
+      ).catch(() => null);
+      continue;
+    }
+
+    try {
+      await syncMicrosoftCalendar(conn, stats, now, deps);
+      stats.synced++;
+    } catch (err) {
+      stats.failed++;
       const retryable = !(err instanceof ReauthRequiredError);
       await markSyncResult(conn.provider, conn.id, {
         ok: false,

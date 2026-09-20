@@ -57,6 +57,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-graph-intro": "pure",
   "smoke-graph-layout": "pure",
   "smoke-google-calendar-map": "pure",
+  "smoke-outlook-calendar-map": "pure",
   "smoke-graph-positions": "pure",
   "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",

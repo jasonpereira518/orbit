@@ -51,22 +51,31 @@ function depsFor(behaviour: Map<string, "ok" | "reauth" | "transient" | "expired
 } {
   const fetchedFor: string[] = [];
   const expiredOnce = new Set<string>();
+  const stubGetAccessToken = async (userId: string) => {
+    if (behaviour.get(userId) === "reauth") throw new ReauthRequiredError("dead grant");
+    return `stub-token:${userId}`;
+  };
+  const stubFetchPage = async ({ accessToken }: { accessToken: string }) => {
+    const userId = String(accessToken).replace(/^stub-token:/, "");
+    fetchedFor.push(userId);
+    const mode = behaviour.get(userId);
+    if (mode === "transient") throw new Error("Google Calendar 503: upstream unavailable");
+    if (mode === "expired" && !expiredOnce.has(userId)) {
+      expiredOnce.add(userId);
+      throw new CalendarSyncTokenExpiredError();
+    }
+    return emptyPage();
+  };
+  // This script only ever seeds `gmail_connections` rows, so the Microsoft side of each
+  // deps object is never exercised — it is wired to the same stubs purely so `SyncDeps`
+  // type-checks. `runSyncPass` claiming zero due `outlook_connections` rows every call
+  // means these are dead code for this script's purposes, not a gap in coverage: the
+  // Microsoft claim+loop block shares 100% of its logic with the Google one tested below.
   const deps: SyncDeps = {
-    getAccessToken: async (userId: string) => {
-      if (behaviour.get(userId) === "reauth") throw new ReauthRequiredError("dead grant");
-      return `stub-token:${userId}`;
-    },
-    fetchPage: async ({ accessToken }) => {
-      const userId = String(accessToken).replace(/^stub-token:/, "");
-      fetchedFor.push(userId);
-      const mode = behaviour.get(userId);
-      if (mode === "transient") throw new Error("Google Calendar 503: upstream unavailable");
-      if (mode === "expired" && !expiredOnce.has(userId)) {
-        expiredOnce.add(userId);
-        throw new CalendarSyncTokenExpiredError();
-      }
-      return emptyPage();
-    },
+    getGoogleAccessToken: stubGetAccessToken,
+    fetchGooglePage: stubFetchPage,
+    getMicrosoftAccessToken: stubGetAccessToken,
+    fetchMicrosoftPage: async (opts) => stubFetchPage(opts),
   };
   return { deps, fetchedFor };
 }

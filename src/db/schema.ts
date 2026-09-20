@@ -1048,6 +1048,12 @@ export type ImportStats = {
    * stopped instead of re-walking the mailbox from the start.
    */
   gmailPageToken?: string | null;
+  /**
+   * Outlook recruiter scan's equivalent of `gmailPageToken` — but Graph pagination hands
+   * back a full `@odata.nextLink` URL rather than a bare token, so this stores that whole
+   * URL and is refetched directly on resume, same as the calendar connector's cursor.
+   */
+  outlookNextLink?: string | null;
   /** Messages examined during discovery — the denominator users actually feel. */
   messagesScanned?: number;
   /** Senders that survived the heuristic prefilter and became work rows. */
@@ -1107,6 +1113,20 @@ export type LinkedInImportRowPayload = {
  */
 export type GmailSenderRowPayload = {
   kind: "gmail_sender";
+  email: string;
+  name: string;
+  firm: string | null;
+  /** Capped at scan time; the classifier only reads the most recent few. */
+  messageIds: string[];
+};
+
+/**
+ * One candidate sender from an Outlook recruiter scan — mirrors `GmailSenderRowPayload`
+ * exactly. The unit of work is the sender, not the message, for the same reason: the
+ * classifier needs the whole conversation with a person, not one message in isolation.
+ */
+export type OutlookSenderRowPayload = {
+  kind: "outlook_sender";
   email: string;
   name: string;
   firm: string | null;
@@ -1218,6 +1238,7 @@ export type CalendarEventRowPayload = {
 export type ImportJobRowPayload =
   | LinkedInImportRowPayload
   | GmailSenderRowPayload
+  | OutlookSenderRowPayload
   | GoogleContactRowPayload
   | OutlookContactRowPayload
   | LinkedInMessageThreadRowPayload
@@ -1227,6 +1248,12 @@ export function isGmailSenderRow(
   payload: ImportJobRowPayload
 ): payload is GmailSenderRowPayload {
   return payload.kind === "gmail_sender";
+}
+
+export function isOutlookSenderRow(
+  payload: ImportJobRowPayload
+): payload is OutlookSenderRowPayload {
+  return payload.kind === "outlook_sender";
 }
 
 export const importJobRows = pgTable(
@@ -1449,7 +1476,7 @@ export type RecruiterLinkStatus =
   | "active"
   | "archived";
 
-export type RecruiterLinkSource = "manual" | "gmail" | "chat";
+export type RecruiterLinkSource = "manual" | "gmail" | "outlook" | "chat";
 
 /** Crowdsourced canonical recruiter profile (global, not user-scoped). */
 export const recruiters = pgTable(

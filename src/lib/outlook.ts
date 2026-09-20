@@ -4,6 +4,21 @@ import { outlookConnections } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
 
+/**
+ * Read-only access to the user's calendar, for continuous meeting sync — the Microsoft
+ * Graph equivalent of Gmail's `GOOGLE_CALENDAR_SCOPE`. A token minted before this scope
+ * shipped is still valid for Contacts and will keep working, but every Calendar call it
+ * makes returns 403, which is why `hasCalendarScope` exists.
+ */
+const MICROSOFT_CALENDAR_SCOPE = "https://graph.microsoft.com/Calendars.Read";
+
+/**
+ * Read-only mail access, for the recruiter-scan feature over Outlook mail — the Graph
+ * equivalent of Gmail's `gmail.readonly`. Same re-consent caveat as the calendar scope:
+ * connections made before this shipped must reconnect before a scan can run.
+ */
+const MICROSOFT_MAIL_SCOPE = "https://graph.microsoft.com/Mail.Read";
+
 const MICROSOFT_SCOPES = [
   "openid",
   "profile",
@@ -11,7 +26,33 @@ const MICROSOFT_SCOPES = [
   "offline_access",
   "https://graph.microsoft.com/Contacts.Read",
   "https://graph.microsoft.com/User.Read",
+  MICROSOFT_CALENDAR_SCOPE,
+  MICROSOFT_MAIL_SCOPE,
 ].join(" ");
+
+/** True once a connection has re-consented to the Contacts.Read scope. */
+export function hasContactsScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes("https://graph.microsoft.com/Contacts.Read"));
+}
+
+/**
+ * True once a connection has re-consented to calendar access.
+ *
+ * The scheduler must check this before claiming an Outlook connection for calendar sync:
+ * a token minted before this scope shipped is still perfectly valid for Contacts and will
+ * keep working — but every Calendar API call it makes returns 403. Without the probe that
+ * surfaces as a stream of failures on healthy connections, walking them up the backoff
+ * ladder for a problem only the user can fix by reconnecting.
+ */
+export function hasCalendarScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes(MICROSOFT_CALENDAR_SCOPE));
+}
+
+/** True once a connection has re-consented to mail access. Connections made before the
+ *  mail scope shipped return false and must reconnect before a recruiter scan can run. */
+export function hasMailScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes(MICROSOFT_MAIL_SCOPE));
+}
 
 /** Canonical Outlook OAuth callback path — must match the Azure app's redirect URI. */
 export const OUTLOOK_CALLBACK_PATH = "/api/outlook/callback";
@@ -385,4 +426,134 @@ export async function fetchOutlookContacts(
   }
 
   return people.filter((p) => p.fullName.trim());
+}
+
+/**
+ * Graph search-syntax adaptation of Gmail's `RECRUITER_QUERY_TERMS`.
+ *
+ * Best-effort, not a byte-for-byte equivalent: Graph's `$search` on `/me/messages` takes a
+ * single quoted string tested against subject/body/sender, whereas Gmail's `q` supports a
+ * full boolean grammar. This narrows the mailbox sweep the same way Gmail's query does —
+ * cheaply, and recall-biased — before `looksLikeRecruiter` and the classifier both get a
+ * veto downstream.
+ */
+export const OUTLOOK_RECRUITER_SEARCH_QUERY =
+  '"recruiter OR staffing OR headhunter OR \\"talent acquisition\\" OR \\"job opportunity\\" OR \\"open role\\""';
+
+/** Graph messages don't need a separate thread id for this use case. */
+export type OutlookMessageRef = { id: string };
+
+/**
+ * One page of message ids from Microsoft Graph.
+ *
+ * Graph pagination hands back a full `@odata.nextLink` URL rather than a bare token, so —
+ * unlike Gmail's `pageToken` — the caller stores and refetches that whole URL directly on
+ * the next page. Simpler and correct for Graph's pagination model; there is no separate
+ * token to reconstruct the query string from.
+ */
+export async function listOutlookMessagePage(
+  accessToken: string,
+  opts: { query: string; skipToken?: string | null; top?: number }
+): Promise<{ messages: OutlookMessageRef[]; nextLink: string | null }> {
+  const url =
+    opts.skipToken ||
+    `https://graph.microsoft.com/v1.0/me/messages?$search=${encodeURIComponent(
+      opts.query
+    )}&$top=${opts.top ?? 200}&$select=id`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      // $search requires this header (or an equivalent ConsistencyLevel) on /me/messages.
+      ConsistencyLevel: "eventual",
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Outlook message list failed: ${(await res.text()).slice(0, 200)}`);
+  }
+  const data = (await res.json()) as {
+    value?: OutlookMessageRef[];
+    "@odata.nextLink"?: string;
+  };
+  return {
+    messages: data.value || [],
+    nextLink: data["@odata.nextLink"] || null,
+  };
+}
+
+export type OutlookHeaderSummary = {
+  id: string;
+  from: string;
+  subject: string;
+  snippet: string;
+  internalDate: number | null;
+};
+
+type GraphMessage = {
+  id?: string;
+  subject?: string;
+  bodyPreview?: string;
+  receivedDateTime?: string;
+  from?: { emailAddress?: { name?: string; address?: string } };
+};
+
+/** Bounded-concurrency fetch, mirroring Gmail's `mapWithConcurrency`. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker())
+  );
+  return out;
+}
+
+/**
+ * Batch-fetch headers for a page of message refs, shaped like Gmail's `GmailHeaderSummary`
+ * so `parseFromHeader`/`looksLikeRecruiter` (from `recruiter-detect.ts`) work unchanged.
+ * `from` is reconstructed as `"Name <email>"` from Graph's `{ emailAddress: { name,
+ * address } }` shape, which is exactly the string form `parseFromHeader` already parses.
+ */
+export async function fetchOutlookMessageHeaders(
+  accessToken: string,
+  refs: OutlookMessageRef[],
+  concurrency = 8
+): Promise<OutlookHeaderSummary[]> {
+  const results = await mapWithConcurrency(refs, concurrency, async (ref) => {
+    try {
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/me/messages/${ref.id}?$select=id,subject,from,bodyPreview,receivedDateTime`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+      if (!res.ok) return null;
+      const msg = (await res.json()) as GraphMessage;
+      const address = msg.from?.emailAddress?.address || "";
+      const name = msg.from?.emailAddress?.name || "";
+      const from = address ? (name ? `${name} <${address}>` : address) : "";
+      const received = msg.receivedDateTime ? Date.parse(msg.receivedDateTime) : NaN;
+      return {
+        id: ref.id,
+        from,
+        subject: msg.subject || "",
+        snippet: msg.bodyPreview || "",
+        internalDate: Number.isFinite(received) ? received : null,
+      } satisfies OutlookHeaderSummary;
+    } catch {
+      return null;
+    }
+  });
+  return results.filter((r): r is OutlookHeaderSummary => r !== null);
 }
