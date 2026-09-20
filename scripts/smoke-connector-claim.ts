@@ -137,6 +137,10 @@ run(async () => {
     "switching to api_key stores the new secret as an api key",
     decryptOrNull(row3?.apiKeyEncrypted ?? null) === "api-key-1"
   );
+  // The refresh token belongs to the oauth2 grant that produced it. Switching away from
+  // oauth2 without resupplying one must drop it, not carry it forward under the new auth
+  // kind — before round 2's fix, the coalesce kept the stale "refresh-1" here.
+  check("switching to api_key drops the stale oauth refresh token", row3?.refreshTokenEncrypted === null);
 
   await upsertConnectorConnection({
     userId: USER,

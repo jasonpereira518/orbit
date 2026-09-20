@@ -269,7 +269,14 @@ export async function upsertConnectorConnection(
         // `api_key` and `oauth2` never leaves a stale secret behind in the other column.
         apiKeyEncrypted: sql`excluded.api_key_encrypted`,
         accessTokenEncrypted: sql`excluded.access_token_encrypted`,
-        refreshTokenEncrypted: sql`coalesce(excluded.refresh_token_encrypted, ${connectorConnections.refreshTokenEncrypted})`,
+        // A refresh token is only meaningful for oauth2, so the "keep what's stored"
+        // coalesce applies only when this call's auth kind is oauth2. Switching to
+        // `api_key` / `dav_password` / `api_token` — with or without a resupplied
+        // refresh token — drops it: an encrypted credential must not outlive the grant
+        // that produced it.
+        refreshTokenEncrypted: sql`case when excluded.auth_kind = 'oauth2'
+          then coalesce(excluded.refresh_token_encrypted, ${connectorConnections.refreshTokenEncrypted})
+          else null end`,
         tokenExpiresAt: sql`excluded.token_expires_at`,
         scopes: sql`coalesce(excluded.scopes, ${connectorConnections.scopes})`,
         capabilities: sql`excluded.capabilities`,
