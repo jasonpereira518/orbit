@@ -550,6 +550,14 @@ async function seed() {
     keyHash: "0".repeat(64),
     scopes: ["read"],
   });
+  // A message an assistant drafted. It holds a body the user never sent, which is exactly
+  // the kind of content a deletion has to take with it.
+  await db.insert(schema.agentSendRequests).values({
+    userId: USER,
+    toEmail: "someone@example.org",
+    body: "purge fixture",
+    expiresAt: new Date(Date.now() + 86_400_000),
+  });
   await db.insert(schema.apiIdempotencyKeys).values({
     userId: USER,
     idempotencyKey: "purge-fixture",

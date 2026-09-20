@@ -789,6 +789,26 @@ CREATE TABLE IF NOT EXISTS ops_alert_state (
   detail jsonb NOT NULL DEFAULT '{}',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS agent_send_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  channel text NOT NULL DEFAULT 'email',
+  to_email text NOT NULL,
+  subject text,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  client_name text,
+  error_message text,
+  delivery_id text,
+  decided_at timestamptz,
+  sent_at timestamptz,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_send_requests_user_status_idx ON agent_send_requests(user_id, status, created_at);
+CREATE INDEX IF NOT EXISTS agent_send_requests_contact_idx ON agent_send_requests(contact_id);
 CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   bucket text PRIMARY KEY,
   window_started_at timestamptz NOT NULL DEFAULT now(),
@@ -1592,7 +1612,12 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // (never extracted into contacts). Built as 34, then 63, before this branch merged main's DDL
 // through 69; renumbered past every claim (checked against all remote branches and local
 // worktrees on Sep 18 2026: none above 69).
-export const SCHEMA_VERSION = 70;
+//
+// 73 = agent_send_requests: messages an assistant drafted through MCP, held until the user
+// approves them in Orbit. 71 and 72 are claimed by the unmerged ai-api-optimization branch
+// (contact_briefs.input_hash and ai_batch_jobs), so this starts above both rather than
+// racing them — checked against every remote branch on Sep 19 2026.
+export const SCHEMA_VERSION = 73;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2977,6 +3002,9 @@ const alters = [
     WHERE status = 'active' AND next_sync_at IS NULL AND sync_status IS NULL`,
   // Schema v31: the connector platform. The CREATE TABLEs above land on a fresh database;
   // these repair an existing one, which is why every index appears in both places.
+  `CREATE TABLE IF NOT EXISTS agent_send_requests (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL, channel text NOT NULL DEFAULT 'email', to_email text NOT NULL, subject text, body text NOT NULL, status text NOT NULL DEFAULT 'pending', client_name text, error_message text, delivery_id text, decided_at timestamptz, sent_at timestamptz, expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS agent_send_requests_user_status_idx ON agent_send_requests(user_id, status, created_at)`,
+  `CREATE INDEX IF NOT EXISTS agent_send_requests_contact_idx ON agent_send_requests(contact_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash)`,
   `CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS api_idempotency_uidx ON api_idempotency_keys(user_id, idempotency_key)`,

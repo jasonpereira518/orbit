@@ -9,6 +9,7 @@ import {
   actionItems,
   aiSuggestions,
   apiIdempotencyKeys,
+  agentSendRequests,
   apiKeys,
   billingEvents,
   calendarSubscriptions,
@@ -377,8 +378,20 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   api: {
-    exports: [own(apiKeys), own(webhookEndpoints), own(outboundWebhookDeliveries), own(apiIdempotencyKeys, "idempotency_key")],
-    counts: [apiKeys, webhookEndpoints, outboundWebhookDeliveries, apiIdempotencyKeys],
+    exports: [
+      own(apiKeys),
+      own(webhookEndpoints),
+      own(outboundWebhookDeliveries),
+      own(apiIdempotencyKeys, "idempotency_key"),
+      own(agentSendRequests),
+    ],
+    counts: [
+      apiKeys,
+      webhookEndpoints,
+      outboundWebhookDeliveries,
+      apiIdempotencyKeys,
+      agentSendRequests,
+    ],
     run: async (db, userId) => {
       // `api_keys` matters most: a key that outlives the data it reaches is a live credential
       // with nothing behind it. The deliveries go before the endpoints they reference,
@@ -387,6 +400,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // rule here admits no exceptions that are not written down — and this is the fifth
       // user-scoped table family caught by `scripts/smoke-purge.ts` rather than by review.
       await db.delete(apiKeys).where(eq(apiKeys.userId, userId));
+      // Drafts an assistant wrote. They hold message bodies the user never sent, which is
+      // exactly the kind of content a deletion is meant to take with it.
+      await db.delete(agentSendRequests).where(eq(agentSendRequests.userId, userId));
       await db.delete(apiIdempotencyKeys).where(eq(apiIdempotencyKeys.userId, userId));
       await db
         .delete(outboundWebhookDeliveries)

@@ -34,6 +34,7 @@
  * the normal state of a local worktree.
  */
 import { isClerkConfigured } from "@/lib/demo-account";
+import { clerkFrontendApiHost } from "@/lib/security-headers";
 import { getAppBaseUrl } from "@/lib/app-url";
 import type { ApiKeyScope } from "@/lib/api/keys";
 
@@ -53,20 +54,14 @@ export function resourceMetadataUrl(): string {
 /**
  * Clerk's Frontend API origin, which is also its OAuth issuer.
  *
- * It is encoded in the publishable key: `pk_live_<base64 of "host$">`. Decoding it beats
- * adding a second environment variable that can drift out of step with the key beside it.
+ * The host is encoded in the publishable key, and `clerkFrontendApiHost` already decodes it
+ * for the Content-Security-Policy — so this reuses that rather than parsing the same key a
+ * second way. Two decoders of one key is two chances to disagree about which Clerk instance
+ * this deployment talks to.
  */
 export function clerkIssuerUrl(): string | null {
-  const publishable = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  if (!publishable) return null;
-  const encoded = publishable.replace(/^pk_(live|test)_/, "");
-  if (encoded === publishable) return null;
-  try {
-    const host = Buffer.from(encoded, "base64").toString("utf8").replace(/\$$/, "");
-    return host ? `https://${host}` : null;
-  } catch {
-    return null;
-  }
+  const host = clerkFrontendApiHost(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+  return host ? `https://${host}` : null;
 }
 
 export type OAuthCaller = {

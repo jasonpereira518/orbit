@@ -2443,6 +2443,70 @@ export const apiKeys = pgTable(
 );
 
 /**
+ * A message an assistant wrote, waiting for the user to approve or reject it.
+ *
+ * THE TABLE IS THE SAFETY CONTROL, not a queue for convenience. The MCP server has a
+ * `request_send` tool and no send tool: an agent can only ever write a row here, and the
+ * transition from row to sent email happens in a Clerk-authenticated server action a human
+ * triggers, after reading the recipient and the body. An agent talked into exfiltration by a
+ * poisoned note still cannot send anything — it can only ask, visibly, in the user's own
+ * inbox of pending drafts.
+ *
+ * It is NOT `outreach_messages`. Those hang off a prospect and a campaign, so reusing them
+ * would mean inventing a fake campaign per conversation. But sent rows here DO count toward
+ * the same daily send limit (`countSendsToday`), or an assistant would be a way around a cap
+ * the rest of the product respects.
+ */
+export const agentSendRequests = pgTable(
+  "agent_send_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Null when the agent wrote to an address that is not in the user's network. */
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    channel: text("channel").$type<"email">().default("email").notNull(),
+    toEmail: text("to_email").notNull(),
+    subject: text("subject"),
+    body: text("body").notNull(),
+    /**
+     * pending → sending → sent, or pending → rejected | expired.
+     *
+     * A send that fails goes back to `pending` with `error_message` set, because the usual
+     * cause is a mailbox that is not connected yet and the draft should survive being fixed.
+     * `failed` is therefore reserved rather than written — kept in the union so a future
+     * terminal failure has a name and does not get spelled as something else.
+     *
+     * `sending` exists so the claim that takes a row out of `pending` is the same statement
+     * that proves nobody else has it: two approve clicks, or a click racing the expiry
+     * sweep, must not both reach Resend.
+     */
+    status: text("status")
+      .$type<"pending" | "sending" | "sent" | "rejected" | "failed" | "expired">()
+      .default("pending")
+      .notNull(),
+    /** Which assistant asked, when the client told us. Shown on the approval card. */
+    clientName: text("client_name"),
+    errorMessage: text("error_message"),
+    deliveryId: text("delivery_id"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    /**
+     * A pending draft is a standing offer to send something, so it must not stand forever:
+     * an approval clicked weeks later would send a message whose context is long gone.
+     */
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("agent_send_requests_user_status_idx").on(t.userId, t.status, t.createdAt),
+    index("agent_send_requests_contact_idx").on(t.contactId),
+  ]
+);
+
+export type AgentSendRequest = typeof agentSendRequests.$inferSelect;
+
+/**
  * One scanning session, handed from a signed-in desktop to a phone that is not signed in.
  *
  * WHY A TABLE AND NOT A SIGNED TOKEN. A stateless JWT would carry the grant without

@@ -288,9 +288,12 @@ run(async () => {
     !tools.some((t) => /delete|remove|merge|purge|archive/i.test(t)),
     tools.join(",")
   );
+  // `request_send` only ever asks; the send itself is a Clerk-authenticated action with no
+  // tool in front of it. So the rule is about names that claim to do the sending — the full
+  // approval seam is asserted in `smoke-agent-sends.ts`.
   check(
-    "no tool can send anything",
-    !tools.some((t) => /send|email|sms|message_/i.test(t)),
+    "no tool sends anything itself",
+    !tools.some((t) => /^(send|approve)/.test(t)) && !tools.some((t) => /sms|fetch_url/i.test(t)),
     tools.join(",")
   );
 
