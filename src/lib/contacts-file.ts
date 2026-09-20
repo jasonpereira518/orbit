@@ -717,6 +717,25 @@ function csvFormat(index: HeaderIndex): ContactsFileFormat {
   return "csv";
 }
 
+/**
+ * Whether these header fields describe people rather than something else entirely.
+ *
+ * Exported because detection asks the same question before it routes a dropped CSV here, and
+ * a second copy of the answer would be the drift this file just finished removing. It is
+ * deliberately permissive — one name or email column is enough — because the refusal it
+ * guards is the last resort, not a filter.
+ */
+export function looksLikeContactsCsv(fields: string[]): boolean {
+  const index = headerIndex(fields);
+  if (numberedColumns(fields, "e-mail").length > 0) return true;
+  return [
+    ...CSV_FIELDS.fullName,
+    ...CSV_FIELDS.firstName,
+    ...CSV_FIELDS.lastName,
+    ...CSV_FIELDS.email,
+  ].some((key) => index.has(key));
+}
+
 function parseContactsCsv(text: string): {
   format: ContactsFileFormat;
   rows: ContactsFileRow[];
@@ -749,12 +768,7 @@ function parseContactsCsv(text: string): {
 
   const emailColumns = numberedColumns(fields, "e-mail");
   const phoneColumns = numberedColumns(fields, "phone");
-  const recognised =
-    emailColumns.length > 0 ||
-    [...CSV_FIELDS.fullName, ...CSV_FIELDS.firstName, ...CSV_FIELDS.lastName, ...CSV_FIELDS.email].some(
-      (key) => index.has(key)
-    );
-  if (!recognised) {
+  if (!looksLikeContactsCsv(fields)) {
     const found = fields.length
       ? ` (it has ${fields.slice(0, 6).join(", ")}${fields.length > 6 ? "…" : ""})`
       : "";
