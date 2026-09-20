@@ -16,12 +16,12 @@ const FAQ: Array<{ q: string; a: string }> = [
     a: "You stop being able to add new people — and that is all. Every contact, note, reminder, and interaction you already have stays fully visible and editable, forever. Orbit never hides your own network behind a paywall.",
   },
   {
-    q: "Do I need my own AI provider key?",
-    a: "On the Free Plan and Orbit Pro, yes: capture, chat, and summaries run on a key you supply from Google, OpenAI, or Anthropic. You pay your provider directly at cost, and Orbit never adds a margin to your tokens — which is also why Pro costs so little. Orbit Lifetime includes AI on Orbit's own keys, up to a monthly allowance. Add a key of your own on Lifetime and Orbit uses yours instead, with no allowance.",
+    q: "Why do I need my own AI provider key?",
+    a: "Capture, chat, and summaries run on a key you supply from Google, OpenAI, or Anthropic, on every plan including the paid ones. You pay your provider directly at cost, and Orbit never adds a margin to your tokens. It is also why the paid plans cost so little: you are paying for the parts that cost us money, not for AI resale.",
   },
   {
     q: "What is the difference between Orbit Pro and Orbit Lifetime?",
-    a: "Two things: AI and contact enrichment. Both plans are uncapped, both include recruiter tracking, mailbox and calendar sync, the extension, and outreach campaigns that send email and SMS on Orbit's own credits. Lifetime includes AI on Orbit's keys up to a monthly allowance, where Pro runs AI on your own key. Pro enriches contacts on Orbit's Apollo credits, where Lifetime connects your own Apollo key. The rule behind both is the same: a single payment can cover a cost with a ceiling — sending is capped per day, included AI per month — but enrichment has no ceiling, so a single payment cannot honestly cover it forever.",
+    a: "One thing: contact enrichment. Both are uncapped, both include recruiter tracking, mailbox and calendar sync, the extension, and outreach campaigns that send email and SMS on Orbit's own credits. Orbit Pro also enriches contacts on Orbit's Apollo credits; Lifetime connects your own Apollo key instead. Sending is capped at a fixed number per day on every plan, so a single payment can cover it. Enrichment has no such ceiling, which is the one thing a single payment cannot honestly cover forever.",
   },
   {
     q: `Why is Orbit Lifetime $${LIFETIME_INTRO_PRICE} instead of $${LIFETIME_STANDARD_PRICE}?`,

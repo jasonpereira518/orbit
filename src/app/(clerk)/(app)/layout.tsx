@@ -8,6 +8,7 @@ import { shouldShowTermsNotice } from "@/lib/legal";
 import { AppShell } from "@/components/layout/app-shell";
 import { LifetimeAiOfferProvider } from "@/components/lifetime-ai-offer";
 import { managedKeysConfigured } from "@/lib/ai-access";
+import { MANAGED_AI_ENABLED } from "@/lib/managed-ai-policy";
 import { SectionFlash } from "@/components/layout/section-flash";
 import { TermsUpdateNotice } from "@/components/legal/terms-update-notice";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
@@ -121,7 +122,10 @@ export default async function AppLayout({
   ]);
 
   // Whether "Lifetime includes AI" is true on this deployment — see LifetimeAiOfferProvider.
-  const lifetimeIncludesAi = Object.values(managedKeysConfigured()).some(Boolean);
+  // False while managed AI is off, even on a dev server holding its own local keys: those
+  // pay for localhost, not for Lifetime.
+  const lifetimeIncludesAi =
+    MANAGED_AI_ENABLED && Object.values(managedKeysConfigured()).some(Boolean);
 
   return (
     <LifetimeAiOfferProvider value={lifetimeIncludesAi}>

@@ -32,10 +32,8 @@ const COLUMN_ACCENT: Record<Plan, { heading: string; tick: string; tint?: string
  *    `canUseHostedSending` are all plain `plan !== "free"`, so Lifetime matches Pro on
  *    each of them. Sending included: it is capped at `DAILY_SEND_LIMIT` a day on every
  *    plan, so it is a bounded cost a one-time payment can carry.
- *  - `canUseHostedEnrichment` is the only ENTITLEMENT that separates the two paid tiers,
- *    so among the entitlement rows "Contact enrichment" must stay the only one whose Pro
- *    and Lifetime cells differ. The "AI" row differs too, but by key policy rather than
- *    entitlement: Lifetime runs on Orbit's managed keys (`src/lib/managed-ai-policy.ts`).
+ *  - `canUseHostedEnrichment` is the ONLY entitlement that separates the two paid tiers,
+ *    so "Contact enrichment" must stay the only row whose Pro and Lifetime cells differ.
  *    It gates Orbit's *own* Apollo key, never a key the user supplied — see the
  *    personal-key short-circuit at the top of `getApolloApiKey`. That is why enrichment
  *    reads "Your own key" on Free and Lifetime rather than a cross: anyone who pastes an
@@ -67,7 +65,7 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
     label: "Contact enrichment",
     cells: ["Your own key", "Orbit's credits", "Your own key"],
   },
-  { label: "AI", cells: ["Your own key", "Your own key", "Included"] },
+  { label: "AI provider key", cells: ["Yours", "Yours", "Yours"] },
 ];
 
 function CellValue({ value, plan }: { value: Cell; plan: Plan }) {

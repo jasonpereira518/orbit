@@ -12,6 +12,7 @@ import type {
   ReminderOrigin,
 } from "@/db/schema";
 import type { ImpliedNextStep } from "@/lib/implied-next-steps";
+import type { LinkedInLookupSummary } from "@/lib/linkedin-paste";
 import type { PreviewMention } from "@/lib/note-batches";
 
 export type BulkNoteDuplicate = {
@@ -106,6 +107,12 @@ export type CaptureParseResult = {
   suggestionsSkipped: RejectedCounts;
   mentions: PreviewMention[];
   mentionedOnly: MentionedOnlyPerson[];
+  /**
+   * Set when the notes carried LinkedIn profile URLs, so the review step can say when a
+   * name was read off a URL rather than looked up. Null when none were pasted, and absent
+   * on a job result stored before this field existed.
+   */
+  linkedinLookup?: LinkedInLookupSummary | null;
 };
 
 // --- the durable capture job ----------------------------------------------------------
