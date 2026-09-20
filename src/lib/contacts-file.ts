@@ -1,5 +1,11 @@
 import Papa from "papaparse";
 import { isRoleEmail } from "@/lib/duplicates";
+import { headerFields } from "@/lib/imports/csv-header";
+import {
+  looksLikeConnectionsExport,
+  looksLikeMessagesExport,
+  stripLinkedInConnectionsPreamble,
+} from "@/lib/linkedin-connections";
 
 /**
  * Address-book file parsing: vCard (.vcf) and the contacts CSVs Google and Outlook export.
@@ -628,15 +634,6 @@ const CSV_FIELDS = {
   notes: ["notes", "note"],
 } as const;
 
-/** Headers a LinkedIn Connections export carries; "connected on" is the one nothing else has. */
-function looksLikeLinkedInConnections(head: string) {
-  return head.includes("first name") && head.includes("last name") && head.includes("connected on");
-}
-
-function looksLikeLinkedInMessages(head: string) {
-  return head.includes("conversation id") && head.includes("conversation title");
-}
-
 type HeaderIndex = Map<string, string>;
 
 function headerIndex(fields: string[]): HeaderIndex {
@@ -726,15 +723,19 @@ function parseContactsCsv(text: string): {
   unnamed: number;
   malformed: number;
 } {
-  const head = text.slice(0, 5000).toLowerCase();
-  if (looksLikeLinkedInConnections(head)) {
+  // Field-based, not a substring scan of the first 5KB, so that one definition of "this is a
+  // LinkedIn export" serves both this refusal and the detection that routes a dropped file.
+  // The preamble strip is load-bearing: a real Connections.csv opens with three `Notes:` lines,
+  // so parsing it unstripped yields the preamble as the header and matches nothing.
+  const guardFields = headerFields(stripLinkedInConnectionsPreamble(text));
+  if (looksLikeConnectionsExport(guardFields)) {
     throw new ContactsFileError(
       "This looks like a LinkedIn Connections export — upload it on the LinkedIn connections card, which keeps each person’s profile link and when you connected"
     );
   }
-  if (looksLikeLinkedInMessages(head)) {
+  if (looksLikeMessagesExport(guardFields)) {
     throw new ContactsFileError(
-      "This looks like a LinkedIn Messages export — upload it on the Messages tab instead"
+      "This looks like a LinkedIn Messages export — upload it on the LinkedIn messages card instead"
     );
   }
 
