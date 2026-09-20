@@ -33,6 +33,7 @@ export type PersonRecord = {
   company?: string | null;
   title?: string | null;
   location?: string | null;
+  notes?: string | null;
 };
 
 export type PeopleIngestStats = {
@@ -80,6 +81,7 @@ function foldPersonInput(
     company: into.company ?? extra.company,
     title: into.title ?? extra.title,
     location: into.location ?? extra.location,
+    notes: into.notes ?? extra.notes,
   };
 }
 
@@ -93,6 +95,7 @@ function toContactInput(person: PersonRecord, source: string): ContactInput {
     company: person.company?.trim() || undefined,
     title: person.title?.trim() || undefined,
     location: person.location?.trim() || undefined,
+    notes: person.notes?.trim() || undefined,
     source,
   };
 }
