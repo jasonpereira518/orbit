@@ -7,6 +7,13 @@
  */
 process.env.HUBSPOT_CLIENT_ID = "test-client";
 process.env.HUBSPOT_CLIENT_SECRET = "test-secret";
+// Deterministic: force the module's dev-secret fallback so the "hand-signed with the real
+// secret" checks below can reproduce it without reaching into the module's internals, and so
+// this suite behaves the same regardless of what happens to be in the shell environment.
+delete process.env.ENCRYPTION_SECRET;
+if (process.env.NODE_ENV === "production") {
+  (process.env as Record<string, string>).NODE_ENV = "test";
+}
 
 import { createHmac } from "crypto";
 import {
@@ -14,6 +21,7 @@ import {
   buildAuthorizeUrl,
   exchangeCode,
   parseOAuthState,
+  refreshAccessToken,
   signOAuthState,
 } from "../src/lib/connectors/oauth";
 
@@ -21,6 +29,40 @@ let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
   console.log(`  ${ok ? "ok  " : "FAIL"}  ${label}${detail ? ` — ${detail}` : ""}`);
   if (!ok) failures++;
+}
+
+// Must match oauth.ts's own `stateSecret()` fallback exactly — this is what makes the
+// "hand-signed with the REAL secret" checks below meaningful rather than a second copy of
+// the "different secret is rejected" check.
+const REAL_DEV_SECRET = "orbit-dev-secret-change-me-in-prod";
+
+/**
+ * Sign a state payload directly, bypassing `signOAuthState` entirely — including its own
+ * sanitizing call to `safeReturnTo`. This is the only way to prove that `parseOAuthState`
+ * sanitizes independently on the way OUT: `signOAuthState` already sanitizes on the way in,
+ * so any check that only ever goes through `signOAuthState` is vacuous for the parse-side
+ * guard — deleting it would never make such a check fail. (This is exactly the mutation the
+ * security reviewer ran to catch the first version of this suite.)
+ */
+function signRawState(fields: {
+  userId?: string;
+  connectorId?: string;
+  returnTo: string;
+  iat?: number;
+  secret?: string;
+}): string {
+  const payload = {
+    userId: fields.userId ?? "u1",
+    connectorId: fields.connectorId ?? "hubspot",
+    returnTo: fields.returnTo,
+    nonce: "test-nonce",
+    iat: fields.iat ?? Date.now(),
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const mac = createHmac("sha256", fields.secret ?? REAL_DEV_SECRET)
+    .update(encoded)
+    .digest("base64url");
+  return `${encoded}.${mac}`;
 }
 
 const url = buildAuthorizeUrl("hubspot", {
@@ -40,38 +82,65 @@ check("state round-trips the user", state?.userId === "u1");
 check("state round-trips the return path", state?.returnTo === "/settings?integration=hubspot");
 
 check("a tampered state is rejected", parseOAuthState("garbage.garbage") === null);
+check("null is rejected without throwing", parseOAuthState(null) === null);
+check("undefined is rejected without throwing", parseOAuthState(undefined) === null);
+
 const forged = signOAuthState({ userId: "u1", connectorId: "hubspot", returnTo: "https://evil.example" });
-check("an absolute return path is refused", parseOAuthState(forged)?.returnTo === "/settings");
+check("an absolute return path is refused (sign side)", parseOAuthState(forged)?.returnTo === "/settings");
 
 // A state signed with a different secret must be rejected outright, not just have its
 // returnTo sanitized — otherwise a forged state with a fabricated userId/connectorId would
 // pass verification as long as its returnTo happened to look safe.
-const foreignMac = createForeignSignedState({ userId: "attacker", connectorId: "hubspot", returnTo: "/settings" });
-check("a state signed with a different secret is rejected", parseOAuthState(foreignMac) === null);
-
-// Protocol-relative return paths are an open-redirect vector too (`//evil.example` is
-// browser-parsed as `https://evil.example`), and must be refused the same as an absolute URL.
-const protocolRelative = signOAuthState({
-  userId: "u1",
+const foreignSigned = signRawState({
+  userId: "attacker",
   connectorId: "hubspot",
-  returnTo: "//evil.example",
+  returnTo: "/settings",
+  secret: "a-different-secret-entirely",
 });
+check("a state signed with a different secret is rejected", parseOAuthState(foreignSigned) === null);
+
+// --- Parse-side sanitizer: hand-sign with the REAL secret, bypassing signOAuthState's own
+// sanitization, so these checks exercise parseOAuthState's independent guard directly. ---
+
 check(
-  "a protocol-relative return path is refused",
-  parseOAuthState(protocolRelative)?.returnTo === "/settings"
+  "parseOAuthState refuses an absolute URL even validly signed",
+  parseOAuthState(signRawState({ returnTo: "https://evil.example" }))?.returnTo === "/settings"
+);
+check(
+  "parseOAuthState refuses a protocol-relative path even validly signed",
+  parseOAuthState(signRawState({ returnTo: "//evil.example" }))?.returnTo === "/settings"
 );
 
-function createForeignSignedState(state: {
-  userId: string;
-  connectorId: string;
-  returnTo: string;
-}): string {
-  // Sign with a secret the real module does not know, to prove parseOAuthState actually
-  // verifies the HMAC rather than trusting whatever payload shows up.
-  const payload = Buffer.from(JSON.stringify(state)).toString("base64url");
-  const mac = createHmac("sha256", "a-different-secret-entirely").update(payload).digest("base64url");
-  return `${payload}.${mac}`;
+const bypassStrings: Record<string, string> = {
+  "backslash after the leading slash": "/\\evil.example",
+  "slash-backslash-slash": "/\\/evil.example",
+  "tab before the second segment": "/\t/evil.example",
+  "newline before the second segment": "/\n/evil.example",
+};
+for (const [label, bypass] of Object.entries(bypassStrings)) {
+  check(
+    `parseOAuthState refuses a return path with ${label}`,
+    parseOAuthState(signRawState({ returnTo: bypass }))?.returnTo === "/settings"
+  );
 }
+
+// --- Expiry ---
+
+check(
+  "an expired state is rejected",
+  parseOAuthState(signRawState({ returnTo: "/settings", iat: Date.now() - 31 * 60 * 1000 })) === null
+);
+check(
+  "a fresh state is accepted",
+  parseOAuthState(signRawState({ returnTo: "/settings", iat: Date.now() }))?.returnTo === "/settings"
+);
+
+// --- Nonce: two states for identical inputs must differ, or a captured state is replayable
+// forever (see the class comment on OAuthState). ---
+
+const stateA = signOAuthState({ userId: "u1", connectorId: "hubspot", returnTo: "/settings" });
+const stateB = signOAuthState({ userId: "u1", connectorId: "hubspot", returnTo: "/settings" });
+check("two states for identical inputs differ (nonce)", stateA !== stateB);
 
 async function exchange() {
   const ok = await exchangeCode("hubspot", "the-code", "https://app.example.com/cb", {
@@ -114,6 +183,89 @@ async function exchange() {
   check(
     "a 5xx is marked retryable, not needing reauth",
     (threw5xx as OAuthTokenError)?.needsReauth === false
+  );
+
+  // A rejected fetch (DNS/TCP failure) must not escape as a raw error — it has to come back
+  // through the same retryable/needs-reauth contract as everything else this scheduler acts
+  // on, or the most common transient failure silently bypasses that split entirely.
+  let threwNetwork: unknown = null;
+  try {
+    await exchangeCode("hubspot", "irrelevant", "https://app.example.com/cb", {
+      fetchImpl: (async () => {
+        throw new TypeError("fetch failed");
+      }) as unknown as typeof fetch,
+    });
+  } catch (err) {
+    threwNetwork = err;
+  }
+  check("a fetch rejection throws OAuthTokenError, not a raw error", threwNetwork instanceof OAuthTokenError);
+  check(
+    "a fetch rejection is retryable, not needing reauth",
+    (threwNetwork as OAuthTokenError)?.needsReauth === false
+  );
+
+  // The 15s AbortSignal.timeout firing looks like this: fetchImpl rejects with a
+  // TimeoutError DOMException, not a normal network TypeError.
+  let threwTimeout: unknown = null;
+  try {
+    await exchangeCode("hubspot", "irrelevant", "https://app.example.com/cb", {
+      fetchImpl: (async () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      }) as unknown as typeof fetch,
+    });
+  } catch (err) {
+    threwTimeout = err;
+  }
+  check("a timeout throws OAuthTokenError, not a raw DOMException", threwTimeout instanceof OAuthTokenError);
+  check(
+    "a timeout is retryable, not needing reauth",
+    (threwTimeout as OAuthTokenError)?.needsReauth === false
+  );
+
+  // A provider that 200s an envelope with no access_token is not going to be fixed by
+  // retrying — only a fresh consent will produce a real token — so this must land on the
+  // needs-reauth side, not spin forever on the retry ladder.
+  let threwMalformed: unknown = null;
+  try {
+    await exchangeCode("hubspot", "irrelevant", "https://app.example.com/cb", {
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    });
+  } catch (err) {
+    threwMalformed = err;
+  }
+  check("a malformed 2xx body throws OAuthTokenError", threwMalformed instanceof OAuthTokenError);
+  check(
+    "a malformed 2xx body needs reauth, not a retry",
+    (threwMalformed as OAuthTokenError)?.needsReauth === true
+  );
+
+  // refreshAccessToken shares postToken with exchangeCode but had no coverage of its own.
+  const refreshed = await refreshAccessToken("hubspot", "the-refresh-token", {
+    fetchImpl: (async () =>
+      new Response(JSON.stringify({ access_token: "at2", expires_in: 3600 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch,
+  });
+  check("refreshAccessToken returns a new access token", refreshed.accessToken === "at2");
+
+  let threwRefresh: unknown = null;
+  try {
+    await refreshAccessToken("hubspot", "a-revoked-refresh-token", {
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 })) as typeof fetch,
+    });
+  } catch (err) {
+    threwRefresh = err;
+  }
+  check("refreshAccessToken 4xx throws OAuthTokenError", threwRefresh instanceof OAuthTokenError);
+  check(
+    "refreshAccessToken 4xx needs reauth",
+    (threwRefresh as OAuthTokenError)?.needsReauth === true
   );
 }
 
