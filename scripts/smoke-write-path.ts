@@ -11,6 +11,19 @@
  * `contact_embeddings`, and the stale marker must be set. Keyword search never regresses
  * (it reads the row, not the embedding), which is what makes the deferral acceptable.
  *
+ * ## Why each phase drains first
+ *
+ * The counter is global and the thing being deferred is, by design, still in flight when
+ * the write returns. So a rebuild scheduled by the CREATE lands on a later macrotask —
+ * which, without `settle()` below, is inside the window opened for the INTERACTION. The
+ * suite then failed on the third phase reporting a statement the third phase never issued,
+ * and the earlier phases passed only because nothing had had time to fire yet.
+ *
+ * That is a measurement bug, not a product one: a previous write's deferred task is not
+ * this write's doing, and the assertion is about what THIS write issues before returning.
+ * Draining before each `startQueryCount` is what makes the window contain one write.
+ * Removing a `settle()` call makes this file lie again.
+ *
  * Runs against a throwaway PGlite database. Run: npx tsx scripts/smoke-write-path.ts
  */
 import "./smoke/_env";
@@ -40,6 +53,15 @@ function check(label: string, ok: boolean, detail?: string) {
 const touchesEmbeddings = (statements: string[]) =>
   statements.filter((s) => /contact_embeddings/i.test(s));
 
+/**
+ * Let deferred work from the previous phase run to completion, so the next measurement
+ * window contains only the write it is measuring. A macrotask boundary plus room for the
+ * rebuild's own database round trips — see the note in the header.
+ */
+async function settle() {
+  await new Promise((r) => setTimeout(r, 300));
+}
+
 async function staleAt(id: string) {
   const db = await getDb();
   const row = await db.query.contacts.findFirst({ where: eq(contacts.id, id), columns: { embeddingStaleAt: true } });
@@ -52,6 +74,7 @@ async function main() {
   await ensureUserSettings(USER);
 
   console.log("Create...");
+  await settle();
   startQueryCount();
   // `skipRevalidate` / `skipSummary`: revalidatePath and the person-summary `after()` both
   // need a request scope, which a script has none of. The embedding deferral must not.
@@ -63,6 +86,7 @@ async function main() {
 
   console.log("\nUpdate...");
   await db.update(contacts).set({ embeddingStaleAt: null }).where(eq(contacts.id, created.id));
+  await settle();
   startQueryCount();
   await updateContactForUser(USER, created.id, { title: "Mathematician" }, { skipRevalidate: true, skipSummary: true });
   stopQueryCount();
@@ -72,6 +96,7 @@ async function main() {
 
   console.log("\nLog an interaction...");
   await db.update(contacts).set({ embeddingStaleAt: null }).where(eq(contacts.id, created.id));
+  await settle();
   startQueryCount();
   await logInteractionForUser(USER, { contactId: created.id, rawNotes: "Talked about the engine over coffee." }, { skipRevalidate: true, skipSummary: true });
   stopQueryCount();
@@ -80,7 +105,7 @@ async function main() {
   check("logging notes marks the row stale", (await staleAt(created.id)) !== null);
 
   // Let any deferred work settle before the database goes away.
-  await new Promise((r) => setTimeout(r, 200));
+  await settle();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

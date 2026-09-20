@@ -7,16 +7,17 @@ import { contacts } from "@/db/schema";
 import { loadGraphData } from "@/lib/graph-data";
 import { traced } from "@/lib/perf-trace";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
-import { getCurrentUserProfile } from "@/lib/auth";
+import { getDisplayProfile } from "@/lib/auth";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { requireUserForSurface } from "@/lib/plan-guards";
+import { reportError } from "@/lib/report-error";
 
 export type { GraphCluster, UserSocialLinks } from "@/lib/graph-data";
 
 export async function getGraphData() {
   const userId = await requireUserForSurface("page.graph");
   // Handed over un-awaited: the Clerk profile round trip runs alongside the contact scan.
-  return traced("graph.load", () => loadGraphData(userId, { profile: getCurrentUserProfile() }), {
+  return traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), {
     userId,
   });
 }
@@ -36,7 +37,7 @@ export async function getFullGraphData() {
   const userId = await requireUserForSurface("page.graph");
   return traced(
     "graph.load.all",
-    () => loadGraphData(userId, { profile: getCurrentUserProfile(), scope: "all" }),
+    () => loadGraphData(userId, { profile: getDisplayProfile(), scope: "all" }),
     { userId }
   );
 }
@@ -77,7 +78,6 @@ export async function refreshConstellationBatch(input?: {
     try {
       await rebuildContactEmbedding(userId, row.id);
     } catch (err) {
-      console.error("Embedding rebuild failed", row.id, err);
       failed += 1;
       if (!firstError) {
         firstError = err;
@@ -90,6 +90,11 @@ export async function refreshConstellationBatch(input?: {
   // One row per batch, never per contact — per-item error rows are how a diagnostic
   // table becomes a log firehose.
   if (failed > 0) {
+    reportError(firstError, {
+      where: "action.graph.rebuild-embeddings",
+      userId,
+      extra: { failed, batchSize: slice.length, sampleContactId: firstFailedId },
+    });
     await recordErrorEvent({
       source: ERROR_SOURCES.graphRebuildEmbeddings,
       kind: "batch_partial_failure",
@@ -101,7 +106,7 @@ export async function refreshConstellationBatch(input?: {
 
   const done = processed >= total;
   const graph = done
-    ? await traced("graph.load", () => loadGraphData(userId, { profile: getCurrentUserProfile() }), { userId })
+    ? await traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), { userId })
     : null;
 
   return {

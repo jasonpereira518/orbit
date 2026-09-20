@@ -5,11 +5,13 @@ import { chatWithNetworkStream } from "@/lib/ai";
 import { prepareChatContext } from "@/lib/chat-context";
 import { persistAssistantTurn } from "@/lib/chat-persist";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { reportedFailure } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -29,7 +31,7 @@ export async function POST(request: Request) {
     userId = await requireUserForSurface("page.chat");
   } catch (err) {
     const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: toUserFacingError(err, "Sign in to chat").message }, { status });
+    return NextResponse.json({ error: friendlyError(err, "Sign in to chat") }, { status });
   }
 
   try {
@@ -45,25 +47,46 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { question?: unknown; threadId?: unknown; contactId?: unknown }
+    | {
+        question?: unknown;
+        threadId?: unknown;
+        contactId?: unknown;
+        contextContactIds?: unknown;
+      }
     | null;
   const question = typeof body?.question === "string" ? body.question.trim() : "";
   if (!question) return NextResponse.json({ error: "Question is required" }, { status: 400 });
   const threadId = typeof body?.threadId === "string" ? body.threadId : null;
   const contactId = typeof body?.contactId === "string" ? body.contactId : null;
+  // Ids the composer resolved from its `@Name` chips. Bounded and re-checked against the
+  // user's own rows in `loadAttachedPeople`, so a forged id reaches nothing.
+  const contextContactIds = Array.isArray(body?.contextContactIds)
+    ? body.contextContactIds.filter((id): id is string => typeof id === "string").slice(0, 10)
+    : [];
 
   let ctx: Awaited<ReturnType<typeof prepareChatContext>>;
   try {
-    ctx = await prepareChatContext(userId, question, { threadId, focusContactId: contactId });
+    ctx = await prepareChatContext(userId, question, {
+      threadId,
+      focusContactId: contactId,
+      contextContactIds,
+    });
     if (threadId) {
       const db = await getDb();
-      await db.insert(chatMessages).values({ threadId, userId, role: "user", content: ctx.q });
+      await db.insert(chatMessages).values({
+        threadId,
+        userId,
+        role: "user",
+        content: ctx.q,
+        // Resolved server-side rather than trusted from the client: these are the people
+        // `loadAttachedPeople` actually found and put in front of the model, so the mark on
+        // a reloaded thread describes what the answer was really given.
+        attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+      });
     }
   } catch (err) {
-    return NextResponse.json(
-      { error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message },
-      { status: 400 }
-    );
+    const failure = reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.prepare", userId });
+    return NextResponse.json({ error: failure.error, ref: failure.ref }, { status: 400 });
   }
 
   const encoder = new TextEncoder();
@@ -83,7 +106,9 @@ export async function POST(request: Request) {
               ctx.attention,
               ctx.modelRecruiters,
               (delta) => send({ type: "answer", delta }),
-              ctx.focusProfile
+              ctx.focusProfile,
+              ctx.attachedContext,
+              { signal: request.signal }
             ),
           { userId }
         );
@@ -101,6 +126,7 @@ export async function POST(request: Request) {
           messageId: saved.messageId,
           threadId,
           title: saved.title,
+          notice: ctx.searchNotice,
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,
             fullName: c.fullName,
@@ -110,9 +136,18 @@ export async function POST(request: Request) {
           })),
         });
       } catch (err) {
-        send({ type: "error", message: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message });
+        // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
+        // an error of ours either — the provider call was aborted on purpose.
+        if (request.signal.aborted) return;
+        // The status line is already sent, so this reaches the client as an event. Report it:
+        // a mid-stream failure used to leave no trace outside the person's screen.
+        send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });
       } finally {
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // Already closed by the runtime when the client disconnected.
+        }
       }
     },
   });

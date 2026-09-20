@@ -1,0 +1,40 @@
+{
+  "$comment": "Gate for scripts/eval-ai.ts --compare. maxDrop: a higher-is-better metric may fall by at most this much (absolute, rates are 0-1). maxRise: an error rate or a hallucination count may rise by at most this much. Referral recall and invented facts never get worse; the rest allow a little run-to-run noise. Tune here, not in code.",
+  "capture": {
+    "personRecall": { "maxDrop": 0.02 },
+    "personPrecision": { "maxDrop": 0.03 },
+    "fieldAccuracy": { "maxDrop": 0.02 },
+    "referralRecall": { "maxDrop": 0 },
+    "opportunityRecall": { "maxDrop": 0.05 },
+    "reminderRecall": { "maxDrop": 0.05 },
+    "phantomParticipants": { "maxRise": 0 },
+    "forbiddenHits": { "maxRise": 0 }
+  },
+  "recruiter": {
+    "precision": { "maxDrop": 0 },
+    "recall": { "maxDrop": 0.03 },
+    "detailRecall": { "maxDrop": 0.05 }
+  },
+  "extension": {
+    "fieldAccuracy": { "maxDrop": 0.02 },
+    "nullAccuracy": { "maxDrop": 0 },
+    "forbiddenHits": { "maxRise": 0 }
+  },
+  "ocr": {
+    "nameRecall": { "maxDrop": 0 },
+    "cer": { "maxRise": 0.02 }
+  },
+  "transcribe": {
+    "nameRecall": { "maxDrop": 0.05 },
+    "wer": { "maxRise": 0.03 }
+  },
+  "chat": {
+    "mentionRecall": { "maxDrop": 0.03 },
+    "retrievalRecall": { "maxDrop": 0.03 }
+  },
+  "digest": {
+    "attendeeRecall": { "maxDrop": 0.05 },
+    "attendeePrecision": { "maxDrop": 0.05 },
+    "actionItemRecall": { "maxDrop": 0.05 }
+  }
+}

@@ -32,33 +32,75 @@ export const PROVIDER_MODELS: Record<
   Array<{ value: string; label: string }>
 > = {
   gemini: [
+    { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
+    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite (cheapest)" },
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
   ],
   openai: [
-    { value: "gpt-4o-mini", label: "GPT-4o mini" },
+    { value: "gpt-4o-mini", label: "GPT-4o mini (cheapest)" },
     { value: "gpt-4o", label: "GPT-4o" },
     { value: "gpt-4.1-mini", label: "GPT-4.1 mini" },
     { value: "gpt-4.1", label: "GPT-4.1" },
   ],
   anthropic: [
     { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
-    { value: "claude-opus-4", label: "Claude Opus 4" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 (cheapest)" },
+    { value: "claude-opus-4-5", label: "Claude Opus 4.5" },
   ],
 };
 
+/**
+ * What a new account gets, and what an account that never chose keeps.
+ *
+ * Gemini's default moved from 3.5 Flash to 3.8 Flash on Sep 19 2026: newer, and half the
+ * price per token ($0.75/$3.75 against $1.50/$9.00 — and still cheaper on output after
+ * Google's announced Jan 2027 increase). The eval in docs/ai-evals/ measured no accuracy
+ * lost on capture, OCR or chat.
+ */
 export const DEFAULT_MODELS: Record<AiProvider, string> = {
-  gemini: "gemini-3.5-flash",
+  gemini: "gemini-3.8-flash",
   openai: "gpt-4o-mini",
   anthropic: "claude-sonnet-4-5",
 };
 
+/**
+ * Stored ids that resolve to something else on read.
+ *
+ * The 2.5 entries are not cosmetic: Google answers 404 "no longer available to new users"
+ * for those models on a key issued since, so a stored 2.5 id is a broken account until it
+ * is remapped. They point at the cheapest current model of the same shape.
+ */
 const LEGACY_MODEL_MAP: Record<string, string> = {
-  "gemini-2.5-flash": "gemini-3.5-flash",
+  "gemini-2.5-flash": "gemini-3.8-flash",
   "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
+  // Was offered as a preset but was never a valid Anthropic id (the 4.0 alias was
+  // claude-opus-4-0, and that snapshot retired June 15 2026). Stored settings migrate on read.
+  "claude-opus-4": "claude-opus-4-5",
 };
+
+/**
+ * Anthropic model families that still accept `temperature`.
+ *
+ * An ALLOWLIST on purpose: Claude 4.7 and later (Opus 4.7, 4.8, 5, Sonnet 5, Fable) return
+ * a 400 for a non-default sampling parameter, and a custom id typed into Settings is newer
+ * than any list. Omitting temperature is accepted by every model, so an unknown id falls
+ * safe. Only families still served are listed — Opus 4.0/4.1, Sonnet 4.0 and Claude 3 are
+ * retired, and a request to them fails whatever it carries.
+ */
+const ANTHROPIC_TEMPERATURE_FAMILIES = [
+  "claude-haiku-4-5",
+  "claude-sonnet-4-5",
+  "claude-sonnet-4-6",
+  "claude-opus-4-5",
+  "claude-opus-4-6",
+];
+
+export function anthropicAcceptsTemperature(model: string): boolean {
+  return ANTHROPIC_TEMPERATURE_FAMILIES.some(
+    (family) => model === family || model.startsWith(`${family}-`)
+  );
+}
 
 export function resolveAiProvider(value?: string | null): AiProvider {
   if (value === "openai" || value === "anthropic" || value === "gemini") {

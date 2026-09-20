@@ -120,7 +120,18 @@ export type ContactInput = {
   aiSummary?: string;
   keyFacts?: string[];
   sharedInterests?: string[];
+  /**
+   * LEGACY. `contacts.opportunities` is now a mirror derived from `contact_opportunities`
+   * by `syncContactOpportunityMirror`, which is its only writer. This field has no caller
+   * left; it is kept so the removal is its own change rather than noise in this one, and
+   * so an out-of-tree caller fails loudly at review rather than silently overwriting.
+   */
   opportunities?: string[];
+  /** A rhythm the notes stated ("check in monthly"), resolved to days. */
+  cadenceDays?: number | null;
+  cadencePhrase?: string | null;
+  cadenceSource?: "note" | "user" | null;
+  cadenceSetAt?: Date | null;
   nextFollowUpAt?: string | null;
   tagNames?: string[];
 };
@@ -295,6 +306,10 @@ function contactInsertValues(
     keyFacts: input.keyFacts ?? [],
     sharedInterests: input.sharedInterests ?? [],
     opportunities: input.opportunities ?? [],
+    cadenceDays: input.cadenceDays ?? null,
+    cadencePhrase: input.cadencePhrase ?? null,
+    cadenceSource: input.cadenceSource ?? null,
+    cadenceSetAt: input.cadenceSetAt ?? null,
     firstInteractionAt: firstInteractionAt ?? now,
     lastInteractionAt: metAt ?? now,
     nextFollowUpAt: safeTimestamp(input.nextFollowUpAt),
@@ -416,6 +431,25 @@ export async function createContactForUser(
  * Failure here is not worth failing a write over. An unscored contact is picked up by the
  * next recalibration either way, which is exactly what the dirty flag is asking for.
  */
+/**
+ * Refresh a contact's stored brief after the response.
+ *
+ * `after()` rather than a bare floating promise: on Vercel the function can be suspended the
+ * moment the response is sent, which would cut an unawaited summary request off partway
+ * through. And wrapped, because `after()` THROWS outside a request scope — so an unguarded
+ * call turns an already-committed write into a failed one for every caller that has no
+ * request: a tsx script, a background job, an MCP tool call. Same shape as
+ * `deferEmbeddingRebuild`.
+ */
+function deferBriefRefresh(userId: string, contactId: string) {
+  const task = () => generateAndStoreContactBrief(userId, contactId).catch(() => null);
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
+}
+
 /**
  * Rebuild a contact's semantic embedding AFTER the response, not before it.
  *
@@ -793,6 +827,10 @@ export async function updateContactForUser(
       ...(input.opportunities !== undefined
         ? { opportunities: input.opportunities }
         : {}),
+      ...(input.cadenceDays !== undefined ? { cadenceDays: input.cadenceDays } : {}),
+      ...(input.cadencePhrase !== undefined ? { cadencePhrase: input.cadencePhrase } : {}),
+      ...(input.cadenceSource !== undefined ? { cadenceSource: input.cadenceSource } : {}),
+      ...(input.cadenceSetAt !== undefined ? { cadenceSetAt: input.cadenceSetAt } : {}),
       ...(input.nextFollowUpAt !== undefined
         ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
         : {}),
@@ -840,10 +878,7 @@ export async function updateContactForUser(
     input.sharedInterests !== undefined;
 
   if (significant && !options?.skipRevalidate && !options?.skipSummary) {
-    // `after()` rather than a bare floating promise: on Vercel the function can be
-    // suspended the moment the response is sent, which would cut an unawaited summary
-    // request off partway through.
-    after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
+    deferBriefRefresh(userId, id);
   }
 
   await scoreAfterWrite(userId, id, options);
@@ -864,19 +899,19 @@ export async function logInteractionForUser(
   options?: ContactWriteOptions
 ) {
   const db = await getDb();
-  const { parseInteractionDateFromNotes } = await import(
+  const { clampSameDayToNow, parseInteractionDateFromNotes } = await import(
     "@/lib/interaction-date"
   );
 
+  // A date-only value is a day, stored at noon — except today, which must not be stored
+  // in the future (see `clampSameDayToNow`).
   const parsedDate =
     input.interactionDate instanceof Date
       ? input.interactionDate
       : input.interactionDate
-        ? new Date(
-            input.interactionDate.length <= 10
-              ? `${input.interactionDate}T12:00:00`
-              : input.interactionDate
-          )
+        ? input.interactionDate.length <= 10
+          ? clampSameDayToNow(input.interactionDate, new Date(`${input.interactionDate}T12:00:00`))
+          : new Date(input.interactionDate)
         : null;
   let when =
     parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;
@@ -929,9 +964,7 @@ export async function logInteractionForUser(
 
   // Significant change: refresh stored person summary
   if (!options?.skipSummary) {
-    after(() =>
-      generateAndStoreContactBrief(userId, input.contactId).catch(() => null)
-    );
+    deferBriefRefresh(userId, input.contactId);
   }
 
   // Recency and cadence are the two components an interaction actually moves, so this is
@@ -1025,7 +1058,7 @@ export async function deleteInteractionForUser(
     await scheduleEmbeddingRebuild(userId, contactId);
   }
   if (!options?.skipSummary) {
-    after(() => generateAndStoreContactBrief(userId, contactId).catch(() => null));
+    deferBriefRefresh(userId, contactId);
   }
   await scoreAfterWrite(userId, contactId, options);
 

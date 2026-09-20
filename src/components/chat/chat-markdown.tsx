@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
@@ -55,7 +56,7 @@ const components: Components = {
   ),
 };
 
-export function ChatMarkdown({
+export const ChatMarkdown = memo(function ChatMarkdown({
   children,
   className,
 }: {
@@ -69,4 +70,4 @@ export function ChatMarkdown({
       </ReactMarkdown>
     </div>
   );
-}
+});

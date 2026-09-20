@@ -19,10 +19,13 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 | Where | Value | Why |
 |---|---|---|
 | pages (default) | Vercel default | Nothing user-facing should need more. |
-| `(app)/(main)/layout.tsx` | 300 **(temporary)** | Stopgap for the heavy-account timeouts; revert to 60 once `perf.slow` stays quiet for a week. |
+| `(app)/(main)/layout.tsx` | 60 | Every signed-in page unless it overrides. It was 300 as a stopgap; the dashboard payload is bounded now. |
+| `capture/page.tsx`, `imports/page.tsx` | 300 | Their server actions summarise a meeting (several model calls) or start a large import. |
 | `chat/page.tsx`, `/api/chat` | 60 | A full model completion on the user's own key. |
-| `/api/imports/process-stalled`, `/api/embeddings/backfill`, `/api/linkedin/timeline-events/backfill`, `/api/imports/[id]/continue` | 300 | Batch work that self-continues past the ceiling. |
-| `/api/ops/sweep` | 60 | Reads only. |
+| `/api/imports/process-stalled`, `/api/embeddings/backfill`, `/api/linkedin/timeline-events/backfill`, `/api/imports/[id]/continue`, `/api/sync/run`, `/api/capture/jobs`, `/api/capture/jobs/[id]/run`, `/api/scan/[token]/pages`, `/api/export` | 300 | Batch work that self-continues past the ceiling, or streams a whole account's export. |
+| `/api/capture/meetings/[id]/chunks` | 120 | One chunk's transcription, which can fall through Wispr's 60 s deadline before Whisper starts. |
+| `/api/ops/sweep`, `/api/webhooks/outbound/drain`, `/api/mcp`, `/api/mcp/[token]`, `/api/scan/[token]/finish` | 60 | Bounded reads, or network work inside its own 40 s budget. |
+| `/api/extension/parse`, `/api/extension/starters` | 30 | One small completion for the extension panel. |
 | `/api/health` | 10 | Every check inside is capped at 4 s. |
 
 ## Rules that keep the hot paths fast
@@ -39,3 +42,4 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 - Real plans: enable Drizzle's `logger: true` locally, paste the SQL into Neon's SQL editor with `EXPLAIN (ANALYZE, BUFFERS)`, and read `shared read` — that is the cold-storage cost.
 - Bundles: `npm run analyze` (`next experimental-analyze`, Turbopack-native).
 - Lighthouse on `/`, `/pricing`, `/dashboard` in the in-app browser before and after a change to the marketing tree or the shell.
+- Real-user Core Web Vitals: weekly, or after any change touching `/graph`, `/`, or `/capture` — the three heaviest client trees (the sky-atlas graph, the landing page's three.js globe, capture's lazy-loaded form) — check Speed Insights in the Vercel dashboard, filtered to Production, for LCP/INP/CLS regressions on those routes specifically. Complements the Lighthouse check above with real traffic instead of a synthetic run.

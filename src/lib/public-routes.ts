@@ -2,7 +2,8 @@
  * Routes reachable without a Clerk session.
  *
  * Kept out of `proxy.ts` so it can be asserted against the filesystem: every page under
- * `src/app/(marketing)/` must appear here. A marketing page missing from this list is
+ * `src/app/(site)/` and `src/app/(clerk)/(marketing)/` must appear here. A marketing page
+ * missing from this list is
  * served only to signed-in users, which means the visitors it exists to convert get a
  * 404 — and only in production, since the middleware skips protection entirely when
  * Clerk is unconfigured locally. `scripts/smoke-public-routes.ts` enforces it.
@@ -14,6 +15,9 @@ export const PUBLIC_ROUTES = [
   // matched here — actions POST to the page's own URL, so a public page covers them.
   "/interest",
   "/privacy",
+  // How to connect an assistant. A setup guide whose whole audience is people deciding
+  // whether to sign up, so it must be readable signed out.
+  "/connect",
   "/terms",
   "/contact",
   "/sign-in(.*)",
@@ -25,6 +29,9 @@ export const PUBLIC_ROUTES = [
   // Clicked from an email, by someone who has never signed in. Authenticated by the
   // opaque token in the query string instead, same pattern as the calendar feed above.
   "/api/interest-list/unsubscribe",
+  // The boarding-pass link preview. Fetched by X, LinkedIn and iMessage, which carry no
+  // session; authenticated by nothing, because it reveals only a number and a planet.
+  "/api/interest-list/ticket-image",
   // Not actually public: these authenticate via requireExtensionUserId, which reads the
   // Clerk state clerkMiddleware populates. They are exempted from auth.protect() only so
   // an unauthenticated call gets a JSON 401 the extension can act on, rather than a 302
@@ -37,10 +44,16 @@ export const PUBLIC_ROUTES = [
   // (`src/lib/internal-auth.ts`), which is fail-closed in production.
   "/api/imports/process-stalled",
   "/api/imports/(.*)/continue",
+  // The capture job runner's internal kick — same gate, same reasons.
+  "/api/capture/jobs/(.*)/run",
+  // The photo encoder — the one function that carries `sharp`. Called by the app's own
+  // `fetch` from other functions, which carry no Clerk session; same CRON_SECRET gate.
+  "/api/avatars/encode",
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
   "/api/sync/run",
+  "/api/jobs/feed/sweep",
   "/api/webhooks/outbound/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key
   // (`src/lib/api/auth.ts`), which Clerk knows nothing about. Exempted from
@@ -49,10 +62,28 @@ export const PUBLIC_ROUTES = [
   // The key check is fail-closed and rejects a malformed bearer before any database work.
   "/api/v1(.*)",
   "/api/mcp(.*)",
+  // OAuth discovery for the MCP server. These must be readable by a client that has never
+  // authenticated — discovering how to sign in is the whole point — and they are fetched
+  // before any token exists, so a 302 to /sign-in here stops the connect flow at step one.
+  // They expose two public URLs and no user data (`src/lib/mcp/oauth.ts`).
+  "/.well-known/(.*)",
   // Genuinely public: browsers POST Content-Security-Policy violation reports here with
   // no session. The handler stores nothing but a directive and a URI, throttled.
   "/api/csp-report",
+  // Genuinely public: the traffic beacon. Anonymous marketing visitors are most of what
+  // it exists to count, so requiring a session would measure only the people who already
+  // converted. It stores no IP and sets no cookie — see src/lib/analytics-visitor.ts.
+  "/api/track",
   // Genuinely public: the liveness probe the uptime monitor polls. Its shallow body says
   // only "up or down" plus the deployed sha; the deep view needs HEALTH_TOKEN.
   "/api/health",
+  // The phone half of note scanning. A phone that has never signed in opens this from a QR
+  // code on a signed-in desktop, and is authenticated solely by the opaque token in the
+  // path (`src/lib/scan-handoff.ts`) — the same arrangement as the calendar feed above.
+  // Requiring a Clerk session here would defeat the point: the entire feature exists so
+  // nobody has to sign into a CRM on a phone keyboard to photograph a page of notes.
+  // The token is single-use, expires in ten minutes, is stored only as a SHA-256 hash, and
+  // is checked against a shape regex before any query, so malformed traffic costs nothing.
+  "/scan/(.*)",
+  "/api/scan/(.*)",
 ] as const;
