@@ -1,3 +1,4 @@
+import { cancelBatchJobsFor } from "@/lib/ai-batch";
 import { del } from "@vercel/blob";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
@@ -15,6 +16,8 @@ import {
   captureHandoffs,
   captureJobs,
   capturePhotos,
+  aiBatchJobs,
+  aiResultCache,
   chatMessages,
   chatThreads,
   closenessCohorts,
@@ -184,9 +187,17 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id")],
+    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
     counts: [aiSuggestions, contactEmbeddings, closenessCohorts],
     run: async (db, userId) => {
+      // Background AI still in flight at a provider. Cancelled there first — the provider is
+      // holding this person's prompts, and deleting our row would only lose the handle to
+      // them. Best effort: the rows go either way.
+      await cancelBatchJobsFor(userId).catch(() => 0);
+      await db.delete(aiBatchJobs).where(eq(aiBatchJobs.userId, userId));
+      // Remembered AI answers (recruiter verdicts, profile reads, drafts): derived from this
+      // person's mail and contacts, and rebuilt on the next ask.
+      await db.delete(aiResultCache).where(eq(aiResultCache.userId, userId));
       await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, userId));
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));

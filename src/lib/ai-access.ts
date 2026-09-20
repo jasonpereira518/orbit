@@ -3,7 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { usageEvents, userSettings } from "@/db/schema";
+import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
 import { decryptOrNull } from "@/lib/crypto";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan } from "@/lib/entitlements";
@@ -326,7 +326,14 @@ export function managedCostSql() {
     ELSE 0 END)`;
 }
 
-/** This month's managed spend for one account — an index scan on `(user_id, created_at)`. */
+/**
+ * This month's managed spend for one account — an index scan on `(user_id, created_at)`,
+ * plus what batches still in flight are expected to cost.
+ *
+ * The reservation matters: a submitted batch has spent the money but written no usage rows
+ * yet (they land when its results do, hours later). Without counting it, an account could
+ * submit batch after batch and only discover the cap when the bill arrived.
+ */
 export async function managedUsageThisMonth(userId: string, now = new Date()): Promise<ManagedUsage> {
   const { start } = managedWindow(now);
   const db = await getDb();
@@ -343,7 +350,24 @@ export async function managedUsageThisMonth(userId: string, now = new Date()): P
         gte(usageEvents.createdAt, start),
       ),
     );
-  return { spentMicros: Number(row?.spent ?? 0), calls: Number(row?.calls ?? 0) };
+  const [reserved] = await db
+    .select({
+      micros: sql<string>`coalesce(sum(${aiBatchJobs.estCostMicros}), 0)::bigint`,
+      calls: sql<string>`coalesce(sum(${aiBatchJobs.requestCount}), 0)::bigint`,
+    })
+    .from(aiBatchJobs)
+    .where(
+      and(
+        eq(aiBatchJobs.userId, userId),
+        eq(aiBatchJobs.keyOwner, "orbit"),
+        eq(aiBatchJobs.status, "submitted"),
+        gte(aiBatchJobs.createdAt, start),
+      ),
+    );
+  return {
+    spentMicros: Number(row?.spent ?? 0) + Number(reserved?.micros ?? 0),
+    calls: Number(row?.calls ?? 0) + Number(reserved?.calls ?? 0),
+  };
 }
 
 export function allowanceFrom(usage: ManagedUsage, now = new Date()): ManagedAllowance {

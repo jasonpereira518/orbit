@@ -98,7 +98,12 @@ export const userSettings = pgTable("user_settings", {
    * complete, so it never participates in provider/model selection. See `src/lib/wispr.ts`.
    */
   wisprApiKeyEncrypted: text("wispr_api_key_encrypted"),
-  aiModel: text("ai_model").default("gemini-3.5-flash"),
+  aiModel: text("ai_model").default("gemini-3.8-flash"),
+  /**
+   * The model this account was moved OFF when a default changed under it, so Settings can
+   * say so once and offer the old one back. Null for everyone who chose their own.
+   */
+  aiModelMigratedFrom: text("ai_model_migrated_from"),
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),
@@ -1286,6 +1291,13 @@ export const contactBriefs = pgTable("contact_briefs", {
    */
   nextStep: text("next_step"),
   model: text("model"),
+  /**
+   * sha256 of what the model was asked (system prompt + assembled inputs). A regeneration
+   * whose inputs hash the same returns this brief instead of paying for the same answer
+   * (`generateAndStoreContactBrief`). Null for the deterministic no-model fallback, which
+   * must be replaced as soon as a model can run.
+   */
+  inputHash: text("input_hash"),
 });
 
 /** One entry on a LinkedIn profile: a job, or a school. */
@@ -2341,6 +2353,79 @@ export const usageEvents = pgTable(
     index("usage_events_user_created_idx").on(t.userId, t.createdAt),
     index("usage_events_created_idx").on(t.createdAt),
     index("usage_events_model_idx").on(t.provider, t.model),
+  ]
+);
+
+/**
+ * One submitted provider batch (`src/lib/ai-batch.ts`).
+ *
+ * Background work — LinkedIn enrichment, timeline events, the recruiter scan — is nobody's
+ * foreground, and every provider bills a batch at half price. The trade is latency: results
+ * arrive minutes to a day later, so the work has to survive being left half-done, which is
+ * what this row is. It holds what the results have to be mapped back onto (`payload`), what
+ * the provider needs deleting afterwards (`provider_meta`), and the estimate the managed
+ * allowance reserves while the batch is in flight.
+ */
+export const aiBatchJobs = pgTable(
+  "ai_batch_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** The `operation` every request in this batch records, e.g. "recruiter.scan". */
+    operation: text("operation").notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic">().notNull(),
+    model: text("model").notNull(),
+    /** Whose key paid, exactly as `usage_events` means it. */
+    keyOwner: text("key_owner").$type<"user" | "orbit">().notNull(),
+    /** The provider's own id for the batch. */
+    providerBatchId: text("provider_batch_id").notNull(),
+    /**
+     * submitted → the provider has it; applied → results written back; failed/cancelled are
+     * terminal and hand the work back to the feature's ordinary path.
+     */
+    status: text("status").$type<"submitted" | "applied" | "failed" | "cancelled">().notNull().default("submitted"),
+    requestCount: integer("request_count").notNull(),
+    /** Pessimistic estimate at batch prices; the managed allowance counts it while in flight. */
+    estCostMicros: integer("est_cost_micros"),
+    /** What the applier needs to map each `custom_id` back onto (contact ids, sender rows…). */
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    /** Provider-side leftovers to delete once results are in (OpenAI's input/output files). */
+    providerMeta: jsonb("provider_meta").$type<Record<string, string>>(),
+    attempts: integer("attempts").notNull().default(0),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("ai_batch_jobs_user_idx").on(t.userId, t.status),
+    index("ai_batch_jobs_status_idx").on(t.status, t.createdAt),
+    uniqueIndex("ai_batch_jobs_provider_batch_uidx").on(t.provider, t.providerBatchId),
+  ]
+);
+
+/**
+ * AI answers keyed by exactly what was asked (`src/lib/ai-result-cache.ts`).
+ *
+ * For call sites whose answer is a pure function of their inputs and gets asked again: the
+ * recruiter classifier on a re-scan, the extension re-reading a profile it read yesterday,
+ * a follow-up draft sheet reopened. `input_hash` covers the operation's prompt version and
+ * every input, so a changed prompt or new mail is a miss by construction. Pruned after 30
+ * days by the process-stalled sweep; per-user, and purged with the account's AI data.
+ */
+export const aiResultCache = pgTable(
+  "ai_result_cache",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    operation: text("operation").notNull(),
+    inputHash: text("input_hash").notNull(),
+    result: jsonb("result").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("ai_result_cache_key_uidx").on(t.userId, t.operation, t.inputHash),
+    index("ai_result_cache_created_idx").on(t.createdAt),
   ]
 );
 

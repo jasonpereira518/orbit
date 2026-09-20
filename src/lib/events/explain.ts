@@ -159,8 +159,7 @@ export async function explainAttendeeForUser(
       system: SYSTEM,
       user: JSON.stringify(inputs),
       operation: "events.why",
-      speed: "fast",
-      maxOutputTokens: 300,
+        maxOutputTokens: 300,
     });
     parsed = JSON.parse(raw) as { why?: unknown; opener?: unknown };
   } catch (err) {

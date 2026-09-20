@@ -25,7 +25,8 @@ import type {
   StarterMode,
   StartersResponse as StartersResult,
 } from "@/lib/extension/contract";
-import { completeJson, parseAiJson, userCanUseAi } from "@/lib/ai";
+import { parseAiJson, userCanUseAi } from "@/lib/ai";
+import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import { daysAgo } from "@/lib/duplicates";
 import {
   buildConversationTranscript,
@@ -650,16 +651,28 @@ export async function generateConversationStarters(
 
   let content: string;
   try {
-    content = await completeJson(userId, {
-      operation: "extension.starters",
-      system: systemPrompt(ctx.mode, limit),
-      user: userPrompt(ctx, limit),
-      temperature: 0.6,
-      // Matches the house default. A tighter budget looks generous for three
-      // short sentences, but reasoning models spend this allowance before they
-      // emit any answer, and the response comes back truncated mid-word.
-      maxOutputTokens: 4096,
-    });
+    // The panel follows the tab, so the same profile is asked about every time the user
+    // comes back to it. Same page, same notes → the starters it already wrote.
+    content = await cachedCompleteJson(
+      userId,
+      {
+        operation: "extension.starters",
+        system: systemPrompt(ctx.mode, limit),
+        user: userPrompt(ctx, limit),
+        temperature: 0.6,
+        // Matches the house default. A tighter budget looks generous for three
+        // short sentences, but reasoning models spend this allowance before they
+        // emit any answer, and the response comes back truncated mid-word.
+        maxOutputTokens: 4096,
+      },
+      {
+        ttlDays: 7,
+        accept: (raw) => {
+          const reply = startersResponseSchema.safeParse(parseAiJson(raw));
+          return reply.success && reply.data.starters.some((s) => s.basis.trim() && s.text.trim());
+        },
+      }
+    );
   } catch (error) {
     console.warn("[starters] model call failed", error);
     return {

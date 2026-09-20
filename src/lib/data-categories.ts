@@ -50,7 +50,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "insights",
     label: "AI suggestions and search index",
     description:
-      "Suggested edits, the closeness snapshot, and the embeddings behind search and chat. Orbit rebuilds these from whatever contacts remain.",
+      "Suggested edits, the closeness snapshot, the embeddings behind search and chat, and AI answers Orbit saved to reuse. Orbit rebuilds these from whatever contacts remain.",
   },
   {
     id: "notes",

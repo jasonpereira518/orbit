@@ -369,6 +369,27 @@ async function seed() {
     title: "Reach out",
   });
 
+  // Background AI still in flight at a provider when the account went.
+  await db.insert(schema.aiBatchJobs).values({
+    userId: USER,
+    operation: "import.enrich",
+    provider: "gemini",
+    model: "gemini-3.5-flash",
+    keyOwner: "user",
+    providerBatchId: "batches/smoke-purge",
+    requestCount: 1,
+    payload: { items: [] },
+  });
+
+  // A remembered AI answer: a recruiter verdict, a profile read or a draft — prose derived
+  // from this person's mail and contacts, so it goes with their data.
+  await db.insert(schema.aiResultCache).values({
+    userId: USER,
+    operation: "followup.draft",
+    inputHash: "smoke-purge-hash",
+    result: { v: "Great catching up last week — here is the deck I promised." },
+  });
+
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
 
   await db.insert(schema.contactEmbeddings).values({

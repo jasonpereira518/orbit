@@ -19,12 +19,12 @@
  */
 import { and, asc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { contacts, embeddingFailures } from "@/db/schema";
+import { contactEmbeddings, contacts, embeddingFailures } from "@/db/schema";
 import { createEmbeddingsBatch } from "@/lib/ai";
 import { embedWithBisect, planEmbeddingBatches } from "@/lib/embedding-batches";
 import { classifyAiError, isMissingAiApiKeyError } from "@/lib/errors";
 import { internalFetch } from "@/lib/internal-auth";
-import { buildContactEmbeddingContent, persistEmbeddingVectors } from "@/lib/search";
+import { buildContactEmbeddingContent, computeContentHash, persistEmbeddingVectors } from "@/lib/search";
 import { reportError } from "@/lib/report-error";
 
 /** Contacts claimed per pass. */
@@ -126,17 +126,45 @@ export async function runEmbeddingBackfill(
     });
     if (stale.length === 0) break;
 
-    const entries = stale
-      .map((contact) => ({
-        contactId: contact.id,
-        content: buildContactEmbeddingContent(contact),
-      }))
+    const candidates = stale
+      .map((contact) => {
+        const content = buildContactEmbeddingContent(contact);
+        return { contactId: contact.id, content, contentHash: computeContentHash(content) };
+      })
       .filter((entry) => entry.content.trim().length > 0);
 
-    const embeddable = new Set(entries.map((entry) => entry.contactId));
+    // Stamped stale is not the same as changed: an opportunity write, a merge or a profile
+    // save stamps the flag whether or not the embedded text moved. A contact whose stored
+    // vector was built from exactly this text needs its flag cleared, not another API call —
+    // the same check `rebuildContactEmbedding` makes on the immediate path.
+    const storedHash = new Map(
+      candidates.length === 0
+        ? []
+        : (
+            await db
+              .select({ contactId: contactEmbeddings.contactId, contentHash: contactEmbeddings.contentHash })
+              .from(contactEmbeddings)
+              .where(
+                and(
+                  eq(contactEmbeddings.userId, userId),
+                  eq(contactEmbeddings.sourceType, "profile"),
+                  inArray(contactEmbeddings.contactId, candidates.map((c) => c.contactId))
+                )
+              )
+          ).map((r) => [r.contactId, r.contentHash])
+    );
+    const unchangedIds = candidates
+      .filter((entry) => storedHash.get(entry.contactId) === entry.contentHash)
+      .map((entry) => entry.contactId);
+    const entries = candidates.filter((entry) => storedHash.get(entry.contactId) !== entry.contentHash);
+
+    const embeddable = new Set(candidates.map((entry) => entry.contactId));
     // A contact with no embeddable text is not pending work — clear its flag so the loop
-    // cannot spin on it forever, but write no embedding row.
-    const emptyIds = stale.map((c) => c.id).filter((id) => !embeddable.has(id));
+    // cannot spin on it forever, but write no embedding row. An unchanged one is done too.
+    const emptyIds = [
+      ...stale.map((c) => c.id).filter((id) => !embeddable.has(id)),
+      ...unchangedIds,
+    ];
 
     for (const slice of planEmbeddingBatches(entries, (entry) => entry.content)) {
       // Key-level failures are rethrown by embedWithBisect, leaving `embedding_stale_at` set
@@ -154,15 +182,17 @@ export async function runEmbeddingBackfill(
           ({ item, vector }) => sql`(
             ${userId}::text, ${item.contactId}::uuid, 'profile'::text,
             ${item.contactId}::text, ${JSON.stringify(vector)}::jsonb,
-            ${item.content}::text
+            ${item.content}::text, ${item.contentHash}::text
           )`
         );
+        // content_hash is written so the next pass — and the immediate path — can tell this
+        // vector is current. Rows written before it was stored re-embed once, then settle.
         const result = await db.execute(sql`
           INSERT INTO contact_embeddings
-            (user_id, contact_id, source_type, source_id, embedding, content)
+            (user_id, contact_id, source_type, source_id, embedding, content, content_hash)
           VALUES ${sql.join(tuples, sql`, `)}
           ON CONFLICT (user_id, contact_id, source_type, source_id)
-          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content
+          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash
           RETURNING id, contact_id
         `);
         // `db.execute` returns an array on neon-http and `{ rows }` on PGlite; both drivers
@@ -353,7 +383,7 @@ async function runMeetingPhase(
           ({ item, vector }) => sql`(
             ${userId}::text, ${item.contact_id}::uuid, 'meeting'::text,
             ${item.external_id}::text, ${JSON.stringify(vector)}::jsonb,
-            ${item.content}::text
+            ${item.content}::text, ${computeContentHash(item.content)}::text
           )`
         );
         // Four-column conflict target, matching `embeddings_user_contact_source_id_uidx`.
@@ -362,10 +392,10 @@ async function runMeetingPhase(
         // second meeting of any contact collide with the first.
         const result = await db.execute(sql`
           INSERT INTO contact_embeddings
-            (user_id, contact_id, source_type, source_id, embedding, content)
+            (user_id, contact_id, source_type, source_id, embedding, content, content_hash)
           VALUES ${sql.join(tuples, sql`, `)}
           ON CONFLICT (user_id, contact_id, source_type, source_id)
-          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content
+          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash
           RETURNING id, source_id
         `);
         const idBySourceId = new Map(

@@ -1318,6 +1318,8 @@ export async function draftContactFollowUp(
   options?: {
     channel?: "email" | "linkedin" | "sms";
     intent?: string;
+    /** The draft already written for this exact context, if any (see `draftFromContext`). */
+    reuse?: boolean;
   }
 ) {
   const userId = await requireUserId();
