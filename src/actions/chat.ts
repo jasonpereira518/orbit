@@ -96,6 +96,37 @@ export async function updateChatThreadContext(threadId: string, note: string | n
   return { contextNote: row.contextNote };
 }
 
+/**
+ * Thumbs on one answer. Scoped to the user's own rows, and to assistant turns only — there
+ * is nothing to rate about your own question.
+ *
+ * Passing the value already stored clears it, so the same button both sets and un-sets.
+ */
+export async function setChatMessageFeedback(
+  messageId: string,
+  value: "up" | "down" | null,
+  note?: string | null
+) {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+  const existing = await db.query.chatMessages.findFirst({
+    where: and(eq(chatMessages.id, messageId), eq(chatMessages.userId, userId)),
+    columns: { id: true, role: true, feedback: true },
+  });
+  if (!existing || existing.role !== "assistant") throw new Error("Answer not found");
+
+  const next = existing.feedback === value ? null : value;
+  await db
+    .update(chatMessages)
+    .set({
+      feedback: next,
+      // A note only belongs to the rating it was written for; clearing the rating clears it.
+      feedbackNote: next ? (note?.trim() || null) : null,
+    })
+    .where(and(eq(chatMessages.id, messageId), eq(chatMessages.userId, userId)));
+  return { feedback: next };
+}
+
 export async function deleteChatThread(threadId: string) {
   const userId = await requireUserForSurface("page.chat");
   const db = await getDb();

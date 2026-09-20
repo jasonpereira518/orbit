@@ -56,6 +56,7 @@ import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
+import { AnswerActions } from "@/components/chat/answer-actions";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -134,6 +135,19 @@ type AssistantMessage = {
    * record of the previous one.
    */
   steps?: ChatStep[];
+  /** Next questions derived from what retrieval found. Never model-generated. */
+  followUps?: string[];
+  /** Thumbs already on this answer, when it came back from a saved thread. */
+  feedback?: "up" | "down" | null;
+  /**
+   * True once the server has a row for this answer.
+   *
+   * A stopped or failed turn keeps its text on screen but was never persisted, so it has
+   * nothing to rate — and saying so is better than offering a button that would fail.
+   */
+  persisted?: boolean;
+  /** The user cut this answer short. */
+  stopped?: boolean;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -193,6 +207,9 @@ export function ChatPanel() {
   // Streaming is deliberately NOT a transition: updates inside `startTransition` are
   // deferred, which would hold every streamed token back until the whole answer landed.
   const [streaming, setStreaming] = useState(false);
+  // Lets the user cut a long answer short. `streamChat` has always accepted a signal and
+  // the route already honours `request.signal`; nothing was passing one.
+  const abortRef = useRef<AbortController | null>(null);
   const busy = pending || streaming;
   // The "searching" bubble makes sense until the first token; after that the answer
   // itself is the progress indicator.
@@ -496,6 +513,9 @@ export function ChatPanel() {
                 // Answers written before this column existed have none, and simply show no
                 // summary rather than a fabricated one.
                 steps: row.activity ?? undefined,
+                feedback: row.feedback ?? null,
+                // It came out of the database, so by definition there is a row to rate.
+                persisted: true,
               }
         )
       );
@@ -629,6 +649,8 @@ export function ChatPanel() {
           ]);
         };
 
+        const controller = new AbortController();
+        abortRef.current = controller;
         await streamChat(
           {
             question: q,
@@ -660,7 +682,14 @@ export function ChatPanel() {
             },
             onDone: (info) => {
               ensurePlaceholder();
-              patch((m) => ({ ...m, id: info.messageId || assistantId, streaming: false }));
+              patch((m) => ({
+                ...m,
+                id: info.messageId || assistantId,
+                streaming: false,
+                followUps: info.followUps ?? [],
+                // Only a real message id means there is a row to rate.
+                persisted: Boolean(info.messageId),
+              }));
               if (info.notice) toast.message(info.notice);
               if (info.title) setThreadTitle(info.title);
               setThreads((prev) => {
@@ -677,17 +706,40 @@ export function ChatPanel() {
               });
             },
             onError: (message) => {
+              // A stop is the user's own doing, not a failure: keep whatever arrived and
+              // say plainly that it was cut short rather than deleting it and apologising.
+              if (controller.signal.aborted) return;
               toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               resetQuestion(q);
             },
-          }
+          },
+          controller.signal
         );
+        if (controller.signal.aborted) {
+          // Stopping during retrieval means no answer bubble was ever placed, which used to
+          // leave the question sitting alone with nothing to say what happened. The user
+          // message may already be saved server-side by then, so the honest move is to mark
+          // the turn stopped rather than delete a question that was really asked.
+          if (!placed) ensurePlaceholder();
+          patch((m) => ({ ...m, streaming: false, stopped: true }));
+        }
+        abortRef.current = null;
         setStreaming(false);
       })();
     },
     [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
   );
+
+  /**
+   * Cut the answer short.
+   *
+   * The partial text stays on screen, but the server never reaches `persistAssistantTurn`,
+   * so nothing is saved — the bubble says so rather than letting a reload silently lose it.
+   */
+  const stopStreaming = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   function fillMostRecentUserMessage() {
     const fromThread = [...messages]
@@ -961,7 +1013,12 @@ export function ChatPanel() {
                     msg.role === "user" ? (
                       <UserBubble key={msg.id} msg={msg} />
                     ) : (
-                      <AssistantBubble key={msg.id} msg={msg} />
+                      <AssistantBubble
+                        key={msg.id}
+                        msg={msg}
+                        onRetry={() => sendQuestion(lastUserQuery)}
+                        onFollowUp={(q) => sendQuestion(q)}
+                      />
                     )
                   )}
 
@@ -1081,6 +1138,7 @@ export function ChatPanel() {
                     loadingThread ||
                     (!question.trim() && !lastUserQuery)
                   }
+                  onStop={stopStreaming}
                   onClick={() => {
                     if (!question.trim()) {
                       fillMostRecentUserMessage();
@@ -1217,8 +1275,12 @@ const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
 
 const AssistantBubble = memo(function AssistantBubble({
   msg,
+  onRetry,
+  onFollowUp,
 }: {
   msg: AssistantMessage;
+  onRetry?: () => void;
+  onFollowUp?: (question: string) => void;
 }) {
   const steps = msg.steps ?? [];
   return (
@@ -1235,6 +1297,11 @@ const AssistantBubble = memo(function AssistantBubble({
             <ChatMarkdown>{msg.answer}</ChatMarkdown>
           </div>
         )}
+        {msg.stopped && (
+          <p className="text-xs text-muted-foreground">
+            Stopped — this answer wasn’t saved.
+          </p>
+        )}
         {msg.recommendations.length > 0 && (
           <div className="space-y-2">
             {msg.recommendations.map((r) => (
@@ -1242,6 +1309,29 @@ const AssistantBubble = memo(function AssistantBubble({
                 key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
                 rec={r}
               />
+            ))}
+          </div>
+        )}
+        {!msg.streaming && msg.answer && (
+          <AnswerActions
+            messageId={msg.id}
+            answer={msg.answer}
+            persisted={Boolean(msg.persisted)}
+            initialFeedback={msg.feedback ?? null}
+            onRetry={onRetry}
+          />
+        )}
+        {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {msg.followUps?.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => onFollowUp?.(q)}
+                className="rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                {q}
+              </button>
             ))}
           </div>
         )}
