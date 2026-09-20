@@ -112,6 +112,39 @@ export const followupsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
+/**
+ * A note from outside the app — an Apple Note shared in, an Obsidian daily note, a Zap.
+ *
+ * Text only. The parse that turns it into people and commitments is the app's, and running
+ * it here would mean duplicating the whole capture pipeline behind a second door.
+ */
+export const noteBody = z.object({
+  text: z.string().trim().min(1, "A note needs some text").max(50_000),
+  /** Shown on the capture card so a user can tell where it came from. */
+  sourceLabel: z.string().trim().max(200).optional(),
+  contactId: z.string().uuid().optional(),
+});
+
+export const interactionsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  /** ISO 8601. Everything changed at or after this instant. */
+  updated_since: z.string().datetime().optional(),
+  contactId: z.string().uuid().optional(),
+});
+
+export const followupPatchBody = z
+  .object({
+    status: z.enum(["complete", "snoozed"]),
+    dueAt: z.string().datetime().optional(),
+  })
+  .refine((v) => v.status !== "snoozed" || Boolean(v.dueAt), {
+    message: "Snoozing needs a dueAt",
+    path: ["dueAt"],
+  });
+
+export type NoteBody = z.infer<typeof noteBody>;
+export type FollowupPatchBody = z.infer<typeof followupPatchBody>;
+
 export const webhookEndpointBody = z.object({
   url: httpsUrl,
   eventTypes: z
