@@ -767,8 +767,13 @@ export type ImportHistoryItem = {
   };
 };
 
-/** Rows per page. History is a record, not a feed — nobody scrolls past a screenful. */
-export const IMPORT_HISTORY_PAGE = 25;
+/**
+ * Rows per page. History is a record, not a feed — nobody scrolls past a screenful.
+ *
+ * Deliberately not exported: this is a "use server" file, and a single non-async export makes
+ * every export in it fail to compile. TypeScript does not catch that.
+ */
+const IMPORT_HISTORY_PAGE = 25;
 
 /**
  * Recent imports, narrowed to what the list draws.

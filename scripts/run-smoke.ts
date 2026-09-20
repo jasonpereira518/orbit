@@ -128,6 +128,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-icon-button-names": "pure",
   "smoke-import-detect": "pure",
   "smoke-import-errors": "pure",
+  "smoke-import-history-render": "pure",
   "smoke-import-sources": "pure",
   "smoke-import-queue": "pure",
   "smoke-import-progress-card": "pure",

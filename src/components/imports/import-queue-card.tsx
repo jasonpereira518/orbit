@@ -35,9 +35,15 @@ export function ImportQueueCard() {
 
   if (!queue.items.length && !queue.ignored.length) return null;
 
-  const reviewable = queue.items.filter((i) => i.status === "needs_review");
+  const reviewable = queue.items.filter(
+    (i) => i.status === "needs_review" && (i.ids?.length ?? 0) > 0,
+  );
+  const emptyPreviews = queue.items.filter(
+    (i) => i.status === "needs_review" && !(i.ids?.length ?? 0),
+  );
+  // Calendar's sentinel id is not a person, so it must not inflate this count.
   const selectedTotal = reviewable.reduce(
-    (n, i) => n + (i.ids?.length ?? 0),
+    (n, i) => n + (isPeopleImport(i) ? (i.ids?.length ?? 0) : 0),
     0,
   );
   const isRunning = queue.phase === "running";
@@ -96,6 +102,13 @@ export function ImportQueueCard() {
         ))}
       </ul>
 
+      {emptyPreviews.length ? (
+        <p className="text-xs text-muted-foreground">
+          {emptyPreviews.map((i) => i.fileName).join(", ")} — nobody new to
+          import from {emptyPreviews.length === 1 ? "this one" : "these"}
+        </p>
+      ) : null}
+
       {queue.ignored.length ? (
         <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
           <p className="text-xs font-medium text-muted-foreground">
@@ -129,7 +142,7 @@ export function ImportQueueCard() {
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
-            disabled={running || selectedTotal === 0}
+            disabled={running || reviewable.length === 0}
             onClick={() =>
               start(async () => {
                 const { message } = await runQueue();
@@ -141,9 +154,11 @@ export function ImportQueueCard() {
               ? "Import"
               : `Import everything (${reviewable.length} files)`}
           </Button>
-          <span className="text-xs text-muted-foreground">
-            {selectedTotal} selected
-          </span>
+          {selectedTotal ? (
+            <span className="text-xs text-muted-foreground">
+              {selectedTotal} people selected
+            </span>
+          ) : null}
         </div>
       ) : null}
 
@@ -159,6 +174,17 @@ export function ImportQueueCard() {
       ) : null}
     </section>
   );
+}
+
+/**
+ * Whether this step imports people you pick one by one.
+ *
+ * Calendar does not: a whole file is confirmed at once, and its `ids` holds a single sentinel
+ * that makes the reducer treat it as runnable. Counting that sentinel as a selected person is
+ * what produced "1 of 0 selected", and it inflated the total under the button.
+ */
+function isPeopleImport(item: QueuedImport): boolean {
+  return item.target !== "calendar_ics" && item.target !== "calendar_csv";
 }
 
 const STATUS_BADGE: Record<
@@ -232,7 +258,9 @@ function QueueRow({
               : item.result
                 ? item.result
                 : item.status === "needs_review"
-                  ? `${item.fileName} — ${item.ids?.length ?? 0} of ${item.reviewCount ?? 0} selected`
+                  ? isPeopleImport(item)
+                    ? `${item.fileName} — ${item.ids?.length ?? 0} of ${item.reviewCount ?? 0} selected`
+                    : `${item.fileName} — meetings with people you already know`
                   : item.fileName}
           </p>
         </div>

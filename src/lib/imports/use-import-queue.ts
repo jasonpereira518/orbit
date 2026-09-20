@@ -355,7 +355,16 @@ export type RunResult = { message: string };
  * the runner's single-job guard satisfied without the queue having to know about it.
  */
 export async function runQueue(): Promise<RunResult> {
-  setState({ phase: "running", stopping: false });
+  // A file whose preview found nobody to import can never run — `nextRunnable` requires a
+  // selection — so it would sit in the list forever and make the button's count a lie.
+  // Skipping it up front keeps the count, the step totals and the summary all honest.
+  let items = state.items;
+  for (const item of items) {
+    if (item.status === "needs_review" && !(item.ids?.length ?? 0)) {
+      items = advance(items, item.id, { status: "skipped" });
+    }
+  }
+  setState({ items, phase: "running", stopping: false });
 
   for (;;) {
     const item = nextRunnable(state.items);

@@ -1,0 +1,183 @@
+/**
+ * The import history row, rendered — and the guarantee that no raw error reaches it.
+ *
+ * `imports.error_message` holds whatever the driver threw: Postgres constraint prose, OAuth
+ * token-endpoint bodies, socket errors. The row used to print that verbatim. The mapping is
+ * unit-tested next door, but the mapping being right is not the same as the component using
+ * it — a single `{h.errorMessage}` slipping back in would restore the bug with every unit test
+ * still green. This renders the real component and greps the output.
+ *
+ * It also pins the counter semantics that differ per import type: a calendar import runs with
+ * `createsContacts: false`, so "0 created · 0 updated" is a true sentence about the wrong
+ * thing, and `blockedByPlan` is an upgrade prompt rather than a fault.
+ *
+ * Pure tier: no database.
+ *
+ * Run: npx tsx scripts/smoke-import-history-render.ts
+ */
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ImportHistory } from "../src/components/imports/import-history";
+import type { ImportHistoryItem } from "../src/actions/imports";
+
+let failures = 0;
+function check(label: string, ok: boolean, detail = "") {
+  console.log(
+    `  ${ok ? "ok  " : "FAIL"}  ${label}${detail ? ` — ${detail}` : ""}`,
+  );
+  if (!ok) failures++;
+}
+
+function item(over: Partial<ImportHistoryItem> = {}): ImportHistoryItem {
+  return {
+    id: "i1",
+    importType: "linkedin_connections",
+    fileName: "Connections.csv",
+    status: "completed",
+    totalRows: 100,
+    rowsProcessed: 100,
+    contactsCreated: 12,
+    contactsUpdated: 3,
+    duplicatesFound: 2,
+    errorMessage: null,
+    createdAt: new Date("2026-09-01T10:00:00Z"),
+    stats: {},
+    ...over,
+  };
+}
+
+const render = (items: ImportHistoryItem[]) =>
+  renderToStaticMarkup(React.createElement(ImportHistory, { history: items }));
+
+console.log("A normal import");
+const ok = render([item()]);
+check("names the file", ok.includes("Connections.csv"));
+check("names the source", ok.includes("LinkedIn connections"));
+check(
+  "counts what came in",
+  ok.includes("12 added") && ok.includes("3 updated"),
+);
+
+console.log("Raw errors never reach the page");
+/** Verbatim text real failures put in `imports.error_message`. */
+const RAW = [
+  'duplicate key value violates unique constraint "contacts_user_email_uidx"',
+  '{"error":"invalid_grant","error_description":"Token has been expired or revoked."}',
+  "canceling statement due to statement timeout",
+  "connect ECONNRESET 10.0.0.1:5432",
+  "value too long for type character varying(255)",
+  "Request failed with status code 401 (ref ab12cd34)",
+];
+for (const raw of RAW) {
+  const html = render([item({ status: "failed", errorMessage: raw })]);
+  const leaked = [
+    "unique constraint",
+    "invalid_grant",
+    "error_description",
+    "canceling statement",
+    "ECONNRESET",
+    "character varying",
+    "10.0.0.1",
+  ].filter((frag) => html.includes(frag));
+  check(
+    `${raw.slice(0, 42)}… is mapped`,
+    leaked.length === 0,
+    leaked.join(", "),
+  );
+}
+
+const failedHtml = render([
+  item({
+    status: "failed",
+    errorMessage: 'duplicate key value violates unique constraint "x"',
+  }),
+]);
+check(
+  "...and says something useful instead",
+  failedHtml.includes("Some rows clashed"),
+  "",
+);
+check(
+  "...with a next step",
+  failedHtml.includes("Everything else was imported"),
+);
+
+console.log("A stored code beats classifying the text");
+const coded = render([
+  item({
+    status: "failed",
+    errorMessage: "something nobody can classify",
+    stats: { errorCode: "needs_reconnect" },
+  }),
+]);
+check(
+  "the precise code wins",
+  coded.includes("connection to that account expired"),
+  "",
+);
+
+console.log("Counters mean what they say");
+const calendar = render([
+  item({
+    id: "c1",
+    importType: "calendar_ics",
+    fileName: "work.ics",
+    contactsCreated: 0,
+    contactsUpdated: 0,
+    duplicatesFound: 0,
+    stats: { interactionsLogged: 8 },
+  }),
+]);
+check(
+  "a calendar import reports meetings",
+  calendar.includes("8 meetings logged"),
+);
+check(
+  "...and never claims 0 created",
+  !calendar.includes("0 added") && !calendar.includes("0 updated"),
+);
+
+const capped = render([item({ stats: { blockedByPlan: 40 } })]);
+check("the plan cap is named", capped.includes("40 waiting on your plan"));
+check("...as an upgrade, not a fault", capped.includes("settings-plan"));
+check("...and not in red", !/destructive[^"]*"[^"]*40 waiting/.test(capped));
+
+const refused = render([item({ stats: { failedRows: 3, skipped: 5 } })]);
+check(
+  "rows the database refused are named",
+  refused.includes("3 Orbit couldn’t save"),
+);
+check("...separately from skipped ones", refused.includes("5 skipped"));
+check("...and never with the word “failed”", !/\bfailed\b/i.test(refused), "");
+
+console.log("Every import type still renders");
+const TYPES = [
+  "linkedin_connections",
+  "linkedin_messages",
+  "contacts_file",
+  "google_contacts",
+  "outlook_contacts",
+  "gmail_recruiter_scan",
+  "outlook_recruiter_scan",
+  "calendar_ics",
+  "calendar_csv",
+];
+for (const t of TYPES) {
+  const html = render([item({ importType: t, fileName: null })]);
+  // With no filename the row falls back to the source label, so the raw type appearing
+  // anywhere means the label table does not know this type.
+  check(`${t} has a name, not its raw type`, !html.includes(t), t);
+}
+
+console.log("Empty state");
+const empty = render([]);
+check("says what to do", empty.includes("No imports yet"));
+
+if (failures) {
+  console.error(
+    `\n${failures} history render check${failures === 1 ? "" : "s"} failed`,
+  );
+  process.exit(1);
+}
+console.log("\nimport history render smoke tests passed");
+process.exit(0);

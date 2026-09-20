@@ -344,14 +344,29 @@ async function pollServerOwnedImportJob(
  * `src/db/schema.ts`) via `getImportJobStatus`, and are appended only when nonzero so a
  * plain contacts import's message is unchanged.
  */
-function completionMessage(status: ImportJobStatus): string {
-  const parts = [
-    `${status.contactsCreated} created`,
-    `${status.contactsUpdated} updated`,
-  ];
+/**
+ * What a finished job says it did.
+ *
+ * Kind-aware, because a calendar import runs with `createsContacts: false` by design and
+ * would otherwise always announce itself as "0 created, 0 updated" — a true sentence about
+ * the wrong thing. What it actually did is log meetings.
+ */
+function completionMessage(
+  status: ImportJobStatus,
+  kind?: ImportJobKind,
+): string {
+  const logsMeetings = kind === "calendar";
+  const parts = logsMeetings
+    ? []
+    : [
+        `${status.contactsCreated} created`,
+        `${status.contactsUpdated} updated`,
+      ];
   if (status.interactionsLogged > 0) {
     parts.push(
-      `${status.interactionsLogged} interaction${status.interactionsLogged === 1 ? "" : "s"} logged`,
+      logsMeetings
+        ? `${status.interactionsLogged} meeting${status.interactionsLogged === 1 ? "" : "s"} logged`
+        : `${status.interactionsLogged} interaction${status.interactionsLogged === 1 ? "" : "s"} logged`,
     );
   }
   if (status.remindersCreated > 0) {
@@ -365,8 +380,13 @@ function completionMessage(status: ImportJobStatus): string {
   // still reports "completed" with the failures nowhere in the UI.
   if (status.failedRows > 0) {
     parts.push(
-      `${status.failedRows} row${status.failedRows === 1 ? "" : "s"} failed`,
+      `${status.failedRows} row${status.failedRows === 1 ? "" : "s"} Orbit couldn\u2019t save`,
     );
+  }
+  if (!parts.length) {
+    return logsMeetings
+      ? "Nothing new to log \u2014 those meetings were already in your orbit"
+      : "Nothing new to import \u2014 everyone was already in your orbit";
   }
   return `Imported: ${parts.join(", ")}`;
 }
@@ -481,7 +501,7 @@ async function runServerOwnedImportJob(
     step,
     status: "completed",
     progress: null,
-    resultMessage: completionMessage(status),
+    resultMessage: completionMessage(status, kind),
   });
 }
 
