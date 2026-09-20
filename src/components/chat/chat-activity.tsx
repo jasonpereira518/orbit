@@ -35,41 +35,46 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
   const [open, setOpen] = useState(false);
   const reduceMotion = usePrefersReducedMotion();
 
-  const active = useMemo(
-    () => [...steps].reverse().find((step) => step.status === "active") ?? null,
-    [steps]
-  );
+  /**
+   * What the live line says right now.
+   *
+   * The most recently started stage that is still running — and when nothing is running,
+   * the last stage that did, rather than a generic "working on it". The stages fan out in
+   * parallel, so there are real gaps between one finishing and the next starting; filling
+   * them with the last true statement keeps the line honest without inventing a stage.
+   */
+  const current = useMemo(() => {
+    const running = [...steps].reverse().find((step) => step.status === "active");
+    return running ?? steps[steps.length - 1] ?? null;
+  }, [steps]);
   const summary = useMemo(() => summarise(steps), [steps]);
 
   if (steps.length === 0) return null;
 
   if (state === "live") {
-    const label = active?.label ?? "Working on it";
+    const label = current?.label ?? "Starting";
     return (
-      <div
-        className={cn("flex items-center gap-2 text-sm text-muted-foreground", className)}
-        aria-live="polite"
-        aria-atomic="true"
-      >
+      <div className={cn("flex items-center gap-2 text-sm text-muted-foreground", className)}>
         <OrbitMark reduceMotion={reduceMotion} />
         {/*
-          Keyed on the label so each new stage cross-fades in place rather than the text
-          swapping instantly. `mode="wait"` would leave a gap with nothing in it, which
-          reads as a stall on the very thing meant to show progress.
+          `mode="wait"` is load-bearing, not a preference. Overlapping enter/exit left the
+          outgoing label mounted, so the line accumulated every stage it had ever shown —
+          and because this is an aria-live region, a screen reader read the whole history
+          aloud on each change. Waiting for the exit guarantees exactly one label.
         */}
-        <span className="relative min-w-0">
-          <AnimatePresence initial={false}>
+        <span className="min-w-0" aria-live="polite" aria-atomic="true">
+          <AnimatePresence initial={false} mode="wait">
             <motion.span
               key={label}
               className="block truncate"
-              initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+              initial={reduceMotion ? false : { opacity: 0, y: 3 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4, position: "absolute" }}
-              transition={{ duration: DUR.base, ease: EASE_HOUSE }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -3 }}
+              transition={{ duration: DUR.fast, ease: EASE_HOUSE }}
             >
               {label}
-              {active?.detail ? (
-                <span className="text-muted-foreground/70"> · {active.detail}</span>
+              {current?.detail ? (
+                <span className="text-muted-foreground/70"> · {current.detail}</span>
               ) : null}
             </motion.span>
           </AnimatePresence>
