@@ -13,6 +13,10 @@ import {
   outlookContactsAdapter,
 } from "@/lib/import-adapters/outlook-contacts";
 import {
+  CONTACTS_FILE_IMPORT_TYPE,
+  contactsFileAdapter,
+} from "@/lib/import-adapters/contacts-file";
+import {
   LINKEDIN_MESSAGES_IMPORT_TYPE,
   linkedinMessagesAdapter,
 } from "@/lib/import-adapters/linkedin-messages";
@@ -38,6 +42,7 @@ const ADAPTERS: Record<string, ImportAdapter<ImportJobRowPayload>> = {
   [LINKEDIN_IMPORT_TYPE]: linkedinConnectionsAdapter,
   [GOOGLE_CONTACTS_IMPORT_TYPE]: googleContactsAdapter,
   [OUTLOOK_CONTACTS_IMPORT_TYPE]: outlookContactsAdapter,
+  [CONTACTS_FILE_IMPORT_TYPE]: contactsFileAdapter,
   [LINKEDIN_MESSAGES_IMPORT_TYPE]: linkedinMessagesAdapter,
   [CALENDAR_ICS_IMPORT_TYPE]: calendarAdapter,
   [CALENDAR_CSV_IMPORT_TYPE]: calendarAdapter,

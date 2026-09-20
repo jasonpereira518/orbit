@@ -1,135 +1,5 @@
+import { brandLuma, lookupBrand, type Brand, type BrandKind } from "@/lib/brand-colors";
 import { hashHue } from "@/lib/hash";
-
-/** Curated primary brand colors for common schools (normalized keys). */
-const SCHOOL_COLORS: Record<string, string> = {
-  "harvard university": "#A51C30",
-  harvard: "#A51C30",
-  "stanford university": "#8C1515",
-  stanford: "#8C1515",
-  mit: "#A31F34",
-  "massachusetts institute of technology": "#A31F34",
-  "yale university": "#00356B",
-  yale: "#00356B",
-  "princeton university": "#E77500",
-  princeton: "#E77500",
-  "columbia university": "#B9D9EB",
-  columbia: "#B9D9EB",
-  "university of pennsylvania": "#011F5B",
-  upenn: "#011F5B",
-  penn: "#011F5B",
-  "cornell university": "#B31B1B",
-  cornell: "#B31B1B",
-  "brown university": "#4E3629",
-  brown: "#4E3629",
-  "dartmouth college": "#00693E",
-  dartmouth: "#00693E",
-  "uc berkeley": "#003262",
-  berkeley: "#003262",
-  "university of california berkeley": "#003262",
-  ucla: "#2774AE",
-  "university of california los angeles": "#2774AE",
-  "university of michigan": "#FFCB05",
-  michigan: "#FFCB05",
-  nyu: "#57068C",
-  "new york university": "#57068C",
-  "georgia tech": "#B3A369",
-  "georgia institute of technology": "#B3A369",
-  "carnegie mellon": "#C41230",
-  "carnegie mellon university": "#C41230",
-  cmu: "#C41230",
-  "university of texas": "#BF5700",
-  ut: "#BF5700",
-  "university of washington": "#4B2E83",
-  "duke university": "#003087",
-  duke: "#003087",
-  "northwestern university": "#4E2A84",
-  northwestern: "#4E2A84",
-  "university of chicago": "#800000",
-  caltech: "#FF6C0C",
-  "california institute of technology": "#FF6C0C",
-  oxford: "#002147",
-  "university of oxford": "#002147",
-  cambridge: "#A3C1AD",
-  "university of cambridge": "#A3C1AD",
-  "university of toronto": "#002A5C",
-  waterloo: "#FDD54F",
-  "university of waterloo": "#FDD54F",
-  georgetown: "#041E42",
-  "georgetown university": "#041E42",
-};
-
-/** Curated primary brand colors for common companies. */
-const COMPANY_COLORS: Record<string, string> = {
-  google: "#4285F4",
-  "alphabet": "#4285F4",
-  "amazon web services": "#FF9900",
-  aws: "#FF9900",
-  amazon: "#FF9900",
-  meta: "#0668E1",
-  facebook: "#0668E1",
-  "meta platforms": "#0668E1",
-  openai: "#10A37F",
-  microsoft: "#00A4EF",
-  apple: "#A2AAAD",
-  stripe: "#635BFF",
-  vercel: "#FFFFFF",
-  netflix: "#E50914",
-  uber: "#000000",
-  airbnb: "#FF5A5F",
-  salesforce: "#00A1E0",
-  oracle: "#F80000",
-  ibm: "#054ADA",
-  nvidia: "#76B900",
-  intel: "#0071C5",
-  adobe: "#FF0000",
-  slack: "#4A154B",
-  notion: "#FFFFFF",
-  figma: "#F24E1E",
-  linkedin: "#0A66C2",
-  twitter: "#1DA1F2",
-  x: "#FFFFFF",
-  "jpmorgan chase": "#005EB8",
-  "jp morgan": "#005EB8",
-  "jp morgan chase": "#005EB8",
-  jpmorgan: "#005EB8",
-  "goldman sachs": "#7399C6",
-  "morgan stanley": "#002F6C",
-  "bank of america": "#012169",
-  citibank: "#003B70",
-  citi: "#003B70",
-  metaprop: "#6C5CE7",
-  "y combinator": "#F26625",
-  yc: "#F26625",
-  a16z: "#FF5A00",
-  "andreessen horowitz": "#FF5A00",
-  sequoia: "#EE3224",
-  "sequoia capital": "#EE3224",
-  accenture: "#A100FF",
-  deloitte: "#86BC25",
-  mckinsey: "#000000",
-  "bain & company": "#CC0000",
-  bain: "#CC0000",
-  "boston consulting group": "#0095C8",
-  bcg: "#0095C8",
-  palantir: "#000000",
-  databricks: "#FF3621",
-  snowflake: "#29B5E8",
-  shopify: "#96BF48",
-  spotify: "#1DB954",
-  discord: "#5865F2",
-  github: "#FFFFFF",
-  gitlab: "#FC6D26",
-  atlassian: "#0052CC",
-  zoom: "#2D8CFF",
-  dropbox: "#0061FF",
-  coinbase: "#0052FF",
-  robinhood: "#CCFF00",
-  tesla: "#CC0000",
-  spacex: "#005288",
-  anthropic: "#D4A27F",
-  perplexity: "#22B8CF",
-  cursor: "#7C6CFF",
-};
 
 const NEUTRAL_STAR = "#c8d0dc";
 const NEUTRAL_ORG = "#8a9bb0";
@@ -139,6 +9,8 @@ export function normalizeOrgKey(name: string | null | undefined): string {
     .trim()
     .toLowerCase()
     .replace(/[.,']/g, "")
+    // "UNC-Chapel Hill" and "UNC Chapel Hill" are one school.
+    .replace(/\s*[-–—]\s*/g, " ")
     .replace(/\s+/g, " ")
     .replace(/\s*\(.*\)\s*$/, "")
     .trim();
@@ -165,51 +37,65 @@ function hashToBrandHex(input: string): string {
   return hslToHex(hue, sat, light);
 }
 
-function lookupColor(
-  key: string,
-  map: Record<string, string>
-): string | null {
-  if (!key) return null;
-  if (map[key]) return map[key];
-  for (const [known, color] of Object.entries(map)) {
-    if (key.includes(known) || known.includes(key)) return color;
-  }
-  return null;
-}
+/** The dimmest a brand may be drawn on the night sky. */
+const MIN_SKY_LUMA = 0.4;
 
-/** Lift near-black / near-white brands so they glow on the dark map. */
-function mapFriendlyBrand(hex: string): string {
+/**
+ * The dark-sky treatment: make a brand visible on the dark map without changing what colour
+ * it is. Raw hexes come from `brand-colors.ts`; this is the constellation's own adaptation.
+ *
+ * A dark brand is lifted toward white until it clears `MIN_SKY_LUMA`, so Duke stays Duke blue and
+ * Stanford stays cardinal — they used to either stay navy (invisible on black) or, past a cutoff,
+ * all become the same slate grey. Only a brand with no hue at all (a black logo) ends up grey,
+ * which is what it is. Near-white is softened a touch so it does not glare.
+ */
+export function mapFriendlyBrand(hex: string): string {
   const raw = hex.replace("#", "");
   if (raw.length !== 6) return hex;
-  const r = parseInt(raw.slice(0, 2), 16);
-  const g = parseInt(raw.slice(2, 4), 16);
-  const b = parseInt(raw.slice(4, 6), 16);
-  const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  if (luma < 0.12) return "#6B7C93";
-  if (luma > 0.92) return "#E8EEF7";
-  return hex;
+  const l = brandLuma(hex);
+  if (l > 0.92) return "#E8EEF7";
+  if (l >= MIN_SKY_LUMA) return hex;
+  for (let t = 0.05; t < 1; t += 0.05) {
+    const lifted = mixWithWhite(hex, t);
+    if (brandLuma(lifted) >= MIN_SKY_LUMA) return lifted;
+  }
+  return mixWithWhite(hex, 0.5);
 }
 
-function resolveFromMap(
+/**
+ * Brands whose true hex reads as a different colour on the night sky. Stripe's "blurple"
+ * (#635BFF, hue ~243°) sits on the blue/violet line; on black, and mixed toward white for the
+ * stars, it read plainly blue. Nudged to the violet people see. Sky-only: cards keep the raw hex.
+ */
+const SKY_HUE_OVERRIDES: Record<string, string> = {
+  Stripe: "#9061F9",
+};
+
+/** A known brand as the constellation draws it. */
+export function skyBrandColor(brand: Brand): string {
+  return mapFriendlyBrand(SKY_HUE_OVERRIDES[brand.name] ?? brand.hex);
+}
+
+function resolveBrand(
   name: string | null | undefined,
-  map: Record<string, string>,
+  kind: BrandKind | undefined,
   fallbackNeutral: string
 ): string {
   const key = normalizeOrgKey(name);
   if (!key) return fallbackNeutral;
-  const hit = lookupColor(key, map);
-  if (hit) return mapFriendlyBrand(hit);
+  const hit = lookupBrand(name, kind);
+  if (hit) return skyBrandColor(hit);
   return hashToBrandHex(key);
 }
 
 /** Primary color for a contact's school star tint. */
 export function schoolStarColor(school: string | null | undefined): string {
-  return resolveFromMap(school, SCHOOL_COLORS, NEUTRAL_STAR);
+  return resolveBrand(school, "school", NEUTRAL_STAR);
 }
 
 /** Primary brand color for a company. */
 export function companyBrandColor(company: string | null | undefined): string {
-  return resolveFromMap(company, COMPANY_COLORS, NEUTRAL_ORG);
+  return resolveBrand(company, "company", NEUTRAL_ORG);
 }
 
 export function clusterBrandColor(
@@ -218,10 +104,10 @@ export function clusterBrandColor(
 ): string {
   if (kind === "school") return schoolStarColor(name);
   if (kind === "company") return companyBrandColor(name);
-  // Infer: try school map first for known schools, else company
-  const key = normalizeOrgKey(name);
-  if (lookupColor(key, SCHOOL_COLORS)) return schoolStarColor(name);
-  return companyBrandColor(name);
+  // Infer from the name: a known school tints as a school, anything else as a company.
+  return lookupBrand(name)?.kind === "school"
+    ? schoolStarColor(name)
+    : companyBrandColor(name);
 }
 
 /** Lerp a hex color toward white (0 = unchanged, 1 = pure white). */

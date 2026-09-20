@@ -2,7 +2,8 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
-import { completeJson, parseAiJson } from "@/lib/ai";
+import { parseAiJson } from "@/lib/ai";
+import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import { formatHowMetSummary } from "@/lib/met-context";
 
 const draftSchema = z.object({
@@ -129,6 +130,13 @@ async function draftFromContext(input: {
   reminderBlock?: string | null;
   channel?: "email" | "linkedin" | "sms";
   intent?: string | null;
+  /**
+   * Return the draft already written for this exact context instead of a new one. Only the
+   * sheet that drafts on OPEN asks for this: reopening it used to buy a fresh draft every
+   * time. Every explicit Draft/Regenerate click stays fresh — and is stored, so the next
+   * open shows the latest draft.
+   */
+  reuse?: boolean;
 }): Promise<FollowUpDraft> {
   const contactName = input.contact.preferredName || input.contact.fullName;
   const profileBlock = buildProfileBlock(input.contact);
@@ -178,7 +186,7 @@ async function draftFromContext(input: {
       ? `End with a short sign-off followed by "${senderFirstName}" on its own line.`
       : "Do not write a sign-off, signature, or placeholder name — end on the final sentence.";
 
-  const content = await completeJson(input.userId, {
+  const content = await cachedCompleteJson(input.userId, {
     operation: "followup.draft",
     temperature: 0.5,
     system: `You draft warm, specific follow-up messages for a personal networking CRM called Orbit.
@@ -207,6 +215,10 @@ ${intentBlock ? `\n${intentBlock}` : ""}
 
 Conversation history (newest first):
 ${transcript || "(no interactions logged yet)"}`,
+  }, {
+    ttlDays: 7,
+    fresh: !input.reuse,
+    accept: (raw) => Boolean(parseDraftBody(raw)?.trim()),
   });
 
   return {
@@ -266,6 +278,7 @@ export async function generateContactFollowUpDraft(
   options?: {
     channel?: "email" | "linkedin" | "sms";
     intent?: string | null;
+    reuse?: boolean;
   }
 ): Promise<FollowUpDraft> {
   const { contact, recent } = await loadContactContext(userId, contactId);
@@ -277,5 +290,6 @@ export async function generateContactFollowUpDraft(
     reminderBlock: "Reminder: Warm follow-up from contact profile",
     channel: options?.channel,
     intent: options?.intent,
+    reuse: options?.reuse,
   });
 }

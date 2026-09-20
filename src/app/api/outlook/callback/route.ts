@@ -7,6 +7,7 @@ import {
   upsertOutlookConnection,
 } from "@/lib/outlook";
 import { isDemoMode } from "@/lib/auth";
+import { grantCovers } from "@/lib/microsoft-scopes";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
 /** Keeps `error_events.kind` low-cardinality so the admin console can group on it. */
@@ -36,6 +37,16 @@ export async function GET(request: Request) {
       kind: "provider_denied",
       message: error,
     });
+    // A cancelled consent still carries the state, so honour its returnTo too — otherwise
+    // "Cancel" on Microsoft's screen ignored where the user started from. Best-effort: a
+    // bad or missing state just keeps the default.
+    try {
+      const { returnTo, purpose } = await consumeOutlookOAuthState(state);
+      if (returnTo) redirectBase = new URL(returnTo, url.origin);
+      if (purpose) redirectBase.searchParams.set("purpose", purpose);
+    } catch {
+      // keep the default destination
+    }
     redirectBase.searchParams.set("outlook", "error");
     redirectBase.searchParams.set("reason", error);
     return NextResponse.redirect(redirectBase);
@@ -44,8 +55,9 @@ export async function GET(request: Request) {
   try {
     if (!code) throw new Error("Missing authorization code");
 
-    const { userId: stateUserId, returnTo } = await consumeOutlookOAuthState(state);
+    const { userId: stateUserId, returnTo, purpose } = await consumeOutlookOAuthState(state);
     if (returnTo) redirectBase = new URL(returnTo, url.origin);
+    if (purpose) redirectBase.searchParams.set("purpose", purpose);
 
     let sessionUserId: string | null = null;
     if (isDemoMode()) {
@@ -61,7 +73,22 @@ export async function GET(request: Request) {
 
     const tokens = await exchangeCodeForTokens(code);
     const email = await fetchMicrosoftProfileEmail(tokens.access_token);
-    await upsertOutlookConnection(sessionUserId, tokens, email);
+    const connection = await upsertOutlookConnection(sessionUserId, tokens, email);
+
+    // Consent can finish without the scope this entry point asked for (a work or school
+    // tenant's policy, or an admin-consent requirement). The connection is kept — whatever
+    // WAS granted still works — but the feature that asked cannot run, so say so instead of
+    // "connected".
+    if (purpose && !grantCovers(purpose, connection?.scopes)) {
+      await recordErrorEvent({
+        source: ERROR_SOURCES.oauthOutlookCallback,
+        kind: "missing_scope",
+        message: purpose,
+      });
+      redirectBase.searchParams.set("outlook", "error");
+      redirectBase.searchParams.set("reason", "missing_scope");
+      return NextResponse.redirect(redirectBase);
+    }
 
     redirectBase.searchParams.set("outlook", "connected");
     return NextResponse.redirect(redirectBase);
@@ -74,7 +101,10 @@ export async function GET(request: Request) {
     redirectBase.searchParams.set("outlook", "error");
     redirectBase.searchParams.set(
       "reason",
-      err instanceof Error ? err.message : "oauth_failed"
+      // A code, not the message. The full error is already in recordErrorEvent above;
+      // in the URL it only leaked token-endpoint bodies into a toast, browser history
+      // and access logs.
+      "oauth_failed"
     );
     return NextResponse.redirect(redirectBase);
   }

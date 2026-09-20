@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { cronRuns } from "@/db/schema";
 import { toUserFacingError } from "@/lib/errors";
+import { reportError } from "@/lib/report-error";
 
 /**
  * The scheduled-job ledger.
@@ -16,6 +17,7 @@ import { toUserFacingError } from "@/lib/errors";
 /** `ops.sweep` is the ten-minute known-condition sweep (`src/lib/ops-sweep.ts`). */
 export type CronJobName =
   | "imports.process-stalled"
+  | "jobs.feed-sweep"
   | "ops.sweep"
   | "sync.run"
   | "webhooks.drain";
@@ -75,9 +77,10 @@ export async function startCronRun(
       .values({ job, trigger, status: "running", startedAt: new Date(startedAt) })
       .returning();
     return { id: row?.id ?? null, startedAt };
-  } catch {
+  } catch (err) {
     // Degrade to today's behaviour (no record) rather than breaking the job this
-    // route exists to run.
+    // route exists to run — but say so: a job with no ledger row looks like it never ran.
+    reportError(err, { where: "job.cron-ledger.start", level: "warning", extra: { job } });
     return { id: null, startedAt };
   }
 }
@@ -105,7 +108,8 @@ export async function finishCronRun(
           : null,
       })
       .where(eq(cronRuns.id, handle.id));
-  } catch {
-    // The ledger must never fail the job.
+  } catch (err) {
+    // The ledger must never fail the job; reported so a stuck "running" row has a cause.
+    reportError(err, { where: "job.cron-ledger.finish", level: "warning" });
   }
 }

@@ -50,6 +50,21 @@ export type Entitlements = {
    * table exists to collect.
    */
   canUseApi: boolean;
+  /**
+   * The MCP server — Orbit inside Claude, ChatGPT or any other assistant that speaks the
+   * protocol. True on every plan, including free, which is the one deliberate exception to
+   * the paid-connector line above.
+   *
+   * The reasoning is that this is the funnel, not an add-on. Someone who asks their assistant
+   * "who do I know at Stripe?" and gets a real answer has understood the product in one
+   * sentence, which no landing page has managed. The plan limits that cost money still apply
+   * underneath: the free contact cap bounds `create_contact`, and sending is not a tool at
+   * all — an agent can only queue a message for the user to approve.
+   *
+   * Kept as its own flag rather than reusing `canUseApi` so that the REST API and webhooks,
+   * which really are paid, do not silently become free with it.
+   */
+  canUseMcp: boolean;
 };
 
 /** Feature keys that `requireEntitlement` can gate on. */
@@ -86,7 +101,7 @@ export function isPaywallError(err: unknown): err is PaywallError {
   return err instanceof Error && err.name === "PaywallError";
 }
 
-type BillingColumns = {
+export type BillingColumns = {
   compedPlan?: "orbit" | "lifetime" | null;
   lifetimePurchasedAt?: Date | null;
   subscriptionPlan?: "orbit" | null;
@@ -110,9 +125,9 @@ function subscriptionIsLive(row: BillingColumns, now: Date) {
  * Precedence: comp > lifetime > subscription > free.
  *
  * Comp wins outright so a manually granted account is never downgraded by stale billing
- * state. Lifetime outranks subscription so that someone who bought Lifetime and later also
- * subscribed does not silently lose the Lifetime grant if the subscription lapses — the two
- * are additive in practice (see `getEntitlements`, which unions hosted enrichment back in).
+ * state. Lifetime outranks subscription: an account holds one plan at a time, and buying
+ * Lifetime ends Pro, so a subscription row left behind (canceled but not yet past its
+ * period end) must never outrank the Lifetime that replaced it.
  */
 export function resolvePlan(
   row: BillingColumns | null | undefined,
@@ -145,6 +160,7 @@ export function entitlementsForPlan(
     canUseSync: paid,
     canUseExtension: paid,
     canUseApi: paid,
+    canUseMcp: true,
   };
 }
 
@@ -174,13 +190,11 @@ export const getEntitlements = cache(
     // from a free account, and the pricing surfaces should still tell the truth about
     // what was bought. Only the gates are lifted.
     if (isDemoAccount(userId)) return unrestrictedEntitlements(plan, source);
-    // A Lifetime holder who also subscribes gets hosted enrichment for as long as the
-    // subscription is live, without losing the Lifetime floor when it lapses. Enrichment
-    // is the only flag this can still matter for: `resolvePlan` ranks lifetime above
-    // subscription, so such a user resolves to `lifetime`, which is denied enrichment on
-    // its own. Everything else is already true on both paid tiers.
-    const hostedEnrichment =
-      plan === "orbit" || (row ? subscriptionIsLive(row, new Date()) : false);
+    // One plan at a time: a Lifetime holder resolves to Lifetime and gets Lifetime's flags,
+    // even while a Pro subscription is still winding down. Buying Lifetime cancels Pro on
+    // the spot (`endProForLifetime`), so the two are never meant to overlap; the resolver
+    // no longer unions a lingering subscription's enrichment back in.
+    const hostedEnrichment = plan === "orbit";
     return entitlementsForPlan(plan, source, { hostedEnrichment });
   }
 );
@@ -192,7 +206,7 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
   hostedEnrichment:
     "Contact enrichment on Orbit's credits requires Orbit Pro. On any other plan, add your own Apollo key in Settings.",
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
-  api: "The Orbit API, webhooks and MCP server are available on Orbit Pro and Orbit Lifetime.",
+  api: "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime. Claude and ChatGPT connect on any plan, with no key.",
   sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
 };

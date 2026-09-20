@@ -1,3 +1,5 @@
+import { fromWallClockInput } from "@/lib/events/wall-clock";
+
 export type ParsedCalendarEvent = {
   uid: string;
   summary: string;
@@ -7,6 +9,37 @@ export type ParsedCalendarEvent = {
   end: Date | null;
   attendees: Array<{ name: string; email: string }>;
   organizer: { name: string; email: string } | null;
+  /**
+   * The event's own link, from the ICS `URL` property or Google's `source.url`.
+   *
+   * Optional because the CSV path has no such column. It matters to event discovery: a Luma
+   * or Partiful feed puts the event page here, which is a far better answer than fishing a
+   * link out of the description.
+   */
+  url?: string | null;
+  /** `CONFIRMED` / `TENTATIVE` / `CANCELLED`, where the source said. */
+  status?: string | null;
+  /**
+   * The IANA zone from a `TZID` parameter.
+   *
+   * Kept because a floating local time is otherwise read in the SERVER's zone — the same
+   * class of bug `src/lib/events/wall-clock.ts` exists to prevent, and the reason a 7pm
+   * event could display as 2am.
+   */
+  timezone?: string | null;
+  /**
+   * False when the source said the guest list is hidden from guests.
+   *
+   * Undefined means "not stated", which is treated as visible — an ICS feed does not carry
+   * the flag, and its ATTENDEE lines are there in plain sight either way.
+   */
+  guestsVisible?: boolean;
+  /**
+   * The calendar owner's own answer — Google's `responseStatus` on the `self` attendee, or the
+   * `PARTSTAT` on a personal feed's single ATTENDEE line. `status` is the EVENT's state (a
+   * confirmed event you were only invited to is still `CONFIRMED`); this is the user's.
+   */
+  selfResponse?: string | null;
 };
 
 /**
@@ -55,7 +88,17 @@ function unescapeIcs(value: string) {
     .replace(/\\\\/g, "\\");
 }
 
-function parseIcsDate(raw: string): Date | null {
+/** The `TZID=` parameter off a property line, e.g. `DTSTART;TZID=America/New_York:2026…`. */
+function tzidOf(block: string, name: string): string | null {
+  const line = block
+    .split(/\r?\n/)
+    .find((candidate) => new RegExp(`^${name}[;:]`, "i").test(candidate));
+  if (!line) return null;
+  const hit = /;TZID=([^:;]+)/i.exec(line.slice(0, line.indexOf(":") + 1));
+  return hit ? hit[1]!.trim() : null;
+}
+
+function parseIcsDate(raw: string, timezone?: string | null): Date | null {
   const value = raw.trim();
   if (!value) return null;
 
@@ -85,6 +128,14 @@ function parseIcsDate(raw: string): Date | null {
   // Local floating: YYYYMMDDTHHMMSS
   const local = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);
   if (local) {
+    // With a TZID this is a wall clock in a NAMED zone, and reading it in the server's zone
+    // instead — which is what this did, and still does when no TZID was given — moves the
+    // event by however far Vercel happens to be from the venue.
+    if (timezone) {
+      const wall = `${local[1]}-${local[2]}-${local[3]}T${local[4]}:${local[5]}`;
+      const instant = fromWallClockInput(wall, timezone);
+      if (instant) return instant;
+    }
     return new Date(
       Number(local[1]),
       Number(local[2]) - 1,
@@ -149,12 +200,21 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
     const description = getProp(block, "DESCRIPTION");
     const location = getProp(block, "LOCATION");
     const uid = getProp(block, "UID") || `${summary}-${getProp(block, "DTSTART")}`;
-    const start = parseIcsDate(getProp(block, "DTSTART"));
-    const end = parseIcsDate(getProp(block, "DTEND"));
+    const timezone = tzidOf(block, "DTSTART");
+    const start = parseIcsDate(getProp(block, "DTSTART"), timezone);
+    const end = parseIcsDate(getProp(block, "DTEND"), tzidOf(block, "DTEND") ?? timezone);
 
     const attendees = getAllPropLines(block, "ATTENDEE")
       .map(parsePerson)
       .filter((p) => p.email || p.name);
+
+    // A personal feed (Luma, Partiful) that lists anyone lists exactly one person: its owner.
+    // More than one ATTENDEE line is somebody's shared calendar, and then no line is "ours".
+    const attendeeLines = getAllPropLines(block, "ATTENDEE");
+    const selfResponse =
+      attendeeLines.length === 1
+        ? /;PARTSTAT=([^;:]+)/i.exec(attendeeLines[0]!.slice(0, attendeeLines[0]!.indexOf(":") + 1))?.[1] ?? null
+        : null;
 
     const organizerLine = block
       .split(/\r?\n/)
@@ -173,6 +233,12 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       attendees,
       organizer:
         organizer && (organizer.email || organizer.name) ? organizer : null,
+      // The Luma and Partiful personal feeds put the event's own page here, which is a much
+      // better link than anything that can be fished out of a description.
+      url: getProp(block, "URL") || null,
+      status: getProp(block, "STATUS") || null,
+      timezone,
+      selfResponse,
     });
   }
 

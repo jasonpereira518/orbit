@@ -18,7 +18,11 @@ import {
   updateBackgroundJob,
 } from "@/lib/background-jobs";
 import { Button } from "@/components/ui/button";
+import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { toast } from "@/lib/toast";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -44,12 +48,25 @@ function phaseLabel(scan: GmailScanStatus) {
 export function GmailImportPanel({
   connection,
   initialScan,
+  returnTo,
 }: {
   connection: GmailConnectionStatus;
   initialScan: GmailScanStatus | null;
+  /** Where Google sends the user back to. Omitted, the callback defaults to /recruiters. */
+  returnTo?: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  // One handler for the header link and the button: both start the same mail consent.
+  const connect = () =>
+    start(async () => {
+      try {
+        const { url } = await startGmailOAuth({ purpose: "recruiter_scan", returnTo });
+        window.location.href = url;
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+      }
+    });
   const [scan, setScan] = useState<GmailScanStatus | null>(initialScan);
   const jobIdRef = useRef<string | null>(null);
 
@@ -102,12 +119,25 @@ export function GmailImportPanel({
       toast.success("Gmail connected");
       router.refresh();
     } else if (gmail === "error") {
-      toast.error(params.get("reason") || "Gmail connection failed");
+      {
+        const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
     }
     params.delete("gmail");
+    // The callback sets both; left behind, the Google Contacts card would toast the same
+    // connect again the next time it mounts (it shares this page in Settings).
+    params.delete("google");
     params.delete("reason");
+    params.delete("purpose");
     const next = params.toString();
-    window.history.replaceState(null, "", `/recruiters${next ? `?${next}` : ""}`);
+    // The current path, not a hardcoded one: this panel also lives in Settings.
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+    );
   }, [router]);
 
   useEffect(() => {
@@ -128,7 +158,8 @@ export function GmailImportPanel({
                 : "No recruiters found in your mailbox"
             );
           } else if (next.status === "failed") {
-            toast.error(next.errorMessage || "Scan failed");
+            // The stored scan error can be a raw Gmail API body.
+            toast.error(friendlyError(next.errorMessage, "The scan didn’t finish — try again?"));
           }
           router.refresh();
         }
@@ -177,29 +208,31 @@ export function GmailImportPanel({
             Gmail
           </h2>
           <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
-            {connection.connected
-              ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
-              : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
+            {connection.status === "needs_reauth"
+              ? `${SESSION_EXPIRED_LINE} to scan your mailbox again.`
+              : connection.connected && connection.canRead
+                ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
+                : connection.connected
+                  ? `Connected as ${connection.emailAddress}, without permission to read mail. Allow mail access to scan for recruiters.`
+                  : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
           </p>
+          {connection.status === "disarmed" ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
+              <span>{calendarPauseLine(connection.syncError)}</span>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={pending} onClick={connect}>
+                Reconnect Google
+              </Button>
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
-          {!connection.connected ? (
-            <Button
-              disabled={pending}
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const { url } = await startGmailOAuth();
-                    window.location.href = url;
-                  } catch (err) {
-                    toast.error(
-                      err instanceof Error ? err.message : "OAuth failed"
-                    );
-                  }
-                })
-              }
-            >
-              Connect Gmail
+          {!connection.connected || !connection.canRead ? (
+            <Button disabled={pending} onClick={connect}>
+              {connection.status === "needs_reauth"
+                ? "Reconnect Google"
+                : connection.connected
+                  ? "Allow mail access"
+                  : "Connect Gmail"}
             </Button>
           ) : (
             <>
@@ -208,7 +241,12 @@ export function GmailImportPanel({
                 onClick={() =>
                   start(async () => {
                     try {
-                      const { importId } = await startGmailRecruiterScan();
+                      const started = await startGmailRecruiterScan();
+                      if (!started.ok) {
+                        toast.error(started.error);
+                        return;
+                      }
+                      const { importId } = started.value;
                       const next = await getGmailScanStatus(importId);
                       if (next) {
                         setScan(next);
@@ -217,7 +255,7 @@ export function GmailImportPanel({
                       toast.success("Scan started — this can take a few minutes");
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not start scan"
+                        friendlyError(err, "Couldn’t start the scan — try again?")
                       );
                     }
                   })
@@ -225,20 +263,18 @@ export function GmailImportPanel({
               >
                 {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
               </Button>
-              <Button
-                variant="outline"
+              <DisconnectAccountDialog
+                provider="gmail"
                 disabled={pending || running}
-                onClick={() =>
+                onConfirm={(opts) =>
                   start(async () => {
-                    await disconnectGmail();
+                    await disconnectGmail(opts);
                     setScan(null);
-                    toast.success("Gmail disconnected");
+                    toast.success(opts.alsoDelete ? "Gmail disconnected and its recruiter data deleted" : "Gmail disconnected");
                     router.refresh();
                   })
                 }
-              >
-                Disconnect
-              </Button>
+              />
             </>
           )}
         </div>
@@ -257,7 +293,7 @@ export function GmailImportPanel({
               onClick={() =>
                 start(async () => {
                   await cancelGmailRecruiterScan(scan.importId);
-                  toast.success("Scan cancelled");
+                  toast.success("Scan stopped");
                   const next = await getGmailScanStatus(scan.importId);
                   if (next) {
                     setScan(next);

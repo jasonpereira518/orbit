@@ -75,9 +75,13 @@ const STAR_CAP = 700;
  * Everything load-bearing IS carried over: the DPR cap, the viewport-sized
  * canvas, the hidden-tab pause and the reduced-motion path.
  */
-export function AppStarfield() {
+export function AppStarfield({ still = false }: { still?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const reduced = usePrefersReducedMotion();
+  // `still` paints one frame and runs no loop, exactly as reduced motion does. The
+  // constellation asks for it: a full-viewport canvas repainting 700 arcs every frame
+  // underneath a chart holding thousands of layers was part of the GPU pressure that
+  // made the sidebar's tiles drop out and flash blank.
+  const reduced = usePrefersReducedMotion() || still;
   const active = useSyncExternalStore(
     subscribeToTheme,
     isDarkNow,

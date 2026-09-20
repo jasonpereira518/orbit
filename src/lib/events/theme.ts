@@ -38,6 +38,7 @@
  *
  * Pure: no DOM, no DB, no `next/*`. Safe to import from a client component.
  */
+import { FALLBACK_LIGHTNESS, FALLBACK_SATURATION } from "@/lib/brand-colors";
 import { clampForContrast, hexToHsl, hslToHex, type Hsl } from "@/lib/contrast";
 import { hashHue } from "@/lib/hash";
 
@@ -92,10 +93,13 @@ export function resolveThemeColor(input: EventThemeInput): ResolvedEventTheme {
     const hex = normalizeHex(raw);
     if (hex && hasUsableHue(hex)) return { color: hex, source };
   }
-  // Matches `companyBrandColor`'s fallback in `src/lib/company-brand.ts` — same saturation
-  // and lightness, so an event and a company tinted from the same string look related.
+  // The same fallback tint as `companyBrandColor` (shared constants in `brand-colors.ts`),
+  // so an event and a company tinted from the same string look related.
   const hue = hashHue(input.seed || "event");
-  return { color: hslToHex({ h: hue, s: 0.58, l: 0.42 }), source: "hash" };
+  return {
+    color: hslToHex({ h: hue, s: FALLBACK_SATURATION, l: FALLBACK_LIGHTNESS }),
+    source: "hash",
+  };
 }
 
 export type EventThemeVars = {
