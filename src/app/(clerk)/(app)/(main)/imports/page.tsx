@@ -5,9 +5,12 @@ import {
   listCalendarSubscriptions,
   syncStaleCalendarSubscriptions,
 } from "@/actions/calendar";
+import { getGmailConnectionStatus } from "@/actions/gmail";
+import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { ImportHub } from "@/components/imports/import-hub";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import type { ProviderCalendarInput } from "@/lib/imports/calendar-sources";
 
 /** Large connections imports process in the background via after(); allow it room to run. */
 export const maxDuration = 300;
@@ -18,11 +21,43 @@ export default async function ImportsPage() {
     void syncStaleCalendarSubscriptions().catch(() => {});
   });
 
-  const [history, calendarSubscriptions, entitlements] = await Promise.all([
-    listImports(),
-    listCalendarSubscriptions(),
-    getEntitlements(await requireUserId()),
-  ]);
+  // Both connection statuses are fetched here rather than in a mount effect inside the cards,
+  // so the calendar section knows on first paint whether anything is syncing — and so the
+  // contacts cards stop flashing "Not connected" before their own fetch resolves.
+  const [history, calendarSubscriptions, entitlements, gmail, outlook] =
+    await Promise.all([
+      listImports(),
+      listCalendarSubscriptions(),
+      getEntitlements(await requireUserId()),
+      getGmailConnectionStatus().catch(() => null),
+      getOutlookConnectionStatus().catch(() => null),
+    ]);
+
+  const google: ProviderCalendarInput | null = gmail
+    ? {
+        kind: "google",
+        configured: gmail.configured,
+        connected: gmail.connected,
+        emailAddress: gmail.emailAddress,
+        status: gmail.status,
+        hasCalendarScope: gmail.hasCalendarScope,
+        syncError: gmail.syncError,
+        lastSyncedAt: gmail.lastSyncedAt,
+      }
+    : null;
+
+  const microsoft: ProviderCalendarInput | null = outlook
+    ? {
+        kind: "outlook",
+        configured: outlook.configured,
+        connected: outlook.connected,
+        emailAddress: outlook.emailAddress,
+        status: outlook.status,
+        hasCalendarScope: outlook.hasCalendarScope,
+        syncError: outlook.syncError,
+        lastSyncedAt: outlook.lastSyncedAt,
+      }
+    : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -31,9 +66,12 @@ export default async function ImportsPage() {
           Imports
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Bring in LinkedIn, your address book, Google, Outlook and calendars,
-          and review past imports. After import, browse everything in{" "}
-          <Link href="/knowledge" className="underline-offset-2 hover:underline">
+          Drop your exports here and Orbit sorts out the rest. Once
+          they&rsquo;re in, browse everything in{" "}
+          <Link
+            href="/knowledge"
+            className="underline-offset-2 hover:underline"
+          >
             Knowledge
           </Link>
           .
@@ -44,6 +82,8 @@ export default async function ImportsPage() {
         history={history}
         calendarSubscriptions={calendarSubscriptions}
         canUseSync={entitlements.canUseSync}
+        google={google}
+        outlook={microsoft}
       />
     </div>
   );

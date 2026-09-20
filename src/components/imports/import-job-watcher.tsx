@@ -3,10 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
-import {
-  clearImportJob,
-  useImportJob,
-} from "@/lib/import-job-runner";
+import { clearImportJob, useImportJob } from "@/lib/import-job-runner";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { friendlyError } from "@/lib/errors";
 

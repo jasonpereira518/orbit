@@ -55,7 +55,7 @@ const ARCHIVE_MEMBERS: Record<
  */
 export async function readLinkedInArchive(
   file: File,
-  member: LinkedInArchiveMember
+  member: LinkedInArchiveMember,
 ): Promise<{ text: string; fileName: string }> {
   const lower = file.name.toLowerCase();
   if (!lower.endsWith(".zip")) {
@@ -228,12 +228,14 @@ export function ImportProgress({
               {imported.toLocaleString()}
             </p>
             <p className="text-xs text-muted-foreground">
-              {importedLabel ?? (imported === 1 ? "contact imported" : "contacts imported")}
+              {importedLabel ??
+                (imported === 1 ? "contact imported" : "contacts imported")}
             </p>
           </div>
         ) : (
           <p className="text-sm font-medium">
-            {cancelling ? "Stopping import…" : "Importing…"} {done} of {total} {label}
+            {cancelling ? "Stopping import…" : "Importing…"} {done} of {total}{" "}
+            {label}
           </p>
         )}
         <div className="text-right">
@@ -306,4 +308,3 @@ export function BusyHint({ children }: { children: ReactNode }) {
     </div>
   );
 }
-

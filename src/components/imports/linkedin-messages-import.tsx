@@ -80,8 +80,7 @@ export function LinkedInMessagesImport() {
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             Upload a Messages CSV or ZIP, review conversation partners, then
-            import message history. Imports keep running if you leave this
-            page.
+            import message history. Imports keep running if you leave this page.
           </p>
         </div>
       </div>
@@ -109,7 +108,10 @@ export function LinkedInMessagesImport() {
               setSelected(new Set());
               setMeta(null);
               toast.error(
-                friendlyError(err, "Couldn’t read that file — is it the right export?"),
+                friendlyError(
+                  err,
+                  "Couldn’t read that file — is it the right export?",
+                ),
               );
             }
           });
@@ -130,9 +132,7 @@ export function LinkedInMessagesImport() {
                 applyPreview(res);
                 toast.success(`Loaded ${res.totalConversations} people`);
               } catch (err) {
-                toast.error(
-                  friendlyError(err, TOAST_COPY.previewFailed),
-                );
+                toast.error(friendlyError(err, TOAST_COPY.previewFailed));
               }
             })
           }
@@ -168,7 +168,9 @@ export function LinkedInMessagesImport() {
         </Button>
       </div>
 
-      <TimelineBackfillToggle refreshKey={job?.kind === "messages" ? job.status : null} />
+      <TimelineBackfillToggle
+        refreshKey={job?.kind === "messages" ? job.status : null}
+      />
 
       {people.length > 0 && (
         <div className="space-y-2">

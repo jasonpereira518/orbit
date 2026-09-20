@@ -3,7 +3,10 @@
 import { useEffect, useState, useTransition } from "react";
 import { BookUser } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { previewContactsFile, type ContactsFilePerson } from "@/actions/imports";
+import {
+  previewContactsFile,
+  type ContactsFilePerson,
+} from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ContactsExportGuide } from "@/components/imports/contacts-export-guide";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
@@ -124,9 +127,9 @@ export function ContactsFileImport() {
             <ContactsExportGuide />
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Upload a vCard (.vcf) or contacts CSV from Google Contacts,
-            iPhone, Android or Outlook — no account to connect. Photos
-            aren&apos;t imported.
+            Upload a vCard (.vcf) or contacts CSV from Google Contacts, iPhone,
+            Android or Outlook — no account to connect. Photos aren&apos;t
+            imported.
           </p>
         </div>
       </div>
