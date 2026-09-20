@@ -66,7 +66,7 @@ const PROCESSORS = [
   { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider and key you choose in Settings." },
   { name: "Wispr Flow", badge: "Optional", body: "Meeting transcription, only if you add a Wispr key." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
-  { name: "Microsoft", badge: "Optional", body: "Outlook contacts import, read-only. Orbit does not read Outlook mail." },
+  { name: "Microsoft", badge: "Optional", body: "Outlook, read-only, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, and your mail only for the recruiter scan you start. See The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), and your personal Luma calendar link if you paste it." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to." },
@@ -129,8 +129,15 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Connected accounts</strong> — if you connect Google, Orbit reads only what the
-              feature you turned on needs (see <a href="#google">Google user data</a>). Microsoft is
-              used only to import Outlook contacts.
+              feature you turned on needs (see <a href="#google">Google user data</a>). If you connect
+              Microsoft, Orbit asks for one read-only permission per feature you turn on: your
+              Outlook contacts, so you can pick who to import; your calendar, to add meetings with
+              people you know to their timelines; and your mail, only for the recruiter scan you
+              start. Each connection also asks for your Microsoft sign-in identity and email
+              address, to show which account is connected. Orbit cannot send mail or change
+              anything in your Microsoft account. Disconnecting deletes the tokens Orbit holds; to
+              also revoke the grant on Microsoft&rsquo;s side, remove Orbit from your Microsoft
+              account&rsquo;s app permissions.
             </li>
             <li>
               <strong>The browser extension</strong> — when you open its panel on a LinkedIn profile,
@@ -252,6 +259,14 @@ export default function PrivacyPage() {
             sends the subject and text of up to five of their most recent messages, with their name
             and address, to the AI provider you chose, on your key. The model decides whether the
             sender is a recruiter and writes a short summary of the conversation.
+          </p>
+          <p>
+            <strong>Outlook.</strong> If you connect Outlook instead, or as well, the scan works the
+            same way on Outlook mail: it needs the read-only mail permission, which Orbit asks for
+            only when you press Allow mail access on the Recruiters page. It searches your mailbox
+            for the same terms, skips Junk Email and Deleted Items, and sends the same text to the
+            same AI provider on your key. What is kept is the same too, apart from the thread id,
+            which Outlook does not provide. Message bodies are not stored.
           </p>
           <p>
             <strong>What is kept.</strong> For each recruiter found: their name, firm and email

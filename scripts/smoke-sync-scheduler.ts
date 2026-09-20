@@ -339,6 +339,55 @@ run(async () => {
     check("and it left the queue", enriched.enrich_due_at === null);
   }
 
+  // --- Microsoft: a real grant is not read as "no calendar scope" ---------------------------------
+  //
+  // Microsoft echoes Graph scopes as short names or full URIs, in any case. A case-sensitive
+  // full-URI substring test read a genuine "Calendars.Read" as no calendar and disarmed the
+  // connection — silently, for a user who had done everything right.
+  await clearAll();
+  {
+    const db = await getDb();
+    await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-ms-%'`);
+    await db.execute(sql`UPDATE outlook_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-ms-%'`);
+    const seedMs = async (userId: string, scopes: string): Promise<string> => {
+      const inserted = await db.execute(sql`
+        INSERT INTO outlook_connections
+          (user_id, email_address, access_token_encrypted, status, scopes, next_sync_at, sync_failures)
+        VALUES (${userId}, ${userId + "@example.com"}, 'enc', 'active', ${scopes}, ${new Date(Date.now() - 60_000)}, 0)
+        RETURNING id
+      `);
+      return rowsOf<{ id: string }>(inserted)[0].id;
+    };
+    const readMs = async (id: string) =>
+      rowsOf<{ next_sync_at: string | Date | null; sync_error: string | null }>(
+        await db.execute(sql`SELECT next_sync_at, sync_error FROM outlook_connections WHERE id = ${id}`)
+      )[0];
+
+    const shortId = await seedMs("sched-ms-short", "openid Calendars.Read");
+    const uriId = await seedMs("sched-ms-uri", "https://graph.microsoft.com/calendars.read openid");
+    const contactsId = await seedMs("sched-ms-contacts", "https://graph.microsoft.com/Contacts.Read");
+    const lookalikeId = await seedMs("sched-ms-lookalike", "Calendars.ReadWrite");
+
+    const fetchedFor: string[] = [];
+    const { deps } = depsFor(new Map());
+    deps.getMicrosoftAccessToken = async (userId: string) => `stub-token:${userId}`;
+    deps.fetchMicrosoftPage = async ({ accessToken }) => {
+      fetchedFor.push(String(accessToken).replace(/^stub-token:/, ""));
+      return emptyPage();
+    };
+    const stats = await runSyncPass({ deps });
+    check("both calendar grants are synced, whatever their form", stats.synced === 2, JSON.stringify(stats));
+    check("a short-form Calendars.Read is fetched", fetchedFor.includes("sched-ms-short"), JSON.stringify(fetchedFor));
+    check("a mixed-case full-URI grant is fetched", fetchedFor.includes("sched-ms-uri"), JSON.stringify(fetchedFor));
+    check("a short-form grant is rescheduled, not disarmed", (await readMs(shortId)).next_sync_at !== null);
+    check("its sync_error stays empty", (await readMs(shortId)).sync_error === null, String((await readMs(shortId)).sync_error));
+    check("a mixed-case full-URI grant is rescheduled, not disarmed", (await readMs(uriId)).next_sync_at !== null);
+    check("a contacts-only connection is skipped", stats.skippedNoScope === 2, JSON.stringify(stats));
+    check("…and disarmed with a reason the user can act on", (await readMs(contactsId)).next_sync_at === null && /reconnect/i.test((await readMs(contactsId)).sync_error ?? ""));
+    check("a look-alike scope is not calendar access", (await readMs(lookalikeId)).next_sync_at === null && !fetchedFor.includes("sched-ms-lookalike"));
+    await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-ms-%'`);
+  }
+
   // --- An unarmed connection is never picked up ---------------------------------------------------
   await clearAll();
   {

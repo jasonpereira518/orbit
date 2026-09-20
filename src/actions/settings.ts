@@ -69,6 +69,11 @@ export async function getSettings() {
   return {
     aiProvider: provider,
     aiModel: resolveAiModel(provider, settings?.aiModel),
+    /**
+     * The model this account was moved off when a default changed under it. Settings says
+     * so once, and offers the old model back; saving anything clears it.
+     */
+    aiModelMigratedFrom: settings?.aiModelMigratedFrom ?? null,
     theme: resolveThemePreference(settings?.theme),
     keys: {
       gemini: Boolean(settings?.geminiApiKeyEncrypted),
@@ -257,6 +262,8 @@ export async function saveAiSettings(input: {
       .set({
         aiProvider: provider,
         aiModel,
+        // They have now seen the model they are on and chosen: the notice is spent.
+        aiModelMigratedFrom: null,
         ...nextKeyState,
         updatedAt: new Date(),
       })

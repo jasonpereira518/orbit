@@ -16,6 +16,7 @@ import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
+import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -34,14 +35,30 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
     job?.kind === "outlook_contacts" && job.status === "running" ? job : null;
   const importProgress = outlookJob?.progress ?? null;
   const busy = pending || job?.status === "running";
-  // One handler for the header link and the button: both start the same Microsoft consent.
-  const connect = () =>
+  // One handler for every button: each asks Microsoft for that feature's scope and nothing
+  // else. "Reconnect" after a session expiry asks as "contacts" (this is the contacts card);
+  // a paused calendar sync reconnects as "calendar", which was already granted, so fixing it
+  // never asks for anything new.
+  const connect = (purpose: MicrosoftPurpose = "contacts") =>
     start(async () => {
       try {
-        const { url } = await startOutlookOAuth(returnTo);
+        const { url } = await startOutlookOAuth({ purpose, returnTo });
         window.location.href = url;
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+      }
+    });
+
+  const loadContacts = () =>
+    start(async () => {
+      try {
+        const res = await previewOutlookContacts();
+        setPeople(res.people);
+        setSelected(new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id)));
+        setLoaded(true);
+        toast.success(`Loaded ${res.people.length} contacts`);
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.loadContactsFailed));
       }
     });
 
@@ -77,6 +94,7 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
       toast.success("Outlook connected");
       params.delete("outlook");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
       // The current path, not a hardcoded one: this card also lives in Settings.
       window.history.replaceState(
@@ -88,12 +106,13 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
       getOutlookConnectionStatus().then(setStatus).catch(() => {});
     } else if (outlook === "error") {
       {
-        const oauth = describeOAuthReason(params.get("reason"), "Outlook");
+        const oauth = describeOAuthReason(params.get("reason"), "Outlook", params.get("purpose"));
         if (oauth.cancelled) toast.message(oauth.message);
         else toast.error(oauth.message);
       }
       params.delete("outlook");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
       // The current path, not a hardcoded one: this card also lives in Settings.
       window.history.replaceState(
@@ -136,13 +155,13 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
             {status.status === "needs_reauth"
               ? `${SESSION_EXPIRED_LINE} to import contacts again`
               : status.connected
-                ? `Connected as ${status.emailAddress}`
+                ? `Connected as ${status.emailAddress}${!status.hasContactsScope ? " — allow contacts access to import" : ""}`
                 : "Connect your Microsoft account to import contacts directly."}
           </p>
           {status.status === "disarmed" ? (
             <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
               <span>{calendarPauseLine(status.syncError, "Microsoft")}</span>
-              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={connect}>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={() => connect("calendar")}>
                 Reconnect Microsoft
               </Button>
             </p>
@@ -150,33 +169,20 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
         </div>
         <div className="flex flex-wrap gap-2">
           {!status.connected ? (
-            <Button disabled={busy} onClick={connect}>
+            <Button disabled={busy} onClick={() => connect()}>
               {status.status === "needs_reauth" ? "Reconnect Microsoft" : "Connect Microsoft"}
             </Button>
           ) : (
             <>
-              <Button
-                disabled={busy}
-                onClick={() =>
-                  start(async () => {
-                    try {
-                      const res = await previewOutlookContacts();
-                      setPeople(res.people);
-                      setSelected(
-                        new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
-                      );
-                      setLoaded(true);
-                      toast.success(`Loaded ${res.people.length} contacts`);
-                    } catch (err) {
-                      toast.error(
-                        friendlyError(err, TOAST_COPY.loadContactsFailed)
-                      );
-                    }
-                  })
-                }
-              >
-                {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
-              </Button>
+              {!status.hasContactsScope ? (
+                <Button disabled={busy} onClick={() => connect("contacts")}>
+                  Allow contacts access
+                </Button>
+              ) : (
+                <Button disabled={busy} onClick={loadContacts}>
+                  {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
+                </Button>
+              )}
               <DisconnectAccountDialog
                 provider="outlook"
                 disabled={busy}
@@ -196,6 +202,26 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
           )}
         </div>
       </div>
+
+      {status.connected ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/40 px-4 py-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium text-ink">Outlook calendar</h3>
+            <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
+              {!status.hasCalendarScope
+                ? "Read-only. Orbit logs meetings with people you know onto their timelines, and keeps them current."
+                : status.status === "disarmed"
+                  ? "Sync is paused — see above."
+                  : "Sync is on — meetings with people you know are logged on their timelines."}
+            </p>
+          </div>
+          {!status.hasCalendarScope ? (
+            <Button variant="outline" disabled={busy} onClick={() => connect("calendar")}>
+              Sync your Outlook calendar
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       {pending && !loaded ? <BusyHint>Loading contacts…</BusyHint> : null}
 

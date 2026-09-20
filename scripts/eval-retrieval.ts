@@ -3,12 +3,22 @@
  * Without an AI key: lexical arms only. With a key (GEMINI_API_KEY or
  * OPENAI_API_KEY in env, local only — the local stand-ins for Orbit's managed keys, used
  * via a Lifetime comp on the eval user): + semantic arm and rerank stage.
- * Stop dev servers on .data/pglite first (PGlite is single-writer).
- * Run: npx tsx scripts/eval-retrieval.ts
+ * Runs on a throwaway PGlite directory unless ORBIT_PGLITE_DIR is set, so it never
+ * contends with a dev server's .data/pglite (PGlite is single-writer).
+ *
+ * A gate, not just a report: exits 1 when recall falls under the floor. Lexical-only runs
+ * default to the floor measured on Sep 19 2026 (19/24 = 79.2%); with a key, pass the
+ * floor from your own baseline run: --min-recall12 0.9 --min-recall60 0.95.
+ * Run: npx tsx scripts/eval-retrieval.ts [--min-recall12 R] [--min-recall60 R]
  */
 import { config } from "dotenv";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 config({ path: ".env.local" });
 config();
+if (!process.env.ORBIT_PGLITE_DIR) {
+  process.env.ORBIT_PGLITE_DIR = mkdtempSync(path.join(tmpdir(), "orbit-eval-retrieval-"));
+}
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -23,6 +33,9 @@ import { managedKeysConfigured } from "../src/lib/ai-access";
 import { setCompedPlan } from "../src/lib/user-settings";
 
 const U = "eval-retrieval-user";
+
+/** Lexical-only recall measured on Sep 19 2026: 19 of the 24 expected contacts. */
+const LEXICAL_FLOOR = 19 / 24;
 
 type Fixture = {
   contacts: Array<{
@@ -111,10 +124,30 @@ async function main() {
   console.log(`recall@60: ${(hit60 / expectedTotal * 100).toFixed(1)}%  (${hit60}/${expectedTotal})`);
   if (failures.length) console.log(`misses: ${failures.join(" | ")}`);
 
+  const arg = (flag: string) => {
+    const i = process.argv.indexOf(flag);
+    return i >= 0 ? Number(process.argv[i + 1]) : null;
+  };
+  // Without a key only the lexical arms run, and their floor is known; with one, the floor
+  // is whatever your baseline measured, so it has to be passed in.
+  const floor12 = arg("--min-recall12") ?? (hasKey ? null : LEXICAL_FLOOR);
+  const floor60 = arg("--min-recall60") ?? (hasKey ? null : LEXICAL_FLOOR);
+  const r12 = hit12 / expectedTotal;
+  const r60 = hit60 / expectedTotal;
+  const below: string[] = [];
+  if (floor12 != null && r12 < floor12 - 1e-9) below.push(`recall@12 ${r12.toFixed(3)} < ${floor12}`);
+  if (floor60 != null && r60 < floor60 - 1e-9) below.push(`recall@60 ${r60.toFixed(3)} < ${floor60}`);
+
   // Cleanup
   await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, U));
   await db.delete(tags).where(eq(tags.userId, U));
   await db.delete(contacts).where(eq(contacts.userId, U));
+
+  if (below.length) {
+    console.log(`\nGATE: FAIL — ${below.join("; ")}`);
+    process.exit(1);
+  }
+  if (floor12 != null || floor60 != null) console.log("\nGATE: PASS");
 }
 
 main()

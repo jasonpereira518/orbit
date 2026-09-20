@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { recruiterScanState } from "@/db/schema";
+import { imports, recruiterScanState } from "@/db/schema";
 
 /**
  * Watermark bookkeeping for the Gmail recruiter scan.
@@ -58,22 +58,64 @@ export async function getScanState(userId: string) {
 }
 
 /**
+ * Start time of the newest COMPLETED scan of one import type — the watermark for a mailbox
+ * that keeps its own history instead of the shared `recruiter_scan_state` row.
+ *
+ * `recruiter_scan_state` holds ONE watermark per user, so it cannot serve two mailboxes: a
+ * completed Gmail scan would make a user's first Outlook scan look incremental and skip
+ * every older message, and a completed Outlook scan would do the same to a later first Gmail
+ * scan. A scan job already freezes its own `scanStartedAt` into `imports.stats` and only
+ * ever reaches `completed` after finishing its whole window, so the newest completed job of
+ * a given type IS that mailbox's watermark — no extra table needed.
+ */
+export async function lastCompletedScanStart(
+  userId: string,
+  importType: string
+): Promise<Date | null> {
+  const db = await getDb();
+  const rows = await db
+    .select({ stats: imports.stats })
+    .from(imports)
+    .where(
+      and(
+        eq(imports.userId, userId),
+        eq(imports.importType, importType),
+        eq(imports.status, "completed")
+      )
+    )
+    .orderBy(desc(imports.updatedAt))
+    .limit(10);
+  for (const row of rows) {
+    const at = row.stats?.scanStartedAt ? new Date(row.stats.scanStartedAt) : null;
+    if (at && !Number.isNaN(at.getTime())) return at;
+  }
+  return null;
+}
+
+/**
  * Decides how far back this run reads.
  *
  * A full scan — first run, an explicit "re-scan everything", or a prompt-version change that
  * stranded the cached verdicts — reaches back `windowMonths`. Everything else resumes from
  * the watermark, which is why a routine re-scan costs a rounding error of the first one.
+ *
+ * `opts.since` swaps the shared watermark for a caller-supplied one (`null` = this mailbox
+ * has never completed a scan, so read the whole window). The Gmail scan omits it and keeps
+ * the shared row exactly as before. Prompt-version staleness is not consulted under `since`:
+ * that version lives on the shared row, which a caller with its own watermark never writes.
  */
 export async function resolveScanWindow(
   userId: string,
-  opts: { full?: boolean } = {}
+  opts: { full?: boolean; since?: Date | null } = {}
 ): Promise<ScanWindow> {
   const state = await getScanState(userId);
   const windowMonths = state?.windowMonths ?? DEFAULT_WINDOW_MONTHS;
   const floor = monthsAgo(windowMonths);
 
-  const stale = (state?.promptVersion ?? 0) !== RECRUITER_PROMPT_VERSION;
-  const forced = opts.full === true || !state?.lastScanAt || stale;
+  const ownWatermark = opts.since !== undefined;
+  const lastScanAt = ownWatermark ? opts.since : (state?.lastScanAt ?? null);
+  const stale = ownWatermark ? false : (state?.promptVersion ?? 0) !== RECRUITER_PROMPT_VERSION;
+  const forced = opts.full === true || !lastScanAt || stale;
 
   if (forced) {
     return { after: floor, isFull: true, promptVersion: RECRUITER_PROMPT_VERSION, windowMonths };
@@ -81,7 +123,7 @@ export async function resolveScanWindow(
 
   // Never resume from before the window floor — shrinking `windowMonths` must not be
   // overridden by an older watermark.
-  const resume = daysBefore(state.lastScanAt as Date, INCREMENTAL_OVERLAP_DAYS);
+  const resume = daysBefore(lastScanAt, INCREMENTAL_OVERLAP_DAYS);
   return {
     after: resume > floor ? resume : floor,
     isFull: false,

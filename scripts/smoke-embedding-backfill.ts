@@ -156,15 +156,19 @@ async function testDrainWithStubbedProvider() {
   const EMBEDDABLE_COUNT = 220;
   const EMPTY_COUNT = 3;
 
-  await db.insert(contacts).values(
-    Array.from({ length: EMBEDDABLE_COUNT }, (_, i) => ({
-      userId: DRAIN_USER,
-      fullName: `Drain Person ${i}`,
-      company: `Company ${i % 7}`,
-      title: `Title ${i % 4}`,
-      embeddingStaleAt: now,
-    }))
-  );
+  const embeddable = await db
+    .insert(contacts)
+    .values(
+      Array.from({ length: EMBEDDABLE_COUNT }, (_, i) => ({
+        userId: DRAIN_USER,
+        fullName: `Drain Person ${i}`,
+        company: `Company ${i % 7}`,
+        title: `Title ${i % 4}`,
+        embeddingStaleAt: now,
+      }))
+    )
+    .returning();
+  const embeddableIds = embeddable.map((c) => c.id);
 
   // `buildContactEmbeddingContent` reads fullName, preferredName, title, company,
   // location, email, phone, linkedinUrl, website, aiSummary, notes, metContext, dateMet,
@@ -227,6 +231,32 @@ async function testDrainWithStubbedProvider() {
 
   const second = await runEmbeddingBackfill(DRAIN_USER, stubEmbed);
   check("second pass is a no-op", second.embedded === 0, JSON.stringify(second));
+
+  const [hashless] = await db
+    .select({ value: count() })
+    .from(contactEmbeddings)
+    .where(and(eq(contactEmbeddings.userId, DRAIN_USER), isNull(contactEmbeddings.contentHash)));
+  check("every backfilled row records its content hash", (hashless?.value ?? 0) === 0, `hashless ${hashless?.value}`);
+
+  // Stamped stale is not changed: re-stamp every contact without touching its text (what an
+  // opportunity write or a no-op profile save does) and count the provider calls.
+  await db.update(contacts).set({ embeddingStaleAt: new Date() }).where(eq(contacts.userId, DRAIN_USER));
+  let textsSent = 0;
+  const countingEmbed: typeof createEmbeddingsBatch = async (userId, texts) => {
+    textsSent += texts.length;
+    return stubEmbed(userId, texts);
+  };
+  const third = await runEmbeddingBackfill(DRAIN_USER, countingEmbed);
+  check("re-stamped but unchanged contacts cost no embedding call", textsSent === 0, `sent ${textsSent}`);
+  check("  and their flags are still cleared", third.remaining === 0, JSON.stringify(third));
+
+  // A real edit still re-embeds, and only the edited contact.
+  await db
+    .update(contacts)
+    .set({ notes: "Now leads the payments team.", embeddingStaleAt: new Date() })
+    .where(eq(contacts.id, embeddableIds[0]));
+  await runEmbeddingBackfill(DRAIN_USER, countingEmbed);
+  check("an edited contact is re-embedded, alone", textsSent === 1, `sent ${textsSent}`);
 
   await db.delete(contacts).where(eq(contacts.userId, DRAIN_USER));
   await db.delete(userSettings).where(eq(userSettings.userId, DRAIN_USER));

@@ -2,9 +2,11 @@ import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
 import type { BatchItem } from "drizzle-orm/batch";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { neon } from "@neondatabase/serverless";
-import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
-import { PGlite } from "@electric-sql/pglite";
-import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
+// Type-only on purpose. PGlite is the local-development database (no DATABASE_URL); a real
+// import would load it — and make the bundler trace its 21MB of WASM into every serverless
+// function — in production, where it can never run. `ensureReady` imports it lazily instead.
+import type { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import type { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
@@ -25,6 +27,7 @@ type Db =
 
 const globalForDb = globalThis as unknown as {
   orbitPglite?: PGlite;
+  orbitDrizzlePglite?: typeof drizzlePglite;
   orbitNeonSql?: ReturnType<typeof neon>;
   orbitReady?: Promise<void>;
   orbitPgvector?: boolean;
@@ -44,7 +47,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
   wispr_api_key_encrypted text,
-  ai_model text DEFAULT 'gemini-3.5-flash',
+  ai_model text DEFAULT 'gemini-3.8-flash',
+  ai_model_migrated_from text,
   onboarding_completed_at timestamptz,
   first_name text,
   last_name text,
@@ -327,7 +331,8 @@ CREATE TABLE IF NOT EXISTS contact_briefs (
   recent_discussions jsonb NOT NULL DEFAULT '[]',
   generated_at timestamptz NOT NULL DEFAULT now(),
   basis_interaction_id uuid,
-  model text
+  model text,
+  input_hash text
 );
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -677,6 +682,38 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS ai_result_cache (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  operation text NOT NULL,
+  input_hash text NOT NULL,
+  result jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_result_cache_key_uidx ON ai_result_cache(user_id, operation, input_hash);
+CREATE INDEX IF NOT EXISTS ai_result_cache_created_idx ON ai_result_cache(created_at);
+CREATE TABLE IF NOT EXISTS ai_batch_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  operation text NOT NULL,
+  provider text NOT NULL,
+  model text NOT NULL,
+  key_owner text NOT NULL DEFAULT 'user',
+  provider_batch_id text NOT NULL,
+  status text NOT NULL DEFAULT 'submitted',
+  request_count integer NOT NULL,
+  est_cost_micros integer,
+  payload jsonb NOT NULL DEFAULT '{}',
+  provider_meta jsonb,
+  attempts integer NOT NULL DEFAULT 0,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS ai_batch_jobs_user_idx ON ai_batch_jobs(user_id, status);
+CREATE INDEX IF NOT EXISTS ai_batch_jobs_status_idx ON ai_batch_jobs(status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_batch_jobs_provider_batch_uidx ON ai_batch_jobs(provider, provider_batch_id);
 CREATE TABLE IF NOT EXISTS plan_upgrade_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1613,11 +1650,26 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // through 69; renumbered past every claim (checked against all remote branches and local
 // worktrees on Sep 18 2026: none above 69).
 //
-// 73 = agent_send_requests: messages an assistant drafted through MCP, held until the user
-// approves them in Orbit. 71 and 72 are claimed by the unmerged ai-api-optimization branch
-// (contact_briefs.input_hash and ai_batch_jobs), so this starts above both rather than
-// racing them — checked against every remote branch on Sep 19 2026.
-export const SCHEMA_VERSION = 73;
+// 71 = the AI cost work's first schema: contact_briefs.input_hash (skip a brief regeneration
+// whose inputs did not change) and the ai_result_cache table (recruiter verdicts, extension
+// profile reads, follow-up drafts keyed by exactly what was asked). Checked against every
+// remote branch and local worktree on Sep 19 2026: none above 70.
+//
+// 72 = ai_batch_jobs: background AI work submitted to a provider's Batch API (half price,
+// results minutes to a day later). Checked against every remote branch on Sep 19 2026.
+//
+// 73 = user_settings.ai_model_migrated_from, plus the move of accounts on the old Gemini
+// default (3.5 Flash) to 3.8 Flash — half the price, and the eval in docs/ai-evals/ found
+// nothing lost. Checked against every remote branch on Sep 19 2026.
+//
+// 77 = agent_send_requests: messages an assistant drafted through MCP, held until the user
+// approves them in Orbit. Built as 73, which main then took for the AI model migration above
+// — and because BOTH sides wrote `SCHEMA_VERSION = 73`, that line merged silently with no
+// conflict, which would have left every database main had already stamped 73 skipping this
+// table forever. Renumbered past 74-76, claimed by the unpushed integrations-strategy
+// worktree (connector_connections, external_links + connector_outbox, and the outbox lease).
+// Checked against every remote branch and local worktree on Sep 20 2026.
+export const SCHEMA_VERSION = 77;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3093,6 +3145,16 @@ const alters = [
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
   // Schema v70: chat context note.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS context_note text`,
+  // Schema v71: a brief remembers what it was asked, so an unchanged regeneration is free.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS input_hash text`,
+  // Schema v73: the Gemini default moved to 3.8 Flash — newer, and half the price of 3.5
+  // Flash. Accounts still carrying the OLD DEFAULT move with it and are told so once;
+  // anyone who chose a model themselves is left alone. `ai_model_migrated_from IS NULL`
+  // keeps this from re-migrating someone who read the notice and picked 3.5 Flash again.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_model_migrated_from text`,
+  `ALTER TABLE user_settings ALTER COLUMN ai_model SET DEFAULT 'gemini-3.8-flash'`,
+  `UPDATE user_settings SET ai_model_migrated_from = ai_model, ai_model = 'gemini-3.8-flash'
+     WHERE ai_model = 'gemini-3.5-flash' AND ai_model_migrated_from IS NULL`,
 ];
 
 /**
@@ -3170,8 +3232,10 @@ async function ensureReady(): Promise<void> {
     // package (`@electric-sql/pglite-pgvector`) pinned to a newer PGlite than the one this
     // project has installed; it is not installed here, so local vector search uses the JS
     // fallback instead.
+    const { PGlite: PGliteClient } = await import("@electric-sql/pglite");
+    const { pg_trgm } = await import("@electric-sql/pglite/contrib/pg_trgm");
     const open = () =>
-      PGlite.create({ dataDir, extensions: { pg_trgm } });
+      PGliteClient.create({ dataDir, extensions: { pg_trgm } });
 
     try {
       globalForDb.orbitPglite = await open();
@@ -3206,6 +3270,7 @@ async function ensureReady(): Promise<void> {
     simulateNetworkLatency(globalForDb.orbitPglite);
   }
 
+  globalForDb.orbitDrizzlePglite ??= (await import("drizzle-orm/pglite")).drizzle;
   await globalForDb.orbitPglite.waitReady;
 }
 
@@ -3482,13 +3547,13 @@ export async function getDb(): Promise<Db> {
     if (globalForDb.orbitNeonSql) {
       return drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db;
     }
-    return drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
+    return globalForDb.orbitDrizzlePglite!(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
 
   if (!globalForDb.orbitDrizzle) {
     globalForDb.orbitDrizzle = globalForDb.orbitNeonSql
       ? (drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db)
-      : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
+      : globalForDb.orbitDrizzlePglite!(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
 }

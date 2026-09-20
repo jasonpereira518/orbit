@@ -51,7 +51,8 @@ function parseDueDate(iso: string | null | undefined): Date | null {
  * `lastInteractionAt`, and creating an opportunity by hand moves no interaction — so the card
  * would otherwise never notice. Widening the staleness check to `contacts.updatedAt` was the
  * alternative and is worse: that column moves on every edit, and the card would sit at
- * "Updating…" permanently.
+ * "Updating…" permanently. A write that leaves the brief's inputs as they were costs no
+ * model call: the brief is keyed by what it was asked (`contact_briefs.input_hash`).
  */
 async function afterWrite(userId: string, contactId: string) {
   await syncContactOpportunityMirror(userId, contactId);

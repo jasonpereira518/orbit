@@ -109,8 +109,7 @@ export async function understandQuery(
     const content = await withTimeout(
       completeFn(userId, {
         operation: "chat.understand",
-        speed: "fast",
-        temperature: 0,
+            temperature: 0,
         maxOutputTokens: 512,
         system: UNDERSTAND_SYSTEM,
         user: `${goalsBlock}Question: ${question}`,
@@ -169,8 +168,7 @@ export async function rerankCandidates(
     const content = await withTimeout(
       completeFn(userId, {
         operation: "chat.rerank",
-        speed: "fast",
-        temperature: 0,
+            temperature: 0,
         maxOutputTokens: 2048,
         system: RERANK_SYSTEM,
         user: [

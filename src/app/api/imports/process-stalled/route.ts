@@ -2,6 +2,8 @@ import { count, isNotNull, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
+import { pruneAiResultCache } from "@/lib/ai-result-cache";
+import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
 import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
@@ -134,6 +136,9 @@ export async function GET(request: Request) {
     meetingSessionsSwept: 0,
     /** Phone-scan grants past their expiry. */
     handoffsSwept: 0,
+    /** Background AI sent to a provider's Batch API: what came back this sweep. */
+    aiBatchesApplied: 0,
+    aiBatchesPending: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
     embeddingsGenerated: 0,
@@ -187,6 +192,12 @@ export async function GET(request: Request) {
         errorEvents,
         ERROR_EVENT_RETENTION_DAYS
       );
+      // Remembered AI answers past the longest TTL any caller reads them with.
+      await pruneAiResultCache();
+      // Batched background AI: whatever the providers have finished since the last sweep.
+      const batches = await runAiBatchSweep();
+      stats.aiBatchesApplied = batches.applied;
+      stats.aiBatchesPending = batches.pending;
       // Photos uploaded to a capture that was never saved. Nobody can see these — the
       // history only lists saved captures — so keeping them would be holding pictures of
       // someone's notes for no one.

@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { classifyAiError, friendlyError } from "@/lib/errors";
 import { getDb } from "@/db";
 import {
@@ -21,11 +21,17 @@ import {
   listGmailMessagePage,
   looksLikeRecruiter,
   parseFromHeader,
+  type GmailMessageContent,
 } from "@/lib/gmail";
 import {
   RECRUITER_CONFIDENCE_FLOOR,
+  RECRUITER_SYSTEM,
+  buildRecruiterUserPrompt,
   classifyRecruiterSender,
+  recruiterResultFromContent,
+  type RecruiterScanResult,
 } from "@/lib/recruiter-scan";
+import { submitAiBatch } from "@/lib/ai-batch";
 import { markScanCompleted, resolveScanWindow } from "@/lib/recruiter-scan-state";
 import { ensureUserLink, isViewerSharing, upsertCanonicalRecruiter } from "@/lib/recruiters";
 import { reportError } from "@/lib/report-error";
@@ -37,6 +43,11 @@ export { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-type";
  * the LinkedIn runner's chunk of 40 would blow the time budget in a single pass.
  */
 const CHUNK_SIZE = 8;
+/**
+ * Senders per submitted batch. Larger than the inline chunk because a batch costs one round
+ * trip however many requests it holds, and capped by what `submitAiBatch` accepts.
+ */
+const SCAN_BATCH_SIZE = 50;
 /** Same headroom as the LinkedIn runner: stay under the 300s ceiling with room to hand off. */
 const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 const DISCOVERY_PAGE_SIZE = 200;
@@ -82,6 +93,8 @@ export type ScanDeps = {
   fetchHeaders: typeof fetchGmailHeaders;
   fetchMessages: typeof fetchGmailMessages;
   classify: typeof classifyRecruiterSender;
+  /** Submits the batch. Injectable so the smoke suite can run both paths. */
+  submit: typeof submitAiBatch;
   continueLater: (importId: string) => Promise<void>;
 };
 
@@ -111,6 +124,7 @@ const DEFAULT_SCAN_DEPS: ScanDeps = {
   fetchHeaders: fetchGmailHeaders,
   fetchMessages: fetchGmailMessages,
   classify: classifyRecruiterSender,
+  submit: submitAiBatch,
   continueLater: scheduleContinuation,
 };
 
@@ -241,25 +255,30 @@ async function runDiscovery(
 }
 
 /** Phase B: classify and summarize one sender, writing through to the recruiter tables. */
-async function processSender(
+/** What applying a verdict needs from the mail, so a batched answer need not re-read Gmail. */
+export type SenderMailMeta = { dates: number[]; threadId: string | null; messageCount: number };
+
+function mailMetaOf(payload: GmailSenderRowPayload, messages: GmailMessageContent[]): SenderMailMeta {
+  return {
+    dates: messages.map((m) => m.internalDate).filter((d): d is number => typeof d === "number"),
+    threadId: messages[0]?.threadId || null,
+    messageCount: payload.messageIds.length,
+  };
+}
+
+/**
+ * The write half: a verdict becomes a recruiter the user is linked to, or nothing.
+ *
+ * Split from the classification so a batched answer lands exactly like an inline one. Takes
+ * the mail's dates and thread id rather than the messages, because a batch is applied hours
+ * later, when the Gmail token that read them may be long gone.
+ */
+export async function applyRecruiterVerdict(
   userId: string,
   payload: GmailSenderRowPayload,
-  accessToken: string,
-  deps: ScanDeps
+  meta: SenderMailMeta,
+  result: RecruiterScanResult
 ): Promise<"recruiter" | "rejected"> {
-  const messages = await deps.fetchMessages(
-    accessToken,
-    payload.messageIds.slice(0, 5)
-  );
-  if (messages.length === 0) return "rejected";
-
-  const result = await deps.classify(userId, {
-    senderName: payload.name,
-    senderEmail: payload.email,
-    firmGuess: payload.firm,
-    messages,
-  });
-
   if (!result.isRecruiter || result.confidence < RECRUITER_CONFIDENCE_FLOOR) {
     return "rejected";
   }
@@ -285,9 +304,6 @@ async function processSender(
     email: payload.email,
   });
 
-  const dates = messages
-    .map((m) => m.internalDate)
-    .filter((d): d is number => typeof d === "number");
   const db = await getDb();
   await db
     .update(userRecruiterLinks)
@@ -295,10 +311,10 @@ async function processSender(
       aiSummary: result.summary,
       companiesMentioned: result.companiesMentioned,
       rolesDiscussed: result.rolesDiscussed,
-      emailCount: payload.messageIds.length,
-      firstEmailAt: dates.length ? new Date(Math.min(...dates)) : null,
-      lastEmailAt: dates.length ? new Date(Math.max(...dates)) : null,
-      gmailThreadId: messages[0]?.threadId || null,
+      emailCount: meta.messageCount,
+      firstEmailAt: meta.dates.length ? new Date(Math.min(...meta.dates)) : null,
+      lastEmailAt: meta.dates.length ? new Date(Math.max(...meta.dates)) : null,
+      gmailThreadId: meta.threadId,
       updatedAt: new Date(),
     })
     .where(
@@ -309,6 +325,85 @@ async function processSender(
     );
 
   return "recruiter";
+}
+
+async function processSender(
+  userId: string,
+  payload: GmailSenderRowPayload,
+  accessToken: string,
+  deps: ScanDeps
+): Promise<"recruiter" | "rejected"> {
+  const messages = await deps.fetchMessages(
+    accessToken,
+    payload.messageIds.slice(0, 5)
+  );
+  if (messages.length === 0) return "rejected";
+
+  const result = await deps.classify(userId, {
+    senderName: payload.name,
+    senderEmail: payload.email,
+    firmGuess: payload.firm,
+    messages,
+  });
+
+  return applyRecruiterVerdict(userId, payload, mailMetaOf(payload, messages), result);
+}
+
+/** A sender whose classification is out with a provider, waiting on a batch. */
+export const SCAN_ROW_QUEUED = "queued";
+
+/** What a submitted classification batch needs to map its answers back onto. */
+export type RecruiterBatchPayload = {
+  importId: string;
+  items: Array<{ customId: string; rowId: string; payload: GmailSenderRowPayload; meta: SenderMailMeta }>;
+};
+
+/**
+ * Completes a scan once no sender is left unread — including any still out with a provider.
+ *
+ * Only a job that reaches `completed` advances the mailbox watermark, so this is also what
+ * stops a scan from stepping over senders whose batch has not answered yet. Safe to call
+ * from the runner and from the batch sweep; the first one to find nothing outstanding wins.
+ */
+export async function finalizeRecruiterScanIfDone(importId: string): Promise<boolean> {
+  const db = await getDb();
+  const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+  if (!importRow || importRow.status !== "processing") return false;
+
+  const outstanding = await db.query.importJobRows.findMany({
+    where: and(
+      eq(importJobRows.importId, importId),
+      inArray(importJobRows.status, ["pending", SCAN_ROW_QUEUED])
+    ),
+    columns: { id: true },
+    limit: 1,
+  });
+  if (outstanding.length > 0) return false;
+
+  const done = await db.query.importJobRows.findMany({
+    where: eq(importJobRows.importId, importId),
+    columns: { id: true },
+  });
+
+  await db
+    .update(imports)
+    .set({ status: "completed", rowsProcessed: done.length, updatedAt: new Date() })
+    .where(eq(imports.id, importId));
+
+  // Only a job that reached `completed` may advance the watermark. A failed or cancelled
+  // scan leaves it where it was, so the next run re-reads the window it never finished
+  // rather than stepping over the messages it never got to.
+  await markScanCompleted(importRow.userId, {
+    startedAt: importRow.stats?.scanStartedAt ? new Date(importRow.stats.scanStartedAt) : new Date(),
+    wasFull: importRow.stats?.scanIsFull === true,
+  });
+
+  // Feeds the "last synced" line in the connection status.
+  await db
+    .update(gmailConnections)
+    .set({ lastSyncedAt: new Date(), updatedAt: new Date() })
+    .where(eq(gmailConnections.userId, importRow.userId));
+  return true;
 }
 
 /**
@@ -401,14 +496,66 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
           eq(importJobRows.status, "pending")
         ),
         orderBy: [asc(importJobRows.rowIndex)],
-        limit: CHUNK_SIZE,
+        limit: SCAN_BATCH_SIZE,
       });
       if (pending.length === 0) break;
 
       let found = current.stats?.recruitersFound ?? 0;
       let rejected = current.stats?.sendersRejected ?? 0;
 
+      // Classification is the whole cost of a scan, and nobody is reading the results as
+      // they land — so the senders go to the provider's Batch API at half price, and the
+      // job waits for them. Whatever the batch will not take is classified inline below,
+      // one sender at a time, exactly as before.
+      const queued = new Set<string>();
+      const batchable: Array<{ row: (typeof pending)[number]; payload: GmailSenderRowPayload; messages: GmailMessageContent[] }> = [];
       for (const row of pending) {
+        if (!isGmailSenderRow(row.payload)) continue;
+        const messages = await deps.fetchMessages(accessToken, row.payload.messageIds.slice(0, 5));
+        if (messages.length === 0) continue; // the inline pass below records it as rejected
+        batchable.push({ row, payload: row.payload, messages });
+      }
+      if (batchable.length > 0) {
+        const items = batchable.map((b, i) => ({
+          customId: `s${i}`,
+          rowId: b.row.id,
+          payload: b.payload,
+          meta: mailMetaOf(b.payload, b.messages),
+        }));
+        const jobId = await deps.submit(
+          userId,
+          "recruiter.scan",
+          batchable.map((b, i) => ({
+            customId: `s${i}`,
+            system: RECRUITER_SYSTEM,
+            user: buildRecruiterUserPrompt({
+              senderName: b.payload.name,
+              senderEmail: b.payload.email,
+              firmGuess: b.payload.firm,
+              messages: b.messages,
+            }),
+            temperature: 0.2,
+            maxOutputTokens: 700,
+          })),
+          { importId, items } satisfies RecruiterBatchPayload
+        );
+        if (jobId) {
+          for (const b of batchable) queued.add(b.row.id);
+          await db
+            .update(importJobRows)
+            .set({ status: SCAN_ROW_QUEUED, updatedAt: new Date() })
+            .where(inArray(importJobRows.id, batchable.map((b) => b.row.id)));
+        }
+      }
+
+      // Whatever the batch did not take is classified here, one sender per model call —
+      // and only CHUNK_SIZE of them per iteration, because each one is a round trip and
+      // the time budget is only checked at the top of the loop.
+      let inlineProcessed = 0;
+      for (const row of pending) {
+        if (queued.has(row.id)) continue;
+        if (inlineProcessed >= CHUNK_SIZE) break;
+        inlineProcessed += 1;
         if (!isGmailSenderRow(row.payload)) {
           await db
             .update(importJobRows)
@@ -473,22 +620,96 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
         .where(eq(imports.id, importId));
     }
 
-    await db
-      .update(imports)
-      .set({ status: "completed", rowsProcessed: processed, updatedAt: new Date() })
-      .where(eq(imports.id, importId));
-
-    // Only a job that reached `completed` may advance the watermark. A failed or cancelled
-    // scan leaves it where it was, so the next run re-reads the window it never finished
-    // rather than stepping over the messages it never got to.
-    await markScanCompleted(userId, { startedAt: scanStartedAt, wasFull: scanIsFull });
-
-    // Feeds the "last synced" line in the connection status.
-    await db
-      .update(gmailConnections)
-      .set({ lastSyncedAt: new Date(), updatedAt: new Date() })
-      .where(eq(gmailConnections.userId, userId));
+    // Senders still out with a provider are not done, and completing would advance the
+    // watermark past mail nothing has read yet. The batch sweep finishes the job instead,
+    // once their answers land.
+    await finalizeRecruiterScanIfDone(importId);
   } catch (err) {
     await failImport(importId, err);
   }
+}
+
+/**
+ * Writes one batched verdict back: the same row states, counters and recruiter writes the
+ * inline pass makes. An answer that is not the shape it promised marks the sender skipped
+ * with the reason, exactly as a failed inline classification does.
+ */
+export async function applyRecruiterScanOutcome(
+  userId: string,
+  item: RecruiterBatchPayload["items"][number],
+  content: string | null
+): Promise<"recruiter" | "rejected"> {
+  const db = await getDb();
+  let outcome: "recruiter" | "rejected" = "rejected";
+  let errorMessage: string | null = null;
+  try {
+    if (!content) throw new Error("The classifier returned nothing for this sender");
+    outcome = await applyRecruiterVerdict(userId, item.payload, item.meta, recruiterResultFromContent(content));
+  } catch (err) {
+    errorMessage = (err instanceof Error ? err.message : "Classification failed").slice(0, 300);
+  }
+
+  await db
+    .update(importJobRows)
+    .set({
+      status: outcome === "recruiter" ? "done" : "skipped",
+      errorMessage,
+      updatedAt: new Date(),
+    })
+    .where(eq(importJobRows.id, item.rowId));
+
+  const row = await db.query.importJobRows.findFirst({
+    where: eq(importJobRows.id, item.rowId),
+    columns: { importId: true },
+  });
+  if (row) {
+    const current = await db.query.imports.findFirst({ where: eq(imports.id, row.importId) });
+    if (current) {
+      const found = (current.stats?.recruitersFound ?? 0) + (outcome === "recruiter" ? 1 : 0);
+      const rejected = (current.stats?.sendersRejected ?? 0) + (outcome === "recruiter" ? 0 : 1);
+      await db
+        .update(imports)
+        .set({
+          rowsProcessed: (current.rowsProcessed ?? 0) + 1,
+          contactsCreated: found,
+          stats: { ...(current.stats || {}), recruitersFound: found, sendersRejected: rejected },
+          updatedAt: new Date(),
+        })
+        .where(eq(imports.id, row.importId));
+    }
+  }
+  return outcome;
+}
+
+/**
+ * Takes senders out of the queued state: back to `pending` when their batch will never
+ * answer (the scan's own resume path classifies them one at a time), or `skipped` when the
+ * scan they belong to is over and their answers are no longer wanted.
+ */
+export async function releaseRecruiterScanRows(
+  rowIds: string[],
+  to: "pending" | "skipped" = "pending"
+): Promise<void> {
+  if (rowIds.length === 0) return;
+  const db = await getDb();
+  await db
+    .update(importJobRows)
+    .set({ status: to, updatedAt: new Date() })
+    .where(and(inArray(importJobRows.id, rowIds), eq(importJobRows.status, SCAN_ROW_QUEUED)));
+}
+
+/** Whether a scan is still open to results — false once it completed, failed or was cancelled. */
+export async function recruiterScanIsRunning(importId: string): Promise<boolean> {
+  const db = await getDb();
+  const row = await db.query.imports.findFirst({
+    where: eq(imports.id, importId),
+    columns: { status: true },
+  });
+  return row?.status === "processing";
+}
+
+/** Keeps a scan that is waiting on a batch from looking stalled to the resume sweep. */
+export async function touchImport(importId: string): Promise<void> {
+  const db = await getDb();
+  await db.update(imports).set({ updatedAt: new Date() }).where(eq(imports.id, importId));
 }

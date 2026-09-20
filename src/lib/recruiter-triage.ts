@@ -47,7 +47,9 @@ function localPartOf(from: string): string {
  * of legitimate bulk mail sets `List-Unsubscribe` — that is what the header is for — so this
  * catches the next one too.
  */
-export function isBulkMail(header: GmailHeaderSummary): boolean {
+export function isBulkMail(
+  header: Pick<GmailHeaderSummary, "listUnsubscribe" | "listId" | "precedence">
+): boolean {
   if (header.listUnsubscribe.trim()) return true;
   if (header.listId.trim()) return true;
   return /\b(bulk|list|auto_reply|junk)\b/i.test(header.precedence);
@@ -68,7 +70,9 @@ const AUTOMATED_LOCAL_PARTS =
 const ROLE_LOCAL_PARTS =
   /^(careers?|recruit(ing|ment|er)?|talent[a-z]*|jobs?|campus|university|hiring|hr|inbox|info|hello|events?|team|support|admin|contact|apply|applications?)([._+-]|$)/i;
 
-export function classifySenderKind(header: GmailHeaderSummary): SenderKind {
+export function classifySenderKind(
+  header: Pick<GmailHeaderSummary, "from" | "listUnsubscribe" | "listId" | "precedence">
+): SenderKind {
   const domain = domainOf(header.from);
   if (!domain) return "bulk";
 

@@ -1,5 +1,7 @@
+import { cancelBatchJobsFor } from "@/lib/ai-batch";
 import { del } from "@vercel/blob";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
@@ -16,6 +18,8 @@ import {
   captureHandoffs,
   captureJobs,
   capturePhotos,
+  aiBatchJobs,
+  aiResultCache,
   chatMessages,
   chatThreads,
   closenessCohorts,
@@ -185,9 +189,17 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id")],
+    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
     counts: [aiSuggestions, contactEmbeddings, closenessCohorts],
     run: async (db, userId) => {
+      // Background AI still in flight at a provider. Cancelled there first — the provider is
+      // holding this person's prompts, and deleting our row would only lose the handle to
+      // them. Best effort: the rows go either way.
+      await cancelBatchJobsFor(userId).catch(() => 0);
+      await db.delete(aiBatchJobs).where(eq(aiBatchJobs.userId, userId));
+      // Remembered AI answers (recruiter verdicts, profile reads, drafts): derived from this
+      // person's mail and contacts, and rebuilt on the next ask.
+      await db.delete(aiResultCache).where(eq(aiResultCache.userId, userId));
       await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, userId));
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
@@ -375,6 +387,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // The recruiter scan's watermark. Not derived from `gmail_connections`, so it
       // survives a disconnect/reconnect on purpose — but it must not survive the account.
       await db.delete(recruiterScanState).where(eq(recruiterScanState.userId, userId));
+      // The Outlook scan's watermark is not a row of its own: it is the newest completed scan
+      // job's frozen start time (`lastCompletedScanStart`). Left behind, "disconnect and delete
+      // what was imported" would remove the recruiters but keep the record of having read the
+      // mailbox, and the next Outlook scan would run incrementally — never re-reading the
+      // history it just deleted. The rows cascade to `import_job_rows`.
+      await db
+        .delete(imports)
+        .where(and(eq(imports.userId, userId), eq(imports.importType, OUTLOOK_SCAN_IMPORT_TYPE)));
     },
   },
   api: {
