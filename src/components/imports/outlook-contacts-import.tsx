@@ -8,15 +8,9 @@ import {
   disconnectOutlook,
   type OutlookConnectionStatus,
 } from "@/actions/outlook";
-import {
-  previewOutlookContacts,
-  type OutlookContactPerson,
-} from "@/actions/imports";
+import { previewOutlookContacts, type OutlookContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
-import {
-  SESSION_EXPIRED_LINE,
-  calendarPauseLine,
-} from "@/lib/connection-status";
+import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
@@ -28,9 +22,7 @@ import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 /** `returnTo`: see `GoogleContactsImport`. */
-export function OutlookContactsImport({
-  returnTo = "/imports",
-}: { returnTo?: string } = {}) {
+export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
   const router = useRouter();
   const job = useImportJob();
   const [pending, start] = useTransition();
@@ -62,9 +54,7 @@ export function OutlookContactsImport({
       try {
         const res = await previewOutlookContacts();
         setPeople(res.people);
-        setSelected(
-          new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id)),
-        );
+        setSelected(new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id)));
         setLoaded(true);
         toast.success(`Loaded ${res.people.length} contacts`);
       } catch (err) {
@@ -94,9 +84,7 @@ export function OutlookContactsImport({
   }, [job]);
 
   useEffect(() => {
-    getOutlookConnectionStatus()
-      .then(setStatus)
-      .catch(() => {});
+    getOutlookConnectionStatus().then(setStatus).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -112,19 +100,13 @@ export function OutlookContactsImport({
       window.history.replaceState(
         null,
         "",
-        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`,
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
       );
       router.refresh();
-      getOutlookConnectionStatus()
-        .then(setStatus)
-        .catch(() => {});
+      getOutlookConnectionStatus().then(setStatus).catch(() => {});
     } else if (outlook === "error") {
       {
-        const oauth = describeOAuthReason(
-          params.get("reason"),
-          "Outlook",
-          params.get("purpose"),
-        );
+        const oauth = describeOAuthReason(params.get("reason"), "Outlook", params.get("purpose"));
         if (oauth.cancelled) toast.message(oauth.message);
         else toast.error(oauth.message);
       }
@@ -136,14 +118,12 @@ export function OutlookContactsImport({
       window.history.replaceState(
         null,
         "",
-        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`,
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
       );
       // Re-read the status: a Next router "restore" (which `replaceState` is) drops any
       // server action still queued — here, the status fetch this card fired a moment ago
       // on mount — without settling it, which would leave the card rendering nothing.
-      getOutlookConnectionStatus()
-        .then(setStatus)
-        .catch(() => {});
+      getOutlookConnectionStatus().then(setStatus).catch(() => {});
     }
   }, [router]);
 
@@ -167,10 +147,7 @@ export function OutlookContactsImport({
   }
 
   return (
-    <section
-      id="import-outlook-contacts"
-      className="space-y-4 rounded-2xl border border-border/70 bg-card p-6"
-    >
+    <section id="import-outlook-contacts" className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-medium text-ink">Outlook Contacts</h2>
@@ -184,13 +161,7 @@ export function OutlookContactsImport({
           {status.status === "disarmed" ? (
             <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
               <span>{calendarPauseLine(status.syncError, "Microsoft")}</span>
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto px-0"
-                disabled={busy}
-                onClick={() => connect("calendar")}
-              >
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={() => connect("calendar")}>
                 Reconnect Microsoft
               </Button>
             </p>
@@ -199,9 +170,7 @@ export function OutlookContactsImport({
         <div className="flex flex-wrap gap-2">
           {!status.connected ? (
             <Button disabled={busy} onClick={() => connect()}>
-              {status.status === "needs_reauth"
-                ? "Reconnect Microsoft"
-                : "Connect Microsoft"}
+              {status.status === "needs_reauth" ? "Reconnect Microsoft" : "Connect Microsoft"}
             </Button>
           ) : (
             <>
@@ -211,11 +180,7 @@ export function OutlookContactsImport({
                 </Button>
               ) : (
                 <Button disabled={busy} onClick={loadContacts}>
-                  {pending
-                    ? "Loading…"
-                    : loaded
-                      ? "Refresh contacts"
-                      : "Import contacts"}
+                  {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
                 </Button>
               )}
               <DisconnectAccountDialog
@@ -229,9 +194,7 @@ export function OutlookContactsImport({
                     setStatus(null);
                     toast.success("Outlook disconnected");
                     router.refresh();
-                    getOutlookConnectionStatus()
-                      .then(setStatus)
-                      .catch(() => {});
+                    getOutlookConnectionStatus().then(setStatus).catch(() => {});
                   })
                 }
               />
@@ -253,11 +216,7 @@ export function OutlookContactsImport({
             </p>
           </div>
           {!status.hasCalendarScope ? (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => connect("calendar")}
-            >
+            <Button variant="outline" disabled={busy} onClick={() => connect("calendar")}>
               Sync your Outlook calendar
             </Button>
           ) : null}

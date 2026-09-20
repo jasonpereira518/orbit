@@ -121,11 +121,7 @@ export type ImportAdapter<P> = {
    */
   matchConfidence?: number;
   /** Interaction rows to bulk-insert for this payload, once its contact id is known. */
-  interactions?(
-    payload: P,
-    contactId: string,
-    userId: string,
-  ): InteractionInsert[];
+  interactions?(payload: P, contactId: string, userId: string): InteractionInsert[];
   /**
    * Reminder rows to bulk-insert for this payload, once its contact id is known — a second
    * bulk insert alongside `interactions`, not folded into it (they're different tables).
@@ -156,17 +152,11 @@ export type ImportAdapter<P> = {
 /** Kick a self-continuation request so remaining rows keep processing in a fresh invocation. */
 async function scheduleContinuation(importId: string) {
   try {
-    await internalFetch(`/api/imports/${importId}/continue`, {
-      method: "POST",
-    });
+    await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
   } catch (err) {
     // Best-effort — the process-stalled cron will pick this job back up. Reported (throttled)
     // because a kick that always fails means every large import waits an hour per chunk.
-    reportError(err, {
-      where: "job.import.continuation-kick",
-      level: "warning",
-      extra: { importId },
-    });
+    reportError(err, { where: "job.import.continuation-kick", level: "warning", extra: { importId } });
   }
 }
 
@@ -197,16 +187,13 @@ export const PLAN_LIMIT_ROW_REASON = "Contact limit reached on your plan";
  * `Promise.all`, which on `neon-http` is one HTTPS request per row, with no transaction to
  * make the chunk atomic. A single statement is both faster and all-or-nothing.
  */
-async function markRowsDone(
-  rowIds: string[],
-  contactIdByRowId: Map<string, string>,
-) {
+async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, string>) {
   if (rowIds.length === 0) return;
   const db = await getDb();
   const now = new Date();
   const tuples = rowIds.map(
     (rowId) =>
-      sql`(${rowId}::uuid, ${contactIdByRowId.get(rowId) ?? null}::uuid)`,
+      sql`(${rowId}::uuid, ${contactIdByRowId.get(rowId) ?? null}::uuid)`
   );
   await db.execute(sql`
     UPDATE import_job_rows AS r
@@ -249,7 +236,7 @@ async function markRowsDone(
 async function writeWithNarrowing<T>(
   items: T[],
   write: (batch: T[]) => Promise<void>,
-  onBadRow: (item: T, err: unknown) => Promise<void>,
+  onBadRow: (item: T, err: unknown) => Promise<void>
 ): Promise<void> {
   if (items.length === 0) return;
   try {
@@ -276,7 +263,7 @@ async function markRowFailed(row: PendingRow, err: unknown) {
     .set({
       status: "failed",
       errorMessage: truncateStoredError(
-        err instanceof Error ? err.message : "Couldn’t save this row",
+        err instanceof Error ? err.message : "Couldn’t save this row"
       ),
       updatedAt: new Date(),
     })
@@ -310,7 +297,7 @@ type RunningTotals = {
 function accumulatedStats(
   latestStats: ImportStats,
   jobStart: number,
-  totals: RunningTotals,
+  totals: RunningTotals
 ): ImportStats {
   return {
     ...latestStats,
@@ -352,9 +339,7 @@ export async function runImportJob(importId: string): Promise<void> {
   // count), so this `finally` composes cleanly with the explicit calls below that capture the
   // count into a failed job's own `stats` before this backstop re-stops it.
   try {
-    const importRow = await db.query.imports.findFirst({
-      where: eq(imports.id, importId),
-    });
+    const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
     if (!importRow) return;
     // The self-continuation route and the stalled-job cron both re-dispatch by `importId`
     // alone, so re-running an already-finished or since-deleted job is an expected, everyday
@@ -369,8 +354,7 @@ export async function runImportJob(importId: string): Promise<void> {
     const createsContacts = adapter.createsContacts !== false;
     // See `ImportAdapter.matchConfidence`'s doc comment for why this floor is not always
     // `DUPLICATE_MERGE_CONFIDENCE`.
-    const matchConfidence =
-      adapter.matchConfidence ?? DUPLICATE_MERGE_CONFIDENCE;
+    const matchConfidence = adapter.matchConfidence ?? DUPLICATE_MERGE_CONFIDENCE;
 
     const userId = importRow.userId;
 
@@ -421,7 +405,7 @@ export async function runImportJob(importId: string): Promise<void> {
           failedRows: failedRowsTotal,
           interactionsLogged: interactionsLoggedTotal,
           remindersCreated: remindersCreatedTotal,
-        }),
+        })
       );
       return;
     }
@@ -437,9 +421,7 @@ export async function runImportJob(importId: string): Promise<void> {
       // loop moves it, so re-deriving it with a full table count every chunk is a round trip
       // spent confirming arithmetic we already did. An adapter that creates no contacts skips
       // the count entirely — it is a statement spent bounding something that cannot happen.
-      let headroom = createsContacts
-        ? await contactHeadroomForUser(userId)
-        : null;
+      let headroom = createsContacts ? await contactHeadroomForUser(userId) : null;
 
       while (true) {
         if (Date.now() - jobStart > TIME_BUDGET_MS) {
@@ -464,9 +446,7 @@ export async function runImportJob(importId: string): Promise<void> {
           return;
         }
 
-        const current = await db.query.imports.findFirst({
-          where: eq(imports.id, importId),
-        });
+        const current = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
         if (!current || current.status !== "processing") return;
         latestStats = current.stats ?? {};
 
@@ -540,11 +520,7 @@ export async function runImportJob(importId: string): Promise<void> {
           /** A name-tier match this import declined to fold; queued for review after insert. */
           lookalike?: { contactId: string; reason: string; confidence: number };
         }[] = [];
-        const toUpdate: {
-          row: PendingRow;
-          contactId: string;
-          input: Partial<ContactInput>;
-        }[] = [];
+        const toUpdate: { row: PendingRow; contactId: string; input: Partial<ContactInput> }[] = [];
         const toSkip: PendingRow[] = [];
 
         for (const row of pendingRows) {
@@ -578,14 +554,13 @@ export async function runImportJob(importId: string): Promise<void> {
               input: adapter.toCreate(payload),
               // A match too weak to fold — a bare "Same full name" hit, typically. Recorded
               // rather than dropped: it is the likeliest duplicate this row produced.
-              lookalike:
-                best && !best.strong && !canFold
-                  ? {
-                      contactId: best.contact.id,
-                      reason: best.reason,
-                      confidence: best.confidence,
-                    }
-                  : undefined,
+              lookalike: best && !best.strong && !canFold
+                ? {
+                    contactId: best.contact.id,
+                    reason: best.reason,
+                    confidence: best.confidence,
+                  }
+                : undefined,
             });
           } else {
             // An annotate-only import (calendar) has nobody to attach this row to. It still
@@ -650,7 +625,7 @@ export async function runImportJob(importId: string): Promise<void> {
                 userId,
                 batch.map((item) => item.input),
                 companyResolve,
-                { skipRevalidate: true, skipEmbedding: true, headroom },
+                { skipRevalidate: true, skipEmbedding: true, headroom }
               );
               // Only reached once the insert has actually succeeded — a batch whose insert
               // throws is caught by `writeWithNarrowing`, which retries smaller slices of the
@@ -672,26 +647,17 @@ export async function runImportJob(importId: string): Promise<void> {
               });
               // After the insert, so both sides of the pair exist for the foreign keys.
               for (const [a, b, reason, confidence] of suggestions) {
-                await recordDuplicateSuggestion(
-                  userId,
-                  a,
-                  b,
-                  reason,
-                  confidence,
-                );
+                await recordDuplicateSuggestion(userId, a, b, reason, confidence);
               }
               contactsCreated += created.length;
-              if (headroom !== null)
-                headroom = Math.max(0, headroom - created.length);
+              if (headroom !== null) headroom = Math.max(0, headroom - created.length);
 
               if (created.length < batch.length) {
-                planBlockedRows.push(
-                  ...batch.slice(created.length).map((item) => item.row),
-                );
+                planBlockedRows.push(...batch.slice(created.length).map((item) => item.row));
                 blockedByPlanTotal += batch.length - created.length;
               }
             },
-            onBadRow,
+            onBadRow
           );
         }
 
@@ -701,11 +667,8 @@ export async function runImportJob(importId: string): Promise<void> {
             async (batch) => {
               await bulkMergeContactsForUser(
                 userId,
-                batch.map((item) => ({
-                  contactId: item.contactId,
-                  input: item.input,
-                })),
-                companyResolve,
+                batch.map((item) => ({ contactId: item.contactId, input: item.input })),
+                companyResolve
               );
               for (const item of batch) {
                 contactIdByRowId.set(item.row.id, item.contactId);
@@ -714,7 +677,7 @@ export async function runImportJob(importId: string): Promise<void> {
               contactsUpdated += batch.length;
               duplicatesFound += batch.length;
             },
-            onBadRow,
+            onBadRow
           );
         }
 
@@ -765,11 +728,7 @@ export async function runImportJob(importId: string): Promise<void> {
             const contactId = contactIdByRowId.get(row.id);
             if (!contactId) continue;
             interactionRows.push(
-              ...adapter.interactions(
-                row.payload as ImportJobRowPayload,
-                contactId,
-                userId,
-              ),
+              ...adapter.interactions(row.payload as ImportJobRowPayload, contactId, userId)
             );
           }
           if (interactionRows.length > 0) {
@@ -792,10 +751,7 @@ export async function runImportJob(importId: string): Promise<void> {
               if (row.externalId) byExternalId.set(row.externalId, row);
               else noExternalId.push(row);
             }
-            const dedupedInteractionRows = [
-              ...byExternalId.values(),
-              ...noExternalId,
-            ];
+            const dedupedInteractionRows = [...byExternalId.values(), ...noExternalId];
 
             const loggedInteractions = await db
               .insert(interactions)
@@ -835,11 +791,7 @@ export async function runImportJob(importId: string): Promise<void> {
             const contactId = contactIdByRowId.get(row.id);
             if (!contactId) continue;
             reminderRows.push(
-              ...adapter.reminders(
-                row.payload as ImportJobRowPayload,
-                contactId,
-                userId,
-              ),
+              ...adapter.reminders(row.payload as ImportJobRowPayload, contactId, userId)
             );
           }
           if (reminderRows.length > 0) {
@@ -847,7 +799,7 @@ export async function runImportJob(importId: string): Promise<void> {
               ...new Set(
                 reminderRows
                   .map((r) => r.contactId)
-                  .filter((cid): cid is string => typeof cid === "string"),
+                  .filter((cid): cid is string => typeof cid === "string")
               ),
             ];
             const existingReminders =
@@ -855,19 +807,16 @@ export async function runImportJob(importId: string): Promise<void> {
                 ? await db.query.reminders.findMany({
                     where: and(
                       eq(reminders.userId, userId),
-                      inArray(reminders.contactId, candidateContactIds),
+                      inArray(reminders.contactId, candidateContactIds)
                     ),
                     columns: { contactId: true, description: true },
                   })
                 : [];
             const existingKeys = new Set(
-              existingReminders.map(
-                (r) => `${r.contactId}::${r.description ?? ""}`,
-              ),
+              existingReminders.map((r) => `${r.contactId}::${r.description ?? ""}`)
             );
             const newReminders = reminderRows.filter(
-              (r) =>
-                !existingKeys.has(`${r.contactId}::${r.description ?? ""}`),
+              (r) => !existingKeys.has(`${r.contactId}::${r.description ?? ""}`)
             );
             if (newReminders.length > 0) {
               const insertedReminders = await db
@@ -913,12 +862,7 @@ export async function runImportJob(importId: string): Promise<void> {
             ? db
                 .update(importJobRows)
                 .set({ status: "skipped", updatedAt: new Date() })
-                .where(
-                  inArray(
-                    importJobRows.id,
-                    toSkip.map((row) => row.id),
-                  ),
-                )
+                .where(inArray(importJobRows.id, toSkip.map((row) => row.id)))
             : Promise.resolve(),
         ]);
 
@@ -976,7 +920,7 @@ export async function runImportJob(importId: string): Promise<void> {
           failedRows: failedRowsTotal,
           interactionsLogged: interactionsLoggedTotal,
           remindersCreated: remindersCreatedTotal,
-        }),
+        })
       );
       return;
     }
@@ -1006,28 +950,16 @@ export async function runImportJob(importId: string): Promise<void> {
     // improvement, not scope creep: it's the one finalization step every import type is
     // supposed to get, not something specific to this task's two new adapters.
     await refreshOutreachSuggestions(importRow.userId).catch(
-      reportAndContinue(
-        { where: "job.import.finalize.outreach", userId: importRow.userId },
-        null,
-      ),
+      reportAndContinue({ where: "job.import.finalize.outreach", userId: importRow.userId }, null)
     );
 
     // Adapter-specific once-per-job finalization (see `ImportAdapter.finalize`) — e.g. the
     // LinkedIn messages adapter's AI enrichment pass. Runs over every contact this job
     // touched across every chunk, once, not per chunk; non-fatal like the two calls above.
     if (adapter.finalize) {
-      await adapter
-        .finalize(importRow.userId, [...allTouchedContactIds])
-        .catch(
-          reportAndContinue(
-            {
-              where: "job.import.finalize.adapter",
-              userId: importRow.userId,
-              extra: { importId: importRow.id },
-            },
-            null,
-          ),
-        );
+      await adapter.finalize(importRow.userId, [...allTouchedContactIds]).catch(
+        reportAndContinue({ where: "job.import.finalize.adapter", userId: importRow.userId, extra: { importId: importRow.id } }, null)
+      );
     }
 
     // Redraw the distribution once, now that every contact this import will ever add is in.
@@ -1037,10 +969,7 @@ export async function runImportJob(importId: string): Promise<void> {
     // duplicate as it is merged would issue extra queries per row to reach a number that is
     // immediately superseded by this recalibration.
     await recalibrateCloseness(importRow.userId).catch(
-      reportAndContinue(
-        { where: "job.import.finalize.recalibrate", userId: importRow.userId },
-        null,
-      ),
+      reportAndContinue({ where: "job.import.finalize.recalibrate", userId: importRow.userId }, null)
     );
     await kickEmbeddingBackfill(importRow.userId);
 
@@ -1077,16 +1006,14 @@ const PER_CONTACT_REVALIDATE_LIMIT = 50;
 export const STORED_ERROR_MAX = 480;
 
 export function truncateStoredError(message: string): string {
-  return message.length > STORED_ERROR_MAX
-    ? message.slice(0, STORED_ERROR_MAX)
-    : message;
+  return message.length > STORED_ERROR_MAX ? message.slice(0, STORED_ERROR_MAX) : message;
 }
 
 /** Exported so the Gmail recruiter scan runner shares one job-failure path. */
 export async function failImport(
   importId: string,
   err: unknown,
-  stats?: ImportStats,
+  stats?: ImportStats
 ) {
   const message = err instanceof Error ? err.message : "Import failed";
   // Reported, and the stored message carries the reference, so a failed import in someone's
