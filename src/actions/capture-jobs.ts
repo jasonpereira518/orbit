@@ -26,7 +26,7 @@ import {
 import { runCaptureJobById } from "@/lib/capture-job-runner";
 import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type {
   CaptureDecision,
@@ -186,14 +186,14 @@ export async function queueCaptureJob(input: {
             and(
               eq(captureJobs.userId, userId),
               inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"]),
-              // A row that carries its OWN `batchGroupId` is exempt too, not just this call's
-              // incoming one: a multi-file drop's leftover cards, or a note the public API
-              // enqueued (src/app/api/v1/notes/route.ts gives every job it creates a
-              // single-item batchGroupId for exactly this), are not the lone orphan this rule
-              // exists to clear away — `CaptureQueuePanel` can always get back to them. This
-              // was previously missing, which meant EVERY job in these statuses was
-              // discarded by a bare Extract regardless of its own group.
-              isNull(captureJobs.batchGroupId)
+              // A row the public API enqueued (`sourceKind: "api"` — set ONLY by
+              // src/app/api/v1/notes/route.ts, never client-forgeable; see the type's own
+              // comment in src/lib/capture/types.ts) is exempt from this in-app rule. It has
+              // no way back through `CaptureQueuePanel` — that only renders for a group of
+              // more than one job — so discarding it here would be silent data loss with no
+              // recourse, unlike the ordinary single card this rule is written for, which the
+              // person just displaced themselves and can re-extract if they want it back.
+              ne(captureJobs.sourceKind, "api")
             )
           );
       }

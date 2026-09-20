@@ -145,7 +145,14 @@ export const ACTIVE_CAPTURE_JOB_STATUSES: readonly CaptureJobStatus[] = [
   "saving",
 ];
 
-export type CaptureJobSource = "messy" | "voice" | "meeting" | "scan" | "phone";
+/**
+ * `"api"` is set ONLY by `src/app/api/v1/notes/route.ts`, never client-forgeable: `noteBody`
+ * (`src/lib/api/schemas.ts`) has no `sourceKind` field for a caller to set, and the in-app
+ * media-upload route's own allow-list (`src/app/api/capture/jobs/route.ts`'s `SOURCE_KINDS`)
+ * does not include it either. That is what makes it safe to key a discard exemption on —
+ * see `queueCaptureJob` (src/actions/capture-jobs.ts).
+ */
+export type CaptureJobSource = "messy" | "voice" | "meeting" | "scan" | "phone" | "api";
 
 /** One transcribed block of media, in the order it arrived. */
 export type CaptureIngestedBlock = { text: string; source: string };

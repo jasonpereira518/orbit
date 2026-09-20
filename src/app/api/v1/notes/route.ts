@@ -19,20 +19,23 @@
  *   - Getting silently discarded by the user's own next capture: `queueCaptureJob`
  *     (src/actions/capture-jobs.ts) — the app's Extract action — discards every OTHER job of
  *     the account's sitting in `ready | reviewing | failed | transcribed` before starting a
- *     bare single-note Extract, so a person is never staring at two unrelated review cards.
- *     It exempts anything carrying a `batchGroupId`, on the theory that a grouped job is
- *     never a lone orphan — `CaptureQueuePanel` can always get back to it. A note that came
- *     in overnight from a Shortcut, still waiting on review, is not a "second Extract" the
- *     next-morning in-app one should be allowed to bulldoze — so it gets its own
- *     single-item `batchGroupId` for exactly this exemption, even though it is not really a
- *     batch of anything.
+ *     bare single-note Extract, so a person is never staring at two unrelated review cards
+ *     with no way back to the one that got bumped. A note that came in overnight from a
+ *     Shortcut, still waiting on review, is not the "second Extract" that rule is about — the
+ *     person never displaced it themselves, so it gets no chance to come back the way an
+ *     ordinary bumped card does. `queueCaptureJob` exempts it specifically by `sourceKind`
+ *     (`"api"`, set only here — see the type's own comment in src/lib/capture/types.ts for
+ *     why that is safe to key an exemption on). Deliberately NOT `batchGroupId`: a fabricated
+ *     single-item "batch" would make this job invisible to `CaptureQueuePanel` (which only
+ *     renders for more than one job in a group) while still LOOKING like a batch member to
+ *     any code that keys off that column — worse than not being in a batch at all. This job
+ *     is not part of any batch, and does not claim to be.
  *
  *   - Trusting a `contactId` that is not the caller's: it lands in `seedContactId`, which
  *     has no foreign key, so nothing downstream would ever notice — but it would be one
  *     account quietly attaching its capture to a stranger's contact row. Checked here.
  */
 import { and, eq } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { apiError, apiHandler, apiOk, readJson } from "@/lib/api/http";
@@ -82,14 +85,15 @@ export const POST = apiHandler({ scope: "write", bucket: "apiWrite" }, async (re
   }
 
   const job = await createCaptureJob(caller.userId, {
-    sourceKind: "messy",
+    // See the header comment: this is what keeps a later in-app Extract from discarding
+    // this job while it is still awaiting review. Not a real distinction from "messy" in
+    // content terms — an API note IS free text, same as a typed one — but the discard
+    // exemption needs a signal only this route can produce, and `sourceKind` is it.
+    sourceKind: "api",
     status: "queued",
     inputText: body.text,
     sourceLabel: body.sourceLabel ?? "API",
     seedContactId: body.contactId ?? null,
-    // See the header comment: this is what keeps a later in-app Extract from discarding
-    // this job while it is still awaiting review.
-    batchGroupId: randomUUID(),
   });
   // Fire and forget: the drain and the app's own poller both resume a stalled job, so a
   // dropped kick costs latency and never the note.

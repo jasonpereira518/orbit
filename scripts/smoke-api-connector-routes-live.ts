@@ -117,14 +117,13 @@ run(async () => {
   check("scoped to the calling user", jobRow?.user_id === USER, jobRow?.user_id);
   check("carrying the note's source label", jobRow?.source_label === "Apple Shortcut", jobRow?.source_label ?? "");
 
-  // The route must give the job its own batchGroupId, so a later in-app single-note Extract
-  // cannot discard it (see src/actions/capture-jobs.ts's queueCaptureJob). Asserting the
-  // flag is not enough on its own — see the demo-mode section near the end of this script,
-  // which drives the actual discard code path rather than just checking this column.
-  const jobBatchRow = rowsOf<{ batch_group_id: string | null }>(
-    await db.execute(sql`SELECT batch_group_id FROM capture_jobs WHERE id = ${noteData.noteId}`)
-  )[0];
-  check("the job carries its own batchGroupId", Boolean(jobBatchRow?.batch_group_id), String(jobBatchRow?.batch_group_id));
+  // The route must give the job `sourceKind: "api"` — the ONLY thing that exempts it from
+  // `queueCaptureJob`'s "only one review at a time" discard (see src/actions/capture-jobs.ts
+  // and the type's own comment in src/lib/capture/types.ts for why that value is safe to key
+  // an exemption on: nothing else in this codebase ever sets it). Asserting the flag is not
+  // enough on its own — see the demo-mode section near the end of this script, which drives
+  // the actual discard code path rather than just checking this column.
+  check("the job carries sourceKind \"api\"", jobRow?.source_kind === "api", jobRow?.source_kind);
 
   // The AI-spend guard, not just the request-volume one: `/v1/notes` must consume the same
   // `capture` bucket the app's own Extract does (RATE_LIMITS.capture), in ADDITION to
@@ -402,15 +401,25 @@ run(async () => {
   );
   check("a read-only key cannot patch a follow-up", readOnlyPatch.status === 403, String(readOnlyPatch.status));
 
-  // --- The batchGroupId exemption, driven through the REAL discard code path -----------------
+  // --- The sourceKind:"api" exemption, driven through the REAL discard code path -------------
   //
   // `queueCaptureJob` (src/actions/capture-jobs.ts) is what the app's own Extract button
-  // calls, and — before this fix — its "only one review at a time" rule discarded EVERY job
-  // sitting in ready/reviewing/failed/transcribed for the account, batchGroupId or not. A
-  // note the public API enqueued overnight, still awaiting review, would be silently wiped
+  // calls, and — before this round's fix — its "only one review at a time" rule discarded
+  // EVERY job sitting in ready/reviewing/failed/transcribed for the account, no matter what.
+  // A note the public API enqueued overnight, still awaiting review, would be silently wiped
   // out by the very next single-note Extract the person did in the app. Checking the job's
-  // OWN `batchGroupId` column is not proof this is fixed — the discard query itself has to
+  // OWN `source_kind` column is not proof this is fixed — the discard query itself has to
   // filter on it. So this drives the actual server action rather than asserting on the flag.
+  //
+  // An EARLIER version of this fix exempted anything carrying a `batchGroupId`, reasoning
+  // that a grouped job always has a way back through `CaptureQueuePanel`. That was wrong on
+  // two counts the reviewer caught: the panel only renders for a GROUP of more than one job
+  // (`capture-queue-panel.tsx`'s `if (jobs.length <= 1) return null`), so a single-item
+  // "batch" the API route minted could never be reached there either; and it also meant a
+  // genuine in-app multi-file leftover (a real batch, several jobs) became exempt from this
+  // rule too — behaviour this task has no business changing. The three cases below prove
+  // both halves: an API-sourced job survives, and an in-app leftover — grouped OR not —
+  // still gets swept exactly as it always did.
   //
   // `queueCaptureJob` calls `requireUserId()`, which needs either real Clerk auth or Orbit's
   // demo-mode identity (`demo-user`) — the same trick `scripts/smoke-follow-up-actions.ts`
@@ -426,7 +435,8 @@ run(async () => {
   const demoKey = await seedKey(db, DEMO_USER, "demo notes");
 
   // Job A: created through the real /v1/notes route, so it gets the route's own
-  // batchGroupId — exactly what a Shortcut note sitting in the queue overnight looks like.
+  // `sourceKind: "api"` — exactly what a Shortcut note sitting in the queue overnight
+  // looks like.
   const demoNoteRes = await notesPost(
     req("POST", "https://orbit.test/api/v1/notes", demoKey.token, { text: "Overnight note from a Shortcut" })
   );
@@ -434,13 +444,24 @@ run(async () => {
   // Fast-forward past extraction to "awaiting review", without running the real AI pipeline.
   await db.execute(sql`UPDATE capture_jobs SET status = 'ready' WHERE id = ${demoNoteData.noteId}`);
 
-  // Job B: a plain ungrouped job in the same state — stands in for a genuine single-review
-  // card the discard rule is SUPPOSED to clear away, so this also proves the rule still
-  // works at all rather than having been accidentally disabled entirely.
-  const [ungroupedJob] = rowsOf<{ id: string }>(
+  // Job B: a plain ungrouped in-app job in the same state — stands in for a genuine
+  // single-review card the discard rule is SUPPOSED to clear away, so this also proves the
+  // rule still works at all rather than having been accidentally disabled entirely.
+  const [inAppLoneJob] = rowsOf<{ id: string }>(
     await db.execute(sql`
       INSERT INTO capture_jobs (user_id, source_kind, status, input_text)
       VALUES (${DEMO_USER}, 'messy', 'ready', 'A lone in-app draft awaiting review')
+      RETURNING id
+    `)
+  );
+
+  // Job C: an in-app job that DOES carry a batchGroupId — a stand-in for a genuine
+  // multi-file-drop leftover. This must be discarded just as it always was: this task does
+  // not get to grant it immunity by way of a column it happens to share with the API's jobs.
+  const [inAppBatchLeftover] = rowsOf<{ id: string }>(
+    await db.execute(sql`
+      INSERT INTO capture_jobs (user_id, source_kind, status, input_text, batch_group_id)
+      VALUES (${DEMO_USER}, 'messy', 'ready', 'One leftover card from a twelve-file drop', gen_random_uuid())
       RETURNING id
     `)
   );
@@ -458,18 +479,27 @@ run(async () => {
     await db.execute(sql`SELECT status FROM capture_jobs WHERE id = ${demoNoteData.noteId}`)
   )[0];
   check(
-    "the API-created job (with its own batchGroupId) survives the app's own Extract",
+    "the API-created job (sourceKind \"api\") survives the app's own Extract",
     demoJobStatus.status === "ready",
     demoJobStatus.status
   );
 
-  const ungroupedJobStatus = rowsOf<{ status: string }>(
-    await db.execute(sql`SELECT status FROM capture_jobs WHERE id = ${ungroupedJob.id}`)
+  const inAppLoneStatus = rowsOf<{ status: string }>(
+    await db.execute(sql`SELECT status FROM capture_jobs WHERE id = ${inAppLoneJob.id}`)
   )[0];
   check(
-    "…while a true ungrouped job is still discarded (the rule itself still works)",
-    ungroupedJobStatus.status === "discarded",
-    ungroupedJobStatus.status
+    "…while a lone in-app job is still discarded (the rule itself still works)",
+    inAppLoneStatus.status === "discarded",
+    inAppLoneStatus.status
+  );
+
+  const inAppBatchStatus = rowsOf<{ status: string }>(
+    await db.execute(sql`SELECT status FROM capture_jobs WHERE id = ${inAppBatchLeftover.id}`)
+  )[0];
+  check(
+    "…and a grouped in-app leftover is ALSO still discarded (no batchGroupId immunity)",
+    inAppBatchStatus.status === "discarded",
+    inAppBatchStatus.status
   );
 
   const newDemoJob = rowsOf<{ id: string }>(
