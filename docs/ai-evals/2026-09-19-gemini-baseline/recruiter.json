@@ -1,0 +1,61 @@
+{
+  "label": "baseline-recruiter",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash",
+  "date": "2026-09-20T00:26:10.416Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 1,
+  "tasks": {
+    "recruiter": {
+      "cases": 40,
+      "metrics": {
+        "precision": 1,
+        "recall": 0.5555555555555556,
+        "accuracy": 0.8,
+        "detailRecall": 1
+      },
+      "misses": [
+        "rec-agency-02-thread-client-revealed",
+        "rec-inhouse-03-rejection-after-onsite",
+        "rec-inhouse-04-two-openings",
+        "rec-sourcer-01-technical-sourcer",
+        "rec-agency-05-executive-search",
+        "rec-inhouse-06-followups-no-reply",
+        "rec-agency-06-submitted-then-rejected",
+        "rec-inhouse-07-offer-stage",
+        "not-ats-greenhouse-01-application-received",
+        "not-ats-lever-01-ack-then-auto-reject",
+        "not-ats-workday-01-requisition-received",
+        "not-ats-workday-02-assessment-invite",
+        "not-jobalert-linkedin-01-digest",
+        "not-colleague-01-reorg",
+        "not-friend-01-asks-for-referral",
+        "not-sales-02-ats-vendor",
+        "not-conference-01-speaker-invite",
+        "not-vendor-01-renewal",
+        "not-former-manager-01-catching-up",
+        "not-careercenter-01-fair-blast",
+        "not-mentor-01-offer-negotiation-advice",
+        "not-peopleops-01-benefits",
+        "not-student-01-informational-interview"
+      ],
+      "p50LatencyMs": 3578,
+      "costMicros": 272981,
+      "costPerCaseMicros": 6824.525,
+      "usage": [
+        {
+          "operation": "recruiter.scan",
+          "model": "gemini-3.5-flash",
+          "calls": 40,
+          "failures": 23,
+          "inputTokens": 21581,
+          "outputTokens": 26733,
+          "cachedInputTokens": 0,
+          "costMicros": 272981,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

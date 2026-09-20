@@ -32,6 +32,8 @@ export function getShowcaseAccountId(): string | null {
   return process.env.DEMO_ACCOUNT_USER_ID?.trim() || null;
 }
 
+export type DemoAccountReason = "localhost" | "showcase";
+
 /**
  * A demo account is one that exists to show the product, so no plan gate should ever stand
  * in front of it:
@@ -41,9 +43,16 @@ export function getShowcaseAccountId(): string | null {
  *
  * Nothing else. In particular a Clerk-less deploy that isn't `next dev` gets no exemption:
  * it would put every anonymous visitor on the shared `demo-user` with paid access.
+ *
+ * Returns why this account is a demo account, or null when it is not one; `isDemoAccount`
+ * is the same answer as a boolean.
  */
+export function demoAccountReason(userId: string | null | undefined): DemoAccountReason | null {
+  if (!userId) return null;
+  if (isLocalhost()) return "localhost";
+  return userId === getShowcaseAccountId() ? "showcase" : null;
+}
+
 export function isDemoAccount(userId: string | null | undefined): boolean {
-  if (!userId) return false;
-  if (isLocalhost()) return true;
-  return userId === getShowcaseAccountId();
+  return demoAccountReason(userId) !== null;
 }

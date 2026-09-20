@@ -36,6 +36,12 @@ export type Surface = {
    */
   alwaysVisible?: true;
   reason?: string;
+  /**
+   * Pages only: not released yet. Ordinary users get the coming-soon screen in place of the
+   * route (and every route under it) and the nav item carries a "Soon" tag. Set in code, not
+   * by an operator toggle — releasing the page is deleting this line.
+   */
+  comingSoon?: true;
 };
 
 const PAGES: Surface[] = [
@@ -54,6 +60,7 @@ const PAGES: Surface[] = [
     label: "Events",
     description: "Events you attended, their attendee lists, and who you spoke to.",
     href: "/events",
+    comingSoon: true,
   },
   {
     key: "page.contacts",
@@ -103,6 +110,7 @@ const PAGES: Surface[] = [
     label: "Outreach",
     description: "Campaigns, prospects, and sent messages.",
     href: "/outreach",
+    comingSoon: true,
   },
   {
     key: "page.knowledge",
@@ -210,7 +218,10 @@ const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
     key: `settings.${section.id.replace(/^settings-/, "")}`,
     kind: "settings" as const,
     label: section.label,
-    description: `The ${section.label} card on the settings page.`,
+    description:
+      section.group === "integrations"
+        ? `The ${section.label} tab in Settings → Integrations.`
+        : `The ${section.label} section on the settings page.`,
     settingsId: section.id,
     ...(reason ? { alwaysVisible: true as const, reason } : {}),
   };
@@ -254,6 +265,25 @@ export function isHrefHidden(href: string, hidden: ReadonlySet<string>): boolean
 }
 
 /** Settings anchor id → surface key, for filtering the settings page and its rail. */
+/** Page surfaces that are announced but not released. */
+export const COMING_SOON_KEYS: ReadonlySet<string> = new Set(
+  PAGES.filter((s) => s.comingSoon).map((s) => s.key)
+);
+
+/**
+ * Surfaces elsewhere in the app that only make sense once a coming-soon page is released.
+ * They are hidden from exactly the viewers who get the coming-soon screen, so nothing
+ * points at a page that is closed.
+ */
+export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
+  "page.outreach": ["dashboard.outreach-performance", "settings.outreach"],
+};
+
+export function isHrefComingSoon(href: string): boolean {
+  const key = surfaceKeyForHref(href);
+  return key !== null && COMING_SOON_KEYS.has(key);
+}
+
 export function surfaceKeyForSettingsId(settingsId: string): string {
   return `settings.${settingsId.replace(/^settings-/, "")}`;
 }

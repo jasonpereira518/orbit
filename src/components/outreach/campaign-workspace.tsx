@@ -33,6 +33,7 @@ import type {
   PipelineFilter,
   SequenceStep,
 } from "@/lib/outreach-types";
+import { friendlyError } from "@/lib/errors";
 
 export function CampaignWorkspace({
   campaign,
@@ -200,7 +201,12 @@ export function CampaignWorkspace({
           audienceFilters: filters,
           reparseAudience: false,
         });
-        const result = await searchProspects(campaign.id);
+        const res = await searchProspects(campaign.id);
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        const result = res.value;
         if (result.source === "demo") {
           toast.success(
             `Demo search: ${result.matched} matched` +
@@ -215,7 +221,7 @@ export function CampaignWorkspace({
         setShowFilters(false);
         refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Search failed");
+        toast.error(friendlyError(err, "That search didn’t work — try again?"));
       }
     });
   }
@@ -232,7 +238,7 @@ export function CampaignWorkspace({
         toast.success("Drafts regenerated");
         refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Regenerate failed");
+        toast.error(friendlyError(err, "Couldn’t regenerate that draft — try again?"));
       }
     });
   }
@@ -244,11 +250,11 @@ export function CampaignWorkspace({
         toast.success(
           result.generated
             ? `Generated ${result.generated} follow-up drafts`
-            : "No due follow-ups"
+            : "No follow-ups are due"
         );
         refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Follow-up generation failed");
+        toast.error(friendlyError(err, "Couldn’t write those follow-ups — try again?"));
       }
     });
   }

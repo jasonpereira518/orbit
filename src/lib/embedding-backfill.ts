@@ -19,15 +19,16 @@
  */
 import { and, asc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { contacts } from "@/db/schema";
+import { contactEmbeddings, contacts, embeddingFailures } from "@/db/schema";
 import { createEmbeddingsBatch } from "@/lib/ai";
+import { embedWithBisect, planEmbeddingBatches } from "@/lib/embedding-batches";
+import { classifyAiError, isMissingAiApiKeyError } from "@/lib/errors";
 import { internalFetch } from "@/lib/internal-auth";
-import { buildContactEmbeddingContent, persistEmbeddingVectors } from "@/lib/search";
+import { buildContactEmbeddingContent, computeContentHash, persistEmbeddingVectors } from "@/lib/search";
+import { reportError } from "@/lib/report-error";
 
 /** Contacts claimed per pass. */
 const CLAIM_SIZE = 500;
-/** Texts per provider call — well under OpenAI's input cap, small enough to retry cheaply. */
-const EMBED_BATCH = 200;
 /** Leaves room under the 300s ceiling for a self-continuation request. */
 export const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 
@@ -50,9 +51,41 @@ export async function kickEmbeddingBackfill(userId: string) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ userId }),
     });
-  } catch {
-    // Best-effort — the cron backstop picks up anything still pending.
+  } catch (err) {
+    // Best-effort — the cron backstop picks up anything still pending. Reported (throttled)
+    // so a kick that always fails — a wrong APP_BASE_URL, a rotated CRON_SECRET — is visible.
+    reportError(err, { where: "job.embedding-backfill.kick", userId, level: "warning" });
   }
+}
+
+/**
+ * Errors about the KEY or the account, not the rows: bisecting them would only multiply the
+ * failure, and rethrowing keeps the old contract — the work stays pending for the next pass.
+ */
+function isKeyLevelEmbeddingError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  if (isMissingAiApiKeyError(message) || /configured for embeddings|has no embeddings api/i.test(message)) {
+    return true;
+  }
+  const kind = classifyAiError(err);
+  return kind === "auth" || kind === "quota" || kind === "rate_limit" || kind === "model_unavailable";
+}
+
+/** Marks rows the provider refused on their own; see `embeddingFailures` in schema.ts. */
+async function recordEmbeddingFailures(
+  userId: string,
+  sourceType: "profile" | "meeting",
+  failed: Array<{ sourceId: string; error: unknown }>
+): Promise<void> {
+  if (failed.length === 0) return;
+  const db = await getDb();
+  await db
+    .insert(embeddingFailures)
+    .values(failed.map((f) => ({ userId, sourceType, sourceId: f.sourceId, errorKind: classifyAiError(f.error) })))
+    .onConflictDoUpdate({
+      target: [embeddingFailures.userId, embeddingFailures.sourceType, embeddingFailures.sourceId],
+      set: { failedAt: new Date(), errorKind: sql`excluded.error_kind` },
+    });
 }
 
 /**
@@ -93,70 +126,111 @@ export async function runEmbeddingBackfill(
     });
     if (stale.length === 0) break;
 
-    const entries = stale
-      .map((contact) => ({
-        contactId: contact.id,
-        content: buildContactEmbeddingContent(contact),
-      }))
+    const candidates = stale
+      .map((contact) => {
+        const content = buildContactEmbeddingContent(contact);
+        return { contactId: contact.id, content, contentHash: computeContentHash(content) };
+      })
       .filter((entry) => entry.content.trim().length > 0);
 
-    const embeddable = new Set(entries.map((entry) => entry.contactId));
+    // Stamped stale is not the same as changed: an opportunity write, a merge or a profile
+    // save stamps the flag whether or not the embedded text moved. A contact whose stored
+    // vector was built from exactly this text needs its flag cleared, not another API call —
+    // the same check `rebuildContactEmbedding` makes on the immediate path.
+    const storedHash = new Map(
+      candidates.length === 0
+        ? []
+        : (
+            await db
+              .select({ contactId: contactEmbeddings.contactId, contentHash: contactEmbeddings.contentHash })
+              .from(contactEmbeddings)
+              .where(
+                and(
+                  eq(contactEmbeddings.userId, userId),
+                  eq(contactEmbeddings.sourceType, "profile"),
+                  inArray(contactEmbeddings.contactId, candidates.map((c) => c.contactId))
+                )
+              )
+          ).map((r) => [r.contactId, r.contentHash])
+    );
+    const unchangedIds = candidates
+      .filter((entry) => storedHash.get(entry.contactId) === entry.contentHash)
+      .map((entry) => entry.contactId);
+    const entries = candidates.filter((entry) => storedHash.get(entry.contactId) !== entry.contentHash);
+
+    const embeddable = new Set(candidates.map((entry) => entry.contactId));
     // A contact with no embeddable text is not pending work — clear its flag so the loop
-    // cannot spin on it forever, but write no embedding row.
-    const emptyIds = stale.map((c) => c.id).filter((id) => !embeddable.has(id));
+    // cannot spin on it forever, but write no embedding row. An unchanged one is done too.
+    const emptyIds = [
+      ...stale.map((c) => c.id).filter((id) => !embeddable.has(id)),
+      ...unchangedIds,
+    ];
 
-    for (let i = 0; i < entries.length; i += EMBED_BATCH) {
-      const slice = entries.slice(i, i + EMBED_BATCH);
-      // Deliberately not caught: a provider failure must leave `embedding_stale_at` set so
-      // the next pass retries. Swallowing it here would silently drop the work.
-      const vectors = await embed(
-        userId,
-        slice.map((entry) => entry.content)
+    for (const slice of planEmbeddingBatches(entries, (entry) => entry.content)) {
+      // Key-level failures are rethrown by embedWithBisect, leaving `embedding_stale_at` set
+      // so the next pass retries. Only a row refused on its own is isolated and marked.
+      const outcome = await embedWithBisect(
+        slice,
+        (entry) => entry.content,
+        (texts) => embed(userId, texts),
+        isKeyLevelEmbeddingError
       );
+      const done = outcome.embedded;
 
-      const tuples = slice.map(
-        (entry, j) => sql`(
-          ${userId}::text, ${entry.contactId}::uuid, 'profile'::text,
-          ${entry.contactId}::text, ${JSON.stringify(vectors[j])}::jsonb,
-          ${entry.content}::text
-        )`
-      );
-
-      const result = await db.execute(sql`
-        INSERT INTO contact_embeddings
-          (user_id, contact_id, source_type, source_id, embedding, content)
-        VALUES ${sql.join(tuples, sql`, `)}
-        ON CONFLICT (user_id, contact_id, source_type, source_id)
-        DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content
-        RETURNING id, contact_id
-      `);
-
-      // `db.execute` returns an array on neon-http and `{ rows }` on PGlite; both drivers
-      // are in play (production and local), so neither shape can be assumed. `rowsOf` is
-      // the shared normalizer for this (see `src/db/index.ts`).
-      const returned = rowsOf<{ id: string; contact_id: string }>(result);
-      const idByContact = new Map(returned.map((r) => [r.contact_id, r.id]));
-
-      await persistEmbeddingVectors(
-        slice
-          .map((entry, j) => ({
-            id: idByContact.get(entry.contactId) ?? "",
-            embedding: vectors[j],
-          }))
-          .filter((row) => row.id)
-      );
-
-      await db
-        .update(contacts)
-        .set({ embeddingStaleAt: null })
-        .where(
-          and(
-            inArray(contacts.id, slice.map((entry) => entry.contactId)),
-            lte(contacts.embeddingStaleAt, claimedAt)
-          )
+      if (done.length > 0) {
+        const tuples = done.map(
+          ({ item, vector }) => sql`(
+            ${userId}::text, ${item.contactId}::uuid, 'profile'::text,
+            ${item.contactId}::text, ${JSON.stringify(vector)}::jsonb,
+            ${item.content}::text, ${item.contentHash}::text
+          )`
         );
+        // content_hash is written so the next pass — and the immediate path — can tell this
+        // vector is current. Rows written before it was stored re-embed once, then settle.
+        const result = await db.execute(sql`
+          INSERT INTO contact_embeddings
+            (user_id, contact_id, source_type, source_id, embedding, content, content_hash)
+          VALUES ${sql.join(tuples, sql`, `)}
+          ON CONFLICT (user_id, contact_id, source_type, source_id)
+          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash
+          RETURNING id, contact_id
+        `);
+        // `db.execute` returns an array on neon-http and `{ rows }` on PGlite; both drivers
+        // are in play (production and local), so neither shape can be assumed. `rowsOf` is
+        // the shared normalizer for this (see `src/db/index.ts`).
+        const idByContact = new Map(
+          rowsOf<{ id: string; contact_id: string }>(result).map((r) => [r.contact_id, r.id])
+        );
+        await persistEmbeddingVectors(
+          done
+            .map(({ item, vector }) => ({ id: idByContact.get(item.contactId) ?? "", embedding: vector }))
+            .filter((row) => row.id)
+        );
+        await db
+          .update(contacts)
+          .set({ embeddingStaleAt: null })
+          .where(
+            and(
+              inArray(contacts.id, done.map(({ item }) => item.contactId)),
+              lte(contacts.embeddingStaleAt, claimedAt)
+            )
+          );
+        embedded += done.length;
+      }
 
-      embedded += slice.length;
+      if (outcome.failed.length > 0) {
+        const failedIds = outcome.failed.map(({ item }) => item.contactId);
+        await recordEmbeddingFailures(
+          userId,
+          "profile",
+          outcome.failed.map(({ item, error }) => ({ sourceId: item.contactId, error }))
+        );
+        // Un-flagged so the claim stops returning it; an edit re-stamps it for another try.
+        await db
+          .update(contacts)
+          .set({ embeddingStaleAt: null })
+          .where(and(inArray(contacts.id, failedIds), lte(contacts.embeddingStaleAt, claimedAt)));
+      }
     }
 
     if (emptyIds.length > 0) {
@@ -201,7 +275,9 @@ export async function runEmbeddingBackfill(
  *
  * The content check is what keeps a meeting with no text at all out of the claim
  * entirely rather than needing a "clear the flag" branch the way the profile phase does —
- * there is no flag here to clear.
+ * there is no flag here to clear. A meeting the provider refused on its own is listed in
+ * `embedding_failures` and excluded, or it would keep `remaining > 0` and be resent every
+ * hour.
  */
 const PENDING_MEETINGS = sql`
   FROM interactions i
@@ -216,6 +292,12 @@ const PENDING_MEETINGS = sql`
         AND e.contact_id = i.contact_id
         AND e.source_type = 'meeting'
         AND e.source_id = i.external_id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM embedding_failures f
+      WHERE f.user_id = i.user_id
+        AND f.source_type = 'meeting'
+        AND f.source_id = i.contact_id::text || ':' || i.external_id
     )
 `;
 
@@ -245,7 +327,8 @@ export async function pendingMeetingCount(userId: string): Promise<number> {
  *
  * Restored here rather than in the adapter, and this is the whole point: putting it back
  * per row would reintroduce exactly the per-row AI round trip this work exists to remove.
- * Here it is batched (`EMBED_BATCH` texts per provider call), time-boxed, and resumable, and
+ * Here it is batched (`planEmbeddingBatches`, capped by items and estimated tokens),
+ * time-boxed, and resumable, and
  * it needs no new column or flag — `contact_embeddings` already records which meetings have
  * been embedded, so "what is left" is a query rather than state to keep in sync.
  *
@@ -283,50 +366,54 @@ async function runMeetingPhase(
     );
     if (claimed.length === 0) break;
 
-    for (let i = 0; i < claimed.length; i += EMBED_BATCH) {
-      const slice = claimed.slice(i, i + EMBED_BATCH);
-      // Uncaught for the same reason as the profile phase: a provider failure must leave
-      // these meetings unembedded so the next pass retries them. There is no flag to
+    for (const slice of planEmbeddingBatches(claimed, (row) => row.content)) {
+      // Uncaught key-level failures for the same reason as the profile phase: they must
+      // leave these meetings unembedded so the next pass retries them. There is no flag to
       // preserve here — the absence of the `contact_embeddings` row *is* the pending state.
-      const vectors = await embed(
+      const outcome = await embedWithBisect(
+        slice,
+        (row) => row.content,
+        (texts) => embed(userId, texts),
+        isKeyLevelEmbeddingError
+      );
+      const done = outcome.embedded;
+
+      if (done.length > 0) {
+        const tuples = done.map(
+          ({ item, vector }) => sql`(
+            ${userId}::text, ${item.contact_id}::uuid, 'meeting'::text,
+            ${item.external_id}::text, ${JSON.stringify(vector)}::jsonb,
+            ${item.content}::text, ${computeContentHash(item.content)}::text
+          )`
+        );
+        // Four-column conflict target, matching `embeddings_user_contact_source_id_uidx`.
+        // `source_id` is load-bearing here in a way it is not for the profile phase: a
+        // contact has many meetings, each its own row, so a three-column key would make the
+        // second meeting of any contact collide with the first.
+        const result = await db.execute(sql`
+          INSERT INTO contact_embeddings
+            (user_id, contact_id, source_type, source_id, embedding, content, content_hash)
+          VALUES ${sql.join(tuples, sql`, `)}
+          ON CONFLICT (user_id, contact_id, source_type, source_id)
+          DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content, content_hash = EXCLUDED.content_hash
+          RETURNING id, source_id
+        `);
+        const idBySourceId = new Map(
+          rowsOf<{ id: string; source_id: string }>(result).map((r) => [r.source_id, r.id])
+        );
+        await persistEmbeddingVectors(
+          done
+            .map(({ item, vector }) => ({ id: idBySourceId.get(item.external_id) ?? "", embedding: vector }))
+            .filter((row) => row.id)
+        );
+        embedded += done.length;
+      }
+
+      await recordEmbeddingFailures(
         userId,
-        slice.map((row) => row.content)
+        "meeting",
+        outcome.failed.map(({ item, error }) => ({ sourceId: `${item.contact_id}:${item.external_id}`, error }))
       );
-
-      const tuples = slice.map(
-        (row, j) => sql`(
-          ${userId}::text, ${row.contact_id}::uuid, 'meeting'::text,
-          ${row.external_id}::text, ${JSON.stringify(vectors[j])}::jsonb,
-          ${row.content}::text
-        )`
-      );
-
-      // Four-column conflict target, matching `embeddings_user_contact_source_id_uidx`.
-      // `source_id` is load-bearing here in a way it is not for the profile phase: a
-      // contact has many meetings, each its own row, so a three-column key would make the
-      // second meeting of any contact collide with the first.
-      const result = await db.execute(sql`
-        INSERT INTO contact_embeddings
-          (user_id, contact_id, source_type, source_id, embedding, content)
-        VALUES ${sql.join(tuples, sql`, `)}
-        ON CONFLICT (user_id, contact_id, source_type, source_id)
-        DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content
-        RETURNING id, source_id
-      `);
-
-      const idBySourceId = new Map(
-        rowsOf<{ id: string; source_id: string }>(result).map((r) => [r.source_id, r.id])
-      );
-      await persistEmbeddingVectors(
-        slice
-          .map((row, j) => ({
-            id: idBySourceId.get(row.external_id) ?? "",
-            embedding: vectors[j],
-          }))
-          .filter((row) => row.id)
-      );
-
-      embedded += slice.length;
     }
   }
 

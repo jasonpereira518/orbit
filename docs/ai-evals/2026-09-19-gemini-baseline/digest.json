@@ -1,0 +1,50 @@
+{
+  "label": "baseline-digest",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash",
+  "date": "2026-09-20T00:26:10.521Z",
+  "commit": "cc072b3e",
+  "fixtures": "cb8e62c6abbf",
+  "runs": 1,
+  "tasks": {
+    "digest": {
+      "cases": 3,
+      "metrics": {
+        "attendeeRecall": 0.3333333333333333,
+        "attendeePrecision": 1,
+        "actionItemRecall": 1
+      },
+      "misses": [
+        "digest-a-platform-weekly-sync",
+        "digest-c-long-planning-workshop"
+      ],
+      "p50LatencyMs": 22051,
+      "costMicros": 217397,
+      "costPerCaseMicros": 72465.66666666667,
+      "usage": [
+        {
+          "operation": "meeting.digest",
+          "model": "gemini-3.5-flash",
+          "calls": 2,
+          "failures": 1,
+          "inputTokens": 4597,
+          "outputTokens": 9884,
+          "cachedInputTokens": 0,
+          "costMicros": 95852,
+          "unpriced": 0
+        },
+        {
+          "operation": "meeting.digest.map",
+          "model": "gemini-3.5-flash",
+          "calls": 2,
+          "failures": 1,
+          "inputTokens": 9210,
+          "outputTokens": 11970,
+          "cachedInputTokens": 0,
+          "costMicros": 121545,
+          "unpriced": 0
+        }
+      ]
+    }
+  }
+}

@@ -16,6 +16,8 @@ import {
   MAX_REDIRECT_HOPS,
   fetchEventPage,
 } from "../src/lib/events/fetch-page";
+import { guardedFetchText } from "../src/lib/events/guarded-fetch";
+import { redactFeedUrl } from "../src/lib/events/discovery/from-ics-feed";
 import { assertDeliverable, isBlockedAddress } from "../src/lib/net-guard";
 
 let failures = 0;
@@ -141,6 +143,72 @@ async function main() {
     );
   }
 
+  {
+    // The hop budget went 2 -> 4 for ticket links, and a per-hop check is only worth having
+    // if it holds at the FAR end of that budget. Every hop here is public; only the last one
+    // turns inward, which is precisely the shape a longer budget makes newly reachable.
+    const scripted = scriptedFetch([
+      redirect("https://example.com/a"),
+      redirect("https://example.com/b"),
+      redirect("https://example.com/c"),
+      redirect("https://169.254.169.254/latest/meta-data/"),
+    ]);
+    await refuses(
+      "re-checks the guard on the deepest allowed hop, not just the first",
+      () => fetchEventPage("https://example.com/evt", scripted),
+      "blocked"
+    );
+    check(
+      "and still never requested the internal address",
+      !scripted.seen.some((u) => u.includes("169.254.169.254")),
+      scripted.seen.join(" -> ")
+    );
+  }
+
+  console.log("\nlinks that are not the event page");
+  {
+    // An order URL carries an order id, not an event id, so there is nothing to fetch. The
+    // refusal happens before any request at all.
+    const scripted = scriptedFetch([html("<title>Anything</title>")]);
+    await refuses(
+      "refuses an order page without making a request",
+      () => fetchEventPage("https://my.ticketmaster.com/orders/abc", scripted),
+      "private_page"
+    );
+    check("no request was made", scripted.seen.length === 0, `${scripted.seen.length} requests`);
+  }
+  {
+    // The silent failure this replaces: a login page parses fine, and "Log In" would have
+    // been stored as the event's title.
+    const scripted = scriptedFetch([
+      redirect("https://example.com/login?next=/evt"),
+      html("<title>Log in</title>"),
+    ]);
+    await refuses(
+      "refuses a link that lands on a sign-in wall",
+      () => fetchEventPage("https://example.com/evt", scripted),
+      "sign_in_required"
+    );
+  }
+  {
+    // The candidate list earning its keep: the rewrite guess 404s, and the URL the user
+    // actually pasted is still tried rather than the paste failing.
+    const scripted = scriptedFetch([
+      new Response("", { status: 404 }),
+      html(`<title>Founder Mixer</title>`),
+    ]);
+    const details = await fetchEventPage(
+      "https://www.eventbrite.com/x/founder-mixer-tickets-12345",
+      scripted
+    );
+    check("a stale rewrite rule falls back to the pasted URL", details.title === "Founder Mixer", String(details.title));
+    check(
+      "having tried the rewrite first",
+      scripted.seen[0]?.includes("/e/founder-mixer") === true,
+      scripted.seen.join(" -> ")
+    );
+  }
+
   await refuses(
     "refuses a non-HTML content type",
     () =>
@@ -181,6 +249,67 @@ async function main() {
     const details = await fetchEventPage("https://lu.ma/abc", scripted);
     check("a normal redirect is followed", details.title === "Real Event", String(details.title));
     check("and the final URL is recorded", details.sourceUrl.endsWith("/real-event"), details.sourceUrl);
+  }
+
+  console.log("\ncalendar feeds are the same hazard in a different content type");
+  {
+    // A feed URL is pasted once and then fetched by a background job forever, with nobody
+    // watching the result. `calendar-sync.ts` `fetchIcs` is the cautionary example: plain
+    // `fetch`, `redirect: "follow"`, no body cap.
+    await refuses(
+      "a feed URL pointing at link-local metadata is refused",
+      () => guardedFetchText("https://169.254.169.254/latest/meta-data/", { contentTypes: ["text/calendar"] }),
+      "blocked"
+    );
+    await refuses(
+      "and so is one that redirects there",
+      () =>
+        guardedFetchText("https://example.com/feed.ics", {
+          contentTypes: ["text/calendar"],
+          deps: scriptedFetch([redirect("http://169.254.169.254/latest/meta-data/")]),
+        }),
+      "blocked"
+    );
+    await refuses(
+      "an HTML login page is not a calendar",
+      () =>
+        guardedFetchText("https://example.com/feed.ics", {
+          contentTypes: ["text/calendar"],
+          deps: scriptedFetch([html("<html><title>Log in</title></html>")]),
+        }),
+      "not_html"
+    );
+    {
+      const feed = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:1\nSUMMARY:A party\nEND:VEVENT\nEND:VCALENDAR";
+      const result = await guardedFetchText("https://api.lu.ma/ics/get?u=secret", {
+        contentTypes: ["text/calendar"],
+        deps: scriptedFetch([
+          new Response(feed, { status: 200, headers: { "content-type": "text/calendar" } }),
+        ]),
+      });
+      check("a real feed comes through", result.text.includes("BEGIN:VEVENT"));
+    }
+    {
+      // 2 MB cap, proven by a body that claims to be short and is not.
+      const huge = "BEGIN:VCALENDAR\n" + "X-PADDING:x\n".repeat(300_000);
+      const result = await guardedFetchText("https://example.com/feed.ics", {
+        contentTypes: ["text/calendar"],
+        maxBytes: 50_000,
+        deps: scriptedFetch([
+          new Response(huge, {
+            status: 200,
+            headers: { "content-type": "text/calendar", "content-length": "10" },
+          }),
+        ]),
+      });
+      check("an oversized feed is capped", result.text.length <= 60_000, String(result.text.length));
+    }
+    check(
+      "a redacted feed URL keeps no secret",
+      redactFeedUrl("https://api.lu.ma/ics/get?entity=usr-123&token=SECRET") ===
+        "https://api.lu.ma/ics/get",
+      redactFeedUrl("https://api.lu.ma/ics/get?entity=usr-123&token=SECRET")
+    );
   }
 
   if (failures > 0) {
