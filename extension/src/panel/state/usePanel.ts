@@ -37,6 +37,9 @@ export type PanelState = {
   startersDegraded: boolean;
   startersDegradedReason: StartersDegradedReason | null;
   error: string | null;
+  /** The failure's machine-readable cause. The panel branches on this; matching
+   *  on `error` copy meant rewording a sentence silently changed behaviour. */
+  errorCode: string | null;
   /** Set when the user navigated away while holding unsaved work. */
   pendingUrl: string | null;
   /** The origin to ask for, when we could see the URL but not run on it. */
@@ -58,9 +61,20 @@ const INITIAL: PanelState = {
   startersDegraded: false,
   startersDegradedReason: null,
   error: null,
+  errorCode: null,
   pendingUrl: null,
   pendingOrigin: null,
 };
+
+/**
+ * How long a `/me` response stays good for.
+ *
+ * It answers "who am I, what can I do" — which does not change while the user
+ * browses. Re-fetching it on every navigation made each profile cost four calls
+ * against a 60/minute budget, so roughly fifteen profiles a minute rate-limited
+ * the people who use the extension most.
+ */
+const ME_TTL_MS = 5 * 60_000;
 
 export function usePanel() {
   const session = useSession();
@@ -83,6 +97,18 @@ export function usePanel() {
   const getTokenRef = useRef(session.getToken);
   getTokenRef.current = session.getToken;
   const api = useMemo(() => createApi(() => getTokenRef.current()), []);
+
+  const meCacheRef = useRef<{ at: number; value: MeResponse } | null>(null);
+  const loadMe = useCallback(
+    async (signal?: AbortSignal) => {
+      const cached = meCacheRef.current;
+      if (cached && Date.now() - cached.at < ME_TTL_MS) return cached.value;
+      const value = await api.me(signal);
+      meCacheRef.current = { at: Date.now(), value };
+      return value;
+    },
+    [api]
+  );
 
   const loadStarters = useCallback(
     async (page: PageContext, contactId: string | null) => {
@@ -126,6 +152,7 @@ export function usePanel() {
       startersDegraded: false,
       startersDegradedReason: null,
       error: null,
+      errorCode: null,
       pageError: null,
       pageErrorReason: null,
     }));
@@ -180,7 +207,7 @@ export function usePanel() {
 
     try {
       const [me, resolved] = await Promise.all([
-        api.me(controller.signal),
+        loadMe(controller.signal),
         api.resolve(page, controller.signal),
       ]);
       if (controller.signal.aborted) return;
@@ -208,18 +235,22 @@ export function usePanel() {
       if (controller.signal.aborted) return;
       const apiError = error as ApiError;
       const offline = apiError.code === "offline";
+      // A session that just ended must not leave a cached `me` behind for the
+      // next sign-in to read as still-current.
+      if (apiError.code === "unauthorized") meCacheRef.current = null;
       setState((s) => ({
         ...s,
         phase: apiError.code === "unauthorized" ? "signed-out" : "error",
         error: offline
           ? "You're offline. Orbit will catch up when you're back."
           : apiError.message,
+        errorCode: apiError.code ?? "server_error",
         resolving: false,
         // `resolved` is untouched: either it's the same page's last-known
         // data (kept above) or it was already cleared for a new page.
       }));
     }
-  }, [api, loadStarters, session.isLoaded, session.isSignedIn]);
+  }, [api, loadMe, loadStarters, session.isLoaded, session.isSignedIn]);
 
   useEffect(() => {
     void run();

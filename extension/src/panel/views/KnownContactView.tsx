@@ -11,7 +11,7 @@
  * Cards are reserved for the two things that are actionable and dismissible as
  * a unit: the diff and the starters.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
   CalendarClock,
@@ -43,12 +43,14 @@ export function KnownContactView({
   state,
   api,
   onChanged,
+  onDirtyChange,
 }: {
   contact: ContactSnapshot;
   page: PageContext;
   state: PanelState;
   api: OrbitApi;
   onChanged: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [panel, setPanel] = useState<"none" | "note" | "followup">("none");
   const [note, setNote] = useState("");
@@ -58,6 +60,15 @@ export function KnownContactView({
   const [editingSummary, setEditingSummary] = useState(false);
   const [summaryDraft, setSummaryDraft] = useState("");
   const [summaryBusy, setSummaryBusy] = useState(false);
+
+  // Unsaved prose about *this* person outranks the tab, exactly as a capture
+  // draft does: the panel holds where it is and offers to discard, rather than
+  // following the browser and leaving the text pointed at someone else.
+  const hasUnsavedText = note.trim().length > 0 || summaryDraft.trim().length > 0;
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedText);
+    return () => onDirtyChange?.(false);
+  }, [hasUnsavedText, onDirtyChange]);
 
   const changes = (state.resolved?.changes ?? []).filter(
     (change) => !dismissed.includes(change.field)

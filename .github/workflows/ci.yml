@@ -62,7 +62,7 @@ jobs:
       - run: npm test
 
   extension:
-    name: extension typecheck · build
+    name: extension typecheck · lint · test · build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -74,6 +74,8 @@ jobs:
           cache-dependency-path: extension/package-lock.json
       - run: npm --prefix extension ci --no-audit --no-fund
       - run: npm --prefix extension run typecheck
+      - run: npm --prefix extension run lint
+      - run: npm --prefix extension run test
       - run: npm --prefix extension run build
 
   e2e:

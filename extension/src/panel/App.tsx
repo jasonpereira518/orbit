@@ -18,6 +18,7 @@ import { CaptureView } from "./views/CaptureView";
 import { GrantAccessView } from "./views/GrantAccessView";
 import { KnownContactView } from "./views/KnownContactView";
 import { usePanel } from "./state/usePanel";
+import { emptyScope, scopeFor, type PageScope } from "./state/page-scope";
 
 const TIER_WORD = {
   inner: "Inner orbit",
@@ -25,18 +26,32 @@ const TIER_WORD = {
   outer: "Outer orbit",
 } as const;
 
+/** See `state/page-scope.ts` — the rule, and why it is kept there. */
+function usePageScopedState(url: string | null) {
+  const [held, setHeld] = useState<PageScope>(() => emptyScope(url));
+  const current = scopeFor(held, url);
+
+  return {
+    forceCreate: current.forceCreate,
+    sealed: current.sealed,
+    setForceCreate: (value: boolean) =>
+      setHeld({ ...current, url, forceCreate: value }),
+    setSealed: (value: boolean) => setHeld({ ...current, url, sealed: value }),
+  };
+}
+
 export function App() {
   const { state, api, reload, refresh, setDirty, followPending } = usePanel();
-  const [forceCreate, setForceCreate] = useState(false);
-  const [sealed, setSealed] = useState(false);
+  const pageUrl = state.page?.url ?? null;
+  const { forceCreate, sealed, setForceCreate, setSealed } =
+    usePageScopedState(pageUrl);
   const [signInClicked, setSignInClicked] = useState(false);
 
   const contact = state.resolved?.contact ?? null;
   // Offline with prior data for *this same page* (usePanel only keeps
   // `resolved` set in that case — see its own comment) means there's a real
   // record to show, stale, instead of a dead end.
-  const offlineError =
-    state.phase === "error" && Boolean(state.error?.startsWith("You're offline"));
+  const offlineError = state.phase === "error" && state.errorCode === "offline";
   const staleOffline = offlineError && Boolean(state.resolved);
 
   const verdict = () => {
@@ -222,11 +237,17 @@ export function App() {
     if (contact && !forceCreate) {
       return (
         <KnownContactView
+          // Without this the view is reused across people, and every piece of
+          // its own state — most dangerously a half-typed note — carries over
+          // to whoever is on screen next. The note would then be saved against
+          // the *new* contact's id.
+          key={contact.id}
           contact={contact}
           page={state.page}
           state={state}
           api={api}
           onChanged={() => void refresh()}
+          onDirtyChange={setDirty}
         />
       );
     }

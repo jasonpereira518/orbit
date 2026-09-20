@@ -3,12 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Orbit browser extension \u2014 see who you already know on the pages you're reading.",
+  "description": "Orbit browser extension — see who you already know on the pages you're reading.",
   "scripts": {
     "dev": "vite",
     "build": "npm run check:tokens && npm run build:inject && vite build",
     "build:inject": "vite build --config vite.inject.config.ts",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "lint": "eslint src",
     "check:tokens": "node scripts/tokens.mjs check",
     "zip": "npm run build && node scripts/zip.mjs",
@@ -33,6 +34,7 @@
     "eslint": "^9.39.1",
     "typescript": "^5",
     "typescript-eslint": "^8.48.1",
-    "vite": "^7.1.14"
+    "vite": "^7.1.14",
+    "vitest": "^5.0.1"
   }
 }
