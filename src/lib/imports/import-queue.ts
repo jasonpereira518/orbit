@@ -102,7 +102,7 @@ export function queueFromDetection(
       target: d.target,
       label:
         TARGET_LABEL[d.target as Exclude<ImportTarget, "unknown">] ?? "Import",
-      fileName: d.path ? (d.path.split("/").pop() ?? d.file.name) : d.file.name,
+      fileName: d.displayName,
       status: "waiting" as const,
     }));
 }

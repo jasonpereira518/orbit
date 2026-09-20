@@ -94,6 +94,22 @@ const ARCHIVE_NOISE = [
   "Endorsement_Received_Info.csv",
 ];
 
+/**
+ * The two archive members that are not merely noise but actively misleading: each one
+ * classifies as an importer it does not belong to, so a folder drop that sniffed everything
+ * could stage the wrong file.
+ */
+const INVITATIONS = [
+  "From,To,Sent At,Message,Direction",
+  "Ada Lovelace,Me,3/1/24 10:00 AM, ,INCOMING",
+  "Grace Hopper,Me,3/2/24 11:00 AM,Hi there,INCOMING",
+].join("\n");
+
+const ARCHIVE_CONTACTS = [
+  "First Name,Last Name,Email,Company",
+  "Ada,Lovelace,ada@analytical.example,Acme",
+].join("\n");
+
 // ---------------------------------------------------------------- name and head, in isolation
 
 console.log("Filename alone");
@@ -232,6 +248,94 @@ async function main() {
   check(
     "a ZIP with nothing importable is ignored, not an error",
     nothingInside.staged.length === 0 && nothingInside.ignored.length === 1
+  );
+
+  console.log("A whole LinkedIn export folder");
+  // Named the way the archive actually unzips: everything under one folder.
+  const folder = (name: string, body: string) =>
+    drop(name, body, "Basic_LinkedInDataExport_01-01-2024");
+  const exportFolder = await detectImportFiles([
+    folder("Connections.csv", CONNECTIONS_WITH_PREAMBLE),
+    folder("messages.csv", MESSAGES_CSV),
+    folder("Invitations.csv", INVITATIONS),
+    folder("Contacts.csv", ARCHIVE_CONTACTS),
+    ...ARCHIVE_NOISE.filter((n) => n !== "Invitations.csv").map((n) =>
+      folder(n, "Header,Row\na,b\n")
+    ),
+  ]);
+  check(
+    "only Connections.csv and messages.csv are staged",
+    exportFolder.staged.map((d) => d.target).join(",") ===
+      "linkedin_connections,linkedin_messages",
+    exportFolder.staged.map((d) => `${d.file.name}:${d.target}`).join(" | ")
+  );
+  check(
+    "Invitations.csv is not staged, though its From/To columns sniff as messages",
+    classifyByHead(INVITATIONS)?.target === "linkedin_messages" &&
+      !exportFolder.staged.some((d) => d.file.name === "Invitations.csv"),
+    String(classifyByHead(INVITATIONS)?.target)
+  );
+  check(
+    "the archive's own Contacts.csv is not staged either",
+    classifyByHead(ARCHIVE_CONTACTS)?.target === "contacts_file" &&
+      !exportFolder.staged.some((d) => d.file.name === "Contacts.csv")
+  );
+  check(
+    "nothing is silently lost — the rest is accounted for as ignored",
+    exportFolder.ignored.length === ARCHIVE_NOISE.length + 1,
+    `${exportFolder.ignored.length} ignored`
+  );
+  check(
+    "...and says why, once",
+    exportFolder.ignored.every((d) => d.reason === "not needed from a LinkedIn export")
+  );
+  check("nothing is skipped", exportFolder.skipped.length === 0);
+
+  // A bigger Invitations.csv would otherwise WIN the messages slot outright.
+  const lopsided = await detectImportFiles([
+    folder("messages.csv", MESSAGES_CSV),
+    folder("Invitations.csv", INVITATIONS + "\n" + "x,y,z,w,v\n".repeat(400)),
+  ]);
+  check(
+    "a large Invitations.csv cannot displace the real messages.csv",
+    lopsided.staged.length === 1 && lopsided.staged[0].file.name === "messages.csv",
+    lopsided.staged.map((d) => d.file.name).join(",")
+  );
+
+  // Loose files are hand-picked, so a Connections.csv among them must not bin the others.
+  const handPicked = await detectImportFiles([
+    drop("Connections.csv", CONNECTIONS_WITH_PREAMBLE),
+    drop("work.ics", ICS),
+    drop("my-contacts.csv", GOOGLE_CSV),
+  ]);
+  check(
+    "a loose Connections.csv does not discard the other files dropped with it",
+    handPicked.staged.map((d) => d.target).join(",") ===
+      "linkedin_connections,contacts_file,calendar_ics",
+    handPicked.staged.map((d) => d.target).join(",")
+  );
+
+  // ...but the same three INSIDE an export folder are gated.
+  const insideFolder = await detectImportFiles([
+    drop("Connections.csv", CONNECTIONS_WITH_PREAMBLE, "LinkedInExport"),
+    drop("work.ics", ICS, "LinkedInExport"),
+    drop("my-contacts.csv", GOOGLE_CSV, "LinkedInExport"),
+  ]);
+  check(
+    "the same files inside an export folder are gated to the members",
+    insideFolder.staged.map((d) => d.target).join(",") === "linkedin_connections",
+    insideFolder.staged.map((d) => d.target).join(",")
+  );
+
+  // The gate keys on the export's own member names, so an ordinary folder is unaffected.
+  const ordinary = await detectImportFiles([
+    drop("my-contacts.csv", GOOGLE_CSV, "exports"),
+    drop("team.ics", ICS, "exports"),
+  ]);
+  check(
+    "a folder that is not a LinkedIn export still sniffs normally",
+    ordinary.staged.map((d) => d.target).sort().join(",") === "calendar_ics,contacts_file",
+    ordinary.staged.map((d) => d.target).join(",")
   );
 
   console.log("Contracts");

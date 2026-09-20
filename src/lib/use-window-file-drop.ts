@@ -120,6 +120,8 @@ export function useWindowFileDrop({
 
       // Both reads happen before the first await. A `DataTransfer` is emptied the moment the
       // handler returns, so reading it afterwards finds nothing at all.
+      // Both reads happen before the first await. A `DataTransfer` is emptied the moment the
+      // handler returns, so reading it afterwards finds nothing at all.
       const transfer = e.dataTransfer;
       const entries = transfer ? entriesFromDataTransfer(transfer) : [];
       const fallback = Array.from(transfer?.files ?? []);

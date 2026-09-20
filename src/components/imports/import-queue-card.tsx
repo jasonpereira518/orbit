@@ -115,19 +115,16 @@ export function ImportQueueCard() {
             {IMPORT_COPY.notImported}
           </p>
           <ul className="mt-1.5 space-y-1">
-            {queue.ignored.slice(0, 5).map((f) => (
+            {groupIgnored(queue.ignored).map((group) => (
               <li
-                key={f.name}
+                key={group.reason}
                 className="truncate text-xs text-muted-foreground"
               >
-                {f.name} — {f.reason}
+                {group.names.length > 3
+                  ? `${group.names.length} files — ${group.reason}`
+                  : `${group.names.join(", ")} — ${group.reason}`}
               </li>
             ))}
-            {queue.ignored.length > 5 ? (
-              <li className="text-xs text-muted-foreground">
-                +{queue.ignored.length - 5} more
-              </li>
-            ) : null}
           </ul>
         </div>
       ) : null}
@@ -174,6 +171,25 @@ export function ImportQueueCard() {
       ) : null}
     </section>
   );
+}
+
+/**
+ * Collapse the "Not imported" list by reason.
+ *
+ * A LinkedIn export folder contributes about 28 files that all skip for the same reason, and
+ * naming each one is noise standing where one sentence would do. Grouping also makes the
+ * reason the subject, which is what a person actually needs to read.
+ */
+function groupIgnored(
+  ignored: { name: string; reason: string }[],
+): { reason: string; names: string[] }[] {
+  const byReason = new Map<string, string[]>();
+  for (const f of ignored) {
+    const names = byReason.get(f.reason);
+    if (names) names.push(f.name);
+    else byReason.set(f.reason, [f.name]);
+  }
+  return [...byReason].map(([reason, names]) => ({ reason, names }));
 }
 
 /**

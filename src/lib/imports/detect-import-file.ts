@@ -61,6 +61,15 @@ export type Detected = {
   /** One clause, written to be shown to the person as-is. Never a file path. */
   reason: string;
   /**
+   * What to call this file on screen.
+   *
+   * Carried rather than derived from `path`, because `path` means two different things: for a
+   * dropped folder it is the directory the file sits in, and for a ZIP member it is the path
+   * inside the archive. Deriving a name from it showed folder drops as
+   * "Basic_LinkedInDataExport_01-01-2024" instead of "Connections.csv".
+   */
+  displayName: string;
+  /**
    * Text already in hand. Set for ZIP members, which had to be decompressed to be identified
    * and must not be read a second time — a `File` cannot be recovered from a ZIP entry anyway.
    */
@@ -270,7 +279,7 @@ async function readHead(file: File): Promise<string> {
  */
 async function classifyFile(entry: DroppedFile): Promise<Detected> {
   const { file, path } = entry;
-  const base = { file, path, bytes: file.size };
+  const base = { file, path, bytes: file.size, displayName: file.name };
 
   let byHead: Classification | null = null;
   try {
@@ -290,6 +299,27 @@ async function classifyFile(entry: DroppedFile): Promise<Detected> {
     };
   }
   return { ...base, ...best };
+}
+
+/**
+ * The only two members of a LinkedIn export that describe people.
+ *
+ * Everything else in the archive is either not people at all (`Ad_Targeting.csv`,
+ * `Rich_Media.csv`) or people in a shape Orbit has no importer for — and two of them are
+ * actively dangerous to sniff, because they classify as something they are not:
+ *
+ *   - `Invitations.csv` has From / To / Message columns, so the messages predicate matches it.
+ *   - `Contacts.csv` has name and email columns, so the contacts predicate matches it.
+ *
+ * Which means that without this gate, dropping the export FOLDER could stage `Invitations.csv`
+ * *instead of* `messages.csv` — the one-file-per-target rule keeps the larger of the two — and
+ * stage a `Contacts.csv` import nobody asked for. The ZIP path was already name-gated this
+ * way; this is the folder path catching up.
+ */
+const LINKEDIN_EXPORT_MEMBER = /^(connections|messages)\.csv$/i;
+
+function isLinkedInExportMember(name: string): boolean {
+  return LINKEDIN_EXPORT_MEMBER.test(baseName(name));
 }
 
 /** Names inside a LinkedIn archive worth extracting. Everything else in it is noise. */
@@ -334,6 +364,7 @@ async function expandZip(entry: DroppedFile): Promise<Detected[]> {
       reason: known.reason,
       text,
       bytes: text.length,
+      displayName: baseName(member.name),
     });
   }
 
@@ -359,6 +390,7 @@ async function expandZip(entry: DroppedFile): Promise<Detected[]> {
           reason: byHead.reason,
           text,
           bytes: text.length,
+          displayName: baseName(only.name),
         });
       }
     }
@@ -372,6 +404,7 @@ async function expandZip(entry: DroppedFile): Promise<Detected[]> {
       confidence: "guess",
       reason: "a ZIP with nothing Orbit reads inside",
       bytes: entry.file.size,
+      displayName: entry.file.name,
     });
   }
   return out;
@@ -397,14 +430,40 @@ export async function detectImportFiles(
 ): Promise<DetectionResult> {
   const { maxBytes, truncated = false } = options;
 
+  // A LinkedIn export folder is ~30 CSVs and only two of them are people. Recognising one lets
+  // every other member be dismissed WITHOUT being read: nothing else is staged, so nothing
+  // else is uploaded or written to `import_job_rows`, and 28 files' heads are never opened.
+  // See `LINKEDIN_EXPORT_MEMBER` for why sniffing them is unsafe as well as merely wasteful.
+  //
+  // Scoped to the folder the member sits in, and never to loose files. Someone who drops a
+  // Connections.csv and a calendar together has hand-picked both, and throwing the calendar
+  // away because a LinkedIn file was in the same gesture would be its own bug.
+  const linkedInFolders = new Set(
+    files
+      .filter((f) => f.path !== "" && isLinkedInExportMember(f.file.name))
+      .map((f) => f.path),
+  );
+
   const detected: Detected[] = [];
   for (const entry of files) {
     if (isIgnorableFile(baseName(entry.file.name))) continue;
     if (extensionOf(entry.file.name) === ".zip") {
       detected.push(...(await expandZip(entry)));
-    } else {
-      detected.push(await classifyFile(entry));
+      continue;
     }
+    if (linkedInFolders.has(entry.path) && !isLinkedInExportMember(entry.file.name)) {
+      detected.push({
+        file: entry.file,
+        path: entry.path,
+        target: "unknown",
+        confidence: "certain",
+        reason: "not needed from a LinkedIn export",
+        bytes: entry.file.size,
+        displayName: entry.file.name,
+      });
+      continue;
+    }
+    detected.push(await classifyFile(entry));
   }
 
   const ignored = detected.filter((d) => d.target === "unknown");

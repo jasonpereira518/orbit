@@ -44,6 +44,7 @@ function detected(target: ImportTarget, name: string, bytes = 100): Detected {
     confidence: "certain",
     reason: "test",
     bytes,
+    displayName: name,
   };
 }
 
@@ -90,6 +91,16 @@ check(
     {
       ...detected("linkedin_connections", "archive.zip"),
       path: "Basic/Connections.csv",
+      displayName: "Connections.csv",
+    },
+  ])[0].fileName === "Connections.csv",
+);
+check(
+  "a file inside a dropped FOLDER is named by the file, not the folder",
+  queueFromDetection([
+    {
+      ...detected("linkedin_connections", "Connections.csv"),
+      path: "Basic_LinkedInDataExport_01-01-2024",
     },
   ])[0].fileName === "Connections.csv",
 );

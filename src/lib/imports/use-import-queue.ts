@@ -165,9 +165,7 @@ type PreviewOutcome =
   | { ok: false; error: string };
 
 async function previewOne(d: Detected): Promise<PreviewOutcome> {
-  const fileName = d.path
-    ? (d.path.split("/").pop() ?? d.file.name)
-    : d.file.name;
+  const fileName = d.displayName;
   try {
     const text = await readText(d);
 
