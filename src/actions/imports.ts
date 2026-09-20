@@ -1,10 +1,11 @@
 "use server";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
+import { importFailureLine } from "@/lib/import-errors";
 import {
   contacts,
   gmailConnections,
@@ -307,6 +308,156 @@ export type ImportJobStatus = {
    */
   failedRows: number;
 };
+
+/** One row's worth of trouble, named for the person rather than for the database. */
+export type ImportRowProblem = {
+  status: "failed" | "skipped";
+  /** Who the row was about, when the payload says. */
+  who: string | null;
+  reason: string;
+};
+
+export type ImportDetail = {
+  item: ImportHistoryItem;
+  counts: { done: number; skipped: number; failed: number; pending: number };
+  problems: ImportRowProblem[];
+  /** Problems beyond the ones listed. */
+  moreProblems: number;
+};
+
+/** Problem rows shown before it stops being a list and starts being a dump. */
+const IMPORT_PROBLEM_SAMPLE = 25;
+
+/**
+ * Everything the detail sheet shows for one import.
+ *
+ * This is the first thing anywhere to read `import_job_rows.error_message`. The engine has
+ * been writing a per-row reason all along — which row, and why — and until now the only
+ * signal a person got was an aggregate count with no way to find out what was in it.
+ *
+ * Rows survive as long as the import does (they cascade with it, and `purgeUserData` covers
+ * them), so this works for old imports too.
+ */
+export async function getImportDetail(
+  importId: string,
+): Promise<ImportDetail | null> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const row = await db.query.imports.findFirst({
+    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+  });
+  if (!row) return null;
+
+  // One grouped count, served by `import_job_rows_import_status_idx`.
+  const grouped = rowsOf<{ status: string; n: number }>(
+    await db
+      .select({ status: importJobRows.status, n: sql<number>`count(*)::int` })
+      .from(importJobRows)
+      .where(
+        and(
+          eq(importJobRows.importId, importId),
+          eq(importJobRows.userId, userId),
+        ),
+      )
+      .groupBy(importJobRows.status),
+  );
+
+  const counts = { done: 0, skipped: 0, failed: 0, pending: 0 };
+  for (const g of grouped) {
+    if (g.status === "done") counts.done += g.n;
+    else if (g.status === "skipped") counts.skipped += g.n;
+    else if (g.status === "failed") counts.failed += g.n;
+    else counts.pending += g.n;
+  }
+
+  const problemRows = rowsOf<{
+    status: string;
+    payload: unknown;
+    errorMessage: string | null;
+  }>(
+    await db
+      .select({
+        status: importJobRows.status,
+        payload: importJobRows.payload,
+        errorMessage: importJobRows.errorMessage,
+      })
+      .from(importJobRows)
+      .where(
+        and(
+          eq(importJobRows.importId, importId),
+          eq(importJobRows.userId, userId),
+          inArray(importJobRows.status, ["failed", "skipped"]),
+        ),
+      )
+      .orderBy(importJobRows.rowIndex)
+      .limit(IMPORT_PROBLEM_SAMPLE),
+  );
+
+  const problems: ImportRowProblem[] = problemRows.map((r) => ({
+    status: r.status === "failed" ? "failed" : "skipped",
+    who: nameFromRowPayload(r.payload),
+    // Mapped here rather than in the client so a raw driver string never crosses the wire.
+    reason: r.errorMessage
+      ? importFailureLine(r.errorMessage)
+      : r.status === "skipped"
+        ? "Nothing in this row to attach to anyone"
+        : "Orbit couldn’t save this row",
+  }));
+
+  const totalProblems = counts.failed + counts.skipped;
+
+  return {
+    item: {
+      id: row.id,
+      importType: row.importType,
+      fileName: row.fileName,
+      status: row.status,
+      totalRows: row.totalRows,
+      rowsProcessed: row.rowsProcessed,
+      contactsCreated: row.contactsCreated,
+      contactsUpdated: row.contactsUpdated,
+      duplicatesFound: row.duplicatesFound,
+      errorMessage: row.errorMessage,
+      createdAt: row.createdAt,
+      stats: {
+        skipped: row.stats?.skipped,
+        blockedByPlan: row.stats?.blockedByPlan,
+        failedRows: row.stats?.failedRows,
+        interactionsLogged: row.stats?.interactionsLogged,
+        remindersCreated: row.stats?.remindersCreated,
+        messagesImported: row.stats?.messagesImported,
+        meetingsLogged: row.stats?.meetingsLogged,
+        errorCode: row.stats?.errorCode,
+      },
+    },
+    counts,
+    problems,
+    moreProblems: Math.max(0, totalProblems - problems.length),
+  };
+}
+
+/** A person's name out of whichever row payload this import type stages. */
+function nameFromRowPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  const candidates = [
+    p.fullName,
+    p.name,
+    p.displayName,
+    p.title,
+    p.summary,
+    p.email,
+    p.from,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  const first = typeof p.firstName === "string" ? p.firstName : "";
+  const last = typeof p.lastName === "string" ? p.lastName : "";
+  const joined = `${first} ${last}`.trim();
+  return joined || null;
+}
 
 /** Read-only status poll for a server-owned import job (see `startLinkedInImport`). */
 export async function getImportJobStatus(
