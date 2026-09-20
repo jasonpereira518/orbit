@@ -72,7 +72,10 @@ const RULES: [string, (text: string) => boolean][] = [
   ["straight apostrophe — use ’", (t) => /\w'\w/.test(t)],
   ['"Could not" — use "Couldn’t"', (t) => /\bcould not\b/i.test(t)],
   ['"failed" — say what did not happen', (t) => /\bfailed\b/i.test(t)],
-  ["trailing period", (t) => t.trimEnd().endsWith(".") && !t.trimEnd().endsWith("…")],
+  [
+    "trailing period",
+    (t) => t.trimEnd().endsWith(".") && !t.trimEnd().endsWith("…"),
+  ],
 ];
 
 // Text that is not a message: object keys, `params.get("reason")`, pluralisation
@@ -87,7 +90,8 @@ function checkText(where: string, text: string) {
   if (!isMessage(text)) return;
   messagesChecked++;
   for (const [rule, broken] of RULES) {
-    if (broken(text)) problems.push(`${where}  [${rule}]  ${text.slice(0, 90)}`);
+    if (broken(text))
+      problems.push(`${where}  [${rule}]  ${text.slice(0, 90)}`);
   }
 }
 
@@ -102,26 +106,63 @@ for (const file of walk(ROOT)) {
     const where = `${file}:${line(m.index!)}`;
     for (const text of staticTexts(arg)) checkText(where, text);
     if (/\b(err|e|error)\.message\b|toUserFacingError\(/.test(arg)) {
-      problems.push(`${where}  [raw error text in a toast — use friendlyError]`);
+      problems.push(
+        `${where}  [raw error text in a toast — use friendlyError]`,
+      );
     }
   }
 
-  for (const m of src.matchAll(/new UserFacingError\(\s*(["`])((?:(?!\1)[^\\]|\\.)*)\1/g)) {
-    checkText(`${file}:${line(m.index!)} (UserFacingError)`, m[2].replace(/\$\{[^}]*\}/g, "{}"));
+  for (const m of src.matchAll(
+    /new UserFacingError\(\s*(["`])((?:(?!\1)[^\\]|\\.)*)\1/g,
+  )) {
+    checkText(
+      `${file}:${line(m.index!)} (UserFacingError)`,
+      m[2].replace(/\$\{[^}]*\}/g, "{}"),
+    );
   }
 }
 
-const copySrc = readFileSync("src/lib/toast-copy.ts", "utf8");
-const copyBlock = copySrc.slice(copySrc.indexOf("export const TOAST_COPY"));
-for (const m of copyBlock.matchAll(/^\s+(\w+):\s*"((?:[^"\\]|\\.)*)"/gm)) {
-  checkText(`src/lib/toast-copy.ts (TOAST_COPY.${m[1]})`, m[2]);
+/**
+ * The flat copy tables, read out of source.
+ *
+ * `IMPORT_COPY` and `IMPORT_FAILURE_COPY` are not toasts and are not in `toast-copy.ts`, so
+ * without naming them here the guard would not see a single line of the import surface's
+ * copy — which is most of what a person reads when an import goes wrong.
+ */
+const COPY_TABLES: { file: string; symbol: string }[] = [
+  { file: "src/lib/toast-copy.ts", symbol: "TOAST_COPY" },
+  { file: "src/lib/imports/import-copy.ts", symbol: "IMPORT_COPY" },
+  { file: "src/lib/import-errors.ts", symbol: "IMPORT_FAILURE_COPY" },
+];
+for (const table of COPY_TABLES) {
+  const tableSrc = readFileSync(table.file, "utf8");
+  const start = tableSrc.indexOf(`export const ${table.symbol}`);
+  if (start < 0) throw new Error(`${table.symbol} not found in ${table.file}`);
+  const block = tableSrc.slice(start);
+  let found = 0;
+  for (const m of block.matchAll(
+    /^\s+(\w+):\s*$|^\s+(\w+):\s*"((?:[^"\\]|\\.)*)"/gm,
+  )) {
+    if (m[3] === undefined) continue;
+    found++;
+    checkText(`${table.file} (${table.symbol}.${m[2]})`, m[3]);
+  }
+  // A guard on the guard: a renamed field or a reformatted table would otherwise pass here
+  // without a single string being checked.
+  if (found < 5) {
+    throw new Error(
+      `only ${found} strings read from ${table.symbol} — has its shape changed?`,
+    );
+  }
 }
 
 console.log("Toast copy");
 console.log(`  ${toastCalls} toast calls, ${messagesChecked} messages checked`);
 if (toastCalls < 250) {
   // A guard on the guard: if the call pattern stopped matching, this would pass vacuously.
-  throw new Error(`only ${toastCalls} toast calls found — has the call shape changed?`);
+  throw new Error(
+    `only ${toastCalls} toast calls found — has the call shape changed?`,
+  );
 }
 if (problems.length) {
   console.error(`\n${problems.length} message(s) break the house voice:\n`);
