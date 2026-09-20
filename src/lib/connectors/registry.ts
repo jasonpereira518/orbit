@@ -102,7 +102,7 @@ const write = (id: ConnectorCapabilityId, label: string, scopes: string[] = []):
  * has today — the registry describes reality, not the roadmap, and a `planned` entry is the
  * only place the roadmap appears.
  */
-export const CONNECTORS: readonly ConnectorManifest[] = [
+const CONNECTOR_MANIFESTS = [
   {
     id: "google",
     label: "Google",
@@ -254,9 +254,16 @@ export const CONNECTORS: readonly ConnectorManifest[] = [
       write("writeContact", "Mirror contacts into a Notion database"),
     ],
   },
-] as const;
+] as const satisfies readonly ConnectorManifest[];
 
-export type ConnectorId = (typeof CONNECTORS)[number]["id"];
+/**
+ * Widened for consumption: callers get the full `ConnectorManifest` shape (including the
+ * optional `sync`), while `ConnectorId` below is still derived from the literal array so it
+ * stays a real union of ids, not `string`.
+ */
+export const CONNECTORS: readonly ConnectorManifest[] = CONNECTOR_MANIFESTS;
+
+export type ConnectorId = (typeof CONNECTOR_MANIFESTS)[number]["id"];
 
 export function connectorById(id: string): ConnectorManifest | null {
   return CONNECTORS.find((c) => c.id === id) ?? null;
