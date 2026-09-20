@@ -2,9 +2,11 @@ import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
 import type { BatchItem } from "drizzle-orm/batch";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { neon } from "@neondatabase/serverless";
-import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
-import { PGlite } from "@electric-sql/pglite";
-import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
+// Type-only on purpose. PGlite is the local-development database (no DATABASE_URL); a real
+// import would load it — and make the bundler trace its 21MB of WASM into every serverless
+// function — in production, where it can never run. `ensureReady` imports it lazily instead.
+import type { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import type { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
@@ -25,6 +27,7 @@ type Db =
 
 const globalForDb = globalThis as unknown as {
   orbitPglite?: PGlite;
+  orbitDrizzlePglite?: typeof drizzlePglite;
   orbitNeonSql?: ReturnType<typeof neon>;
   orbitReady?: Promise<void>;
   orbitPgvector?: boolean;
@@ -3198,8 +3201,10 @@ async function ensureReady(): Promise<void> {
     // package (`@electric-sql/pglite-pgvector`) pinned to a newer PGlite than the one this
     // project has installed; it is not installed here, so local vector search uses the JS
     // fallback instead.
+    const { PGlite: PGliteClient } = await import("@electric-sql/pglite");
+    const { pg_trgm } = await import("@electric-sql/pglite/contrib/pg_trgm");
     const open = () =>
-      PGlite.create({ dataDir, extensions: { pg_trgm } });
+      PGliteClient.create({ dataDir, extensions: { pg_trgm } });
 
     try {
       globalForDb.orbitPglite = await open();
@@ -3234,6 +3239,7 @@ async function ensureReady(): Promise<void> {
     simulateNetworkLatency(globalForDb.orbitPglite);
   }
 
+  globalForDb.orbitDrizzlePglite ??= (await import("drizzle-orm/pglite")).drizzle;
   await globalForDb.orbitPglite.waitReady;
 }
 
@@ -3510,13 +3516,13 @@ export async function getDb(): Promise<Db> {
     if (globalForDb.orbitNeonSql) {
       return drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db;
     }
-    return drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
+    return globalForDb.orbitDrizzlePglite!(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
 
   if (!globalForDb.orbitDrizzle) {
     globalForDb.orbitDrizzle = globalForDb.orbitNeonSql
       ? (drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db)
-      : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
+      : globalForDb.orbitDrizzlePglite!(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
 }

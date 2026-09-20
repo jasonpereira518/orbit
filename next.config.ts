@@ -39,9 +39,28 @@ const nextConfig: NextConfig = {
     "drizzle-orm",
     "sharp",
   ],
+  // PGlite is the local-development database and only runs when DATABASE_URL is unset, but
+  // it is a serverExternalPackage, so the file tracer copies its 21MB of WASM into every
+  // serverless function that touches the db (~96 of 104), and Vercel bills that as Functions
+  // Storage per deployment. Gated on VERCEL so a local `next build` + `next start` on PGlite
+  // (demo mode) still finds it. `src/db/index.ts` imports it lazily, so nothing loads it here.
+  ...(process.env.VERCEL
+    ? {
+        outputFileTracingExcludes: {
+          "/*": [
+            "./node_modules/@electric-sql/pglite/**/*",
+            "./node_modules/sharp/**/*",
+            "./node_modules/@img/**/*",
+          ],
+        },
+      }
+    : {}),
   // The ticket-image route reads its fonts and the planet art from disk at request time;
   // without this the deploy bundle omits them and the route 500s only in production.
   outputFileTracingIncludes: {
+    ...(process.env.VERCEL
+      ? { "/api/avatars/encode": ["./node_modules/sharp/**/*", "./node_modules/@img/**/*"] }
+      : {}),
     "/api/interest-list/ticket-image": [
       "./src/app/api/interest-list/ticket-image/fonts/*",
       "./public/landing/planets/*.png",
