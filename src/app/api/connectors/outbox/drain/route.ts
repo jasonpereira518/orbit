@@ -37,7 +37,10 @@ export async function POST(request: Request) {
       },
     });
     await finishCronRun(handle, {
-      status: stats.failed > 0 ? "partial" : "ok",
+      // `stale` should be rare (see OutboxDrainStats) — surfacing it here rather than only in
+      // the raw stats blob means a lease actually expiring under load shows up as a
+      // less-than-fully-clean run instead of silently blending into "ok".
+      status: stats.failed > 0 || stats.stale > 0 ? "partial" : "ok",
       stats,
     });
     return NextResponse.json({ ok: true, ...stats });

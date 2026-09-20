@@ -117,7 +117,19 @@ export type DeliverResult =
       retryable?: boolean;
     };
 
-export type OutboxDrainStats = { attempted: number; delivered: number; failed: number };
+export type OutboxDrainStats = {
+  attempted: number;
+  delivered: number;
+  failed: number;
+  /**
+   * A result came back for a row whose lease had already been reclaimed by a later drain
+   * (the claim's `attempts` guard on the post-delivery write matched nothing). Not a
+   * delivery and not a failure of THIS attempt — the newer owner's outcome is what actually
+   * landed. Should be rare (it means a delivery outlived `CLAIM_LEASE_MS`); worth watching if
+   * it isn't.
+   */
+  stale: number;
+};
 
 /**
  * Bounds a single delivery call.
@@ -138,8 +150,16 @@ const PER_ITEM_DELIVER_TIMEOUT_MS = 15_000;
  * the status-update write that happens after it, so the lease outliving just the timeout by a
  * small margin would leave no slack for that overhead. Double the deliver timeout is that
  * margin. See the CAS comment in `drainOutbox` for what this does and does not guarantee.
+ *
+ * MUST be measured from the moment of the claim itself (`Date.now()` at that point in the
+ * loop), never from the drain's own start (`opts.now`/the loop-level `now`). A drain runs for
+ * up to `budgetMs` — 40s in production, with up to 200 items — so an item claimed late in a
+ * long drain is not "a few ms after now," it can be tens of seconds after it. Anchoring to
+ * drain-start leased that item into the PAST the moment it was claimed, making it instantly
+ * re-claimable by another drain while still in flight — the exact bug this constant's
+ * anchoring point exists to prevent (see NEW-3 in the v75 review).
  */
-const CLAIM_LEASE_MS = 30_000;
+export const CLAIM_LEASE_MS = 30_000;
 
 /**
  * The minimum remaining budget worth claiming a row for.
@@ -191,7 +211,7 @@ export async function drainOutbox(opts: {
 }): Promise<OutboxDrainStats> {
   const now = opts.now ?? new Date();
   const deadline = Date.now() + opts.budgetMs;
-  const stats: OutboxDrainStats = { attempted: 0, delivered: 0, failed: 0 };
+  const stats: OutboxDrainStats = { attempted: 0, delivered: 0, failed: 0, stale: 0 };
   const db = await getDb();
 
   const due = await db
@@ -220,20 +240,30 @@ export async function drainOutbox(opts: {
     // The `attempts` guard alone only stops two callers that read the SAME stale snapshot;
     // it does NOT stop a second drain that runs its own SELECT after this UPDATE has already
     // committed, because that second SELECT sees the fresh, post-claim `attempts` value and
-    // its CAS succeeds against it. Pushing `nextAttemptAt` out to `now + CLAIM_LEASE_MS` in
-    // this SAME statement is what closes that gap: a claimed row no longer matches the `due`
-    // query's `nextAttemptAt <= now` filter at all, for any drain, until the lease expires or
-    // the delivery below overwrites `nextAttemptAt` on success or failure (both paths do,
-    // unconditionally). This is a lease, not a lock: if a delivery somehow outlives the lease
-    // (it shouldn't — the lease is double `PER_ITEM_DELIVER_TIMEOUT_MS`), a later drain can
-    // still claim and redeliver it. At-least-once semantics, not exactly-once — stated
-    // plainly because that is the true guarantee, not "this can never double-send."
+    // its CAS succeeds against it. Pushing `nextAttemptAt` out to `Date.now() + CLAIM_LEASE_MS`
+    // in this SAME statement is what closes that gap: a claimed row no longer matches the
+    // `due` query's `nextAttemptAt <= now` filter at all, for any drain, until the lease
+    // expires or the delivery below overwrites `nextAttemptAt` on success or failure (both
+    // paths do, unconditionally, guarded against a stale write below). This is a lease, not a
+    // lock: if a delivery somehow outlives the lease (it shouldn't — the lease is double
+    // `PER_ITEM_DELIVER_TIMEOUT_MS`), a later drain can still claim and redeliver it.
+    // At-least-once semantics, not exactly-once — stated plainly because that is the true
+    // guarantee, not "this can never double-send."
+    //
+    // The lease is anchored at `Date.now()` HERE, not at the loop-level `now` (the drain's
+    // own start, or `opts.now` when a caller injects one for determinism). A drain can run
+    // for the whole `budgetMs` — up to 200 items over 40s in production — so an item claimed
+    // late is not "a few ms after `now`," and leasing it from drain-start would put its
+    // expiry in the past the moment it was claimed. `opts.now` still governs which rows count
+    // as due (the `due` query above) and the bookkeeping timestamps below; only the
+    // correctness-critical scheduling — this lease and the failure path's backoff — reads the
+    // real clock instead.
     const [claimed] = await db
       .update(connectorOutbox)
       .set({
         attempts: row.attempts + 1,
         lastAttemptedAt: now,
-        nextAttemptAt: new Date(now.getTime() + CLAIM_LEASE_MS),
+        nextAttemptAt: new Date(Date.now() + CLAIM_LEASE_MS),
       })
       .where(
         and(
@@ -270,7 +300,34 @@ export async function drainOutbox(opts: {
     );
 
     if (result.ok) {
+      // Guarded on `attempts` still matching what THIS drain claimed with, the same CAS
+      // shape as the claim itself. Keyed on `id` alone (as this was before), a delivery that
+      // outlives its lease (NEW-3: possible, just meant to be rare) would land here after a
+      // later drain has already reclaimed — and possibly already resolved — the row, and
+      // silently stomp whatever that newer owner decided. Zero rows affected means exactly
+      // that happened; counted as `stale`, not `delivered`, because this drain's result is
+      // not the one that should stand.
+      const [updated] = await db
+        .update(connectorOutbox)
+        .set({
+          status: "delivered",
+          lastAttemptedAt: now,
+          deliveredAt: now,
+          nextAttemptAt: null,
+          lastError: null,
+        })
+        .where(
+          and(eq(connectorOutbox.id, row.id), eq(connectorOutbox.attempts, claimed.attempts))
+        )
+        .returning();
+      if (!updated) {
+        stats.stale++;
+        continue;
+      }
       stats.delivered++;
+      // Only recorded once this drain's write is confirmed to have won — recording it
+      // first (as before) risked a stale drain overwriting `external_links` with an older
+      // `remoteId` after a newer delivery had already recorded its own.
       if (result.remoteId) {
         await recordExternalLink({
           userId: row.userId,
@@ -280,35 +337,35 @@ export async function drainOutbox(opts: {
           remoteId: result.remoteId,
         });
       }
-      await db
-        .update(connectorOutbox)
-        .set({
-          status: "delivered",
-          lastAttemptedAt: now,
-          deliveredAt: now,
-          nextAttemptAt: null,
-          lastError: null,
-        })
-        .where(eq(connectorOutbox.id, row.id));
       continue;
     }
 
-    stats.failed++;
     // `attempts` was already bumped by the claim above — that IS this attempt, so the
     // exhaustion check reads it rather than re-deriving it. A `retryable: false` result
     // (the connector is gone, the write capability is off) skips the ladder entirely: no
     // future attempt could do anything different, so waiting seven rounds to reach the same
     // `dead` would only delay the truth.
     const exhausted = result.retryable === false || claimed.attempts >= MAX_OUTBOX_ATTEMPTS;
-    await db
+    // Same attempts guard and the same reason: a failure result arriving after this row's
+    // lease was reclaimed must not overwrite the newer owner's outcome either — a stale
+    // failure clobbering a legitimate `delivered` is the harmful direction of this bug.
+    const [updatedFailure] = await db
       .update(connectorOutbox)
       .set({
         status: exhausted ? "dead" : "pending",
         lastError: result.error.slice(0, 200),
         lastAttemptedAt: now,
-        nextAttemptAt: exhausted ? null : new Date(now.getTime() + backoffFor(claimed.attempts)),
+        nextAttemptAt: exhausted ? null : new Date(Date.now() + backoffFor(claimed.attempts)),
       })
-      .where(eq(connectorOutbox.id, row.id));
+      .where(
+        and(eq(connectorOutbox.id, row.id), eq(connectorOutbox.attempts, claimed.attempts))
+      )
+      .returning();
+    if (updatedFailure) {
+      stats.failed++;
+    } else {
+      stats.stale++;
+    }
   }
 
   return stats;

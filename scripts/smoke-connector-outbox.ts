@@ -20,6 +20,8 @@ import {
   findExternalLink,
   recordExternalLink,
   MAX_OUTBOX_ATTEMPTS,
+  CLAIM_LEASE_MS,
+  type DeliverResult,
 } from "../src/lib/connectors/outbox";
 
 let failures = 0;
@@ -393,6 +395,158 @@ run(async () => {
     .from(connectorOutbox)
     .where(eq(connectorOutbox.entityId, "rem-race"));
   check("the row ends delivered exactly once", racedRow?.status === "delivered");
+
+  console.log(
+    "\nthe lease anchors to claim time, not drain start (NEW-3 regression)"
+  );
+  await enqueueOutbox({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-anchor-a",
+    payload: { title: "goes first, slow" },
+  });
+  await enqueueOutbox({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-anchor-b",
+    payload: { title: "goes second" },
+  });
+  // Force the ordering the `due` query relies on — both were enqueued moments apart, too
+  // close to trust for a deterministic test.
+  await db
+    .update(connectorOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 10_000) })
+    .where(eq(connectorOutbox.entityId, "rem-anchor-a"));
+  await db
+    .update(connectorOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 5_000) })
+    .where(eq(connectorOutbox.entityId, "rem-anchor-b"));
+
+  const ANCHOR_DELAY_MS = 2_500; // long enough to distinguish drain-start anchoring from claim-time anchoring
+  const anchorDrainStart = Date.now();
+  // An object rather than separate `let`s: captured and mutated from inside the `deliver`
+  // callback below, and a plain object property sidesteps TypeScript's closure-narrowing
+  // quirks with reassigned `let`s read after an `await` boundary.
+  const anchorCapture: { claimedAt: number | null; leaseAt: Date | null } = {
+    claimedAt: null,
+    leaseAt: null,
+  };
+  await drainOutbox({
+    budgetMs: 20_000,
+    max: 10,
+    deliver: async (item) => {
+      if (item.entityId === "rem-anchor-a") {
+        await new Promise((resolve) => setTimeout(resolve, ANCHOR_DELAY_MS));
+        return { ok: true, remoteId: "remote-anchor-a" };
+      }
+      // item B: captured the instant it was actually claimed (deliver is called right after
+      // the claim commits), then reads B's own freshly-set lease straight from the row.
+      anchorCapture.claimedAt = Date.now();
+      const [row] = await db
+        .select()
+        .from(connectorOutbox)
+        .where(eq(connectorOutbox.entityId, "rem-anchor-b"));
+      anchorCapture.leaseAt = row?.nextAttemptAt ?? null;
+      return { ok: true, remoteId: "remote-anchor-b" };
+    },
+  });
+  const elapsedBeforeBClaimed = (anchorCapture.claimedAt ?? 0) - anchorDrainStart;
+  check(
+    "B was actually claimed well after the drain started",
+    elapsedBeforeBClaimed > ANCHOR_DELAY_MS - 300,
+    `${elapsedBeforeBClaimed}ms`
+  );
+  const leaseRemainingFromClaim =
+    (anchorCapture.leaseAt?.getTime() ?? 0) - (anchorCapture.claimedAt ?? 0);
+  check(
+    "the lease is anchored to when B was claimed, not when the drain started",
+    Math.abs(leaseRemainingFromClaim - CLAIM_LEASE_MS) < 1_000,
+    `leaseRemainingFromClaim=${leaseRemainingFromClaim}ms, expected ~${CLAIM_LEASE_MS}ms`
+  );
+  await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-anchor-a"));
+  await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-anchor-b"));
+
+  console.log(
+    "\na stale owner's post-delivery write must not clobber a newer owner's result (NEW-3 / RELATED MINOR regression)"
+  );
+  await enqueueOutbox({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-stale",
+    payload: { title: "raced across an expired lease" },
+  });
+  let staleClaimedSignal!: () => void;
+  const staleClaimed = new Promise<void>((resolve) => {
+    staleClaimedSignal = resolve;
+  });
+  let resolveStaleDeliver!: (result: DeliverResult) => void;
+  const staleDeliverPromise = new Promise<DeliverResult>((resolve) => {
+    resolveStaleDeliver = resolve;
+  });
+  const staleDrain = drainOutbox({
+    budgetMs: 10_000,
+    max: 10,
+    deliver: async (item) => {
+      if (item.entityId !== "rem-stale") return { ok: true, remoteId: "n/a" };
+      staleClaimedSignal();
+      // Hangs until the test resolves it below, simulating a delivery that is still in
+      // flight when its lease is later reclaimed by a newer drain.
+      return staleDeliverPromise;
+    },
+  });
+  await staleClaimed;
+
+  // Simulate the lease having actually expired while the stale drain was still in flight —
+  // compressed from the real 30s CLAIM_LEASE_MS into an instant, for a fast, deterministic
+  // test. This is exactly the state a real expiry would leave the row in.
+  await db
+    .update(connectorOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 1_000) })
+    .where(eq(connectorOutbox.entityId, "rem-stale"));
+
+  // A second, legitimately later drain now re-claims and delivers it for real.
+  const newerStats = await drainOutbox({
+    budgetMs: 5_000,
+    max: 10,
+    deliver: async () => ({ ok: true, remoteId: "remote-newer-owner" }),
+  });
+  check("the newer owner actually delivered it", newerStats.delivered === 1, JSON.stringify(newerStats));
+  const [afterNewer] = await db
+    .select()
+    .from(connectorOutbox)
+    .where(eq(connectorOutbox.entityId, "rem-stale"));
+  check("the row is delivered by the newer owner", afterNewer?.status === "delivered");
+  const newerOwnerAttempts = afterNewer?.attempts;
+
+  // Now the stale drain's delivery finally "comes back" — with a failure, the worst-case
+  // direction: an unguarded post-delivery write would stomp the newer owner's `delivered`
+  // status back to `pending`.
+  resolveStaleDeliver({ ok: false, error: "stale owner finally timed out" });
+  const staleStats = await staleDrain;
+  check("the stale write is counted as stale, not a failure", staleStats.stale === 1, JSON.stringify(staleStats));
+
+  const [afterStale] = await db
+    .select()
+    .from(connectorOutbox)
+    .where(eq(connectorOutbox.entityId, "rem-stale"));
+  check(
+    "the stale owner's write did not clobber the newer owner's result",
+    afterStale?.status === "delivered",
+    `status=${afterStale?.status} lastError=${afterStale?.lastError}`
+  );
+  check(
+    "the newer owner's attempts count stands",
+    afterStale?.attempts === newerOwnerAttempts,
+    String(afterStale?.attempts)
+  );
+  check("no stale error was written over the newer owner's result", afterStale?.lastError === null);
+  await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-stale"));
 
   console.log("\nrecordExternalLink updates in place rather than duplicating");
   await recordExternalLink({
