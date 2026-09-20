@@ -59,6 +59,11 @@ import type {
   SharedNoteContext,
 } from "@/lib/ai";
 import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
+import {
+  extractLinkedInProfileRefs,
+  isLinkedInOnlyPaste,
+  type LinkedInLookupSummary,
+} from "@/lib/linkedin-paste";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -115,6 +120,40 @@ const CAPTURE_FILE_ACCEPT = [
   ".m4a",
   ".ogg",
 ].join(",");
+
+/**
+ * What to tell the user when a pasted profile could not be looked up. Silent on the happy
+ * path — a resolved profile needs no explanation, and a guessed name needs one.
+ */
+function linkedInLookupNotice(lookup: LinkedInLookupSummary | null | undefined): string | null {
+  if (!lookup) return null;
+  const parts: string[] = [];
+
+  if (lookup.degraded === "no_key") {
+    parts.push("No Apollo API key, so role and company weren't filled in. Add one in Settings.");
+  } else if (lookup.degraded === "plan") {
+    parts.push("Your Apollo plan doesn't include profile lookups, so role and company weren't filled in.");
+  } else if (lookup.degraded === "error") {
+    parts.push("The profile lookup didn't answer, so only the URL came through.");
+  }
+
+  // Said separately from the reason: a guessed name is the part worth a second look, and
+  // it is guessed whether the lookup was unavailable or simply had no record of them.
+  if (lookup.guessed > 0) {
+    parts.push(
+      lookup.guessed === 1
+        ? "The name was read from the URL — check it before saving."
+        : `${lookup.guessed} names were read from their URLs — check them before saving.`
+    );
+  }
+
+  if (lookup.dropped > 0) {
+    parts.push(
+      `${lookup.dropped} more ${lookup.dropped === 1 ? "profile was" : "profiles were"} left out — paste them in a second batch.`
+    );
+  }
+  return parts.join(" ") || null;
+}
 
 /** Debounce for the draft autosave: long enough not to write on every keystroke. */
 const DRAFT_SAVE_DELAY_MS = 500;
@@ -418,6 +457,11 @@ export function BulkNotesPanel({
     setRestoredAt(null);
     setRestoredJustNow(false);
   }
+
+  // A paste of nothing but profile URLs is looked up directly, with no model pass — so it
+  // must stay available when there is no AI key, which is exactly when it matters most.
+  const pastedProfiles = useMemo(() => extractLinkedInProfileRefs(notes), [notes]);
+  const linkedInOnly = pastedProfiles.length > 0 && isLinkedInOnlyPaste(notes);
 
   const accepted = useMemo(
     () => items.filter((i) => i.decision === "accepted"),
@@ -878,6 +922,11 @@ export function BulkNotesPanel({
         ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
         : "";
       toast.success(`Found ${peopleLabel}${dateLabel}`);
+
+      // Say when a name was read off the URL rather than looked up, so a guess is never
+      // mistaken for profile data on the card that follows.
+      const lookupNote = linkedInLookupNotice(res.linkedinLookup);
+      if (lookupNote) toast.message(lookupNote);
     } catch (err) {
       // Only unexpected throws reach here — a missing key comes back as
       // `res.ok === false` above — so the key message is no longer the
@@ -946,7 +995,14 @@ export function BulkNotesPanel({
             !compact && dragging && "border-dashed border-import-scan bg-import-scan/5"
           )}
         >
-          {!hasApiKey && <AiKeyNotice feature="capture" reason={aiReason} />}
+          {!hasApiKey && (
+            <>
+              <AiKeyNotice feature="capture" reason={aiReason} />
+              <p className="-mt-1 text-xs text-muted-foreground">
+                Pasting a LinkedIn profile URL on its own still works without a key.
+              </p>
+            </>
+          )}
           {restoredAt !== null && (
             <div
               role="status"
@@ -1008,7 +1064,7 @@ export function BulkNotesPanel({
             )}
             {compact && (
               <p className="mt-1 text-xs text-muted-foreground">
-                Multi-person notes (text / voice / photo / .ics / .eml) →
+                Notes, a LinkedIn URL, or a file (voice / photo / .ics / .eml) →
                 extract → review → save.
               </p>
             )}
@@ -1018,8 +1074,8 @@ export function BulkNotesPanel({
               className={cn("mt-2", compact ? "min-h-[140px]" : "min-h-[220px]")}
               placeholder={
                 compact
-                  ? `Met Sarah Chen at AWS Summit — Codex partnerships at OpenAI...\n\nMarcus Lee (Stripe) offered an intro...`
-                  : `AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...\n\nQuick note on Priya Nair from the same night — still at Notion, exploring agent workflows.`
+                  ? `Met Sarah Chen at AWS Summit — Codex partnerships at OpenAI...\n\nOr just: linkedin.com/in/sarah-chen`
+                  : `AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...\n\nOr paste nothing but a profile URL:\nhttps://www.linkedin.com/in/sarah-chen`
               }
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -1110,12 +1166,20 @@ export function BulkNotesPanel({
           )}
 
           <Button
-            disabled={pending || !notes.trim() || !hasApiKey}
+            disabled={pending || !notes.trim() || (!hasApiKey && !linkedInOnly)}
             size={compact ? "sm" : "default"}
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
             onClick={() => runParse(notes)}
           >
-            {pending ? "Parsing…" : "Extract people"}
+            {linkedInOnly
+              ? pending
+                ? "Looking up…"
+                : pastedProfiles.length === 1
+                  ? "Look up profile"
+                  : `Look up ${pastedProfiles.length} profiles`
+              : pending
+                ? "Parsing…"
+                : "Extract people"}
           </Button>
         </div>
       )}
@@ -1456,6 +1520,11 @@ function PersonReviewCard({
           {item.parsed.name || "Unnamed person"}
         </p>
         <div className="flex flex-wrap gap-1.5">
+          {item.parsed.linkedin_url && (
+            <Badge variant="secondary" className="text-[10px]">
+              From LinkedIn
+            </Badge>
+          )}
           {item.sharedNoteTexts.length > 0 && (
             <Badge variant="secondary" className="text-[10px]">
               Includes shared note

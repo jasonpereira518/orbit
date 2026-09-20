@@ -273,7 +273,19 @@ const personDetailBatchSchema = z.object({
 
 export type CaptureParseHints = {
   eventDate?: string | null;
-  seedPeople?: Array<{ name?: string | null; email?: string | null }>;
+  /**
+   * People the ingest already knows about: calendar attendees, email senders, the locked
+   * profile, and any LinkedIn URL pasted with the notes. The profile fields are what a
+   * lookup returned, not what the notes said — `hintsPreamble` presents them as facts the
+   * model may attach to a person it finds, never as people it must invent.
+   */
+  seedPeople?: Array<{
+    name?: string | null;
+    email?: string | null;
+    linkedinUrl?: string | null;
+    title?: string | null;
+    company?: string | null;
+  }>;
   interactionType?: string | null;
   /** The user's active goals, so the model can score each person's `relevance`. */
   goals?: string[];
@@ -1156,8 +1168,17 @@ function hintsPreamble(hints?: CaptureParseHints | null) {
         const name = p.name?.trim() || "";
         const email = p.email?.trim() || "";
         if (!name && !email) return null;
-        if (name && email) return `${name} <${email}>`;
-        return name || email;
+        const head = name && email ? `${name} <${email}>` : name || email;
+        // Role/company/URL come from a profile lookup, so they are worth more than the
+        // model's reading of a slug — spelled out here rather than left to inference.
+        const extra = [
+          p.title?.trim(),
+          p.company?.trim() ? `at ${p.company.trim()}` : "",
+          p.linkedinUrl?.trim(),
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        return extra ? `${head} — ${extra}` : head;
       })
       .filter(Boolean);
     if (seeds.length) {
@@ -1169,7 +1190,7 @@ function hintsPreamble(hints?: CaptureParseHints | null) {
     lines.push(`The user's current goals (score each person's relevance against these):\n- ${goals.join("\n- ")}`);
   }
   if (!lines.length) return "";
-  return `\n\nStructured hints from calendar/email (use when consistent with the notes):\n${lines.join("\n")}`;
+  return `\n\nStructured hints from calendar/email/LinkedIn (use when consistent with the notes):\n${lines.join("\n")}`;
 }
 
 function normalizeSharedNotes(
