@@ -6,6 +6,7 @@ import { toast } from "@/lib/toast";
 import { previewLinkedInCsv } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
+import { connectionToReviewPerson } from "@/lib/imports/review-people";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
 import {
   BusyHint,
@@ -185,13 +186,7 @@ export function LinkedInConnectionsImport() {
 
       {people.length > 0 && (
         <ImportPeopleReview
-          people={people.map((p) => ({
-            id: p.id,
-            name: p.fullName,
-            subtitle: [p.position, p.company].filter(Boolean).join(" · "),
-            isRepeat: p.isRepeat,
-            repeatReason: p.duplicate?.reason,
-          }))}
+          people={people.map(connectionToReviewPerson)}
           selectedIds={selected}
           onSelectedIdsChange={setSelected}
           onRemove={(id) => {

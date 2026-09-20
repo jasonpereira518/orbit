@@ -6,6 +6,7 @@ import { toast } from "@/lib/toast";
 import { previewLinkedInMessagesCsv } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
+import { messageThreadToReviewPerson } from "@/lib/imports/review-people";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
 import { TimelineBackfillToggle } from "@/components/imports/timeline-backfill-toggle";
 import {
@@ -178,28 +179,7 @@ export function LinkedInMessagesImport() {
             </p>
           ) : null}
           <ImportPeopleReview
-            people={people.map((p) => ({
-              id: p.id,
-              name: p.displayName,
-              subtitle: p.isRepeat
-                ? `Matched: ${p.match?.fullName || p.title}`
-                : p.linkedinUrl
-                  ? p.linkedinUrl
-                  : p.willCreate
-                    ? "Will create new contact"
-                    : p.title,
-              // The sent/received split is the tell for an inverted owner guess: if Orbit
-              // decided the wrong person owns this export, every thread reads backwards, and
-              // here is where that is cheap to notice rather than after the rows are written.
-              // Absent when direction could not be established at all.
-              meta: `${
-                p.sentByYou !== null && p.receivedFromThem !== null
-                  ? `${p.sentByYou} sent · ${p.receivedFromThem} received`
-                  : `${p.messageCount} message${p.messageCount === 1 ? "" : "s"}`
-              }${p.sampleContent ? ` · ${p.sampleContent}` : ""}`,
-              isRepeat: p.isRepeat,
-              repeatReason: p.match?.reason || "Already in your network",
-            }))}
+            people={people.map(messageThreadToReviewPerson)}
             selectedIds={selected}
             onSelectedIdsChange={setSelected}
             onRemove={(id) => {

@@ -161,9 +161,15 @@ export function ImportProgress({
   importedLabel,
   onCancel,
   cancelling = false,
+  step,
 }: ImportProgressState & {
   onCancel?: () => void;
   cancelling?: boolean;
+  /**
+   * Which step of a multi-file drop this is. Optional, so the five existing call sites —
+   * including the Settings dialog's — are unchanged.
+   */
+  step?: { index: number; total: number };
 }) {
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
   const eta = useEtaCountdown({
@@ -188,9 +194,16 @@ export function ImportProgress({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
-          <h3 className="truncate text-sm font-medium text-primary">
-            {cancelling ? "Stopping import…" : "Import in progress"}
-          </h3>
+          <div className="min-w-0">
+            {step && step.total > 1 ? (
+              <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                Step {step.index} of {step.total}
+              </p>
+            ) : null}
+            <h3 className="truncate text-sm font-medium text-primary">
+              {cancelling ? "Stopping import…" : "Import in progress"}
+            </h3>
+          </div>
         </div>
         {onCancel ? (
           <Button

@@ -71,11 +71,16 @@ export function useWindowFileDrop({
   // Kept in a ref so the listeners can stay registered for the life of the page: re-registering
   // window listeners on every render would drop a drag that is already in flight.
   const onFilesRef = useRef(onFiles);
-  onFilesRef.current = onFiles;
   const disabledRef = useRef(disabled);
-  disabledRef.current = disabled;
   const limitsRef = useRef(limits);
-  limitsRef.current = limits;
+  // Written in an effect rather than during render: the listeners below stay registered for
+  // the life of the page, so they need the latest values without re-registering — but a ref
+  // written during render is a React violation and the lint rule is right about it.
+  useEffect(() => {
+    onFilesRef.current = onFiles;
+    disabledRef.current = disabled;
+    limitsRef.current = limits;
+  }, [onFiles, disabled, limits]);
 
   const reset = useCallback(() => {
     depth.current = 0;
@@ -167,9 +172,11 @@ export function useWindowFilePaste({
   onFiles: (files: File[]) => void;
 }): void {
   const onFilesRef = useRef(onFiles);
-  onFilesRef.current = onFiles;
   const disabledRef = useRef(disabled);
-  disabledRef.current = disabled;
+  useEffect(() => {
+    onFilesRef.current = onFiles;
+    disabledRef.current = disabled;
+  }, [onFiles, disabled]);
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
