@@ -15,7 +15,7 @@ import "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-capture-queue";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-capture-queue";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { getDb } from "../src/db";
 import { captureJobs } from "../src/db/schema";
@@ -51,9 +51,14 @@ async function statusOf(id: string) {
 
 /**
  * Mirrors what `queueCaptureJob` in `src/actions/capture-jobs.ts` does around the row write:
- * the blanket discard, gated on the batch id. Reproduced here rather than imported because
- * that module is `"use server"` and calls `requireUserId()`, which has no session in a
- * smoke script — the RULE is what matters, and it is one statement.
+ * the blanket discard, gated on the batch id — including the target row's OWN batchGroupId,
+ * not just the incoming call's. Reproduced here rather than imported because that module is
+ * `"use server"` and calls `requireUserId()`, which has no session in a smoke script — the
+ * RULE is what matters, and it must stay byte-for-byte the same rule, not a paraphrase that
+ * quietly drifts (see "a grouped 'ready' row survives an ungrouped queue" below, which is
+ * exactly the case that drifted: this used to discard EVERY row in these statuses regardless
+ * of the row's own batchGroupId, silently wiping out a job the public API had enqueued and
+ * left with its own group).
  */
 async function queueLikeAction(userId: string, batchGroupId: string | null) {
   const db = await getDb();
@@ -64,8 +69,8 @@ async function queueLikeAction(userId: string, batchGroupId: string | null) {
       .where(
         and(
           eq(captureJobs.userId, userId),
-          // `inArray` spelled out to keep this identical to the action.
-          eq(captureJobs.status, "ready")
+          inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"]),
+          isNull(captureJobs.batchGroupId)
         )
       );
   }
@@ -122,15 +127,49 @@ async function main() {
     await db.delete(captureJobs).where(eq(captureJobs.id, fresh.id));
   }
 
-  // A SINGLE queue must still discard them — the original rule has to survive intact.
+  // A SINGLE queue must still discard a true ungrouped sibling — the original rule has to
+  // survive intact. Uses FRESH ungrouped rows rather than the batch's 12, on purpose: the
+  // batch's rows are covered by the next case below, and conflating the two used to hide
+  // exactly the bug that case pins (see its comment).
   {
-    await db.update(captureJobs).set({ status: "ready" }).where(eq(captureJobs.userId, USER));
+    await reset();
+    const loneReady = await createCaptureJob(USER, {
+      sourceKind: "messy",
+      status: "queued",
+      inputText: "a lone draft",
+    });
+    await db.update(captureJobs).set({ status: "ready" }).where(eq(captureJobs.id, loneReady.id));
+
     const fresh = await queueLikeAction(USER, null);
     const survivors = await db.query.captureJobs.findMany({
       where: and(eq(captureJobs.userId, USER), eq(captureJobs.status, "ready")),
     });
-    check("a single queue still discards siblings", survivors.length === 0, String(survivors.length));
+    check("a single queue still discards an ungrouped sibling", survivors.length === 0, String(survivors.length));
     check("  and adds its own row", (await statusOf(fresh.id)) === "queued");
+  }
+
+  // A row that carries its OWN batchGroupId is exempt even from an UNGROUPED queue call —
+  // not just from a grouped one. This is what protects a note the public API enqueued
+  // (src/app/api/v1/notes/route.ts gives every job it creates a single-item batchGroupId
+  // for exactly this) from being wiped out by the very next ordinary in-app Extract. Before
+  // this fix, `queueLikeAction`'s discard (mirroring the real action) ignored the target
+  // row's OWN batchGroupId entirely and would have wiped this row out too.
+  {
+    await reset();
+    const apiJob = await createCaptureJob(USER, {
+      sourceKind: "messy",
+      status: "queued",
+      inputText: "an overnight note from the API",
+      batchGroupId: randomUUID(),
+    });
+    await db.update(captureJobs).set({ status: "ready" }).where(eq(captureJobs.id, apiJob.id));
+
+    const fresh = await queueLikeAction(USER, null);
+    check(
+      "a grouped 'ready' row survives an ungrouped queue",
+      (await statusOf(apiJob.id)) === "ready"
+    );
+    check("  and the ungrouped call still adds its own row", (await statusOf(fresh.id)) === "queued");
   }
 
   console.log("\ndiscarding a batch is scoped to that batch");

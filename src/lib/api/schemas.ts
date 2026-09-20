@@ -127,15 +127,22 @@ export const noteBody = z.object({
 
 export const interactionsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
-  /** ISO 8601. Everything changed at or after this instant. */
-  updated_since: z.string().datetime().optional(),
+  /**
+   * ISO 8601, named for what it actually filters: `interactions.interactionDate` — when the
+   * thing happened, not when the row last changed (there is no `updatedAt` on interactions,
+   * so this can never be a true change-cursor; see the route for what that would need).
+   * `{ offset: true }` because Apple Shortcuts' ISO8601 formatter emits an offset
+   * (`+02:00`) rather than `Z` by default, same as `eventInput.occurredAt` below.
+   */
+  occurred_since: z.string().datetime({ offset: true }).optional(),
   contactId: z.string().uuid().optional(),
 });
 
 export const followupPatchBody = z
   .object({
     status: z.enum(["complete", "snoozed"]),
-    dueAt: z.string().datetime().optional(),
+    /** `{ offset: true }` — see `interactionsQuery.occurred_since`. */
+    dueAt: z.string().datetime({ offset: true }).optional(),
   })
   .refine((v) => v.status !== "snoozed" || Boolean(v.dueAt), {
     message: "Snoozing needs a dueAt",

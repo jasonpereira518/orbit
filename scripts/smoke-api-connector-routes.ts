@@ -28,12 +28,30 @@ console.log("\ninteractions");
 const ok = parseQuery("https://x/api/v1/interactions?limit=10", interactionsQuery);
 check("a plain query parses", ok.ok === true);
 const since = parseQuery(
+  "https://x/api/v1/interactions?occurred_since=2026-09-01T00:00:00.000Z",
+  interactionsQuery
+);
+check("occurred_since (Z) parses", since.ok === true);
+// Apple Shortcuts' ISO8601 formatter emits an offset, not `Z`, by default. A caller building
+// requests from that formatter must not be rejected for it.
+const sinceOffset = parseQuery(
+  "https://x/api/v1/interactions?occurred_since=2026-09-01T00:00:00%2B02:00",
+  interactionsQuery
+);
+check("occurred_since with a UTC offset parses", sinceOffset.ok === true, JSON.stringify(sinceOffset));
+const bad = parseQuery("https://x/api/v1/interactions?occurred_since=nope", interactionsQuery);
+check("a bad occurred_since is rejected", bad.ok === false);
+// The old name must be gone, not just supplemented — a client still sending it should see
+// it silently ignored (unknown query keys are simply absent from the parsed schema, so this
+// mainly guards against the rename being reverted without every reference following it).
+const oldName = parseQuery(
   "https://x/api/v1/interactions?updated_since=2026-09-01T00:00:00.000Z",
   interactionsQuery
 );
-check("updated_since parses", since.ok === true);
-const bad = parseQuery("https://x/api/v1/interactions?updated_since=nope", interactionsQuery);
-check("a bad updated_since is rejected", bad.ok === false);
+check(
+  "the retired updated_since name does not filter anything",
+  oldName.ok === true && !("updated_since" in oldName.data)
+);
 const tooMany = parseQuery("https://x/api/v1/interactions?limit=5000", interactionsQuery);
 check("an oversized limit is rejected", tooMany.ok === false);
 
@@ -46,6 +64,11 @@ check(
 check(
   "snooze with a date parses",
   followupPatchBody.safeParse({ status: "snoozed", dueAt: "2026-10-01T09:00:00.000Z" }).success
+);
+// Same Shortcuts-formatter concern as occurred_since above.
+check(
+  "snooze with a UTC-offset date parses",
+  followupPatchBody.safeParse({ status: "snoozed", dueAt: "2026-10-01T09:00:00+02:00" }).success
 );
 check("an unknown status is rejected", !followupPatchBody.safeParse({ status: "yolo" }).success);
 

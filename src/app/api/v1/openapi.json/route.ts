@@ -122,7 +122,10 @@ export async function GET() {
         post: {
           summary: "Send a note into Orbit",
           description:
-            "Queues the note for the same extraction the app's capture uses. Returns 202 and a note id.",
+            "Queues the note for the same extraction the app's capture uses. There is no " +
+            "endpoint to poll for the result — the note awaits review in the app's own " +
+            "capture queue, the same place a note typed there would. Returns 202 and a job id " +
+            "for reference only.",
           requestBody: body(noteBody),
           responses: { "202": OK },
         },
@@ -133,10 +136,14 @@ export async function GET() {
           parameters: [
             { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 200 } },
             {
-              name: "updated_since",
+              name: "occurred_since",
               in: "query",
               schema: { type: "string", format: "date-time" },
-              description: "Everything at or after this instant, for incremental pulls.",
+              description:
+                "Everything that HAPPENED at or after this instant, for incremental pulls. " +
+                "This is when the interaction occurred, not when its row last changed — " +
+                "there is no change-cursor, so an edit to an existing interaction's summary " +
+                "will not appear via this parameter.",
             },
             { name: "contactId", in: "query", schema: { type: "string", format: "uuid" } },
           ],

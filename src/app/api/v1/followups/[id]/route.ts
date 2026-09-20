@@ -12,18 +12,33 @@
  * hit the same wall and reads the id out of the URL instead; this route follows that existing
  * precedent rather than inventing a second convention. `pathname.split("/").filter(Boolean).pop()`
  * is robust to a trailing slash (an empty last segment is filtered out) and to a query string
- * (`URL#pathname` never includes one).
+ * (`URL#pathname` never includes one) — but NOT to `/followups/` with nothing after it, where
+ * `.pop()` returns the literal path segment `"followups"` rather than an empty string.
+ *
+ * That is why the id is also shape-checked against the same uuid pattern every id in this API
+ * already carries, before it ever reaches a query: `completeReminder`/`snoozeReminderTo` hand
+ * it straight to a `uuid` column comparison, and Postgres throws on an invalid uuid literal
+ * rather than just finding no rows — which, uncaught, is a client-caused 500 into the same
+ * funnel real server faults use. A malformed id is treated exactly like a wrong-owner one
+ * (`not_found`), on purpose: telling the two apart would let a caller distinguish "no such id"
+ * from "not shaped like an id", which is enumeration information this API has no reason to hand
+ * out.
  */
-import { ApiRequestError, apiError, apiHandler, apiOk, readJson } from "@/lib/api/http";
+import { z } from "zod";
+import { apiError, apiHandler, apiOk, readJson } from "@/lib/api/http";
 import { followupPatchBody } from "@/lib/api/schemas";
 import { completeReminder, snoozeReminderTo } from "@/lib/reminders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const uuidShape = z.string().uuid();
+
 export const PATCH = apiHandler({ scope: "write", bucket: "apiWrite" }, async (request, { caller }) => {
   const id = new URL(request.url).pathname.split("/").filter(Boolean).pop();
-  if (!id) throw new ApiRequestError("invalid_request", "Which follow-up?", "id");
+  if (!id || !uuidShape.safeParse(id).success) {
+    return apiError({ code: "not_found", message: "No such follow-up." });
+  }
   const body = await readJson(request, followupPatchBody);
 
   if (body.status === "complete") {
