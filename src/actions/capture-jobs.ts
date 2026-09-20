@@ -198,7 +198,17 @@ export async function queueCaptureJob(input: {
           );
       }
       row = await createCaptureJob(userId, {
-        sourceKind: input.sourceKind,
+        // `"api"` is reserved for src/app/api/v1/notes/route.ts alone — see the type's own
+        // comment in src/lib/capture/types.ts. This action has no route boundary of its own
+        // to enforce that at (it is a "use server" action, reachable by a crafted POST that
+        // supplies any `CaptureJobSource` literal, `input.sourceKind` included), so the
+        // coercion has to live here. Without it, a forged call could exempt its own row from
+        // the discard rule below and make it immortal — `resumeStalledCaptureJobs`'s
+        // retention purge only reaps `saved | failed | discarded`, never a `ready` row stuck
+        // there by a fake exemption. `requireUserId()` above means a forger could only ever
+        // do this to their OWN account, but "harmless to everyone else" is not the same as
+        // "does not happen" — hence coercing rather than trusting the caller.
+        sourceKind: input.sourceKind === "api" ? "messy" : input.sourceKind,
         status: "queued",
         inputText: text,
         inputHints: input.hints ?? null,

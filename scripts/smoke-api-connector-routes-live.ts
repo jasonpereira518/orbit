@@ -510,6 +510,45 @@ run(async () => {
   )[0];
   check("the in-app Extract's own new job was created", Boolean(newDemoJob));
 
+  // --- The forgery case: `queueCaptureJob` itself must refuse to produce sourceKind "api" ---
+  //
+  // `queueCaptureJob` is a `"use server"` action, reachable by a crafted POST that supplies
+  // any `CaptureJobSource` literal in its body — there is no route boundary here the way
+  // `/v1/notes` has one, so `noteBody`'s missing field and the upload route's allow-list
+  // (the two facts the type comment in src/lib/capture/types.ts already documented) do NOT
+  // cover this path. This is exactly what a forged call looks like: calling the action
+  // directly with `sourceKind: "api"`. If the action trusted it, the forger would exempt
+  // their OWN row from the discard rule and make it immortal — `resumeStalledCaptureJobs`'s
+  // retention purge never reaps a `ready`/`reviewing` row. `requireUserId` bounds the damage
+  // to the forger's own account, but "only hurts yourself" is not the same as "can't happen."
+  await queueCaptureJob({ text: "Forged sourceKind", sourceKind: "api" });
+  const forgedJob = rowsOf<{ id: string; source_kind: string }>(
+    await db.execute(sql`
+      SELECT id, source_kind FROM capture_jobs
+      WHERE user_id = ${DEMO_USER} AND input_text = 'Forged sourceKind'
+    `)
+  )[0];
+  check("it created a row", Boolean(forgedJob));
+  check(
+    "…but the stored sourceKind is coerced away from \"api\"",
+    forgedJob?.source_kind === "messy",
+    forgedJob?.source_kind
+  );
+
+  // Prove it beyond the stored column: put it in a discardable state and run another bare
+  // Extract — a genuinely exempt row would survive this, as the earlier cases in this section
+  // show; a coerced one must not.
+  await db.execute(sql`UPDATE capture_jobs SET status = 'ready' WHERE id = ${forgedJob.id}`);
+  await queueCaptureJob({ text: "Yet another in-app note", sourceKind: "messy" });
+  const forgedJobStatus = rowsOf<{ status: string }>(
+    await db.execute(sql`SELECT status FROM capture_jobs WHERE id = ${forgedJob.id}`)
+  )[0];
+  check(
+    "…and it is swept by the next bare Extract, exactly like any other in-app job",
+    forgedJobStatus.status === "discarded",
+    forgedJobStatus.status
+  );
+
   await db.execute(sql`DELETE FROM capture_jobs WHERE user_id = ${DEMO_USER}`);
   await db.execute(sql`DELETE FROM api_keys WHERE user_id = ${DEMO_USER}`);
   await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${DEMO_USER}`);

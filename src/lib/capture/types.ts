@@ -147,10 +147,14 @@ export const ACTIVE_CAPTURE_JOB_STATUSES: readonly CaptureJobStatus[] = [
 
 /**
  * `"api"` is set ONLY by `src/app/api/v1/notes/route.ts`, never client-forgeable: `noteBody`
- * (`src/lib/api/schemas.ts`) has no `sourceKind` field for a caller to set, and the in-app
+ * (`src/lib/api/schemas.ts`) has no `sourceKind` field for a caller to set, the in-app
  * media-upload route's own allow-list (`src/app/api/capture/jobs/route.ts`'s `SOURCE_KINDS`)
- * does not include it either. That is what makes it safe to key a discard exemption on —
- * see `queueCaptureJob` (src/actions/capture-jobs.ts).
+ * does not include it either, and `queueCaptureJob` (src/actions/capture-jobs.ts) — a
+ * `"use server"` action, reachable by a crafted POST that supplies any literal here —
+ * coerces an incoming `"api"` down to `"messy"` before it can reach a new row. That third
+ * path is what makes it safe to key a discard exemption on; without the coercion, a forged
+ * server-action call could make its own row immortal (the retention purge in
+ * `resumeStalledCaptureJobs` never reaps a `ready`/`reviewing` row).
  */
 export type CaptureJobSource = "messy" | "voice" | "meeting" | "scan" | "phone" | "api";
 
