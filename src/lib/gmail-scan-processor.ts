@@ -11,7 +11,7 @@ import {
   type ImportStats,
 } from "@/db/schema";
 import { internalFetch } from "@/lib/internal-auth";
-import { failImport } from "@/lib/import-job-processor";
+import { failImport, truncateStoredError } from "@/lib/import-job-processor";
 import {
   buildRecruiterQuery,
   fetchGmailHeaders,
@@ -32,8 +32,15 @@ import {
   type RecruiterScanResult,
 } from "@/lib/recruiter-scan";
 import { submitAiBatch } from "@/lib/ai-batch";
-import { markScanCompleted, resolveScanWindow } from "@/lib/recruiter-scan-state";
-import { ensureUserLink, isViewerSharing, upsertCanonicalRecruiter } from "@/lib/recruiters";
+import {
+  markScanCompleted,
+  resolveScanWindow,
+} from "@/lib/recruiter-scan-state";
+import {
+  ensureUserLink,
+  isViewerSharing,
+  upsertCanonicalRecruiter,
+} from "@/lib/recruiters";
 import { reportError } from "@/lib/report-error";
 
 export { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-type";
@@ -70,8 +77,10 @@ export const MAX_CONSECUTIVE_SENDER_FAILURES = 5;
  */
 export const SCAN_KEY_PROBLEM_COPY = {
   auth: "Your AI provider didn’t accept your API key — check it in Settings, then scan again",
-  quota: "Your AI provider says your account is out of credit — top up with them, then scan again",
-  model_unavailable: "Your AI model isn’t available — pick another in Settings, then scan again",
+  quota:
+    "Your AI provider says your account is out of credit — top up with them, then scan again",
+  model_unavailable:
+    "Your AI model isn’t available — pick another in Settings, then scan again",
 } as const;
 
 export const SCAN_CONSECUTIVE_FAILURES_COPY =
@@ -88,7 +97,10 @@ function scanAbortReason(err: unknown): string | null {
 
 /** Gmail, the classifier and the continuation kick — injectable so the loop is testable. */
 export type ScanDeps = {
-  getAccessToken: (userId: string, opts?: { minValidityMs?: number }) => Promise<string>;
+  getAccessToken: (
+    userId: string,
+    opts?: { minValidityMs?: number },
+  ) => Promise<string>;
   listPage: typeof listGmailMessagePage;
   fetchHeaders: typeof fetchGmailHeaders;
   fetchMessages: typeof fetchGmailMessages;
@@ -100,7 +112,9 @@ export type ScanDeps = {
 
 async function patchStats(importId: string, patch: Partial<ImportStats>) {
   const db = await getDb();
-  const row = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+  const row = await db.query.imports.findFirst({
+    where: eq(imports.id, importId),
+  });
   if (!row) return;
   await db
     .update(imports)
@@ -111,10 +125,16 @@ async function patchStats(importId: string, patch: Partial<ImportStats>) {
 /** Kick a fresh invocation so the remaining work continues past this function's ceiling. */
 async function scheduleContinuation(importId: string) {
   try {
-    await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
+    await internalFetch(`/api/imports/${importId}/continue`, {
+      method: "POST",
+    });
   } catch (err) {
     // Best-effort — the process-stalled cron picks the job back up either way.
-    reportError(err, { where: "job.gmail-scan.continuation-kick", level: "warning", extra: { importId } });
+    reportError(err, {
+      where: "job.gmail-scan.continuation-kick",
+      level: "warning",
+      extra: { importId },
+    });
   }
 }
 
@@ -143,21 +163,26 @@ async function runDiscovery(
   accessToken: string,
   jobStart: number,
   scanAfter: Date,
-  deps: ScanDeps
+  deps: ScanDeps,
 ): Promise<boolean> {
   const db = await getDb();
 
   const existing = await db.query.importJobRows.findMany({
     where: eq(importJobRows.importId, importId),
   });
-  const byEmail = new Map<string, { id: string; payload: GmailSenderRowPayload }>();
+  const byEmail = new Map<
+    string,
+    { id: string; payload: GmailSenderRowPayload }
+  >();
   for (const row of existing) {
     if (isGmailSenderRow(row.payload)) {
       byEmail.set(row.payload.email, { id: row.id, payload: row.payload });
     }
   }
 
-  const startRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+  const startRow = await db.query.imports.findFirst({
+    where: eq(imports.id, importId),
+  });
   let pageToken = startRow?.stats?.gmailPageToken ?? null;
   let scanned = startRow?.stats?.messagesScanned ?? 0;
 
@@ -186,11 +211,13 @@ async function runDiscovery(
       scanned += page.messages.length;
 
       for (const msg of headers) {
-        if (!looksLikeRecruiter({
-          from: msg.from,
-          subject: msg.subject,
-          snippet: msg.snippet,
-        })) {
+        if (
+          !looksLikeRecruiter({
+            from: msg.from,
+            subject: msg.subject,
+            snippet: msg.snippet,
+          })
+        ) {
           continue;
         }
         const parsed = parseFromHeader(msg.from);
@@ -256,11 +283,20 @@ async function runDiscovery(
 
 /** Phase B: classify and summarize one sender, writing through to the recruiter tables. */
 /** What applying a verdict needs from the mail, so a batched answer need not re-read Gmail. */
-export type SenderMailMeta = { dates: number[]; threadId: string | null; messageCount: number };
+export type SenderMailMeta = {
+  dates: number[];
+  threadId: string | null;
+  messageCount: number;
+};
 
-function mailMetaOf(payload: GmailSenderRowPayload, messages: GmailMessageContent[]): SenderMailMeta {
+function mailMetaOf(
+  payload: GmailSenderRowPayload,
+  messages: GmailMessageContent[],
+): SenderMailMeta {
   return {
-    dates: messages.map((m) => m.internalDate).filter((d): d is number => typeof d === "number"),
+    dates: messages
+      .map((m) => m.internalDate)
+      .filter((d): d is number => typeof d === "number"),
     threadId: messages[0]?.threadId || null,
     messageCount: payload.messageIds.length,
   };
@@ -277,7 +313,7 @@ export async function applyRecruiterVerdict(
   userId: string,
   payload: GmailSenderRowPayload,
   meta: SenderMailMeta,
-  result: RecruiterScanResult
+  result: RecruiterScanResult,
 ): Promise<"recruiter" | "rejected"> {
   if (!result.isRecruiter || result.confidence < RECRUITER_CONFIDENCE_FLOOR) {
     return "rejected";
@@ -292,7 +328,7 @@ export async function applyRecruiterVerdict(
       email: payload.email,
       specialty: result.rolesDiscussed,
     },
-    { contributePii: await isViewerSharing(userId), createdByUserId: userId }
+    { contributePii: await isViewerSharing(userId), createdByUserId: userId },
   );
 
   await ensureUserLink({
@@ -312,7 +348,9 @@ export async function applyRecruiterVerdict(
       companiesMentioned: result.companiesMentioned,
       rolesDiscussed: result.rolesDiscussed,
       emailCount: meta.messageCount,
-      firstEmailAt: meta.dates.length ? new Date(Math.min(...meta.dates)) : null,
+      firstEmailAt: meta.dates.length
+        ? new Date(Math.min(...meta.dates))
+        : null,
       lastEmailAt: meta.dates.length ? new Date(Math.max(...meta.dates)) : null,
       gmailThreadId: meta.threadId,
       updatedAt: new Date(),
@@ -320,8 +358,8 @@ export async function applyRecruiterVerdict(
     .where(
       and(
         eq(userRecruiterLinks.userId, userId),
-        eq(userRecruiterLinks.recruiterId, recruiter.id)
-      )
+        eq(userRecruiterLinks.recruiterId, recruiter.id),
+      ),
     );
 
   return "recruiter";
@@ -331,11 +369,11 @@ async function processSender(
   userId: string,
   payload: GmailSenderRowPayload,
   accessToken: string,
-  deps: ScanDeps
+  deps: ScanDeps,
 ): Promise<"recruiter" | "rejected"> {
   const messages = await deps.fetchMessages(
     accessToken,
-    payload.messageIds.slice(0, 5)
+    payload.messageIds.slice(0, 5),
   );
   if (messages.length === 0) return "rejected";
 
@@ -346,7 +384,12 @@ async function processSender(
     messages,
   });
 
-  return applyRecruiterVerdict(userId, payload, mailMetaOf(payload, messages), result);
+  return applyRecruiterVerdict(
+    userId,
+    payload,
+    mailMetaOf(payload, messages),
+    result,
+  );
 }
 
 /** A sender whose classification is out with a provider, waiting on a batch. */
@@ -355,7 +398,12 @@ export const SCAN_ROW_QUEUED = "queued";
 /** What a submitted classification batch needs to map its answers back onto. */
 export type RecruiterBatchPayload = {
   importId: string;
-  items: Array<{ customId: string; rowId: string; payload: GmailSenderRowPayload; meta: SenderMailMeta }>;
+  items: Array<{
+    customId: string;
+    rowId: string;
+    payload: GmailSenderRowPayload;
+    meta: SenderMailMeta;
+  }>;
 };
 
 /**
@@ -365,15 +413,19 @@ export type RecruiterBatchPayload = {
  * stops a scan from stepping over senders whose batch has not answered yet. Safe to call
  * from the runner and from the batch sweep; the first one to find nothing outstanding wins.
  */
-export async function finalizeRecruiterScanIfDone(importId: string): Promise<boolean> {
+export async function finalizeRecruiterScanIfDone(
+  importId: string,
+): Promise<boolean> {
   const db = await getDb();
-  const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+  const importRow = await db.query.imports.findFirst({
+    where: eq(imports.id, importId),
+  });
   if (!importRow || importRow.status !== "processing") return false;
 
   const outstanding = await db.query.importJobRows.findMany({
     where: and(
       eq(importJobRows.importId, importId),
-      inArray(importJobRows.status, ["pending", SCAN_ROW_QUEUED])
+      inArray(importJobRows.status, ["pending", SCAN_ROW_QUEUED]),
     ),
     columns: { id: true },
     limit: 1,
@@ -387,14 +439,20 @@ export async function finalizeRecruiterScanIfDone(importId: string): Promise<boo
 
   await db
     .update(imports)
-    .set({ status: "completed", rowsProcessed: done.length, updatedAt: new Date() })
+    .set({
+      status: "completed",
+      rowsProcessed: done.length,
+      updatedAt: new Date(),
+    })
     .where(eq(imports.id, importId));
 
   // Only a job that reached `completed` may advance the watermark. A failed or cancelled
   // scan leaves it where it was, so the next run re-reads the window it never finished
   // rather than stepping over the messages it never got to.
   await markScanCompleted(importRow.userId, {
-    startedAt: importRow.stats?.scanStartedAt ? new Date(importRow.stats.scanStartedAt) : new Date(),
+    startedAt: importRow.stats?.scanStartedAt
+      ? new Date(importRow.stats.scanStartedAt)
+      : new Date(),
     wasFull: importRow.stats?.scanIsFull === true,
   });
 
@@ -413,7 +471,10 @@ export async function finalizeRecruiterScanIfDone(importId: string): Promise<boo
  * all land here, and it re-reads job and row state from the DB every iteration rather
  * than assuming it is starting fresh.
  */
-export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps = DEFAULT_SCAN_DEPS): Promise<void> {
+export async function runGmailRecruiterScanJob(
+  importId: string,
+  deps: ScanDeps = DEFAULT_SCAN_DEPS,
+): Promise<void> {
   const db = await getDb();
   const jobStart = Date.now();
 
@@ -429,7 +490,9 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
   try {
     // Valid for the whole invocation: a token minted with two minutes left would expire
     // half-way through a page and read as a run of empty messages.
-    accessToken = await deps.getAccessToken(userId, { minValidityMs: TIME_BUDGET_MS + 60_000 });
+    accessToken = await deps.getAccessToken(userId, {
+      minValidityMs: TIME_BUDGET_MS + 60_000,
+    });
   } catch (err) {
     await failImport(importId, err);
     return;
@@ -468,9 +531,8 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
         userId,
         accessToken,
         jobStart,
-        scanAfter
-      ,
-        deps
+        scanAfter,
+        deps,
       );
       if (!finished) return;
     }
@@ -493,7 +555,7 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
       const pending = await db.query.importJobRows.findMany({
         where: and(
           eq(importJobRows.importId, importId),
-          eq(importJobRows.status, "pending")
+          eq(importJobRows.status, "pending"),
         ),
         orderBy: [asc(importJobRows.rowIndex)],
         limit: SCAN_BATCH_SIZE,
@@ -508,10 +570,17 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
       // job waits for them. Whatever the batch will not take is classified inline below,
       // one sender at a time, exactly as before.
       const queued = new Set<string>();
-      const batchable: Array<{ row: (typeof pending)[number]; payload: GmailSenderRowPayload; messages: GmailMessageContent[] }> = [];
+      const batchable: Array<{
+        row: (typeof pending)[number];
+        payload: GmailSenderRowPayload;
+        messages: GmailMessageContent[];
+      }> = [];
       for (const row of pending) {
         if (!isGmailSenderRow(row.payload)) continue;
-        const messages = await deps.fetchMessages(accessToken, row.payload.messageIds.slice(0, 5));
+        const messages = await deps.fetchMessages(
+          accessToken,
+          row.payload.messageIds.slice(0, 5),
+        );
         if (messages.length === 0) continue; // the inline pass below records it as rejected
         batchable.push({ row, payload: row.payload, messages });
       }
@@ -537,14 +606,19 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
             temperature: 0.2,
             maxOutputTokens: 700,
           })),
-          { importId, items } satisfies RecruiterBatchPayload
+          { importId, items } satisfies RecruiterBatchPayload,
         );
         if (jobId) {
           for (const b of batchable) queued.add(b.row.id);
           await db
             .update(importJobRows)
             .set({ status: SCAN_ROW_QUEUED, updatedAt: new Date() })
-            .where(inArray(importJobRows.id, batchable.map((b) => b.row.id)));
+            .where(
+              inArray(
+                importJobRows.id,
+                batchable.map((b) => b.row.id),
+              ),
+            );
         }
       }
 
@@ -565,7 +639,12 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
         }
 
         try {
-          const outcome = await processSender(userId, row.payload, accessToken, deps);
+          const outcome = await processSender(
+            userId,
+            row.payload,
+            accessToken,
+            deps,
+          );
           consecutiveFailures = 0;
           if (outcome === "recruiter") found += 1;
           else rejected += 1;
@@ -584,21 +663,25 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
             return;
           }
           // A dead sender must not kill the scan — record why and move on.
-          const message = err instanceof Error ? err.message : "Classification failed";
+          const message =
+            err instanceof Error ? err.message : "Couldn’t read this sender";
           rejected += 1;
           consecutiveFailures += 1;
           await db
             .update(importJobRows)
             .set({
               status: "skipped",
-              errorMessage: message.slice(0, 300),
+              errorMessage: truncateStoredError(message),
               updatedAt: new Date(),
             })
             .where(eq(importJobRows.id, row.id));
           // Unless they keep dying: a streak means the scan as a whole is broken, and
           // "completing" would advance the watermark past everything it skipped.
           if (consecutiveFailures >= MAX_CONSECUTIVE_SENDER_FAILURES) {
-            await failImport(importId, new Error(SCAN_CONSECUTIVE_FAILURES_COPY));
+            await failImport(
+              importId,
+              new Error(SCAN_CONSECUTIVE_FAILURES_COPY),
+            );
             return;
           }
         }
@@ -637,16 +720,24 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
 export async function applyRecruiterScanOutcome(
   userId: string,
   item: RecruiterBatchPayload["items"][number],
-  content: string | null
+  content: string | null,
 ): Promise<"recruiter" | "rejected"> {
   const db = await getDb();
   let outcome: "recruiter" | "rejected" = "rejected";
   let errorMessage: string | null = null;
   try {
-    if (!content) throw new Error("The classifier returned nothing for this sender");
-    outcome = await applyRecruiterVerdict(userId, item.payload, item.meta, recruiterResultFromContent(content));
+    if (!content)
+      throw new Error("The classifier returned nothing for this sender");
+    outcome = await applyRecruiterVerdict(
+      userId,
+      item.payload,
+      item.meta,
+      recruiterResultFromContent(content),
+    );
   } catch (err) {
-    errorMessage = (err instanceof Error ? err.message : "Classification failed").slice(0, 300);
+    errorMessage = truncateStoredError(
+      err instanceof Error ? err.message : "Couldn’t read this sender",
+    );
   }
 
   await db
@@ -663,16 +754,26 @@ export async function applyRecruiterScanOutcome(
     columns: { importId: true },
   });
   if (row) {
-    const current = await db.query.imports.findFirst({ where: eq(imports.id, row.importId) });
+    const current = await db.query.imports.findFirst({
+      where: eq(imports.id, row.importId),
+    });
     if (current) {
-      const found = (current.stats?.recruitersFound ?? 0) + (outcome === "recruiter" ? 1 : 0);
-      const rejected = (current.stats?.sendersRejected ?? 0) + (outcome === "recruiter" ? 0 : 1);
+      const found =
+        (current.stats?.recruitersFound ?? 0) +
+        (outcome === "recruiter" ? 1 : 0);
+      const rejected =
+        (current.stats?.sendersRejected ?? 0) +
+        (outcome === "recruiter" ? 0 : 1);
       await db
         .update(imports)
         .set({
           rowsProcessed: (current.rowsProcessed ?? 0) + 1,
           contactsCreated: found,
-          stats: { ...(current.stats || {}), recruitersFound: found, sendersRejected: rejected },
+          stats: {
+            ...(current.stats || {}),
+            recruitersFound: found,
+            sendersRejected: rejected,
+          },
           updatedAt: new Date(),
         })
         .where(eq(imports.id, row.importId));
@@ -688,18 +789,25 @@ export async function applyRecruiterScanOutcome(
  */
 export async function releaseRecruiterScanRows(
   rowIds: string[],
-  to: "pending" | "skipped" = "pending"
+  to: "pending" | "skipped" = "pending",
 ): Promise<void> {
   if (rowIds.length === 0) return;
   const db = await getDb();
   await db
     .update(importJobRows)
     .set({ status: to, updatedAt: new Date() })
-    .where(and(inArray(importJobRows.id, rowIds), eq(importJobRows.status, SCAN_ROW_QUEUED)));
+    .where(
+      and(
+        inArray(importJobRows.id, rowIds),
+        eq(importJobRows.status, SCAN_ROW_QUEUED),
+      ),
+    );
 }
 
 /** Whether a scan is still open to results — false once it completed, failed or was cancelled. */
-export async function recruiterScanIsRunning(importId: string): Promise<boolean> {
+export async function recruiterScanIsRunning(
+  importId: string,
+): Promise<boolean> {
   const db = await getDb();
   const row = await db.query.imports.findFirst({
     where: eq(imports.id, importId),
@@ -711,5 +819,8 @@ export async function recruiterScanIsRunning(importId: string): Promise<boolean>
 /** Keeps a scan that is waiting on a batch from looking stalled to the resume sweep. */
 export async function touchImport(importId: string): Promise<void> {
   const db = await getDb();
-  await db.update(imports).set({ updatedAt: new Date() }).where(eq(imports.id, importId));
+  await db
+    .update(imports)
+    .set({ updatedAt: new Date() })
+    .where(eq(imports.id, importId));
 }

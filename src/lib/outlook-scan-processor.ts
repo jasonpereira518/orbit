@@ -1,5 +1,9 @@
 import { and, asc, eq } from "drizzle-orm";
-import { classifyAiError, friendlyError, ReauthRequiredError } from "@/lib/errors";
+import {
+  classifyAiError,
+  friendlyError,
+  ReauthRequiredError,
+} from "@/lib/errors";
 import { getDb } from "@/db";
 import {
   outlookConnections,
@@ -11,7 +15,7 @@ import {
   type ImportStats,
 } from "@/db/schema";
 import { internalFetch } from "@/lib/internal-auth";
-import { failImport } from "@/lib/import-job-processor";
+import { failImport, truncateStoredError } from "@/lib/import-job-processor";
 import {
   buildOutlookRecruiterQuery,
   fetchOutlookExcludedFolderIds,
@@ -21,19 +25,30 @@ import {
   listOutlookMessagePage,
 } from "@/lib/outlook";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
-import { firmFromEmail, looksLikeRecruiter, parseFromHeader } from "@/lib/recruiter-detect";
+import {
+  firmFromEmail,
+  looksLikeRecruiter,
+  parseFromHeader,
+} from "@/lib/recruiter-detect";
 import {
   RECRUITER_CONFIDENCE_FLOOR,
   classifyRecruiterSender,
 } from "@/lib/recruiter-scan";
-import { lastCompletedScanStart, resolveScanWindow } from "@/lib/recruiter-scan-state";
+import {
+  lastCompletedScanStart,
+  resolveScanWindow,
+} from "@/lib/recruiter-scan-state";
 import { classifySenderKind } from "@/lib/recruiter-triage";
 import {
   MAX_CONSECUTIVE_SENDER_FAILURES,
   SCAN_CONSECUTIVE_FAILURES_COPY,
   SCAN_KEY_PROBLEM_COPY,
 } from "@/lib/gmail-scan-processor";
-import { ensureUserLink, isViewerSharing, upsertCanonicalRecruiter } from "@/lib/recruiters";
+import {
+  ensureUserLink,
+  isViewerSharing,
+  upsertCanonicalRecruiter,
+} from "@/lib/recruiters";
 import { reportError } from "@/lib/report-error";
 
 export { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
@@ -72,7 +87,10 @@ function scanAbortReason(err: unknown): string | null {
 
 /** Graph, the classifier and the continuation kick — injectable so the loop is testable. */
 export type OutlookScanDeps = {
-  getAccessToken: (userId: string, opts?: { minValidityMs?: number }) => Promise<string>;
+  getAccessToken: (
+    userId: string,
+    opts?: { minValidityMs?: number },
+  ) => Promise<string>;
   listPage: typeof listOutlookMessagePage;
   excludedFolders: typeof fetchOutlookExcludedFolderIds;
   fetchHeaders: typeof fetchOutlookMessageHeaders;
@@ -83,7 +101,9 @@ export type OutlookScanDeps = {
 
 async function patchStats(importId: string, patch: Partial<ImportStats>) {
   const db = await getDb();
-  const row = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+  const row = await db.query.imports.findFirst({
+    where: eq(imports.id, importId),
+  });
   if (!row) return;
   await db
     .update(imports)
@@ -94,10 +114,16 @@ async function patchStats(importId: string, patch: Partial<ImportStats>) {
 /** Kick a fresh invocation so the remaining work continues past this function's ceiling. */
 async function scheduleContinuation(importId: string) {
   try {
-    await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
+    await internalFetch(`/api/imports/${importId}/continue`, {
+      method: "POST",
+    });
   } catch (err) {
     // Best-effort — the process-stalled cron picks the job back up either way.
-    reportError(err, { where: "job.outlook-scan.continuation-kick", level: "warning", extra: { importId } });
+    reportError(err, {
+      where: "job.outlook-scan.continuation-kick",
+      level: "warning",
+      extra: { importId },
+    });
   }
 }
 
@@ -130,21 +156,26 @@ async function runDiscovery(
   accessToken: string,
   jobStart: number,
   scanAfter: Date,
-  deps: OutlookScanDeps
+  deps: OutlookScanDeps,
 ): Promise<boolean> {
   const db = await getDb();
 
   const existing = await db.query.importJobRows.findMany({
     where: eq(importJobRows.importId, importId),
   });
-  const byEmail = new Map<string, { id: string; payload: OutlookSenderRowPayload }>();
+  const byEmail = new Map<
+    string,
+    { id: string; payload: OutlookSenderRowPayload }
+  >();
   for (const row of existing) {
     if (isOutlookSenderRow(row.payload)) {
       byEmail.set(row.payload.email, { id: row.id, payload: row.payload });
     }
   }
 
-  const startRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+  const startRow = await db.query.imports.findFirst({
+    where: eq(imports.id, importId),
+  });
   let nextLink = startRow?.stats?.outlookNextLink ?? null;
   let scanned = startRow?.stats?.messagesScanned ?? 0;
 
@@ -177,18 +208,21 @@ async function runDiscovery(
       scanned += page.messages.length;
 
       for (const msg of headers) {
-        if (msg.internalDate != null && msg.internalDate < scanAfterMs) continue;
+        if (msg.internalDate != null && msg.internalDate < scanAfterMs)
+          continue;
         if (msg.folderId && excludedFolders.has(msg.folderId)) continue;
         // Outlook's answer to Gmail's `-category:promotions -category:social -from:<job
         // boards>`: newsletters and job-board mail are cut here, by `List-Unsubscribe` /
         // `List-Id` / `Precedence` and the job-board domain list, before they cost a
         // classification. ATS mail is deliberately NOT cut (see `classifySenderKind`).
         if (classifySenderKind(msg) === "bulk") continue;
-        if (!looksLikeRecruiter({
-          from: msg.from,
-          subject: msg.subject,
-          snippet: msg.snippet,
-        })) {
+        if (
+          !looksLikeRecruiter({
+            from: msg.from,
+            subject: msg.subject,
+            snippet: msg.snippet,
+          })
+        ) {
           continue;
         }
         const parsed = parseFromHeader(msg.from);
@@ -257,9 +291,12 @@ async function processSender(
   userId: string,
   payload: OutlookSenderRowPayload,
   accessToken: string,
-  deps: OutlookScanDeps
+  deps: OutlookScanDeps,
 ): Promise<"recruiter" | "rejected"> {
-  const messages = await deps.fetchMessages(accessToken, payload.messageIds.slice(0, 5));
+  const messages = await deps.fetchMessages(
+    accessToken,
+    payload.messageIds.slice(0, 5),
+  );
   if (messages.length === 0) return "rejected";
 
   const result = await deps.classify(userId, {
@@ -282,7 +319,7 @@ async function processSender(
       email: payload.email,
       specialty: result.rolesDiscussed,
     },
-    { contributePii: await isViewerSharing(userId), createdByUserId: userId }
+    { contributePii: await isViewerSharing(userId), createdByUserId: userId },
   );
 
   await ensureUserLink({
@@ -312,8 +349,8 @@ async function processSender(
     .where(
       and(
         eq(userRecruiterLinks.userId, userId),
-        eq(userRecruiterLinks.recruiterId, recruiter.id)
-      )
+        eq(userRecruiterLinks.recruiterId, recruiter.id),
+      ),
     );
 
   return "recruiter";
@@ -328,7 +365,7 @@ async function processSender(
  */
 export async function runOutlookRecruiterScanJob(
   importId: string,
-  deps: OutlookScanDeps = DEFAULT_SCAN_DEPS
+  deps: OutlookScanDeps = DEFAULT_SCAN_DEPS,
 ): Promise<void> {
   const db = await getDb();
   const jobStart = Date.now();
@@ -345,7 +382,9 @@ export async function runOutlookRecruiterScanJob(
   try {
     // Valid for the whole invocation: a token minted with two minutes left would expire
     // half-way through a page and read as a run of empty messages.
-    accessToken = await deps.getAccessToken(userId, { minValidityMs: TIME_BUDGET_MS + 60_000 });
+    accessToken = await deps.getAccessToken(userId, {
+      minValidityMs: TIME_BUDGET_MS + 60_000,
+    });
   } catch (err) {
     await failImport(importId, err);
     return;
@@ -379,7 +418,14 @@ export async function runOutlookRecruiterScanJob(
 
   try {
     if (!importRow.stats?.discoveryComplete) {
-      const finished = await runDiscovery(importId, userId, accessToken, jobStart, scanAfter, deps);
+      const finished = await runDiscovery(
+        importId,
+        userId,
+        accessToken,
+        jobStart,
+        scanAfter,
+        deps,
+      );
       if (!finished) return;
     }
 
@@ -401,7 +447,7 @@ export async function runOutlookRecruiterScanJob(
       const pending = await db.query.importJobRows.findMany({
         where: and(
           eq(importJobRows.importId, importId),
-          eq(importJobRows.status, "pending")
+          eq(importJobRows.status, "pending"),
         ),
         orderBy: [asc(importJobRows.rowIndex)],
         limit: CHUNK_SIZE,
@@ -421,7 +467,12 @@ export async function runOutlookRecruiterScanJob(
         }
 
         try {
-          const outcome = await processSender(userId, row.payload, accessToken, deps);
+          const outcome = await processSender(
+            userId,
+            row.payload,
+            accessToken,
+            deps,
+          );
           consecutiveFailures = 0;
           if (outcome === "recruiter") found += 1;
           else rejected += 1;
@@ -445,21 +496,25 @@ export async function runOutlookRecruiterScanJob(
             return;
           }
           // A dead sender must not kill the scan — record why and move on.
-          const message = err instanceof Error ? err.message : "Classification failed";
+          const message =
+            err instanceof Error ? err.message : "Couldn’t read this sender";
           rejected += 1;
           consecutiveFailures += 1;
           await db
             .update(importJobRows)
             .set({
               status: "skipped",
-              errorMessage: message.slice(0, 300),
+              errorMessage: truncateStoredError(message),
               updatedAt: new Date(),
             })
             .where(eq(importJobRows.id, row.id));
           // Unless they keep dying: a streak means the scan as a whole is broken, and
           // "completing" would record a watermark over everything it skipped.
           if (consecutiveFailures >= MAX_CONSECUTIVE_SENDER_FAILURES) {
-            await failImport(importId, new Error(SCAN_CONSECUTIVE_FAILURES_COPY));
+            await failImport(
+              importId,
+              new Error(SCAN_CONSECUTIVE_FAILURES_COPY),
+            );
             return;
           }
         }
@@ -486,7 +541,11 @@ export async function runOutlookRecruiterScanJob(
     // re-reads the window it never finished rather than stepping over unread mail.
     await db
       .update(imports)
-      .set({ status: "completed", rowsProcessed: processed, updatedAt: new Date() })
+      .set({
+        status: "completed",
+        rowsProcessed: processed,
+        updatedAt: new Date(),
+      })
       .where(eq(imports.id, importId));
 
     // Feeds the "last synced" line in the connection status.

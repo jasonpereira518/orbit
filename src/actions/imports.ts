@@ -55,7 +55,11 @@ import {
   windowCalendarEvents,
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
-import { fetchGooglePeopleContacts, getValidAccessToken, hasContactsScope } from "@/lib/gmail";
+import {
+  fetchGooglePeopleContacts,
+  getValidAccessToken,
+  hasContactsScope,
+} from "@/lib/gmail";
 import {
   fetchOutlookContacts,
   getValidAccessToken as getValidOutlookAccessToken,
@@ -80,19 +84,26 @@ function simpleHash(input: string) {
 function linkedInMessageExternalId(
   conversationId: string,
   date: Date | null,
-  content: string
+  content: string,
 ) {
   return `li-msg:${conversationId}:${date ? date.toISOString() : "unknown"}:${simpleHash(content.slice(0, 240))}`;
 }
 
 /** Replacement-character artifacts from decoding a non-UTF8 export as UTF-8. */
-function hasEncodingArtifacts(rows: { firstName: string; lastName: string; company: string; position: string }[]) {
+function hasEncodingArtifacts(
+  rows: {
+    firstName: string;
+    lastName: string;
+    company: string;
+    position: string;
+  }[],
+) {
   return rows.some(
     (r) =>
       r.firstName.includes("�") ||
       r.lastName.includes("�") ||
       r.company.includes("�") ||
-      r.position.includes("�")
+      r.position.includes("�"),
   );
 }
 
@@ -101,12 +112,19 @@ function hasEncodingArtifacts(rows: { firstName: string; lastName: string; compa
  * `LinkedInExportError` is forwarded word for word: anything else is a bug, or
  * PapaParse's own wording, and was never written to be read in a toast.
  */
-async function linkedInExportErrorMessage(err: unknown, where: string): Promise<string> {
+async function linkedInExportErrorMessage(
+  err: unknown,
+  where: string,
+): Promise<string> {
   // A LinkedInExportError is about the person's file. Anything else is a parser fault, and
   // it used to be reported to them as "is it the right export?" with no trace anywhere.
   return err instanceof LinkedInExportError
     ? err.message
-    : actionFailure(err, "Couldn’t read that file — is it the LinkedIn export this card asks for?", where);
+    : actionFailure(
+        err,
+        "Couldn’t read that file — is it the LinkedIn export this card asks for?",
+        where,
+      );
 }
 
 type PreviewRefusal = { error: string };
@@ -130,12 +148,14 @@ export async function previewLinkedInCsv(csvText: string) {
   try {
     parsed = parseLinkedInConnectionsCsv(csvText);
   } catch (err) {
-    return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin"));
+    return refusal(
+      await linkedInExportErrorMessage(err, "imports.preview-linkedin"),
+    );
   }
   const { columns, rows, warnings } = parsed;
   if (hasEncodingArtifacts(rows)) {
     warnings.push(
-      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding."
+      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding.",
     );
   }
   const db = await getDb();
@@ -203,7 +223,7 @@ export async function previewLinkedInCsv(csvText: string) {
 export async function startLinkedInImport(
   csvText: string,
   fileName: string,
-  selectedIds?: string[]
+  selectedIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -250,7 +270,7 @@ export async function startLinkedInImport(
           url: row.url,
         },
       };
-    })
+    }),
   );
 
   after(() => runLinkedInImportJob(importRow.id).catch(() => {}));
@@ -289,7 +309,9 @@ export type ImportJobStatus = {
 };
 
 /** Read-only status poll for a server-owned import job (see `startLinkedInImport`). */
-export async function getImportJobStatus(importId: string): Promise<ImportJobStatus> {
+export async function getImportJobStatus(
+  importId: string,
+): Promise<ImportJobStatus> {
   const userId = await requireUserId();
   const db = await getDb();
   const row = await db.query.imports.findFirst({
@@ -366,12 +388,17 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
   try {
     parsed = parseLinkedInMessagesCsv(csvText);
   } catch (err) {
-    return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin-messages"));
+    return refusal(
+      await linkedInExportErrorMessage(
+        err,
+        "imports.preview-linkedin-messages",
+      ),
+    );
   }
   const { columns, messages } = parsed;
   if (!messages.length) {
     return refusal(
-      "No messages found in that file — upload messages.csv from your LinkedIn data download"
+      "No messages found in that file — upload messages.csv from your LinkedIn data download",
     );
   }
 
@@ -393,11 +420,18 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
   ]);
 
   const self = resolveSelfIdentity(messages, storedSelfUrl);
-  const conversations = resolveConversations(messages, existing, self.url || null);
+  const conversations = resolveConversations(
+    messages,
+    existing,
+    self.url || null,
+  );
 
   // Per-thread sent/received split, so an inverted owner guess is visible on the review
   // screen rather than discovered later in twenty thousand mislabelled rows.
-  const directionByConversation = new Map<string, { sent: number; received: number }>();
+  const directionByConversation = new Map<
+    string,
+    { sent: number; received: number }
+  >();
   for (const m of messages) {
     const direction = messageDirection(m, self);
     if (!direction || !m.conversationId) continue;
@@ -416,7 +450,8 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
     title: c.conversationTitle,
     messageCount: c.messageCount,
     sentByYou: directionByConversation.get(c.conversationId)?.sent ?? null,
-    receivedFromThem: directionByConversation.get(c.conversationId)?.received ?? null,
+    receivedFromThem:
+      directionByConversation.get(c.conversationId)?.received ?? null,
     latestDate: c.latestDate?.toISOString() ?? null,
     sampleContent: c.sampleContent,
     match: c.match,
@@ -466,14 +501,17 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
 export async function startLinkedInMessagesImport(
   csvText: string,
   fileName: string,
-  selectedConversationIds?: string[]
+  selectedConversationIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
 
   const { messages } = parseLinkedInMessagesCsv(csvText);
   // Same owner the preview resolved, from the same stored URL — see `storedSelfLinkedInUrl`.
-  const self = resolveSelfIdentity(messages, await storedSelfLinkedInUrl(userId));
+  const self = resolveSelfIdentity(
+    messages,
+    await storedSelfLinkedInUrl(userId),
+  );
   const conversations = resolveConversations(messages, [], self.url || null);
   const selected =
     selectedConversationIds === undefined
@@ -524,7 +562,11 @@ export async function startLinkedInMessagesImport(
           messages: msgs
             .filter((m) => m.content.trim())
             .map((m) => ({
-              id: linkedInMessageExternalId(conv.conversationId, m.parsedDate, m.content),
+              id: linkedInMessageExternalId(
+                conv.conversationId,
+                m.parsedDate,
+                m.content,
+              ),
               body: m.content,
               // `null`, not an epoch sentinel: an unparseable date must be excluded from
               // the conversation's date range, not silently reported as 1970 (see
@@ -539,7 +581,7 @@ export async function startLinkedInMessagesImport(
             })),
         },
       };
-    })
+    }),
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
@@ -549,13 +591,82 @@ export async function startLinkedInMessagesImport(
   return { importId: importRow.id, totalRows: selectedConversations.length };
 }
 
-export async function listImports() {
+/** What the history list actually renders. Everything else stays on the server. */
+export type ImportHistoryItem = {
+  id: string;
+  importType: string;
+  fileName: string | null;
+  status: string;
+  totalRows: number | null;
+  rowsProcessed: number | null;
+  contactsCreated: number | null;
+  contactsUpdated: number | null;
+  duplicatesFound: number | null;
+  errorMessage: string | null;
+  createdAt: Date;
+  stats: {
+    skipped?: number;
+    blockedByPlan?: number;
+    failedRows?: number;
+    interactionsLogged?: number;
+    remindersCreated?: number;
+    messagesImported?: number;
+    meetingsLogged?: number;
+    errorCode?: string;
+  };
+};
+
+/** Rows per page. History is a record, not a feed — nobody scrolls past a screenful. */
+export const IMPORT_HISTORY_PAGE = 25;
+
+/**
+ * Recent imports, narrowed to what the list draws.
+ *
+ * Two things were wrong with returning the rows whole. It had no limit, and it selected the
+ * entire `stats` blob — which for a multi-chunk messages import carries `touchedContactIds`,
+ * an array of every contact UUID the job touched. Those went straight into the RSC payload of
+ * a page that never reads them. The `(user_id, created_at)` index already backs the ordering.
+ */
+export async function listImports(
+  options: { limit?: number; offset?: number } = {},
+): Promise<ImportHistoryItem[]> {
   const userId = await requireUserId();
   const db = await getDb();
-  return db.query.imports.findMany({
+  const rows = await db.query.imports.findMany({
     where: eq(imports.userId, userId),
     orderBy: (i, { desc }) => [desc(i.createdAt)],
+    limit: options.limit ?? IMPORT_HISTORY_PAGE,
+    offset: options.offset,
+    columns: {
+      id: true,
+      importType: true,
+      fileName: true,
+      status: true,
+      totalRows: true,
+      rowsProcessed: true,
+      contactsCreated: true,
+      contactsUpdated: true,
+      duplicatesFound: true,
+      errorMessage: true,
+      createdAt: true,
+      stats: true,
+    },
   });
+
+  return rows.map((r) => ({
+    ...r,
+    // Picked field by field rather than spread: `stats` is where `touchedContactIds` lives.
+    stats: {
+      skipped: r.stats?.skipped,
+      blockedByPlan: r.stats?.blockedByPlan,
+      failedRows: r.stats?.failedRows,
+      interactionsLogged: r.stats?.interactionsLogged,
+      remindersCreated: r.stats?.remindersCreated,
+      messagesImported: r.stats?.messagesImported,
+      meetingsLogged: r.stats?.meetingsLogged,
+      errorCode: r.stats?.errorCode,
+    },
+  }));
 }
 
 export async function previewCalendarImport(payload: {
@@ -740,7 +851,10 @@ export async function confirmCalendarImport(payload: {
     .insert(imports)
     .values({
       userId,
-      importType: payload.kind === "ics" ? CALENDAR_ICS_IMPORT_TYPE : CALENDAR_CSV_IMPORT_TYPE,
+      importType:
+        payload.kind === "ics"
+          ? CALENDAR_ICS_IMPORT_TYPE
+          : CALENDAR_CSV_IMPORT_TYPE,
       fileName: payload.fileName,
       status: "processing",
       totalRows: rowPayloads.length,
@@ -755,7 +869,7 @@ export async function confirmCalendarImport(payload: {
         userId,
         rowIndex: index,
         payload: rowPayload,
-      }))
+      })),
     );
   }
 
@@ -790,7 +904,10 @@ export async function previewGoogleContacts(): Promise<{
   const userId = await requireUserId();
   const db = await getDb();
   const conn = await db.query.gmailConnections.findFirst({
-    where: and(eq(gmailConnections.userId, userId), eq(gmailConnections.status, "active")),
+    where: and(
+      eq(gmailConnections.userId, userId),
+      eq(gmailConnections.status, "active"),
+    ),
   });
   if (!conn) {
     return { connected: false, contactsScopeGranted: false, people: [] };
@@ -860,7 +977,7 @@ export async function previewGoogleContacts(): Promise<{
  * own the writes is what fixes that.
  */
 export async function confirmGoogleContactsImport(
-  selectedIds: string[]
+  selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -900,7 +1017,7 @@ export async function confirmGoogleContactsImport(
         phone: row.phone,
         photoUrl: row.photoUrl ?? "",
       },
-    }))
+    })),
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
@@ -932,7 +1049,10 @@ export async function previewOutlookContacts(): Promise<{
   const userId = await requireUserId();
   const db = await getDb();
   const conn = await db.query.outlookConnections.findFirst({
-    where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
+    where: and(
+      eq(outlookConnections.userId, userId),
+      eq(outlookConnections.status, "active"),
+    ),
   });
   if (!conn) {
     return { connected: false, people: [] };
@@ -993,7 +1113,7 @@ export async function previewOutlookContacts(): Promise<{
  * to a snapshot-and-handoff.
  */
 export async function confirmOutlookContactsImport(
-  selectedIds: string[]
+  selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -1032,7 +1152,7 @@ export async function confirmOutlookContactsImport(
         email: row.email,
         phone: row.phone,
       },
-    }))
+    })),
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
@@ -1073,7 +1193,7 @@ export type ContactsFilePerson = {
  */
 export async function previewContactsFile(
   text: string,
-  fileName: string
+  fileName: string,
 ): Promise<
   | { error: string }
   | {
@@ -1097,7 +1217,7 @@ export async function previewContactsFile(
               err,
               "Couldn’t read that file — export your contacts again as a vCard (.vcf) and try that",
               "imports.preview-contacts-file",
-              { fileName }
+              { fileName },
             ),
     };
   }
@@ -1176,7 +1296,7 @@ export async function previewContactsFile(
 export async function confirmContactsFileImport(
   text: string,
   fileName: string,
-  selectedIds: string[]
+  selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -1188,10 +1308,11 @@ export async function confirmContactsFileImport(
     ...new Set(
       selectedIds
         .map((id) => Number(id))
-        .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length)
+        .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length),
     ),
   ].sort((a, b) => a - b);
-  if (selectedIndexes.length === 0) throw new Error("No contacts selected to import");
+  if (selectedIndexes.length === 0)
+    throw new Error("No contacts selected to import");
 
   const [importRow] = await db
     .insert(imports)
@@ -1225,7 +1346,7 @@ export async function confirmContactsFileImport(
           notes: row.notes,
         },
       };
-    })
+    }),
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
@@ -1265,14 +1386,24 @@ export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
   const conn = await db.query.gmailConnections.findFirst({
     where: and(
       eq(gmailConnections.userId, userId),
-      eq(gmailConnections.status, "active")
+      eq(gmailConnections.status, "active"),
     ),
   });
   if (!conn) {
-    return { connected: false, contactsScopeGranted: false, matched: 0, remaining: 0 };
+    return {
+      connected: false,
+      contactsScopeGranted: false,
+      matched: 0,
+      remaining: 0,
+    };
   }
   if (!hasContactsScope(conn.scopes)) {
-    return { connected: true, contactsScopeGranted: false, matched: 0, remaining: 0 };
+    return {
+      connected: true,
+      contactsScopeGranted: false,
+      matched: 0,
+      remaining: 0,
+    };
   }
 
   const accessToken = await getValidAccessToken(userId);
@@ -1299,8 +1430,8 @@ export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
         sql`(${contacts.profileImageUrl} IS NULL
              OR btrim(${contacts.profileImageUrl}) = ''
              OR ${contacts.profileImageUrl} LIKE '%unavatar.io%'
-             OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%')`
-      )
+             OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%')`,
+      ),
     );
 
   let matched = 0;

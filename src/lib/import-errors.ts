@@ -160,6 +160,34 @@ export function classifyImportError(
   return "unknown";
 }
 
+/**
+ * Classify from the error itself, where there is more to go on than the message.
+ *
+ * A `ReauthRequiredError` and a Postgres `code` both say precisely what happened, and both are
+ * gone by the time the message has been stringified and truncated into the database. Called at
+ * throw time; `classifyImportError` is the fallback for everything already stored.
+ *
+ * Matches on `err.name` rather than importing the error class, so this file stays import-free
+ * and therefore safe in a client component.
+ */
+export function classifyImportFailure(err: unknown): ImportFailureCode {
+  if (err instanceof Error && err.name === "ReauthRequiredError")
+    return "needs_reconnect";
+
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === "string") {
+    // 23xxx integrity violation, 57014 query cancelled, 40P01 deadlock, 22xxx data exception.
+    if (code.startsWith("23")) return "row_conflict";
+    if (code === "57014") return "timeout";
+    if (code === "40P01" || code.startsWith("22") || code.startsWith("42"))
+      return "database";
+  }
+
+  return classifyImportError(
+    err instanceof Error ? err.message : String(err ?? ""),
+  );
+}
+
 export function describeImportFailure(
   code: ImportFailureCode,
 ): ImportFailureCopy {
