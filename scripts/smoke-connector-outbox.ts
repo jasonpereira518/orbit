@@ -21,6 +21,7 @@ import {
   recordExternalLink,
   MAX_OUTBOX_ATTEMPTS,
   CLAIM_LEASE_MS,
+  backoffBoundsMs,
   type DeliverResult,
 } from "../src/lib/connectors/outbox";
 
@@ -144,6 +145,17 @@ run(async () => {
   check("it stays pending for a retry", failed?.status === "pending");
   check("it is rescheduled", failed?.nextAttemptAt !== null);
   check("the attempt is recorded", (failed?.attempts ?? 0) === 1);
+  // No `backoffMs` override anywhere in this section, so this is the REAL jittered ladder. The
+  // anchor section below pins the duration to isolate the anchor; this pins the duration to
+  // the ladder, so an override there can never become the only thing under test.
+  const failBounds = backoffBoundsMs(failed?.attempts ?? 1);
+  const failGap =
+    (failed?.nextAttemptAt?.getTime() ?? 0) - (failed?.lastAttemptedAt?.getTime() ?? 0);
+  check(
+    "the default retry delay is a step on the real ladder",
+    failGap >= failBounds.min && failGap <= failBounds.max,
+    `gap=${failGap}ms, ladder band ${failBounds.min}-${failBounds.max}ms`
+  );
 
   console.log("\nattempt exhaustion goes dead, not stuck retrying forever");
   // Drive the same row through the rest of MAX_OUTBOX_ATTEMPTS failures. It is already at
@@ -173,7 +185,9 @@ run(async () => {
   console.log("\na dead row is not picked up by a later drain");
   const deadHandled: string[] = [];
   const deadDrainStats = await drainOutbox({
-    budgetMs: 2_000,
+    // Comfortably above ITEM_BUDGET_FLOOR_MS (2s): at exactly the floor this drain could stop
+    // before claiming anything at all and the check below would pass for the wrong reason.
+    budgetMs: 5_000,
     max: 10,
     deliver: async (item) => {
       deadHandled.push(item.entityId);
@@ -445,12 +459,15 @@ run(async () => {
       }
       // item B: captured the instant it was actually claimed (deliver is called right after
       // the claim commits), then reads B's own freshly-set lease straight from the row.
+      // The lease lives in `claimedUntil` now, not `nextAttemptAt` — same property under
+      // test (an item claimed late in a long drain is leased from ITS claim, not from the
+      // drain's start), read off the column that now holds it.
       anchorCapture.claimedAt = Date.now();
       const [row] = await db
         .select()
         .from(connectorOutbox)
         .where(eq(connectorOutbox.entityId, "rem-anchor-b"));
-      anchorCapture.leaseAt = row?.nextAttemptAt ?? null;
+      anchorCapture.leaseAt = row?.claimedUntil ?? null;
       return { ok: true, remoteId: "remote-anchor-b" };
     },
   });
@@ -504,10 +521,13 @@ run(async () => {
 
   // Simulate the lease having actually expired while the stale drain was still in flight —
   // compressed from the real 30s CLAIM_LEASE_MS into an instant, for a fast, deterministic
-  // test. This is exactly the state a real expiry would leave the row in.
+  // test. This is exactly the state a real expiry would leave the row in: the claim has
+  // lapsed (`claimedUntil` in the past) while `nextAttemptAt` still says the row is due.
+  // `claimedBy` is deliberately left alone — a real expiry does not clear it either, and the
+  // point of the test is that the STALE owner's uuid no longer matches whoever takes it next.
   await db
     .update(connectorOutbox)
-    .set({ nextAttemptAt: new Date(Date.now() - 1_000) })
+    .set({ claimedUntil: new Date(Date.now() - 1_000) })
     .where(eq(connectorOutbox.entityId, "rem-stale"));
 
   // A second, legitimately later drain now re-claims and delivers it for real.
@@ -547,6 +567,227 @@ run(async () => {
   );
   check("no stale error was written over the newer owner's result", afterStale?.lastError === null);
   await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-stale"));
+
+  console.log(
+    "\nan abandoned owner's write must not land on a revived row's new owner (ABA regression)"
+  );
+  // The failure that forced the round-4 redesign, reproduced end to end. The old claim token
+  // was the row's `attempts` value, and `enqueueOutbox` resets `attempts` to 0 when it revives
+  // a delivered row — so the token RECURRED and a long-abandoned drain's write matched a live,
+  // in-flight row. Verified failing against the pre-redesign implementation (3 of the 8 checks
+  // below), and passing against the identity-based claim.
+  const abaEnqueue = () =>
+    enqueueOutbox({
+      userId: USER,
+      connectorId: "apple_reminders",
+      action: "writeTask",
+      entityType: "reminder",
+      entityId: "rem-aba",
+      payload: { title: "ABA" },
+    });
+  await abaEnqueue();
+
+  // Drain A claims it and hangs.
+  let aClaimedSignal!: () => void;
+  const aClaimed = new Promise<void>((resolve) => {
+    aClaimedSignal = resolve;
+  });
+  let resolveADeliver!: (result: DeliverResult) => void;
+  const aDeliverPromise = new Promise<DeliverResult>((resolve) => {
+    resolveADeliver = resolve;
+  });
+  const drainA = drainOutbox({
+    budgetMs: 10_000,
+    max: 5,
+    deliver: async () => {
+      aClaimedSignal();
+      return aDeliverPromise;
+    },
+  });
+  await aClaimed;
+
+  // A's lease lapses while A is still in flight. Written as raw SQL touching BOTH columns so
+  // this section reproduces identically against the pre-redesign code, where the lease lived
+  // in `next_attempt_at`, and against this one, where it lives in `claimed_until`.
+  await db.execute(
+    sql`UPDATE connector_outbox SET next_attempt_at = now() - interval '1 second',
+          claimed_until = now() - interval '1 second' WHERE entity_id = 'rem-aba'`
+  );
+
+  // Drain B legitimately takes over and delivers.
+  const abaBStats = await drainOutbox({
+    budgetMs: 5_000,
+    max: 5,
+    deliver: async () => ({ ok: true, remoteId: "remote-aba-b" }),
+  });
+  check(
+    "B delivered it while A was still in flight",
+    abaBStats.delivered === 1,
+    JSON.stringify(abaBStats)
+  );
+
+  // The user re-triggers the action. THIS is the reset that made the old token recur.
+  const abaRevived = await abaEnqueue();
+  check("the re-trigger revived the row", abaRevived !== null);
+
+  // Drain C claims the revived row and is now the live owner, mid-delivery.
+  let cClaimedSignal!: () => void;
+  const cClaimed = new Promise<void>((resolve) => {
+    cClaimedSignal = resolve;
+  });
+  let resolveCDeliver!: (result: DeliverResult) => void;
+  const cDeliverPromise = new Promise<DeliverResult>((resolve) => {
+    resolveCDeliver = resolve;
+  });
+  const drainC = drainOutbox({
+    budgetMs: 10_000,
+    max: 5,
+    deliver: async () => {
+      cClaimedSignal();
+      return cDeliverPromise;
+    },
+  });
+  await cClaimed;
+  const [abaInFlight] = await db
+    .select()
+    .from(connectorOutbox)
+    .where(eq(connectorOutbox.entityId, "rem-aba"));
+  const abaCAttempts = abaInFlight?.attempts;
+  const abaCNextAttemptAt = abaInFlight?.nextAttemptAt?.getTime() ?? 0;
+
+  // Only now does A's ancient delivery come back — with a failure, the harmful direction.
+  resolveADeliver({ ok: false, error: "A's ancient failure" });
+  const abaAStats = await drainA;
+  check(
+    "A's write is a no-op counted as stale, not a failure",
+    abaAStats.stale === 1 && abaAStats.failed === 0,
+    JSON.stringify(abaAStats)
+  );
+  const [afterA] = await db
+    .select()
+    .from(connectorOutbox)
+    .where(eq(connectorOutbox.entityId, "rem-aba"));
+  check("C's in-flight row is still pending", afterA?.status === "pending", String(afterA?.status));
+  check(
+    "C's attempt count is untouched",
+    afterA?.attempts === abaCAttempts,
+    `${afterA?.attempts} vs ${abaCAttempts}`
+  );
+  check(
+    "A's error was not written onto C's row",
+    afterA?.lastError === null,
+    String(afterA?.lastError)
+  );
+  check(
+    "A's write did not reschedule C's row",
+    Math.abs((afterA?.nextAttemptAt?.getTime() ?? 0) - abaCNextAttemptAt) < 1_000,
+    `${afterA?.nextAttemptAt?.toISOString()} vs ${new Date(abaCNextAttemptAt).toISOString()}`
+  );
+
+  // And C, the legitimate owner, still gets to record its own outcome.
+  resolveCDeliver({ ok: true, remoteId: "remote-aba-c" });
+  const abaCStats = await drainC;
+  check("C's own delivery still lands", abaCStats.delivered === 1, JSON.stringify(abaCStats));
+  await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-aba"));
+
+  console.log(
+    "\nthe failure backoff and the bookkeeping stamps anchor at resolution, not drain start"
+  );
+  // Round 3 fixed the LEASE's anchor but nothing covered the failure path's backoff anchor or
+  // the `lastAttemptedAt`/`deliveredAt` stamps — a mutation of the backoff anchor left the
+  // whole suite green. At the production budget (40s) a late item's backoff was quietly
+  // shortened by however long the drain had already been running, and its timestamps were
+  // that far stale. Two items: the first deliberately slow, so the second is resolved a
+  // measurable distance from the drain's start.
+  await enqueueOutbox({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-anchor-slow",
+    payload: { title: "slow but fine" },
+  });
+  await enqueueOutbox({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-anchor-fail",
+    payload: { title: "fails late in the drain" },
+  });
+  await db
+    .update(connectorOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 10_000) })
+    .where(eq(connectorOutbox.entityId, "rem-anchor-slow"));
+  await db
+    .update(connectorOutbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 5_000) })
+    .where(eq(connectorOutbox.entityId, "rem-anchor-fail"));
+
+  const ANCHOR_SLOW_MS = 3_000; // must exceed ANCHOR_TOLERANCE_MS by a wide margin
+  const ANCHOR_TOLERANCE_MS = 1_500;
+  // The real ladder jitters ±20% — for attempt 1 that is a 48-SECOND band, far wider than any
+  // delay a smoke test can afford to sit through, so against the real ladder a 3s anchor error
+  // hides inside the jitter and the check passes ~94% of the time. (Confirmed: a mutation that
+  // anchored the backoff at drain start survived the in-band version of this check.) The
+  // `backoffMs` override fixes the DURATION so the ANCHOR is the only thing left varying. It
+  // cannot express an anchor itself, so it cannot paper over the bug it is here to catch. The
+  // default ladder is still exercised, un-overridden, by the in-band check further down.
+  const FIXED_BACKOFF_MS = 120_000;
+  const anchorResolved: { slowAt: number; failAt: number } = { slowAt: 0, failAt: 0 };
+  await drainOutbox({
+    budgetMs: 20_000,
+    max: 10,
+    backoffMs: () => FIXED_BACKOFF_MS,
+    deliver: async (item) => {
+      if (item.entityId === "rem-anchor-slow") {
+        await new Promise((resolve) => setTimeout(resolve, ANCHOR_SLOW_MS));
+        anchorResolved.slowAt = Date.now();
+        return { ok: true, remoteId: "remote-anchor-slow" };
+      }
+      anchorResolved.failAt = Date.now();
+      return { ok: false, error: "provider said no" };
+    },
+  });
+
+  const [anchorSlow] = await db
+    .select()
+    .from(connectorOutbox)
+    .where(eq(connectorOutbox.entityId, "rem-anchor-slow"));
+  check(
+    "deliveredAt is stamped when the delivery finished, not when the drain started",
+    Math.abs((anchorSlow?.deliveredAt?.getTime() ?? 0) - anchorResolved.slowAt) <
+      ANCHOR_TOLERANCE_MS,
+    `deliveredAt=${anchorSlow?.deliveredAt?.toISOString()} resolvedAt=${new Date(anchorResolved.slowAt).toISOString()}`
+  );
+
+  const [anchorFail] = await db
+    .select()
+    .from(connectorOutbox)
+    .where(eq(connectorOutbox.entityId, "rem-anchor-fail"));
+  const failAttemptedAt = anchorFail?.lastAttemptedAt?.getTime() ?? 0;
+  const failNextAttemptAt = anchorFail?.nextAttemptAt?.getTime() ?? 0;
+  check(
+    "lastAttemptedAt is stamped when the attempt finished, not when the drain started",
+    Math.abs(failAttemptedAt - anchorResolved.failAt) < ANCHOR_TOLERANCE_MS,
+    `lastAttemptedAt=${anchorFail?.lastAttemptedAt?.toISOString()} resolvedAt=${new Date(anchorResolved.failAt).toISOString()}`
+  );
+  // Both stamps come from the SAME statement's `now()`, so with the duration pinned their gap
+  // must be EXACTLY the backoff. Anchoring the schedule at drain start instead shortens it by
+  // however long the drain had already been running — here, ANCHOR_SLOW_MS.
+  const scheduledGap = failNextAttemptAt - failAttemptedAt;
+  check(
+    "the retry is exactly one backoff after the recorded attempt",
+    Math.abs(scheduledGap - FIXED_BACKOFF_MS) < 1_000,
+    `gap=${scheduledGap}ms, expected ~${FIXED_BACKOFF_MS}ms`
+  );
+  check(
+    "and exactly one backoff after the delivery actually failed",
+    Math.abs(failNextAttemptAt - anchorResolved.failAt - FIXED_BACKOFF_MS) < ANCHOR_TOLERANCE_MS,
+    `${failNextAttemptAt - anchorResolved.failAt}ms, expected ~${FIXED_BACKOFF_MS}ms`
+  );
+  await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-anchor-slow"));
+  await db.delete(connectorOutbox).where(eq(connectorOutbox.entityId, "rem-anchor-fail"));
 
   console.log("\nrecordExternalLink updates in place rather than duplicating");
   await recordExternalLink({

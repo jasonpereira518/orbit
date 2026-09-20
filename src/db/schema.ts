@@ -4360,6 +4360,14 @@ export type ExternalLink = typeof externalLinks.$inferSelect;
  * permanently poison the key. What stops two DRAINS from both sending the same claimed row
  * is the drain's own claim-with-lease (see `drainOutbox` in `src/lib/connectors/outbox.ts`),
  * not this index.
+ *
+ * Each column here does exactly one job, deliberately. Three rounds of double-delivery bugs
+ * on this table all came from one column doing two: `next_attempt_at` was the retry schedule
+ * AND the lease AND the lock, and `attempts` was the retry counter AND the mutual-exclusion
+ * token — so `enqueueOutbox`'s perfectly reasonable `attempts: 0` reset on a revive handed a
+ * long-gone drain a token that matched a live row (ABA). Now: `next_attempt_at` means only
+ * "when to retry", `attempts` means only "how many tries so far", and ownership lives in
+ * `claimed_by`/`claimed_until`, which nothing but the claim and its release ever writes.
  */
 export const connectorOutbox = pgTable(
   "connector_outbox",
@@ -4377,7 +4385,18 @@ export const connectorOutbox = pgTable(
       .default("pending")
       .notNull(),
     attempts: integer("attempts").notNull().default(0),
+    /** ONLY "when to retry". Never a lease, never a lock — see the table comment. */
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    /**
+     * The identity of the drain that currently holds this row, or NULL when nobody does.
+     *
+     * A fresh uuid per claim, never reused, so a write from a long-abandoned owner can never
+     * match a live row no matter what any business rule resets in between. Every write that
+     * follows a delivery carries `AND claimed_by = <the uuid I claimed with>`.
+     */
+    claimedBy: uuid("claimed_by"),
+    /** When that claim lapses and another drain may take the row. Always set from `now()`. */
+    claimedUntil: timestamp("claimed_until", { withTimezone: true }),
     /** First 200 characters only, like every other error column here. */
     lastError: text("last_error"),
     lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }),
