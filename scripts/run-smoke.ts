@@ -50,6 +50,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-connector-oauth": "pure",
   "smoke-connector-registry": "pure",
   "smoke-api-connector-routes": "pure",
+  "smoke-integration-statuses": "pure",
   "smoke-capture-body-limits": "pure",
   "smoke-capture-planets": "pure",
   "smoke-capture-review-reducer": "pure",
