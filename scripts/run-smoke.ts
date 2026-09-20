@@ -293,6 +293,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-schema-fingerprint": "pglite",
   "smoke-related-contacts-scale": "pglite",
   "smoke-schema-upgrade": "pglite",
+  "smoke-connector-connections": "pglite",
   "smoke-stripe-unattributed": "pglite",
   "smoke-stripe-webhook": "pglite",
   "smoke-billing-portal": "pglite",

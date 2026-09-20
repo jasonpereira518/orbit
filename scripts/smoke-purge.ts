@@ -490,6 +490,14 @@ async function seed() {
     authKind: "api_key",
     apiKeyEncrypted: "ciphertext-luma-key",
   });
+  // Same class of secret as the rows above, for a connector that is not Gmail or Outlook.
+  await db.insert(schema.connectorConnections).values({
+    userId: USER,
+    connectorId: "hubspot",
+    authKind: "oauth2",
+    accessTokenEncrypted: "ciphertext-hubspot-access",
+    refreshTokenEncrypted: "ciphertext-hubspot-refresh",
+  });
 
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({

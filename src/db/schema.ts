@@ -2079,6 +2079,20 @@ export type EventProviderSyncCursor = {
   gmail?: { after?: number; pageToken?: string | null } | null;
 };
 
+/**
+ * A connector's incremental cursor. Deliberately open: a DAV connector stores a ctag, a
+ * Graph connector a delta link, a CRM an updated-since timestamp. One jsonb column beats a
+ * column per provider, and the shape is the connector's business.
+ */
+export type ConnectorSyncCursor = {
+  /** Opaque provider cursor: delta link, page token, sync token. */
+  cursor?: string | null;
+  /** DAV collection tag, for connectors that poll a collection. */
+  ctag?: string | null;
+  /** High-water mark for `updated_since`-style APIs. */
+  syncedThrough?: string | null;
+};
+
 export type ProviderSyncCursor = {
   /** Explicitly nullable, not merely optional: "no cursor yet" and "cursor deliberately
    *  cleared after a 410" are the same state, and callers pass it around as `| null`. */
@@ -4098,6 +4112,65 @@ export const eventProviderConnections = pgTable(
 );
 
 /**
+ * Every connector credential that is not Gmail or Outlook.
+ *
+ * One table with a `connector_id` discriminator, unlike `gmail_connections` /
+ * `outlook_connections`, which are byte-identical twins kept apart only because migrating
+ * them is a one-way door (see `provider-connections.ts`). Nothing here is deployed yet, so
+ * the generic shape costs nothing and saves ~20 near-identical tables.
+ *
+ * `capabilities` is the enabled-capability list, and the reason write-back is opt-in: a
+ * connection can hold a scope without Orbit acting on it, so revoking a capability is a row
+ * update rather than an OAuth round trip.
+ */
+export const connectorConnections = pgTable(
+  "connector_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Matches a `ConnectorManifest.id` in `src/lib/connectors/registry.ts`. */
+    connectorId: text("connector_id").notNull(),
+    authKind: text("auth_kind")
+      .$type<"oauth2" | "api_key" | "dav_password" | "api_token">()
+      .notNull(),
+    /** Account name or workspace, shown so a user can tell two connections apart. */
+    label: text("label"),
+    /** Remote account/workspace/portal id, when the provider has one. */
+    accountRef: text("account_ref"),
+    apiKeyEncrypted: text("api_key_encrypted"),
+    accessTokenEncrypted: text("access_token_encrypted"),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    scopes: text("scopes"),
+    /**
+     * Enabled capability ids. Reads are written at connect time; a write capability lands
+     * here only when the user turns it on, which is what keeps Orbit from putting rows in
+     * someone else's system because a scope happened to be granted.
+     */
+    capabilities: jsonb("capabilities").$type<string[]>().default([]).notNull(),
+    /**
+     * Exactly two values, matching the Gmail/Outlook and event-provider rule: disconnecting
+     * deletes the row, so a third value nothing writes would be dead code.
+     */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
+    // The shared helper types this as `ProviderSyncCursor`, whose shape is Google/Outlook's.
+    // A connector's cursor is its own business — a DAV ctag, a Graph delta link, an
+    // updated-since mark — so the column keeps one name and one DDL line but its own type.
+    syncCursor: jsonb("sync_cursor").$type<ConnectorSyncCursor>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("connector_connections_user_uidx").on(t.userId, t.connectorId),
+    index("connector_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
+);
+
+/**
  * One row per page view, written by `POST /api/track` from the client beacon in
  * `src/components/analytics/pageview-beacon.tsx`.
  *
@@ -4239,6 +4312,7 @@ export type NewEventRecord = typeof events.$inferInsert;
 export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
 export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
 export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
+export type ConnectorConnection = typeof connectorConnections.$inferSelect;
 export type EventAlias = typeof eventAliases.$inferSelect;
 export type EventCompany = typeof eventCompanies.$inferSelect;
 export type TargetCompany = typeof targetCompanies.$inferSelect;

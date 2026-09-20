@@ -1199,6 +1199,32 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS connector_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  auth_kind text NOT NULL,
+  label text,
+  account_ref text,
+  api_key_encrypted text,
+  access_token_encrypted text,
+  refresh_token_encrypted text,
+  token_expires_at timestamptz,
+  scopes text,
+  capabilities jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id);
+CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL;
 CREATE TABLE IF NOT EXISTS contact_identities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1592,7 +1618,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // (never extracted into contacts). Built as 34, then 63, before this branch merged main's DDL
 // through 69; renumbered past every claim (checked against all remote branches and local
 // worktrees on Sep 18 2026: none above 69).
-export const SCHEMA_VERSION = 70;
+//
+// 74 = connector_connections: one credential row per (user, connector) for every connector
+//      that is not Gmail or Outlook, with a capabilities list so write-back stays opt-in.
+//      71-73 were already claimed on other branches (checked against every remote branch and
+//      local worktree on Sep 19 2026: both ai-api-optimization and mcp-server-vision-5e9a07
+//      are at 73, the highest found).
+export const SCHEMA_VERSION = 74;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3065,6 +3097,14 @@ const alters = [
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
   // Schema v70: chat context note.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS context_note text`,
+  // Schema v74: the connector platform's generic credential table. The CREATE TABLE in the
+  // template above repairs a fresh database; this repairs one already stamped past v74's
+  // predecessor, and both indexes are written in both places because smoke-schema-ddl
+  // compares the `uniqueIndex()` declarations in schema.ts against this file by name and
+  // column list.
+  `CREATE TABLE IF NOT EXISTS connector_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, auth_kind text NOT NULL, label text, account_ref text, api_key_encrypted text, access_token_encrypted text, refresh_token_encrypted text, token_expires_at timestamptz, scopes text, capabilities jsonb NOT NULL DEFAULT '[]'::jsonb, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id)`,
+  `CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
 ];
 
 /**
