@@ -36,6 +36,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
   "smoke-toast-copy": "pure",
+  "smoke-drive-picker-token": "pure",
   "smoke-vercel-ignore-build": "pure",
   "smoke-admin-gate": "pure",
   "smoke-admin-redaction": "pure",
