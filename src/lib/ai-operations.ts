@@ -78,6 +78,7 @@ export const AI_OPERATIONS = {
   // thinking level: this file only sets one where the eval showed it loses nothing, and this
   // operation has not been through the eval yet.
   "chat.gather": { label: "Chat: looking things up", tier: "user" },
+  "chat.title": { label: "Chat: naming the conversation", tier: "fast", thinking: "minimal" },
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },

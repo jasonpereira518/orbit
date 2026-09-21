@@ -25,6 +25,12 @@ export async function persistAssistantTurn(
     recommendations: ChatRecommendation[];
     /** The stages this answer actually ran, so a reloaded thread still shows its work. */
     activity?: ChatStep[];
+    /**
+     * A summary of the first message, when one was written in time. Only ever used to NAME an
+     * untitled thread; a thread that already has a title keeps it, so a later turn cannot
+     * rename a conversation out from under the person.
+     */
+    title?: string | null;
   }
 ): Promise<{ messageId: string | null; title: string | null }> {
   if (!threadId) return { messageId: null, title: existingTitle };
@@ -40,7 +46,10 @@ export async function persistAssistantTurn(
       activity: turn.activity ?? [],
     })
     .returning();
-  const title = existingTitle || titleFromQuestion(question);
+  // Precedence: the name the thread already has, then a written summary, then the old cut of
+  // the first message — which is what a summary that failed or ran late falls back to, so a
+  // conversation is never left unnamed.
+  const title = existingTitle || turn.title?.trim() || titleFromQuestion(question);
   await db
     .update(chatThreads)
     .set({ updatedAt: new Date(), title })

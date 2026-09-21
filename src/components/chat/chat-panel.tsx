@@ -16,12 +16,9 @@ import {
   History,
   Loader2,
   NotebookPen,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   Trash2,
 } from "lucide-react";
-import { motion } from "motion/react";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import {
@@ -32,7 +29,6 @@ import {
   listChatThreads,
   updateChatThreadContext,
 } from "@/actions/chat";
-import { createReminder } from "@/actions/reminders";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { ScanControls } from "@/components/scan/scan-controls";
@@ -61,6 +57,7 @@ import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { AnswerActions } from "@/components/chat/answer-actions";
+import { ReminderButton } from "@/components/chat/reminder-button";
 import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
@@ -926,43 +923,19 @@ export function ChatPanel() {
         {/* From md up the history is a rail beside the conversation. Below that the header
             keeps its dropdown (`md:hidden` on both of its controls), because on a phone the
             conversation should have the full width. */}
-        {/* The wrapper animates the width and clips; the rail inside keeps its own fixed
-            width, so its contents slide out of view instead of reflowing as it narrows.
-            `inert` while closed: clipped is not the same as unreachable, and a hidden list
-            of links must not stay in the tab order. */}
-        <motion.div
-          className="hidden shrink-0 overflow-hidden md:block"
-          initial={false}
-          animate={{ width: railOpen ? 224 : 0 }}
-          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-          inert={!railOpen}
-        >
-          <ChatHistoryRail
-            id="chat-history-rail"
-            className="h-full"
-            threads={threads}
-            activeId={threadId}
-            busy={busy}
-            onSelect={(id) => void loadThread(id)}
-            onNew={startNewChat}
-            onDelete={removeThread}
-          />
-        </motion.div>
+        <ChatHistoryRail
+          id="chat-history-rail"
+          open={railOpen}
+          onToggle={toggleRail}
+          threads={threads}
+          activeId={threadId}
+          busy={busy}
+          onSelect={(id) => void loadThread(id)}
+          onNew={startNewChat}
+          onDelete={removeThread}
+        />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="hidden shrink-0 text-muted-foreground md:inline-flex"
-            onClick={toggleRail}
-            aria-expanded={railOpen}
-            aria-controls="chat-history-rail"
-            aria-label={railOpen ? "Hide chat history" : "Show chat history"}
-            title={railOpen ? "Hide chat history" : "Show chat history"}
-          >
-            {railOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
-          </Button>
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
               render={
@@ -1036,7 +1009,7 @@ export function ChatPanel() {
             type="button"
             variant="ghost"
             size="sm"
-            className={cn("shrink-0 text-muted-foreground", railOpen && "md:hidden")}
+            className="shrink-0 text-muted-foreground md:hidden"
             onClick={startNewChat}
             disabled={busy}
           >
@@ -1471,7 +1444,6 @@ const RecommendationCard = memo(function RecommendationCard({
   /** The contact's stored photo, when the activity steps learned it. */
   photoUrl?: string | null;
 }) {
-  const [pending, start] = useTransition();
   const href = rec.recruiter_id
     ? `/recruiters/${rec.recruiter_id}`
     : rec.contact_id
@@ -1483,13 +1455,33 @@ const RecommendationCard = memo(function RecommendationCard({
   return (
     <div className="flex h-full flex-col rounded-xl border border-border/70 bg-background p-3">
       <div className="flex items-center gap-2.5">
-        <ContactAvatar
-          contactId={rec.contact_id ?? null}
-          fullName={rec.name}
-          profileImageUrl={photoUrl}
-          size="sm"
-          className="size-9 shrink-0"
-        />
+        {/* The picture opens the profile too — it is the obvious thing to click. The name
+            beside it is the same link and stays the keyboard and screen-reader route, so this
+            one is left out of both (`tabIndex`, `aria-hidden`) rather than announced twice. */}
+        {href !== "#" ? (
+          <Link
+            href={href}
+            tabIndex={-1}
+            aria-hidden="true"
+            className="shrink-0 rounded-full ring-2 ring-transparent transition-[transform,box-shadow] hover:scale-105 hover:ring-primary/40"
+          >
+            <ContactAvatar
+              contactId={rec.contact_id ?? null}
+              fullName={rec.name}
+              profileImageUrl={photoUrl}
+              size="sm"
+              className="size-9"
+            />
+          </Link>
+        ) : (
+          <ContactAvatar
+            contactId={rec.contact_id ?? null}
+            fullName={rec.name}
+            profileImageUrl={photoUrl}
+            size="sm"
+            className="size-9 shrink-0"
+          />
+        )}
         <div className="min-w-0 flex-1">
           <Link
             href={href}
@@ -1515,26 +1507,11 @@ const RecommendationCard = memo(function RecommendationCard({
       )}
       {canRemind && (
         <div className="mt-auto pt-2.5">
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={pending}
-            onClick={() =>
-              start(async () => {
-                await createReminder({
-                  contactId: rec.contact_id!,
-                  title: `Reach out to ${rec.name}`,
-                  description: rec.suggested_action,
-                  dueDate: new Date(
-                    Date.now() + 3 * 24 * 60 * 60 * 1000
-                  ).toISOString(),
-                });
-                toast.success(TOAST_COPY.reminderSet);
-              })
-            }
-          >
-            Reminder
-          </Button>
+          <ReminderButton
+            contactId={rec.contact_id!}
+            name={rec.name}
+            suggestedAction={rec.suggested_action}
+          />
         </div>
       )}
     </div>

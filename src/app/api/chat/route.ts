@@ -6,6 +6,7 @@ import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
 import { persistAssistantTurn } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
+import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
@@ -107,6 +108,13 @@ export async function POST(request: Request) {
           });
         }
 
+        // Name a NEW conversation from its first message. Started here, once retrieval is done,
+        // so it runs alongside the answer stream — the answer takes far longer than the fast
+        // model does, and the title is normally waiting by the time it lands. Only for a
+        // thread with no title yet: a later turn must never rename the conversation.
+        const titlePromise =
+          threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q) : null;
+
         // One retrieval answers most questions; the ones whose shape says it cannot — what
         // was discussed and when, a path to someone, a follow-up that refers back — get a
         // bounded research loop first. See `chooseDepth` and `gatherEvidence`.
@@ -148,11 +156,15 @@ export async function POST(request: Request) {
           });
         }
         send({ type: "recommendations", items: recommendations });
+        // A beat for a title that is nearly there, never longer: if it is not ready the thread
+        // is named the old way (the first message, cut short) rather than holding the answer.
+        const title = await settleWithin(titlePromise, TITLE_GRACE_MS);
         // Persisted before `done` so the client learns the real message id and title.
         const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
           answer: result.answer,
           recommendations,
           activity: steps.snapshot(),
+          title,
         });
         send({
           type: "done",
