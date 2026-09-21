@@ -15,6 +15,34 @@ import { getDb, rowsOf } from "@/db";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { buildMemoryChunks, syncMemoryChunks } from "@/lib/memory-chunks";
 
+/**
+ * The one predicate for "an interaction with text that has no passages yet". Shared by the
+ * claim and the count, so `remaining` can never report a row the claim will not return —
+ * the drain's re-kick loop spins on exactly that disagreement.
+ *
+ * With a `userId`, the tenant is bound as a LITERAL inside the subquery as well as outside
+ * it, and that is not decoration. A NOT EXISTS correlated only on `m.user_id = i.user_id`
+ * reads as scoped, but once the table is ANALYZEd Postgres may rewrite it into a hashed
+ * subplan evaluated once with no user predicate, scanning every tenant's chunks — the same
+ * trap `experienceExists` in `@/lib/hybrid-search` documents. Without a `userId` (the
+ * cross-user cron query) correlation is all there is, and that query runs once a day.
+ */
+function unindexedInteractions(userId?: string) {
+  const outer = userId ? sql`and i.user_id = ${userId}` : sql``;
+  const inner = userId ? sql`m.user_id = ${userId}` : sql`m.user_id = i.user_id`;
+  return sql`
+    from interactions i
+    where (coalesce(i.raw_notes, '') <> '' or coalesce(i.ai_summary, '') <> '')
+      ${outer}
+      and not exists (
+        select 1 from memory_chunks m
+         where ${inner}
+           and m.source_kind = 'interaction'
+           and m.source_id = i.id
+      )
+  `;
+}
+
 /** Interactions per pass. Each one is a delete-then-insert, so this is the real write cost. */
 const CLAIM_SIZE = 200;
 
@@ -64,16 +92,8 @@ export async function backfillMemoryChunks(
                i.raw_notes,
                i.ai_summary,
                coalesce(c.preferred_name, c.full_name) as contact_name
-          from interactions i
+          from (select i.* ${unindexedInteractions(userId)}) i
           left join contacts c on c.id = i.contact_id and c.user_id = ${userId}
-         where i.user_id = ${userId}
-           and (coalesce(i.raw_notes, '') <> '' or coalesce(i.ai_summary, '') <> '')
-           and not exists (
-             select 1 from memory_chunks m
-              where m.user_id = ${userId}
-                and m.source_kind = 'interaction'
-                and m.source_id = i.id
-           )
          order by i.interaction_date desc nulls last
          limit ${take}
       `)
@@ -111,22 +131,53 @@ export async function backfillMemoryChunks(
     }
   }
 
-  const [{ count: remaining }] = rowsOf<{ count: number }>(
-    await db.execute(sql`
-      select count(*)::int as count
-        from interactions i
-       where i.user_id = ${userId}
-         and (coalesce(i.raw_notes, '') <> '' or coalesce(i.ai_summary, '') <> '')
-         and not exists (
-           select 1 from memory_chunks m
-            where m.user_id = ${userId}
-              and m.source_kind = 'interaction'
-              and m.source_id = i.id
-         )
-    `)
-  );
+  return { scanned, indexed, chunks, remaining: await pendingMemorySourceCount(userId) };
+}
 
-  return { scanned, indexed, chunks, remaining: remaining ?? 0 };
+/** Interactions with text and no passages yet. The same predicate the sweep claims with. */
+export async function pendingMemorySourceCount(userId: string): Promise<number> {
+  const db = await getDb();
+  const [row] = rowsOf<{ n: number }>(
+    await db.execute(sql`select count(*)::int as n ${unindexedInteractions(userId)}`)
+  );
+  return Number(row?.n ?? 0);
+}
+
+/**
+ * Users with passage work outstanding, for the daily cron's backstop.
+ *
+ * The cron used to pick users by `contacts.embedding_stale_at` alone, so an account whose
+ * only pending work was passages — every existing account, on the day this ships — would
+ * never have been swept unless it happened to import something. Two sources, both bounded:
+ * chunks awaiting an embedding (served by the partial pending index, cheap), and
+ * interactions with no chunks at all (an anti-join over interactions; this one scans, and
+ * once history is indexed it scans to find nothing, which at Orbit's size is a fraction of a
+ * second a day and is the price of not needing a flag column to keep in sync).
+ */
+export async function usersWithPendingMemoryWork(
+  limit: number,
+  canEmbed: (userId: string) => Promise<boolean>
+): Promise<string[]> {
+  const db = await getDb();
+  const [unindexed, unembedded] = await Promise.all([
+    db.execute(sql`select distinct i.user_id ${unindexedInteractions()} limit ${limit}`),
+    // Over-fetched, because some of these will be filtered out below.
+    db.execute(sql`
+      select distinct m.user_id from memory_chunks m
+       where m.embedded_hash is distinct from m.content_hash
+       limit ${limit * 4}
+    `),
+  ]);
+
+  const picked = new Set(rowsOf<{ user_id: string }>(unindexed).map((r) => r.user_id));
+  // An account with passages awaiting embedding but no embeddings backend — an Anthropic
+  // key — has work that can never be done. Left in, those accounts would fill this list
+  // every day and starve the ones that can make progress.
+  for (const { user_id } of rowsOf<{ user_id: string }>(unembedded)) {
+    if (picked.size >= limit) break;
+    if (!picked.has(user_id) && (await canEmbed(user_id))) picked.add(user_id);
+  }
+  return [...picked].slice(0, limit);
 }
 
 /**

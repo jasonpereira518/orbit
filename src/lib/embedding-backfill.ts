@@ -25,6 +25,8 @@ import { embedWithBisect, planEmbeddingBatches } from "@/lib/embedding-batches";
 import { classifyAiError, isMissingAiApiKeyError } from "@/lib/errors";
 import { internalFetch } from "@/lib/internal-auth";
 import { buildContactEmbeddingContent, computeContentHash, persistEmbeddingVectors } from "@/lib/search";
+import { backfillMemoryChunks, pendingMemorySourceCount } from "@/lib/memory-backfill";
+import { resolveAiAccess } from "@/lib/ai-access";
 import { reportError } from "@/lib/report-error";
 
 /** Contacts claimed per pass. */
@@ -62,7 +64,7 @@ export async function kickEmbeddingBackfill(userId: string) {
  * Errors about the KEY or the account, not the rows: bisecting them would only multiply the
  * failure, and rethrowing keeps the old contract — the work stays pending for the next pass.
  */
-function isKeyLevelEmbeddingError(err: unknown): boolean {
+export function isKeyLevelEmbeddingError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   if (isMissingAiApiKeyError(message) || /configured for embeddings|has no embeddings api/i.test(message)) {
     return true;
@@ -72,9 +74,9 @@ function isKeyLevelEmbeddingError(err: unknown): boolean {
 }
 
 /** Marks rows the provider refused on their own; see `embeddingFailures` in schema.ts. */
-async function recordEmbeddingFailures(
+export async function recordEmbeddingFailures(
   userId: string,
-  sourceType: "profile" | "meeting",
+  sourceType: "profile" | "meeting" | "memory_chunk",
   failed: Array<{ sourceId: string; error: unknown }>
 ): Promise<void> {
   if (failed.length === 0) return;
@@ -102,10 +104,31 @@ export async function runEmbeddingBackfill(
   userId: string,
   embed: typeof createEmbeddingsBatch = createEmbeddingsBatch,
   budgetMs: number = TIME_BUDGET_MS
-): Promise<{ embedded: number; remaining: number }> {
+): Promise<{
+  /** Contact and meeting embeddings — unchanged meaning, and what the cron reports. */
+  embedded: number;
+  /** Passages of notes given an embedding this run. */
+  passages: number;
+  /** Interactions newly cut into passages this run. No AI involved. */
+  indexed: number;
+  remaining: number;
+}> {
   const db = await getDb();
   const start = Date.now();
   let embedded = 0;
+
+  // Passages FIRST, and not behind anything that can throw. Cutting notes into passages
+  // needs no AI at all, and the phases below rethrow key-level errors by design — which, for
+  // an account on a key with no embeddings API, is every run. Put this after them and those
+  // accounts' history would never become searchable even by its words. A fifth of the
+  // budget at most: it is cheap per row, and the embedding phases are what the budget is for.
+  const sweep = await backfillMemoryChunks(userId, {
+    budgetMs: Math.floor(budgetMs / 5),
+  }).catch((err) => {
+    reportError(err, { where: "job.embedding-backfill.memory-sweep", userId, level: "warning" });
+    return null;
+  });
+  const indexed = sweep?.indexed ?? 0;
 
   while (Date.now() - start < budgetMs) {
     // Snapshot the claim moment before reading, and condition both clears below on it. A
@@ -243,6 +266,19 @@ export async function runEmbeddingBackfill(
 
   embedded += await runMeetingPhase(userId, embed, start, budgetMs);
 
+  // Passages can only be embedded by an account that HAS an embeddings backend. An account on
+  // an Anthropic key never will — there is no Anthropic embeddings API — so its passages stay
+  // pending for good, and without this gate every run would throw a key-level error from
+  // this phase and record a `backfill.failed` the ops sweep alerts on. Those accounts are
+  // served by the lexical arm, which is exactly what it is for.
+  //
+  // An injected `embed` is its own backend: that seam exists so the smoke can drive the
+  // write path without a live key, and gating it on the real account would test nothing.
+  const canEmbedPassages = embed !== createEmbeddingsBatch || (await accountCanEmbed(userId));
+  const passages = canEmbedPassages
+    ? await runMemoryChunkPhase(userId, embed, start, budgetMs)
+    : 0;
+
   const [row] = await db
     .select({ value: sql<number>`count(*)::int` })
     .from(contacts)
@@ -250,7 +286,15 @@ export async function runEmbeddingBackfill(
 
   return {
     embedded,
-    remaining: Number(row?.value ?? 0) + (await pendingMeetingCount(userId)),
+    passages,
+    indexed,
+    remaining:
+      Number(row?.value ?? 0) +
+      (await pendingMeetingCount(userId)) +
+      // Only work that CAN be done counts as remaining. Passages an account can never embed
+      // are not a backlog; counting them would re-kick this route for them every day.
+      (canEmbedPassages ? await pendingMemoryChunkCount(userId) : 0) +
+      (await pendingMemorySourceCount(userId)),
   };
 }
 
@@ -419,3 +463,150 @@ async function runMeetingPhase(
 
   return embedded;
 }
+
+/**
+ * Whether this account has any embeddings backend, asked without minting a key or throwing.
+ * False for an Anthropic-only account; see the gate in `runEmbeddingBackfill`.
+ */
+export async function accountCanEmbed(userId: string): Promise<boolean> {
+  try {
+    return (await resolveAiAccess(userId)).embeddingBackend() !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The one predicate that defines "a passage still needing an embedding".
+ *
+ * Shared by the claim and the count for the same reason `PENDING_MEETINGS` is: if they could
+ * disagree, the route's re-kick loop would spin on a row the claim never returns.
+ *
+ * `embedded_hash IS DISTINCT FROM content_hash` is served by the partial
+ * `memory_chunks_pending_idx`, so this stays the size of the outstanding work rather than the
+ * table. A chunk the provider refused on its own is listed in `embedding_failures`, keyed by
+ * id AND hash: an edit re-chunks the note into new rows with new ids, so a refused passage
+ * gets another try exactly when its text changes, and not before.
+ */
+function pendingMemoryChunks(userId: string) {
+  // The tenant is bound as a literal inside the subquery too — see `unindexedInteractions`
+  // in `@/lib/memory-backfill` for why a correlation alone is not a tenant boundary.
+  return sql`
+    FROM memory_chunks m
+    WHERE m.user_id = ${userId}
+      AND m.embedded_hash IS DISTINCT FROM m.content_hash
+      AND NOT EXISTS (
+        SELECT 1 FROM embedding_failures f
+        WHERE f.user_id = ${userId}
+          AND f.source_type = 'memory_chunk'
+          AND f.source_id = m.id::text || ':' || m.content_hash
+      )
+  `;
+}
+/** How many passages still need an embedding. Exported for the smoke, against the real predicate. */
+export async function pendingMemoryChunkCount(userId: string): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    SELECT count(*)::int AS n ${pendingMemoryChunks(userId)}
+  `);
+  return Number(rowsOf<{ n: number }>(result)[0]?.n ?? 0);
+}
+
+/**
+ * Phase 3: embeddings for passages of the user's own notes (`memory_chunks`).
+ *
+ * Without this the passage index is lexical only — it finds a note by its words and never by
+ * its meaning, so "who is raising money?" misses a note that says "closing a seed round".
+ * Same shape as the meeting phase: batched, bisected on refusal, time-boxed, resumable, and
+ * no new flag — the hash columns already say what is pending.
+ *
+ * The write is conditional on `content_hash` still matching what was claimed. A note edited
+ * mid-pass is re-chunked into NEW rows (delete-then-insert in `syncMemoryChunks`), so a
+ * vector computed from the old text finds nothing to land on rather than overwriting the
+ * new passage with a stale meaning.
+ */
+export async function runMemoryChunkPhase(
+  userId: string,
+  embed: typeof createEmbeddingsBatch,
+  start: number,
+  budgetMs: number
+): Promise<number> {
+  const db = await getDb();
+  let embedded = 0;
+
+  while (Date.now() - start < budgetMs) {
+    const claimed = rowsOf<{ id: string; content: string; content_hash: string }>(
+      await db.execute(sql`
+        SELECT m.id, m.content, m.content_hash
+        ${pendingMemoryChunks(userId)}
+        ORDER BY m.occurred_at DESC NULLS LAST
+        LIMIT ${CLAIM_SIZE}
+      `)
+    );
+    if (claimed.length === 0) break;
+
+    let progressed = 0;
+    for (const slice of planEmbeddingBatches(claimed, (row) => row.content)) {
+      // Key-level failures are rethrown, leaving every passage pending for the next pass —
+      // including for accounts on a key with no embeddings API, which is why the passage
+      // SWEEP runs before any phase that can throw (see `runEmbeddingBackfill`).
+      const outcome = await embedWithBisect(
+        slice,
+        (row) => row.content,
+        (texts) => embed(userId, texts),
+        isKeyLevelEmbeddingError
+      );
+
+      const done = outcome.embedded;
+      for (let i = 0; i < done.length; i += MEMORY_VECTOR_WRITE_CHUNK) {
+        const part = done.slice(i, i + MEMORY_VECTOR_WRITE_CHUNK);
+        const tuples = part.map(
+          ({ item, vector }) =>
+            sql`(${item.id}::uuid, ${JSON.stringify(vector)}::jsonb, ${item.content_hash}::text)`
+        );
+        const landed = rowsOf<{ id: string }>(
+          await db.execute(sql`
+            UPDATE memory_chunks AS m
+               SET embedding = v.emb, embedded_hash = v.hash
+              FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, emb, hash)
+             WHERE m.id = v.id AND m.user_id = ${userId} AND m.content_hash = v.hash
+            RETURNING m.id
+          `)
+        );
+        const landedIds = new Set(landed.map((r) => r.id));
+        await persistEmbeddingVectors(
+          part
+            .filter(({ item }) => landedIds.has(item.id))
+            .map(({ item, vector }) => ({ id: item.id, embedding: vector })),
+          "memory_chunks"
+        );
+        embedded += landedIds.size;
+        progressed += part.length;
+      }
+
+      if (outcome.failed.length > 0) {
+        await recordEmbeddingFailures(
+          userId,
+          "memory_chunk",
+          outcome.failed.map(({ item, error }) => ({
+            sourceId: `${item.id}:${item.content_hash}`,
+            error,
+          }))
+        );
+        progressed += outcome.failed.length;
+      }
+    }
+    // A pass that neither embedded nor marked anything would claim the same rows again
+    // forever. Cannot happen with the predicate above, but a loop with a wall-clock budget
+    // as its only exit is one bad predicate away from burning the whole budget, so say so.
+    if (progressed === 0) break;
+  }
+
+  return embedded;
+}
+
+/**
+ * Rows per UPDATE. Each carries a full 1,536-float vector as jsonb text (~18KB), so this
+ * matches `VECTOR_WRITE_CHUNK` in `@/lib/search` for the same neon-http statement-size reason.
+ */
+const MEMORY_VECTOR_WRITE_CHUNK = 50;

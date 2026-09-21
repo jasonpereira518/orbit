@@ -1966,7 +1966,7 @@ export const embeddingFailures = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
-    sourceType: text("source_type").$type<"profile" | "meeting">().notNull(),
+    sourceType: text("source_type").$type<"profile" | "meeting" | "memory_chunk">().notNull(),
     sourceId: text("source_id").notNull(),
     errorKind: text("error_kind"),
     failedAt: timestamp("failed_at", { withTimezone: true }).defaultNow().notNull(),
