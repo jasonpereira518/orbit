@@ -1854,6 +1854,53 @@ export const outreachMessages = pgTable(
   ]
 );
 
+/**
+ * The user's own writing, cut into passages that can be retrieved on their own.
+ *
+ * Why a table of its own rather than more `source_type` rows in `contact_embeddings`: the
+ * semantic arm there selects `contact_id ... order by distance` with a 4x overscan and keeps
+ * the best row per contact, so several rows per contact would spend that overscan on
+ * duplicates of one person and move a recall floor that is currently measured and passing.
+ * And `contact_embeddings.contact_id` is NOT NULL, while a passage may name four people or
+ * none.
+ *
+ * The same warning as `contactEmbeddings` applies to `embedding_vector`: it is created and
+ * indexed at runtime by `migratePgvector`, is deliberately absent from this declaration, and
+ * `drizzle-kit push` would drop it. Migrations here are hand-written SQL on purpose.
+ */
+export const memoryChunks = pgTable(
+  "memory_chunks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceKind: text("source_kind").$type<"interaction" | "note_batch" | "brief">().notNull(),
+    sourceId: uuid("source_id").notNull(),
+    /** The passage's primary subject. Null when nobody has been resolved from it yet. */
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+    /** Everyone named in it, including mentions — what makes a dinner note findable from any guest. */
+    contactIds: uuid("contact_ids").array().notNull().default(sql`'{}'`),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    chunkIndex: integer("chunk_index").default(0).notNull(),
+    content: text("content").notNull(),
+    contentHash: text("content_hash").notNull(),
+    /**
+     * The hash that was embedded, which is the staleness predicate: a chunk is pending when
+     * `embedded_hash IS DISTINCT FROM content_hash`. Per chunk, so editing paragraph three
+     * of a note does not re-embed paragraphs one and two, and so it never contends with the
+     * contact-grained `contacts.embedding_stale_at` that five writers already stamp.
+     */
+    embeddedHash: text("embedded_hash"),
+    embedding: jsonb("embedding").$type<number[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("memory_chunks_source_uidx").on(t.userId, t.sourceKind, t.sourceId, t.chunkIndex),
+    index("memory_chunks_user_date_idx").on(t.userId, t.occurredAt),
+  ]
+);
+
+export type MemoryChunk = typeof memoryChunks.$inferSelect;
+
 export const contactEmbeddings = pgTable(
   "contact_embeddings",
   {
