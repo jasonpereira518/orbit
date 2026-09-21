@@ -153,7 +153,7 @@ export function ImportQueueCard() {
           </Button>
           {selectedTotal ? (
             <span className="text-xs text-muted-foreground">
-              {selectedTotal} people selected
+              {selectedTotal} {selectedTotal === 1 ? "person" : "people"} selected
             </span>
           ) : null}
         </div>

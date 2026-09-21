@@ -7,6 +7,12 @@ import Papa from "papaparse";
 import { getDb, rowsOf } from "@/db";
 import { importFailureLine } from "@/lib/import-errors";
 import {
+  countImportPeople,
+  listImportPeople,
+  type ImportPeoplePage,
+  type ImportPersonOutcome,
+} from "@/lib/imports/import-people";
+import {
   contacts,
   gmailConnections,
   imports,
@@ -323,6 +329,8 @@ export type ImportDetail = {
   problems: ImportRowProblem[];
   /** Problems beyond the ones listed. */
   moreProblems: number;
+  /** How many distinct people this import added, and how many it matched to someone already here. */
+  people: { added: number; existing: number };
 };
 
 /** Problem rows shown before it stops being a list and starts being a dump. */
@@ -406,6 +414,7 @@ export async function getImportDetail(
   }));
 
   const totalProblems = counts.failed + counts.skipped;
+  const people = await countImportPeople(userId, importId, row.createdAt);
 
   return {
     item: {
@@ -434,7 +443,18 @@ export async function getImportDetail(
     counts,
     problems,
     moreProblems: Math.max(0, totalProblems - problems.length),
+    people,
   };
+}
+
+/** One page of the people an import added, or matched to someone already here. */
+export async function getImportPeople(
+  importId: string,
+  outcome: ImportPersonOutcome,
+  offset = 0,
+): Promise<ImportPeoplePage> {
+  const userId = await requireUserId();
+  return listImportPeople(userId, importId, outcome, offset);
 }
 
 /** A person's name out of whichever row payload this import type stages. */

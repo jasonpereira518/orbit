@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import {
   BookUser,
@@ -23,9 +24,14 @@ import {
 } from "@/components/ui/sheet";
 import {
   getImportDetail,
+  getImportPeople,
   type ImportDetail,
   type ImportHistoryItem,
 } from "@/actions/imports";
+import type {
+  ImportedPerson,
+  ImportPersonOutcome,
+} from "@/lib/imports/import-people";
 
 // Re-exported: `import-hub.tsx` has always imported this type from here, and the row shape is
 // now owned by the action that narrows it.
@@ -256,7 +262,7 @@ function ImportDetailBody({
     );
   }
 
-  const { item, counts, problems, moreProblems } = detail;
+  const { item, counts, problems, moreProblems, people } = detail;
   const label = importSourceLabel(item.importType);
   const failure =
     item.status === "failed"
@@ -314,6 +320,14 @@ function ImportDetailBody({
           </div>
         ) : null}
 
+        {people.added + people.existing > 0 ? (
+          <ImportPeopleList
+            importId={item.id}
+            added={people.added}
+            existing={people.existing}
+          />
+        ) : null}
+
         {problems.length ? (
           <div>
             <h3 className="text-sm font-medium">What didn’t come in</h3>
@@ -343,5 +357,132 @@ function ImportDetailBody({
         ) : null}
       </div>
     </>
+  );
+}
+
+const OUTCOME_LABEL: Record<ImportPersonOutcome, string> = {
+  added: "Added",
+  existing: "Already in Orbit",
+};
+
+/**
+ * Everyone the import touched, split into who it added and who it matched to someone already
+ * here. Paged from the server — a LinkedIn export can be thousands of people.
+ */
+function ImportPeopleList({
+  importId,
+  added,
+  existing,
+}: {
+  importId: string;
+  added: number;
+  existing: number;
+}) {
+  const [outcome, setOutcome] = useState<ImportPersonOutcome>(
+    added > 0 ? "added" : "existing",
+  );
+  const [pages, setPages] = useState<
+    Partial<Record<ImportPersonOutcome, { people: ImportedPerson[]; hasMore: boolean }>>
+  >({});
+  const [loading, load] = useTransition();
+
+  const page = pages[outcome];
+
+  function fetchMore(which: ImportPersonOutcome, offset: number) {
+    load(async () => {
+      const next = await getImportPeople(importId, which, offset);
+      setPages((prev) => ({
+        ...prev,
+        // Spliced in at its offset rather than appended, so a repeated fetch of the same page
+        // (the effect runs twice under StrictMode) replaces itself instead of doubling the list.
+        [which]: {
+          people: [
+            ...(prev[which]?.people ?? []).slice(0, offset),
+            ...next.people,
+          ],
+          hasMore: next.hasMore,
+        },
+      }));
+    });
+  }
+
+  // First page of whichever list is showing, once.
+  useEffect(() => {
+    if (!pages[outcome]) fetchMore(outcome, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch on switch only; `pages` is read, not tracked
+  }, [outcome]);
+
+  const tabs: { key: ImportPersonOutcome; n: number }[] = [
+    { key: "added", n: added },
+    { key: "existing", n: existing },
+  ];
+
+  return (
+    <div>
+      <h3 className="text-sm font-medium">People</h3>
+      <div
+        role="tablist"
+        aria-label="People in this import"
+        className="mt-1.5 inline-flex rounded-lg border border-border/60 p-0.5 text-xs"
+      >
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={outcome === t.key}
+            disabled={t.n === 0}
+            onClick={() => setOutcome(t.key)}
+            className={cn(
+              "rounded-md px-2.5 py-1 transition-colors disabled:opacity-50",
+              outcome === t.key
+                ? "bg-muted font-medium text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {OUTCOME_LABEL[t.key]} · {t.n.toLocaleString()}
+          </button>
+        ))}
+      </div>
+
+      {!page ? (
+        <p className="mt-2 text-xs text-muted-foreground">Loading people…</p>
+      ) : page.people.length === 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Nobody here any more — they may have been deleted since
+        </p>
+      ) : (
+        <ul className="mt-2 divide-y divide-border/50 rounded-lg border border-border/60">
+          {page.people.map((p) => (
+            <li key={p.id}>
+              <Link
+                href={`/contacts/${p.id}`}
+                className="block px-3 py-2 text-xs hover:bg-muted/50"
+              >
+                <span className="font-medium text-foreground">{p.name}</span>
+                {p.detail ? (
+                  <span className="block truncate text-muted-foreground">
+                    {p.detail}
+                  </span>
+                ) : null}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {page?.hasMore ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-1.5"
+          disabled={loading}
+          onClick={() => fetchMore(outcome, page.people.length)}
+        >
+          {loading ? "Loading…" : "Show more"}
+        </Button>
+      ) : null}
+    </div>
   );
 }
