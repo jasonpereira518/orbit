@@ -247,6 +247,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-hybrid-search": "pglite",
   "smoke-import-engine": "pglite",
   "smoke-import-people": "pglite",
+  "smoke-drive-import": "pglite",
   "smoke-import-stall": "pglite",
   "smoke-ingest-events": "pglite",
   "smoke-import-resumption-auth": "pglite",
@@ -344,6 +345,7 @@ const MANIFEST: Record<string, Tier> = {
 const TIMEOUT_MS: Partial<Record<string, number>> = {
   "smoke-page-budgets": 5 * 60_000,
   "smoke-import-engine": 5 * 60_000,
+  "smoke-drive-import": 3 * 60_000,
 };
 const DEFAULT_TIMEOUT_MS = 3 * 60_000;
 

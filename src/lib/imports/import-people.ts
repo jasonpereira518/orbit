@@ -30,6 +30,9 @@ export const IMPORT_PEOPLE_PAGE = 50;
  * so one person can sit behind many rows. People deleted since are simply not listed —
  * `contact_id` has no foreign key, and the lookup starts from `contacts`.
  *
+ * A Drive doc names several people but its row holds one `contact_id`; the rest ride
+ * `payload.contactIds`, which the second arm reads.
+ *
  * Raw SQL with explicit aliases: both tables have `created_at`, and a column interpolated
  * into a drizzle `sql` projection loses its table prefix.
  */
@@ -40,6 +43,13 @@ function importContactIds(userId: string, importId: string) {
       AND r.user_id = ${userId}
       AND r.status = 'done'
       AND r.contact_id IS NOT NULL
+    UNION
+    SELECT (jsonb_array_elements_text(r.payload->'contactIds'))::uuid
+    FROM import_job_rows r
+    WHERE r.import_id = ${importId}
+      AND r.user_id = ${userId}
+      AND r.status = 'done'
+      AND jsonb_typeof(r.payload->'contactIds') = 'array'
   `;
 }
 
