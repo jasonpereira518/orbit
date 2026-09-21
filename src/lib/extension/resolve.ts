@@ -12,6 +12,7 @@
 import { and, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
+import { metContextLabel } from "@/lib/met-context";
 import type { Contact } from "@/db/schema";
 import { computeCloseness } from "@/lib/closeness";
 import {
@@ -270,6 +271,10 @@ export async function buildSnapshot(
       interactionDate: iso(i.interactionDate),
       summary: i.aiSummary ?? i.rawNotes ?? null,
     })),
+    // `metContext` is an enum code ("conference"), so it is only ever shown
+    // through its label — and only when the user wrote nothing themselves.
+    howMet: row.howMet?.trim() || metContextLabel(row.metContext) || null,
+    dateMet: iso(row.dateMet),
     openReminders: row.reminders.map((r) => ({
       id: r.id,
       title: r.title,

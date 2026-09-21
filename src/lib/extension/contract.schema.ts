@@ -19,6 +19,7 @@ import type {
   FollowUpRequest,
   LogInteractionRequest,
   PageContext,
+  ReminderActionRequest,
   ResolveRequest,
   SaveContactRequest,
   StartersRequest,
@@ -188,6 +189,19 @@ export const followUpRequestSchema = z.intersection(
   followUpSchema
 );
 
+const reminderCompletionSchema = z.object({
+  reminderId: z.uuid(),
+  previousStatus: z.string().trim().min(1).max(40),
+  closedActionItemIds: z.array(z.uuid()).max(200),
+  contactId: z.uuid().nullable(),
+  clearedFollowUpAt: isoDate.nullable(),
+});
+
+export const reminderActionRequestSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("complete"), reminderId: z.uuid() }),
+  z.object({ action: z.literal("reopen"), completion: reminderCompletionSchema }),
+]);
+
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;
@@ -196,6 +210,10 @@ const _starters: Exact<z.infer<typeof startersRequestSchema>, StartersRequest> =
 const _save: Exact<z.infer<typeof saveContactRequestSchema>, SaveContactRequest> = true;
 const _log: Exact<z.infer<typeof logInteractionRequestSchema>, LogInteractionRequest> = true;
 const _followUp: Exact<z.infer<typeof followUpRequestSchema>, FollowUpRequest> = true;
-void [_resolve, _page, _parse, _starters, _save, _log, _followUp];
+const _reminder: Exact<
+  z.infer<typeof reminderActionRequestSchema>,
+  ReminderActionRequest
+> = true;
+void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _reminder];
 
 export type { ContactSearchResponse };

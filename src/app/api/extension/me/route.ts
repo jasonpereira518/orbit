@@ -2,6 +2,7 @@ import { and, count, eq, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { getAiCapability } from "@/lib/ai";
+import { AI_PROVIDERS } from "@/lib/ai-providers";
 import { userHasApolloKey } from "@/lib/apollo";
 import { getCurrentUserProfile } from "@/lib/auth";
 import type { MeResponse } from "@/lib/extension/contract";
@@ -55,6 +56,9 @@ export const GET = extensionRoute<undefined, MeResponse>({
         hasAiKey: ai.hasKey,
         hasApolloKey,
         aiProvider: ai.provider,
+        aiProviderLabel:
+          AI_PROVIDERS.find((provider) => provider.id === ai.provider)?.label ??
+          ai.provider,
       },
       stats: {
         contactCount: contactRow?.value ?? 0,
