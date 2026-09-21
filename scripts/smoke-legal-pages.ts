@@ -38,7 +38,7 @@ check("the table discloses nothing the code does not request", GOOGLE_SCOPE_DISC
 check("the privacy page renders the table", privacy.includes("GOOGLE_SCOPE_DISCLOSURES.map"));
 
 console.log("Processors");
-for (const name of ["Clerk", "Vercel", "Neon", "Stripe", "Resend", "Twilio", "Apollo", "Microsoft", "Eventbrite", "Luma", "Partiful", "Google Gemini, OpenAI, Anthropic", "Wispr Flow", "Sentry", "Slack", "Better Stack", "unavatar.io", "Microlink", "Gravatar"]) {
+for (const name of ["Clerk", "Vercel", "Neon", "Stripe", "Resend", "Twilio", "Apollo", "Microsoft", "Eventbrite", "Luma", "Partiful", "Google Gemini, OpenAI, Anthropic", "Sentry", "Slack", "Better Stack", "unavatar.io", "Microlink", "Gravatar"]) {
   check(`${name} is listed`, privacy.includes(`name: "${name}`));
 }
 

@@ -43,7 +43,7 @@ export function aiProviderLabel(
 /** Orbit's own no-key errors, thrown from `lib/ai.ts` before any provider is called. */
 const MISSING_KEY_PATTERNS = [
   /\bno (?:(?:google )?gemini |openai |anthropic )?api key configured\b/i,
-  /\bneeds an? (?:openai|gemini|wispr)\b[^.]*\bapi key\b/i,
+  /\bneeds an? (?:openai|gemini)\b[^.]*\bapi key\b/i,
 ];
 
 /**

@@ -90,7 +90,7 @@ for (const own of [
   "No Google Gemini API key configured. Add your own key in Settings.",
   "No OpenAI API key configured for embeddings. Add your own key in Settings.",
   "No Gemini API key configured for embeddings. Add your own key in Settings.",
-  "Voice capture needs an OpenAI, Gemini, or Wispr API key in Settings for transcription.",
+  "Voice capture needs an OpenAI or Gemini API key in Settings for transcription.",
   MISSING_AI_API_KEY_MESSAGE,
 ]) {
   check(`missing: ${own.slice(0, 48)}`, isMissingAiApiKeyError(own));
