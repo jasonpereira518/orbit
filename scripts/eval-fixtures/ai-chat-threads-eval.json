@@ -1,0 +1,91 @@
+{
+  "$comment": "Multi-turn chat over contact-search-eval.json's network. Two failure modes are being watched, and they pull against each other: a follow-up that refers back with a pronoun needs the people already under discussion to still be in front of the model (mustNotDrop), while a turn that pivots to a new subject needs retrieval for the NEW question not to be crowded out by the carried ones (mustMention on a pivot turn). A change that helps one and breaks the other is not an improvement.",
+  "cases": [
+    {
+      "id": "thread-01-stripe-then-narrow",
+      "turns": [
+        {
+          "question": "Who do I know at Stripe?",
+          "mustMention": ["maya@stripe.example", "omar@stripe.example"]
+        },
+        {
+          "question": "Which of them is based outside the US?",
+          "mustMention": ["omar@stripe.example"],
+          "mustNotDrop": ["maya@stripe.example", "omar@stripe.example"]
+        }
+      ]
+    },
+    {
+      "id": "thread-02-fintech-then-pivot-design",
+      "turns": [
+        {
+          "question": "Who in my network works in fintech in New York?",
+          "mustMention": ["dev@plaid.example", "prisha@ramp.example"]
+        },
+        {
+          "question": "Different question — who do I know working in design?",
+          "mustMention": ["lena@figma.example"]
+        }
+      ]
+    },
+    {
+      "id": "thread-03-vc-then-narrow-coast",
+      "turns": [
+        {
+          "question": "Who are my contacts in venture capital?",
+          "mustMention": ["james@sequoia.example", "claire@nea.example"]
+        },
+        {
+          "question": "Which of those two is on the east coast?",
+          "mustMention": ["claire@nea.example"],
+          "mustNotDrop": ["james@sequoia.example", "claire@nea.example"]
+        }
+      ]
+    },
+    {
+      "id": "thread-04-stanford-then-pivot-ai",
+      "turns": [
+        {
+          "question": "Which of my contacts went to Stanford?",
+          "mustMention": ["maya@stripe.example", "ines@shopify.example"]
+        },
+        {
+          "question": "Separately, who do I know working in AI?",
+          "mustMention": ["sofia@openai.example", "sam@anthropic.example"]
+        }
+      ]
+    },
+    {
+      "id": "thread-05-sf-narrow-then-recall",
+      "turns": [
+        {
+          "question": "Who do I know in San Francisco?",
+          "mustMention": ["sofia@openai.example", "hana@notion.example"]
+        },
+        {
+          "question": "Of those, who works in AI?",
+          "mustMention": ["sofia@openai.example"],
+          "mustNotDrop": ["sofia@openai.example", "sam@anthropic.example"]
+        },
+        {
+          "question": "Earlier you mentioned someone who recruits — who was that?",
+          "mustMention": ["hana@notion.example"],
+          "mustNotDrop": ["hana@notion.example"]
+        }
+      ]
+    },
+    {
+      "id": "thread-06-media-then-pivot-security",
+      "turns": [
+        {
+          "question": "Who do I know in media?",
+          "mustMention": ["amelia@nyt.example"]
+        },
+        {
+          "question": "New topic: who works on security or crypto?",
+          "mustMention": ["raj@coinbase.example"]
+        }
+      ]
+    }
+  ]
+}

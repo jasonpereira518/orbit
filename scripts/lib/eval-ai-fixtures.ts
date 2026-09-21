@@ -113,6 +113,31 @@ export type ChatEvalFixture = {
   }>;
 };
 
+/**
+ * `scripts/eval-fixtures/ai-chat-threads-eval.json` — the same network, asked in threads.
+ *
+ * Single-turn cases cannot see what carrying a thread's context forward does, and that is
+ * the whole risk of it: a follow-up that keeps the people already under discussion can as
+ * easily crowd out the ones the NEW question is about. So a case is a sequence, and each
+ * turn carries both expectations — `mustMention` for what the turn must still find, and
+ * `mustNotDrop` for people named in an earlier turn that a pronoun now refers back to.
+ */
+export type ChatThreadEvalFixture = {
+  cases: Array<{
+    id: string;
+    turns: Array<{
+      question: string;
+      /** Emails whose contacts this turn's answer must name. */
+      mustMention: string[];
+      /**
+       * Emails the thread has already discussed and which this turn refers back to
+       * ("what about the second one?"). Empty on a first turn.
+       */
+      mustNotDrop?: string[];
+    }>;
+  }>;
+};
+
 /** `scripts/eval-fixtures/ai-digest-eval.json` — meeting transcripts for the digest. */
 export type DigestEvalFixture = {
   cases: Array<{

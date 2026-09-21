@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../src/db";
-import { contactTags, contacts, tags } from "../../src/db/schema";
+import { chatMessages, chatThreads, contactTags, contacts, tags, type ChatRecommendation } from "../../src/db/schema";
 import { runCaptureParse } from "../../src/lib/capture-parse";
 import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR } from "../../src/lib/recruiter-scan";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
@@ -27,11 +27,13 @@ import {
   transcribeImagePages,
 } from "../../src/lib/ai";
 import { prepareChatContext } from "../../src/lib/chat-context";
+import { persistAssistantTurn } from "../../src/lib/chat-persist";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
 import { analyzeMeetingTranscript } from "../../src/lib/meeting-digest";
 import type {
   CaptureEvalFixture,
   ChatEvalFixture,
+  ChatThreadEvalFixture,
   DigestEvalFixture,
   ExtensionEvalFixture,
   OcrEvalFixture,
@@ -59,9 +61,9 @@ export type TaskResult = {
   latenciesMs: number[];
 };
 
-export type TaskName = "capture" | "recruiter" | "extension" | "ocr" | "transcribe" | "chat" | "digest";
+export type TaskName = "capture" | "recruiter" | "extension" | "ocr" | "transcribe" | "chat" | "chatThreads" | "digest";
 
-export const TASK_NAMES: TaskName[] = ["capture", "recruiter", "extension", "ocr", "transcribe", "chat", "digest"];
+export const TASK_NAMES: TaskName[] = ["capture", "recruiter", "extension", "ocr", "transcribe", "chat", "chatThreads", "digest"];
 
 /** Overridable so the harness itself can be exercised on throwaway fixtures. */
 export const FIXTURE_DIR = process.env.ORBIT_EVAL_FIXTURE_DIR || join(process.cwd(), "scripts", "eval-fixtures");
@@ -549,6 +551,112 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
   };
 }
 
+/* ------------------------------------------------------------------ chat (threads) ----- */
+
+/**
+ * The same network, asked in threads rather than one question at a time.
+ *
+ * This exists to gate carrying a thread's context forward. Retrieval runs per question, so
+ * today a follow-up re-retrieves from scratch and can drop the very people it refers back
+ * to; carrying them forward fixes that and creates the opposite risk, of a pivot turn whose
+ * new subject never makes it in. `carriedRecall` and `mentionRecall` are therefore read
+ * together — a change that lifts one and drops the other has not helped.
+ */
+export async function runChatThreadsTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<ChatThreadEvalFixture>("ai-chat-threads-eval.json").cases.slice(0, limit);
+  const network = await seedNetwork(userId);
+  const db = await getDb();
+  const answered = tally();
+  const carried = tally();
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+
+  const emailToId = (email: string) => {
+    const person = network.get(email);
+    if (!person) throw new Error(`fixture names ${email}, which contact-search-eval.json does not have`);
+    return person;
+  };
+
+  for (const c of cases) {
+    try {
+      const [thread] = await db.insert(chatThreads).values({ userId, title: null }).returning();
+      let title: string | null = null;
+      let missed = false;
+
+      for (const [index, turn] of c.turns.entries()) {
+        const { ctx, result } = await timed(latenciesMs, async () => {
+          const ctx = await prepareChatContext(userId, turn.question, { threadId: thread.id });
+          // The route writes the user's message before the model runs, and `priorTurns`
+          // reads it back on the next turn — so the thread has to be built the same way
+          // here or every turn would look like a first turn.
+          await db.insert(chatMessages).values({
+            threadId: thread.id,
+            userId,
+            role: "user",
+            content: ctx.q,
+            attachedContacts: [],
+          });
+          const result = await chatWithNetwork(
+            userId,
+            ctx.scopedQuestion,
+            ctx.modelContacts,
+            ctx.priorTurns,
+            ctx.orgRosters,
+            ctx.attention,
+            ctx.modelRecruiters,
+            ctx.focusProfile,
+            ctx.attachedContext
+          );
+          return { ctx, result };
+        });
+
+        const recommended = new Set(
+          ((result.recommendations ?? []) as Array<{ contact_id?: string | null }>).map((r) => r.contact_id)
+        );
+        const shown = new Set(ctx.modelContacts.map((m) => m.id));
+
+        for (const email of turn.mustMention) {
+          const person = emailToId(email);
+          const ok = mentions(result.answer ?? "", person.fullName) || recommended.has(person.id);
+          count(answered, ok);
+          missed ||= !ok;
+        }
+        // Carrying forward is about what the model was GIVEN, not what it chose to say:
+        // a turn can reasonably decline to name someone it was shown. Scoring the answer
+        // here would blame the model for a retrieval property.
+        for (const email of turn.mustNotDrop ?? []) {
+          const ok = shown.has(emailToId(email).id);
+          count(carried, ok);
+          missed ||= !ok;
+        }
+
+        const saved = await persistAssistantTurn(userId, thread.id, title, ctx.q, {
+          answer: result.answer,
+          recommendations: (result.recommendations ?? []) as ChatRecommendation[],
+        });
+        title = saved.title;
+        log(`  ${missed ? "MISS" : "ok  "} threads/${c.id} turn ${index + 1}/${c.turns.length}`);
+      }
+
+      if (missed) misses.push(c.id);
+    } catch (err) {
+      misses.push(c.id);
+      for (const turn of c.turns) {
+        for (let i = 0; i < turn.mustMention.length; i++) count(answered, false);
+        for (let i = 0; i < (turn.mustNotDrop ?? []).length; i++) count(carried, false);
+      }
+      log(`  FAIL threads/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: { mentionRecall: rate(answered), carriedRecall: rate(carried) },
+  };
+}
+
 /* ------------------------------------------------------------------------- digest ----- */
 
 export async function runDigestTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
@@ -616,5 +724,6 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   ocr: runOcrTask,
   transcribe: runTranscribeTask,
   chat: runChatTask,
+  chatThreads: runChatThreadsTask,
   digest: runDigestTask,
 };

@@ -15,10 +15,11 @@
  *                   "chat.answer": "low" },
  *     "tiers": { "recruiter.scan": "fast" },  // move an operation to another tier
  *     "fastModels": { "gemini": "gemini-3.5-flash-lite" },
- *     "visionModels": { "gemini": "gemini-3.8-flash" } }
+ *     "visionModels": { "gemini": "gemini-3.8-flash" },
+ *     "contextBudget": { "totalChars": 24000 } }   // how much network chat carries
  *
  * Flags: --provider gemini|openai|anthropic (default gemini) · --model <id> (default: the
- * provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,digest
+ * provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,chatThreads,digest
  * (default all) · --runs N (default 1; use 2+ for a gate decision — models are not
  * deterministic) · --limit N (cases per task, for a quick look) · --label <name> ·
  * --out <file> (default docs/ai-evals/<date>-<label>.json) · --compare <baseline.json>
@@ -52,6 +53,7 @@ import { DEFAULT_MODELS, resolveAiProvider, type AiProvider } from "../src/lib/a
 import { FIXTURE_DIR, TASKS, TASK_NAMES, type TaskName, type TaskResult } from "./lib/eval-ai-tasks";
 import { AI_OPERATIONS, AI_OPERATION_IDS, type AiOperationId, type AiTier } from "../src/lib/ai-operations";
 import { FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
+import { CHAT_CONTEXT_BUDGET, type ChatContextTier } from "../src/lib/chat-retrieval";
 import type { ThinkingLevel } from "../src/lib/ai-request-options";
 import { gate, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
 
@@ -84,6 +86,16 @@ type CandidateConfig = {
   tiers?: Record<string, AiTier>;
   fastModels?: Partial<Record<AiProvider, string>>;
   visionModels?: Partial<Record<AiProvider, string>>;
+  /**
+   * How much of the network the chat prompt may carry. `tiers` is optional: giving
+   * `totalChars` alone sweeps the ceiling while leaving the per-contact caps alone,
+   * which is the one-dimensional cut worth measuring first. A tier's `upto` is written
+   * as `null` for the open-ended last one, since JSON has no `Infinity`.
+   */
+  contextBudget?: {
+    totalChars?: number;
+    tiers?: Array<Omit<ChatContextTier, "upto"> & { upto: number | null }>;
+  };
 };
 
 function parseArgs(argv: string[]): Args {
@@ -139,6 +151,17 @@ function applyCandidate(config: CandidateConfig): string[] {
   for (const [provider, model] of Object.entries(config.visionModels ?? {})) {
     VISION_MODELS[provider as AiProvider] = model;
     applied.push(`vision ${provider}=${model}`);
+  }
+  if (config.contextBudget?.totalChars != null) {
+    CHAT_CONTEXT_BUDGET.totalChars = config.contextBudget.totalChars;
+    applied.push(`contextBudget totalChars=${config.contextBudget.totalChars}`);
+  }
+  if (config.contextBudget?.tiers) {
+    CHAT_CONTEXT_BUDGET.tiers = config.contextBudget.tiers.map((t) => ({
+      ...t,
+      upto: t.upto ?? Infinity,
+    }));
+    applied.push(`contextBudget tiers=${config.contextBudget.tiers.length}`);
   }
   return applied;
 }
@@ -319,10 +342,12 @@ async function main() {
     for (let run = 0; run < args.runs; run++) {
       if (args.runs > 1) console.log(` run ${run + 1}/${args.runs}`);
       // Chat seeds a network; a second run must not seed it twice.
-      if (task === "chat" && run > 0) {
+      // Both chat tasks seed the same network, so a second run would double it.
+      if ((task === "chat" || task === "chatThreads") && run > 0) {
         const db = await getDb();
         await db.execute(sql`DELETE FROM contacts WHERE user_id = ${USER}`);
         await db.execute(sql`DELETE FROM tags WHERE user_id = ${USER}`);
+        await db.execute(sql`DELETE FROM chat_threads WHERE user_id = ${USER}`);
       }
       perRun.push(await TASKS[task]({ userId: USER, limit: args.limit, log: (l) => console.log(l) }));
     }

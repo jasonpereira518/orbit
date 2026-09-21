@@ -234,12 +234,33 @@ export type BudgetedContact = {
 // almost every contact has some — so the counts came down. The budget below binds far more
 // often than it used to, and a contact serialized with eight timeline lines is a contact
 // somebody further down the ranking does not get serialized at all.
-const CONTEXT_TIERS = [
-  { upto: 4, notes: 1200, summary: 600, entries: 6, entryChars: 240, facts: 8 },
-  { upto: 8, notes: 600, summary: 400, entries: 4, entryChars: 200, facts: 6 },
-  { upto: Infinity, notes: 300, summary: 240, entries: 2, entryChars: 160, facts: 4 },
-] as const;
-const TOTAL_CONTEXT_CHAR_BUDGET = 48000;
+export type ChatContextTier = {
+  /** Applies to contacts ranked before this index. `Infinity` on the last tier. */
+  upto: number;
+  notes: number;
+  summary: number;
+  entries: number;
+  entryChars: number;
+  facts: number;
+};
+
+/**
+ * MUTABLE, like `FAST_MODELS` — and for the same reason. This budget is the single
+ * largest input cost Orbit has: a measured ten-contact turn is ~9,700 prompt tokens,
+ * of which the system prompt is 363. Nothing else in a chat call is worth tuning
+ * until this is, so `scripts/eval-ai.ts` rewrites it from a candidate's
+ * `contextBudget`, exactly as it rewrites a thinking level or a tier. The chat task's
+ * `retrieved` metric is what a cut damages first, so the sweep is gated on the same
+ * numbers production reads — a candidate that passes ships by editing the values here.
+ */
+export const CHAT_CONTEXT_BUDGET: { totalChars: number; tiers: ChatContextTier[] } = {
+  totalChars: 48_000,
+  tiers: [
+    { upto: 4, notes: 1200, summary: 600, entries: 6, entryChars: 240, facts: 8 },
+    { upto: 8, notes: 600, summary: 400, entries: 4, entryChars: 200, facts: 6 },
+    { upto: Infinity, notes: 300, summary: 240, entries: 2, entryChars: 160, facts: 4 },
+  ],
+};
 
 export function budgetContactsContext(
   contacts: RankedContact[],
@@ -250,7 +271,7 @@ export function budgetContactsContext(
   let spent = 0;
   for (let index = 0; index < contacts.length; index++) {
     const c = contacts[index];
-    const tier = CONTEXT_TIERS.find((t) => index < t.upto)!;
+    const tier = CHAT_CONTEXT_BUDGET.tiers.find((t) => index < t.upto)!;
     const notes = (c.notes || "").slice(0, tier.notes) || null;
     const aiSummary = (c.aiSummary || "").slice(0, tier.summary) || null;
     const keyFacts = c.keyFacts.slice(0, tier.facts);
@@ -266,7 +287,7 @@ export function budgetContactsContext(
       c.tags.join("").length + 80; // formatting overhead
     // Budget exhaustion stops serialization entirely — a later, cheaper
     // contact must not be appended out of rank order once we've run dry.
-    if (spent + cost > TOTAL_CONTEXT_CHAR_BUDGET && out.length > 0) break;
+    if (spent + cost > CHAT_CONTEXT_BUDGET.totalChars && out.length > 0) break;
     spent += cost;
 
     out.push({
