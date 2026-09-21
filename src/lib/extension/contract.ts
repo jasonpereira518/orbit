@@ -12,7 +12,22 @@
  * failing in confusing ways.
  */
 
-export const EXTENSION_CONTRACT_VERSION = 1;
+export const EXTENSION_CONTRACT_VERSION = 2;
+
+/**
+ * The oldest contract the server still serves. Extension updates roll out on
+ * Chrome's schedule, not ours, so every shape a v1 build sends stays valid:
+ * v2 only ever ADDS optional fields, widens enums in responses, and adds
+ * routes. Raise this only for a change a v1 build genuinely cannot survive —
+ * the panel then shows a hard "update Orbit" state instead of misbehaving.
+ */
+export const MIN_SUPPORTED_CONTRACT_VERSION = 1;
+
+/**
+ * The extension's paid depth. Its core — recognize, save, notes, follow-ups,
+ * reminders — is free on every plan; these four are Pro and Lifetime.
+ */
+export type ExtensionFeature = "starters" | "workHistory" | "company" | "search";
 
 /* -------------------------------------------------------------------------- */
 /* Envelope                                                                   */
@@ -26,6 +41,7 @@ export type ExtensionErrorCode =
   | "duplicate"
   | "limit_exceeded"
   | "payload_too_large"
+  | "feature_locked"
   | "server_error";
 
 export type ExtensionError = {
@@ -34,6 +50,9 @@ export type ExtensionError = {
   retryAfterSeconds?: number;
   /** Present on `duplicate`: the existing contacts that blocked the create. */
   candidates?: MatchCandidate[];
+  /** Present on `feature_locked`: which Pro feature, and where to get it. */
+  feature?: ExtensionFeature;
+  upgradeUrl?: string;
 };
 
 export type ExtensionResponse<T> =
@@ -141,6 +160,8 @@ export type ClosenessTier = "inner" | "mid" | "outer";
 export type SnapshotInteraction = {
   id: string;
   interactionType: string;
+  /** "Reached out", not "reach_out". Optional: older servers send only the code. */
+  typeLabel?: string;
   interactionDate: string | null;
   summary: string | null;
 };
@@ -261,7 +282,12 @@ export type ConversationStarter = {
   source: "ai" | "heuristic";
 };
 
-export type StartersDegradedReason = "no_api_key" | "ai_error" | "no_signal";
+/**
+ * `plan`: AI opening lines are Pro, so a free account gets the heuristic ones —
+ * as a normal 200, never a 402, so a v1 panel that knows nothing about plans
+ * degrades to what it always showed without an AI key.
+ */
+export type StartersDegradedReason = "no_api_key" | "ai_error" | "no_signal" | "plan";
 
 export type StartersRequest = {
   contactId?: string | null;
@@ -469,4 +495,27 @@ export type MeResponse = {
     contactCount: number;
     dueFollowUpCount: number;
   };
+  /** v2. Absent from a v1 server; the panel treats absent as "unknown", not "free". */
+  minSupportedContractVersion?: number;
+  entitlements?: ExtensionEntitlements;
+  links?: {
+    app: string;
+    pricing: string;
+    settings: string;
+  };
 };
+
+export type ExtensionEntitlements = {
+  plan: "free" | "orbit" | "lifetime";
+  /** "Free", "Orbit Pro", "Orbit Lifetime" — for display, never for branching. */
+  planLabel: string;
+  /** null = unlimited. */
+  contactLimit: number | null;
+  /** null = unlimited. How many more people this account can save. */
+  contactsRemaining: number | null;
+  features: Record<ExtensionFeature, boolean>;
+};
+
+/** A click on a locked section — recorded (throttled) as demand for the feature. */
+export type GateIntentRequest = { feature: ExtensionFeature; site?: string };
+export type GateIntentResponse = { recorded: boolean; upgradeUrl: string };

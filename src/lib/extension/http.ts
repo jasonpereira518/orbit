@@ -8,12 +8,20 @@
  */
 
 import { sql } from "drizzle-orm";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import type { z } from "zod";
 import { getDb } from "@/db";
 import { extensionUsage } from "@/db/schema";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { ContactNotFoundError } from "@/lib/contact-writes";
-import type { ExtensionError, ExtensionErrorCode } from "./contract";
+import { getEntitlements, type Entitlements } from "@/lib/entitlements";
+import { recordExtensionGateHit } from "@/lib/gate-events";
+import type { ExtensionError, ExtensionErrorCode, ExtensionFeature } from "./contract";
+import {
+  extensionFeatures,
+  extensionUpgradeUrl,
+  FEATURE_LOCKED_COPY,
+} from "./entitlements";
 import { MAX_BODY_BYTES } from "./contract.schema";
 import {
   ExtensionRateLimitError,
@@ -47,6 +55,9 @@ const STATUS_BY_CODE: Record<ExtensionErrorCode, number> = {
   not_found: 404,
   duplicate: 409,
   limit_exceeded: 402,
+  // 402 like every other paywall in the app (and `limit_exceeded` here). Not 403:
+  // clients read 401/403 as "sign in again", and this user is signed in fine.
+  feature_locked: 402,
   payload_too_large: 413,
   server_error: 500,
 };
@@ -81,15 +92,35 @@ export function preflight() {
 export class ExtensionRouteError extends Error {
   code: ExtensionErrorCode;
   candidates?: ExtensionError["candidates"];
+  feature?: ExtensionFeature;
+  upgradeUrl?: string;
   constructor(
     code: ExtensionErrorCode,
     message: string,
-    candidates?: ExtensionError["candidates"]
+    candidates?: ExtensionError["candidates"],
+    extra?: { feature?: ExtensionFeature; upgradeUrl?: string }
   ) {
     super(message);
     this.name = "ExtensionRouteError";
     this.code = code;
     this.candidates = candidates;
+    this.feature = extra?.feature;
+    this.upgradeUrl = extra?.upgradeUrl;
+  }
+}
+
+/**
+ * `after()` when there is a request to hang it on, otherwise run it now.
+ *
+ * `after()` throws outside a request scope, which made every route that defers
+ * work (embeddings, briefs, revalidation after a save) impossible to drive from
+ * a smoke script. Routes hand this to the write core instead of bare `after`.
+ */
+export function deferSafely(work: () => Promise<unknown>) {
+  try {
+    after(work);
+  } catch {
+    void work().catch(() => null);
   }
 }
 
@@ -163,14 +194,18 @@ async function consumeBudget(userId: string, cost: RouteCost) {
  * reject cheaply, then the decoded length is re-checked because the header can
  * be absent under chunked encoding, or simply wrong.
  */
-async function readJsonBody<T>(req: Request, schema: z.ZodType<T>): Promise<T> {
+async function readJsonBody<T>(
+  req: Request,
+  schema: z.ZodType<T>,
+  maxBytes = MAX_BODY_BYTES
+): Promise<T> {
   const declared = Number(req.headers.get("content-length") || 0);
-  if (declared > MAX_BODY_BYTES) {
+  if (declared > maxBytes) {
     throw new PayloadTooLargeError("Request body is too large.");
   }
 
   const raw = await req.text();
-  if (raw.length > MAX_BODY_BYTES) {
+  if (raw.length > maxBytes) {
     throw new PayloadTooLargeError("Request body is too large.");
   }
 
@@ -200,6 +235,8 @@ export type RouteContext<TIn> = {
   userId: string;
   input: TIn;
   req: Request;
+  /** Resolved once per request. Routes serving both tiers branch on this. */
+  entitlements: Entitlements;
 };
 
 function toErrorResponse(error: unknown) {
@@ -227,6 +264,8 @@ function toErrorResponse(error: unknown) {
       code: error.code,
       message: error.message,
       candidates: error.candidates,
+      feature: error.feature,
+      upgradeUrl: error.upgradeUrl,
     });
   }
 
@@ -247,18 +286,48 @@ function toErrorResponse(error: unknown) {
 export function extensionRoute<TIn, TOut>(config: {
   schema?: z.ZodType<TIn>;
   cost?: RouteCost;
+  /**
+   * A Pro feature the WHOLE route is. Routes that serve both tiers (a free
+   * answer plus a paid one) leave this off and branch on `ctx.entitlements`.
+   */
+  entitlement?: ExtensionFeature;
+  /** Defaults to `MAX_BODY_BYTES`. Raise only for a route that needs it. */
+  maxBodyBytes?: number;
   handler: (ctx: RouteContext<TIn>) => Promise<TOut>;
 }) {
   return async function handle(req: Request) {
     try {
       const userId = await requireExtensionUserId(req);
       await consumeBudget(userId, config.cost ?? "request");
+      const entitlements = await getEntitlements(userId);
+
+      // Before the body is read: a locked 200KB request is refused without
+      // parsing it. A current panel never gets here — it reads the same
+      // `extensionFeatures` from /me and draws the lock itself — so this is
+      // the backstop for older builds and for anything not using the panel.
+      if (config.entitlement && !extensionFeatures(entitlements)[config.entitlement]) {
+        await recordExtensionGateHit({
+          userId,
+          plan: entitlements.plan,
+          feature: config.entitlement,
+          context: { route: new URL(req.url).pathname },
+        });
+        throw new ExtensionRouteError(
+          "feature_locked",
+          FEATURE_LOCKED_COPY[config.entitlement],
+          undefined,
+          {
+            feature: config.entitlement,
+            upgradeUrl: extensionUpgradeUrl(getAppBaseUrl(), config.entitlement),
+          }
+        );
+      }
 
       const input = config.schema
-        ? await readJsonBody(req, config.schema)
+        ? await readJsonBody(req, config.schema, config.maxBodyBytes)
         : (undefined as TIn);
 
-      const data = await config.handler({ userId, input, req });
+      const data = await config.handler({ userId, input, req, entitlements });
       return jsonOk(data);
     } catch (error) {
       return toErrorResponse(error);

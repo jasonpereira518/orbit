@@ -1,10 +1,9 @@
-import { after } from "next/server";
 import type {
   LogInteractionRequest,
   LogInteractionResponse,
 } from "@/lib/extension/contract";
 import { logInteractionRequestSchema } from "@/lib/extension/contract.schema";
-import { extensionRoute, preflight } from "@/lib/extension/http";
+import { deferSafely, extensionRoute, preflight } from "@/lib/extension/http";
 import { logExtensionInteraction } from "@/lib/extension/writes";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +15,7 @@ export const dynamic = "force-dynamic";
  */
 export const POST = extensionRoute<LogInteractionRequest, LogInteractionResponse>({
   schema: logInteractionRequestSchema,
-  handler: ({ userId, input }) => logExtensionInteraction(userId, input, after),
+  handler: ({ userId, input }) => logExtensionInteraction(userId, input, deferSafely),
 });
 
 export const OPTIONS = preflight;

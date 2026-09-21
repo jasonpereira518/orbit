@@ -306,7 +306,7 @@ export function NotificationsPanelButton({
           </SheetHeader>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-            {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
+            {data && <ExtensionPromo hasExtensionPro={data.hasExtensionPro} />}
 
             {loading && !data ? (
               <p className="text-sm text-muted-foreground">Loading…</p>

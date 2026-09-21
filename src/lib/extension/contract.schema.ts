@@ -17,6 +17,7 @@ import type {
   ContactSearchResponse,
   ParseRequest,
   FollowUpRequest,
+  GateIntentRequest,
   LogInteractionRequest,
   PageContext,
   ReminderActionRequest,
@@ -202,6 +203,11 @@ export const reminderActionRequestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("reopen"), completion: reminderCompletionSchema }),
 ]);
 
+export const gateIntentRequestSchema = z.object({
+  feature: z.enum(["starters", "workHistory", "company", "search"]),
+  site: z.string().trim().max(40).optional(),
+});
+
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;
@@ -214,6 +220,7 @@ const _reminder: Exact<
   z.infer<typeof reminderActionRequestSchema>,
   ReminderActionRequest
 > = true;
-void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _reminder];
+const _gate: Exact<z.infer<typeof gateIntentRequestSchema>, GateIntentRequest> = true;
+void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _reminder, _gate];
 
 export type { ContactSearchResponse };

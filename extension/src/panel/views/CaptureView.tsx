@@ -16,6 +16,7 @@ import type { OrbitApi } from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
+import { unlockFeature } from "@/lib/unlock";
 import { RecordRow, humanSource, type RecordField } from "../components/RecordRow";
 import { StarterList } from "../components/StarterList";
 import { Button, MicroLabel, Section } from "../components/ui";
@@ -272,6 +273,7 @@ export function CaptureView({
               loading={state.startersLoading}
               degraded={state.startersDegraded}
               degradedReason={state.startersDegradedReason}
+            onUnlock={() => void unlockFeature(api, "starters")}
             />
           </Section>
         ) : null}

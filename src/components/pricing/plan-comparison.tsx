@@ -28,7 +28,7 @@ const COLUMN_ACCENT: Record<Plan, { heading: string; tick: string; tint?: string
  *  - The first block is ungated in code. Capture, chat, the map, LinkedIn import,
  *    reminders, the knowledge base, and export never consult entitlements at all, so they
  *    are true on every plan and stay grouped together.
- *  - `canUseOutreach`, `canUseRecruiters`, `canUseSync`, `canUseExtension`, and
+ *  - `canUseOutreach`, `canUseRecruiters`, `canUseSync`, `canUseExtensionPro`, and
  *    `canUseHostedSending` are all plain `plan !== "free"`, so Lifetime matches Pro on
  *    each of them. Sending included: it is capped at `DAILY_SEND_LIMIT` a day on every
  *    plan, so it is a bounded cost a one-time payment can carry.
@@ -55,9 +55,15 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   // see what Orbit is for — a paywall in front of it would be a paywall in front of the
   // demonstration. See `canUseMcp` in entitlements.ts.
   { label: "Use from Claude and ChatGPT", cells: [true, true, true] },
+  // `canUseExtension` is true on every plan — recognize, save, notes, follow-ups.
+  // Its paid depth is `canUseExtensionPro`, the row below the paid line.
+  { label: "Chrome extension", cells: [true, true, true] },
   { label: "Recruiter tracking", cells: [false, true, true] },
   { label: "Gmail, Outlook, calendar sync", cells: [false, true, true] },
-  { label: "Chrome extension", cells: [false, true, true] },
+  // Name only what has shipped. Work history, company lookup and smart search are
+  // also `canUseExtensionPro`, but they join this label when they exist — a
+  // pricing table is a promise.
+  { label: "Extension: AI opening lines", cells: [false, true, true] },
   { label: "Outreach campaigns", cells: [false, true, true] },
   { label: "Email and SMS sending", cells: [false, true, true] },
   { label: "API and webhooks", cells: [false, true, true] },

@@ -2,6 +2,8 @@ import type {
   ExtensionResponse,
   FollowUpRequest,
   FollowUpResponse,
+  GateIntentRequest,
+  GateIntentResponse,
   LogInteractionRequest,
   LogInteractionResponse,
   MeResponse,
@@ -105,6 +107,9 @@ export function createApi(getToken: TokenGetter) {
 
     reminder: (body: ReminderActionRequest, signal?: AbortSignal) =>
       post<ReminderActionResponse>("/reminders", body, signal),
+
+    gate: (body: GateIntentRequest, signal?: AbortSignal) =>
+      post<GateIntentResponse>("/gate", body, signal),
 
     // GET /contacts?q= exists server-side but has no client here yet: it is
     // the seam for a future "link this page to an existing contact" flow.

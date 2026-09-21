@@ -1,5 +1,4 @@
 import { and, eq, ilike, or, sql } from "drizzle-orm";
-import { after } from "next/server";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import type {
@@ -8,7 +7,7 @@ import type {
   SaveContactResponse,
 } from "@/lib/extension/contract";
 import { saveContactRequestSchema } from "@/lib/extension/contract.schema";
-import { extensionRoute, preflight } from "@/lib/extension/http";
+import { deferSafely, extensionRoute, preflight } from "@/lib/extension/http";
 import { saveContactFromExtension } from "@/lib/extension/writes";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +17,7 @@ const SEARCH_LIMIT = 10;
 /** Create a contact, or merge the page's fields into an existing one. */
 export const POST = extensionRoute<SaveContactRequest, SaveContactResponse>({
   schema: saveContactRequestSchema,
-  handler: ({ userId, input }) => saveContactFromExtension(userId, input, after),
+  handler: ({ userId, input }) => saveContactFromExtension(userId, input, deferSafely),
 });
 
 /**
