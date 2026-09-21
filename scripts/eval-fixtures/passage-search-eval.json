@@ -1,0 +1,179 @@
+{
+  "$comment": "Passage retrieval over the user's own notes (memory_chunks). Notes attach to people from contact-search-eval.json by email. Each note carries a stable id the cases expect by. `forbid` lists notes that match the words but must be excluded (by date or person) — a scoped case passes only if its expected note is found AND no forbidden one is. `paraphrase` cases share no content word with their question on purpose: the lexical arm is expected to miss them and the semantic arm to find them, so they measure what embeddings buy rather than being counted against the lexical floor.",
+  "notes": [
+    {
+      "id": "n-james-seed",
+      "email": "james@sequoia.example",
+      "date": "2026-03-12",
+      "type": "coffee",
+      "pad": 2600,
+      "text": "Near the end he said Sequoia is leading a seed round for a fintech startup doing SMB treasury, and he wants warm intros to founders in that space."
+    },
+    {
+      "id": "n-james-dinner",
+      "email": "james@sequoia.example",
+      "date": "2026-06-20",
+      "type": "meeting",
+      "text": "Dinner after the Money2020 panel. Mostly talked about his kids and sailing. He mentioned the fund's next fintech thesis will lean toward stablecoin infrastructure."
+    },
+    {
+      "id": "n-tom-sre",
+      "email": "tom@datadog.example",
+      "date": "2026-04-03",
+      "type": "call",
+      "pad": 1800,
+      "text": "Tomás is hiring three site reliability engineers for the Paris office and asked if I know anyone who has run Kubernetes at scale."
+    },
+    {
+      "id": "n-hana-hiring",
+      "email": "hana@notion.example",
+      "date": "2026-03-28",
+      "type": "email",
+      "text": "Hana is hiring a staff engineer for the Notion AI team and said the loop moves fast if someone has shipped retrieval systems."
+    },
+    {
+      "id": "n-sofia-talk",
+      "email": "sofia@openai.example",
+      "date": "2026-05-14",
+      "type": "meeting",
+      "text": "Sofia gave a talk on evaluation harnesses for retrieval-augmented generation. She offered to review our eval design before the launch."
+    },
+    {
+      "id": "n-raj-audit",
+      "email": "raj@coinbase.example",
+      "date": "2026-02-09",
+      "type": "coffee",
+      "pad": 3200,
+      "text": "Raj offered to do a free review of our key custody setup and threat model before we raise, if we send him the architecture doc."
+    },
+    {
+      "id": "n-amelia-lisbon",
+      "email": "amelia@nyt.example",
+      "date": "2026-07-01",
+      "type": "note",
+      "text": "Amelia is moving to Lisbon in September to open the paper's European tech desk, and wants story leads on EU AI regulation."
+    },
+    {
+      "id": "n-kofi-launch",
+      "email": "kofi@flutterwave.example",
+      "date": "2026-03-19",
+      "type": "call",
+      "text": "Kofi can introduce us to the heads of payments at three Nigerian banks once we have a fintech pilot proposal written up."
+    },
+    {
+      "id": "n-lena-mentor",
+      "email": "lena@figma.example",
+      "date": "2026-06-05",
+      "type": "coffee",
+      "text": "Lena agreed to mentor our first product designer for a quarter, meeting every other Thursday."
+    },
+    {
+      "id": "n-claire-diligence",
+      "email": "claire@nea.example",
+      "date": "2026-05-22",
+      "type": "email",
+      "text": "Claire asked for our clinical validation data before NEA will take a second meeting; she flagged regulatory risk as the main blocker."
+    }
+  ],
+  "cases": [
+    {
+      "kind": "buried-fact",
+      "question": "who is leading a seed round?",
+      "expect": [
+        "n-james-seed"
+      ]
+    },
+    {
+      "kind": "buried-fact",
+      "question": "who is hiring site reliability engineers?",
+      "expect": [
+        "n-tom-sre"
+      ]
+    },
+    {
+      "kind": "buried-fact",
+      "question": "who offered to review our key custody?",
+      "expect": [
+        "n-raj-audit"
+      ]
+    },
+    {
+      "kind": "no-person",
+      "question": "introductions to banks in Nigeria",
+      "expect": [
+        "n-kofi-launch"
+      ]
+    },
+    {
+      "kind": "no-person",
+      "question": "EU AI regulation story leads",
+      "expect": [
+        "n-amelia-lisbon"
+      ]
+    },
+    {
+      "kind": "no-person",
+      "question": "clinical validation data",
+      "expect": [
+        "n-claire-diligence"
+      ]
+    },
+    {
+      "kind": "date-scoped",
+      "question": "fintech",
+      "after": "2026-03-01",
+      "before": "2026-03-31",
+      "expect": [
+        "n-james-seed"
+      ],
+      "forbid": [
+        "n-james-dinner"
+      ]
+    },
+    {
+      "kind": "date-scoped",
+      "question": "hiring engineers",
+      "after": "2026-03-01",
+      "before": "2026-03-31",
+      "expect": [
+        "n-hana-hiring"
+      ],
+      "forbid": [
+        "n-tom-sre"
+      ]
+    },
+    {
+      "kind": "person-scoped",
+      "question": "fintech",
+      "person": "james@sequoia.example",
+      "expect": [
+        "n-james-seed",
+        "n-james-dinner"
+      ],
+      "forbid": [
+        "n-kofi-launch"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "question": "who is raising money",
+      "expect": [
+        "n-james-seed"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "question": "someone relocating to Portugal",
+      "expect": [
+        "n-amelia-lisbon"
+      ]
+    },
+    {
+      "kind": "paraphrase",
+      "question": "who could guide a beginner in visual craft",
+      "expect": [
+        "n-lena-mentor"
+      ]
+    }
+  ]
+}

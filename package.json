@@ -25,7 +25,8 @@
     "db:check": "tsx scripts/smoke-schema-ddl.ts",
     "ext:dev": "npm --prefix extension run dev",
     "ext:build": "npm --prefix extension run build",
-    "ext:zip": "npm --prefix extension run zip"
+    "ext:zip": "npm --prefix extension run zip",
+    "eval:retrieval": "tsx scripts/eval-retrieval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",

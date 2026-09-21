@@ -22,7 +22,8 @@ import {
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { sweepInterestListFollowUps } from "@/lib/interest-list-follow-up";
 import { findStaleCohorts } from "@/lib/closeness-materialize";
-import { kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { accountCanEmbed, kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { usersWithPendingMemoryWork } from "@/lib/memory-backfill";
 import {
   kickLinkedInTimelineBackfill,
   usersWithPendingTimelineEvents,
@@ -299,11 +300,22 @@ export async function GET(request: Request) {
     try {
       // Backstop only — imports kick the backfill directly on completion. This catches
       // users whose kick was lost along with the invocation that sent it.
-      const staleUsers = await db
+      const staleContactUsers = await db
         .selectDistinct({ userId: contacts.userId })
         .from(contacts)
         .where(isNotNull(contacts.embeddingStaleAt))
         .limit(EMBED_BACKFILL_USERS);
+      // Stale contacts used to be the only way onto this list, so an account whose only
+      // outstanding work was passages of its notes — every existing account, the day those
+      // shipped — would never have been swept unless it happened to import something.
+      const memoryUsers = await usersWithPendingMemoryWork(EMBED_BACKFILL_USERS, accountCanEmbed).catch(
+        reportAndContinue({ where: "job.process-stalled.memory-users" }, [] as string[])
+      );
+      const staleUsers = [
+        ...new Set([...staleContactUsers.map((u) => u.userId), ...memoryUsers]),
+      ]
+        .slice(0, EMBED_BACKFILL_USERS)
+        .map((userId) => ({ userId }));
 
       const sweepDeadline = Date.now() + EMBED_SWEEP_BUDGET_MS;
       for (const { userId: staleUser } of staleUsers) {

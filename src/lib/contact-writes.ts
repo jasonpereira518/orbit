@@ -15,6 +15,8 @@ import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
+import { buildMemoryChunks, syncMemoryChunks } from "@/lib/memory-chunks";
+import { interactionTypeLabel } from "@/lib/interaction-types";
 import {
   contactIdentities,
   contactTags,
@@ -960,6 +962,30 @@ export async function logInteractionForUser(
 
   if ((input.rawNotes || input.aiSummary) && !options?.skipEmbedding) {
     await scheduleEmbeddingRebuild(userId, input.contactId);
+    // Index the note as passages, now, using the row and contact already in hand — no extra
+    // reads. Inline rather than left to the sweep because this is the path a person is
+    // waiting on (a typed note, a capture, an assistant's add_note), and a note that is not
+    // searchable until tomorrow's cron is not searchable when they ask about it tonight.
+    //
+    // Bulk paths pass `skipEmbedding` and are deliberately not indexed here: an import
+    // writing thousands of rows should not pay per row. `backfillMemoryChunks` sweeps them,
+    // along with all the history that predates this table.
+    //
+    // Never fatal. Failing to index a note must not fail writing it.
+    await syncMemoryChunks(userId, {
+      sourceKind: "interaction",
+      sourceId: row.id,
+      drafts: buildMemoryChunks({
+        text: input.rawNotes || input.aiSummary,
+        occurredAt: when,
+        kindLabel: interactionTypeLabel(row.interactionType),
+        contactId: input.contactId,
+        contactName: owned.preferredName || owned.fullName,
+        contactIds: [],
+      }),
+    }).catch((err) => {
+      console.warn("[memory-chunks] could not index interaction", row.id, err);
+    });
   }
 
   // Significant change: refresh stored person summary
