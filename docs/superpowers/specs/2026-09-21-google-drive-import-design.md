@@ -1,6 +1,6 @@
 # Google Drive import — design
 
-**Status:** design approved in conversation, Sep 21 2026. Not built.
+**Status:** design approved in conversation, Sep 21 2026. Implemented on `claude/google-drive-import`.
 **Builds on:** the `/imports` redesign (PR #238) — drop hero, sequential queue, import history + detail sheet.
 
 ## What it is
@@ -35,9 +35,12 @@ than capture — reminders.
 
 - Client loads the Picker (`apis.google.com/js/api.js` → `gapi.load("picker")`) lazily, only
   when the button is pressed.
-- A server action `getDrivePickerToken()` returns `{ accessToken, expiresAt }` from
-  `getValidAccessToken`, refusing unless the grant includes `drive.file`. With no Drive grant,
-  the button starts the incremental-consent OAuth first and comes back to `/imports`.
+- A server action `getDrivePickerToken()` returns `{ ok: true; accessToken }` from
+  `getValidAccessToken`, or `{ ok: false; reason; error? }` with `reason` one of
+  `"needs_consent"`, `"needs_reconnect"`, `"not_connected"`, `"error"` — distinct enough that
+  the three consent-shaped reasons all route to the same incremental-consent OAuth and only
+  `"error"` shows a toast. With no Drive grant, the button starts that OAuth first and comes
+  back to `/imports`.
 - Picker config: `DocsView` filtered to `application/vnd.google-apps.document` and
   `…presentation`, multi-select on, `setAppId(NEXT_PUBLIC_GOOGLE_APP_ID)` (must be the same GCP
   project as the OAuth client, or `drive.file` grants nothing), `setDeveloperKey(NEXT_PUBLIC_GOOGLE_PICKER_API_KEY)`.
@@ -66,20 +69,48 @@ notes", "Looks like a template"). Pure-tier smoke with a table of real-world fil
 ## 4. The import type and processor
 
 - `src/lib/drive-import-type.ts`: `DRIVE_IMPORT_TYPE = "drive_docs"` (mirrors `gmail-scan-type.ts`).
+  Alone in an import-free module, same reason as `gmail-scan-type.ts`: `import-job-dispatch.ts`
+  reads it at module scope in a cycle with the processors.
 - **Confirm** (`startDriveImport(files)`) creates the `imports` row and stages one
   `import_job_rows` row per file: `{ kind: "drive_file", fileId, name, mimeType, modifiedTime }`.
-  Cheap — nothing is fetched yet. `ImportJobRowPayload` gains that variant (types only).
+  Cheap — nothing is fetched yet. `ImportJobRowPayload` gains that variant (types only). It
+  returns an `ActionResult<{ importId; totalRows }>` rather than throwing — a message thrown
+  across a `"use server"` boundary is replaced by an opaque digest in production, so a
+  `UserFacingError`'s own sentence only survives the trip as data. The client-side runner
+  unwraps it and re-throws locally so the rest of the import UI sees the same errors as every
+  other kind.
 - **`runDriveImportJob`** in `src/lib/drive-import-processor.ts`:
   - small chunk (~4 rows; each is a fetch + a ~60 s parse), wall-clock budget,
-    `scheduleContinuation` through `/api/imports/[id]/continue`;
+    `scheduleContinuation` through `/api/imports/[id]/continue`. A row never starts with under
+    90 s of the function's 300 s ceiling left — a read-plus-parse that started with less could
+    run past the limit mid-write; progress is saved after every row rather than per chunk, and
+    a row already marked finished is never overwritten, so a resumed run can't redo (or
+    re-charge AI for) a doc it already read;
   - registered in `RESUMABLE_IMPORT_TYPES` and the `runImportJobById` dispatch, so the
     process-stalled cron and admin retry pick it up.
 - Per row:
   1. `files.export(fileId, "text/plain")` — works for both Docs and Slides. Empty text →
      row `skipped` ("Nothing written in this one").
-  2. `runCaptureParse(userId, text, hints)` with **the doc's `modifiedTime` as the date anchor**
-     (`anchorBasis: "upload"`). Without this, "next Tuesday" in a 2024 doc resolves against today.
-  3. Write people, one interaction, and reminders through the same primitives capture uses.
+  2. **Already-imported check**, before spending an AI call: hash the exported text and look
+     for an earlier *finished Drive row* carrying the same hash. Only a Drive row counts — a
+     matching note batch saved through `/capture` from the same text is not recognised, since
+     the two paths don't share a dedupe key. A hash match skips straight to "Already brought
+     in — unchanged since" with no new interaction; an edited doc hashes differently and is
+     treated as new.
+  3. `runCaptureParse(userId, text, hints)` with **the doc's `modifiedTime` day as
+     `hints.eventDate`** (not a new `"upload"` anchor basis — `runCaptureParse` already
+     supports a date hint, and the resulting `anchorBasis` is `"hint"`). Without this, "next
+     Tuesday" in a 2024 doc resolves against today.
+  4. Write people, one interaction, and reminders through the same primitives capture uses —
+     `saveNoteBatch`, the same call `/capture` makes. Its own dedupe key
+     (`notes:<sourceHash>:<contactId>`) is what makes step 2's hash check correct: identical
+     text never double-logs even without it.
+- **Re-import dedupe rides capture's own key**, not a new `drive:<fileId>:<contactId>` external
+  id — the hash check above is what recognises "the same doc, unchanged" before parsing even
+  runs.
+- **Extra people per doc ride the row payload** (`payload.contactIds`), not extra rows —
+  `import-people.ts` unions `contact_id` with `payload->'contactIds'`, so the detail sheet's
+  people list covers everyone the doc named and "Rows" still counts docs, not people.
 - `import_type` is a text column and `stats` is jsonb — **no DDL, no `SCHEMA_VERSION` bump.**
 - Requires an AI key (`ai-access.ts`). Without one, the button explains that instead of
   starting.
@@ -95,29 +126,38 @@ notes", "Looks like a template"). Pure-tier smoke with a table of real-world fil
   (same `fileId` in the payload, `rowIndex` past the staged range). The people list then works
   unchanged; the rows count reports docs, not rows, for `drive_docs`.
 - **Interaction** — one per person per doc, type `meeting`, dated from the parse (falling back to
-  `modifiedTime`), `externalId = drive:<fileId>:<contactId>` per the `external-id.ts` contract, so
-  re-importing the same doc updates rather than duplicates.
+  `modifiedTime`), saved through `saveNoteBatch` under its own key
+  (`notes:<sourceHash>:<contactId>`) rather than a new `drive:<fileId>:<contactId>` external id
+  — see §4. Re-importing an unchanged doc is caught before this by the hash check; an edited
+  doc saves a new batch.
 - **Reminders — stricter than capture:**
-  1. **Future-dated only.** A commitment whose due date has passed never becomes a reminder.
+  1. **Future-dated only.** A commitment whose due date has passed never becomes a reminder —
+     `saveNoteBatch`'s one follow-up per person, due `anchor + followUpDays`, is turned off
+     when that date has already passed. Without this an old doc would generate a
+     follow-up that's overdue the moment it's created.
   2. **Explicit dates only.** `origin === "explicit"`, a non-null `rawDatePhrase`,
      `dateBasis !== "vague"`, and not `yearInferred` — no reminder from "soon" or an implied
      next step.
   3. **At most 3 per document**, highest `confidenceScore` first.
   4. **A past-dated commitment that looks important is flagged, not created.** "Looks important"
-     = explicit, `dateBasis === "absolute"`, `confidenceScore >= 0.85`, and due within the last
-     30 days. Flags are stored on the import (`stats.flaggedCommitments`, capped at 20: title,
-     person, due date, source excerpt, doc name) and shown in the import's detail sheet under
-     **Worth a look**, each with a **Make a reminder** button that creates it due today.
-     Nothing is written for a flag the person ignores.
+     = explicit, `dateBasis === "absolute"`, `confidenceScore >= 85` (capture's 0–100 scale —
+     see `EXPLICIT_AUTO_TICK_CONFIDENCE`), and due within the last 30 days. Flags are stored on
+     the import (`stats.flaggedCommitments`, capped at 20: title, person, due date, source
+     excerpt, doc name) and shown in the import's detail sheet under **Worth a look**, each with
+     a **Make a reminder** button that creates it due today. Nothing is written for a flag the
+     person ignores.
   - Existing (contactId, description) de-dupe still applies.
-  - The 0.85 / 30-day thresholds are starting values; `eval-ai.ts` is the gate for tuning them.
+  - The 85 / 30-day thresholds are starting values; `eval-ai.ts` is the gate for tuning them.
 
 ## 6. UI
 
 - Third button on the drop hero; hidden when the Picker env vars are unset.
-- Picked files enter the existing queue card as a `drive_docs` step: one row per file with its
-  triage `why`, likely ones pre-ticked. Runs through the same sequential queue, progress and
-  single summary toast.
+- **Picked files get their own card** (`DriveImportCard`), in the queue card's slot, rather than
+  entering the file queue — the queue's vocabulary is file detection (`ImportTarget`), and a
+  Drive pick is not a file. One row per file with its triage `why`, likely ones pre-ticked; a
+  single "Import N files" button starts the whole pick as one `drive_docs` job, with progress
+  shown through the page's standalone `ImportProgress` (the same bar every other kind uses)
+  rather than the queue's own.
 - History: new label + icon in `import-sources.ts` / `SOURCE_ICON` (`smoke-import-sources`
   fails until they exist). `summarizeImport` chips: "N docs read · N people · N meetings logged
   · N reminders · N to look at".
