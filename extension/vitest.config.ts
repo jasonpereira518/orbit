@@ -18,5 +18,17 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["test/**/*.test.ts"],
+    // DOM tests parse real captured pages; happy-dom must never try to fetch
+    // their stylesheets and scripts from the network.
+    environmentOptions: {
+      happyDOM: {
+        settings: {
+          disableCSSFileLoading: true,
+          disableJavaScriptFileLoading: true,
+          disableIframePageLoading: true,
+          handleDisabledFileLoadingAsSuccess: true,
+        },
+      },
+    },
   },
 });
