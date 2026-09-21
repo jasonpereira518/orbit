@@ -27,3 +27,29 @@ export function initials(name: string | null | undefined): string {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
+
+/**
+ * `relativeTime`, short enough for a narrow column: "5 mo", "3 wk", "2 d".
+ * The "Recently" band wrapped "5 months ago" onto two lines in its date column.
+ */
+export function shortAgo(iso: string | null, now = Date.now()): string | null {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+  const days = Math.round((now - then) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days < 14) return `${days} d`;
+  if (days < 60) return `${Math.round(days / 7)} wk`;
+  if (days < 365) return `${Math.round(days / 30)} mo`;
+  return `${Math.floor(days / 365)} yr`;
+}
+
+/**
+ * An interaction's type for display. Prefers the server's label; an older
+ * server sends only the code, and "reach_out" must never reach the screen.
+ */
+export function interactionLabel(type: string, label?: string): string {
+  if (label) return label;
+  const words = type.replace(/[_-]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "Interaction";
+}

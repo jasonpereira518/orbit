@@ -15,6 +15,8 @@ function degradedCaption(reason: StartersDegradedReason | null | undefined): str
       return "couldn't reach AI right now";
     case "no_api_key":
       return "AI features are off";
+    case "plan":
+      return "AI lines are in Pro";
     case "no_signal":
     default:
       return "from your notes";
@@ -98,6 +100,7 @@ export function StarterList({
   // titles per call site — don't "fix" the difference by merging them.
   title = "What to say",
   onLog,
+  onUnlock,
   limit = 2,
 }: {
   starters: ConversationStarter[];
@@ -106,6 +109,8 @@ export function StarterList({
   degradedReason?: StartersDegradedReason | null;
   title?: string;
   onLog?: (text: string) => void;
+  /** Shown only when the reason is `plan`: records the interest, opens pricing. */
+  onUnlock?: () => void;
   limit?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -117,14 +122,24 @@ export function StarterList({
   return (
     <div>
       <div className="mb-1.5">
-        <MicroLabel>
-          {title}
-          {degraded && !loading ? (
-            <span className="text-[var(--muted-foreground)]">
-              {` · ${degradedCaption(degradedReason)}`}
-            </span>
+        <div className="flex items-baseline justify-between gap-2">
+          <MicroLabel>
+            {title}
+            {degraded && !loading ? (
+              <span className="text-[var(--muted-foreground)]">
+                {` · ${degradedCaption(degradedReason)}`}
+              </span>
+            ) : null}
+          </MicroLabel>
+          {degradedReason === "plan" && onUnlock && !loading ? (
+            <button
+              onClick={onUnlock}
+              className="shrink-0 text-[11px] text-[var(--primary)] hover:underline"
+            >
+              See plans
+            </button>
           ) : null}
-        </MicroLabel>
+        </div>
         <div className="mt-1 h-px w-full overflow-hidden bg-[var(--border)]">
           <div
             className={cn(

@@ -25,8 +25,9 @@ import type { ContactSnapshot, PageContext } from "@contract";
 import type { OrbitApi } from "@/lib/api";
 import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
+import { unlockFeature } from "@/lib/unlock";
 import { cn } from "@/lib/cn";
-import { relativeTime } from "@/lib/format";
+import { interactionLabel, relativeTime, shortAgo } from "@/lib/format";
 import { StarterList } from "../components/StarterList";
 import { Button, Chip, Meta, MicroLabel, Section } from "../components/ui";
 import type { PanelState } from "../state/usePanel";
@@ -469,11 +470,12 @@ export function KnownContactView({
           {contact.recentInteractions.length > 0
             ? contact.recentInteractions.slice(0, 3).map((interaction) => (
                 <div key={interaction.id} className="flex gap-2 py-0.5">
-                  <Meta className="w-[52px] shrink-0 pt-[1px]">
-                    {relativeTime(interaction.interactionDate) ?? "—"}
+                  <Meta className="w-[40px] shrink-0 whitespace-nowrap pt-[1px] tabular-nums">
+                    {shortAgo(interaction.interactionDate) ?? "—"}
                   </Meta>
                   <p className="min-w-0 flex-1 line-clamp-2 text-[13px] leading-[18px] text-[var(--muted-foreground)]">
-                    {interaction.summary ?? interaction.interactionType}
+                    {interaction.summary ??
+                      interactionLabel(interaction.interactionType, interaction.typeLabel)}
                   </p>
                 </div>
               ))
@@ -487,6 +489,7 @@ export function KnownContactView({
             loading={state.startersLoading}
             degraded={state.startersDegraded}
             degradedReason={state.startersDegradedReason}
+            onUnlock={() => void unlockFeature(api, "starters")}
             onLog={(text) => void logNote(`Sent: ${text}`, "reach_out")}
           />
         </Section>

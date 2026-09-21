@@ -10,6 +10,7 @@ import type {
 import { ApiError, createApi } from "@/lib/api";
 import { browser } from "@/lib/browser";
 import { shouldAccept, targetKey } from "@/lib/intents";
+import { startersPolicy } from "./starters-policy";
 import { readActivePage, type PageReadReason, type PageReadResult } from "@/lib/page";
 import { useSession } from "./useSession";
 
@@ -216,6 +217,8 @@ export function usePanel() {
       if (controller.signal.aborted) return;
       lastResolvedRef.current = { url: page.url, resolved };
 
+      const { fetchAi: aiStarters, reason: starterBlocker } = startersPolicy(me);
+
       setState((s) => ({
         ...s,
         phase: "ready",
@@ -224,14 +227,13 @@ export function usePanel() {
         resolving: false,
         starters: resolved.startersSeed,
         // Only `loadStarters` (below) can confirm a *real* AI degradation
-        // reason; but absent an AI key at all, it's never called, so without
-        // this the panel would silently show undegraded seed starters with no
-        // "from your notes" credit and no explanation.
-        startersDegraded: !me.capabilities.hasAiKey,
-        startersDegradedReason: me.capabilities.hasAiKey ? null : "no_api_key",
+        // reason; when it is never called, say why here, or the panel shows
+        // seed starters with no credit and no explanation.
+        startersDegraded: !aiStarters,
+        startersDegradedReason: aiStarters ? null : starterBlocker,
       }));
 
-      if (me.capabilities.hasAiKey) {
+      if (aiStarters) {
         void loadStarters(page, resolved.contact?.id ?? null);
       }
     } catch (error) {

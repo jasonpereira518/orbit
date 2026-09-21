@@ -26,7 +26,11 @@ import type {
  * harness installs a typed fake there instead of stubbing `globalThis.chrome`. */
 import { installBrowser } from "@/lib/browser";
 import { createFakeBrowser } from "./fake-browser";
-installBrowser(createFakeBrowser());
+const fakeBrowser = createFakeBrowser();
+installBrowser(fakeBrowser);
+// Exposed so a CDP check can assert what a click actually did (e.g. which URL
+// "See plans" opened), not merely that the button exists.
+(window as unknown as { __fakeBrowserLog: unknown }).__fakeBrowserLog = fakeBrowser.log;
 
 // Deliberately NOT importing App: it reaches usePanel -> Clerk, which throws
 // outside a real extension. Every view below is imported directly instead.
@@ -359,6 +363,26 @@ function States() {
           contact={rich}
           page={page()}
           state={changed}
+          api={api}
+          onChanged={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Known contact — free plan" note="AI lines locked, heuristics shown">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={page()} />
+        <VerdictZone>
+          <OrbitGlyph tier="inner" size={16} />
+          <span style={{ flex: 1 }}>Inner orbit · last spoke 5 months ago</span>
+        </VerdictZone>
+        <KnownContactView
+          contact={contact({ openReminders: [], notesPreview: null, tags: [] })}
+          page={page()}
+          state={panelState({
+            starters: [starters[0]],
+            startersDegraded: true,
+            startersDegradedReason: "plan",
+          })}
           api={api}
           onChanged={() => {}}
         />
