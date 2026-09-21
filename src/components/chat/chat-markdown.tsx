@@ -4,15 +4,34 @@ import { Children, memo, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 
 /** Soften common model output where list items are jammed onto one line. */
-function normalizeChatMarkdown(text: string) {
+function normalizeProse(text: string) {
   return text
     .replace(/(\S)\s+(\d+)\.\s+(\*\*|__)/g, "$1\n\n$2. $3")
     .replace(/(\S)\s+[-*]\s+(\*\*|__)/g, "$1\n\n- $2")
     .replace(/([.:;!?])\s+(\d+)\.\s+/g, "$1\n\n$2. ")
     .replace(/([.:;!?])\s+[-*]\s+/g, "$1\n\n- ");
+}
+
+/**
+ * Runs of table rows — consecutive lines that start with `|`.
+ *
+ * The list-fixing regexes above look for "a sentence, then `1.` or `- `" anywhere in the text,
+ * which is exactly what a table cell like "Q1. **Plan**" or "Met - follow up" looks like. Left to
+ * them, a cell is split onto its own paragraph and the table stops being one. So table blocks are
+ * carved out first and passed through untouched. The capture group makes `split` keep them, at
+ * the odd indices.
+ */
+const TABLE_BLOCK = /((?:^[ \t]*\|[^\n]*(?:\n|$))+)/m;
+
+function normalizeChatMarkdown(text: string) {
+  return text
+    .split(TABLE_BLOCK)
+    .map((part, i) => (i % 2 === 1 ? part : normalizeProse(part)))
+    .join("");
 }
 
 /** A person the answer may name, and where their page is. */
@@ -87,6 +106,27 @@ function buildComponents(matcher: NameMatcher | null): Components {
       <ol className="mb-2 list-decimal space-y-1 pl-4 last:mb-0">{children}</ol>
     ),
     li: ({ children }) => <li className="leading-relaxed">{linkNames(children, matcher)}</li>,
+    // GitHub-style tables (remark-gfm). The wrapper is what scrolls: a wide table must scroll
+    // sideways inside the answer rather than stretch the whole chat column, which on a phone is
+    // the difference between a readable answer and a page that scrolls in two directions.
+    table: ({ children }) => (
+      <div className="mb-2 max-w-full overflow-x-auto rounded-lg border border-border/60 last:mb-0">
+        <table className="min-w-full border-collapse text-left text-xs">{children}</table>
+      </div>
+    ),
+    thead: ({ children }) => <thead className="bg-muted/60">{children}</thead>,
+    tr: ({ children }) => <tr className="border-b border-border/50 last:border-b-0">{children}</tr>,
+    th: ({ children }) => (
+      <th className="whitespace-nowrap px-2.5 py-1.5 font-medium text-foreground">{children}</th>
+    ),
+    td: ({ children }) => (
+      <td className="px-2.5 py-1.5 align-top">{linkNames(children, matcher)}</td>
+    ),
+    del: ({ children }) => <del className="text-muted-foreground line-through">{children}</del>,
+    // A task list's checkbox is a picture of state, not a control: the answer is read-only.
+    input: ({ checked }) => (
+      <input type="checkbox" checked={Boolean(checked)} disabled readOnly className="mr-1.5 align-middle" />
+    ),
     a: ({ href, children }) => (
       <a
         href={href}
@@ -117,6 +157,8 @@ function buildComponents(matcher: NameMatcher | null): Components {
   };
 }
 
+const REMARK_PLUGINS = [remarkGfm];
+
 /** The no-people set is shared, so the common case never rebuilds it. */
 const PLAIN_COMPONENTS = buildComponents(null);
 
@@ -143,7 +185,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({
 
   return (
     <div className={cn("chat-markdown", className)}>
-      <ReactMarkdown components={components}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
         {normalizeChatMarkdown(children)}
       </ReactMarkdown>
     </div>

@@ -23,6 +23,7 @@ import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { CaptureJobWatcher } from "@/components/capture/capture-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { CommandPalette } from "@/components/layout/command-palette";
+import { HiddenSurfacesProvider } from "@/components/layout/hidden-surfaces";
 import { Button } from "@/components/ui/button";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
 import { Search } from "lucide-react";
@@ -256,7 +257,7 @@ export function AppShell({
                 isConstellation && "py-4 md:py-5",
               )}
             >
-              {children}
+              <HiddenSurfacesProvider value={hiddenSet}>{children}</HiddenSurfacesProvider>
             </div>
 
             {showAskBar && <FloatingAskBar />}
