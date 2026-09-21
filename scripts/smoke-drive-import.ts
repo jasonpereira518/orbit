@@ -5,7 +5,9 @@
  * capture's own save; reminders obey the strict rules and a flag lands on the import; an
  * unchanged doc re-imported is skipped, not double-logged; a vanished file is skipped with
  * a plain reason and the job still completes; a missing AI key stops the job; a time budget
- * hand-off resumes where it stopped.
+ * hand-off resumes where it stopped, and no row starts without room to finish; a batch left
+ * half-written by a killed save is re-saved rather than trusted; a row another runner already
+ * finished is never overwritten or double-counted.
  *
  * Run: npx tsx scripts/smoke-drive-import.ts
  */
@@ -25,6 +27,8 @@ import {
 import { DriveFileUnavailableError } from "../src/lib/drive";
 import { DRIVE_MIME } from "../src/lib/imports/drive-triage";
 import { saveNoteBatch } from "../src/lib/note-batch-save";
+import { emptyNoteBatchResult } from "../src/lib/note-batches";
+import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import type { CaptureParseResult, SuggestedReminderPreview } from "../src/lib/capture/types";
 import { countImportPeople } from "../src/lib/imports/import-people";
 
@@ -97,6 +101,8 @@ const DOCS: Record<string, { text: string; names: string[]; reminders: Suggested
   b: { text: "Coffee with Lena Okafor.", names: ["Lena Okafor"], reminders: [] },
   // Never imported before the no-key scenario, so the unchanged-doc dedupe can't skip it.
   c: { text: "Call with Sam Rivera.", names: ["Sam Rivera"], reminders: [] },
+  d: { text: "Lunch with Omar Haddad.", names: ["Omar Haddad"], reminders: [] },
+  e: { text: "Drinks with Nia Brooks.", names: ["Nia Brooks"], reminders: [] },
   gone: "gone",
 };
 
@@ -216,6 +222,54 @@ async function main() {
     where: and(eq(importJobRows.importId, later.importId), inArray(importJobRows.status, ["pending"])),
   });
   check("…and left the row pending", still.length === 1);
+
+  // Row reserve: 200 s in, a row would have started under the old 270 s budget and been
+  // killed at the 300 s ceiling mid-parse. 215 s leaves under 90 s, so none starts.
+  const tight = await stageDriveImport(USER, [file("b")]);
+  let calls = 0;
+  const d4 = deps({
+    now: () => new Date(NOW.getTime() + (calls++ === 0 ? 0 : calls === 2 ? 200_000 : 215_000)),
+  });
+  await runDriveImportJob(tight.importId, d4);
+  check("under the row reserve → handed off", d4.continued.includes(tight.importId));
+  const tightRows = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, tight.importId) });
+  check("…without starting the row", tightRows.length === 1 && tightRows[0].status === "pending", tightRows[0]?.status);
+
+  // A save killed part-way leaves a `saved` batch with no participants. That is not proof
+  // the doc was brought in: it is re-saved, and counts as read.
+  const e = DOCS.e as { text: string };
+  await db.insert(noteBatches).values({
+    userId: USER, sourceHash: hashSourceNote(e.text), sourceText: e.text, entryPoint: "capture",
+    anchorDate: new Date("2026-09-01T12:00:00Z"), anchorBasis: "hint", status: "saved",
+    result: emptyNoteBatchResult(), inputSources: ["file"],
+  });
+  const half = await stageDriveImport(USER, [file("e")]);
+  await runDriveImportJob(half.importId, deps());
+  const hImp = await db.query.imports.findFirst({ where: eq(imports.id, half.importId) });
+  check("a half-written batch is not trusted", hImp?.stats?.docsRead === 1 && !hImp?.stats?.docsAlreadyImported, JSON.stringify(hImp?.stats));
+  const [hRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, half.importId) });
+  const hIds = (hRow.payload as { contactIds?: string[] }).contactIds ?? [];
+  check("…the row is done with its person", hRow.status === "done" && hIds.length === 1 && hRow.contactId === hIds[0], JSON.stringify(hRow));
+  const nia = await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Nia Brooks")) });
+  check("…and the person exists once", nia.length === 1, String(nia.length));
+
+  // A second runner (the stall cron) finished this row while this one was reading it.
+  const raced = await stageDriveImport(USER, [file("d")]);
+  const OTHER_RUNNER = "finished by the other runner";
+  await runDriveImportJob(raced.importId, deps({
+    exportText: async (_t, fileId) => {
+      await db
+        .update(importJobRows)
+        .set({ status: "done", errorMessage: OTHER_RUNNER })
+        .where(eq(importJobRows.importId, raced.importId));
+      return (DOCS[fileId] as { text: string }).text;
+    },
+  }));
+  const [rRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, raced.importId) });
+  check("a finished row is not overwritten", rRow.status === "done" && rRow.errorMessage === OTHER_RUNNER && !rRow.contactId, JSON.stringify(rRow));
+  const rImp = await db.query.imports.findFirst({ where: eq(imports.id, raced.importId) });
+  check("…nor counted twice", !rImp?.stats?.docsRead && (rImp?.rowsProcessed ?? 0) === 0, JSON.stringify([rImp?.rowsProcessed, rImp?.stats]));
+  check("…and the job still completes", rImp?.status === "completed", rImp?.status);
 
   await reset();
   console.log("smoke-drive-import: all checks passed");

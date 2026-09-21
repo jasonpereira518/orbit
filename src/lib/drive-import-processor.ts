@@ -12,7 +12,7 @@
  * reminders, the generic follow-up is dropped once it would already be overdue, and a
  * recently-passed, high-confidence date is only flagged on the import.
  */
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   imports,
@@ -52,8 +52,15 @@ export { DRIVE_IMPORT_TYPE };
 export const MAX_DRIVE_FILES_PER_IMPORT = 25;
 /** Each row is an export plus a multi-call parse (~60 s for a busy doc), so a few per pass. */
 const CHUNK_SIZE = 4;
-/** Same headroom as the other runners: stay under the 300 s ceiling with room to hand off. */
-const TIME_BUDGET_MS = 4.5 * 60 * 1000;
+/** The continue route's `maxDuration` (and the cron's): the platform kills the run here. */
+const MAX_DURATION_MS = 300 * 1000;
+/**
+ * A row is only started with at least this much of the ceiling left: one busy doc's parse
+ * alone is ~60 s, and a row killed mid-save is exactly what resuming has to avoid.
+ */
+const ROW_RESERVE_MS = 90 * 1000;
+/** Past this, no new row starts and the job hands off to a fresh invocation. */
+const START_ROW_DEADLINE_MS = MAX_DURATION_MS - ROW_RESERVE_MS;
 const MAX_STORED_FLAGS = 20;
 
 /** Per-row reasons, stored on `import_job_rows.error_message` and shown in the detail sheet. */
@@ -166,7 +173,16 @@ function acceptEveryone(
   return { people, reminders: { checked: keep, overrides: {} } };
 }
 
-/** A saved batch for exactly this text, from any earlier import or capture. */
+/**
+ * A finished save of exactly this text, from any earlier import or capture.
+ *
+ * `saveNoteBatch` inserts its batch row as `saved` with an empty `result` BEFORE writing
+ * anyone, and fills `result` only at the end. So a save killed or thrown part-way leaves a
+ * `saved` batch that proves nothing; only one that recorded its participants counts. Anything
+ * else is re-saved — interactions and reminders are idempotent on their own keys, and the
+ * re-parse's duplicate check merges into whoever the partial save created, so the only cost
+ * is one more batch row.
+ */
 async function priorBatchFor(userId: string, sourceHash: string) {
   const db = await getDb();
   return (
@@ -175,6 +191,7 @@ async function priorBatchFor(userId: string, sourceHash: string) {
         eq(noteBatches.userId, userId),
         eq(noteBatches.sourceHash, sourceHash),
         eq(noteBatches.status, "saved"),
+        sql`jsonb_array_length(coalesce(${noteBatches.result}->'participants', '[]'::jsonb)) > 0`,
       ),
       orderBy: [desc(noteBatches.createdAt)],
       columns: { result: true },
@@ -306,7 +323,7 @@ export async function runDriveImportJob(
 
   let accessToken: string;
   try {
-    accessToken = await deps.getAccessToken(userId, { minValidityMs: TIME_BUDGET_MS + 60_000 });
+    accessToken = await deps.getAccessToken(userId, { minValidityMs: MAX_DURATION_MS + 60_000 });
   } catch (err) {
     await failImport(importId, err);
     return;
@@ -314,7 +331,7 @@ export async function runDriveImportJob(
 
   try {
     for (;;) {
-      if (deps.now().getTime() - jobStart > TIME_BUDGET_MS) {
+      if (deps.now().getTime() - jobStart > START_ROW_DEADLINE_MS) {
         await deps.continueLater(importId);
         return;
       }
@@ -341,11 +358,18 @@ export async function runDriveImportJob(
           .where(eq(imports.id, importId));
 
       for (const row of pending) {
-        if (deps.now().getTime() - jobStart > TIME_BUDGET_MS) break;
+        if (deps.now().getTime() - jobStart > START_ROW_DEADLINE_MS) break;
         const payload = row.payload;
         if (!isDriveFileRow(payload)) {
-          await db.update(importJobRows).set({ status: "skipped", updatedAt: new Date() }).where(eq(importJobRows.id, row.id));
-          rowsProcessed++;
+          const claimed = await db
+            .update(importJobRows)
+            .set({ status: "skipped", updatedAt: new Date() })
+            .where(and(eq(importJobRows.id, row.id), eq(importJobRows.status, "pending")))
+            .returning();
+          if (claimed.length) {
+            rowsProcessed++;
+            await flushProgress();
+          }
           continue;
         }
 
@@ -364,18 +388,10 @@ export async function runDriveImportJob(
           outcome = { status: "skipped", reason: DRIVE_ROW_COPY.unreadable };
         }
 
-        if (outcome.status === "done") {
-          stats.docsRead = (stats.docsRead ?? 0) + 1;
-          stats.remindersCreated = (stats.remindersCreated ?? 0) + outcome.reminders;
-          stats.flaggedCommitments = [...(stats.flaggedCommitments ?? []), ...outcome.flags].slice(0, MAX_STORED_FLAGS);
-          contactsCreated += outcome.created;
-          contactsUpdated += outcome.updated;
-        } else if (outcome.already) {
-          stats.docsAlreadyImported = (stats.docsAlreadyImported ?? 0) + 1;
-        }
-
         const contactIds = outcome.status === "done" ? outcome.contactIds : (outcome.contactIds ?? []);
-        await db
+        // Guarded on `pending`: if the stall cron started a second runner that finished this
+        // row first, its result stands and this one neither overwrites it nor counts it.
+        const claimed = await db
           .update(importJobRows)
           .set({
             // An unchanged re-import is recorded as done: it touched these people, and the
@@ -386,11 +402,24 @@ export async function runDriveImportJob(
             errorMessage: outcome.status === "skipped" ? truncateStoredError(outcome.reason) : null,
             updatedAt: new Date(),
           })
-          .where(eq(importJobRows.id, row.id));
-        rowsProcessed++;
-      }
+          .where(and(eq(importJobRows.id, row.id), eq(importJobRows.status, "pending")))
+          .returning();
+        if (!claimed.length) continue;
 
-      await flushProgress();
+        if (outcome.status === "done") {
+          stats.docsRead = (stats.docsRead ?? 0) + 1;
+          stats.remindersCreated = (stats.remindersCreated ?? 0) + outcome.reminders;
+          stats.flaggedCommitments = [...(stats.flaggedCommitments ?? []), ...outcome.flags].slice(0, MAX_STORED_FLAGS);
+          contactsCreated += outcome.created;
+          contactsUpdated += outcome.updated;
+        } else if (outcome.already) {
+          stats.docsAlreadyImported = (stats.docsAlreadyImported ?? 0) + 1;
+        }
+        rowsProcessed++;
+        // Per row, not per chunk: this bumps `imports.updated_at`, which the stall cron reads.
+        // A chunk of busy docs can outlast its 3-minute threshold and invite a second runner.
+        await flushProgress();
+      }
     }
 
     await db
