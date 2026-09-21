@@ -17,9 +17,12 @@
  * it is now, so the regex table is the primary path and the stored code is an optimisation
  * over it — precise where we had the error instance in hand, unnecessary everywhere else.
  *
- * Pure and import-free on purpose: `account-alerts.ts` documents itself as having no database
- * import directly or transitively, and the history list is a client component.
+ * Pure and import-free on purpose (bar the equally import-free Drive row copy):
+ * `account-alerts.ts` documents itself as having no database import directly or transitively,
+ * and the history list is a client component.
  */
+
+import { isDriveRowCopy } from "@/lib/imports/drive-row-copy";
 
 export type ImportFailureCode =
   | "contact_limit"
@@ -115,7 +118,9 @@ const PATTERNS: { code: ImportFailureCode; test: RegExp }[] = [
   { code: "stalled", test: /stalled \d+ times|gave up/i },
   {
     code: "ai_key",
-    test: /\bAI (provider|key|model)\b/i,
+    // "AI provider/key/model" (the Drive key-problem copy) and every AI gate refusal in
+    // `ai-access-copy.ts`, which say "AI API key" or "own API key".
+    test: /\bAI (provider|key|model|API key)\b|\bown API key\b/i,
   },
   {
     code: "needs_reconnect",
@@ -183,6 +188,9 @@ export function classifyImportError(
 export function classifyImportFailure(err: unknown): ImportFailureCode {
   if (err instanceof Error && err.name === "ReauthRequiredError")
     return "needs_reconnect";
+  // The AI gate said no (no key, allowance used, managed AI down). By name, not instanceof,
+  // to stay import-free — and because its copy is prose a regex could drift away from.
+  if (err instanceof Error && err.name === "AiAccessError") return "ai_key";
 
   const code = (err as { code?: unknown } | null)?.code;
   if (typeof code === "string") {
@@ -215,6 +223,24 @@ export function importFailureLine(
 ): string {
   const copy = describeImportFailure(code ?? classifyImportError(raw));
   return copy.next ? `${copy.cause} — ${copy.next}` : copy.cause;
+}
+
+/**
+ * One skipped or failed row's reason, for the detail sheet.
+ *
+ * A reason Orbit wrote itself (the Drive row copy) is already a sentence for a person and
+ * passes through unchanged; anything else is stored driver text and goes through the
+ * classifier like an import-level failure.
+ */
+export function importRowProblemLine(
+  status: "failed" | "skipped",
+  raw: string | null | undefined,
+): string {
+  if (raw && isDriveRowCopy(raw)) return raw.trim();
+  if (raw) return importFailureLine(raw);
+  return status === "skipped"
+    ? "Nothing in this row to attach to anyone"
+    : "Orbit couldn’t save this row";
 }
 
 /**

@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
 import { getDb, rowsOf } from "@/db";
-import { importFailureLine } from "@/lib/import-errors";
+import { importRowProblemLine } from "@/lib/import-errors";
 import {
   countImportPeople,
   listImportPeople,
@@ -407,11 +407,11 @@ export async function getImportDetail(
     status: r.status === "failed" ? "failed" : "skipped",
     who: nameFromRowPayload(r.payload),
     // Mapped here rather than in the client so a raw driver string never crosses the wire.
-    reason: r.errorMessage
-      ? importFailureLine(r.errorMessage)
-      : r.status === "skipped"
-        ? "Nothing in this row to attach to anyone"
-        : "Orbit couldn’t save this row",
+    // Orbit's own row copy (a Drive doc's skip reason) passes through as written.
+    reason: importRowProblemLine(
+      r.status === "failed" ? "failed" : "skipped",
+      r.errorMessage,
+    ),
   }));
 
   const totalProblems = counts.failed + counts.skipped;
