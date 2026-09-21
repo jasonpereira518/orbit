@@ -376,7 +376,8 @@ function completionMessage(
     ? []
     : readsFiles
       ? [
-          `${status.rowsProcessed} file${status.rowsProcessed === 1 ? "" : "s"} read`,
+          // Docs actually read, not rows processed: a skipped or unchanged doc wasn't.
+          `${status.docsRead} file${status.docsRead === 1 ? "" : "s"} read`,
           `${status.contactsCreated} created`,
           `${status.contactsUpdated} updated`,
         ]

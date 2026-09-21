@@ -17,7 +17,7 @@
  */
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ImportHistory } from "../src/components/imports/import-history";
+import { ImportHistory, formatFlagDue } from "../src/components/imports/import-history";
 import type { ImportHistoryItem } from "../src/actions/imports";
 
 let failures = 0;
@@ -207,6 +207,12 @@ check(
 );
 check("flags what's worth a look", drive.includes("1 to look at"));
 check("...and never with the word “failed”", !/\bfailed\b/i.test(drive), "");
+
+console.log("Worth a look dates");
+const SEP_21 = new Date("2026-09-21T12:00:00Z");
+check("a due date reads as a day, not an ISO string", formatFlagDue("2026-09-01", SEP_21) === "Sep 1", formatFlagDue("2026-09-01", SEP_21));
+check("…read as a calendar day in any timezone", formatFlagDue("2026-09-30", SEP_21) === "Sep 30", formatFlagDue("2026-09-30", SEP_21));
+check("…with the year only when it isn't this one", formatFlagDue("2025-12-28", SEP_21) === "Dec 28, 2025", formatFlagDue("2025-12-28", SEP_21));
 
 console.log("Empty state");
 const empty = render([]);

@@ -314,6 +314,8 @@ export type ImportJobStatus = {
    * job, and a "completed" toast that never mentions them hides the loss.
    */
   failedRows: number;
+  /** Drive imports: docs actually read (skipped and unchanged ones excluded). */
+  docsRead: number;
 };
 
 /** One row's worth of trouble, named for the person rather than for the database. */
@@ -506,6 +508,7 @@ export async function getImportJobStatus(
     interactionsLogged: row.stats?.interactionsLogged ?? 0,
     remindersCreated: row.stats?.remindersCreated ?? 0,
     failedRows: row.stats?.failedRows ?? 0,
+    docsRead: row.stats?.docsRead ?? 0,
   };
 }
 

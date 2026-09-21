@@ -68,7 +68,6 @@ Signals, all from metadata:
   `X <> Y`, a date in the name.
 - Negative patterns: `template`, `resume`/`CV`, `invoice`, `budget`, `roadmap`, `spec`, `PRD`,
   `deck` (Slides named like a pitch).
-- Recency: edited in the last 12 months nudges up.
 - "Untitled document" → not pre-selected, `why` says the name gives nothing to go on.
 
 `likely` rows are pre-selected; `why` is one clause shown on the row ("Named like meeting
@@ -103,7 +102,7 @@ notes", "Looks like a template"). Pure-tier smoke with a table of real-world fil
      for an earlier *finished Drive row* carrying the same hash. Only a Drive row counts — a
      matching note batch saved through `/capture` from the same text is not recognised, since
      the two paths don't share a dedupe key. A hash match skips straight to "Already brought
-     in — unchanged since" with no new interaction; an edited doc hashes differently and is
+     in, and unchanged since then" with no new interaction; an edited doc hashes differently and is
      treated as new.
   3. `runCaptureParse(userId, text, hints)` with **the doc's `modifiedTime` day as
      `hints.eventDate`** (not a new `"upload"` anchor basis — `runCaptureParse` already
@@ -120,14 +119,26 @@ notes", "Looks like a template"). Pure-tier smoke with a table of real-world fil
   `import-people.ts` unions `contact_id` with `payload->'contactIds'`, so the detail sheet's
   people list covers everyone the doc named and "Rows" still counts docs, not people.
 - `import_type` is a text column and `stats` is jsonb — **no DDL, no `SCHEMA_VERSION` bump.**
-- Requires an AI key (`ai-access.ts`). Without one, the button explains that instead of
-  starting.
+- Requires an AI key (`ai-access.ts`). There is no pre-check: without one, the job fails at
+  the first doc with the AI gate's own sentence (`failImport` gets the `AiAccessError` itself,
+  classified `ai_key`), and the history row offers "Open AI settings". Only the parse call is
+  checked for a key problem — a save-step error is that doc's problem.
+- Staging validates what the browser sent: at most 25 entries counted before type filtering,
+  ids matching `^[A-Za-z0-9_-]+$`, names clipped to 500 characters, an unparseable
+  `modifiedTime` replaced by now.
+- Each export is capped at capture's own `CAPTURE_INPUT_MAX_CHARS` (100k). A row records an
+  attempt in its payload when a run starts reading it; one started twice without finishing is
+  skipped ("This one took too long to read") so a doc that kills the function can't loop.
+- The status is re-read before each row, so a cancel stops after the doc being read now.
+- On completion the runner kicks the embedding backfill once (capture's follow-on work).
+  Briefs are deliberately not regenerated — an AI call per contact.
 - Cap: **25 files per import.**
 
 ## 5. What gets written
 
-- **People** — through the duplicate index, so a person already in Orbit is merged, not
-  duplicated. They show up in the detail sheet's Added / Already in Orbit lists for free, since
+- **People** — merged only into the parse's own confident `suggestedMergeId`; with no review
+  step, a weaker lookalike is never merged unattended — the person is created and the
+  duplicate machinery flags the pair for review. They show up in the detail sheet's Added / Already in Orbit lists for free, since
   that list reads `import_job_rows.contact_id` (one row per doc; the sheet de-dupes per person).
   One doc usually names several people but a row holds one `contact_id`, so the processor
   records the first on the doc's row and inserts one extra `done` row per additional person
@@ -166,6 +177,8 @@ notes", "Looks like a template"). Pure-tier smoke with a table of real-world fil
   single "Import N files" button starts the whole pick as one `drive_docs` job, with progress
   shown through the page's standalone `ImportProgress` (the same bar every other kind uses)
   rather than the queue's own.
+- **Worth a look** dates read as days ("Sep 1"); the buttons all wait while one flag is busy;
+  flags are appended and dismissed in single SQL statements so a dismissal mid-run sticks.
 - History: new label + icon in `import-sources.ts` / `SOURCE_ICON` (`smoke-import-sources`
   fails until they exist). `summarizeImport` chips: "N docs read · N people · N meetings logged
   · N reminders · N to look at".
@@ -174,11 +187,18 @@ notes", "Looks like a template"). Pure-tier smoke with a table of real-world fil
 ## 7. Errors
 
 All through `import-errors.ts`, never raw text:
-- Grant revoked / `drive.file` missing → reconnect Google.
-- A file deleted or unshared between picking and processing (404/403) → row `skipped`,
-  "Orbit can’t open this file any more".
-- Export too large (Google caps export at 10 MB) → row `skipped`.
+- Grant revoked / `drive.file` missing, or a 401 from the export → the job fails as
+  `needs_reconnect` ("reconnect Google"), rows left pending.
+- 403 `rateLimitExceeded` / `userRateLimitExceeded` or a 429 → the row stays pending and the
+  job hands off to a later run; after 5 hand-offs for one row it is skipped as too busy.
+- 403 `appNotAuthorizedToFile` / `insufficientPermissions` / `insufficientFilePermissions` →
+  row `skipped`, "Orbit isn’t allowed to open this file — pick it again from Google Drive".
+- A file deleted or unshared between picking and processing (404, any other 403) → row
+  `skipped`, "Orbit can’t open this file any more".
+- Export too large (Google caps export at 10 MB, `exportSizeLimitExceeded`) → row `skipped`.
 - AI provider failures → the existing `AI_FAILURE_COPY` path.
+- Skipped rows' reasons are Orbit's own sentences (`drive-row-copy.ts`) and the detail sheet
+  shows them as written, never through the generic failure classifier.
 
 ## 8. Testing
 

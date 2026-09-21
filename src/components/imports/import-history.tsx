@@ -378,6 +378,22 @@ function ImportDetailBody({
 type Flag = NonNullable<ImportStats["flaggedCommitments"]>[number];
 
 /**
+ * "Sep 1" — a calendar day, so read in UTC (the ISO is a date, not an instant). The year is
+ * added only when it isn't this one.
+ */
+export function formatFlagDue(dueDateIso: string, now: Date = new Date()): string {
+  const d = new Date(`${dueDateIso.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return dueDateIso;
+  const sameYear = d.getUTCFullYear() === now.getUTCFullYear();
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    timeZone: "UTC",
+  });
+}
+
+/**
  * Past-due commitments a Drive doc mentioned, which `drive-reminder-rules.ts` deliberately
  * did not turn into a reminder on its own (the date has already passed). Making one here
  * dismisses the flag too — the flag's job was to surface the choice, not to survive it.
@@ -407,11 +423,19 @@ function WorthALook({
         dueDate: new Date().toISOString(),
         actionKind: f.actionKind,
       });
-      await dismissDriveFlag(importId, f.id);
-      setFlags((xs) => xs.filter((x) => x.id !== f.id));
-      toast.success("Reminder made for today");
     } catch (err) {
       toast.error(friendlyError(err, "Couldn’t make that reminder — try again"));
+      setBusyFlag(null);
+      return;
+    }
+    // The reminder exists now. Clearing the flag is housekeeping: if that part doesn't land,
+    // the flag still goes from this view, and the toast says what actually happened.
+    setFlags((xs) => xs.filter((x) => x.id !== f.id));
+    try {
+      await dismissDriveFlag(importId, f.id);
+      toast.success("Reminder made for today");
+    } catch {
+      toast.success("Reminder made for today — this one may show up here again later");
     } finally {
       setBusyFlag(null);
     }
@@ -444,7 +468,7 @@ function WorthALook({
           >
             <p className="font-medium">{f.title}</p>
             <p className="text-muted-foreground">
-              {f.personName ? `${f.personName} · ` : ""}was due {f.dueDateIso} ·{" "}
+              {f.personName ? `${f.personName} · ` : ""}was due {formatFlagDue(f.dueDateIso)} ·{" "}
               {f.docName}
             </p>
             <div className="mt-1.5 flex gap-2">
@@ -452,7 +476,8 @@ function WorthALook({
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={busyFlag === f.id}
+                // Every button waits while any one is busy: two requests at once would race.
+                disabled={busyFlag !== null}
                 onClick={() => remind(f)}
               >
                 Make a reminder
@@ -461,7 +486,7 @@ function WorthALook({
                 type="button"
                 size="sm"
                 variant="ghost"
-                disabled={busyFlag === f.id}
+                disabled={busyFlag !== null}
                 onClick={() => dismiss(f.id)}
               >
                 Dismiss
