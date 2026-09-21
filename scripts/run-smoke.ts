@@ -142,6 +142,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-note-parse-schema": "pure",
   "smoke-note-window": "pure",
   "smoke-memory-chunks": "pure",
+  "smoke-chat-depth": "pure",
+  "smoke-tool-loop": "pure",
   "smoke-ops-alerts": "pure",
   "smoke-outreach-sender": "pure",
   "smoke-parsers": "pure",
@@ -264,6 +266,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-tool-registry": "pglite",
   "smoke-memory-search": "pglite",
   "smoke-memory-embedding": "pglite",
+  "smoke-chat-gather": "pglite",
   "smoke-agent-sends": "pglite",
   "smoke-dashboard-aggregates": "pglite",
   "smoke-migration-guards": "pglite", // the pure half is here too: both guards belong in one place

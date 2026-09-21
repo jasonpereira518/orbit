@@ -123,6 +123,8 @@ export type ChatStepKind =
   | "recruiters"
   | "attached"
   | "read"
+  /** The research loop before a multi-step answer — one step, relabelled per lookup. */
+  | "gather"
   | "answer"
   | "verify";
 

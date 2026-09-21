@@ -106,7 +106,13 @@ async function main() {
     chatTools.every((t) => t.scope === "read"),
     chatTools.filter((t) => t.scope !== "read").map((t) => t.name).join(", ")
   );
-  check("chat still gets the read tools", chatTools.length === 6, String(chatTools.length));
+  check("chat gets the six shared read tools plus search_notes", chatTools.length === 7, String(chatTools.length));
+  check(
+    "search_notes is chat-only — free-text fan-out over notes is what MCP must never offer",
+    chatTools.some((t) => t.name === "search_notes") &&
+      !toolsFor(ORBIT_TOOLS, "mcp", ["read", "write"]).some((t) => t.name === "search_notes"),
+    chatTools.map((t) => t.name).join(", ")
+  );
 
   // --- the projection actually strips ----------------------------------------------------
 

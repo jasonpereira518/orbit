@@ -73,6 +73,11 @@ export const AI_OPERATIONS = {
   "chat.answer": { label: "Chat answers", tier: "user" },
   "chat.understand": { label: "Chat: understanding the question", tier: "fast", thinking: "minimal" },
   "chat.rerank": { label: "Chat: ranking results", tier: "fast", thinking: "minimal" },
+  // The research rounds before a multi-step answer: which lookups to make, not the answer
+  // itself. On the user's model, because a weak tool choice wastes the rounds it costs. No
+  // thinking level: this file only sets one where the eval showed it loses nothing, and this
+  // operation has not been through the eval yet.
+  "chat.gather": { label: "Chat: looking things up", tier: "user" },
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },
