@@ -61,6 +61,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-bins": "pure",
   "smoke-capture-file-drop": "pure",
   "smoke-cadence": "pure",
+  "smoke-chat-history-groups": "pure",
   "smoke-chat-mentions": "pure",
   "smoke-chat-pipeline": "pure",
   "smoke-chat-prompt": "pure",

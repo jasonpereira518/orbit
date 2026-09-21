@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useTransition,
@@ -57,7 +58,10 @@ import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { AnswerActions } from "@/components/chat/answer-actions";
+import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
+import type { ChatPerson } from "@/components/chat/chat-markdown";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -78,7 +82,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
-import { streamChat } from "@/lib/chat-stream-client";
+import { streamChat, type DoneInfo } from "@/lib/chat-stream-client";
 import { activeMentions } from "@/lib/chat-mentions";
 import { addMentionPick } from "@/lib/mentions/mention-picks";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
@@ -137,6 +141,12 @@ type AssistantMessage = {
   steps?: ChatStep[];
   /** Next questions derived from what retrieval found. Never model-generated. */
   followUps?: string[];
+  /**
+   * The contacts retrieval grounded this answer in. Gives a recommendation card its role and
+   * company, and tells the prose which names are safe to link. Not persisted, so a reloaded
+   * thread falls back to what the recommendation itself carries.
+   */
+  retrieved?: DoneInfo["retrieved"];
   /** Thumbs already on this answer, when it came back from a saved thread. */
   feedback?: "up" | "down" | null;
   /**
@@ -687,6 +697,7 @@ export function ChatPanel() {
                 id: info.messageId || assistantId,
                 streaming: false,
                 followUps: info.followUps ?? [],
+                retrieved: info.retrieved,
                 // Only a real message id means there is a row to rate.
                 persisted: Boolean(info.messageId),
               }));
@@ -880,7 +891,20 @@ export function ChatPanel() {
           the suggestion chips. The whole ancestor chain is bounded (app-shell `h-dvh` →
           `min-h-0 flex-1` → page `flex min-h-0 flex-1`), and ChatPanelSkeleton already sized
           itself this way — so this also removes the height jump when the panel swaps in. */}
-      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card">
+      <div className="flex min-h-0 w-full flex-1 flex-row overflow-hidden rounded-2xl border border-border/70 bg-card">
+        {/* From md up the history is a rail beside the conversation. Below that the header
+            keeps its dropdown (`md:hidden` on both of its controls), because on a phone the
+            conversation should have the full width. */}
+        <ChatHistoryRail
+          className="hidden md:flex"
+          threads={threads}
+          activeId={threadId}
+          busy={busy}
+          onSelect={(id) => void loadThread(id)}
+          onNew={startNewChat}
+          onDelete={removeThread}
+        />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
@@ -889,7 +913,7 @@ export function ChatPanel() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="shrink-0 text-muted-foreground"
+                  className="shrink-0 text-muted-foreground md:hidden"
                   aria-label="Chat history"
                 />
               }
@@ -955,7 +979,7 @@ export function ChatPanel() {
             type="button"
             variant="ghost"
             size="sm"
-            className="shrink-0 text-muted-foreground"
+            className="shrink-0 text-muted-foreground md:hidden"
             onClick={startNewChat}
             disabled={busy}
           >
@@ -1178,6 +1202,7 @@ export function ChatPanel() {
             </div>
           </div>
         </div>
+        </div>
       </div>
 
       <Sheet open={contextOpen} onOpenChange={setContextOpen}>
@@ -1283,6 +1308,31 @@ const AssistantBubble = memo(function AssistantBubble({
   onFollowUp?: (question: string) => void;
 }) {
   const steps = msg.steps ?? [];
+
+  // Who this answer may name, from its own grounding only: the contacts retrieval returned
+  // and the people it recommended. Exact names, so the prose links only what is known.
+  const people = useMemo<ChatPerson[]>(() => {
+    const out: ChatPerson[] = [];
+    for (const c of msg.retrieved ?? []) {
+      out.push({ name: c.fullName, href: `/contacts/${c.id}` });
+    }
+    for (const r of msg.recommendations) {
+      if (r.recruiter_id) out.push({ name: r.name, href: `/recruiters/${r.recruiter_id}` });
+      else if (r.contact_id) out.push({ name: r.name, href: `/contacts/${r.contact_id}` });
+    }
+    return out;
+  }, [msg.retrieved, msg.recommendations]);
+
+  // Role and company for a card come from retrieval's own rows, not from the model.
+  const subtitleById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of msg.retrieved ?? []) {
+      const line = [c.title, c.company].filter(Boolean).join(" · ");
+      if (line) map.set(c.id, line);
+    }
+    return map;
+  }, [msg.retrieved]);
+
   return (
     // No bubble on the assistant side: the answer is the page's content, not a chat turn
     // from a stranger. The user's own words keep a bubble, so the two are still easy to
@@ -1294,7 +1344,7 @@ const AssistantBubble = memo(function AssistantBubble({
         )}
         {msg.answer && (
           <div className="text-sm leading-relaxed text-foreground">
-            <ChatMarkdown>{msg.answer}</ChatMarkdown>
+            <ChatMarkdown people={people}>{msg.answer}</ChatMarkdown>
           </div>
         )}
         {msg.stopped && (
@@ -1303,11 +1353,12 @@ const AssistantBubble = memo(function AssistantBubble({
           </p>
         )}
         {msg.recommendations.length > 0 && (
-          <div className="space-y-2">
+          <div className="grid gap-2 sm:grid-cols-2">
             {msg.recommendations.map((r) => (
               <RecommendationCard
                 key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
                 rec={r}
+                subtitle={r.contact_id ? subtitleById.get(r.contact_id) : undefined}
               />
             ))}
           </div>
@@ -1342,8 +1393,11 @@ const AssistantBubble = memo(function AssistantBubble({
 
 const RecommendationCard = memo(function RecommendationCard({
   rec,
+  subtitle,
 }: {
   rec: ChatResult["recommendations"][number];
+  /** Role and company from retrieval — absent on a reloaded thread, which is fine. */
+  subtitle?: string | null;
 }) {
   const [pending, start] = useTransition();
   const href = rec.recruiter_id
@@ -1352,29 +1406,42 @@ const RecommendationCard = memo(function RecommendationCard({
       ? `/contacts/${rec.contact_id}`
       : "#";
   const canRemind = Boolean(rec.contact_id);
+  const line = rec.recruiter_id ? "Recruiter" : subtitle;
 
   return (
-    <div className="rounded-xl border border-border/70 bg-background p-3.5">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <div className="flex h-full flex-col rounded-xl border border-border/70 bg-background p-3">
+      <div className="flex items-center gap-2.5">
+        <ContactAvatar
+          contactId={rec.contact_id ?? null}
+          fullName={rec.name}
+          size="sm"
+          className="size-9 shrink-0"
+        />
         <div className="min-w-0 flex-1">
           <Link
             href={href}
-            className="text-sm font-medium text-primary hover:underline"
+            className="block truncate text-sm font-medium text-foreground hover:text-primary hover:underline"
           >
             {rec.name}
           </Link>
-          {rec.recruiter_id && (
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Recruiter
-            </p>
-          )}
-          <p className="mt-0.5 text-xs text-muted-foreground">{rec.reason}</p>
-          <p className="mt-1.5 text-xs">
-            <span className="font-medium">Next: </span>
-            {rec.suggested_action}
-          </p>
+          {line && <p className="truncate text-xs text-muted-foreground">{line}</p>}
         </div>
-        {canRemind && (
+      </div>
+      <p className="mt-2 text-xs leading-snug text-muted-foreground">{rec.reason}</p>
+      <p className="mt-1.5 text-xs leading-snug">
+        <span className="font-medium">Next: </span>
+        {rec.suggested_action}
+      </p>
+      {rec.draft_message && (
+        <div className="mt-2 rounded-lg bg-muted/50 p-2 text-xs">
+          <Badge variant="secondary" className="mb-1 text-[10px]">
+            Draft
+          </Badge>
+          <p className="whitespace-pre-wrap text-muted-foreground">{rec.draft_message}</p>
+        </div>
+      )}
+      {canRemind && (
+        <div className="mt-auto pt-2.5">
           <Button
             size="xs"
             variant="outline"
@@ -1395,16 +1462,6 @@ const RecommendationCard = memo(function RecommendationCard({
           >
             Reminder
           </Button>
-        )}
-      </div>
-      {rec.draft_message && (
-        <div className="mt-2.5 rounded-lg bg-muted/50 p-2.5 text-xs">
-          <Badge variant="secondary" className="mb-1.5 text-[10px]">
-            Draft
-          </Badge>
-          <p className="whitespace-pre-wrap text-muted-foreground">
-            {rec.draft_message}
-          </p>
         </div>
       )}
     </div>

@@ -17,6 +17,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, Loader2, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
@@ -50,7 +51,14 @@ export function ComposerSendButton({
       type="button"
       data-slot="chat-send"
       disabled={stopping ? false : disabled}
-      className="size-9 shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
+      className={cn(
+        "size-9 shrink-0 rounded-full",
+        // Red while it means "stop", so it reads as a different control from the send arrow
+        // it just replaced — the same button in the same place doing the opposite.
+        stopping
+          ? "bg-destructive text-white hover:bg-destructive/90"
+          : "bg-primary text-primary-foreground hover:bg-primary/90"
+      )}
       onClick={stopping ? onStop : onClick}
       aria-label={label}
       title={label}

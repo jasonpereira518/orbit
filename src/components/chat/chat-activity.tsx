@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronDown } from "lucide-react";
+import { Check, ChevronDown, CircleDashed } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -18,8 +18,9 @@ import type { ChatStep } from "@/lib/chat-stream-protocol";
  * so the counts, durations and names are facts rather than a scripted sequence. A stage
  * that was skipped sends nothing, and this renders nothing for it.
  *
- * Live it is one line that replaces itself; finished it collapses to a summary you can open
- * to see each stage, how long it took, and the records it read.
+ * Live, it is a card: the stage running now as its header, the stages already finished
+ * ticked off beneath it. Finished, it collapses to a one-line summary you can open again.
+ * The ask bar (`compact`) has no room for either, so it gets a single line.
  */
 
 export type ChatActivityProps = {
@@ -32,11 +33,15 @@ export type ChatActivityProps = {
 };
 
 export function ChatActivity({ steps, state, variant = "full", className }: ChatActivityProps) {
-  const [open, setOpen] = useState(false);
+  // Two separate flags: whether the live card is folded and whether the finished summary is
+  // open are different questions, and sharing one would make the summary spring open (or
+  // shut) the instant the answer lands.
+  const [liveOpen, setLiveOpen] = useState(true);
+  const [finalOpen, setFinalOpen] = useState(false);
   const reduceMotion = usePrefersReducedMotion();
 
   /**
-   * What the live line says right now.
+   * What the header says right now.
    *
    * The most recently started stage that is still running — and when nothing is running,
    * the last stage that did, rather than a generic "working on it". The stages fan out in
@@ -47,14 +52,19 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
     const running = [...steps].reverse().find((step) => step.status === "active");
     return running ?? steps[steps.length - 1] ?? null;
   }, [steps]);
+  const finished = useMemo(
+    () => steps.filter((step) => step.status === "done" && step.id !== current?.id),
+    [steps, current]
+  );
   const summary = useMemo(() => summarise(steps), [steps]);
 
   if (steps.length === 0) return null;
 
   if (state === "live") {
     const label = current?.label ?? "Starting";
-    return (
-      <div className={cn("flex items-center gap-2 text-sm text-muted-foreground", className)}>
+
+    const header = (
+      <>
         <OrbitMark reduceMotion={reduceMotion} />
         {/*
           `mode="wait"` is load-bearing, not a preference. Overlapping enter/exit left the
@@ -62,7 +72,7 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
           and because this is an aria-live region, a screen reader read the whole history
           aloud on each change. Waiting for the exit guarantees exactly one label.
         */}
-        <span className="min-w-0" aria-live="polite" aria-atomic="true">
+        <span className="min-w-0 flex-1 text-left" aria-live="polite" aria-atomic="true">
           <AnimatePresence initial={false} mode="wait">
             <motion.span
               key={label}
@@ -79,44 +89,100 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
             </motion.span>
           </AnimatePresence>
         </span>
+      </>
+    );
+
+    if (variant === "compact") {
+      return (
+        <div className={cn("flex items-center gap-2 text-sm text-muted-foreground", className)}>
+          {header}
+        </div>
+      );
+    }
+
+    const canFold = finished.length > 0;
+    return (
+      <div className={cn("rounded-xl border border-primary/30 bg-muted/30", className)}>
+        <button
+          type="button"
+          onClick={() => canFold && setLiveOpen((v) => !v)}
+          aria-expanded={canFold ? liveOpen : undefined}
+          disabled={!canFold}
+          className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-foreground disabled:cursor-default"
+        >
+          {header}
+          {canFold && (
+            <ChevronDown
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                liveOpen && "rotate-180"
+              )}
+              aria-hidden="true"
+            />
+          )}
+        </button>
+
+        <AnimatePresence initial={false}>
+          {liveOpen && finished.length > 0 && (
+            <motion.div
+              initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+              transition={{ duration: DUR.base, ease: EASE_HOUSE }}
+              className="overflow-hidden"
+            >
+              <ul className="space-y-1.5 px-3 pb-3 pl-[2.1rem]">
+                {finished.map((step) => (
+                  <li
+                    key={step.id}
+                    className="relative text-xs leading-snug text-muted-foreground"
+                  >
+                    <Check
+                      className="absolute -left-[1.15rem] top-px size-3.5 text-primary"
+                      aria-hidden="true"
+                    />
+                    <span className="text-foreground/80">{step.label}</span>
+                    {step.detail && <span> · {step.detail}</span>}
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     );
   }
 
   if (variant === "compact") {
-    return (
-      <p className={cn("text-xs text-muted-foreground", className)}>{summary}</p>
-    );
+    return <p className={cn("text-xs text-muted-foreground", className)}>{summary}</p>;
   }
 
   return (
     <div className={className}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
+        onClick={() => setFinalOpen((v) => !v)}
+        aria-expanded={finalOpen}
         className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
       >
+        <CircleDashed className="size-3.5 shrink-0" aria-hidden="true" />
         <span className="truncate">{summary}</span>
         <ChevronDown
-          className={cn(
-            "size-3.5 shrink-0 transition-transform",
-            open && "rotate-180"
-          )}
+          className={cn("size-3.5 shrink-0 transition-transform", finalOpen && "rotate-180")}
           aria-hidden="true"
         />
       </button>
 
       <AnimatePresence initial={false}>
-        {open && (
-          <motion.ol
+        {finalOpen && (
+          <motion.div
             initial={reduceMotion ? false : { height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
             transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
             className="overflow-hidden"
           >
-            <div className="mt-2 space-y-2 border-l border-border/70 pl-3">
+            <ol className="mt-2 space-y-2 border-l border-border/70 pl-3">
               {steps.map((step) => (
                 <li key={step.id} className="text-xs text-muted-foreground">
                   <span className="text-foreground/80">{step.label}</span>
@@ -150,8 +216,8 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
                   )}
                 </li>
               ))}
-            </div>
-          </motion.ol>
+            </ol>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
