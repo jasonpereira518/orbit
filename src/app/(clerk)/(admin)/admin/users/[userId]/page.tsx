@@ -117,6 +117,7 @@ export default async function AdminUserDetailPage({
     ["recruiters", ent.canUseRecruiters],
     ["sync", ent.canUseSync],
     ["extension", ent.canUseExtension],
+    ["extension pro", ent.canUseExtensionPro],
   ];
 
   return (

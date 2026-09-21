@@ -213,9 +213,9 @@ export async function loadNotificationPanel(
     items,
     dueCount,
     totalCount: items.length,
-    // Drives the extension promo in the panel: paid plans get an install link,
-    // everyone else gets the pitch and a route to the plans page.
-    canUseExtension: entitlements.canUseExtension,
+    // Drives the extension promo in the panel. The extension is free on every
+    // plan; free accounts are also told what Pro adds to it.
+    hasExtensionPro: entitlements.canUseExtensionPro,
     /**
      * Account health, as a SIBLING of `items` and never an entry in it. That placement is
      * the structural guarantee that alerts can never become OS desktop notifications:

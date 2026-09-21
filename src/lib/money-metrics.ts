@@ -441,4 +441,5 @@ export const KNOWN_GATES = [
   "recruiters",
   "sync",
   "extension",
+  "extensionPro",
 ] as const;

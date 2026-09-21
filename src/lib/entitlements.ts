@@ -38,7 +38,28 @@ export type Entitlements = {
   canUseHostedEnrichment: boolean;
   canUseRecruiters: boolean;
   canUseSync: boolean;
+  /**
+   * The browser extension's core: recognize the person on the page, save them, log a
+   * note, set or clear a follow-up, act on reminders. True on every plan.
+   *
+   * Same reasoning as `canUseMcp` below: this is the funnel. Seeing "Inner orbit · last
+   * spoke 5 months ago" over someone's LinkedIn profile explains the product faster than
+   * any page of it can, and putting a paywall in front of that is putting one in front of
+   * the demonstration. The costs stay bounded underneath — the free contact cap governs
+   * saving, and every AI call runs on the user's own key.
+   *
+   * It used to be `plan !== "free"` while no extension route ever checked it, so the
+   * pricing table sold a gate that did not exist. Kept as a flag (rather than deleted) so
+   * existing readers and historical `gate_events` rows keep their meaning.
+   */
   canUseExtension: boolean;
+  /**
+   * The extension's depth: AI opening lines, work-history capture, the people you know
+   * at a company, and semantic search. Pro and Lifetime. A key of its own for the same
+   * reason `canUseApi` is one — `gate_events` should say "someone wanted work history
+   * from the panel", not a vaguer "extension".
+   */
+  canUseExtensionPro: boolean;
   /**
    * The public API, outbound webhooks and the MCP server.
    *
@@ -75,6 +96,7 @@ export type FeatureKey =
   | "recruiters"
   | "sync"
   | "extension"
+  | "extensionPro"
   | "api";
 
 /**
@@ -158,7 +180,8 @@ export function entitlementsForPlan(
     canUseHostedEnrichment: opts.hostedEnrichment ?? plan === "orbit",
     canUseRecruiters: paid,
     canUseSync: paid,
-    canUseExtension: paid,
+    canUseExtension: true,
+    canUseExtensionPro: paid,
     canUseApi: paid,
     canUseMcp: true,
   };
@@ -208,7 +231,9 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
   api: "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime. Claude and ChatGPT connect on any plan, with no key.",
   sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
-  extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
+  // Never denied since the extension's core became free; kept so the record stays total.
+  extension: "The Orbit extension is free on every plan.",
+  extensionPro: "This part of the extension is included with Orbit Pro and Orbit Lifetime.",
 };
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
@@ -218,6 +243,7 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   recruiters: "canUseRecruiters",
   sync: "canUseSync",
   extension: "canUseExtension",
+  extensionPro: "canUseExtensionPro",
   api: "canUseApi",
 };
 

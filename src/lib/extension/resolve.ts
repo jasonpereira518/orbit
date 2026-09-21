@@ -12,6 +12,7 @@
 import { and, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
+import { interactionTypeLabel } from "@/lib/interaction-types";
 import { metContextLabel } from "@/lib/met-context";
 import type { Contact } from "@/db/schema";
 import { computeCloseness } from "@/lib/closeness";
@@ -268,6 +269,7 @@ export async function buildSnapshot(
     recentInteractions: row.interactions.map((i) => ({
       id: i.id,
       interactionType: i.interactionType,
+      typeLabel: interactionTypeLabel(i.interactionType),
       interactionDate: iso(i.interactionDate),
       summary: i.aiSummary ?? i.rawNotes ?? null,
     })),

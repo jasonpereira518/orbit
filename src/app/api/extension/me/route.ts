@@ -5,8 +5,13 @@ import { getAiCapability } from "@/lib/ai";
 import { AI_PROVIDERS } from "@/lib/ai-providers";
 import { userHasApolloKey } from "@/lib/apollo";
 import { getCurrentUserProfile } from "@/lib/auth";
+import { getAppBaseUrl } from "@/lib/app-url";
 import type { MeResponse } from "@/lib/extension/contract";
-import { EXTENSION_CONTRACT_VERSION } from "@/lib/extension/contract";
+import {
+  EXTENSION_CONTRACT_VERSION,
+  MIN_SUPPORTED_CONTRACT_VERSION,
+} from "@/lib/extension/contract";
+import { extensionEntitlements } from "@/lib/extension/entitlements";
 import { extensionRoute, preflight } from "@/lib/extension/http";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +23,7 @@ export const dynamic = "force-dynamic";
  * heuristic starters, not an error.
  */
 export const GET = extensionRoute<undefined, MeResponse>({
-  handler: async ({ userId }) => {
+  handler: async ({ userId, entitlements }) => {
     const db = await getDb();
     const now = new Date();
 
@@ -63,6 +68,15 @@ export const GET = extensionRoute<undefined, MeResponse>({
       stats: {
         contactCount: contactRow?.value ?? 0,
         dueFollowUpCount: dueRow?.value ?? 0,
+      },
+      minSupportedContractVersion: MIN_SUPPORTED_CONTRACT_VERSION,
+      // Free of any extra query: the wrapper already resolved the entitlements,
+      // and the contact count above is what the remaining headroom needs.
+      entitlements: extensionEntitlements(entitlements, contactRow?.value ?? 0),
+      links: {
+        app: getAppBaseUrl(),
+        pricing: new URL("/pricing?from=extension", getAppBaseUrl()).toString(),
+        settings: new URL("/settings", getAppBaseUrl()).toString(),
       },
     };
   },

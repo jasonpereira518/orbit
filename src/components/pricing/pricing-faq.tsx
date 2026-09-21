@@ -20,8 +20,12 @@ const FAQ: Array<{ q: string; a: string }> = [
     a: "Capture, chat, and summaries run on a key you supply from Google, OpenAI, or Anthropic, on every plan including the paid ones. You pay your provider directly at cost, and Orbit never adds a margin to your tokens. It is also why the paid plans cost so little: you are paying for the parts that cost us money, not for AI resale.",
   },
   {
+    q: "Is the Chrome extension free?",
+    a: "Yes, on every plan. It recognizes the people you already know as you browse, saves new ones, and logs notes and follow-ups without leaving the page. Orbit Pro and Lifetime add AI-written opening lines, using your own AI key.",
+  },
+  {
     q: "What is the difference between Orbit Pro and Orbit Lifetime?",
-    a: "One thing: contact enrichment. Both are uncapped, both include recruiter tracking, mailbox and calendar sync, the extension, and outreach campaigns that send email and SMS on Orbit's own credits. Orbit Pro also enriches contacts on Orbit's Apollo credits; Lifetime connects your own Apollo key instead. Sending is capped at a fixed number per day on every plan, so a single payment can cover it. Enrichment has no such ceiling, which is the one thing a single payment cannot honestly cover forever.",
+    a: "One thing: contact enrichment. Both are uncapped, both include recruiter tracking, mailbox and calendar sync, the extension's AI opening lines, and outreach campaigns that send email and SMS on Orbit's own credits. Orbit Pro also enriches contacts on Orbit's Apollo credits; Lifetime connects your own Apollo key instead. Sending is capped at a fixed number per day on every plan, so a single payment can cover it. Enrichment has no such ceiling, which is the one thing a single payment cannot honestly cover forever.",
   },
   {
     q: `Why is Orbit Lifetime $${LIFETIME_INTRO_PRICE} instead of $${LIFETIME_STANDARD_PRICE}?`,

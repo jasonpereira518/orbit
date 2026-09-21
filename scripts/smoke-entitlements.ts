@@ -94,6 +94,9 @@ async function main() {
   check(`contact limit is ${FREE_CONTACT_LIMIT}`, ent.contactLimit === FREE_CONTACT_LIMIT);
   check("outreach gated", ent.canUseOutreach === false);
   check("sync gated", ent.canUseSync === false);
+  // The extension's core is free — the funnel, like MCP — and its depth is paid.
+  check("extension core free", ent.canUseExtension === true);
+  check("extension pro gated", ent.canUseExtensionPro === false);
   check("hosted sending gated", ent.canUseHostedSending === false);
   check("hosted enrichment gated", ent.canUseHostedEnrichment === false);
 
@@ -165,6 +168,7 @@ async function main() {
   check("outreach unlocked", ent.canUseOutreach === true);
   check("sync unlocked", ent.canUseSync === true);
   check("extension unlocked", ent.canUseExtension === true);
+  check("extension pro unlocked on lifetime", ent.canUseExtensionPro === true);
   // The whole point of the split: Lifetime sends on Orbit's credits (bounded by
   // DAILY_SEND_LIMIT) but enriches on its own Apollo key (which has no ceiling).
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
@@ -237,6 +241,7 @@ async function main() {
         ent.canUseRecruiters &&
         ent.canUseSync &&
         ent.canUseExtension &&
+        ent.canUseExtensionPro &&
         ent.canUseApi,
       JSON.stringify(ent)
     );

@@ -55,7 +55,9 @@ const CTA_CLASS = cn(
 );
 
 // Bump the suffix to resurface the banner for people who already dismissed it.
-const DISMISS_KEY = "orbit-extension-promo-dismissed-v1";
+// v2: the offer changed (the extension went from paid-only to free), so a
+// dismissal of the old pitch doesn't silence the new one.
+const DISMISS_KEY = "orbit-extension-promo-dismissed-v2";
 
 function wasDismissed() {
   if (typeof window === "undefined") return true;
@@ -87,9 +89,9 @@ function rememberDismissed() {
  * swapped underneath the cursor.
  */
 export function ExtensionPromo({
-  canUseExtension,
+  hasExtensionPro,
 }: {
-  canUseExtension: boolean;
+  hasExtensionPro: boolean;
 }) {
   // Read once at mount rather than in an effect, so someone who already
   // dismissed this never sees it flash back for a frame. Safe to read during
@@ -146,12 +148,11 @@ export function ExtensionPromo({
               Add to Chrome
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
-            {/* The store page is public, so the button shows on every plan —
-                but the extension only works on a paid one, and finding that
-                out after installing it would be the wrong order. */}
-            {!canUseExtension && (
+            {/* The extension is free on every plan; its AI depth is Pro. Saying so up front beats a locked section being
+                the first a free user hears of it. */}
+            {!hasExtensionPro && (
               <span className="text-xs text-muted-foreground">
-                Needs Orbit Pro or Lifetime —{" "}
+                Free. AI opening lines come with Pro —{" "}
                 <WarpLink
                   href="/pricing"
                   className="font-medium text-import-connections underline underline-offset-2 hover:opacity-80"
