@@ -49,8 +49,20 @@ export function toolError(message: string): ToolError {
   return { error: message };
 }
 
+/**
+ * Strict: an envelope is an object whose ONLY key is `error`.
+ *
+ * A looser test would misread real results. `get_send_status` returns a draft whose `error`
+ * field carries the reason a send failed, and `create_contact` returns `{created: false,
+ * error}` when the paywall refuses — both are results with an error IN them, not error
+ * envelopes, and treating them as envelopes would silently exempt them from their surface's
+ * field allowlist. Today neither declares one, so nothing leaks; the point is that the next
+ * person to add `fields` to either should not have to discover this.
+ */
 export function isToolError(value: unknown): value is ToolError {
-  return typeof value === "object" && value !== null && typeof (value as ToolError).error === "string";
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length === 1 && keys[0] === "error" && typeof (value as ToolError).error === "string";
 }
 
 export type OrbitTool = {
