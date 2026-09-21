@@ -5,7 +5,6 @@ import {
   chatThreads,
   contacts,
   interactions,
-  userGoals,
   type ChatRecommendation,
 } from "@/db/schema";
 import {
@@ -13,7 +12,12 @@ import {
   renderAttachedPeople,
   type AttachedPerson,
 } from "@/lib/chat-attached";
-import { getAttentionBrief, isAttentionQuestion, type AttentionBrief } from "@/lib/chat-attention";
+import {
+  getAttentionBrief,
+  isAttentionQuestion,
+  renderAttentionLite,
+  type AttentionBrief,
+} from "@/lib/chat-attention";
 import {
   budgetContactsContext,
   CANDIDATE_POOL,
@@ -34,6 +38,7 @@ import { interactionTypeLabel } from "@/lib/interaction-types";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import { isRecruiterIntent } from "@/lib/recruiters";
+import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadRecruitersForChat } from "@/actions/recruiters";
 
 /**
@@ -69,8 +74,26 @@ export type ChatContext = {
   userContext: string | null;
   /** One line to show under the answer when the semantic arm was unavailable. */
   searchNotice: string | null;
+  /**
+   * The user's active networking goals, newest first.
+   *
+   * Trusted text: the user typed these into their own settings, so unlike notes and profile
+   * prose they are not fenced as untrusted in the prompt. The `goals` argument of
+   * `chatWithNetwork`.
+   */
+  goals: string[];
   orgRosters: OrgRoster[];
   attention: AttentionBrief | null;
+  /**
+   * The overdue queue as one line, present for every question.
+   *
+   * Distinct from `attention`, which is the full brief and only loads for questions that ask
+   * — the full brief comes with an instruction to answer FROM it, and that instruction has
+   * to stay behind a narrow gate. This is the same facts with no instruction attached, so
+   * the model can answer a differently-worded question about who is slipping instead of
+   * pleading ignorance. Null only if the read failed.
+   */
+  attentionLite: string | null;
   recruitersForChat: Recruiters;
   /**
    * People the user attached with the composer's `+`, with their role and timeline.
@@ -189,24 +212,18 @@ async function loadRecentInteractions(
   return result;
 }
 
+/** How many active goals reach a prompt. Newest first; the rest are still the user's, just not steering this answer. */
+const GOAL_LIMIT = 5;
+
 async function loadActiveGoalTexts(userId: string): Promise<string[]> {
-  const db = await getDb();
-  const rows = await db.query.userGoals
-    .findMany({
-      where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
-      columns: { text: true },
-      orderBy: [desc(userGoals.createdAt)],
-      limit: 5,
-    })
-    .catch(() => []);
-  return rows.map((g) => g.text);
+  return listActiveGoalTextsForUser(userId, { limit: GOAL_LIMIT }).catch(() => []);
 }
 
 /** Stage 0-3: query embedding + parse (parallel), wide hybrid retrieval, flash rerank. */
 async function retrieveRankedContacts(
   userId: string,
   q: string
-): Promise<{ ranked: RankedContact[]; searchNotice: string | null }> {
+): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[] }> {
   const activeGoals = await loadActiveGoalTexts(userId);
   let searchNotice: string | null = null;
   // The embedding still degrades to keywords — but now says so, instead of letting the
@@ -227,7 +244,12 @@ async function retrieveRankedContacts(
     limit: CANDIDATE_POOL,
   });
   const ranked = await rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery);
-  return { ranked, searchNotice };
+  // The goals come back out because they belong in the ANSWER prompt too, not just in the
+  // query parse. They were loaded here and used only to help `understandQuery` read the
+  // question, so the model that actually wrote the answer never learned what the user was
+  // trying to accomplish — every other AI surface in the product (outreach, starters,
+  // follow-up drafts) has been given them for months.
+  return { ranked, searchNotice, goals: activeGoals };
 }
 
 // Every field below is written by the profile's owner, so it is exactly as
@@ -357,8 +379,16 @@ export async function prepareChatContext(
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
-  const [thread, priorRows, retrieval, orgRosters, attention, recruitersForChat, attachedPeople] =
-    await Promise.all([
+  const [
+    thread,
+    priorRows,
+    retrieval,
+    orgRosters,
+    attention,
+    attentionLite,
+    recruitersForChat,
+    attachedPeople,
+  ] = await Promise.all([
       threadId
         ? db.query.chatThreads.findFirst({
             where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
@@ -384,6 +414,9 @@ export async function prepareChatContext(
             .then((cohort) => getAttentionBrief(userId, cohort?.interactedIds))
             .catch(() => null)
         : Promise.resolve(null),
+      // The same queue as one line, for every other question — see `renderAttentionLite`.
+      // Never fatal, and never carries an instruction to act on it.
+      renderAttentionLite(userId).catch(() => null),
       isRecruiterIntent(q) ? loadRecruitersForChat(q, 8) : Promise.resolve([] as Recruiters),
       // Depends on ids the client already resolved, so it needs neither the question nor
       // the search. Never fatal: a question with a dead attachment is still a question.
@@ -487,7 +520,7 @@ export async function prepareChatContext(
   // Sized by rank under a total char budget — a later, cheaper contact must not be
   // appended out of rank order once the budget runs dry, so this can be a strict prefix
   // of `retrieved`.
-  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines);
+  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines, q);
 
   // Roster and attention contacts are as legitimate a recommendation as retrieved ones —
   // they came from the same user's own rows — so they must not be filtered out for being
@@ -515,8 +548,10 @@ export async function prepareChatContext(
     scopedQuestion,
     userContext,
     searchNotice: retrieval.searchNotice,
+    goals: retrieval.goals,
     orgRosters,
     attention,
+    attentionLite,
     recruitersForChat,
     attachedPeople,
     attachedContext: renderAttachedPeople(attachedPeople),
