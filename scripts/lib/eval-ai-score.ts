@@ -145,3 +145,45 @@ export function gate(
   }
   return findings;
 }
+
+/**
+ * One research-eval answer, scored. Pure, so `smoke-eval-ai-score` can pin it.
+ *
+ * - A person counts as mentioned if the answer names them OR a recommendation that SURVIVED
+ *   the allowlist filter points at them — a recommendation the filter dropped reached nobody.
+ * - A fact counts if the answer text contains it. The fixture only uses facts that live in a
+ *   note and nowhere on a contact card, so this is a test of whether the research found the
+ *   note, not of whether the model can paraphrase what retrieval handed it.
+ * - An invented id is a raw recommendation (before the filter) pointing at an id that is not
+ *   one of this user's contacts at all: a fabrication, not a judgement call. The filter would
+ *   catch it in production; counting it here is how a model change that starts making them
+ *   up gets noticed before the filter is the only thing standing in the way.
+ */
+export function scoreResearchAnswer(input: {
+  answer: string;
+  /** contact_id of every recommendation the model returned, before filtering. */
+  rawRecommendationIds: Array<string | null | undefined>;
+  /** contact_id of every recommendation that survived `filterRecommendations`. */
+  keptRecommendationIds: Array<string | null | undefined>;
+  mustMention: Array<{ id: string; fullName: string }>;
+  mustSay: string[];
+  forbidden: string[];
+  /** Every contact id this user really has. */
+  knownContactIds: Set<string>;
+}): {
+  mentioned: boolean[];
+  said: boolean[];
+  forbiddenHits: number;
+  inventedIds: number;
+  filteredOut: number;
+} {
+  const kept = new Set(input.keptRecommendationIds.filter((id): id is string => !!id));
+  const raw = input.rawRecommendationIds.filter((id): id is string => !!id);
+  return {
+    mentioned: input.mustMention.map((p) => mentions(input.answer, p.fullName) || kept.has(p.id)),
+    said: input.mustSay.map((fact) => mentions(input.answer, fact)),
+    forbiddenHits: input.forbidden.filter((claim) => mentions(input.answer, claim)).length,
+    inventedIds: raw.filter((id) => !input.knownContactIds.has(id)).length,
+    filteredOut: raw.filter((id) => input.knownContactIds.has(id) && !kept.has(id)).length,
+  };
+}

@@ -304,13 +304,13 @@ export async function maybeGather(
     /** Test seam, passed through to `gatherEvidence`. */
     driver?: Awaited<ReturnType<typeof createToolDriver>>;
   }
-): Promise<{ evidence: string | null; depth: DepthDecision }> {
+): Promise<{ evidence: string | null; depth: DepthDecision; research: ResearchSummary | null }> {
   const depth = chooseDepth(ctx.q, { hasPriorTurns: ctx.priorTurns.length > 0 });
-  if (depth.depth !== "research") return { evidence: null, depth };
+  if (depth.depth !== "research") return { evidence: null, depth, research: null };
 
   const now = Date.now();
   const deadline = Math.min(options.requestStartedAt + GATHER_ENDS_BY_MS, now + GATHER_MAX_MS);
-  if (deadline - now < GATHER_MIN_MS) return { evidence: null, depth };
+  if (deadline - now < GATHER_MIN_MS) return { evidence: null, depth, research: null };
 
   const gathered = await gatherEvidence(userId, ctx, {
     deadline,
@@ -320,5 +320,26 @@ export async function maybeGather(
     driver: options.driver,
   });
   for (const id of gathered.contactIds) ctx.allowedContacts.add(id);
-  return { evidence: gathered.evidence, depth };
+  const o = gathered.outcome;
+  return {
+    evidence: gathered.evidence,
+    depth,
+    research: o
+      ? {
+          rounds: o.rounds,
+          lookups: o.calls.filter((c) => c.ok).length,
+          stoppedBy: o.stoppedBy,
+          contactsFound: gathered.contactIds.length,
+        }
+      : null,
+  };
 }
+
+/** What the research step did, for the eval and for anyone measuring what it costs. */
+export type ResearchSummary = {
+  rounds: number;
+  /** Lookups that returned something; rejected calls are not counted. */
+  lookups: number;
+  stoppedBy: ToolLoopOutcome["stoppedBy"];
+  contactsFound: number;
+};

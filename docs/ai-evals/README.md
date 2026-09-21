@@ -10,7 +10,7 @@ Tasks are run as separate processes — one per task, in parallel, each with its
 database — so a run is a *directory* of reports:
 
 ```bash
-for t in capture recruiter extension ocr transcribe chat digest; do
+for t in capture recruiter extension ocr transcribe chat research digest; do
   npx tsx scripts/eval-ai.ts --keys-from .env.local --provider gemini \
     --task "$t" --runs 2 --out "runs/mine/$t.json" &
 done; wait
@@ -24,6 +24,23 @@ The report prints accuracy and cost per case side by side and applies
 Candidates are JSON files under `scripts/eval-fixtures/candidates/`, applied to the operation
 registry and tier maps before the run — the same values production reads, so a candidate that
 passes ships by editing those values.
+
+## The research task
+
+`research` scores whole answers to questions one retrieval cannot answer — the job of chat's
+research step (`src/lib/chat-gather.ts`). It runs the production path in order: retrieval,
+the depth decision, the research loop, the answer, the recommendation filter.
+
+Every fact a case requires lives **only in a note**, never on a contact card, so a case passes
+only if the research step found the note and the answer used it. It gates on `mentionRecall`,
+`factRecall`, `routingAccuracy` (the rule-based router may not drop at all),
+`forbiddenHits` and `inventedContactIds` (never). `meanLookups`, `meanRounds` and
+`filteredRecommendations` are reported for cost and are not gated.
+
+It has no baseline yet — the report shows it as `(new)` and does not gate it until one is
+recorded. Record one before tuning anything the research step does, or there is nothing to
+compare a change against. Its plumbing is checked without a key by
+`scripts/smoke-eval-research-task.ts`.
 
 ## What is recorded here
 

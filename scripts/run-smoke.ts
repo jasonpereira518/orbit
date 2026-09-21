@@ -269,6 +269,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-memory-search": "pglite",
   "smoke-memory-embedding": "pglite",
   "smoke-chat-gather": "pglite",
+  "smoke-eval-research-task": "pglite",
   "smoke-agent-sends": "pglite",
   "smoke-dashboard-aggregates": "pglite",
   "smoke-migration-guards": "pglite", // the pure half is here too: both guards belong in one place

@@ -18,7 +18,7 @@
  *     "visionModels": { "gemini": "gemini-3.8-flash" } }
  *
  * Flags: --provider gemini|openai|anthropic (default gemini) · --model <id> (default: the
- * provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,digest
+ * provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,research,digest
  * (default all) · --runs N (default 1; use 2+ for a gate decision — models are not
  * deterministic) · --limit N (cases per task, for a quick look) · --label <name> ·
  * --out <file> (default docs/ai-evals/<date>-<label>.json) · --compare <baseline.json>
@@ -234,6 +234,8 @@ function fixtureDigest(): string {
   for (const file of [
     "ai-capture-eval.json", "ai-recruiter-eval.json", "ai-extension-eval.json", "ai-ocr-eval.json",
     "ai-transcribe-eval.json", "ai-chat-eval.json", "ai-digest-eval.json", "contact-search-eval.json",
+    // The research task's cases, and the notes both it and eval-retrieval seed.
+    "ai-research-eval.json", "passage-search-eval.json",
   ]) {
     try {
       hash.update(readFileSync(join(FIXTURE_DIR, file)));

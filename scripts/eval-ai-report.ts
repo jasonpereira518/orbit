@@ -17,6 +17,17 @@ type Report = {
   tasks: Record<string, { cases: number; metrics: TaskMetrics; costMicros: number; costPerCaseMicros: number | null; misses: string[] }>;
 };
 
+/**
+ * Rates print as percentages; counts and averages print as numbers. Named by convention in
+ * the tasks: `*Hits`, `phantom*`, `*Ids` are counts, `mean*` are averages, `filtered*` are
+ * counts. Printing `meanLookups 1.5` as "150.0%" would read as a broken metric.
+ */
+function formatMetric(key: string, value: number): string {
+  if (/Hits$|^phantom|Ids$|^filtered/.test(key)) return String(value);
+  if (/^mean/.test(key)) return value.toFixed(2);
+  return pct(value);
+}
+
 function load(dir: string): Report["tasks"] {
   const tasks: Report["tasks"] = {};
   for (const file of readdirSync(dir)) {
@@ -43,8 +54,23 @@ function main() {
   let baseTotal = 0;
   let candTotal = 0;
   console.log(`\n${pad("task", 11)}${pad("cases", 7)}${pad("cost/case", 12)}${cand ? pad("candidate", 12) + pad("change", 9) : ""}accuracy`);
-  for (const [task, b] of Object.entries(base)) {
+  // Every task either side ran — not just the baseline's. A task added after the baseline was
+  // recorded (research, say) would otherwise vanish from the table entirely, and nobody would
+  // see its numbers until someone re-ran the baseline.
+  const tasks = [...new Set([...Object.keys(base), ...Object.keys(cand ?? {})])];
+  for (const task of tasks) {
+    const b = base[task];
     const c = cand?.[task];
+    if (!b) {
+      const metrics = Object.entries(c!.metrics)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => `${k} ${formatMetric(k, v as number)}`)
+        .join(" · ");
+      console.log(
+        `${pad(task, 11)}${pad(String(c!.cases), 7)}${pad("(new)", 12)}${pad(usd(c!.costPerCaseMicros), 12)}${pad("—", 9)}${metrics}  [no baseline: reported, not gated]`
+      );
+      continue;
+    }
     baseTotal += b.costMicros;
     if (c) candTotal += c.costMicros;
     const delta =
@@ -53,7 +79,7 @@ function main() {
         : "—";
     const metrics = Object.entries((c ?? b).metrics)
       .filter(([, v]) => v != null)
-      .map(([k, v]) => `${k} ${k.endsWith("Hits") || k.startsWith("phantom") ? v : pct(v as number)}`)
+      .map(([k, v]) => `${k} ${formatMetric(k, v as number)}`)
       .join(" · ");
     console.log(
       `${pad(task, 11)}${pad(String(b.cases), 7)}${pad(usd(b.costPerCaseMicros), 12)}${cand ? pad(usd(c?.costPerCaseMicros ?? null), 12) + pad(delta, 9) : ""}${metrics}`

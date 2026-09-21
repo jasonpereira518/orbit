@@ -34,6 +34,10 @@ const research: Array<[string, typeof fresh]> = [
   ["who have I talked to about hiring this quarter", fresh],
   ["When did I last speak to Tomás?", fresh],
   ["what did she say about the raise?", followUp],
+  // Named people, not just pronouns — found by writing the research eval.
+  ["What did James say about the seed round he's leading?", fresh],
+  ["What did Raj ask us to send before he reviews our key custody setup?", fresh],
+  ["what did Priya Raman promise to send", fresh],
   ["can you draft something for them", followUp],
 ];
 for (const [q, ctx] of research) {
@@ -50,6 +54,8 @@ const single: Array<[string, typeof fresh]> = [
   ["Stripe", fresh],
   ["who is overdue", fresh],
   ["who works on payments infrastructure?", fresh],
+  // A profile question about a named person, not a note question: no speech verb.
+  ["What did Ada Lovelace work on before Stripe?", fresh],
   // A pronoun with NO prior turn is not a follow-up — there is nothing to refer back to.
   ["what did she work on before Stripe", { hasPriorTurns: false }],
 ];

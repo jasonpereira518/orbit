@@ -35,7 +35,11 @@ const MONTHS =
 const RULES: Array<{ reason: string; test: (q: string, ctx: DepthContext) => boolean }> = [
   {
     reason: "asks what was said",
+    // Pronouns ("what did she…") AND names: "what did James say", "what did Raj ask us" are
+    // the same question about a note. Only speech verbs count — "what did Ada work on before
+    // Stripe" is a profile question, and retrieval already has her career line.
     test: (q) =>
+      /\bwhat did (\S+ ){1,3}?(say|tell|mention|ask|promise|offer|suggest|want|think)\b/.test(q) ||
       /\b(what did (we|i|they|he|she)|discuss(ed)?|talk(ed)? (about|to|with)|(spoke|spoken) (to|with)|mention(ed)?|said about|told me|we spoke|conversation with|my notes?|i wrote|i noted)\b/.test(
         q
       ),

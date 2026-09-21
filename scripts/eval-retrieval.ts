@@ -34,7 +34,7 @@ import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, contactEmbeddings, tags, contactTags, interactions, memoryChunks } from "../src/db/schema";
-import { backfillMemoryChunks } from "../src/lib/memory-backfill";
+import { loadPassageFixture, seedPassageNotes } from "./lib/eval-passage-notes";
 import { searchMemories } from "../src/lib/memory-search";
 import { runEmbeddingBackfill } from "../src/lib/embedding-backfill";
 import { hybridSearchContacts } from "../src/lib/hybrid-search";
@@ -63,35 +63,6 @@ const PASSAGE_LEXICAL_RECALL_FLOOR = 10 / 10;
 const PASSAGE_LEXICAL_MRR_FLOOR = 0.9;
 /** How many passages a case may look at. Matches `searchMemories`' default limit. */
 const PASSAGE_K = 8;
-
-/**
- * Words that appear in no question, prepended to a note to bury its fact past any head
- * slice. Varied sentences rather than one repeated, so the chunker's boundaries are real.
- */
-function filler(chars: number): string {
-  const lines = [
-    "We caught up on family, travel and the usual weekend plans.",
-    "The weather was grey and the coffee was better than last time.",
-    "There was a long tangent about a television series neither of us finished.",
-    "We compared notes on commuting and on the new train timetable.",
-  ];
-  let out = "";
-  for (let i = 0; out.length < chars; i++) out += `${lines[i % lines.length]} `;
-  return out;
-}
-
-type PassageFixture = {
-  notes: Array<{ id: string; email: string; date: string; type: string; text: string; pad?: number }>;
-  cases: Array<{
-    kind: string;
-    question: string;
-    expect: string[];
-    forbid?: string[];
-    after?: string;
-    before?: string;
-    person?: string;
-  }>;
-};
 
 type Fixture = {
   contacts: Array<{
@@ -195,32 +166,17 @@ async function main() {
   if (floor60 != null && r60 < floor60 - 1e-9) below.push(`recall@60 ${r60.toFixed(3)} < ${floor60}`);
 
   // ------------------------------------------------------------------ passages -----------
-  const passages: PassageFixture = JSON.parse(
-    readFileSync(path.join(process.cwd(), "scripts", "eval-fixtures", "passage-search-eval.json"), "utf8")
-  );
+  const passages = loadPassageFixture(path.join(process.cwd(), "scripts", "eval-fixtures"));
   await db.delete(memoryChunks).where(eq(memoryChunks.userId, U));
   await db.delete(interactions).where(eq(interactions.userId, U));
 
-  const noteIdBySource = new Map<string, string>();
-  for (const note of passages.notes) {
-    const contactId = idByEmail.get(note.email);
-    if (!contactId) throw new Error(`passage fixture names ${note.email}, which contact-search-eval.json does not have`);
-    const [row] = await db.insert(interactions).values({
-      userId: U,
-      contactId,
-      interactionType: note.type,
-      rawNotes: `${filler(note.pad ?? 0)}${note.text}`,
-      interactionDate: new Date(`${note.date}T12:00:00Z`),
-    }).returning();
-    noteIdBySource.set(row.id, note.id);
-  }
-
-  // Indexed through the REAL sweep, not by calling the chunker directly — the eval should
-  // fail if the path production uses to index history stops working.
-  for (let pass = 0; pass < 20; pass++) {
-    const r = await backfillMemoryChunks(U);
-    if (r.remaining === 0) break;
-  }
+  // Seeded and indexed through the same path the research eval uses — see
+  // `scripts/lib/eval-passage-notes.ts`.
+  const noteIdBySource = await seedPassageNotes(
+    U,
+    passages,
+    new Map([...idByEmail].map(([email, id]) => [email, id]))
+  );
   if (hasKey) {
     // And embedded through the real drain, with the real provider.
     const drained = await runEmbeddingBackfill(U);
