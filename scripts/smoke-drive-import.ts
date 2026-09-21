@@ -5,9 +5,10 @@
  * capture's own save; reminders obey the strict rules and a flag lands on the import; an
  * unchanged doc re-imported is skipped, not double-logged; a vanished file is skipped with
  * a plain reason and the job still completes; a missing AI key stops the job; a time budget
- * hand-off resumes where it stopped, and no row starts without room to finish; a batch left
- * half-written by a killed save is re-saved rather than trusted; a row another runner already
- * finished is never overwritten or double-counted.
+ * hand-off resumes where it stopped, and no row starts without room to finish; a save that
+ * throws part-way is re-saved on the next import rather than trusted; a commitments-only doc
+ * is recognised once finished; a row another runner already finished is never overwritten or
+ * double-counted.
  *
  * Run: npx tsx scripts/smoke-drive-import.ts
  */
@@ -27,7 +28,6 @@ import {
 import { DriveFileUnavailableError } from "../src/lib/drive";
 import { DRIVE_MIME } from "../src/lib/imports/drive-triage";
 import { saveNoteBatch } from "../src/lib/note-batch-save";
-import { emptyNoteBatchResult } from "../src/lib/note-batches";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import type { CaptureParseResult, SuggestedReminderPreview } from "../src/lib/capture/types";
 import { countImportPeople } from "../src/lib/imports/import-people";
@@ -63,7 +63,12 @@ function reminder(key: string, over: Partial<SuggestedReminderPreview>): Suggest
  * `follow_up_days: 14` puts each generic follow-up at Sep 15 — already overdue on Sep 21 —
  * so the "no overdue follow-up" check really exercises `followUpStillAhead`.
  */
-function parsed(text: string, names: string[], suggested: SuggestedReminderPreview[]): CaptureParseResult {
+function parsed(
+  text: string,
+  names: string[],
+  suggested: SuggestedReminderPreview[],
+  existing: Map<string, string> = new Map(),
+): CaptureParseResult {
   return {
     items: names.map((name, i) => ({
       key: `p${i}`,
@@ -77,7 +82,12 @@ function parsed(text: string, names: string[], suggested: SuggestedReminderPrevi
         confidence: null, interaction_date: "2026-09-01", low_confidence_fields: [],
       },
       opportunities: [], impliedSteps: [], cadence: null,
-      duplicates: [], suggestedMergeId: null, sharedNoteTexts: [],
+      // What the real parse does for someone already in Orbit: offers them as the merge.
+      duplicates: existing.has(name)
+        ? [{ id: existing.get(name)!, fullName: name, company: null, title: null, reason: "Same name", confidence: 0.9 }]
+        : [],
+      suggestedMergeId: existing.get(name) ?? null,
+      sharedNoteTexts: [],
       interactionDate: "2026-09-01", interactionType: "meeting",
     })) as unknown as CaptureParseResult["items"],
     sharedNotes: [], interactionDate: "2026-09-01", interactionType: "meeting",
@@ -103,6 +113,11 @@ const DOCS: Record<string, { text: string; names: string[]; reminders: Suggested
   c: { text: "Call with Sam Rivera.", names: ["Sam Rivera"], reminders: [] },
   d: { text: "Lunch with Omar Haddad.", names: ["Omar Haddad"], reminders: [] },
   e: { text: "Drinks with Nia Brooks.", names: ["Nia Brooks"], reminders: [] },
+  f: {
+    text: "Board review on October 15.",
+    names: [],
+    reminders: [reminder("board", { title: "Board review", personName: null, dueDateIso: "2026-10-15" })],
+  },
   gone: "gone",
 };
 
@@ -119,7 +134,11 @@ function deps(over: Partial<DriveImportDeps> = {}): DriveImportDeps & { continue
     parse: async (_u, text) => {
       const d = Object.values(DOCS).find((x) => x !== "gone" && x.text === text);
       if (!d || d === "gone") throw new Error("unexpected text");
-      return parsed(text, d.names, d.reminders);
+      const db = await getDb();
+      const known = d.names.length
+        ? await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), inArray(contacts.fullName, d.names)) })
+        : [];
+      return parsed(text, d.names, d.reminders, new Map(known.map((c) => [c.fullName, c.id])));
     },
     save: saveNoteBatch,
     continueLater: async (id) => void continued.push(id),
@@ -235,23 +254,50 @@ async function main() {
   const tightRows = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, tight.importId) });
   check("…without starting the row", tightRows.length === 1 && tightRows[0].status === "pending", tightRows[0]?.status);
 
-  // A save killed part-way leaves a `saved` batch with no participants. That is not proof
-  // the doc was brought in: it is re-saved, and counts as read.
-  const e = DOCS.e as { text: string };
-  await db.insert(noteBatches).values({
-    userId: USER, sourceHash: hashSourceNote(e.text), sourceText: e.text, entryPoint: "capture",
-    anchorDate: new Date("2026-09-01T12:00:00Z"), anchorBasis: "hint", status: "saved",
-    result: emptyNoteBatchResult(), inputSources: ["file"],
-  });
-  const half = await stageDriveImport(USER, [file("e")]);
-  await runDriveImportJob(half.importId, deps());
-  const hImp = await db.query.imports.findFirst({ where: eq(imports.id, half.importId) });
-  check("a half-written batch is not trusted", hImp?.stats?.docsRead === 1 && !hImp?.stats?.docsAlreadyImported, JSON.stringify(hImp?.stats));
-  const [hRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, half.importId) });
-  const hIds = (hRow.payload as { contactIds?: string[] }).contactIds ?? [];
-  check("…the row is done with its person", hRow.status === "done" && hIds.length === 1 && hRow.contactId === hIds[0], JSON.stringify(hRow));
+  // A save that throws part-way leaves the row unfinished, so it is never a marker: the next
+  // import re-saves the doc and ends done with its people.
+  const broken = await stageDriveImport(USER, [file("e")]);
+  await runDriveImportJob(broken.importId, deps({
+    save: async (u, input) => {
+      await saveNoteBatch(u, input);
+      throw new Error("save interrupted");
+    },
+  }));
+  const [bRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, broken.importId) });
+  check("a save that throws leaves the row unfinished", bRow.status === "skipped" && bRow.errorMessage === DRIVE_ROW_COPY.unreadable, JSON.stringify(bRow));
+  check("…and marks nothing imported", !(bRow.payload as { sourceHash?: string }).sourceHash);
+  const retry = await stageDriveImport(USER, [file("e")]);
+  await runDriveImportJob(retry.importId, deps());
+  const retryImp = await db.query.imports.findFirst({ where: eq(imports.id, retry.importId) });
+  check("re-importing it saves it again", retryImp?.stats?.docsRead === 1 && !retryImp?.stats?.docsAlreadyImported, JSON.stringify(retryImp?.stats));
+  const [retryRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, retry.importId) });
+  const retryIds = (retryRow.payload as { contactIds?: string[] }).contactIds ?? [];
+  check("…the row is done with its person", retryRow.status === "done" && retryIds.length === 1 && retryRow.contactId === retryIds[0], JSON.stringify(retryRow));
   const nia = await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Nia Brooks")) });
   check("…and the person exists once", nia.length === 1, String(nia.length));
+
+  // A commitments-only doc: no people, one stated future date. Finished once, recognised after.
+  const f = DOCS.f as { text: string };
+  const fHash = hashSourceNote(f.text);
+  const firstF = await stageDriveImport(USER, [file("f")]);
+  await runDriveImportJob(firstF.importId, deps());
+  const f1 = await db.query.imports.findFirst({ where: eq(imports.id, firstF.importId) });
+  check("a dates-only doc is read", f1?.stats?.docsRead === 1, JSON.stringify(f1?.stats));
+  const boardReminders = async () =>
+    (await db.query.reminders.findMany({ where: eq(reminders.userId, USER) })).filter((r) => r.title === "Board review");
+  check("…its stated date became a reminder", (await boardReminders()).length === 1);
+  const batchesFor = async () =>
+    (await db.query.noteBatches.findMany({ where: and(eq(noteBatches.userId, USER), eq(noteBatches.sourceHash, fHash)) })).length;
+  const interactionsF = (await db.query.interactions.findMany({ where: eq(interactions.userId, USER) })).length;
+  const secondF = await stageDriveImport(USER, [file("f")]);
+  await runDriveImportJob(secondF.importId, deps({
+    parse: async () => { throw new Error("should not parse"); },
+  }));
+  const f2 = await db.query.imports.findFirst({ where: eq(imports.id, secondF.importId) });
+  check("…and recognised when imported again", f2?.stats?.docsAlreadyImported === 1 && !f2?.stats?.docsRead, JSON.stringify(f2?.stats));
+  check("…with no second batch", (await batchesFor()) === 1);
+  check("…no new interaction", (await db.query.interactions.findMany({ where: eq(interactions.userId, USER) })).length === interactionsF);
+  check("…and no second reminder", (await boardReminders()).length === 1);
 
   // A second runner (the stall cron) finished this row while this one was reading it.
   const raced = await stageDriveImport(USER, [file("d")]);

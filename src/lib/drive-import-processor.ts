@@ -12,12 +12,11 @@
  * reminders, the generic follow-up is dropped once it would already be overdue, and a
  * recently-passed, high-confidence date is only flagged on the import.
  */
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   imports,
   importJobRows,
-  noteBatches,
   isDriveFileRow,
   type DriveFileRowPayload,
   type ImportStats,
@@ -174,45 +173,50 @@ function acceptEveryone(
 }
 
 /**
- * A finished save of exactly this text, from any earlier import or capture.
+ * An earlier Drive row that finished importing exactly this text.
  *
- * `saveNoteBatch` inserts its batch row as `saved` with an empty `result` BEFORE writing
- * anyone, and fills `result` only at the end. So a save killed or thrown part-way leaves a
- * `saved` batch that proves nothing; only one that recorded its participants counts. Anything
- * else is re-saved — interactions and reminders are idempotent on their own keys, and the
- * re-parse's duplicate check merges into whoever the partial save created, so the only cost
- * is one more batch row.
+ * The proof is our own row, not `note_batches`: `saveNoteBatch` inserts its batch as `saved`
+ * before writing anyone and, if it throws part-way, persists whatever it had written, so a
+ * batch can't tell a finished save from a broken one. A Drive row is only marked `done` with
+ * a `sourceHash` after its save returned, so a part-way failure is never a marker and the
+ * next import re-saves (interactions and reminders are idempotent on their own keys). It
+ * also recognises a finished commitments-only doc, which has no participants to show for it.
  */
-async function priorBatchFor(userId: string, sourceHash: string) {
+async function priorImportFor(userId: string, sourceHash: string, excludeRowId: string) {
   const db = await getDb();
-  return (
-    (await db.query.noteBatches.findFirst({
-      where: and(
-        eq(noteBatches.userId, userId),
-        eq(noteBatches.sourceHash, sourceHash),
-        eq(noteBatches.status, "saved"),
-        sql`jsonb_array_length(coalesce(${noteBatches.result}->'participants', '[]'::jsonb)) > 0`,
+  const [row] = await db
+    .select({ payload: importJobRows.payload })
+    .from(importJobRows)
+    .where(
+      and(
+        eq(importJobRows.userId, userId),
+        eq(importJobRows.status, "done"),
+        ne(importJobRows.id, excludeRowId),
+        sql`${importJobRows.payload}->>'kind' = 'drive_file'`,
+        sql`${importJobRows.payload}->>'sourceHash' = ${sourceHash}`,
       ),
-      orderBy: [desc(noteBatches.createdAt)],
-      columns: { result: true },
-    })) ?? null
-  );
+    )
+    .orderBy(desc(importJobRows.updatedAt))
+    .limit(1);
+  return row && isDriveFileRow(row.payload) ? row.payload : null;
 }
 
 type RowOutcome =
   | {
       status: "done";
       contactIds: string[];
+      sourceHash: string;
       flags: NonNullable<ImportStats["flaggedCommitments"]>;
       reminders: number;
       created: number;
       updated: number;
     }
-  | { status: "skipped"; reason: string; already?: boolean; contactIds?: string[] };
+  | { status: "skipped"; reason: string; already?: boolean; contactIds?: string[]; sourceHash?: string };
 
 async function processDoc(
   userId: string,
   importId: string,
+  rowId: string,
   payload: DriveFileRowPayload,
   accessToken: string,
   deps: DriveImportDeps,
@@ -232,13 +236,14 @@ async function processDoc(
   if (!text.trim()) return { status: "skipped", reason: DRIVE_ROW_COPY.empty };
 
   const sourceHash = hashSourceNote(text);
-  const prior = await priorBatchFor(userId, sourceHash);
+  const prior = await priorImportFor(userId, sourceHash, rowId);
   if (prior) {
     return {
       status: "skipped",
       reason: DRIVE_ROW_COPY.alreadyImported,
       already: true,
-      contactIds: (prior.result?.participants ?? []).map((p) => p.contactId),
+      contactIds: prior.contactIds ?? [],
+      sourceHash,
     };
   }
 
@@ -287,6 +292,7 @@ async function processDoc(
   return {
     status: "done",
     contactIds: out.contactIds,
+    sourceHash,
     reminders: out.remindersCreated,
     created: out.created,
     updated: out.updated,
@@ -375,7 +381,7 @@ export async function runDriveImportJob(
 
         let outcome: RowOutcome;
         try {
-          outcome = await processDoc(userId, importId, payload, accessToken, deps);
+          outcome = await processDoc(userId, importId, row.id, payload, accessToken, deps);
         } catch (err) {
           const problem = keyProblem(err);
           if (problem) {
@@ -389,6 +395,7 @@ export async function runDriveImportJob(
         }
 
         const contactIds = outcome.status === "done" ? outcome.contactIds : (outcome.contactIds ?? []);
+        const finished = outcome.status === "done" || Boolean(outcome.already);
         // Guarded on `pending`: if the stall cron started a second runner that finished this
         // row first, its result stands and this one neither overwrites it nor counts it.
         const claimed = await db
@@ -396,9 +403,10 @@ export async function runDriveImportJob(
           .set({
             // An unchanged re-import is recorded as done: it touched these people, and the
             // detail sheet should list them. Its reason is kept for the row view.
-            status: outcome.status === "done" || outcome.already ? "done" : "skipped",
+            status: finished ? "done" : "skipped",
             contactId: contactIds[0] ?? null,
-            payload: { ...payload, contactIds },
+            // `sourceHash` on a done row is what marks this text imported (`priorImportFor`).
+            payload: { ...payload, contactIds, ...(finished && outcome.sourceHash ? { sourceHash: outcome.sourceHash } : {}) },
             errorMessage: outcome.status === "skipped" ? truncateStoredError(outcome.reason) : null,
             updatedAt: new Date(),
           })

@@ -1572,6 +1572,11 @@ export type DriveFileRowPayload = {
   modifiedTime: string;
   /** Everyone the doc's save touched. The row's own `contact_id` holds only the first. */
   contactIds?: string[];
+  /**
+   * `hashSourceNote` of the exported text, written only when the row finishes (`done`). A
+   * done row carrying it is the proof a later import uses to skip the unchanged doc.
+   */
+  sourceHash?: string;
 };
 
 /**
