@@ -9,6 +9,7 @@ import {
   Contact,
   FileSpreadsheet,
   HardDrive,
+  Loader2,
   MessageSquare,
 } from "lucide-react";
 import { ImportHistory } from "@/components/imports/import-history";
@@ -54,8 +55,6 @@ import type { ImportHistoryItem } from "@/actions/imports";
 export type DriveImportInput = {
   apiKey: string | null;
   appId: string | null;
-  connected: boolean;
-  canImportDrive: boolean;
 };
 
 /**
@@ -215,37 +214,45 @@ export function ImportHub({
   const queue = useImportQueue();
   const [open, setOpen] = useState<RowId | null>(null);
   const [drivePicks, setDrivePicks] = useState<PickedDriveFile[] | null>(null);
+  // Covers the whole click→token→Picker round trip: a slow token fetch or a Picker that
+  // takes a moment to load would otherwise leave the button clickable again mid-flight.
+  const [drivePickerBusy, setDrivePickerBusy] = useState(false);
   useRefreshOnVisible();
 
   async function pickFromDrive() {
-    if (!drive?.apiKey || !drive.appId) return;
-    const token = await getDrivePickerToken();
-    if (!token.ok) {
-      if (
-        token.reason === "needs_consent" ||
-        token.reason === "needs_reconnect" ||
-        token.reason === "not_connected"
-      ) {
-        try {
-          const { url } = await startGmailOAuth({ purpose: "drive", returnTo: "/imports" });
-          window.location.assign(url);
-        } catch (err) {
-          toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+    if (!drive?.apiKey || !drive.appId || drivePickerBusy) return;
+    setDrivePickerBusy(true);
+    try {
+      const token = await getDrivePickerToken();
+      if (!token.ok) {
+        if (
+          token.reason === "needs_consent" ||
+          token.reason === "needs_reconnect" ||
+          token.reason === "not_connected"
+        ) {
+          try {
+            const { url } = await startGmailOAuth({ purpose: "drive", returnTo: "/imports" });
+            window.location.assign(url);
+          } catch (err) {
+            toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+          }
+          return;
         }
+        toast.error(token.error ?? IMPORT_COPY.driveUnavailable);
         return;
       }
-      toast.error(token.error ?? IMPORT_COPY.driveUnavailable);
-      return;
-    }
-    try {
-      const picked = await openDrivePicker({
-        accessToken: token.accessToken,
-        apiKey: drive.apiKey,
-        appId: drive.appId,
-      });
-      if (picked.length) setDrivePicks(picked);
-    } catch (err) {
-      toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+      try {
+        const picked = await openDrivePicker({
+          accessToken: token.accessToken,
+          apiKey: drive.apiKey,
+          appId: drive.appId,
+        });
+        if (picked.length) setDrivePicks(picked);
+      } catch (err) {
+        toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+      }
+    } finally {
+      setDrivePickerBusy(false);
     }
   }
 
@@ -327,7 +334,7 @@ export function ImportHub({
             <Button
               type="button"
               variant="outline"
-              disabled={!canUseSync}
+              disabled={!canUseSync || drivePickerBusy}
               title={!canUseSync ? IMPORT_COPY.drivePaywalled : undefined}
               onClick={(e) => {
                 e.stopPropagation();
@@ -335,7 +342,11 @@ export function ImportHub({
                 void pickFromDrive();
               }}
             >
-              <HardDrive className="size-4" />
+              {drivePickerBusy ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <HardDrive className="size-4" />
+              )}
               Choose from Google Drive
             </Button>
           ) : undefined

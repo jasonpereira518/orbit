@@ -1,6 +1,8 @@
 "use client";
 
 import { DRIVE_MIME, type PickedDriveFile } from "@/lib/imports/drive-triage";
+import { UserFacingError } from "@/lib/errors";
+import { createSettler } from "@/lib/settle-once";
 
 /**
  * Google's file picker, loaded only when someone presses the Drive button.
@@ -13,6 +15,17 @@ type GapiWindow = Window & {
   gapi?: { load: (lib: string, cb: () => void) => void };
   google?: { picker: any }; // eslint-disable-line @typescript-eslint/no-explicit-any -- Google ships no types
 };
+
+/**
+ * How long we wait, from `setVisible(true)`, for Google to report ANY of loaded/picked/cancel.
+ *
+ * A bad API key, an App ID from the wrong GCP project, or the Picker failing to render can all
+ * mean the callback we wired never fires — Google shows its own error state inside the iframe,
+ * not through our callback. Without this, `openDrivePicker` would hang forever and the button
+ * would never re-enable. 20s is generous: `loaded` alone normally arrives in well under a
+ * second once the script is on the page.
+ */
+const PICKER_LOAD_TIMEOUT_MS = 20_000;
 
 let loading: Promise<void> | null = null;
 
@@ -40,7 +53,16 @@ export async function openDrivePicker(opts: {
 }): Promise<PickedDriveFile[]> {
   await loadPickerLibrary();
   const { picker } = (window as GapiWindow).google!;
-  return new Promise((resolve) => {
+  const settler = createSettler<PickedDriveFile[]>();
+
+  // Cleared the moment ANY of loaded/picked/cancel arrives — see PICKER_LOAD_TIMEOUT_MS.
+  const timeoutId = window.setTimeout(() => {
+    settler.reject(
+      new UserFacingError("Google’s file picker didn’t load — try again in a moment"),
+    );
+  }, PICKER_LOAD_TIMEOUT_MS);
+
+  try {
     const view = new picker.DocsView(picker.ViewId.DOCS)
       .setMimeTypes(`${DRIVE_MIME.doc},${DRIVE_MIME.slides}`)
       .setIncludeFolders(true)
@@ -55,8 +77,15 @@ export async function openDrivePicker(opts: {
       // imports server-only code, so this stays a literal rather than an import.
       .setMaxItems(25)
       .setCallback((data: { action: string; docs?: PickerDoc[] }) => {
+        if (
+          data.action === picker.Action.LOADED ||
+          data.action === picker.Action.PICKED ||
+          data.action === picker.Action.CANCEL
+        ) {
+          window.clearTimeout(timeoutId);
+        }
         if (data.action === picker.Action.PICKED) {
-          resolve(
+          settler.resolve(
             (data.docs ?? []).map((d) => ({
               id: d.id,
               name: d.name,
@@ -65,10 +94,19 @@ export async function openDrivePicker(opts: {
             })),
           );
         } else if (data.action === picker.Action.CANCEL) {
-          resolve([]);
+          settler.resolve([]);
         }
       })
       .build()
       .setVisible(true);
-  });
+  } catch (err) {
+    window.clearTimeout(timeoutId);
+    settler.reject(
+      err instanceof Error
+        ? err
+        : new UserFacingError("Couldn’t open Google’s file picker"),
+    );
+  }
+
+  return settler.promise;
 }
