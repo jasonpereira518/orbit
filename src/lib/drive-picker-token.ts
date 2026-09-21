@@ -1,12 +1,12 @@
 import { grantCovers } from "@/lib/google-scopes";
 
 /**
- * Why `getDrivePickerToken` (`src/actions/drive.ts`) can't hand back a Picker token for this
- * connection, decided from the row alone — no DB, no network — so it's smoke-testable
- * without a user session. `null` means the grant is usable and the caller should go fetch
- * a live access token.
+ * Why `checkDriveReadiness` (`src/actions/drive.ts`) says the stored Google grant can't export
+ * picked files yet, decided from the row alone — no DB, no network — so it's smoke-testable
+ * without a user session. `null` means the grant covers `drive.file` and the caller should
+ * confirm it still refreshes. (The Picker's own token never comes from this grant.)
  */
-export function pickerTokenReason(
+export function driveReadinessReason(
   conn: { status: string; scopes: string | null } | undefined,
 ): "not_connected" | "needs_reconnect" | "needs_consent" | null {
   if (!conn) return "not_connected";

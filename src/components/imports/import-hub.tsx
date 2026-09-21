@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BookUser,
   Calendar as CalendarIcon,
@@ -36,9 +36,13 @@ import {
 import { detectImportFiles } from "@/lib/imports/detect-import-file";
 import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
-import { openDrivePicker } from "@/lib/imports/google-picker";
+import {
+  openDrivePicker,
+  requestPickerToken,
+  warmDrivePicker,
+} from "@/lib/imports/google-picker";
 import type { PickedDriveFile } from "@/lib/imports/drive-triage";
-import { getDrivePickerToken } from "@/actions/drive";
+import { checkDriveReadiness } from "@/actions/drive";
 import { startGmailOAuth } from "@/actions/gmail";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
@@ -55,7 +59,13 @@ import type { ImportHistoryItem } from "@/actions/imports";
 export type DriveImportInput = {
   apiKey: string | null;
   appId: string | null;
+  /** The server's `GOOGLE_CLIENT_ID` — the browser's Picker token must come from it. */
+  clientId: string | null;
 };
+
+type DriveReadiness = Awaited<ReturnType<typeof checkDriveReadiness>>;
+/** A readiness answer fetched on hover is trusted for this long when the press comes. */
+const READINESS_FRESH_MS = 60_000;
 
 /**
  * Everything on /imports.
@@ -219,16 +229,41 @@ export function ImportHub({
   const [drivePickerBusy, setDrivePickerBusy] = useState(false);
   useRefreshOnVisible();
 
+  // The Drive card takes the queue card's slot, so it must never open over a queue that is
+  // still running or showing results — the queue would vanish mid-import.
+  const queueBusy = queue.items.length > 0;
+  const driveConfigured = Boolean(drive?.apiKey && drive.appId && drive.clientId);
+  // Asked on hover/focus so the press can open Google's token window straight away: browsers
+  // only allow a popup close to the gesture, and a server round trip after the click spends it.
+  const readinessRef = useRef<{ at: number; promise: Promise<DriveReadiness> } | null>(null);
+
+  function warmDrive() {
+    if (!driveConfigured || !canUseSync) return;
+    warmDrivePicker();
+    const cached = readinessRef.current;
+    if (cached && Date.now() - cached.at < READINESS_FRESH_MS) return;
+    const promise = checkDriveReadiness();
+    promise.catch(() => {
+      if (readinessRef.current?.promise === promise) readinessRef.current = null;
+    });
+    readinessRef.current = { at: Date.now(), promise };
+  }
+
   async function pickFromDrive() {
-    if (!drive?.apiKey || !drive.appId || drivePickerBusy) return;
+    if (!drive?.apiKey || !drive.appId || !drive.clientId || drivePickerBusy || queueBusy) return;
     setDrivePickerBusy(true);
     try {
-      const token = await getDrivePickerToken();
-      if (!token.ok) {
+      const cached = readinessRef.current;
+      readinessRef.current = null;
+      const ready =
+        cached && Date.now() - cached.at < READINESS_FRESH_MS
+          ? await cached.promise
+          : await checkDriveReadiness();
+      if (!ready.ok) {
         if (
-          token.reason === "needs_consent" ||
-          token.reason === "needs_reconnect" ||
-          token.reason === "not_connected"
+          ready.reason === "needs_consent" ||
+          ready.reason === "needs_reconnect" ||
+          ready.reason === "not_connected"
         ) {
           try {
             const { url } = await startGmailOAuth({ purpose: "drive", returnTo: "/imports" });
@@ -238,12 +273,18 @@ export function ImportHub({
           }
           return;
         }
-        toast.error(token.error ?? IMPORT_COPY.driveUnavailable);
+        toast.error(ready.error ?? IMPORT_COPY.driveUnavailable);
         return;
       }
       try {
+        // Browser-only, drive.file-only, never sent to Orbit or kept past this call.
+        const accessToken = await requestPickerToken({
+          clientId: drive.clientId,
+          loginHint: google?.emailAddress ?? null,
+        });
+        if (!accessToken) return; // closed Google's window: a cancel
         const picked = await openDrivePicker({
-          accessToken: token.accessToken,
+          accessToken,
           apiKey: drive.apiKey,
           appId: drive.appId,
         });
@@ -251,6 +292,8 @@ export function ImportHub({
       } catch (err) {
         toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
       }
+    } catch (err) {
+      toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
     } finally {
       setDrivePickerBusy(false);
     }
@@ -330,15 +373,23 @@ export function ImportHub({
         onFiles={(files) => void handleFiles(files)}
         busy={reading}
         extraAction={
-          drive?.apiKey && drive.appId ? (
+          driveConfigured ? (
             <Button
               type="button"
               variant="outline"
-              disabled={!canUseSync || drivePickerBusy}
-              title={!canUseSync ? IMPORT_COPY.drivePaywalled : undefined}
+              disabled={!canUseSync || drivePickerBusy || queueBusy}
+              title={
+                !canUseSync
+                  ? IMPORT_COPY.drivePaywalled
+                  : queueBusy
+                    ? IMPORT_COPY.driveWaitForQueue
+                    : undefined
+              }
+              onPointerEnter={warmDrive}
+              onFocus={warmDrive}
               onClick={(e) => {
                 e.stopPropagation();
-                if (!canUseSync) return;
+                if (!canUseSync || queueBusy) return;
                 void pickFromDrive();
               }}
             >

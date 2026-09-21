@@ -20,7 +20,7 @@ than capture — reminders.
 | How "looks like notes" is judged | **Filename and metadata only** — free, instant, no AI before the person has chosen anything. Weak on "Untitled document"; accepted. |
 | What gets written | **Everything capture produces** — people, the logged meeting, reminders — with **stricter reminder rules** (below). |
 | File types | **Google Docs and Google Slides only.** Sheets, PDFs, Word files are out. |
-| Picker token | A short-lived access token minted server-side from the stored Google grant and handed to the Picker in the browser. **The first time a Google token reaches the client in this codebase** — accepted: it is the user's own token, `drive.file` + identity only, never stored client-side. |
+| Picker token | Minted **in the browser by Google Identity Services** (`initTokenClient`, scope `drive.file` only, `include_granted_scopes: false`), used only to open the Picker, never sent to Orbit's server and never stored. The stored server grant is the union of every Google scope the person connected (Gmail, Calendar…), so no token minted from it ever reaches the client. `drive.file` access is per OAuth client, so a file picked with the browser token is exportable by the stored grant of the same client — the GIS client id is the server's `GOOGLE_CLIENT_ID`, read in `page.tsx` and passed down (it is public; no new env var). |
 
 ## 1. Connecting
 
@@ -33,21 +33,29 @@ than capture — reminders.
 
 ## 2. Picking
 
-- Client loads the Picker (`apis.google.com/js/api.js` → `gapi.load("picker")`) lazily, only
-  when the button is pressed.
-- A server action `getDrivePickerToken()` returns `{ ok: true; accessToken }` from
-  `getValidAccessToken`, or `{ ok: false; reason; error? }` with `reason` one of
-  `"needs_consent"`, `"needs_reconnect"`, `"not_connected"`, `"error"` — distinct enough that
-  the three consent-shaped reasons all route to the same incremental-consent OAuth and only
-  `"error"` shows a toast. With no Drive grant, the button starts that OAuth first and comes
-  back to `/imports`.
+- Client loads the Picker (`apis.google.com/js/api.js` → `gapi.load("picker", { callback,
+  onerror, timeout, ontimeout })`) and Google Identity Services (`accounts.google.com/gsi/client`)
+  lazily — warmed on hover/focus of the button, so the press can open Google's token popup
+  while the browser still counts it as a user gesture.
+- A server action `checkDriveReadiness()` returns `{ ok: true }` or `{ ok: false; reason; error? }`
+  with `reason` one of `"needs_consent"`, `"needs_reconnect"`, `"not_connected"`, `"error"` —
+  it checks that the **stored** grant covers `drive.file` and still refreshes (the server needs
+  it to export picked files) and **never returns a token**. The three consent-shaped reasons all
+  route to the same incremental-consent OAuth and only `"error"` shows a toast. With no Drive
+  grant, the button starts that OAuth first and comes back to `/imports`.
+- Then `google.accounts.oauth2.initTokenClient({ client_id, scope: drive.file,
+  include_granted_scopes: false, login_hint: <connected Google address>, callback,
+  error_callback })` + `requestAccessToken({ prompt: "" })`. A closed popup or a decline is a
+  cancel; a blocked popup, an OAuth error or three minutes of silence is a toast. Settle-once
+  (`settle-once.ts`) guards every callback.
 - Picker config: `DocsView` filtered to `application/vnd.google-apps.document` and
   `…presentation`, multi-select on, `setAppId(NEXT_PUBLIC_GOOGLE_APP_ID)` (must be the same GCP
   project as the OAuth client, or `drive.file` grants nothing), `setDeveloperKey(NEXT_PUBLIC_GOOGLE_PICKER_API_KEY)`.
-- **Both env vars are optional.** Unset → the Drive button is not rendered. They must not join
+- **Both env vars are optional.** Unset (or `GOOGLE_CLIENT_ID` unset) → the Drive button is not rendered. They must not join
   the prod env gate in `env.ts`, which blocks every deploy on a missing required var.
-- CSP (`security-headers.ts`): `apis.google.com` in `script-src`, `docs.google.com` and
-  `drive.google.com` in `frame-src`.
+- CSP (`security-headers.ts`): `apis.google.com` and `accounts.google.com/gsi/client` in
+  `script-src`; `docs.google.com`, `drive.google.com` and `accounts.google.com` in `frame-src`;
+  `www.googleapis.com` and `accounts.google.com` in `connect-src`.
 - Picker results carry id, name, mimeType, lastEditedUtc, and owner — that is all triage reads.
 
 ## 3. Triage — `src/lib/imports/drive-triage.ts` (pure)

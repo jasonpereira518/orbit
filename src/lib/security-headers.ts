@@ -56,7 +56,9 @@ export function buildSecurityHeaders(options: {
       "https://challenges.cloudflare.com",
       "https://va.vercel-scripts.com",
       // Google Picker for Drive imports
-      "https://apis.google.com"
+      "https://apis.google.com",
+      // Google Identity Services: mints the Picker's drive.file-only token in the browser
+      "https://accounts.google.com/gsi/client"
     )}`,
     `connect-src ${join(
       "'self'",
@@ -67,7 +69,9 @@ export function buildSecurityHeaders(options: {
       "https://va.vercel-scripts.com",
       "https://vitals.vercel-insights.com",
       // Google Picker for Drive imports
-      "https://www.googleapis.com"
+      "https://www.googleapis.com",
+      // Google Identity Services (host-wide, as Google advises for connect-src)
+      "https://accounts.google.com"
     )}`,
     // Avatars redirect to Blob, LinkedIn's CDN, unavatar and Clerk; the set is open by design.
     `img-src 'self' data: blob: https:`,
@@ -83,7 +87,9 @@ export function buildSecurityHeaders(options: {
       "https://challenges.cloudflare.com",
       // Google Picker for Drive imports
       "https://docs.google.com",
-      "https://drive.google.com"
+      "https://drive.google.com",
+      // Google Identity Services' own frames
+      "https://accounts.google.com"
     )}`,
     `object-src 'none'`,
     `base-uri 'self'`,

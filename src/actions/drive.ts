@@ -10,17 +10,22 @@ import { getValidAccessToken } from "@/lib/gmail";
 import { asActionResult, friendlyError, ReauthRequiredError, type ActionResult } from "@/lib/errors";
 import { runDriveImportJob, stageDriveImport } from "@/lib/drive-import-processor";
 import { removeDriveFlag } from "@/lib/drive-flags";
-import { pickerTokenReason } from "@/lib/drive-picker-token";
+import { driveReadinessReason } from "@/lib/drive-picker-token";
 import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 
 /**
- * A short-lived Google token for the Picker, which runs in the browser and cannot use the
- * encrypted token we store. Only ever for a grant that covers drive.file, so what reaches
- * the browser can open the Picker and nothing more. Returned as data, never thrown: a thrown
- * message is replaced by a digest in production.
+ * Whether Orbit's stored Google grant can read the files someone is about to pick.
+ *
+ * Never returns a token. The Picker runs on its own `drive.file`-only token that Google
+ * Identity Services mints in the browser (`src/lib/imports/google-picker.ts`); the stored
+ * grant — which also carries whatever Gmail/Calendar scopes the person connected — stays on
+ * the server, where the import uses it to export the picked files. This check exists so the
+ * browser knows, before it opens anything, whether to send the person through Google's
+ * consent first. Returned as data, never thrown: a thrown message is replaced by a digest in
+ * production.
  */
-export async function getDrivePickerToken(): Promise<
-  | { ok: true; accessToken: string }
+export async function checkDriveReadiness(): Promise<
+  | { ok: true }
   | { ok: false; reason: "needs_consent" | "not_connected" | "needs_reconnect" | "error"; error?: string }
 > {
   const userId = await requireSyncUser();
@@ -29,10 +34,12 @@ export async function getDrivePickerToken(): Promise<
     where: eq(gmailConnections.userId, userId),
     columns: { scopes: true, status: true },
   });
-  const reason = pickerTokenReason(conn);
+  const reason = driveReadinessReason(conn);
   if (reason) return { ok: false, reason };
   try {
-    return { ok: true, accessToken: await getValidAccessToken(userId, { minValidityMs: 10 * 60_000 }) };
+    // Proves the stored grant still refreshes; the token itself is discarded here.
+    await getValidAccessToken(userId);
+    return { ok: true };
   } catch (err) {
     // The refresh token itself was rejected mid-flight (revoked, or Google now wants fresh
     // consent) even though the row still read `active` a moment ago — same fix as a lapsed

@@ -25,6 +25,7 @@ export const IMPORT_COPY = {
   stopped: "Import stopped",
   driveUnavailable: "Couldn’t open Google Drive — try again in a moment",
   drivePaywalled: "Google Drive is on paid plans",
+  driveWaitForQueue: "Finish or clear the files above first",
 } as const;
 
 export type ImportCopyKey = keyof typeof IMPORT_COPY;
