@@ -37,10 +37,31 @@ only if the research step found the note and the answer used it. It gates on `me
 `forbiddenHits` and `inventedContactIds` (never). `meanLookups`, `meanRounds` and
 `filteredRecommendations` are reported for cost and are not gated.
 
-It has no baseline yet — the report shows it as `(new)` and does not gate it until one is
-recorded. Record one before tuning anything the research step does, or there is nothing to
-compare a change against. Its plumbing is checked without a key by
-`scripts/smoke-eval-research-task.ts`.
+Its baseline is `2026-09-21-gemini-research-baseline/` — Gemini 3.8 Flash, 10 cases, 2 runs:
+
+| metric | value |
+|---|---|
+| mentionRecall | 100% |
+| factRecall | 92.9% (13/14 — one miss, `research-date-scoped`, run 2 only) |
+| routingAccuracy | 100% |
+| forbiddenHits / inventedContactIds | 0 / 0 |
+| meanLookups / meanRounds | 2.75 / 2.5 |
+| cost | $0.0122 per case, p50 9.8s |
+
+What it says about the research step's cost: the gather rounds cost about as much as writing
+the answer ($0.104 vs $0.106 across the run), because every round re-sends the conversation —
+so a question routed to research costs roughly twice a single-pass one. `research-intro-path`
+hits the six-lookup cap on every run; it is the most expensive case and the first place to
+look when tuning. The one miss predates the per-case miss detail (the log now says which
+person or fact was missing and prints the answer), so the next run will say why.
+
+Compare against it with the directory form:
+
+```bash
+npx tsx scripts/eval-ai-report.ts docs/ai-evals/2026-09-21-gemini-research-baseline runs/mine
+```
+
+Its plumbing is also checked without a key by `scripts/smoke-eval-research-task.ts`.
 
 ## What is recorded here
 

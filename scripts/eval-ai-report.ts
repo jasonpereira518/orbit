@@ -9,7 +9,7 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { gate, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
+import { formatMetric, gate, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
 
 type Report = {
   label: string;
@@ -17,16 +17,6 @@ type Report = {
   tasks: Record<string, { cases: number; metrics: TaskMetrics; costMicros: number; costPerCaseMicros: number | null; misses: string[] }>;
 };
 
-/**
- * Rates print as percentages; counts and averages print as numbers. Named by convention in
- * the tasks: `*Hits`, `phantom*`, `*Ids` are counts, `mean*` are averages, `filtered*` are
- * counts. Printing `meanLookups 1.5` as "150.0%" would read as a broken metric.
- */
-function formatMetric(key: string, value: number): string {
-  if (/Hits$|^phantom|Ids$|^filtered/.test(key)) return String(value);
-  if (/^mean/.test(key)) return value.toFixed(2);
-  return pct(value);
-}
 
 function load(dir: string): Report["tasks"] {
   const tasks: Report["tasks"] = {};
@@ -39,7 +29,6 @@ function load(dir: string): Report["tasks"] {
 }
 
 const usd = (micros: number | null) => (micros == null ? "—" : `$${(micros / 1_000_000).toFixed(4)}`);
-const pct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(0)}%`);
 const pad = (s: string, n: number) => (s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length));
 
 function main() {

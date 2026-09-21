@@ -187,3 +187,14 @@ export function scoreResearchAnswer(input: {
     filteredOut: raw.filter((id) => input.knownContactIds.has(id) && !kept.has(id)).length,
   };
 }
+
+/**
+ * Rates print as percentages; counts and averages print as numbers. Named by convention in
+ * the tasks: `*Hits`, `phantom*`, `*Ids` are counts, `mean*` are averages, `filtered*` are
+ * counts. Printing `meanLookups 1.5` as "150.0%" would read as a broken metric.
+ */
+export function formatMetric(key: string, value: number): string {
+  if (/Hits$|^phantom|Ids$|^filtered/.test(key)) return String(value);
+  if (/^mean/.test(key)) return value.toFixed(2);
+  return `${(value * 100).toFixed(1)}%`;
+}

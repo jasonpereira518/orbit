@@ -677,7 +677,22 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
       const research = gathered.research
         ? ` — ${gathered.research.lookups} lookup(s), ${gathered.research.rounds} round(s), stopped: ${gathered.research.stoppedBy}`
         : "";
-      log(`  ${missed ? "MISS" : "ok  "} research/${c.id} [${gathered.depth.depth}]${research}`);
+      // Say WHAT missed. A bare MISS on a one-off run leaves nothing to go on: the first
+      // baseline had one, and whether it was the person, the fact or the routing could only
+      // be guessed at afterwards.
+      const why = missed
+        ? [
+            !routedOk ? `routed ${gathered.depth.depth}, expected ${c.expectDepth}` : null,
+            ...people.flatMap((p, i) => (score.mentioned[i] ? [] : [`did not name ${p.fullName}`])),
+            ...c.mustSay.flatMap((f, i) => (score.said[i] ? [] : [`did not say "${f}"`])),
+            score.forbiddenHits ? `${score.forbiddenHits} unsupported claim(s)` : null,
+            score.inventedIds ? `${score.inventedIds} invented id(s)` : null,
+          ]
+            .filter(Boolean)
+            .join("; ")
+        : "";
+      log(`  ${missed ? "MISS" : "ok  "} research/${c.id} [${gathered.depth.depth}]${research}${why ? ` — ${why}` : ""}`);
+      if (missed) log(`       answer: ${(result.answer ?? "").replace(/\s+/g, " ").slice(0, 300)}`);
     } catch (err) {
       misses.push(c.id);
       c.mustMention.forEach(() => count(mentioned, false));

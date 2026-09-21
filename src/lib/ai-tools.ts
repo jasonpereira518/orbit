@@ -258,7 +258,15 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
         name: fc.name ?? "",
         args: fc.args ?? {},
       }));
-      return { calls, text: response.text ?? "" };
+      // Text read from the parts directly, not through `response.text`: that getter logs a
+      // "there are non-text parts functionCall" warning on every round that makes a call —
+      // i.e. on every research round, in production logs — and returns the same string.
+      const text = (content?.parts ?? [])
+        // `thought` parts carry the model's reasoning as text on thinking models; they are
+        // not its reply, and `response.text` excludes them too.
+        .flatMap((p) => (typeof p.text === "string" && !p.thought ? [p.text] : []))
+        .join("");
+      return { calls, text };
     },
     addResults(results) {
       if (!results.length) return;

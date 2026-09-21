@@ -53,7 +53,7 @@ import { FIXTURE_DIR, TASKS, TASK_NAMES, type TaskName, type TaskResult } from "
 import { AI_OPERATIONS, AI_OPERATION_IDS, type AiOperationId, type AiTier } from "../src/lib/ai-operations";
 import { FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
 import type { ThinkingLevel } from "../src/lib/ai-request-options";
-import { gate, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
+import { formatMetric, gate, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
 
 const USER = "eval-ai-user";
 
@@ -254,7 +254,6 @@ function gitCommit(): string | null {
   }
 }
 
-const pct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(4)}`;
 
 export type EvalReport = {
@@ -345,7 +344,7 @@ async function main() {
   console.log("\nSummary");
   for (const [task, t] of Object.entries(report.tasks)) {
     const metrics = Object.entries(t.metrics)
-      .map(([k, v]) => `${k} ${v == null ? "—" : k.endsWith("Hits") || k.startsWith("phantom") ? v.toFixed(1) : pct(v)}`)
+      .map(([k, v]) => `${k} ${v == null ? "—" : formatMetric(k, v)}`)
       .join(" · ");
     console.log(`  ${task.padEnd(11)} ${metrics}`);
     console.log(
