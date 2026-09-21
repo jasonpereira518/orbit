@@ -13,6 +13,7 @@ import {
 } from "react";
 import Link from "next/link";
 import {
+  ArrowDown,
   History,
   Loader2,
   NotebookPen,
@@ -83,6 +84,11 @@ import {
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
 import { streamChat, type DoneInfo } from "@/lib/chat-stream-client";
+import {
+  createStreamSmoother,
+  prefersReducedMotionNow,
+  type StreamSmoother,
+} from "@/lib/stream-smoother";
 import { activeMentions } from "@/lib/chat-mentions";
 import { addMentionPick } from "@/lib/mentions/mention-picks";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
@@ -248,6 +254,12 @@ export function ChatPanel() {
   // Lets the user cut a long answer short. `streamChat` has always accepted a signal and
   // the route already honours `request.signal`; nothing was passing one.
   const abortRef = useRef<AbortController | null>(null);
+  // The reveal buffer for the answer being streamed, so an unmount can stop it drawing.
+  const smootherRef = useRef<StreamSmoother | null>(null);
+  useEffect(() => () => smootherRef.current?.cancel(), []);
+  // Whether the reader is at the bottom of the thread. Drives the jump-to-latest button; kept as
+  // state (not just the ref) because it changes what is rendered.
+  const [atBottom, setAtBottom] = useState(true);
   const busy = pending || streaming;
   // The "searching" bubble makes sense until the first token; after that the answer
   // itself is the progress indicator.
@@ -499,12 +511,17 @@ export function ChatPanel() {
     // heading out of view and cut its first line in half under the chat header.
     if (messages.length === 0 && !busy) return;
     if (!stickToBottomRef.current && !isNearBottom()) return;
-    // Defer so DOM has laid out new messages
-    requestAnimationFrame(() => scrollToBottom(true));
-  }, [messages, busy, isNearBottom, scrollToBottom]);
+    // Defer so DOM has laid out new messages. While an answer streams this runs on every frame,
+    // and a *smooth* scroll re-issued every frame keeps interrupting the last one — the view
+    // judders instead of tracking. Instant while streaming, smooth only when a whole message lands.
+    requestAnimationFrame(() => scrollToBottom(!streaming));
+  }, [messages, busy, streaming, isNearBottom, scrollToBottom]);
 
   function onListScroll() {
-    stickToBottomRef.current = isNearBottom();
+    const near = isNearBottom();
+    stickToBottomRef.current = near;
+    // Scroll fires at high frequency; only re-render when the answer actually changes.
+    setAtBottom((prev) => (prev === near ? prev : near));
   }
 
   const ensureThread = useCallback(async () => {
@@ -687,6 +704,18 @@ export function ChatPanel() {
           ]);
         };
 
+        // The answer is revealed a frame at a time rather than a network chunk at a time. Every
+        // path that ends the answer (recommendations, done, stop) flushes it first, so what is on
+        // screen is complete whenever the stream is.
+        const smoother = createStreamSmoother(
+          (chunk) => {
+            ensurePlaceholder();
+            patch((m) => ({ ...m, answer: m.answer + chunk }));
+          },
+          { reduced: prefersReducedMotionNow() }
+        );
+        smootherRef.current = smoother;
+
         const controller = new AbortController();
         abortRef.current = controller;
         await streamChat(
@@ -696,11 +725,10 @@ export function ChatPanel() {
             contextContactIds,
           },
           {
-            onAnswer: (delta) => {
-              ensurePlaceholder();
-              patch((m) => ({ ...m, answer: m.answer + delta }));
-            },
+            onAnswer: (delta) => smoother.push(delta),
             onRecommendations: (items) => {
+              // Recommendations follow the last word of the prose; show that word first.
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
             },
@@ -719,6 +747,7 @@ export function ChatPanel() {
               });
             },
             onDone: (info) => {
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({
                 ...m,
@@ -748,6 +777,8 @@ export function ChatPanel() {
               // A stop is the user's own doing, not a failure: keep whatever arrived and
               // say plainly that it was cut short rather than deleting it and apologising.
               if (controller.signal.aborted) return;
+              // The bubble is about to be removed; there is nothing to reveal into.
+              smoother.cancel();
               toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               resetQuestion(q);
@@ -755,6 +786,9 @@ export function ChatPanel() {
           },
           controller.signal
         );
+        // However the stream ended, show everything that arrived. A no-op after done or an error.
+        smoother.flush();
+        smootherRef.current = null;
         if (controller.signal.aborted) {
           // Stopping during retrieval means no answer bubble was ever placed, which used to
           // leave the question sitting alone with nothing to say what happened. The user
@@ -1030,6 +1064,9 @@ export function ChatPanel() {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* `relative` so the jump button can sit on the scroller's bottom edge — above the
+              composer, but not inside the scrolling content, where it would scroll away. */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
           <div
             ref={listRef}
             onScroll={onListScroll}
@@ -1095,6 +1132,34 @@ export function ChatPanel() {
               )}
             </div>
           </div>
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-x-0 bottom-3 flex justify-center transition-opacity duration-150",
+              !atBottom && messages.length > 0 ? "opacity-100" : "opacity-0"
+            )}
+          >
+            <button
+              type="button"
+              // Only a tab stop while it is visible: an invisible button in the tab order is a
+              // control you can land on and cannot see.
+              tabIndex={!atBottom && messages.length > 0 ? 0 : -1}
+              aria-hidden={atBottom || messages.length === 0}
+              aria-label="Jump to latest"
+              title="Jump to latest"
+              onClick={() => {
+                stickToBottomRef.current = true;
+                setAtBottom(true);
+                scrollToBottom(true);
+              }}
+              className={cn(
+                "flex size-8 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground shadow-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                !atBottom && messages.length > 0 && "pointer-events-auto"
+              )}
+            >
+              <ArrowDown className="size-4" />
+            </button>
+          </div>
+          </div>
 
           <div className="shrink-0 border-t border-border/60 bg-card p-3 sm:p-4">
             {/* `relative`: the `@` type-ahead anchors to this box's top edge, which is the
@@ -1136,6 +1201,8 @@ export function ChatPanel() {
                   onPicksChange={setAttached}
                   // Chat is the surface where a past conversation is worth naming.
                   events
+                  // `/` at the start of a line opens the command menu (prefills and page jumps).
+                  commands
                   // Off while the recogniser owns the box — an accepted row splices text
                   // the dictated span is anchored against. (Mid-IME is the composer's own
                   // business and it shuts itself.)
@@ -1379,7 +1446,7 @@ const AssistantBubble = memo(function AssistantBubble({
     // from a stranger. The user's own words keep a bubble, so the two are still easy to
     // tell apart while scanning.
     <div className="flex justify-start">
-      <div className="w-full max-w-[92%] space-y-3">
+      <div className="w-full min-w-0 max-w-[92%] space-y-3">
         {steps.length > 0 && (
           <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} />
         )}
