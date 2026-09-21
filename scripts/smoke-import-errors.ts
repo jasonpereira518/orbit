@@ -60,6 +60,22 @@ const SAMPLES: { raw: string; code: ImportFailureCode }[] = [
   { raw: "connect ECONNRESET 10.0.0.1:5432", code: "provider_unavailable" },
   { raw: "Unable to auto-detect delimiting character", code: "bad_file" },
   { raw: "Something nobody has ever seen before", code: "unknown" },
+  {
+    raw: "Your AI provider didn’t accept your API key — check it in Settings, then try again",
+    code: "ai_key",
+  },
+  {
+    raw: "Your AI provider says your account is out of credit — top up with them, then try again",
+    code: "ai_key",
+  },
+  {
+    raw: "Your AI model isn’t available — pick another in Settings, then try again",
+    code: "ai_key",
+  },
+  {
+    raw: "Add an AI key in Settings so Orbit can read your Drive files",
+    code: "ai_key",
+  },
 ];
 
 console.log("Classification");
@@ -159,6 +175,7 @@ const CODES: ImportFailureCode[] = [
   "row_conflict",
   "database",
   "stalled",
+  "ai_key",
   "unknown",
 ];
 check(

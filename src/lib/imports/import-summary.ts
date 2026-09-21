@@ -35,6 +35,8 @@ export type SummarisableImport = {
     remindersCreated?: number;
     messagesImported?: number;
     meetingsLogged?: number;
+    docsRead?: number;
+    flaggedCommitments?: unknown[];
   } | null;
 };
 
@@ -51,6 +53,10 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
     chips.push({ label: label(n), tone, href });
   };
 
+  if (item.importType === "drive_docs") {
+    add(stats.docsRead, (n) => `${n} doc${n === 1 ? "" : "s"} read`, "neutral");
+  }
+
   if (createsContacts(item.importType)) {
     add(item.contactsCreated, (n) => `${n} added`, "good");
     add(item.contactsUpdated, (n) => `${n} updated`, "neutral");
@@ -59,6 +65,7 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
   // Calendar's real output, and the one every calendar row used to be missing.
   add(stats.interactionsLogged, (n) => `${n} meetings logged`, "good");
   add(stats.remindersCreated, (n) => `${n} reminders`, "neutral");
+  add(stats.flaggedCommitments?.length, (n) => `${n} to look at`, "offer", "#worth-a-look");
 
   // Legacy per-type counters, still rendered so rows from before the engine keep their numbers.
   add(stats.messagesImported, (n) => `${n} messages`, "neutral");

@@ -8,6 +8,7 @@ import {
   Calendar as CalendarIcon,
   Contact,
   FileSpreadsheet,
+  FileText,
   Mail,
   MessageSquare,
   Upload,
@@ -28,10 +29,15 @@ import {
   type ImportDetail,
   type ImportHistoryItem,
 } from "@/actions/imports";
+import { dismissDriveFlag } from "@/actions/drive";
+import { createReminder } from "@/actions/reminders";
 import type {
   ImportedPerson,
   ImportPersonOutcome,
 } from "@/lib/imports/import-people";
+import type { ImportStats } from "@/db/schema";
+import { friendlyError } from "@/lib/errors";
+import { toast } from "@/lib/toast";
 
 // Re-exported: `import-hub.tsx` has always imported this type from here, and the row shape is
 // now owned by the action that narrows it.
@@ -65,6 +71,7 @@ const SOURCE_ICON: Record<string, { icon: LucideIcon; badge: string }> = {
   outlook_recruiter_scan: { icon: Mail, badge: MESSAGES_BADGE },
   calendar_ics: { icon: CalendarIcon, badge: CALENDAR_BADGE },
   calendar_csv: { icon: CalendarIcon, badge: CALENDAR_BADGE },
+  drive_docs: { icon: FileText, badge: CONNECTIONS_BADGE },
 };
 
 const UNKNOWN_ICON = { icon: Upload, badge: "bg-muted text-muted-foreground" };
@@ -328,6 +335,14 @@ function ImportDetailBody({
           />
         ) : null}
 
+        {item.stats?.flaggedCommitments?.length ? (
+          <WorthALook
+            key={item.id}
+            importId={item.id}
+            flaggedCommitments={item.stats.flaggedCommitments}
+          />
+        ) : null}
+
         {problems.length ? (
           <div>
             <h3 className="text-sm font-medium">What didn’t come in</h3>
@@ -357,6 +372,105 @@ function ImportDetailBody({
         ) : null}
       </div>
     </>
+  );
+}
+
+type Flag = NonNullable<ImportStats["flaggedCommitments"]>[number];
+
+/**
+ * Past-due commitments a Drive doc mentioned, which `drive-reminder-rules.ts` deliberately
+ * did not turn into a reminder on its own (the date has already passed). Making one here
+ * dismisses the flag too — the flag's job was to surface the choice, not to survive it.
+ *
+ * Keyed by `item.id` at the call site so opening a different import starts from that
+ * import's own flags rather than carrying over whatever was left of the previous one.
+ */
+function WorthALook({
+  importId,
+  flaggedCommitments,
+}: {
+  importId: string;
+  flaggedCommitments: Flag[];
+}) {
+  const [flags, setFlags] = useState(flaggedCommitments);
+  const [busyFlag, setBusyFlag] = useState<string | null>(null);
+
+  if (!flags.length) return null;
+
+  async function remind(f: Flag) {
+    setBusyFlag(f.id);
+    try {
+      await createReminder({
+        contactId: f.contactId ?? undefined,
+        title: f.title,
+        description: f.sourceExcerpt,
+        dueDate: new Date().toISOString(),
+        actionKind: f.actionKind,
+      });
+      await dismissDriveFlag(importId, f.id);
+      setFlags((xs) => xs.filter((x) => x.id !== f.id));
+      toast.success("Reminder made for today");
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t make that reminder — try again"));
+    } finally {
+      setBusyFlag(null);
+    }
+  }
+
+  async function dismiss(flagId: string) {
+    setBusyFlag(flagId);
+    try {
+      await dismissDriveFlag(importId, flagId);
+      setFlags((xs) => xs.filter((x) => x.id !== flagId));
+      toast.success("Dismissed");
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t dismiss that — try again"));
+    } finally {
+      setBusyFlag(null);
+    }
+  }
+
+  return (
+    <div id="worth-a-look">
+      <h3 className="text-sm font-medium">Worth a look</h3>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        These dates had already passed, so Orbit didn’t make reminders for them
+      </p>
+      <ul className="mt-1.5 space-y-1.5">
+        {flags.map((f) => (
+          <li
+            key={f.id}
+            className="rounded-lg border border-border/60 px-3 py-2 text-xs"
+          >
+            <p className="font-medium">{f.title}</p>
+            <p className="text-muted-foreground">
+              {f.personName ? `${f.personName} · ` : ""}was due {f.dueDateIso} ·{" "}
+              {f.docName}
+            </p>
+            <div className="mt-1.5 flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busyFlag === f.id}
+                onClick={() => remind(f)}
+              >
+                Make a reminder
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={busyFlag === f.id}
+                onClick={() => dismiss(f.id)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

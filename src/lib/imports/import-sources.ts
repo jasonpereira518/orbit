@@ -16,6 +16,7 @@ export const IMPORT_SOURCE_LABEL: Record<string, string> = {
   outlook_recruiter_scan: "Outlook recruiter scan",
   calendar_ics: "Calendar (.ics)",
   calendar_csv: "Calendar (CSV)",
+  drive_docs: "Google Drive",
 };
 
 /** A type this list has never heard of still gets a row that looks like the others. */

@@ -32,6 +32,7 @@ export type ImportFailureCode =
   | "row_conflict"
   | "database"
   | "stalled"
+  | "ai_key"
   | "unknown";
 
 export type ImportFailureCopy = {
@@ -94,6 +95,11 @@ export const IMPORT_FAILURE_COPY: Record<ImportFailureCode, ImportFailureCopy> =
       cause: "The import stopped partway and couldn’t pick itself back up",
       next: "Upload the file again to import the rest",
     },
+    ai_key: {
+      cause: "Orbit doesn’t have a working AI key to read those files with",
+      next: "Add or fix your AI key in Settings, then start the import again",
+      fix: { label: "Open AI settings", href: "/settings?section=settings-ai" },
+    },
     unknown: {
       cause: "This import didn’t finish",
       next: "Try it again, and send us the reference below if it keeps happening",
@@ -107,6 +113,10 @@ const PATTERNS: { code: ImportFailureCode; test: RegExp }[] = [
     test: /contact limit|plan limit|limit reached on your plan/i,
   },
   { code: "stalled", test: /stalled \d+ times|gave up/i },
+  {
+    code: "ai_key",
+    test: /\bAI (provider|key|model)\b/i,
+  },
   {
     code: "needs_reconnect",
     test: /invalid_grant|reauth|token (has been )?(expired|revoked)|refresh token|unauthoriz|\b401\b/i,

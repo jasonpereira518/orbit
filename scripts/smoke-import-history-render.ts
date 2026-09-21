@@ -161,6 +161,7 @@ const TYPES = [
   "outlook_recruiter_scan",
   "calendar_ics",
   "calendar_csv",
+  "drive_docs",
 ];
 for (const t of TYPES) {
   const html = render([item({ importType: t, fileName: null })]);
@@ -168,6 +169,41 @@ for (const t of TYPES) {
   // anywhere means the label table does not know this type.
   check(`${t} has a name, not its raw type`, !html.includes(t), t);
 }
+
+console.log("A Drive import");
+const drive = render([
+  item({
+    id: "d1",
+    importType: "drive_docs",
+    fileName: "3 Google Drive files",
+    contactsCreated: 2,
+    contactsUpdated: 1,
+    duplicatesFound: 0,
+    stats: {
+      docsRead: 3,
+      remindersCreated: 1,
+      flaggedCommitments: [
+        {
+          id: "f1:commit",
+          key: "commit",
+          title: "Send the follow-up doc",
+          personName: "Jamie Rivera",
+          contactId: null,
+          dueDateIso: "2026-09-10",
+          sourceExcerpt: "I'll send the doc by Friday",
+          actionKind: "follow_up",
+          docName: "1:1 with Jamie.gdoc",
+        },
+      ],
+    },
+  }),
+]);
+check("names docs read", drive.includes("3 docs read"));
+check("counts people added", drive.includes("2 added"));
+check("counts people updated", drive.includes("1 updated"));
+check("counts the reminder", drive.includes("1 reminder"));
+check("flags what's worth a look", drive.includes("1 to look at"));
+check("...and never with the word “failed”", !/\bfailed\b/i.test(drive), "");
 
 console.log("Empty state");
 const empty = render([]);

@@ -147,8 +147,13 @@ const ROW_FOR_ANCHOR: Record<string, RowId | undefined> = {
   "import-panel-calendar": "import-panel-calendar",
 };
 
-/** Which row a running job belongs to, so returning mid-import lands on it. */
-function rowForImportJobKind(kind: ImportJobKind): RowId {
+/**
+ * Which row a running job belongs to, so returning mid-import lands on it.
+ *
+ * `drive_docs` has no row here yet — its own Picker card is a later addition — so it
+ * resolves to `null` rather than a made-up row id.
+ */
+function rowForImportJobKind(kind: ImportJobKind): RowId | null {
   switch (kind) {
     case "connections":
       return "import-panel-connections";
@@ -162,6 +167,8 @@ function rowForImportJobKind(kind: ImportJobKind): RowId {
       return "import-outlook-contacts";
     case "calendar":
       return "import-calendar-file";
+    case "drive_docs":
+      return null;
   }
 }
 

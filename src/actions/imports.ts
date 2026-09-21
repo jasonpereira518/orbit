@@ -20,6 +20,7 @@ import {
   outlookConnections,
   userSettings,
   type CalendarEventRowPayload,
+  type ImportStats,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
@@ -438,6 +439,9 @@ export async function getImportDetail(
         messagesImported: row.stats?.messagesImported,
         meetingsLogged: row.stats?.meetingsLogged,
         errorCode: row.stats?.errorCode,
+        docsRead: row.stats?.docsRead,
+        docsAlreadyImported: row.stats?.docsAlreadyImported,
+        flaggedCommitments: row.stats?.flaggedCommitments,
       },
     },
     counts,
@@ -784,6 +788,9 @@ export type ImportHistoryItem = {
     messagesImported?: number;
     meetingsLogged?: number;
     errorCode?: string;
+    docsRead?: number;
+    docsAlreadyImported?: number;
+    flaggedCommitments?: NonNullable<ImportStats["flaggedCommitments"]>;
   };
 };
 
@@ -841,6 +848,9 @@ export async function listImports(
       messagesImported: r.stats?.messagesImported,
       meetingsLogged: r.stats?.meetingsLogged,
       errorCode: r.stats?.errorCode,
+      docsRead: r.stats?.docsRead,
+      docsAlreadyImported: r.stats?.docsAlreadyImported,
+      flaggedCommitments: r.stats?.flaggedCommitments,
     },
   }));
 }
