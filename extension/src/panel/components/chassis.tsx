@@ -17,6 +17,7 @@ import type { ReactNode } from "react";
 import { ExternalLink, Settings } from "lucide-react";
 import type { PageContext } from "@contract";
 import { cn } from "@/lib/cn";
+import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
 import { pageDisplayName, pageSubtitle, siteLabel } from "@/lib/page";
 import { Avatar, CompanyMark, Skeleton } from "./ui";
@@ -43,7 +44,7 @@ export function PanelHeader({ onSettings }: { onSettings?: () => void }) {
           </button>
         ) : null}
         <button
-          onClick={() => chrome.tabs.create({ url: `${APP_URL}/dashboard` })}
+          onClick={() => browser().openTab(`${APP_URL}/dashboard`)}
           title="Open Orbit"
           className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
         >

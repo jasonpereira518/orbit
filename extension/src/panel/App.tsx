@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CircleAlert, MousePointerClick, UserX, WifiOff } from "lucide-react";
 import type { MatchCandidate } from "@contract";
+import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
 import { relativeTime } from "@/lib/format";
 import { isPersonPage } from "@/lib/page";
@@ -18,6 +19,10 @@ import { CaptureView } from "./views/CaptureView";
 import { GrantAccessView } from "./views/GrantAccessView";
 import { KnownContactView } from "./views/KnownContactView";
 import { usePanel } from "./state/usePanel";
+import { isOutdated } from "./state/update-status";
+import { UpdateBand } from "./components/UpdateBand";
+import { SettingsView } from "./views/SettingsView";
+import { FixtureSaver } from "./dev/FixtureSaver";
 import { emptyScope, scopeFor, type PageScope } from "./state/page-scope";
 
 const TIER_WORD = {
@@ -46,6 +51,13 @@ export function App() {
   const { forceCreate, sealed, setForceCreate, setSealed } =
     usePageScopedState(pageUrl);
   const [signInClicked, setSignInClicked] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const outdated = isOutdated(state.me?.contractVersion);
+
+  const signIn = () => {
+    browser().openTab(`${APP_URL}/sign-in`);
+    setSignInClicked(true);
+  };
 
   const contact = state.resolved?.contact ?? null;
   // Offline with prior data for *this same page* (usePanel only keeps
@@ -146,12 +158,7 @@ export function App() {
               </div>
             ) : (
               <div className="space-y-3 pt-1">
-                <Button
-                  onClick={() => {
-                    chrome.tabs.create({ url: `${APP_URL}/sign-in` });
-                    setSignInClicked(true);
-                  }}
-                >
+                <Button onClick={signIn}>
                   Sign in to Orbit
                 </Button>
                 <Meta>Orbit only reads a page when you click the icon.</Meta>
@@ -186,7 +193,7 @@ export function App() {
             <Button
               variant="outline"
               onClick={() =>
-                chrome.tabs.create({ url: `${APP_URL}/contacts/new` })
+                browser().openTab(`${APP_URL}/contacts/new`)
               }
             >
               Add someone manually
@@ -261,7 +268,7 @@ export function App() {
         <AmbiguousView
           candidates={state.resolved.candidates}
           onPick={(candidate: MatchCandidate) =>
-            chrome.tabs.create({ url: `${APP_URL}/contacts/${candidate.id}` })
+            browser().openTab(`${APP_URL}/contacts/${candidate.id}`)
           }
           onCreateNew={() => setForceCreate(true)}
         />
@@ -289,10 +296,29 @@ export function App() {
 
   return (
     <>
-      <PanelHeader />
-      <IdentityZone page={state.page} sealed={sealed} stale={staleOffline} />
-      {verdict()}
-      {body()}
+      <PanelHeader onSettings={() => setSettingsOpen((open) => !open)} />
+      {settingsOpen ? (
+        <SettingsView
+          me={state.me}
+          signedIn={state.phase !== "signed-out"}
+          outdated={outdated}
+          onClose={() => setSettingsOpen(false)}
+          onSignIn={signIn}
+          devTools={
+            import.meta.env.DEV ? (
+              <FixtureSaver page={state.page} />
+            ) : undefined
+          }
+        />
+      ) : null}
+      {/* Hidden, not unmounted: a capture draft or a half-typed note lives in
+          this subtree, and opening Settings must not throw it away. */}
+      <div hidden={settingsOpen} className="flex min-h-0 flex-1 flex-col">
+        <IdentityZone page={state.page} sealed={sealed} stale={staleOffline} />
+        {verdict()}
+        {outdated ? <UpdateBand /> : null}
+        {body()}
+      </div>
     </>
   );
 }

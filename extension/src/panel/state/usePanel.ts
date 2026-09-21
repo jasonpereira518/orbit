@@ -8,6 +8,7 @@ import type {
   StartersDegradedReason,
 } from "@contract";
 import { ApiError, createApi } from "@/lib/api";
+import { browser } from "@/lib/browser";
 import { readActivePage, type PageReadReason, type PageReadResult } from "@/lib/page";
 import { useSession } from "./useSession";
 
@@ -275,10 +276,7 @@ export function usePanel() {
     const schedule = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(async () => {
-        const [tab] = await chrome.tabs.query({
-          active: true,
-          currentWindow: true,
-        });
+        const tab = await browser().activeTab();
         const url = tab?.url ?? null;
         if (!url || url === lastUrlRef.current) return;
         lastUrlRef.current = url;
@@ -293,21 +291,10 @@ export function usePanel() {
       }, 250);
     };
 
-    const onUpdated = (
-      _tabId: number,
-      change: chrome.tabs.OnUpdatedInfo,
-      tab: chrome.tabs.Tab
-    ) => {
-      if (!tab.active) return;
-      if (change.url || change.status === "complete") schedule();
-    };
-
-    chrome.tabs.onUpdated.addListener(onUpdated);
-    chrome.tabs.onActivated.addListener(schedule);
+    const unsubscribe = browser().onTabChange(schedule);
     return () => {
       window.clearTimeout(timer);
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      chrome.tabs.onActivated.removeListener(schedule);
+      unsubscribe();
     };
   }, [session.isLoaded, run]);
 

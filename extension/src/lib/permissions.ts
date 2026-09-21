@@ -14,6 +14,7 @@
  * better trade than a scary install dialog for a permission whose point they
  * haven't seen yet.
  */
+import { browser } from "./browser";
 
 /**
  * The sites Orbit knows how to read deeply. Must stay in lockstep with
@@ -29,17 +30,8 @@ export const KNOWN_SITES = [
 
 export const KNOWN_ORIGINS: string[] = KNOWN_SITES.map((site) => site.origin);
 
-export async function grantedOrigins(): Promise<string[]> {
-  try {
-    return (await chrome.permissions.getAll()).origins ?? [];
-  } catch {
-    return [];
-  }
-}
-
-export async function hasAnySitePermission(): Promise<boolean> {
-  const granted = await grantedOrigins();
-  return granted.some((origin) => KNOWN_ORIGINS.includes(origin));
+export function grantedOrigins(): Promise<string[]> {
+  return browser().permissions.granted();
 }
 
 /**
@@ -48,9 +40,9 @@ export async function hasAnySitePermission(): Promise<boolean> {
  * loses the gesture.
  */
 export function requestSites(origins: string[]): Promise<boolean> {
-  return chrome.permissions.request({ origins }).catch(() => false);
+  return browser().permissions.request(origins);
 }
 
 export function revokeSites(origins: string[]): Promise<boolean> {
-  return chrome.permissions.remove({ origins }).catch(() => false);
+  return browser().permissions.remove(origins);
 }

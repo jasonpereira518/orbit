@@ -18,27 +18,15 @@ import type {
   ContactSnapshot,
   ConversationStarter,
   MatchCandidate,
+  MeResponse,
   PageContext,
 } from "@contract";
 
-/* The panel calls a handful of chrome.* APIs. Stub them before the components
- * are imported so a plain page can render them. */
-type ChromeStub = {
-  tabs: { create: (o: unknown) => void };
-  permissions: {
-    getAll: () => Promise<{ origins: string[] }>;
-    request: () => Promise<boolean>;
-    remove: () => Promise<boolean>;
-  };
-};
-(globalThis as unknown as { chrome: ChromeStub }).chrome = {
-  tabs: { create: (o) => console.log("tabs.create", o) },
-  permissions: {
-    getAll: async () => ({ origins: ["https://*.linkedin.com/*"] }),
-    request: async () => true,
-    remove: async () => true,
-  },
-};
+/* Every browser call the panel makes goes through `@/lib/browser`, so the
+ * harness installs a typed fake there instead of stubbing `globalThis.chrome`. */
+import { installBrowser } from "@/lib/browser";
+import { createFakeBrowser } from "./fake-browser";
+installBrowser(createFakeBrowser());
 
 // Deliberately NOT importing App: it reaches usePanel -> Clerk, which throws
 // outside a real extension. Every view below is imported directly instead.
@@ -52,6 +40,8 @@ const { CaptureView } = await import("@/panel/views/CaptureView");
 const { KnownContactView } = await import("@/panel/views/KnownContactView");
 const { AmbiguousView } = await import("@/panel/views/AmbiguousView");
 const { GrantAccessView } = await import("@/panel/views/GrantAccessView");
+const { SettingsView } = await import("@/panel/views/SettingsView");
+const { UpdateBand } = await import("@/panel/components/UpdateBand");
 import "@/styles/panel.css";
 
 /* -------------------------------------------------------------------------- */
@@ -135,6 +125,8 @@ function contact(over: Partial<ContactSnapshot> = {}): ContactSnapshot {
     opportunities: ["Could intro to the infra team"],
     openActionItems: ["Send the intro to Priya on design"],
     aiSummary: null,
+    howMet: "Intro from Priya at the Stripe offsite",
+    dateMet: new Date(Date.now() - 800 * 864e5).toISOString(),
     notesPreview:
       "Met through Priya. Very direct, prefers a written brief before any call. Leaving Acme was about the billing rewrite being cancelled twice.",
     recentInteractions: [
@@ -187,6 +179,20 @@ const candidates: MatchCandidate[] = [
     confidence: 0.6,
   },
 ];
+
+function me(over: { hasAiKey?: boolean } = {}): MeResponse {
+  return {
+    contractVersion: 1,
+    user: { name: "Jordan Park", email: "jordan@example.com", imageUrl: null },
+    capabilities: {
+      hasAiKey: over.hasAiKey ?? true,
+      hasApolloKey: false,
+      aiProvider: "anthropic",
+      aiProviderLabel: "Anthropic",
+    },
+    stats: { contactCount: 1248, dueFollowUpCount: 3 },
+  };
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const api: any = new Proxy(
@@ -403,6 +409,56 @@ function States() {
         <IdentityZone page={null} />
         <VerdictZone tone="accent">Waiting on your go-ahead</VerdictZone>
         <GrantAccessView pendingOrigin={null} onGranted={() => {}} />
+      </Frame>
+
+      <Frame label="Settings" note="who am I, is AI on, which sites">
+        <PanelHeader onSettings={() => {}} />
+        <SettingsView
+          me={me()}
+          signedIn
+          outdated={false}
+          onClose={() => {}}
+          onSignIn={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Settings — AI off" note="the free, no-key account">
+        <PanelHeader onSettings={() => {}} />
+        <SettingsView
+          me={me({ hasAiKey: false })}
+          signedIn
+          outdated
+          onClose={() => {}}
+          onSignIn={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Settings — signed out">
+        <PanelHeader onSettings={() => {}} />
+        <SettingsView
+          me={null}
+          signedIn={false}
+          outdated={false}
+          onClose={() => {}}
+          onSignIn={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Update available" note="server moved ahead of this build">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={page()} />
+        <VerdictZone>
+          <OrbitGlyph tier="inner" size={16} />
+          <span style={{ flex: 1 }}>Inner orbit · last spoke 5 months ago</span>
+        </VerdictZone>
+        <UpdateBand />
+        <KnownContactView
+          contact={rich}
+          page={page()}
+          state={panelState()}
+          api={api}
+          onChanged={() => {}}
+        />
       </Frame>
 
       <Frame label="Loading" note="staged arrival, reserved heights">

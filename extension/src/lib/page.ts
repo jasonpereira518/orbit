@@ -1,4 +1,5 @@
 import type { PageContext } from "@contract";
+import { browser } from "./browser";
 
 export type PageReadReason =
   | "restricted"
@@ -35,17 +36,11 @@ function originOf(url: string): string | undefined {
 /**
  * Read the current tab.
  *
- * Two injections rather than one: the extractor is a bundled IIFE, and a
- * bundled IIFE's completion value is not reliably what `executeScript` reports.
- * So the file parks its result on a global and a second trivial call reads it.
- * Both are milliseconds, and it removes a whole class of "works in dev, returns
- * undefined in prod" bundler dependence.
- *
  * Injection happens on demand under `activeTab` — there is no declared content
  * script, so nothing runs on any page until the user clicks the toolbar icon.
  */
 export async function readActivePage(): Promise<PageReadResult> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await browser().activeTab();
   if (!tab?.id) {
     return { ok: false, reason: "no-tab", message: "No active tab." };
   }
@@ -71,17 +66,10 @@ export async function readActivePage(): Promise<PageReadResult> {
   }
 
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["inject/extract.js"],
-    });
-
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => (window as unknown as { __orbitPageContext?: unknown }).__orbitPageContext,
-    });
-
-    const value = result?.result as PageContext | { error: string } | undefined;
+    const value = (await browser().runExtractor(tab.id)) as
+      | PageContext
+      | { error: string }
+      | undefined;
     if (!value) {
       return {
         ok: false,

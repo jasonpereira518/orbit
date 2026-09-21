@@ -11,17 +11,11 @@
  * revocable from here too — an on-switch you can't find the off-switch for is
  * how extensions lose trust.
  */
-import { useEffect, useState } from "react";
-import { Check, ShieldCheck } from "lucide-react";
-import { cn } from "@/lib/cn";
-import { Button, Meta, MicroLabel } from "../components/ui";
-import {
-  KNOWN_ORIGINS,
-  KNOWN_SITES,
-  grantedOrigins,
-  requestSites,
-  revokeSites,
-} from "@/lib/permissions";
+import { useState } from "react";
+import { ShieldCheck } from "lucide-react";
+import { Button, Meta } from "../components/ui";
+import { SiteAccessList } from "../components/SiteAccess";
+import { KNOWN_ORIGINS, KNOWN_SITES, requestSites } from "@/lib/permissions";
 
 export function GrantAccessView({
   pendingOrigin,
@@ -30,11 +24,7 @@ export function GrantAccessView({
   pendingOrigin: string | null;
   onGranted: () => void;
 }) {
-  const [granted, setGranted] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-
-  const refresh = () => void grantedOrigins().then(setGranted);
-  useEffect(refresh, []);
 
   // Must run synchronously inside the click: awaiting first loses the gesture
   // and Chrome rejects the request.
@@ -42,7 +32,6 @@ export function GrantAccessView({
     setBusy(true);
     void requestSites(origins).then((ok) => {
       setBusy(false);
-      refresh();
       if (ok) onGranted();
     });
   };
@@ -101,46 +90,7 @@ export function GrantAccessView({
       </div>
 
       <div className="mt-5">
-        <MicroLabel className="mb-1.5">Sites</MicroLabel>
-        <ul className="space-y-1">
-          {KNOWN_SITES.map((s) => {
-            const on = granted.includes(s.origin);
-            return (
-              <li
-                key={s.origin}
-                className={cn(
-                  "flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-[13px]",
-                  on && "bg-[var(--accent)]"
-                )}
-              >
-                <span
-                  aria-hidden
-                  className={cn(
-                    "h-[5px] w-[5px] shrink-0 rounded-full",
-                    on ? "bg-[var(--primary)]" : "border border-[var(--border)]"
-                  )}
-                />
-                <span className="flex-1">{s.label}</span>
-                {on ? (
-                  <button
-                    onClick={() => void revokeSites([s.origin]).then(refresh)}
-                    className="inline-flex items-center gap-1 text-[11px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:underline"
-                  >
-                    <Check size={11} />
-                    turn off
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => ask([s.origin])}
-                    className="text-[11px] text-[var(--primary)] hover:underline"
-                  >
-                    turn on
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <SiteAccessList onGranted={onGranted} />
       </div>
     </div>
   );

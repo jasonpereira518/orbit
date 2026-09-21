@@ -14,6 +14,7 @@ import { Loader2, Plus, UserCheck, Zap } from "lucide-react";
 import type { MatchCandidate, PageContext } from "@contract";
 import type { OrbitApi } from "@/lib/api";
 import { ApiError } from "@/lib/api";
+import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
 import { RecordRow, humanSource, type RecordField } from "../components/RecordRow";
 import { StarterList } from "../components/StarterList";
@@ -60,6 +61,14 @@ export function CaptureView({
   /** Set when the contact saved but something attached to it did not. */
   const [warnings, setWarnings] = useState<string[] | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
+  /**
+   * What was said, separate from how you met. The contract has always taken
+   * an inline note with a save — one request that creates the person and logs
+   * the conversation — and the panel never sent one, so capturing someone
+   * right after talking to them meant a second trip to the Note drawer.
+   */
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [note, setNote] = useState("");
 
   const firstName = draft.fields[0]?.value?.trim().split(/\s+/)[0] ?? "";
   const loginWalled = page.warnings.includes("login-wall");
@@ -101,6 +110,7 @@ export function CaptureView({
         page,
         force,
         fields,
+        note: note.trim() ? { rawNotes: note.trim() } : undefined,
         followUp:
           draft.followUpDays !== null
             ? { inDays: draft.followUpDays }
@@ -202,6 +212,29 @@ export function CaptureView({
           </div>
         </Section>
 
+        <Section title="Note">
+          {noteOpen ? (
+            <textarea
+              autoFocus
+              rows={3}
+              value={note}
+              onChange={(e) => {
+                setNote(e.target.value);
+                onDirtyChange?.(true);
+              }}
+              placeholder="What did you talk about?"
+              className="w-full resize-none rounded-[var(--radius)] border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 text-[13px] leading-[18px] outline-none focus:border-[var(--ring)]"
+            />
+          ) : (
+            <button
+              onClick={() => setNoteOpen(true)}
+              className="rounded-full border border-dashed border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)] transition-colors hover:border-[var(--ring)] hover:text-[var(--foreground)]"
+            >
+              + Add a note about today
+            </button>
+          )}
+        </Section>
+
         <Section title="Follow-up">
           <label className="flex cursor-pointer items-center gap-2">
             <input
@@ -283,7 +316,7 @@ export function CaptureView({
                   <CandidateRow
                     candidate={candidate}
                     onPick={(c) =>
-                      chrome.tabs.create({ url: `${APP_URL}/contacts/${c.id}` })
+                      browser().openTab(`${APP_URL}/contacts/${c.id}`)
                     }
                   />
                 </li>
