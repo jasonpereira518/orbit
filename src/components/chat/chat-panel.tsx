@@ -16,12 +16,9 @@ import {
   History,
   Loader2,
   NotebookPen,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   Trash2,
 } from "lucide-react";
-import { motion } from "motion/react";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import {
@@ -926,43 +923,19 @@ export function ChatPanel() {
         {/* From md up the history is a rail beside the conversation. Below that the header
             keeps its dropdown (`md:hidden` on both of its controls), because on a phone the
             conversation should have the full width. */}
-        {/* The wrapper animates the width and clips; the rail inside keeps its own fixed
-            width, so its contents slide out of view instead of reflowing as it narrows.
-            `inert` while closed: clipped is not the same as unreachable, and a hidden list
-            of links must not stay in the tab order. */}
-        <motion.div
-          className="hidden shrink-0 overflow-hidden md:block"
-          initial={false}
-          animate={{ width: railOpen ? 224 : 0 }}
-          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-          inert={!railOpen}
-        >
-          <ChatHistoryRail
-            id="chat-history-rail"
-            className="h-full"
-            threads={threads}
-            activeId={threadId}
-            busy={busy}
-            onSelect={(id) => void loadThread(id)}
-            onNew={startNewChat}
-            onDelete={removeThread}
-          />
-        </motion.div>
+        <ChatHistoryRail
+          id="chat-history-rail"
+          open={railOpen}
+          onToggle={toggleRail}
+          threads={threads}
+          activeId={threadId}
+          busy={busy}
+          onSelect={(id) => void loadThread(id)}
+          onNew={startNewChat}
+          onDelete={removeThread}
+        />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="hidden shrink-0 text-muted-foreground md:inline-flex"
-            onClick={toggleRail}
-            aria-expanded={railOpen}
-            aria-controls="chat-history-rail"
-            aria-label={railOpen ? "Hide chat history" : "Show chat history"}
-            title={railOpen ? "Hide chat history" : "Show chat history"}
-          >
-            {railOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
-          </Button>
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
               render={
@@ -1036,7 +1009,7 @@ export function ChatPanel() {
             type="button"
             variant="ghost"
             size="sm"
-            className={cn("shrink-0 text-muted-foreground", railOpen && "md:hidden")}
+            className="shrink-0 text-muted-foreground md:hidden"
             onClick={startNewChat}
             disabled={busy}
           >
