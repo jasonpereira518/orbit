@@ -32,7 +32,6 @@ import {
   listChatThreads,
   updateChatThreadContext,
 } from "@/actions/chat";
-import { createReminder } from "@/actions/reminders";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { ScanControls } from "@/components/scan/scan-controls";
@@ -61,6 +60,7 @@ import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { AnswerActions } from "@/components/chat/answer-actions";
+import { ReminderButton } from "@/components/chat/reminder-button";
 import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
@@ -1471,7 +1471,6 @@ const RecommendationCard = memo(function RecommendationCard({
   /** The contact's stored photo, when the activity steps learned it. */
   photoUrl?: string | null;
 }) {
-  const [pending, start] = useTransition();
   const href = rec.recruiter_id
     ? `/recruiters/${rec.recruiter_id}`
     : rec.contact_id
@@ -1483,13 +1482,33 @@ const RecommendationCard = memo(function RecommendationCard({
   return (
     <div className="flex h-full flex-col rounded-xl border border-border/70 bg-background p-3">
       <div className="flex items-center gap-2.5">
-        <ContactAvatar
-          contactId={rec.contact_id ?? null}
-          fullName={rec.name}
-          profileImageUrl={photoUrl}
-          size="sm"
-          className="size-9 shrink-0"
-        />
+        {/* The picture opens the profile too — it is the obvious thing to click. The name
+            beside it is the same link and stays the keyboard and screen-reader route, so this
+            one is left out of both (`tabIndex`, `aria-hidden`) rather than announced twice. */}
+        {href !== "#" ? (
+          <Link
+            href={href}
+            tabIndex={-1}
+            aria-hidden="true"
+            className="shrink-0 rounded-full ring-2 ring-transparent transition-[transform,box-shadow] hover:scale-105 hover:ring-primary/40"
+          >
+            <ContactAvatar
+              contactId={rec.contact_id ?? null}
+              fullName={rec.name}
+              profileImageUrl={photoUrl}
+              size="sm"
+              className="size-9"
+            />
+          </Link>
+        ) : (
+          <ContactAvatar
+            contactId={rec.contact_id ?? null}
+            fullName={rec.name}
+            profileImageUrl={photoUrl}
+            size="sm"
+            className="size-9 shrink-0"
+          />
+        )}
         <div className="min-w-0 flex-1">
           <Link
             href={href}
@@ -1515,26 +1534,11 @@ const RecommendationCard = memo(function RecommendationCard({
       )}
       {canRemind && (
         <div className="mt-auto pt-2.5">
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={pending}
-            onClick={() =>
-              start(async () => {
-                await createReminder({
-                  contactId: rec.contact_id!,
-                  title: `Reach out to ${rec.name}`,
-                  description: rec.suggested_action,
-                  dueDate: new Date(
-                    Date.now() + 3 * 24 * 60 * 60 * 1000
-                  ).toISOString(),
-                });
-                toast.success(TOAST_COPY.reminderSet);
-              })
-            }
-          >
-            Reminder
-          </Button>
+          <ReminderButton
+            contactId={rec.contact_id!}
+            name={rec.name}
+            suggestedAction={rec.suggested_action}
+          />
         </div>
       )}
     </div>
