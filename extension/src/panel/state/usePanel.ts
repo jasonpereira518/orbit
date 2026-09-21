@@ -9,6 +9,7 @@ import type {
 } from "@contract";
 import { ApiError, createApi } from "@/lib/api";
 import { browser } from "@/lib/browser";
+import { shouldAccept, targetKey } from "@/lib/intents";
 import { readActivePage, type PageReadReason, type PageReadResult } from "@/lib/page";
 import { useSession } from "./useSession";
 
@@ -43,8 +44,6 @@ export type PanelState = {
   errorCode: string | null;
   /** Set when the user navigated away while holding unsaved work. */
   pendingUrl: string | null;
-  /** The origin to ask for, when we could see the URL but not run on it. */
-  pendingOrigin: string | null;
 };
 
 const INITIAL: PanelState = {
@@ -64,7 +63,6 @@ const INITIAL: PanelState = {
   error: null,
   errorCode: null,
   pendingUrl: null,
-  pendingOrigin: null,
 };
 
 /**
@@ -167,8 +165,12 @@ export function usePanel() {
         phase: read.reason === "no-permission" ? "needs-permission" : "unsupported",
         pageError: read.message,
         pageErrorReason: read.reason,
-        pendingOrigin: read.origin ?? null,
         resolving: false,
+        // The panel is now beside a tab it cannot read. Whatever it showed
+        // before belongs to a different page, and leaving it up would put the
+        // previous person beside someone else's profile.
+        page: null,
+        resolved: null,
       }));
       return;
     }
@@ -263,40 +265,94 @@ export function usePanel() {
    *
    * Unlike a popup, the panel stays open while the user browses profile after
    * profile — so it has to keep up or it is lying. LinkedIn is an SPA and fires
-   * onUpdated repeatedly during a single navigation, hence the debounce; and we
-   * only re-run when the *canonical* URL actually changes, so query-string
-   * churn doesn't cause pointless work.
+   * onUpdated repeatedly during a single navigation, hence the debounce.
    *
-   * `activeTab` survives same-document and same-domain navigation, so browsing
-   * within LinkedIn keeps working without another click on the icon.
+   * What counts as "moved" is the tab AND its URL (`targetKey`), not the URL
+   * alone. Under activeTab most tabs' URLs are invisible, and following by URL
+   * skipped every one of them — so switching to an unclicked tab left the
+   * previous person on screen. Now that switch re-reads, finds nothing it may
+   * read, and says so.
+   *
+   * What keeps a grant (measured, extension/docs/permission-spike.md): SPA
+   * route changes and full navigations within the same origin keep it; a
+   * cross-origin navigation drops it; another tab needs its own click.
    */
-  const lastUrlRef = useRef<string | null>(null);
+  const lastTargetRef = useRef<string | null>(null);
+  const lastIntentRef = useRef<string | null>(null);
+  const windowIdRef = useRef<number | null>(null);
+
+  /** Re-read if the panel is now beside something else — or `force` it. */
+  const follow = useCallback(
+    async (force = false) => {
+      const tab = await browser().activeTab();
+      const key = targetKey(tab);
+      if (!force && key === lastTargetRef.current) return;
+      lastTargetRef.current = key;
+
+      // A half-typed note or an edited capture field outranks the page: once
+      // a draft exists the panel is bound to the draft, not to the tab.
+      if (dirtyRef.current) {
+        setState((s) => ({ ...s, pendingUrl: tab?.url || "another tab" }));
+        return;
+      }
+      void run();
+    },
+    [run]
+  );
+
   useEffect(() => {
     let timer: number | undefined;
     const schedule = () => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(async () => {
-        const tab = await browser().activeTab();
-        const url = tab?.url ?? null;
-        if (!url || url === lastUrlRef.current) return;
-        lastUrlRef.current = url;
-
-        // A half-typed note or an edited capture field outranks the page: once
-        // a draft exists the panel is bound to the draft, not to the tab.
-        if (dirtyRef.current) {
-          setState((s) => ({ ...s, pendingUrl: url }));
-          return;
-        }
-        void run();
-      }, 250);
+      timer = window.setTimeout(() => void follow(), 250);
     };
-
     const unsubscribe = browser().onTabChange(schedule);
     return () => {
       window.clearTimeout(timer);
       unsubscribe();
     };
-  }, [session.isLoaded, run]);
+  }, [follow]);
+
+  /**
+   * Hear toolbar clicks (see lib/intents). A click while the panel is open
+   * just granted the tab beside it — same tab, often the same URL, so nothing
+   * above fires. It is always a re-read, even if the target looks unchanged:
+   * the page may have been unreadable a moment ago and readable now.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const accept = (value: unknown) => {
+      if (
+        !shouldAccept(value, {
+          now: Date.now(),
+          windowId: windowIdRef.current,
+          lastAcceptedId: lastIntentRef.current,
+        })
+      ) {
+        return false;
+      }
+      lastIntentRef.current = value.id;
+      void browser().clearIntent();
+      return true;
+    };
+
+    void (async () => {
+      windowIdRef.current = await browser().currentWindowId();
+      // The click that OPENED the panel is already being served by the mount
+      // read; consume it so the change event below doesn't run it again.
+      const pending = await browser().readIntent();
+      if (!cancelled) accept(pending);
+      lastTargetRef.current = targetKey(await browser().activeTab());
+    })();
+
+    const unsubscribe = browser().onIntent((value) => {
+      if (accept(value)) void follow(true);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [follow]);
 
   /** Re-run resolve after a write, so the panel reflects the new state. */
   const refresh = useCallback(async () => {

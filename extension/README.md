@@ -98,7 +98,10 @@ openssl rsa -in key.pem -pubout -outform DER | base64 | tr -d '\n'
 ## Architecture
 
 ```
-popup (React + Clerk) ──fetch──► <app>/api/extension/*
+toolbar click ─► background worker (onClicked)
+                   ├─ sidePanel.open()          ← inside the gesture: grants activeTab
+                   └─ storage.session intent    ← "re-read", for a panel already open
+side panel (React + Clerk) ──fetch──► <app>/api/extension/*
   └─ chrome.scripting.executeScript
        └─ inject/extract.js (IIFE, no deps)
             └─ site adapter → PageContext
@@ -117,14 +120,31 @@ degrades to "we know who this is, we just can't show their headline."
 ### Permissions
 
 `activeTab` + on-demand injection, not declared content scripts. `activeTab`
-grants access to the current tab only, and only after a toolbar click, so
-installing shows **no** "read your data on linkedin.com" warning — and the
-extension structurally cannot fetch any site in the background, because it holds
-no host permission for one.
+grants access to the current tab only, and only after the user clicks the
+toolbar icon (or presses its shortcut), so installing shows **no** "read your
+data on linkedin.com" warning — and the extension structurally cannot fetch any
+site in the background, because it holds no host permission for one.
 
-`optional_host_permissions` are declared but never requested. Declaring costs no
-install-time warning and lets a future always-on mode ask at runtime rather than
-shipping a permission bump that re-prompts every existing user.
+**The click must reach our own code.** Chrome's `openPanelOnActionClick: true`
+opens the panel but grants the tab *nothing*, which is why every site used to
+start behind a grant wall. The worker handles `action.onClicked` itself and
+calls `sidePanel.open()` inside the gesture; that same click then grants the
+tab. Measured on Chrome 153 — see [docs/permission-spike.md](docs/permission-spike.md):
+
+| After a click on a tab | Grant |
+|---|---|
+| SPA route change, or full navigation within the same origin | kept |
+| Navigation to another origin | dropped (click again) |
+| Switching to another tab | that tab needs its own click |
+| Switching back to a clicked tab | kept |
+
+A tab without a grant shows "click the Orbit icon to read this tab", never the
+previous person.
+
+`optional_host_permissions` (LinkedIn, X, Gmail, GitHub) are the opt-in on
+top: turned on from Settings, they let the panel read each page on that site
+as you open it, with no click. Never required, always revocable from the same
+list, and declaring them costs no install-time warning.
 
 ### What it deliberately does not do
 
@@ -134,7 +154,9 @@ injected UI on the host page. Every extraction is one read of what the user's ow
 browser already rendered, because they clicked the icon.
 
 Page text is never persisted — it's model input only. The raw blob is never
-cached locally either.
+cached locally either. The only first-party use of extension storage is the
+click hand-off above: a tab id and a timestamp in `storage.session` (memory
+only, extension pages only), deleted as soon as the panel acts on it.
 
 ## Keeping in sync with the app
 

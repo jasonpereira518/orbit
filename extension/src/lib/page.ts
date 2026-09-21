@@ -9,7 +9,7 @@ export type PageReadReason =
 
 export type PageReadResult =
   | { ok: true; page: PageContext }
-  | { ok: false; reason: PageReadReason; message: string; origin?: string };
+  | { ok: false; reason: PageReadReason; message: string };
 
 /** Pages Chrome refuses to inject into. Worth naming so the panel can say why. */
 function restrictedReason(url: string): string | null {
@@ -21,16 +21,6 @@ function restrictedReason(url: string): string | null {
   }
   if (/^file:/i.test(url)) return "Orbit can't read local files.";
   return null;
-}
-
-function originOf(url: string): string | undefined {
-  try {
-    const { protocol, hostname } = new URL(url);
-    if (!/^https?:$/.test(protocol)) return undefined;
-    return `${protocol}//${hostname}/*`;
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -45,18 +35,14 @@ export async function readActivePage(): Promise<PageReadResult> {
     return { ok: false, reason: "no-tab", message: "No active tab." };
   }
 
-  // An empty `url` on a real tab means we hold no permission for it.
-  //
-  // This is the side panel's central difference from a popup. `activeTab` is
-  // granted by "executing an action" — but when the action's job is to open the
-  // side panel, Chrome does not fire the action and does not grant it. So a
-  // panel opened from the toolbar can see that a tab exists and nothing more,
-  // and the only way through is an explicit host permission for the site.
+  // An empty `url` on a real tab means Orbit holds no grant for it: the user
+  // hasn't clicked the icon on this tab (or has since left the site it was
+  // clicked on), and it isn't a site they've let Orbit follow them on.
   if (!tab.url) {
     return {
       ok: false,
       reason: "no-permission",
-      message: "Orbit needs your go-ahead to read this site.",
+      message: "Click the Orbit icon to read this tab.",
     };
   }
 
@@ -82,13 +68,12 @@ export async function readActivePage(): Promise<PageReadResult> {
     }
     return { ok: true, page: value };
   } catch {
-    // We could see the URL but not run on it — a host permission was revoked,
-    // or this is a page Chrome protects. Offer the grant for its origin.
+    // We could see the URL but not run on it — a grant was revoked, or this is
+    // a page Chrome protects. Another click on the icon is the way back in.
     return {
       ok: false,
       reason: "no-permission",
-      message: "Orbit needs your go-ahead to read this site.",
-      origin: originOf(tab.url),
+      message: "Click the Orbit icon to read this tab.",
     };
   }
 }

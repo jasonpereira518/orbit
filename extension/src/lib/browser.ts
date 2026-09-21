@@ -12,6 +12,7 @@
  * API. The background worker and the injected extractor do not use it — they
  * only ever run inside the real browser.
  */
+import { INTENT_KEY } from "./intents";
 
 export type ActiveTab = { id?: number; url?: string };
 
@@ -49,6 +50,20 @@ export type Browser = {
     request(origins: string[]): Promise<boolean>;
     remove(origins: string[]): Promise<boolean>;
   };
+  /** The window this panel belongs to. Each window has its own panel. */
+  currentWindowId(): Promise<number | null>;
+  /** The latest toolbar click the worker recorded, if any (see lib/intents). */
+  readIntent(): Promise<unknown>;
+  /** Consume a click so no panel acts on it again. */
+  clearIntent(): Promise<void>;
+  /** Hear toolbar clicks as the worker records them. Returns unsubscribe. */
+  onIntent(listener: (value: unknown) => void): () => void;
+  /**
+   * The keyboard shortcut that does what clicking the icon does, as the user
+   * actually has it set — they can change it in chrome://extensions/shortcuts.
+   * Null when unset.
+   */
+  actionShortcut(): Promise<string | null>;
   /** This build's version, from the manifest. */
   extensionVersion(): string;
   /** Ask Chrome whether a newer build is waiting in the Web Store. */
@@ -125,6 +140,44 @@ export const chromeBrowser: Browser = {
     remove(origins) {
       return chrome.permissions.remove({ origins }).catch(() => false);
     },
+  },
+
+  async currentWindowId() {
+    try {
+      return (await chrome.windows.getCurrent()).id ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  async readIntent() {
+    return (await chrome.storage.session.get(INTENT_KEY))[INTENT_KEY];
+  },
+
+  async clearIntent() {
+    await chrome.storage.session.remove(INTENT_KEY);
+  },
+
+  onIntent(listener) {
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: string
+    ) => {
+      if (area !== "session" || !(INTENT_KEY in changes)) return;
+      const next = changes[INTENT_KEY].newValue;
+      if (next !== undefined) listener(next);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  },
+
+  async actionShortcut() {
+    try {
+      const commands = await chrome.commands.getAll();
+      return commands.find((c) => c.name === "_execute_action")?.shortcut || null;
+    } catch {
+      return null;
+    }
   },
 
   extensionVersion() {

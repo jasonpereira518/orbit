@@ -39,7 +39,7 @@ const { Button, Meta, Skeleton } = await import("@/panel/components/ui");
 const { CaptureView } = await import("@/panel/views/CaptureView");
 const { KnownContactView } = await import("@/panel/views/KnownContactView");
 const { AmbiguousView } = await import("@/panel/views/AmbiguousView");
-const { GrantAccessView } = await import("@/panel/views/GrantAccessView");
+const { TabHintView } = await import("@/panel/views/TabHintView");
 const { SettingsView } = await import("@/panel/views/SettingsView");
 const { UpdateBand } = await import("@/panel/components/UpdateBand");
 import "@/styles/panel.css";
@@ -235,7 +235,6 @@ function panelState(over: Record<string, unknown> = {}) {
     startersDegraded: false,
     error: null,
     pendingUrl: null,
-    pendingOrigin: null,
     ...over,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -404,11 +403,11 @@ function States() {
         <AmbiguousView candidates={candidates} onPick={() => {}} onCreateNew={() => {}} />
       </Frame>
 
-      <Frame label="Needs site access" note="the panel's activeTab problem">
-        <PanelHeader />
-        <IdentityZone page={null} />
-        <VerdictZone tone="accent">Waiting on your go-ahead</VerdictZone>
-        <GrantAccessView pendingOrigin={null} onGranted={() => {}} />
+      <Frame label="Tab not read yet" note="an unclicked tab — a hint, not a wall">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={null} unread />
+        <VerdictZone tone="accent">Not read yet — click the icon</VerdictZone>
+        <TabHintView onOpenSettings={() => {}} />
       </Frame>
 
       <Frame label="Settings" note="who am I, is AI on, which sites">

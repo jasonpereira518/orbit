@@ -37,6 +37,11 @@ export function createFakeBrowser(
         return true;
       },
     },
+    currentWindowId: async () => 1,
+    readIntent: async () => undefined,
+    clearIntent: async () => {},
+    onIntent: () => () => {},
+    actionShortcut: async () => "⇧⌘O",
     extensionVersion: () => over.version ?? "1.0.0",
     requestUpdateCheck: async () => "no_update",
     reloadExtension: () => note("reloadExtension"),

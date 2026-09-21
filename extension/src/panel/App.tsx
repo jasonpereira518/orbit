@@ -16,7 +16,7 @@ import { Notice } from "./components/Notice";
 import { Button, Meta, Skeleton } from "./components/ui";
 import { AmbiguousView } from "./views/AmbiguousView";
 import { CaptureView } from "./views/CaptureView";
-import { GrantAccessView } from "./views/GrantAccessView";
+import { TabHintView } from "./views/TabHintView";
 import { KnownContactView } from "./views/KnownContactView";
 import { usePanel } from "./state/usePanel";
 import { isOutdated } from "./state/update-status";
@@ -88,7 +88,7 @@ export function App() {
       return <VerdictZone tone="accent">Not signed in</VerdictZone>;
     }
     if (state.phase === "needs-permission") {
-      return <VerdictZone tone="accent">Waiting on your go-ahead</VerdictZone>;
+      return <VerdictZone tone="accent">Not read yet — click the icon</VerdictZone>;
     }
     if (state.phase === "unsupported") {
       return <VerdictZone>Can&apos;t read this page</VerdictZone>;
@@ -170,12 +170,7 @@ export function App() {
     }
 
     if (state.phase === "needs-permission") {
-      return (
-        <GrantAccessView
-          pendingOrigin={state.pendingOrigin}
-          onGranted={() => void reload()}
-        />
-      );
+      return <TabHintView onOpenSettings={() => setSettingsOpen(true)} />;
     }
 
     if (state.phase === "unsupported") {
@@ -314,7 +309,12 @@ export function App() {
       {/* Hidden, not unmounted: a capture draft or a half-typed note lives in
           this subtree, and opening Settings must not throw it away. */}
       <div hidden={settingsOpen} className="flex min-h-0 flex-1 flex-col">
-        <IdentityZone page={state.page} sealed={sealed} stale={staleOffline} />
+        <IdentityZone
+          page={state.page}
+          sealed={sealed}
+          stale={staleOffline}
+          unread={state.phase === "needs-permission" || state.phase === "unsupported"}
+        />
         {verdict()}
         {outdated ? <UpdateBand /> : null}
         {body()}

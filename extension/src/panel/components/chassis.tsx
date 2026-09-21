@@ -64,11 +64,33 @@ export function IdentityZone({
   page,
   sealed,
   stale,
+  unread,
 }: {
   page: PageContext | null;
   sealed?: boolean;
   stale?: boolean;
+  /**
+   * There is no page to paint, and none is coming: the tab hasn't been given
+   * to Orbit, or it is one Chrome won't let extensions read. A skeleton here
+   * would promise a load that never happens.
+   */
+  unread?: boolean;
 }) {
+  if (!page && unread) {
+    return (
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-[var(--border)] px-3 py-2.5">
+        <span className="h-9 w-9 shrink-0 rounded-full border border-dashed border-[var(--border)]" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[15px] font-medium leading-[18px] text-[var(--muted-foreground)]">
+            This tab
+          </p>
+          <p className="mt-0.5 text-[11px] text-[var(--muted-foreground)]">
+            Not read
+          </p>
+        </div>
+      </div>
+    );
+  }
   if (!page) {
     return (
       <div className="flex shrink-0 items-center gap-2.5 border-b border-[var(--border)] px-3 py-2.5">

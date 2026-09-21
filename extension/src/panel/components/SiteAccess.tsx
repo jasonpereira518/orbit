@@ -1,9 +1,9 @@
 /**
  * The per-site switches: which sites Orbit may read without being asked again.
  *
- * Shared by the grant screen (where it is the way in) and Settings (where it is
- * the way back out). An on-switch you can't find the off-switch for is how
- * extensions lose trust, so both surfaces draw the same list.
+ * Lives in Settings. Reading a page never needs these — the icon click grants
+ * the tab — so this is purely "follow me on this site without a click", with
+ * the off-switch right beside the on-switch.
  */
 import { useEffect, useState } from "react";
 import { Check } from "lucide-react";

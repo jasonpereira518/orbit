@@ -128,8 +128,9 @@ export function SettingsView({
         <Section>
           <SiteAccessList title="Read these sites without asking" />
           <Meta className="mt-2">
-            Orbit reads a page only while the panel is open beside it. Turning a
-            site off takes effect immediately.
+            On these sites the open panel reads each page as you arrive, no
+            click needed. Anywhere else, click the Orbit icon. Turning a site
+            off takes effect immediately.
           </Meta>
         </Section>
 
