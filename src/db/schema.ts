@@ -1577,6 +1577,14 @@ export type DriveFileRowPayload = {
    * done row carrying it is the proof a later import uses to skip the unchanged doc.
    */
   sourceHash?: string;
+  /**
+   * How many runs have started reading this row. Bumped before the export; a row that has
+   * been started twice without finishing is skipped rather than retried, so a doc that kills
+   * the function can't loop forever.
+   */
+  attempts?: number;
+  /** How many times Google's rate limit sent this row back to wait for a later run. */
+  rateLimitHandoffs?: number;
 };
 
 /**

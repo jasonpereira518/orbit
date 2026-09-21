@@ -21,8 +21,9 @@ import {
   type DriveFileRowPayload,
   type ImportStats,
 } from "@/db/schema";
-import { classifyAiError, friendlyError, UserFacingError } from "@/lib/errors";
+import { classifyAiError, ReauthRequiredError, UserFacingError } from "@/lib/errors";
 import { isAiAccessError } from "@/lib/ai-access";
+import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { internalFetch } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
 import { failImport, truncateStoredError } from "@/lib/import-job-processor";
@@ -30,12 +31,14 @@ import { getValidAccessToken } from "@/lib/gmail";
 import {
   DriveFileTooLargeError,
   DriveFileUnavailableError,
+  DriveNotAuthorizedError,
+  DriveRateLimitedError,
   exportDriveFileText,
 } from "@/lib/drive";
+import { DRIVE_ROW_COPY } from "@/lib/imports/drive-row-copy";
 import { NO_PEOPLE_OR_DATES_MESSAGE, runCaptureParse } from "@/lib/capture-parse";
 import { saveNoteBatch } from "@/lib/note-batch-save";
 import { saveInputFromParse } from "@/lib/capture-job-runner";
-import { defaultMergeId } from "@/lib/capture/review-reducer";
 import type { CaptureDecisions } from "@/lib/capture/types";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { DEFAULT_FOLLOW_UP_WINDOW_DAYS } from "@/lib/note-batches";
@@ -46,7 +49,7 @@ import {
 import { DRIVE_MIME, type PickedDriveFile } from "@/lib/imports/drive-triage";
 import { DRIVE_IMPORT_TYPE } from "@/lib/drive-import-type";
 
-export { DRIVE_IMPORT_TYPE };
+export { DRIVE_IMPORT_TYPE, DRIVE_ROW_COPY };
 
 export const MAX_DRIVE_FILES_PER_IMPORT = 25;
 /** Each row is an export plus a multi-call parse (~60 s for a busy doc), so a few per pass. */
@@ -61,17 +64,13 @@ const ROW_RESERVE_MS = 90 * 1000;
 /** Past this, no new row starts and the job hands off to a fresh invocation. */
 const START_ROW_DEADLINE_MS = MAX_DURATION_MS - ROW_RESERVE_MS;
 const MAX_STORED_FLAGS = 20;
-
-/** Per-row reasons, stored on `import_job_rows.error_message` and shown in the detail sheet. */
-export const DRIVE_ROW_COPY = {
-  unavailable: "Orbit can’t open this file any more — it may have been deleted or unshared",
-  tooLarge: "This file is too long to read as notes",
-  empty: "Nothing written in this one",
-  nobody: "No people or dates in this one",
-  alreadyImported: "Already brought in — unchanged since",
-  unreadable: "Orbit couldn’t read this one",
-  noAiKey: "Add an AI key in Settings so Orbit can read your Drive files",
-} as const;
+/** A row started this many times without finishing is skipped: it keeps killing the run. */
+const MAX_ROW_ATTEMPTS = 2;
+/** Rate-limit hand-offs a single row may take before it is skipped as too busy. */
+const MAX_RATE_LIMIT_HANDOFFS = 5;
+/** Picker ids are Drive file ids: letters, digits, `-` and `_`. */
+const DRIVE_FILE_ID = /^[A-Za-z0-9_-]+$/;
+const MAX_FILE_NAME_CHARS = 500;
 
 export const DRIVE_KEY_PROBLEM_COPY = {
   auth: "Your AI provider didn’t accept your API key — check it in Settings, then try again",
@@ -85,6 +84,8 @@ export type DriveImportDeps = {
   parse: typeof runCaptureParse;
   save: typeof saveNoteBatch;
   continueLater: (importId: string) => Promise<void>;
+  /** Once, when a job completes — capture's own follow-on work (search embeddings). */
+  kickEmbeddings: (userId: string) => Promise<void>;
   now: () => Date;
 };
 
@@ -103,20 +104,43 @@ const DEFAULT_DEPS: DriveImportDeps = {
   parse: runCaptureParse,
   save: saveNoteBatch,
   continueLater: scheduleContinuation,
+  kickEmbeddings: kickEmbeddingBackfill,
   now: () => new Date(),
 };
 
 const SUPPORTED = new Set<string>([DRIVE_MIME.doc, DRIVE_MIME.slides]);
 
+/**
+ * The picked files as the browser sent them, checked: a server action's arguments are
+ * whatever the caller posts, not what the Picker returned.
+ */
+function validatePicks(files: unknown, now: Date): PickedDriveFile[] {
+  if (!Array.isArray(files)) throw new UserFacingError("Pick a Google Doc or Slides deck to import");
+  // Counted before filtering by type, so a huge post can't slip under the cap.
+  if (files.length > MAX_DRIVE_FILES_PER_IMPORT) {
+    throw new UserFacingError(`Pick up to ${MAX_DRIVE_FILES_PER_IMPORT} files at a time`);
+  }
+  return files.map((f: unknown) => {
+    const o = (f ?? {}) as Record<string, unknown>;
+    const id = typeof o.id === "string" ? o.id : "";
+    if (!id || !DRIVE_FILE_ID.test(id)) {
+      throw new UserFacingError("Pick your files again from Google Drive");
+    }
+    const name = (typeof o.name === "string" && o.name.trim() ? o.name.trim() : "Untitled").slice(0, MAX_FILE_NAME_CHARS);
+    const mimeType = typeof o.mimeType === "string" ? o.mimeType : "";
+    const parsed = typeof o.modifiedTime === "string" ? new Date(o.modifiedTime) : null;
+    const modifiedTime = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : now.toISOString();
+    return { id, name, mimeType, modifiedTime };
+  });
+}
+
 /** Create the import and one pending row per supported file. Nothing is fetched yet. */
 export async function stageDriveImport(
   userId: string,
   files: PickedDriveFile[],
+  now: Date = new Date(),
 ): Promise<{ importId: string; totalRows: number }> {
-  const usable = files.filter((f) => SUPPORTED.has(f.mimeType));
-  if (usable.length > MAX_DRIVE_FILES_PER_IMPORT) {
-    throw new UserFacingError(`Pick up to ${MAX_DRIVE_FILES_PER_IMPORT} files at a time`);
-  }
+  const usable = validatePicks(files, now).filter((f) => SUPPORTED.has(f.mimeType));
   if (!usable.length) throw new UserFacingError("Pick a Google Doc or Slides deck to import");
 
   const db = await getDb();
@@ -152,7 +176,13 @@ export async function stageDriveImport(
   return { importId: row.id, totalRows: usable.length };
 }
 
-/** Every person the parse found, accepted into their best existing match — no review step. */
+/**
+ * Every person the parse found, accepted — no review step.
+ *
+ * Merged only into the parse's own confident suggestion (`suggestedMergeId`). A weaker
+ * lookalike is NOT merged unattended: the person is created, and the duplicate machinery
+ * flags the pair for review, where a human decides.
+ */
 function acceptEveryone(
   items: Awaited<ReturnType<typeof runCaptureParse>>["items"],
   keep: string[],
@@ -163,7 +193,7 @@ function acceptEveryone(
     people[item.key] = {
       decision: "accept",
       index,
-      mergeContactId: defaultMergeId(item),
+      mergeContactId: item.suggestedMergeId ?? null,
       relationshipScore: item.parsed.relationship_score_suggestion ?? 3,
       tagNames: item.parsed.tags ?? [],
       decidedAt: at,
@@ -208,10 +238,25 @@ type RowOutcome =
       sourceHash: string;
       flags: NonNullable<ImportStats["flaggedCommitments"]>;
       reminders: number;
+      interactions: number;
       created: number;
       updated: number;
     }
-  | { status: "skipped"; reason: string; already?: boolean; contactIds?: string[]; sourceHash?: string };
+  | { status: "skipped"; reason: string; already?: boolean; contactIds?: string[]; sourceHash?: string }
+  /** Google asked us to slow down: the row goes back to pending for a later run. */
+  | { status: "rate_limited" };
+
+/**
+ * A problem with the whole job, not this doc — every later doc would hit the same wall, so the
+ * job stops with this error (the original instance where there is one, so `failImport`
+ * classifies it precisely) and the row is left pending.
+ */
+class DriveJobStop extends Error {
+  constructor(readonly failure: unknown) {
+    super("Drive import stopped");
+    this.name = "DriveJobStop";
+  }
+}
 
 async function processDoc(
   userId: string,
@@ -227,6 +272,10 @@ async function processDoc(
   } catch (err) {
     if (err instanceof DriveFileUnavailableError) return { status: "skipped", reason: DRIVE_ROW_COPY.unavailable };
     if (err instanceof DriveFileTooLargeError) return { status: "skipped", reason: DRIVE_ROW_COPY.tooLarge };
+    if (err instanceof DriveNotAuthorizedError) return { status: "skipped", reason: DRIVE_ROW_COPY.notAuthorized };
+    if (err instanceof DriveRateLimitedError) return { status: "rate_limited" };
+    // The grant itself is dead: no later doc can be read either, so stop for a reconnect.
+    if (err instanceof ReauthRequiredError) throw new DriveJobStop(err);
     // Any other Drive failure is this file's problem, never the AI key's. Handled here so it
     // can't reach `keyProblem`, whose classifier would read "Drive export returned 401" as
     // a rejected AI key and stop the whole job with the wrong sentence.
@@ -256,6 +305,10 @@ async function processDoc(
     if (err instanceof UserFacingError && err.message === NO_PEOPLE_OR_DATES_MESSAGE) {
       return { status: "skipped", reason: DRIVE_ROW_COPY.nobody };
     }
+    // Only the parse is checked for a key problem: a save-step error mentioning "model" or
+    // "404" is this doc's problem, never the AI key's.
+    const stop = keyProblem(err);
+    if (stop) throw new DriveJobStop(stop);
     throw err;
   }
 
@@ -294,6 +347,7 @@ async function processDoc(
     contactIds: out.contactIds,
     sourceHash,
     reminders: out.remindersCreated,
+    interactions: out.result.participants.filter((p) => p.interactionId != null).length,
     created: out.created,
     updated: out.updated,
     flags: flags.map((f) => ({
@@ -305,14 +359,35 @@ async function processDoc(
   };
 }
 
-function keyProblem(err: unknown): string | null {
-  // No usable AI key at all: every doc would hit the same wall, so the job stops at the first.
-  if (isAiAccessError(err)) return friendlyError(err, DRIVE_ROW_COPY.noAiKey);
+/** The error to fail the job with when the parse says the AI key is the problem, else null. */
+function keyProblem(err: unknown): unknown {
+  // No usable AI key at all (or the allowance is spent): the gate's own error, passed through
+  // so `failImport` classifies it by name and stores the gate's own sentence.
+  if (isAiAccessError(err)) return err;
   const kind = classifyAiError(err);
   if (kind === "auth" || kind === "quota" || kind === "model_unavailable") {
-    return friendlyError(err, DRIVE_KEY_PROBLEM_COPY[kind]);
+    return Object.assign(new Error(DRIVE_KEY_PROBLEM_COPY[kind]), { cause: err });
   }
   return null;
+}
+
+/** Append this row's flags to the import in one statement, so a dismissal mid-run survives. */
+function appendFlagsSql(flags: NonNullable<ImportStats["flaggedCommitments"]>) {
+  return sql`jsonb_set(
+    coalesce(${imports.stats}, '{}'::jsonb),
+    '{flaggedCommitments}',
+    (
+      select coalesce(jsonb_agg(t.e order by t.ord), '[]'::jsonb)
+      from (
+        select e, ord
+        from jsonb_array_elements(
+          coalesce(${imports.stats}->'flaggedCommitments', '[]'::jsonb) || ${JSON.stringify(flags)}::jsonb
+        ) with ordinality as x(e, ord)
+        order by ord
+        limit ${MAX_STORED_FLAGS}
+      ) t
+    )
+  )`;
 }
 
 export async function runDriveImportJob(
@@ -352,19 +427,38 @@ export async function runDriveImportJob(
       });
       if (!pending.length) break;
 
-      const stats: ImportStats = { ...(current.stats ?? {}) };
+      // Counters only. The flags list is appended in SQL (`appendFlagsSql`) and never written
+      // from here, so a flag dismissed while this runs isn't put back by the next flush.
+      const { flaggedCommitments: _flags, ...counters } = current.stats ?? {};
+      void _flags;
+      const stats: ImportStats = counters;
       // Nullable columns: `?? 0`, not destructuring defaults, which only catch undefined.
       let contactsCreated = current.contactsCreated ?? 0;
       let contactsUpdated = current.contactsUpdated ?? 0;
       let rowsProcessed = current.rowsProcessed ?? 0;
-      const flushProgress = () =>
+      const flushProgress = (flags?: NonNullable<ImportStats["flaggedCommitments"]>) =>
         db
           .update(imports)
-          .set({ rowsProcessed, contactsCreated, contactsUpdated, stats, updatedAt: new Date() })
+          .set({
+            rowsProcessed,
+            contactsCreated,
+            contactsUpdated,
+            stats: flags?.length
+              ? sql`${appendFlagsSql(flags)} || ${JSON.stringify(stats)}::jsonb`
+              : sql`coalesce(${imports.stats}, '{}'::jsonb) || ${JSON.stringify(stats)}::jsonb`,
+            updatedAt: new Date(),
+          })
           .where(eq(imports.id, importId));
 
       for (const row of pending) {
         if (deps.now().getTime() - jobStart > START_ROW_DEADLINE_MS) break;
+        // Per row, not only per chunk: a cancel stops after the doc being read now.
+        const live = await db.query.imports.findFirst({
+          where: eq(imports.id, importId),
+          columns: { status: true },
+        });
+        if (live?.status !== "processing") return;
+
         const payload = row.payload;
         if (!isDriveFileRow(payload)) {
           const claimed = await db
@@ -379,19 +473,52 @@ export async function runDriveImportJob(
           continue;
         }
 
+        // Started twice already and never finished: this doc kills the run (too long to parse
+        // inside the ceiling, most likely). Skip it rather than loop on it forever.
+        const attempts = payload.attempts ?? 0;
         let outcome: RowOutcome;
-        try {
-          outcome = await processDoc(userId, importId, row.id, payload, accessToken, deps);
-        } catch (err) {
-          const problem = keyProblem(err);
-          if (problem) {
-            // Keep what earlier rows in this chunk already saved, then stop with this row pending.
+        if (attempts >= MAX_ROW_ATTEMPTS) {
+          outcome = { status: "skipped", reason: DRIVE_ROW_COPY.tookTooLong };
+        } else {
+          const started = await db
+            .update(importJobRows)
+            .set({ payload: { ...payload, attempts: attempts + 1 }, updatedAt: new Date() })
+            .where(and(eq(importJobRows.id, row.id), eq(importJobRows.status, "pending")))
+            .returning();
+          if (!started.length) continue; // another runner finished it
+          try {
+            outcome = await processDoc(userId, importId, row.id, payload, accessToken, deps);
+          } catch (err) {
+            if (err instanceof DriveJobStop) {
+              // Keep what earlier rows already saved, then stop with this row pending — and
+              // its attempt given back, since the doc itself was never the problem.
+              await db
+                .update(importJobRows)
+                .set({ payload: { ...payload, attempts }, updatedAt: new Date() })
+                .where(and(eq(importJobRows.id, row.id), eq(importJobRows.status, "pending")));
+              await flushProgress();
+              await failImport(importId, err.failure);
+              return;
+            }
+            reportError(err, { where: "job.drive-import.row", level: "warning", extra: { importId } });
+            outcome = { status: "skipped", reason: DRIVE_ROW_COPY.unreadable };
+          }
+        }
+
+        if (outcome.status === "rate_limited") {
+          const handoffs = (payload.rateLimitHandoffs ?? 0) + 1;
+          if (handoffs <= MAX_RATE_LIMIT_HANDOFFS) {
+            // Back to pending with its attempt given back: the doc was never read. A fresh
+            // run picks it up; the hand-off count keeps a Drive that stays busy from looping.
+            await db
+              .update(importJobRows)
+              .set({ payload: { ...payload, attempts, rateLimitHandoffs: handoffs }, updatedAt: new Date() })
+              .where(and(eq(importJobRows.id, row.id), eq(importJobRows.status, "pending")));
             await flushProgress();
-            await failImport(importId, new Error(problem));
+            await deps.continueLater(importId);
             return;
           }
-          reportError(err, { where: "job.drive-import.row", level: "warning", extra: { importId } });
-          outcome = { status: "skipped", reason: DRIVE_ROW_COPY.unreadable };
+          outcome = { status: "skipped", reason: DRIVE_ROW_COPY.busy };
         }
 
         const contactIds = outcome.status === "done" ? outcome.contactIds : (outcome.contactIds ?? []);
@@ -406,7 +533,13 @@ export async function runDriveImportJob(
             status: finished ? "done" : "skipped",
             contactId: contactIds[0] ?? null,
             // `sourceHash` on a done row is what marks this text imported (`priorImportFor`).
-            payload: { ...payload, contactIds, ...(finished && outcome.sourceHash ? { sourceHash: outcome.sourceHash } : {}) },
+            payload: {
+              ...payload,
+              // The skip-without-reading path never bumped it; every other path read once more.
+              attempts: attempts >= MAX_ROW_ATTEMPTS ? attempts : attempts + 1,
+              contactIds,
+              ...(finished && outcome.sourceHash ? { sourceHash: outcome.sourceHash } : {}),
+            },
             errorMessage: outcome.status === "skipped" ? truncateStoredError(outcome.reason) : null,
             updatedAt: new Date(),
           })
@@ -414,10 +547,12 @@ export async function runDriveImportJob(
           .returning();
         if (!claimed.length) continue;
 
+        let newFlags: NonNullable<ImportStats["flaggedCommitments"]> = [];
         if (outcome.status === "done") {
           stats.docsRead = (stats.docsRead ?? 0) + 1;
           stats.remindersCreated = (stats.remindersCreated ?? 0) + outcome.reminders;
-          stats.flaggedCommitments = [...(stats.flaggedCommitments ?? []), ...outcome.flags].slice(0, MAX_STORED_FLAGS);
+          stats.interactionsLogged = (stats.interactionsLogged ?? 0) + outcome.interactions;
+          newFlags = outcome.flags;
           contactsCreated += outcome.created;
           contactsUpdated += outcome.updated;
         } else if (outcome.already) {
@@ -426,14 +561,18 @@ export async function runDriveImportJob(
         rowsProcessed++;
         // Per row, not per chunk: this bumps `imports.updated_at`, which the stall cron reads.
         // A chunk of busy docs can outlast its 3-minute threshold and invite a second runner.
-        await flushProgress();
+        await flushProgress(newFlags);
       }
     }
 
-    await db
+    const completed = await db
       .update(imports)
       .set({ status: "completed", updatedAt: new Date() })
-      .where(and(eq(imports.id, importId), eq(imports.status, "processing")));
+      .where(and(eq(imports.id, importId), eq(imports.status, "processing")))
+      .returning();
+    // Capture's own follow-on: new people become searchable. Best-effort; the daily cron
+    // backstops it. Briefs are deliberately not regenerated (an AI call per contact).
+    if (completed.length) await deps.kickEmbeddings(userId).catch(() => {});
   } catch (err) {
     await failImport(importId, err);
   }

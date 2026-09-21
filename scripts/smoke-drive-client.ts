@@ -8,8 +8,12 @@ import {
   DRIVE_EXPORT_MAX_CHARS,
   DriveFileTooLargeError,
   DriveFileUnavailableError,
+  DriveNotAuthorizedError,
+  DriveRateLimitedError,
   exportDriveFileText,
 } from "../src/lib/drive";
+import { ReauthRequiredError } from "../src/lib/errors";
+import { CAPTURE_INPUT_MAX_CHARS } from "../src/lib/capture/limits";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -52,6 +56,19 @@ async function main() {
     await rejects(exportDriveFileText("t", "x", stub(403, '{"error":{"errors":[{"reason":"exportSizeLimitExceeded"}]}}')), DriveFileTooLargeError),
   );
   check("huge text → too large", await rejects(exportDriveFileText("t", "x", stub(200, "a".repeat(DRIVE_EXPORT_MAX_CHARS + 1))), DriveFileTooLargeError));
+
+  const reason = (r: string) => JSON.stringify({ error: { errors: [{ reason: r }] } });
+  check("401 → reconnect (the grant is dead)", await rejects(exportDriveFileText("t", "x", stub(401, "{}")), ReauthRequiredError));
+  check("429 → rate limited", await rejects(exportDriveFileText("t", "x", stub(429, "{}")), DriveRateLimitedError));
+  for (const r of ["rateLimitExceeded", "userRateLimitExceeded"]) {
+    check(`403 ${r} → rate limited`, await rejects(exportDriveFileText("t", "x", stub(403, reason(r))), DriveRateLimitedError));
+  }
+  for (const r of ["appNotAuthorizedToFile", "insufficientPermissions", "insufficientFilePermissions"]) {
+    check(`403 ${r} → not authorized`, await rejects(exportDriveFileText("t", "x", stub(403, reason(r))), DriveNotAuthorizedError));
+  }
+  check("403 with a non-JSON body → unavailable", await rejects(exportDriveFileText("t", "x", stub(403, "<html>nope</html>")), DriveFileUnavailableError));
+  check("the export cap is capture's own", DRIVE_EXPORT_MAX_CHARS === CAPTURE_INPUT_MAX_CHARS, String(DRIVE_EXPORT_MAX_CHARS));
+  check("text at capture's cap is kept", (await exportDriveFileText("t", "x", stub(200, "a".repeat(CAPTURE_INPUT_MAX_CHARS)))).length === CAPTURE_INPUT_MAX_CHARS);
 
   let raw = "";
   try {

@@ -10,6 +10,14 @@
  * is recognised once finished; a row another runner already finished is never overwritten or
  * double-counted.
  *
+ * Final-review fixes: the no-key failure is classified ai_key with the gate's own sentence
+ * (I1); a dead grant stops for a reconnect, a not-authorized file asks for a re-pick, and a
+ * rate limit hands the row off and is bounded (I2); a weak lookalike is never merged
+ * unattended (I3); a row started twice without finishing is skipped (I4); meetings are
+ * counted and embeddings kicked once (I5); a save error mentioning "model" never stops the
+ * job as a key problem (I6); a flag dismissed mid-run stays dismissed (m1); a cancel stops
+ * after the current doc (m5); staging validates what the browser sent (m6).
+ *
  * Run: npx tsx scripts/smoke-drive-import.ts
  */
 import "./smoke/_env";
@@ -32,6 +40,10 @@ import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import type { CaptureParseResult, SuggestedReminderPreview } from "../src/lib/capture/types";
 import { countImportPeople } from "../src/lib/imports/import-people";
 import { removeDriveFlag } from "../src/lib/drive-flags";
+import { DriveNotAuthorizedError, DriveRateLimitedError } from "../src/lib/drive";
+import { ReauthRequiredError } from "../src/lib/errors";
+import { AI_ACCESS_COPY } from "../src/lib/ai-access-copy";
+import { splitReference } from "../src/lib/import-errors";
 
 const USER = "smoke-drive-import-user";
 const NOW = new Date("2026-09-21T12:00:00Z");
@@ -114,6 +126,16 @@ const DOCS: Record<string, { text: string; names: string[]; reminders: Suggested
   c: { text: "Call with Sam Rivera.", names: ["Sam Rivera"], reminders: [] },
   d: { text: "Lunch with Omar Haddad.", names: ["Omar Haddad"], reminders: [] },
   e: { text: "Drinks with Nia Brooks.", names: ["Nia Brooks"], reminders: [] },
+  g: {
+    text: "Planning with Ravi Menon.",
+    names: ["Ravi Menon"],
+    reminders: [reminder("ravi-past", { dueDateIso: "2026-09-12", confidenceScore: 95, personName: "Ravi Menon" })],
+  },
+  h: { text: "Walk with Tess Grant.", names: ["Tess Grant"], reminders: [] },
+  i: { text: "Sync with Uma Patel.", names: ["Uma Patel"], reminders: [] },
+  j: { text: "Sync with Victor Chen.", names: ["Victor Chen"], reminders: [] },
+  k: { text: "Quick chat with Priya.", names: ["Priya Raman"], reminders: [] },
+  l: { text: "Dinner with Wen Li.", names: ["Wen Li"], reminders: [] },
   f: {
     text: "Board review on October 15.",
     names: [],
@@ -122,10 +144,13 @@ const DOCS: Record<string, { text: string; names: string[]; reminders: Suggested
   gone: "gone",
 };
 
-function deps(over: Partial<DriveImportDeps> = {}): DriveImportDeps & { continued: string[] } {
+function deps(over: Partial<DriveImportDeps> = {}): DriveImportDeps & { continued: string[]; kicked: string[] } {
   const continued: string[] = [];
+  const kicked: string[] = [];
   return {
     continued,
+    kicked,
+    kickEmbeddings: async (u) => void kicked.push(u),
     getAccessToken: async () => "tok",
     exportText: async (_t, fileId) => {
       const d = DOCS[fileId];
@@ -175,6 +200,8 @@ async function main() {
   check("the job completes", imp?.status === "completed", `${imp?.status} ${imp?.errorMessage ?? ""}`);
   check("two docs read", imp?.stats?.docsRead === 2, JSON.stringify(imp?.stats));
   check("every row counted", imp?.rowsProcessed === 3, String(imp?.rowsProcessed));
+  check("each person's meeting is counted as logged (I5)", imp?.stats?.interactionsLogged === 3, JSON.stringify(imp?.stats));
+  check("embeddings kicked once, for this user, on completion (I5)", d1.kicked.length === 1 && d1.kicked[0] === USER, JSON.stringify(d1.kicked));
 
   const rows = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, staged.importId) });
   const byFile = new Map(rows.map((r) => [(r.payload as { fileId: string }).fileId, r]));
@@ -231,6 +258,8 @@ async function main() {
   check("no AI key fails the job", nk?.status === "failed", nk?.status);
   const nkRows = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, nokey.importId) });
   check("…and leaves the row pending", nkRows.length === 1 && nkRows[0].status === "pending", nkRows[0]?.status);
+  check("…classified as an AI key problem (I1)", nk?.stats?.errorCode === "ai_key", JSON.stringify(nk?.stats));
+  check("…with the gate's own sentence", splitReference(nk?.errorMessage).message === AI_ACCESS_COPY.key_required, nk?.errorMessage ?? "");
 
   // Time budget: a clock past the budget hands off without touching rows.
   const later = await stageDriveImport(USER, [file("b")]);
@@ -317,6 +346,119 @@ async function main() {
   const rImp = await db.query.imports.findFirst({ where: eq(imports.id, raced.importId) });
   check("…nor counted twice", !rImp?.stats?.docsRead && (rImp?.rowsProcessed ?? 0) === 0, JSON.stringify([rImp?.rowsProcessed, rImp?.stats]));
   check("…and the job still completes", rImp?.status === "completed", rImp?.status);
+
+  // I2: a dead grant (401) stops the job for a reconnect, row left pending.
+  const dead = await stageDriveImport(USER, [file("h")]);
+  await runDriveImportJob(dead.importId, deps({
+    exportText: async () => { throw new ReauthRequiredError("Google Drive refused Orbit’s access — reconnect Google"); },
+  }));
+  const deadImp = await db.query.imports.findFirst({ where: eq(imports.id, dead.importId) });
+  check("a dead grant fails the job as needs-reconnect (I2)", deadImp?.status === "failed" && deadImp.stats?.errorCode === "needs_reconnect", JSON.stringify([deadImp?.status, deadImp?.stats]));
+  const [deadRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, dead.importId) });
+  check("…leaving the row pending with its attempt given back", deadRow.status === "pending" && !(deadRow.payload as { attempts?: number }).attempts, JSON.stringify(deadRow.payload));
+
+  // I2: a file this client isn't allowed to open asks for a re-pick.
+  const notAuth = await stageDriveImport(USER, [file("h")]);
+  await runDriveImportJob(notAuth.importId, deps({
+    exportText: async () => { throw new DriveNotAuthorizedError(); },
+  }));
+  const [naRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, notAuth.importId) });
+  check("a not-authorized file is skipped with its own sentence (I2)", naRow.status === "skipped" && naRow.errorMessage === DRIVE_ROW_COPY.notAuthorized, JSON.stringify(naRow));
+
+  // I2: a rate limit leaves the row pending and hands off; a Drive that stays busy is bounded.
+  const busy = await stageDriveImport(USER, [file("h")]);
+  const dBusy = deps({ exportText: async () => { throw new DriveRateLimitedError(); } });
+  await runDriveImportJob(busy.importId, dBusy);
+  const [busyRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, busy.importId) });
+  check("a rate limit leaves the row pending (I2)", busyRow.status === "pending", busyRow.status);
+  check("…hands off to a later run", dBusy.continued.includes(busy.importId));
+  check("…and doesn't count it as an attempt", !(busyRow.payload as { attempts?: number }).attempts, JSON.stringify(busyRow.payload));
+  for (let n = 0; n < 5; n++) await runDriveImportJob(busy.importId, dBusy);
+  const [busyRow2] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, busy.importId) });
+  check("…until too many hand-offs skip it as busy", busyRow2.status === "skipped" && busyRow2.errorMessage === DRIVE_ROW_COPY.busy, JSON.stringify(busyRow2));
+
+  // I3: a weak lookalike offered without a confident suggestion is never merged unattended.
+  const priyasBefore = await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Priya Raman")) });
+  const weak = await stageDriveImport(USER, [file("k")]);
+  await runDriveImportJob(weak.importId, deps({
+    parse: async (_u, text) => {
+      const r = parsed(text, ["Priya Raman"], []);
+      const item = r.items[0] as unknown as { duplicates: unknown[]; suggestedMergeId: string | null };
+      item.duplicates = [{ id: priyasBefore[0].id, fullName: "Priya Raman", company: null, title: null, reason: "Similar name", confidence: 0.4 }];
+      item.suggestedMergeId = null;
+      return r;
+    },
+  }));
+  const priyasAfter = await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Priya Raman")) });
+  check("a low-confidence lookalike creates a new contact (I3)", priyasBefore.length === 1 && priyasAfter.length === 2, `${priyasBefore.length} → ${priyasAfter.length}`);
+
+  // I4: a row already started twice without finishing is skipped without being read.
+  const stuck = await stageDriveImport(USER, [file("l")]);
+  await db
+    .update(importJobRows)
+    .set({ payload: { kind: "drive_file", fileId: "l", name: "Doc l", mimeType: DRIVE_MIME.doc, modifiedTime: "2026-09-01T10:00:00Z", attempts: 2 } })
+    .where(eq(importJobRows.importId, stuck.importId));
+  let stuckRead = false;
+  await runDriveImportJob(stuck.importId, deps({ exportText: async () => { stuckRead = true; return "x"; } }));
+  const [stuckRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, stuck.importId) });
+  check("a row started twice is skipped as too long (I4)", stuckRow.status === "skipped" && stuckRow.errorMessage === DRIVE_ROW_COPY.tookTooLong, JSON.stringify(stuckRow));
+  check("…without reading it again", !stuckRead);
+  const once = await stageDriveImport(USER, [file("h")]);
+  await runDriveImportJob(once.importId, deps({ parse: async () => { throw new Error("parse blew up"); } }));
+  const [onceRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, once.importId) });
+  check("…and every read is recorded as an attempt", (onceRow.payload as { attempts?: number }).attempts === 1, JSON.stringify(onceRow.payload));
+
+  // I6: a save-step error that mentions "model" or "404" is this doc's problem, not the key's.
+  const saveErr = await stageDriveImport(USER, [file("l")]);
+  await runDriveImportJob(saveErr.importId, deps({
+    save: async () => { throw new Error("relation model_versions not found (404)"); },
+  }));
+  const saveImp = await db.query.imports.findFirst({ where: eq(imports.id, saveErr.importId) });
+  const [saveRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, saveErr.importId) });
+  check("a save error never stops the job as a key problem (I6)", saveImp?.status === "completed" && saveRow.errorMessage === DRIVE_ROW_COPY.unreadable, JSON.stringify([saveImp?.status, saveRow.errorMessage]));
+
+  // m1: a flag dismissed while the import is still running stays dismissed.
+  const mid = await stageDriveImport(USER, [file("g"), file("h")]);
+  let dismissedMidRun = false;
+  await runDriveImportJob(mid.importId, deps({
+    exportText: async (_t, fileId) => {
+      if (fileId === "h") {
+        const cur = await db.query.imports.findFirst({ where: eq(imports.id, mid.importId) });
+        const id = cur?.stats?.flaggedCommitments?.[0]?.id;
+        if (id) dismissedMidRun = await removeDriveFlag(USER, mid.importId, id);
+      }
+      return (DOCS[fileId] as { text: string }).text;
+    },
+  }));
+  const midImp = await db.query.imports.findFirst({ where: eq(imports.id, mid.importId) });
+  check("doc g's past date was flagged and dismissed mid-run", dismissedMidRun);
+  check("a flag dismissed mid-run isn't put back by the next flush (m1)", midImp?.status === "completed" && (midImp.stats?.flaggedCommitments ?? []).length === 0 && midImp.stats?.docsRead === 2, JSON.stringify(midImp?.stats));
+
+  // m5: a cancel lands after the doc being read now, not at the end of the chunk.
+  const cancel = await stageDriveImport(USER, [file("i"), file("j")]);
+  await runDriveImportJob(cancel.importId, deps({
+    exportText: async (_t, fileId) => {
+      if (fileId === "i") await db.update(imports).set({ status: "cancelled" }).where(eq(imports.id, cancel.importId));
+      return (DOCS[fileId] as { text: string }).text;
+    },
+  }));
+  const cancelRows = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, cancel.importId) });
+  const jRow = cancelRows.find((r) => (r.payload as { fileId: string }).fileId === "j");
+  check("a cancel stops before the next doc in the chunk (m5)", jRow?.status === "pending", jRow?.status);
+
+  // m6: staging checks what the browser sent.
+  const refuses = async (files: unknown) => {
+    try { await stageDriveImport(USER, files as never); return false; } catch { return true; }
+  };
+  const sheets = Array.from({ length: MAX_DRIVE_FILES_PER_IMPORT + 1 }, (_, n) => file(`s${n}`, "application/vnd.google-apps.spreadsheet"));
+  check("the cap counts every file sent, before type filtering (m6)", await refuses([...sheets.slice(0, MAX_DRIVE_FILES_PER_IMPORT), file("ok")]));
+  check("…an id that isn't a Drive id is refused", await refuses([{ ...file("x"), id: "../etc/passwd" }]));
+  check("…an empty id is refused", await refuses([{ ...file("x"), id: "" }]));
+  const odd = await stageDriveImport(USER, [{ ...file("odd"), name: "n".repeat(900), modifiedTime: "not a date" }], NOW);
+  const [oddRow] = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, odd.importId) });
+  const oddPayload = oddRow.payload as { name: string; modifiedTime: string };
+  check("…a long name is clipped to 500", oddPayload.name.length === 500, String(oddPayload.name.length));
+  check("…an unparseable date becomes now", oddPayload.modifiedTime === NOW.toISOString(), oddPayload.modifiedTime);
 
   // Dismissing a flag removes exactly that one, and only for its owner.
   const flagged = await db.query.imports.findFirst({ where: eq(imports.id, staged.importId) });
