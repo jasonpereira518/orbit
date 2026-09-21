@@ -8,15 +8,18 @@ import {
   CalendarPlus,
   Contact,
   FileSpreadsheet,
+  HardDrive,
   MessageSquare,
 } from "lucide-react";
 import { ImportHistory } from "@/components/imports/import-history";
 import { ImportDropOverlay } from "@/components/imports/import-drop-overlay";
 import { ImportDropzone } from "@/components/imports/import-dropzone";
 import { ImportQueueCard } from "@/components/imports/import-queue-card";
+import { DriveImportCard } from "@/components/imports/drive-import-card";
 import { ImportSourceRow } from "@/components/imports/import-source-row";
 import { CalendarConnectionsCard } from "@/components/imports/calendar-connections-card";
 import { ImportProgress } from "@/components/imports/import-utils";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LockedFeature } from "@/components/locked-feature";
 import {
@@ -32,6 +35,12 @@ import {
 import { detectImportFiles } from "@/lib/imports/detect-import-file";
 import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
+import { openDrivePicker } from "@/lib/imports/google-picker";
+import type { PickedDriveFile } from "@/lib/imports/drive-triage";
+import { getDrivePickerToken } from "@/actions/drive";
+import { startGmailOAuth } from "@/actions/gmail";
+import { friendlyError } from "@/lib/errors";
+import { toast } from "@/lib/toast";
 import { MAX_CONTACTS_FILE_BYTES } from "@/lib/contacts-file";
 import { MAX_DROP_DEPTH } from "@/lib/capture/file-drop";
 import {
@@ -41,6 +50,13 @@ import {
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import type { DroppedFile } from "@/lib/capture/file-drop";
 import type { ImportHistoryItem } from "@/actions/imports";
+
+export type DriveImportInput = {
+  apiKey: string | null;
+  appId: string | null;
+  connected: boolean;
+  canImportDrive: boolean;
+};
 
 /**
  * Everything on /imports.
@@ -182,6 +198,7 @@ export function ImportHub({
   canUseSync = true,
   google,
   outlook,
+  drive,
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
@@ -192,11 +209,45 @@ export function ImportHub({
   canUseSync?: boolean;
   google?: ProviderCalendarInput | null;
   outlook?: ProviderCalendarInput | null;
+  drive?: DriveImportInput;
 }) {
   const job = useImportJob();
   const queue = useImportQueue();
   const [open, setOpen] = useState<RowId | null>(null);
+  const [drivePicks, setDrivePicks] = useState<PickedDriveFile[] | null>(null);
   useRefreshOnVisible();
+
+  async function pickFromDrive() {
+    if (!drive?.apiKey || !drive.appId) return;
+    const token = await getDrivePickerToken();
+    if (!token.ok) {
+      if (
+        token.reason === "needs_consent" ||
+        token.reason === "needs_reconnect" ||
+        token.reason === "not_connected"
+      ) {
+        try {
+          const { url } = await startGmailOAuth({ purpose: "drive", returnTo: "/imports" });
+          window.location.assign(url);
+        } catch (err) {
+          toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+        }
+        return;
+      }
+      toast.error(token.error ?? IMPORT_COPY.driveUnavailable);
+      return;
+    }
+    try {
+      const picked = await openDrivePicker({
+        accessToken: token.accessToken,
+        apiKey: drive.apiKey,
+        appId: drive.appId,
+      });
+      if (picked.length) setDrivePicks(picked);
+    } catch (err) {
+      toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+    }
+  }
 
   const handleFiles = useCallback(async (files: DroppedFile[]) => {
     const result = await detectImportFiles(files, {
@@ -271,6 +322,24 @@ export function ImportHub({
       <ImportDropzone
         onFiles={(files) => void handleFiles(files)}
         busy={reading}
+        extraAction={
+          drive?.apiKey && drive.appId ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!canUseSync}
+              title={!canUseSync ? IMPORT_COPY.drivePaywalled : undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!canUseSync) return;
+                void pickFromDrive();
+              }}
+            >
+              <HardDrive className="size-4" />
+              Choose from Google Drive
+            </Button>
+          ) : undefined
+        }
       />
 
       {showStandaloneProgress ? (
@@ -282,7 +351,11 @@ export function ImportHub({
         />
       ) : null}
 
-      <ImportQueueCard />
+      {drivePicks ? (
+        <DriveImportCard files={drivePicks} onDone={() => setDrivePicks(null)} />
+      ) : (
+        <ImportQueueCard />
+      )}
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">

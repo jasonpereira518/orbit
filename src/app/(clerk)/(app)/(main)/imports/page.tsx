@@ -84,6 +84,12 @@ export default async function ImportsPage() {
         canUseSync={entitlements.canUseSync}
         google={google}
         outlook={microsoft}
+        drive={{
+          apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
+          appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,
+          connected: Boolean(gmail?.connected),
+          canImportDrive: Boolean(gmail?.canImportDrive),
+        }}
       />
     </div>
   );

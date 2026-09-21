@@ -23,6 +23,8 @@ export const IMPORT_COPY = {
   truncated:
     "That folder had more files than Orbit reads in one go — drop the rest after this",
   stopped: "Import stopped",
+  driveUnavailable: "Couldn’t open Google Drive — try again in a moment",
+  drivePaywalled: "Google Drive is on paid plans",
 } as const;
 
 export type ImportCopyKey = keyof typeof IMPORT_COPY;

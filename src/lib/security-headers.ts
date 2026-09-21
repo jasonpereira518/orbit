@@ -54,7 +54,9 @@ export function buildSecurityHeaders(options: {
       clerk,
       "https://*.clerk.accounts.dev",
       "https://challenges.cloudflare.com",
-      "https://va.vercel-scripts.com"
+      "https://va.vercel-scripts.com",
+      // Google Picker for Drive imports
+      "https://apis.google.com"
     )}`,
     `connect-src ${join(
       "'self'",
@@ -63,7 +65,9 @@ export function buildSecurityHeaders(options: {
       "https://*.ingest.sentry.io",
       "https://*.ingest.us.sentry.io",
       "https://va.vercel-scripts.com",
-      "https://vitals.vercel-insights.com"
+      "https://vitals.vercel-insights.com",
+      // Google Picker for Drive imports
+      "https://www.googleapis.com"
     )}`,
     // Avatars redirect to Blob, LinkedIn's CDN, unavatar and Clerk; the set is open by design.
     `img-src 'self' data: blob: https:`,
@@ -72,7 +76,15 @@ export function buildSecurityHeaders(options: {
     // Capture records voice and photos in the browser before upload.
     `media-src 'self' blob: data:`,
     `worker-src 'self' blob:`,
-    `frame-src ${join("'self'", clerk, "https://*.clerk.accounts.dev", "https://challenges.cloudflare.com")}`,
+    `frame-src ${join(
+      "'self'",
+      clerk,
+      "https://*.clerk.accounts.dev",
+      "https://challenges.cloudflare.com",
+      // Google Picker for Drive imports
+      "https://docs.google.com",
+      "https://drive.google.com"
+    )}`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,
