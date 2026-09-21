@@ -64,8 +64,14 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
 
   // Calendar's real output, and the one every calendar row used to be missing.
   add(stats.interactionsLogged, (n) => `${n} meetings logged`, "good");
-  add(stats.remindersCreated, (n) => `${n} reminders`, "neutral");
-  add(stats.flaggedCommitments?.length, (n) => `${n} to look at`, "offer", "#worth-a-look");
+  add(
+    stats.remindersCreated,
+    (n) => `${n} reminder${n === 1 ? "" : "s"}`,
+    "neutral",
+  );
+  // No `href`: the section this points at only exists inside the (closed) detail sheet, so
+  // a chip on the collapsed list row has nowhere real to link.
+  add(stats.flaggedCommitments?.length, (n) => `${n} to look at`, "offer");
 
   // Legacy per-type counters, still rendered so rows from before the engine keep their numbers.
   add(stats.messagesImported, (n) => `${n} messages`, "neutral");

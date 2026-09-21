@@ -27,6 +27,7 @@ import {
   type Detected,
   type ImportTarget,
 } from "../src/lib/imports/detect-import-file";
+import { failureText } from "../src/lib/errors";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -265,6 +266,38 @@ check(
   ]) === null,
 );
 check("an empty queue is not 'done'", !summarize([]).done);
+
+console.log("A failed step's error text");
+// `failureText` is what `ImportJobWatcher` and `runQueue` use once a job's failure has been
+// flattened to a plain string on the snapshot/queue item — see `src/lib/errors.ts`. A
+// message a catch site marked `userFacing: true` (it was `isUserFacingError` at the moment
+// of the throw, before that identity was lost) passes through verbatim; anything else still
+// goes through `friendlyError`, so a raw driver string never reaches a toast unflattened.
+check(
+  "user-facing text passes through verbatim",
+  failureText("Pick up to 25 files at a time", true, "Import didn’t finish") ===
+    "Pick up to 25 files at a time",
+);
+check(
+  "raw driver text is not shown as-is",
+  failureText(
+    'duplicate key value violates unique constraint "x"',
+    false,
+    "Import didn’t finish",
+  ) !== 'duplicate key value violates unique constraint "x"',
+);
+check(
+  "raw driver text with no flag is treated the same as false",
+  failureText(
+    'duplicate key value violates unique constraint "x"',
+    undefined,
+    "Import didn’t finish",
+  ) !== 'duplicate key value violates unique constraint "x"',
+);
+check(
+  "an empty message still says something",
+  failureText("", true, "Import didn’t finish") === "Import didn’t finish",
+);
 
 if (failures) {
   console.error(`\n${failures} queue check${failures === 1 ? "" : "s"} failed`);

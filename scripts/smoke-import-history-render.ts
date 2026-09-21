@@ -201,7 +201,10 @@ const drive = render([
 check("names docs read", drive.includes("3 docs read"));
 check("counts people added", drive.includes("2 added"));
 check("counts people updated", drive.includes("1 updated"));
-check("counts the reminder", drive.includes("1 reminder"));
+check(
+  "counts the reminder, singular",
+  drive.includes("1 reminder") && !drive.includes("1 reminders"),
+);
 check("flags what's worth a look", drive.includes("1 to look at"));
 check("...and never with the word “failed”", !/\bfailed\b/i.test(drive), "");
 

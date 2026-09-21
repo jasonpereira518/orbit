@@ -13,7 +13,7 @@ import {
   type ImportJobStatus,
 } from "@/actions/imports";
 import { startDriveImport } from "@/actions/drive";
-import { UserFacingError } from "@/lib/errors";
+import { UserFacingError, isUserFacingError } from "@/lib/errors";
 import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 import { type ImportProgressState } from "@/components/imports/import-utils";
 import {
@@ -47,6 +47,13 @@ export type ImportJobSnapshot = {
   step?: { index: number; total: number };
   cancelling?: boolean;
   error?: string;
+  /**
+   * Set only when `error` came from an `isUserFacingError` catch — a message written on
+   * purpose to be read, not raw driver/server text. `failureText` (see `src/lib/errors.ts`)
+   * is what actually branches on it; this field just carries that fact forward past the
+   * point where `error` became a plain string and lost it.
+   */
+  userFacingError?: boolean;
   resultMessage?: string;
   enrichmentMessage?: string;
 };
@@ -678,6 +685,7 @@ export function startImportJob(
         status: "failed",
         progress: null,
         error: err instanceof Error ? err.message : "Import failed",
+        userFacingError: isUserFacingError(err),
       });
     }
   })();
