@@ -1,8 +1,9 @@
 import js from "@eslint/js";
+import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "node_modules/**", "public/inject/**"] },
+  { ignores: ["dist/**", "dist-e2e/**", "node_modules/**", "public/inject/**"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -26,5 +27,7 @@ export default tseslint.config(
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
     },
-  }
+  },
+  // The e2e drivers are Node scripts that launch Chrome, not extension code.
+  { files: ["e2e/**"], languageOptions: { globals: globals.node } }
 );

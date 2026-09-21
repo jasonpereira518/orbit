@@ -53,6 +53,7 @@ next-env.d.ts
 # browser extension (separate project — own lockfile, not deployed)
 extension/node_modules/
 extension/dist/
+extension/dist-e2e/
 extension/release/
 extension/*.zip
 # Intermediate build output: the injected IIFE is emitted into public/ so the
