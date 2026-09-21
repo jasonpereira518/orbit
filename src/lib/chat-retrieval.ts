@@ -1,5 +1,6 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
 import type { RankedContact, SearchFilters } from "@/lib/hybrid-search";
+import { pickNoteWindow } from "@/lib/note-window";
 
 export type ParsedQuery = {
   semanticQuery: string;
@@ -234,6 +235,11 @@ export type BudgetedContact = {
 // almost every contact has some — so the counts came down. The budget below binds far more
 // often than it used to, and a contact serialized with eight timeline lines is a contact
 // somebody further down the ranking does not get serialized at all.
+//
+// `notes` is a WINDOW, not a prefix: the tier says how many characters of the note the model
+// gets, and `pickNoteWindow` decides which ones. A contact retrieved because of something
+// written 3,000 characters into their note used to arrive with the first 1,200 and nothing
+// to say about the match.
 const CONTEXT_TIERS = [
   { upto: 4, notes: 1200, summary: 600, entries: 6, entryChars: 240, facts: 8 },
   { upto: 8, notes: 600, summary: 400, entries: 4, entryChars: 200, facts: 6 },
@@ -244,14 +250,22 @@ const TOTAL_CONTEXT_CHAR_BUDGET = 48000;
 export function budgetContactsContext(
   contacts: RankedContact[],
   snippets: Map<string, { timeline: string[] }>,
-  careerLines: Map<string, string> = new Map()
+  careerLines: Map<string, string> = new Map(),
+  /**
+   * The question, so a trimmed note keeps the part that answers it.
+   *
+   * Optional, and an empty string reproduces the old head-slice exactly — the eval harness
+   * and a couple of smoke scripts call this without a query and should not change behaviour.
+   * See `pickNoteWindow` (@/lib/note-window) for why the head was the wrong 1,200 characters.
+   */
+  query: string = ""
 ): BudgetedContact[] {
   const out: BudgetedContact[] = [];
   let spent = 0;
   for (let index = 0; index < contacts.length; index++) {
     const c = contacts[index];
     const tier = CONTEXT_TIERS.find((t) => index < t.upto)!;
-    const notes = (c.notes || "").slice(0, tier.notes) || null;
+    const notes = pickNoteWindow(c.notes, query, tier.notes).text || null;
     const aiSummary = (c.aiSummary || "").slice(0, tier.summary) || null;
     const keyFacts = c.keyFacts.slice(0, tier.facts);
     const timeline = (snippets.get(c.id)?.timeline ?? [])

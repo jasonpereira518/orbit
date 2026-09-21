@@ -515,7 +515,9 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
           ctx.attention,
           ctx.modelRecruiters,
           ctx.focusProfile,
-          ctx.attachedContext
+          ctx.attachedContext,
+          ctx.goals,
+          ctx.attentionLite
         );
         return { ctx, result };
       });
