@@ -23,6 +23,8 @@ export type ChatHistoryRailProps<T extends ThreadLike> = {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  /** The toggle that collapses this rail points at it with `aria-controls`. */
+  id?: string;
   className?: string;
 };
 
@@ -33,6 +35,7 @@ export function ChatHistoryRail<T extends ThreadLike>({
   onSelect,
   onNew,
   onDelete,
+  id,
   className,
 }: ChatHistoryRailProps<T>) {
   // A thread row is created the moment a question is sent, but only gets a title once an
@@ -47,6 +50,7 @@ export function ChatHistoryRail<T extends ThreadLike>({
 
   return (
     <nav
+      id={id}
       aria-label="Chat history"
       className={cn("flex min-h-0 w-56 shrink-0 flex-col border-r border-border/60", className)}
     >

@@ -16,9 +16,12 @@ import {
   History,
   Loader2,
   NotebookPen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Trash2,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import {
@@ -166,6 +169,20 @@ function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/** Whether the history rail is open is a per-browser preference, kept across visits. */
+const RAIL_OPEN_KEY = "orbit:chat-rail-open";
+
+function readRailOpen(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    // Open unless it was explicitly closed: a first visit, or storage that cannot be read,
+    // gets the rail — the default that shows the feature exists.
+    return window.localStorage.getItem(RAIL_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
 function formatThreadLabel(thread: ThreadSummary) {
   return thread.title?.trim() || "New chat";
 }
@@ -200,6 +217,20 @@ export function ChatPanel() {
   // are not.
   const { setNotes: setContextNotes, reset: resetContext } = contextIngest;
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Read in the initializer, which is safe because this panel is `ssr: false` — there is no
+  // server render for a stored value to disagree with (same reasoning as the `?q=` seed).
+  const [railOpen, setRailOpen] = useState(readRailOpen);
+  const toggleRail = useCallback(() => {
+    setRailOpen((open) => {
+      const next = !open;
+      try {
+        window.localStorage.setItem(RAIL_OPEN_KEY, next ? "1" : "0");
+      } catch {
+        // Private mode or blocked storage: the toggle still works, it just is not remembered.
+      }
+      return next;
+    });
+  }, []);
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
   /**
@@ -895,17 +926,43 @@ export function ChatPanel() {
         {/* From md up the history is a rail beside the conversation. Below that the header
             keeps its dropdown (`md:hidden` on both of its controls), because on a phone the
             conversation should have the full width. */}
-        <ChatHistoryRail
-          className="hidden md:flex"
-          threads={threads}
-          activeId={threadId}
-          busy={busy}
-          onSelect={(id) => void loadThread(id)}
-          onNew={startNewChat}
-          onDelete={removeThread}
-        />
+        {/* The wrapper animates the width and clips; the rail inside keeps its own fixed
+            width, so its contents slide out of view instead of reflowing as it narrows.
+            `inert` while closed: clipped is not the same as unreachable, and a hidden list
+            of links must not stay in the tab order. */}
+        <motion.div
+          className="hidden shrink-0 overflow-hidden md:block"
+          initial={false}
+          animate={{ width: railOpen ? 224 : 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          inert={!railOpen}
+        >
+          <ChatHistoryRail
+            id="chat-history-rail"
+            className="h-full"
+            threads={threads}
+            activeId={threadId}
+            busy={busy}
+            onSelect={(id) => void loadThread(id)}
+            onNew={startNewChat}
+            onDelete={removeThread}
+          />
+        </motion.div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="hidden shrink-0 text-muted-foreground md:inline-flex"
+            onClick={toggleRail}
+            aria-expanded={railOpen}
+            aria-controls="chat-history-rail"
+            aria-label={railOpen ? "Hide chat history" : "Show chat history"}
+            title={railOpen ? "Hide chat history" : "Show chat history"}
+          >
+            {railOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
+          </Button>
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
               render={
@@ -979,7 +1036,7 @@ export function ChatPanel() {
             type="button"
             variant="ghost"
             size="sm"
-            className="shrink-0 text-muted-foreground md:hidden"
+            className={cn("shrink-0 text-muted-foreground", railOpen && "md:hidden")}
             onClick={startNewChat}
             disabled={busy}
           >
@@ -1323,6 +1380,17 @@ const AssistantBubble = memo(function AssistantBubble({
     return out;
   }, [msg.retrieved, msg.recommendations]);
 
+  // Photos learned by the activity steps, so a card shows the same face the orbit did.
+  const photoById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const step of msg.steps ?? []) {
+      for (const ref of step.refs ?? []) {
+        if (ref.kind === "contact" && ref.photoUrl && !map.has(ref.id)) map.set(ref.id, ref.photoUrl);
+      }
+    }
+    return map;
+  }, [msg.steps]);
+
   // Role and company for a card come from retrieval's own rows, not from the model.
   const subtitleById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1359,6 +1427,7 @@ const AssistantBubble = memo(function AssistantBubble({
                 key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
                 rec={r}
                 subtitle={r.contact_id ? subtitleById.get(r.contact_id) : undefined}
+                photoUrl={r.contact_id ? photoById.get(r.contact_id) : undefined}
               />
             ))}
           </div>
@@ -1394,10 +1463,13 @@ const AssistantBubble = memo(function AssistantBubble({
 const RecommendationCard = memo(function RecommendationCard({
   rec,
   subtitle,
+  photoUrl,
 }: {
   rec: ChatResult["recommendations"][number];
   /** Role and company from retrieval — absent on a reloaded thread, which is fine. */
   subtitle?: string | null;
+  /** The contact's stored photo, when the activity steps learned it. */
+  photoUrl?: string | null;
 }) {
   const [pending, start] = useTransition();
   const href = rec.recruiter_id
@@ -1414,6 +1486,7 @@ const RecommendationCard = memo(function RecommendationCard({
         <ContactAvatar
           contactId={rec.contact_id ?? null}
           fullName={rec.name}
+          profileImageUrl={photoUrl}
           size="sm"
           className="size-9 shrink-0"
         />

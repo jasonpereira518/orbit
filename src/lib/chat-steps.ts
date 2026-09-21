@@ -29,6 +29,14 @@ export type StepEmitter = {
   start: (kind: ChatStepKind, label: string, detail?: string) => void;
   /** Mark a stage finished, filling in its real duration and whatever it found. */
   done: (kind: ChatStepKind, patch?: StepPatch) => void;
+  /**
+   * Re-send a stage with extra detail, leaving its status and duration exactly as they were.
+   *
+   * For facts that arrive after the stage itself finished — a contact's photo, looked up off
+   * the critical path. Deliberately not `done`: calling that again would re-stamp `ms` with
+   * the time since `start`, quietly inflating the duration the user is shown.
+   */
+  update: (kind: ChatStepKind, patch: StepPatch) => void;
   /** Every step seen so far, in the order it started — what gets persisted with the turn. */
   snapshot: () => ChatStep[];
 };
@@ -37,6 +45,7 @@ export type StepEmitter = {
 export const NULL_STEPS: StepEmitter = {
   start: () => {},
   done: () => {},
+  update: () => {},
   snapshot: () => [],
 };
 
@@ -70,6 +79,27 @@ export function createStepEmitter(onStep: (step: ChatStep) => void): StepEmitter
       };
       steps.set(kind, step);
       onStep(step);
+    },
+    update(kind, patch) {
+      const prior = steps.get(kind);
+      // Nothing to add to a stage that never reported: better silent than a step with no
+      // status. The late arrival can only enrich a stage the user has already been told about.
+      if (!prior) return;
+      const step: ChatStep = {
+        ...prior,
+        label: patch.label ?? prior.label,
+        detail: patch.detail ?? prior.detail,
+        refs: patch.refs ?? prior.refs,
+      };
+      steps.set(kind, step);
+      // Fire-and-forget callers reach this after the stream may have closed (the client
+      // left, or the answer already landed); a throw here would be an unhandled rejection
+      // for something the user cannot see and does not need.
+      try {
+        onStep(step);
+      } catch {
+        // The stream is gone; the enrichment has nowhere to go.
+      }
     },
     snapshot() {
       return order.flatMap((kind) => {

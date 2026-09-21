@@ -21,6 +21,7 @@ import {
   understandQuery,
 } from "@/lib/chat-retrieval";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
+import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { getCareerLines, getContactProfile } from "@/lib/contact-profile";
@@ -207,7 +208,8 @@ async function loadActiveGoalTexts(userId: string): Promise<string[]> {
 async function retrieveRankedContacts(
   userId: string,
   q: string,
-  steps: StepEmitter = NULL_STEPS
+  steps: StepEmitter = NULL_STEPS,
+  photos: PhotoCache = createPhotoCache()
 ): Promise<{ ranked: RankedContact[]; searchNotice: string | null }> {
   const activeGoals = await loadActiveGoalTexts(userId);
   let searchNotice: string | null = null;
@@ -235,20 +237,32 @@ async function retrieveRankedContacts(
     expansionTerms: parsedQuery.expansionTerms,
     limit: CANDIDATE_POOL,
   });
+  // The strongest few candidates, so the activity scene can show who is in play the moment
+  // they are found rather than waiting for the rerank. They are candidates, not answers —
+  // the rank step below replaces them with whoever survives — so the summary and the
+  // finished view deliberately ignore this step's refs.
+  const candidateRefs = toRefs(
+    candidates.map((c) => ({ id: c.id, name: c.fullName })),
+    "contact"
+  );
   steps.done("search", {
     label: `Searched your network, found ${plural(candidates.length, "candidate")}`,
     detail: describeArms(candidates.flatMap((c) => c.matchedArms ?? [])),
+    refs: candidateRefs,
   });
+  attachPhotos(steps, "search", candidateRefs, userId, photos);
 
   steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
   const ranked = await rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery);
+  const keptRefs = toRefs(
+    ranked.map((c) => ({ id: c.id, name: c.fullName })),
+    "contact"
+  );
   steps.done("rank", {
     label: `Kept the ${plural(ranked.length, "closest match", "closest matches")}`,
-    refs: toRefs(
-      ranked.map((c) => ({ id: c.id, name: c.fullName })),
-      "contact"
-    ),
+    refs: keptRefs,
   });
+  attachPhotos(steps, "rank", keptRefs, userId, photos);
   return { ranked, searchNotice };
 }
 
@@ -404,6 +418,7 @@ export async function prepareChatContext(
     (id): id is string => typeof id === "string" && id.trim().length > 0
   );
   const steps = options.steps ?? NULL_STEPS;
+  const photos = createPhotoCache();
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
@@ -423,7 +438,7 @@ export async function prepareChatContext(
             columns: { role: true, content: true },
           })
         : Promise.resolve([]),
-      retrieveRankedContacts(userId, q, steps),
+      retrieveRankedContacts(userId, q, steps, photos),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.
       // Runs for every question, but only worth reporting when it actually names an org.
@@ -448,17 +463,19 @@ export async function prepareChatContext(
               .then((cohort) => getAttentionBrief(userId, cohort?.interactedIds))
               .catch(() => null)
               .then((brief) => {
+                const overdueRefs = brief
+                  ? toRefs(
+                      brief.overdue.map((c) => ({ id: c.id, name: c.name })),
+                      "contact"
+                    )
+                  : undefined;
                 steps.done("attention", {
                   label: brief
                     ? `Checked ${plural(brief.overdue.length, "overdue follow-up")}`
                     : "Checked overdue follow-ups",
-                  refs: brief
-                    ? toRefs(
-                        brief.overdue.map((c) => ({ id: c.id, name: c.name })),
-                        "contact"
-                      )
-                    : undefined,
+                  refs: overdueRefs,
                 });
+                attachPhotos(steps, "attention", overdueRefs, userId, photos);
                 return brief;
               });
           })()
@@ -486,13 +503,15 @@ export async function prepareChatContext(
             return loadAttachedPeople(userId, attachedIds)
               .catch(() => [] as AttachedPerson[])
               .then((people) => {
+                const namedRefs = toRefs(
+                  people.map((p) => ({ id: p.id, name: p.name })),
+                  "contact"
+                );
                 steps.done("attached", {
                   label: `Read ${plural(people.length, "person", "people")} you named`,
-                  refs: toRefs(
-                    people.map((p) => ({ id: p.id, name: p.name })),
-                    "contact"
-                  ),
+                  refs: namedRefs,
                 });
+                attachPhotos(steps, "attached", namedRefs, userId, photos);
                 return people;
               });
           })()

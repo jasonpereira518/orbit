@@ -16,6 +16,8 @@ import {
   plural,
   toRefs,
 } from "../src/lib/chat-steps";
+import { ORBIT_FACE, ORBIT_RINGS, ORBIT_SIZE, minFaceSeparation } from "../src/lib/chat-orbit-geometry";
+import { collectOrbitPeople, ORBIT_CAPACITY } from "../src/lib/chat-orbit-people";
 import type { ChatStep } from "../src/lib/chat-stream-protocol";
 
 let failures = 0;
@@ -165,6 +167,100 @@ console.log("\nFollow-ups are derived, never invented");
     2
   );
   check("the cap is honoured", limited.length === 2);
+}
+
+
+console.log("\nupdate() enriches a finished stage without re-stamping it");
+{
+  const { seen, emitter } = collect();
+  emitter.start("rank", "Ranking");
+  emitter.done("rank", { label: "Kept 2", refs: [{ id: "a", name: "Ada", kind: "contact" }] });
+  const done = seen[seen.length - 1];
+  emitter.update("rank", { refs: [{ id: "a", name: "Ada", kind: "contact", photoUrl: "/api/avatars/a" }] });
+  const after = seen[seen.length - 1];
+  check("an update re-sends the stage", seen.length === 3);
+  check("it carries the new detail", after?.refs?.[0]?.photoUrl === "/api/avatars/a");
+  check("status is untouched", after?.status === "done");
+  check("duration is untouched", after?.ms === done?.ms);
+  check("label is untouched", after?.label === "Kept 2");
+
+  const { seen: none, emitter: fresh } = collect();
+  fresh.update("search", { label: "Nothing to update" });
+  check("a stage that never reported is not invented by an update", none.length === 0 && fresh.snapshot().length === 0);
+
+  const boom = createStepEmitter(() => {
+    throw new Error("stream closed");
+  });
+  let threw = false;
+  try {
+    // start/done go through the caller's stream directly and may throw; update runs detached
+    // after the stream can have closed, so it must not.
+    try {
+      boom.start("rank", "x");
+    } catch {}
+    boom.update("rank", { label: "y" });
+  } catch {
+    threw = true;
+  }
+  check("update swallows a closed stream", !threw);
+}
+
+console.log("\nWho circles the planet");
+{
+  const contact = (id: string, photoUrl?: string) => ({ id, name: `Person ${id}`, kind: "contact" as const, photoUrl });
+  const step = (kind: ChatStep["kind"], status: ChatStep["status"], refs?: ChatStep["refs"]): ChatStep => ({
+    id: kind,
+    kind,
+    label: kind,
+    status,
+    refs,
+  });
+
+  check("no steps, no one", collectOrbitPeople([]).length === 0);
+
+  const searching = [step("search", "done", [contact("a"), contact("b"), contact("c")]), step("rank", "active")];
+  check("candidates are shown while the rerank is still running", collectOrbitPeople(searching).map((p) => p.id).join() === "a,b,c");
+
+  const ranked = [...searching.slice(0, 1), step("rank", "done", [contact("b")])];
+  check("once ranked, candidates give way to the survivors", collectOrbitPeople(ranked).map((p) => p.id).join() === "b");
+
+  const named = [step("attached", "done", [contact("n")]), step("search", "done", [contact("a")]), step("rank", "done", [contact("b")])];
+  check("people you named stay through the rerank", collectOrbitPeople(named).map((p) => p.id).join() === "n,b");
+
+  const dupes = [step("rank", "done", [contact("a")]), step("read", "done", [contact("a"), contact("b")])];
+  check("a person two stages report appears once", collectOrbitPeople(dupes).map((p) => p.id).join() === "a,b");
+
+  const photoLater = [step("rank", "done", [contact("a")]), step("read", "done", [contact("a", "/api/avatars/a")])];
+  check("a photo learned by any stage is kept", collectOrbitPeople(photoLater)[0]?.photoUrl === "/api/avatars/a");
+
+  const orgs = [step("roster", "done", [{ id: "Acme", name: "Acme", kind: "org" }]), step("recruiters", "done", [{ id: "r", name: "Rec", kind: "recruiter" }])];
+  check("organisations and recruiters do not orbit as contacts", collectOrbitPeople(orgs).length === 0);
+
+  const crowd = [step("rank", "done", Array.from({ length: 30 }, (_, i) => contact(String(i))))];
+  check("the scene is capped so faces never crowd", collectOrbitPeople(crowd).length === ORBIT_CAPACITY);
+  check("the cap keeps the strongest, in rank order", collectOrbitPeople(crowd)[0]?.id === "0");
+
+  check("a missing photo is null, not undefined", collectOrbitPeople([step("rank", "done", [contact("a")])])[0]?.photoUrl === null);
+}
+
+console.log("\nOrbit geometry: faces never touch");
+{
+  const capacity = ORBIT_RINGS.reduce((n, r) => n + r.capacity, 0);
+  check("the rings hold exactly what the scene is capped at", capacity === ORBIT_CAPACITY, `${capacity} vs ${ORBIT_CAPACITY}`);
+  check("no two faces can ever be closer than a face is wide", minFaceSeparation() >= ORBIT_FACE, `${minFaceSeparation().toFixed(1)}px vs ${ORBIT_FACE}px`);
+  // The counter-rotating rings line up on every pass, so the radial gap alone must clear a face.
+  const [inner, outer] = ORBIT_RINGS;
+  check("the gap between the rings clears a face", Math.abs(outer.radius - inner.radius) >= ORBIT_FACE);
+  check("the scene is big enough to hold the outermost face", ORBIT_SIZE / 2 >= outer.radius + ORBIT_FACE / 2);
+  // Guards the guard: the arrangement that shipped first must fail it.
+  const cramped = [
+    { ...inner, radius: 40 },
+    { ...outer, radius: 60 },
+  ];
+  check("the original 20px gap is caught as overlapping", minFaceSeparation(cramped) < 28);
+  // Twelve faces round the inner ring sit ~18px apart on a 26px face: the guard must object.
+  check("a ring too crowded for its faces is caught", minFaceSeparation([{ ...inner, capacity: 12 }]) < ORBIT_FACE);
+  check("and a sparse ring is not falsely flagged", minFaceSeparation([{ ...outer, capacity: 5 }]) >= ORBIT_FACE);
 }
 
 if (failures) {

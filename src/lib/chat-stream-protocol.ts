@@ -131,6 +131,13 @@ export type ChatStepRef = {
   id: string;
   name: string;
   kind: "contact" | "recruiter" | "org";
+  /**
+   * The contact's photo, when they have a stored one — a short browser-safe URL from
+   * `clientAvatarUrlSql`, never image bytes. Resolved off the critical path and patched onto
+   * the step a moment after it is first sent, so a ref can arrive without it and gain it
+   * later; absent means "no known photo", and the avatar shows its illustration.
+   */
+  photoUrl?: string | null;
 };
 
 export type ChatStep = {

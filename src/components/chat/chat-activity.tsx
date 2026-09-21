@@ -7,6 +7,8 @@ import { Check, ChevronDown, CircleDashed } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { ChatOrbit } from "@/components/chat/chat-orbit";
+import { collectOrbitPeople } from "@/lib/chat-orbit-people";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 
 /**
@@ -57,6 +59,7 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
     [steps, current]
   );
   const summary = useMemo(() => summarise(steps), [steps]);
+  const people = useMemo(() => collectOrbitPeople(steps), [steps]);
 
   if (steps.length === 0) return null;
 
@@ -100,30 +103,26 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
       );
     }
 
-    const canFold = finished.length > 0;
     return (
       <div className={cn("rounded-xl border border-primary/30 bg-muted/30", className)}>
         <button
           type="button"
-          onClick={() => canFold && setLiveOpen((v) => !v)}
-          aria-expanded={canFold ? liveOpen : undefined}
-          disabled={!canFold}
-          className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-foreground disabled:cursor-default"
+          onClick={() => setLiveOpen((v) => !v)}
+          aria-expanded={liveOpen}
+          className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-foreground"
         >
           {header}
-          {canFold && (
-            <ChevronDown
-              className={cn(
-                "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                liveOpen && "rotate-180"
-              )}
-              aria-hidden="true"
-            />
-          )}
+          <ChevronDown
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              liveOpen && "rotate-180"
+            )}
+            aria-hidden="true"
+          />
         </button>
 
         <AnimatePresence initial={false}>
-          {liveOpen && finished.length > 0 && (
+          {liveOpen && (
             <motion.div
               initial={reduceMotion ? false : { height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
@@ -131,21 +130,27 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
               transition={{ duration: DUR.base, ease: EASE_HOUSE }}
               className="overflow-hidden"
             >
-              <ul className="space-y-1.5 px-3 pb-3 pl-[2.1rem]">
-                {finished.map((step) => (
-                  <li
-                    key={step.id}
-                    className="relative text-xs leading-snug text-muted-foreground"
-                  >
-                    <Check
-                      className="absolute -left-[1.15rem] top-px size-3.5 text-primary"
-                      aria-hidden="true"
-                    />
-                    <span className="text-foreground/80">{step.label}</span>
-                    {step.detail && <span> · {step.detail}</span>}
-                  </li>
-                ))}
-              </ul>
+              {/* The scene is the loading animation, so it is here from the first step —
+                  not held back until something has finished — with the finished stages
+                  ticked off beside it, or above it where there is no room to sit beside. */}
+              <div className="flex flex-col items-center gap-2 px-3 pb-3 sm:flex-row sm:items-center sm:gap-4">
+                <ul className="w-full min-w-0 flex-1 space-y-1.5 pl-[1.4rem]">
+                  {finished.map((step) => (
+                    <li
+                      key={step.id}
+                      className="relative text-xs leading-snug text-muted-foreground"
+                    >
+                      <Check
+                        className="absolute -left-[1.15rem] top-px size-3.5 text-primary"
+                        aria-hidden="true"
+                      />
+                      <span className="text-foreground/80">{step.label}</span>
+                      {step.detail && <span> · {step.detail}</span>}
+                    </li>
+                  ))}
+                </ul>
+                <ChatOrbit people={people} reduceMotion={reduceMotion} />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -192,7 +197,7 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
                   {step.detail && (
                     <span className="block text-muted-foreground/70">{step.detail}</span>
                   )}
-                  {step.refs && step.refs.length > 0 && (
+                  {step.kind !== "search" && step.refs && step.refs.length > 0 && (
                     <span className="mt-1 flex flex-wrap gap-1">
                       {step.refs.map((ref) =>
                         ref.kind === "contact" ? (
@@ -254,6 +259,9 @@ function OrbitMark({ reduceMotion }: { reduceMotion: boolean }) {
 function summarise(steps: ChatStep[]): string {
   const people = new Set<string>();
   for (const step of steps) {
+    // The search step's refs are a live preview of candidates, most of whom the rerank then
+    // dropped. Counting them would claim the answer "looked at" people it discarded.
+    if (step.kind === "search") continue;
     for (const ref of step.refs ?? []) {
       if (ref.kind === "contact") people.add(ref.id);
     }

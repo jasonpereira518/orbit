@@ -197,6 +197,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-source-budget": "pglite",
   "smoke-broadcasts": "pglite",
   "smoke-chat-context": "pglite",
+  "smoke-chat-photos": "pglite",
   "smoke-clear-api-key": "pglite",
   "smoke-scan-handoff": "pglite",
   "smoke-capture-jobs": "pglite",
