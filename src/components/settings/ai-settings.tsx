@@ -6,7 +6,6 @@ import {
   clearApiKey,
   getSettings,
   saveAiSettings,
-  saveVoiceSettings,
 } from "@/actions/settings";
 import {
   AI_PROVIDERS,
@@ -56,7 +55,6 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const [provider, setProvider] = useState<AiProvider>(initialSettings.aiProvider);
   const [apiKey, setApiKey] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
-  const [wisprKey, setWisprKey] = useState("");
   const [model, setModel] = useState(initialSettings.aiModel);
   /**
    * Set when a default changed under this account (`ai_model_migrated_from`). Shown once,
@@ -319,68 +317,6 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           Clear personal key
         </Button>
       </div>
-
-      <SettingsRow
-        title="Voice transcription"
-        description={
-          <>
-            Voice notes are transcribed with{" "}
-            <span className="font-medium text-foreground">Wispr Flow</span>{" "}
-            when a key is saved here, because it accepts your contacts&apos; names as a vocabulary and
-            gets their spelling right. Without one, Orbit falls back to your AI provider
-            above — which still receives the same list of names, just less reliably.
-          </>
-        }
-      >
-        <div className="space-y-1.5">
-          <Label htmlFor="wispr-key">Wispr Flow API key</Label>
-          <Input
-            id="wispr-key"
-            type="password"
-            autoComplete="off"
-            placeholder={settings.hasWisprKey ? "Saved — enter a new key to replace" : "Optional"}
-            value={wisprKey}
-            onChange={(e) => setWisprKey(e.target.value)}
-          />
-        </div>
-        {settings.wisprKeyRejected ? (
-          <p role="status" className="text-sm text-warning">
-            Wispr didn’t accept this key, so voice notes use your AI provider instead — replace it or clear it
-          </p>
-        ) : null}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending || !wisprKey.trim()}
-            onClick={() =>
-              start(async () => {
-                await saveVoiceSettings({ wisprApiKey: wisprKey.trim() });
-                setWisprKey("");
-                setSettings(await getSettings());
-                toast.success("Wispr key saved");
-              })
-            }
-          >
-            Save Wispr key
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={pending || !settings.hasWisprKey}
-            onClick={() =>
-              start(async () => {
-                // "" clears; `undefined` would leave it untouched.
-                await saveVoiceSettings({ wisprApiKey: "" });
-                setSettings(await getSettings());
-                toast.success("Wispr key cleared");
-              })
-            }
-          >
-            Clear
-          </Button>
-        </div>
-      </SettingsRow>
 
       <SettingsRow title="Saved keys">
         <ul className="space-y-1 text-sm text-muted-foreground">

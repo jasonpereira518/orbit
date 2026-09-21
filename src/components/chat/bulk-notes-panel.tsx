@@ -323,8 +323,6 @@ export function BulkNotesPanel({
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
   /** Why AI can't run, when it can't — which notice to show. See `AiKeyNotice`. */
   const [aiReason, setAiReason] = useState<AiAccessDenial | null>(null);
-  /** Whether to mention a fallback at all — see `ingestPayloads`. */
-  const [wisprConfigured, setWisprConfigured] = useState(false);
   const [pending, start] = useTransition();
 
   useEffect(() => {
@@ -332,11 +330,9 @@ export function BulkNotesPanel({
     getSettings()
       .then((settings) => {
         if (cancelled) return;
-        // `hasApiKeyProp` is the server's answer and stays authoritative when given; only
-        // the Wispr flag needs this round-trip.
+        // `hasApiKeyProp` is the server's answer and stays authoritative when given.
         if (hasApiKeyProp === undefined) setHasApiKey(settings.hasApiKey);
         setAiReason(settings.ai.reason);
-        setWisprConfigured(Boolean(settings.hasWisprKey));
       })
       .catch(() => {
         // Keep extract enabled; the action returns a clear error if needed.
@@ -826,18 +822,6 @@ export function BulkNotesPanel({
         res.photosNotKept === 1
           ? "Read the photo, but couldn’t keep a copy for your history"
           : `Read ${res.photosNotKept} photos, but couldn’t keep copies for your history`
-      );
-    }
-
-    // A silent downgrade is the failure mode worth naming. Someone who configured Wispr
-    // and got Whisper — because the key was rejected, or the service was down — would
-    // otherwise notice only that the names came back spelled wrong, with no reason given.
-    // Said once, quietly, and only when a Wispr key exists to have been used.
-    if (res.transcriptionEngine && res.transcriptionEngine !== "wispr" && wisprConfigured) {
-      toast.info(
-        res.transcriptionEngine === "whisper"
-          ? "Transcribed with Whisper — Wispr didn’t answer"
-          : "Transcribed with Gemini — Wispr didn’t answer"
       );
     }
   }

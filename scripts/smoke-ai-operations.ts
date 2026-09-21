@@ -49,7 +49,7 @@ console.log("Every emitted operation id is registered");
   const patterns = [
     /operation:\s*"([a-z][\w.-]*)"/g,
     /operation\s*\?\?\s*"([a-z][\w.-]*)"/g,
-    /\.(?:completion|embedding|transcription|wispr)\(\s*"([a-z][\w.-]*)"/g,
+    /\.(?:completion|embedding|transcription)\(\s*"([a-z][\w.-]*)"/g,
     /getAiConfig\(\s*\w+,\s*"([a-z][\w.-]*)"/g,
   ];
   const emitted = new Map<string, string>();

@@ -40,7 +40,7 @@ for (const value of Object.values(schema)) {
 }
 
 console.log("Every encrypted column");
-check("the schema has the encrypted columns this guard expects", encrypted.length >= 16, `${encrypted.length}`);
+check("the schema has the encrypted columns this guard expects", encrypted.length >= 15, `${encrypted.length}`);
 for (const qualified of encrypted) {
   check(`${qualified} is never revealable`, denied.has(qualified));
 }

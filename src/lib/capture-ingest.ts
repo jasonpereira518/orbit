@@ -27,9 +27,7 @@ export type NormalizedCaptureInput = {
   /**
    * Which engine transcribed the audio, when there was any.
    *
-   * Carried out to the UI so a silent downgrade stays visible: a user who configured Wispr
-   * and quietly got Whisper because their key was rejected would otherwise see only
-   * worse-spelled names and no reason. Absent when nothing was transcribed.
+   * Absent when nothing was transcribed.
    */
   transcriptionEngine?: TranscriptionEngine;
 };

@@ -62,7 +62,7 @@ export default async function CapturePage({
   // so it opens on the Meeting tab unless the link asked for something specific.
   const defaultMode: CaptureMode =
     modeParam || (contactId ? "structured" : resumableMeeting ? "meeting" : "messy");
-  // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Wispr, Whisper,
+  // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Whisper or
   // Gemini — or Orbit's on Lifetime). Anthropic has no speech-to-text, so an Anthropic-only
   // BYOK account can summarize but not transcribe.
   const canTranscribe = settings.ai.canTranscribe;

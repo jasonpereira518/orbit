@@ -3,7 +3,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { createHash, randomBytes } from "node:crypto";
-import { buildWisprContext } from "@/lib/wispr";
 import { nothingUsable } from "@/lib/managed-ai-policy";
 import {
   anthropicClient,
@@ -12,8 +11,6 @@ import {
   openaiClient,
   resolveAiAccess,
   runOnGrant,
-  recordWisprGrantRejected,
-  transcribeWithWisprOutcomeGrant,
   type AiGrant,
 } from "@/lib/ai-access";
 import {
@@ -29,7 +26,6 @@ import {
 } from "@/lib/ai-opportunity-schema";
 import { closenessLegend } from "@/lib/capture/closeness";
 import {
-  recordUsage,
   withUsage,
   tokensFromGemini,
   tokensFromOpenAi,
@@ -802,14 +798,14 @@ async function completeMultimodalJsonInner(
 }
 
 /** Which engine actually produced a transcript, so the UI can say so when it wasn't the first choice. */
-export type TranscriptionEngine = "wispr" | "whisper" | "gemini";
+export type TranscriptionEngine = "whisper" | "gemini";
 
 export type TranscriptionResult = { text: string; engine: TranscriptionEngine };
 
 export type TranscribeOptions = {
   /**
    * What came just before this audio — the previous meeting chunk's transcript. Only its
-   * tail is used, as continuation context for Whisper and Gemini; Wispr has no field for it.
+   * tail is used, as continuation context for Whisper and Gemini.
    */
   contextText?: string | null;
   /** Return `{ text: "" }` for silence instead of throwing "Empty transcription". */
@@ -825,20 +821,14 @@ const TRANSCRIBE_CONTEXT_CHARS = 200;
 const TRANSCRIBE_TIMEOUT_MS = 90_000;
 
 /**
- * Speech to text: Wispr, then OpenAI Whisper, then Gemini audio understanding.
+ * Speech to text: OpenAI Whisper or Gemini audio understanding, whichever the gate grants.
  *
- * THE ORDER IS ABOUT PROPER NOUNS, NOT ACCURACY IN GENERAL. All three transcribe ordinary
- * English about equally well. What separates them here is that this is a networking CRM:
- * a note is mostly *names*, and a misheard name does not produce a typo, it produces a
- * duplicate contact. Wispr goes first because its `dictionary_context` takes the user's
- * network as an explicit term list.
+ * This is a networking CRM: a note is mostly *names*, and a misheard name does not produce a
+ * typo, it produces a duplicate contact. So the user's network vocabulary is built once and
+ * handed to whichever engine runs — Whisper's `prompt`, Gemini's prompt text — to get their
+ * contacts spelled right.
  *
- * So the vocabulary is built once and handed to whichever engine runs — Wispr's dictionary,
- * Whisper's `prompt`, Gemini's prompt text. A user with no Wispr key (which, since the API
- * is partner-gated, is most of them) still gets their contacts spelled right.
- *
- * Falling through is silent to the pipeline but not to the user: the engine that won comes
- * back in the result, and `ingestCaptureMedia` reports it.
+ * The engine that ran comes back in the result, and `ingestCaptureMedia` reports it.
  */
 export async function transcribeAudioWithAI(
   userId: string,
@@ -846,7 +836,6 @@ export async function transcribeAudioWithAI(
   opts: TranscribeOptions = {},
 ): Promise<TranscriptionResult> {
   const access = await resolveAiAccess(userId);
-  const settings = access.settings;
   const operation = opts.operation ?? "capture.transcribe.audio";
   // Only the tail matters: it is there so a word cut at a chunk boundary is decoded as the
   // continuation of the sentence it belongs to, not as the start of a new one.
@@ -862,43 +851,15 @@ export async function transcribeAudioWithAI(
   // transcript with misspelled names beats no transcript.
   const vocabulary = await loadNetworkVocabulary(userId);
 
-  const wispr = await access.wispr(operation);
-  if (wispr) {
-    const started = Date.now();
-    const outcome = await transcribeWithWisprOutcomeGrant(wispr, {
-      audioBase64: input.base64,
-      context: await buildWisprContext(userId, {
-        firstName: settings?.firstName,
-        lastName: settings?.lastName,
-      }),
-    });
-    // Recorded by hand: Wispr never throws, so `withUsage` filed every null — a dead key
-    // included — as a success. A rejected key is the user's (`auth`, outside
-    // OUR_ERROR_KINDS); any other null is `empty_response`.
-    recordUsage({
-      userId, operation, provider: "wispr", model: "flow", kind: "transcription", keyOwner: wispr.keyOwner,
-      success: outcome.text !== null,
-      errorKind: outcome.text !== null ? null : outcome.reason === "rejected_key" ? "auth" : "empty_response",
-      durationMs: Date.now() - started,
-    });
-    if (outcome.text !== null) return { text: outcome.text, engine: "wispr" };
-    if (outcome.reason === "rejected_key" && wispr.keyOwner === "user") {
-      await recordWisprGrantRejected(userId, wispr, outcome.status);
-    }
-    // Fall through to Whisper, then Gemini. Wispr's wire format is unverified (see
-    // src/lib/wispr.ts), so a null here is as likely to be a schema surprise as an
-    // outage, and neither is worth failing a capture over.
-  }
-
-  // After Wispr, one engine: the gate picks the user's own Whisper, then their own Gemini,
-  // then — Lifetime only — Orbit's Gemini before Orbit's Whisper (see `AiAccess.transcription`).
+  // The gate picks the user's own Whisper, then their own Gemini, then — Lifetime only —
+  // Orbit's Gemini before Orbit's Whisper (see `AiAccess.transcription`).
   const grant = await access.transcription(operation);
   if (!grant) {
     const { reason } = nothingUsable(access.eligibility);
     throw access.refusal(
       reason,
       reason === "key_required"
-        ? "Voice capture needs an OpenAI, Gemini, or Wispr API key in Settings for transcription."
+        ? "Voice capture needs an OpenAI or Gemini API key in Settings for transcription."
         : undefined,
     );
   }

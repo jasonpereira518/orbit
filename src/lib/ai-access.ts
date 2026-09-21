@@ -12,13 +12,6 @@ import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/er
 import type { SessionRetriever } from "@/lib/lifetime-checkout";
 import type { Plan } from "@/lib/plan-limits";
 import {
-  recordWisprKeyRejected,
-  transcribeWithWispr,
-  transcribeWithWisprOutcome,
-  type WisprOutcome,
-  type WisprTranscribeInput,
-} from "@/lib/wispr";
-import {
   AI_PROVIDERS,
   resolveAiModel,
   resolveAiProvider,
@@ -29,7 +22,6 @@ import { AI_ACCESS_COPY, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-acces
 import {
   chooseCompletionKey,
   chooseEmbeddingKey,
-  chooseProviderKey,
   aiReadyFromFacts,
   managedCallAllowed,
   managedEligibility,
@@ -97,13 +89,10 @@ export function isAiAccessError(err: unknown): err is AiAccessError {
 
 /* ------------------------------------------------------------------ managed keys ----- */
 
-type KeyedProvider = AiProvider | "wispr";
-
-const MANAGED_ENV: Record<KeyedProvider, string> = {
+const MANAGED_ENV: Record<AiProvider, string> = {
   gemini: "ORBIT_MANAGED_GEMINI_API_KEY",
   openai: "ORBIT_MANAGED_OPENAI_API_KEY",
   anthropic: "ORBIT_MANAGED_ANTHROPIC_API_KEY",
-  wispr: "ORBIT_MANAGED_WISPR_API_KEY",
 };
 
 /**
@@ -112,11 +101,10 @@ const MANAGED_ENV: Record<KeyedProvider, string> = {
  * account at all when a tsx script ran against a shared database; now it pays only for the
  * accounts the policy says Orbit pays for.
  */
-const LOCAL_ENV: Record<KeyedProvider, string> = {
+const LOCAL_ENV: Record<AiProvider, string> = {
   gemini: "GEMINI_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
-  wispr: "WISPR_API_KEY",
 };
 
 /**
@@ -128,7 +116,7 @@ export function managedAiSwitchedOff(): boolean {
   return process.env.ORBIT_MANAGED_AI?.trim().toLowerCase() === "off";
 }
 
-function managedKey(provider: KeyedProvider): string | null {
+function managedKey(provider: AiProvider): string | null {
   // Managed AI off: the local-dev names are the only ones read, and only on a dev server.
   if (!MANAGED_AI_ENABLED) {
     return localDevAiEnabled() ? process.env[LOCAL_ENV[provider]]?.trim() || null : null;
@@ -150,7 +138,7 @@ export function managedKeysConfigured(): Record<AiProvider, boolean> {
 }
 
 /** The env var an operator sets for a provider's managed key — for Settings and the runbook. */
-export function managedEnvVar(provider: KeyedProvider): string {
+export function managedEnvVar(provider: AiProvider): string {
   return MANAGED_ENV[provider];
 }
 
@@ -191,7 +179,7 @@ function demoCountsAsManaged(userId: string): boolean {
  * Permission to make ONE kind of call on ONE key. Everything a caller may know about it —
  * never the key itself. `keyOwner` is what `usage_events.key_owner` records.
  */
-export type AiGrant<P extends KeyedProvider = AiProvider> = Readonly<{
+export type AiGrant<P extends AiProvider = AiProvider> = Readonly<{
   provider: P;
   model: string;
   source: AiKeySource;
@@ -201,7 +189,7 @@ export type AiGrant<P extends KeyedProvider = AiProvider> = Readonly<{
 
 const GRANT_KEYS = new WeakMap<object, string>();
 
-function mint<P extends KeyedProvider>(
+function mint<P extends AiProvider>(
   provider: P,
   model: string,
   source: AiKeySource,
@@ -219,7 +207,7 @@ function mint<P extends KeyedProvider>(
   return grant;
 }
 
-function keyFor(grant: AiGrant<KeyedProvider>, provider: KeyedProvider): string {
+function keyFor(grant: AiGrant<AiProvider>, provider: AiProvider): string {
   const key = GRANT_KEYS.get(grant);
   if (!key || grant.provider !== provider) {
     // A programming error, not a user state: something tried to build a client without
@@ -229,40 +217,16 @@ function keyFor(grant: AiGrant<KeyedProvider>, provider: KeyedProvider): string 
   return key;
 }
 
-export function geminiClient(grant: AiGrant<KeyedProvider>): GoogleGenAI {
+export function geminiClient(grant: AiGrant<AiProvider>): GoogleGenAI {
   return new GoogleGenAI({ apiKey: keyFor(grant, "gemini") });
 }
 
-export function openaiClient(grant: AiGrant<KeyedProvider>): OpenAI {
+export function openaiClient(grant: AiGrant<AiProvider>): OpenAI {
   return new OpenAI({ apiKey: keyFor(grant, "openai") });
 }
 
-export function anthropicClient(grant: AiGrant<KeyedProvider>): Anthropic {
+export function anthropicClient(grant: AiGrant<AiProvider>): Anthropic {
   return new Anthropic({ apiKey: keyFor(grant, "anthropic") });
-}
-
-/** Wispr has no SDK; its one call takes the key directly, so the gate makes that call. */
-export function transcribeWithWisprGrant(
-  grant: AiGrant<"wispr">,
-  input: WisprTranscribeInput,
-): Promise<string | null> {
-  return transcribeWithWispr(keyFor(grant, "wispr"), input);
-}
-
-/** Like `transcribeWithWisprGrant`, but says WHICH failure: a rejected key is not an empty answer. */
-export function transcribeWithWisprOutcomeGrant(
-  grant: AiGrant<"wispr">,
-  input: WisprTranscribeInput,
-): Promise<WisprOutcome> {
-  return transcribeWithWisprOutcome(keyFor(grant, "wispr"), input);
-}
-
-/**
- * Remembers that Wispr refused this grant's key — by fingerprint, never the key — so
- * Settings can say "this key". Here rather than in ai.ts because only the gate holds keys.
- */
-export function recordWisprGrantRejected(userId: string, grant: AiGrant<"wispr">, status: number): Promise<void> {
-  return recordWisprKeyRejected(userId, keyFor(grant, "wispr"), status);
 }
 
 /**
@@ -275,7 +239,7 @@ export function recordWisprGrantRejected(userId: string, grant: AiGrant<"wispr">
  * `withUsage` call, not its callback, so `usage_events.error_kind` still records the
  * provider's real failure kind.
  */
-export async function runOnGrant<T>(grant: AiGrant<KeyedProvider>, call: Promise<T>): Promise<T> {
+export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>): Promise<T> {
   try {
     return await call;
   } catch (err) {
@@ -396,8 +360,8 @@ export class AiAccess {
     readonly eligibility: ManagedEligibility,
     /** A paid Lifetime checkout Stripe says has not cleared yet. */
     readonly upgradePending: boolean,
-    private readonly personal: Partial<Record<KeyedProvider, string>>,
-    private readonly managed: Partial<Record<KeyedProvider, string>>,
+    private readonly personal: Partial<Record<AiProvider, string>>,
+    private readonly managed: Partial<Record<AiProvider, string>>,
   ) {}
 
   static async open(userId: string, opts: AiAccessOptions = {}): Promise<AiAccess> {
@@ -426,21 +390,20 @@ export class AiAccess {
       }
     }
 
-    const personal: Partial<Record<KeyedProvider, string>> = {};
+    const personal: Partial<Record<AiProvider, string>> = {};
     const decrypted = {
       gemini: decryptOrNull(row?.geminiApiKeyEncrypted),
       openai: decryptOrNull(row?.openaiApiKeyEncrypted),
       anthropic: decryptOrNull(row?.anthropicApiKeyEncrypted),
-      wispr: decryptOrNull(row?.wisprApiKeyEncrypted),
     };
     for (const [provider, key] of Object.entries(decrypted)) {
-      if (key) personal[provider as KeyedProvider] = key;
+      if (key) personal[provider as AiProvider] = key;
     }
 
     const eligibility = managedEligibility(plan, demoCountsAsManaged(userId));
-    const managed: Partial<Record<KeyedProvider, string>> = {};
+    const managed: Partial<Record<AiProvider, string>> = {};
     if (eligibility) {
-      for (const provider of [...MANAGED_PROVIDER_ORDER, "wispr"] as const) {
+      for (const provider of MANAGED_PROVIDER_ORDER) {
         const key = managedKey(provider);
         if (key) managed[provider] = key;
       }
@@ -486,7 +449,7 @@ export class AiAccess {
     return new AiAccessError(reason, message);
   }
 
-  private async grant<P extends KeyedProvider>(
+  private async grant<P extends AiProvider>(
     provider: P,
     source: AiKeySource,
     model: string,
@@ -542,7 +505,7 @@ export class AiAccess {
   }
 
   /**
-   * Speech to text, after Wispr. The user's own OpenAI key (Whisper), then their own Gemini
+   * Speech to text. The user's own OpenAI key (Whisper), then their own Gemini
    * key; for an eligible account with neither, Orbit's Gemini before Orbit's OpenAI —
    * Gemini's audio is priced per token, where Whisper's usage is invisible to the allowance.
    * Null when nothing is available.
@@ -561,29 +524,13 @@ export class AiAccess {
   }
 
   /**
-   * Whether any speech-to-text engine is available — the same chain as `wispr()` then
-   * `transcription()`, presence only. Anthropic has no speech-to-text, so an Anthropic-only
+   * Whether any speech-to-text engine is available — the same chain as `transcription()`,
+   * presence only. Anthropic has no speech-to-text, so an Anthropic-only
    * BYOK account can summarize but not transcribe.
    */
   canTranscribe(): boolean {
-    if (this.personal.wispr || this.personal.openai || this.personal.gemini) return true;
-    return Boolean(
-      this.eligibility && (this.managed.wispr || this.managed.openai || this.managed.gemini),
-    );
-  }
-
-  /** Wispr: their own key, or — for an eligible account — Orbit's, if it holds one. */
-  async wispr(operation: string): Promise<AiGrant<"wispr"> | null> {
-    const source = chooseProviderKey(
-      {
-        eligibility: this.eligibility,
-        personal: { wispr: Boolean(this.personal.wispr) },
-        managed: { wispr: Boolean(this.managed.wispr) },
-      },
-      "wispr",
-    );
-    if (!source) return null;
-    return this.grant("wispr", source, "flow", operation);
+    if (this.personal.openai || this.personal.gemini) return true;
+    return Boolean(this.eligibility && (this.managed.openai || this.managed.gemini));
   }
 }
 
