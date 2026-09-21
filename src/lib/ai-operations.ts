@@ -19,7 +19,7 @@ import type { ThinkingLevel } from "@/lib/ai-request-options";
  *  - `fast`        `FAST_MODELS[provider]` — the cheap tier
  *  - `vision`      `VISION_MODELS[provider]` — OCR, where a misread name can't be recovered
  *  - `embed`       the embedding model for the account's embedding backend
- *  - `transcribe`  the transcription chain (Wispr → Whisper → Gemini)
+ *  - `transcribe`  the transcription chain (Whisper → Gemini)
  *
  * This DRIVES routing: `modelForOperation` in `ai-models.ts` reads the tier, and the AI
  * entry points read that — there is no per-call-site model argument to disagree with it.

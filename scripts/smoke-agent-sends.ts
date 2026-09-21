@@ -32,6 +32,7 @@ import {
 import { countSendsToday } from "../src/lib/outreach-send";
 import { generateApiKey } from "../src/lib/api/keys";
 import { POST } from "../src/app/api/mcp/route";
+import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 
 const USER = "agent-send-smoke-user";
 
@@ -96,22 +97,44 @@ run(async () => {
     !/gmail-send|outreach-send|resend/i.test(agentReachable),
     "it must stay unable to send, not merely decline to"
   );
-  // Imports and tool names, not prose: the file's header discusses `approveAgentSend` at
+  // Imports and tool names, not prose: the files' headers discuss `approveAgentSend` at
   // length, and a check that a comment can fail is a check nobody will trust.
+  //
+  // BOTH files, because the tools moved. They used to be closures inside `mcp/server.ts`,
+  // and this guard read that one file; they now live in the shared registry that Orbit's own
+  // chat also reads. A guard that kept pointing at the old file would have gone on passing
+  // while the thing it guards moved out from under it — which is the failure mode this
+  // check exists to prevent in the first place.
   const serverSource = readFileSync("src/lib/mcp/server.ts", "utf8");
-  const serverImports = serverSource.slice(0, serverSource.indexOf("export function"));
-  check(
-    "the MCP server imports no approval or send path",
-    !/from "@\/lib\/(agent-send-approve|gmail-send|outreach-send)"/.test(serverImports),
-    "an approval must not be one import away from a tool"
-  );
-  const toolNames = [...serverSource.matchAll(/registerTool\(\s*"([a-z_]+)"/g)].map((m) => m[1]);
+  const toolSource = readFileSync("src/lib/tools/definitions.ts", "utf8");
+  for (const [label, source] of [
+    ["the MCP server", serverSource],
+    ["the shared tool registry", toolSource],
+  ] as const) {
+    const imports = source.slice(0, Math.max(source.indexOf("export "), 0) || source.length);
+    check(
+      `${label} imports no approval or send path`,
+      !/from "@\/lib\/(agent-send-approve|gmail-send|outreach-send)"/.test(imports),
+      "an approval must not be one import away from a tool"
+    );
+  }
+
+  // The names come from the registry now. Read as data rather than by regex over source, so
+  // the check cannot be fooled by how a definition happens to be formatted.
+  const toolNames = ORBIT_TOOLS.map((t) => t.name);
   check(
     "no registered tool approves or sends",
     // `request_send` is the allowed name because it only ever asks. Anything that reads as
     // doing the sending — send_email, send_message, approve_draft — must not exist.
     !toolNames.some((t) => /^(approve|send)/.test(t)) && toolNames.includes("request_send"),
     toolNames.join(",")
+  );
+  check(
+    "and no tool that writes is reachable from Orbit's own chat",
+    ORBIT_TOOLS.every((t) => !t.surfaces.includes("chat") || t.scope === "read"),
+    ORBIT_TOOLS.filter((t) => t.surfaces.includes("chat") && t.scope !== "read")
+      .map((t) => t.name)
+      .join(",")
   );
 
   // --- request_send stages a draft and sends nothing -----------------------------------------

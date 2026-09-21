@@ -9,6 +9,7 @@ import { contacts, contactEmbeddings } from "@/db/schema";
 import { normalizeCompanyKey } from "@/lib/company-name";
 import { applyNameMatchPolicy } from "@/lib/contact-search-rank";
 import { formatVectorLiteral } from "@/lib/pgvector";
+import { contentTokens } from "@/lib/search-tokens";
 import { cosineSimilarity } from "@/lib/ai";
 
 export type SearchFilters = {
@@ -198,23 +199,6 @@ function filterCondition(
 
   if (!parts.length) return null;
   return sql`(${sql.join(parts, sql` and `)})`;
-}
-
-const FTS_STOPWORDS = new Set([
-  "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "at", "for", "with", "from",
-  "who", "whom", "whose", "what", "which", "where", "when", "why", "how",
-  "do", "does", "did", "is", "are", "was", "were", "be", "been", "being",
-  "i", "me", "my", "we", "our", "you", "your", "they", "them", "their", "it", "its",
-  "know", "knows", "anyone", "someone", "somebody", "people", "person", "contact", "contacts",
-  "can", "could", "would", "should", "have", "has", "had", "that", "this", "these", "those",
-]);
-
-/** Content-bearing tokens from a natural-language query, for OR-expansion. */
-function contentTokens(query: string): string[] {
-  return [...new Set(
-    query.toLowerCase().split(/[^a-z0-9]+/)
-      .filter((t) => t.length >= 3 && !FTS_STOPWORDS.has(t))
-  )].slice(0, 8);
 }
 
 async function ftsArm(

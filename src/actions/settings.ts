@@ -10,8 +10,7 @@ import {
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
-import { decryptOrNull, encrypt } from "@/lib/crypto";
-import { wisprKeyWasRejected } from "@/lib/wispr";
+import { encrypt } from "@/lib/crypto";
 import {
   DATA_CATEGORY_IDS,
   deletionOutcome,
@@ -53,12 +52,10 @@ export async function getSettings() {
   // Run alongside entitlements rather than after: neither depends on the other, and
   // `userHasApolloKey` already re-derives entitlements internally for its own hosted-key
   // check, so serializing them would only add latency.
-  const wisprKey = decryptOrNull(settings?.wisprApiKeyEncrypted);
-  const [entitlements, hasApolloKey, ai, wisprKeyRejected] = await Promise.all([
+  const [entitlements, hasApolloKey, ai] = await Promise.all([
     getEntitlements(userId),
     userHasApolloKey(userId),
     getAiAccessStatus(userId),
-    wisprKey ? wisprKeyWasRejected(userId, wisprKey).catch(() => false) : Promise.resolve(false),
   ]);
   // Mirrors the two runtime resolvers so this card states what would actually be used:
   // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
@@ -88,16 +85,6 @@ export async function getSettings() {
     // Whether "Fill from Apollo" on the contact page has anything to call — computed via
     // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
     hasApolloKey,
-    /**
-     * Whether voice capture will try Wispr first.
-     *
-     * Presence only, like `keys` above — this decides whether the capture panel is
-     * entitled to say "Wispr didn't answer", and a rejected key still counts as
-     * configured, since that is precisely the case worth reporting.
-     */
-    hasWisprKey: Boolean(settings?.wisprApiKeyEncrypted),
-    /** Wispr refused the saved key on its latest try; clears when the key changes. */
-    wisprKeyRejected,
     /**
      * Whether AI features will run — NOT whether a key is saved. A Lifetime account on
      * Orbit's managed key is `true` with no key at all; a Lifetime account that has used its
@@ -336,45 +323,6 @@ export async function clearApiKey(provider?: AiProvider) {
 
   revalidatePathIfRequestScoped("/settings");
   return { ok: true as const, embeddingReset };
-}
-
-/**
- * Store or clear the Wispr transcription key.
- *
- * Its own action rather than a field on `saveAiSettings`, because Wispr is not an
- * `AiProvider`: it transcribes and never completes, so it takes no part in provider or
- * model selection and none of that action's re-indexing logic applies to it.
- *
- * An empty string clears the key; `undefined` leaves it untouched. That asymmetry is what
- * lets the settings form send the field unconditionally without wiping a stored key every
- * time an unrelated control is saved.
- */
-export async function saveVoiceSettings(input: { wisprApiKey?: string }) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const existing = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-  });
-
-  const trimmed = input.wisprApiKey?.trim();
-  const wisprApiKeyEncrypted =
-    input.wisprApiKey === undefined
-      ? (existing?.wisprApiKeyEncrypted ?? null)
-      : trimmed
-        ? encrypt(trimmed)
-        : null;
-
-  if (existing) {
-    await db
-      .update(userSettings)
-      .set({ wisprApiKeyEncrypted, updatedAt: new Date() })
-      .where(eq(userSettings.userId, userId));
-  } else {
-    await db.insert(userSettings).values({ userId, wisprApiKeyEncrypted });
-  }
-
-  revalidatePath("/settings");
-  return { ok: true as const };
 }
 
 export async function saveOutreachSettings(input: {

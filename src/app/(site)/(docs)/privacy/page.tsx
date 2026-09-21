@@ -64,7 +64,6 @@ const PROCESSORS = [
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro and Orbit Lifetime payments. Card details go to Stripe directly; Orbit stores a customer reference." },
   { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider and key you choose in Settings." },
-  { name: "Wispr Flow", badge: "Optional", body: "Meeting transcription, only if you add a Wispr key." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Microsoft", badge: "Optional", body: "Outlook, read-only, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, and your mail only for the recruiter scan you start. See The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },

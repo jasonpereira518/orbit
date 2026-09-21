@@ -82,7 +82,6 @@ export function useCaptureIngest({
   const [busy, setBusy] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
   const [aiReason, setAiReason] = useState<AiAccessDenial | null>(aiReasonProp);
-  const [wisprConfigured, setWisprConfigured] = useState(false);
 
   // A server re-render (the plan changed in another tab, or this one just bought Lifetime)
   // hands down a fresh answer; adopt it. Adjusted during render, not in an effect, so the
@@ -110,15 +109,14 @@ export function useCaptureIngest({
   });
 
   useEffect(() => {
+    // The server's answer, when given, is authoritative; only an unanswered mount asks.
+    if (hasApiKeyProp !== undefined) return;
     let cancelled = false;
     getSettings()
       .then((settings) => {
         if (cancelled) return;
-        if (hasApiKeyProp === undefined) {
-          setHasApiKey(settings.hasApiKey);
-          setAiReason(settings.ai.reason);
-        }
-        setWisprConfigured(Boolean(settings.hasWisprKey));
+        setHasApiKey(settings.hasApiKey);
+        setAiReason(settings.ai.reason);
       })
       .catch(() => {
         // Keep extract enabled; the action returns a clear error if needed.
@@ -185,15 +183,6 @@ export function useCaptureIngest({
         if (bgId) finishBackgroundJob(bgId, { status: "completed", resultMessage: opts.successMessage });
         landTranscript(res.text, { hints: res.hints, sources: res.sources, label, jobId: res.job.id }, mode);
         if (opts.successMessage) toast.success(opts.successMessage);
-        // A silent downgrade is the failure mode worth naming: someone who configured
-        // Wispr and got Whisper would otherwise notice only misspelled names.
-        if (res.transcriptionEngine && res.transcriptionEngine !== "wispr" && wisprConfigured) {
-          toast.info(
-            res.transcriptionEngine === "whisper"
-              ? "Transcribed with Whisper — Wispr didn’t answer"
-              : "Transcribed with Gemini — Wispr didn’t answer"
-          );
-        }
       } catch (err) {
         const message = friendlyError(err, opts.failureFallback);
         if (bgId) finishBackgroundJob(bgId, { status: "failed", error: message });
@@ -202,7 +191,7 @@ export function useCaptureIngest({
         setBusy(false);
       }
     },
-    [sourceKind, landTranscript, wisprConfigured, noteAiRefusal]
+    [sourceKind, landTranscript, noteAiRefusal]
   );
 
   /** Text, calendar, email, audio and other raw files from a picker or a drop. */

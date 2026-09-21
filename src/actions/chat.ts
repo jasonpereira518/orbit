@@ -187,7 +187,9 @@ async function askNetworkInner(
       ctx.attention,
       ctx.modelRecruiters,
       ctx.focusProfile,
-      ctx.attachedContext
+      ctx.attachedContext,
+      ctx.goals,
+      ctx.attentionLite
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]

@@ -96,11 +96,6 @@ export const userSettings = pgTable("user_settings", {
   geminiApiKeyEncrypted: text("gemini_api_key_encrypted"),
   openaiApiKeyEncrypted: text("openai_api_key_encrypted"),
   anthropicApiKeyEncrypted: text("anthropic_api_key_encrypted"),
-  /**
-   * Wispr Flow transcription. Not an `AiProvider`: Wispr transcribes and does not
-   * complete, so it never participates in provider/model selection. See `src/lib/wispr.ts`.
-   */
-  wisprApiKeyEncrypted: text("wispr_api_key_encrypted"),
   aiModel: text("ai_model").default("gemini-3.8-flash"),
   /**
    * The model this account was moved OFF when a default changed under it, so Settings can
@@ -1203,7 +1198,7 @@ export const contactOpportunities = pgTable(
 );
 
 export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
-export type MeetingSegmentEngine = "wispr" | "whisper" | "gemini" | "silent";
+export type MeetingSegmentEngine = "whisper" | "gemini" | "silent";
 
 /**
  * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
@@ -2360,7 +2355,7 @@ export const usageEvents = pgTable(
     userId: text("user_id").notNull(),
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "wispr">().notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
       .$type<"completion" | "multimodal" | "embedding" | "transcription">()

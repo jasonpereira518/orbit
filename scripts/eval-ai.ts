@@ -24,13 +24,13 @@
  * --out <file> (default docs/ai-evals/<date>-<label>.json) · --compare <baseline.json>
  * (exits 1 when a threshold in scripts/eval-fixtures/ai-eval-thresholds.json is broken).
  *
- * KEYS. Only `ORBIT_EVAL_{GEMINI,OPENAI,ANTHROPIC,WISPR}_KEY` are used, stored as the
+ * KEYS. Only `ORBIT_EVAL_{GEMINI,OPENAI,ANTHROPIC}_KEY` are used, stored as the
  * synthetic user's OWN keys — the same bring-your-own-key path a person's pasted key takes
  * through the AI gate, so every model is reachable (Orbit's managed keys would pin the model
  * to the managed allowlist). The ordinary `GEMINI_API_KEY`-style names are deliberately
  * ignored and stripped: a developer's `.env.local` key must never be spent by just running a
  * script. To spend them on purpose, name the file: `--keys-from ../../.env.local` reads its
- * `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `WISPR_API_KEY` as the eval
+ * `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` as the eval
  * keys (an `ORBIT_EVAL_*` variable still wins). A full run costs roughly a dollar or two per
  * provider.
  *
@@ -155,7 +155,6 @@ function evalKeys(keysFrom?: string) {
     gemini: read("ORBIT_EVAL_GEMINI_KEY", "GEMINI_API_KEY"),
     openai: read("ORBIT_EVAL_OPENAI_KEY", "OPENAI_API_KEY"),
     anthropic: read("ORBIT_EVAL_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"),
-    wispr: read("ORBIT_EVAL_WISPR_KEY", "WISPR_API_KEY"),
   };
 }
 
@@ -167,7 +166,6 @@ async function setUpUser(args: Args, keys: ReturnType<typeof evalKeys>) {
     geminiApiKeyEncrypted: keys.gemini ? encrypt(keys.gemini) : null,
     openaiApiKeyEncrypted: keys.openai ? encrypt(keys.openai) : null,
     anthropicApiKeyEncrypted: keys.anthropic ? encrypt(keys.anthropic) : null,
-    wisprApiKeyEncrypted: keys.wispr ? encrypt(keys.wispr) : null,
   };
   await db
     .insert(userSettings)

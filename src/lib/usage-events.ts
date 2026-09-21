@@ -34,14 +34,8 @@ export type TokenCounts = {
   audioInputTokens?: number | null;
 };
 
-/**
- * Who was billed for a call.
- *
- * A superset of `AiProvider`, not the same type. Wispr transcribes and does not complete,
- * so it never takes part in provider/model selection and must not be assignable where an
- * `AiProvider` is expected — but its calls still cost money and still belong in the ledger.
- */
-export type UsageProvider = AiProvider | "wispr";
+/** Who was billed for a call. */
+export type UsageProvider = AiProvider;
 
 export type UsageMeta = {
   userId: string;

@@ -141,6 +141,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-mention-picks": "pure",
   "smoke-mention-resolution": "pure",
   "smoke-note-parse-schema": "pure",
+  "smoke-note-window": "pure",
   "smoke-ops-alerts": "pure",
   "smoke-outreach-sender": "pure",
   "smoke-parsers": "pure",
@@ -170,7 +171,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-meeting-digest": "pure",
   "smoke-meeting-upload-queue": "pure",
   "smoke-outreach-email": "pure",
-  "smoke-wispr": "pure",
+  "smoke-vocabulary-terms": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
   "smoke-account-alerts": "pglite",
@@ -261,6 +262,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
+  "smoke-tool-registry": "pglite",
   "smoke-agent-sends": "pglite",
   "smoke-dashboard-aggregates": "pglite",
   "smoke-migration-guards": "pglite", // the pure half is here too: both guards belong in one place
@@ -331,7 +333,6 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-user-settings-race": "pglite",
   "smoke-webhook-guard": "pglite",
   "smoke-webhook-delivery": "pglite",
-  "smoke-wispr-key-rejection": "pglite",
   "smoke-write-path": "pglite",
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
