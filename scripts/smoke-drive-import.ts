@@ -31,6 +31,7 @@ import { saveNoteBatch } from "../src/lib/note-batch-save";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import type { CaptureParseResult, SuggestedReminderPreview } from "../src/lib/capture/types";
 import { countImportPeople } from "../src/lib/imports/import-people";
+import { removeDriveFlag } from "../src/lib/drive-flags";
 
 const USER = "smoke-drive-import-user";
 const NOW = new Date("2026-09-21T12:00:00Z");
@@ -316,6 +317,14 @@ async function main() {
   const rImp = await db.query.imports.findFirst({ where: eq(imports.id, raced.importId) });
   check("…nor counted twice", !rImp?.stats?.docsRead && (rImp?.rowsProcessed ?? 0) === 0, JSON.stringify([rImp?.rowsProcessed, rImp?.stats]));
   check("…and the job still completes", rImp?.status === "completed", rImp?.status);
+
+  // Dismissing a flag removes exactly that one, and only for its owner.
+  const flagged = await db.query.imports.findFirst({ where: eq(imports.id, staged.importId) });
+  const flagId = flagged!.stats!.flaggedCommitments![0].id;
+  check("another user can't dismiss it", !(await removeDriveFlag("someone-else", staged.importId, flagId)));
+  check("the owner can", await removeDriveFlag(USER, staged.importId, flagId));
+  const after = await db.query.imports.findFirst({ where: eq(imports.id, staged.importId) });
+  check("…and it's gone", (after!.stats!.flaggedCommitments ?? []).length === 0);
 
   await reset();
   console.log("smoke-drive-import: all checks passed");
