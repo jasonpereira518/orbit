@@ -64,3 +64,8 @@ extension/public/inject/
 /test-results/
 /playwright-report/
 /blob-report/
+
+# Real LinkedIn page text for the work-history eval: other people's data, never committed.
+/scripts/eval-fixtures/extension-profile/*
+!/scripts/eval-fixtures/extension-profile/README.md
+!/scripts/eval-fixtures/extension-profile/*.synthetic.json

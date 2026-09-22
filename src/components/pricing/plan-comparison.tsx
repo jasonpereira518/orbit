@@ -63,7 +63,7 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   // Name only what has shipped. Work history is also `canUseExtensionPro`, but
   // it joins this label when it exists — a pricing table is a promise.
   {
-    label: "Extension: AI opening lines, smart search, who you know at a company",
+    label: "Extension: AI opening lines, smart search, work history, who you know at a company",
     cells: [false, true, true],
   },
   { label: "Outreach campaigns", cells: [false, true, true] },

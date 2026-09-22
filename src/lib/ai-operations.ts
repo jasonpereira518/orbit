@@ -79,6 +79,7 @@ export const AI_OPERATIONS = {
   "events.why": { label: "Events: why talk to them", tier: "fast", thinking: "minimal" },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
+  "extension.profile": { label: "Extension: work history", tier: "user" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },

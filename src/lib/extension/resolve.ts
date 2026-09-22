@@ -12,6 +12,7 @@
 import { and, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
+import { getContactProfile } from "@/lib/contact-profile";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { metContextLabel } from "@/lib/met-context";
 import type { Contact } from "@/db/schema";
@@ -42,6 +43,7 @@ import type {
   PageContext,
   ResolveResponse,
 } from "./contract";
+import { toSnapshotWorkHistory } from "./work-history";
 
 /** Above this, and alone, a match is shown directly as "you know this person". */
 const CONFIDENT_CONFIDENCE = 0.9;
@@ -304,21 +306,24 @@ export async function buildSnapshot(
 ): Promise<SnapshotBundle | null> {
   const db = await getDb();
 
-  const row = await db.query.contacts.findFirst({
-    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    with: {
-      contactTags: { with: { tag: true } },
-      interactions: {
-        orderBy: [sql`${interactions.interactionDate} DESC`],
-        limit: RECENT_INTERACTIONS,
+  const [row, profile] = await Promise.all([
+    db.query.contacts.findFirst({
+      where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+      with: {
+        contactTags: { with: { tag: true } },
+        interactions: {
+          orderBy: [sql`${interactions.interactionDate} DESC`],
+          limit: RECENT_INTERACTIONS,
+        },
+        reminders: {
+          where: eq(reminders.status, "pending"),
+          orderBy: [sql`${reminders.dueDate} ASC NULLS LAST`],
+          limit: 3,
+        },
       },
-      reminders: {
-        where: eq(reminders.status, "pending"),
-        orderBy: [sql`${reminders.dueDate} ASC NULLS LAST`],
-        limit: 3,
-      },
-    },
-  });
+    }),
+    getContactProfile(userId, contactId),
+  ]);
 
   if (!row) return null;
 
@@ -376,6 +381,7 @@ export async function buildSnapshot(
     // through its label — and only when the user wrote nothing themselves.
     howMet: row.howMet?.trim() || metContextLabel(row.metContext) || null,
     dateMet: iso(row.dateMet),
+    workHistory: toSnapshotWorkHistory(profile),
     openReminders: row.reminders.map((r) => ({
       id: r.id,
       title: r.title,
