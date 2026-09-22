@@ -22,6 +22,8 @@ export type AnswerActionsProps = {
   persisted: boolean;
   initialFeedback?: "up" | "down" | null;
   onRetry?: () => void;
+  /** "Ask again" by default; the last answer in a thread says "Regenerate" instead. */
+  retryLabel?: string;
   className?: string;
 };
 
@@ -31,6 +33,7 @@ export function AnswerActions({
   persisted,
   initialFeedback = null,
   onRetry,
+  retryLabel = "Ask again",
   className,
 }: AnswerActionsProps) {
   const [copied, setCopied] = useState(false);
@@ -75,7 +78,7 @@ export function AnswerActions({
       </ActionButton>
 
       {onRetry && (
-        <ActionButton label="Ask again" onClick={onRetry}>
+        <ActionButton label={retryLabel} onClick={onRetry}>
           <RefreshCw className="size-3.5" />
         </ActionButton>
       )}

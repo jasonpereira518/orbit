@@ -163,8 +163,12 @@ export type ChatStreamEvent =
   | {
       type: "done";
       messageId: string | null;
+      /** The user row this turn persisted, so the client can address it — pencil-edit, versions. */
+      userMessageId: string | null;
       threadId: string | null;
       title: string | null;
+      /** Present when this turn was a version of an earlier one. See `@/lib/chat-versions`. */
+      version?: { slot: string; version: number } | null;
       /** The relevance-ranked contacts the answer was grounded in (the ask bar shows them). */
       retrieved: Array<{
         id: string;

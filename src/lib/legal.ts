@@ -85,8 +85,8 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailSend,
     permission: "Send email as you (gmail.send)",
-    use: "Sends the recruiter messages you write and press Send on, from your own address, so replies reach your inbox. Orbit never sends a message you did not send.",
-    askedWhen: "Allow Gmail to send, in the recruiter composer",
+    use: "Sends the messages you write and press Send on — recruiter emails, and drafts from Chat — from your own address, so replies reach your inbox. Each one is shown to you first and goes only when you confirm it. Orbit never sends a message you did not send.",
+    askedWhen: "Allow Gmail to send, in the recruiter composer or on a draft in Chat",
   },
   {
     scope: GOOGLE_SCOPES.calendar,
