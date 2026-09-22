@@ -394,6 +394,11 @@ export function friendlyError(err: unknown, fallback: string): string {
     return typeof digest === "string" ? withReference(fallback, digest) : fallback;
   }
 
+  // A plan denial is already written for the person who hit it (`FEATURE_DENIAL`), and it is
+  // the one server-thrown message worth showing verbatim. Matched by name, not `instanceof`:
+  // a second module instance would break the class check, and this file imports nothing.
+  if (err instanceof Error && err.name === "PaywallError" && err.message) return err.message;
+
   if (raw && OWN_WORDS.has(raw)) return raw;
   if (raw && isMissingAiApiKeyError(raw)) return MISSING_AI_API_KEY_MESSAGE;
   if (raw && PROVIDER_KEY_REJECTED.test(raw)) return AI_KEY_REJECTED_MESSAGE;

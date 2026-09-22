@@ -10,7 +10,7 @@ import { getDb } from "@/db";
 import { outlookConnections, imports } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
@@ -115,7 +115,9 @@ export async function startOutlookOAuth(input: {
   if (purposes.length === 0 || !purposes.every(isMicrosoftPurpose)) {
     throw new Error("Unknown Microsoft connection purpose");
   }
-  const userId = await requireSyncUser();
+  // Connecting Microsoft is free: the spec puts contacts, meetings and sending on every plan,
+  // and the one paid feature (the recruiter inbox scan) is gated where it runs, not here.
+  const userId = await requireUserId();
   const summary = getOutlookOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError ? ` (${summary.redirectUriError})` : "";
@@ -224,7 +226,7 @@ function toScanStatus(row: typeof imports.$inferSelect): OutlookScanStatus {
  */
 export async function startOutlookRecruiterScan(): Promise<ActionResult<{ importId: string }>> {
   return asActionResult(async () => {
-    const userId = await requireSyncUser();
+    const userId = await requireRecruitersUser();
     const db = await getDb();
 
     const conn = await db.query.outlookConnections.findFirst({
@@ -304,7 +306,7 @@ export async function getOutlookScanStatus(
 }
 
 export async function cancelOutlookRecruiterScan(importId: string) {
-  const userId = await requireSyncUser();
+  const userId = await requireRecruitersUser();
   const db = await getDb();
   // The runner re-reads status every iteration, so flipping the row is the cancel.
   await db

@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { gmailConnections, imports, userSettings } from "@/db/schema";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
 import {
@@ -121,7 +121,9 @@ export async function startGmailOAuth(input: {
   if (purposes.length === 0 || !purposes.every(isGooglePurpose)) {
     throw new Error("Unknown Google connection purpose");
   }
-  const userId = await requireSyncUser();
+  // Connecting Google is free: the spec puts contacts, meetings and sending on every plan, and
+  // the one paid feature (the recruiter inbox scan) is gated where it runs, not here.
+  const userId = await requireUserId();
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError
@@ -229,7 +231,7 @@ function toScanStatus(row: typeof imports.$inferSelect): GmailScanStatus {
  */
 export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId: string }>> {
   return asActionResult(async () => {
-    const userId = await requireSyncUser();
+    const userId = await requireRecruitersUser();
     const db = await getDb();
 
     const conn = await db.query.gmailConnections.findFirst({
@@ -309,7 +311,7 @@ export async function getGmailScanStatus(
 }
 
 export async function cancelGmailRecruiterScan(importId: string) {
-  const userId = await requireSyncUser();
+  const userId = await requireRecruitersUser();
   const db = await getDb();
   // The runner re-reads status every iteration, so flipping the row is the cancel.
   await db
