@@ -488,12 +488,8 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           body: `${email ? `Your ${email} session` : "Your session"} expired. Contact sync and mailbox scans are paused until you sign in again.`,
           cta: {
             label: "Reconnect",
-            // Straight at that provider's card. `ImportHub` maps the anchor to its tab,
-            // so this opens the right tab as well as scrolling to it.
-            href:
-              f.code === "connection.gmail"
-                ? "/imports#import-google-contacts"
-                : "/imports#import-outlook-contacts",
+            // Straight at that account's page in the Integrations dialog.
+            href: integrationHref(f.code === "connection.gmail" ? "google" : "microsoft"),
             external: false,
           },
           surfaceKey: "page.imports",
@@ -506,7 +502,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           ...base,
           title: "Calendar sync is paused",
           body: "New meetings aren’t reaching Orbit. Reconnect Google to start calendar sync again.",
-          cta: { label: "Reconnect", href: "/imports#import-google-contacts", external: false },
+          cta: { label: "Reconnect", href: integrationHref("google"), external: false },
           surfaceKey: "page.imports",
         });
         break;
