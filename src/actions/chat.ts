@@ -22,6 +22,8 @@ import {
 } from "@/lib/chat-suggestions";
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
 import { persistAssistantTurn } from "@/lib/chat-persist";
+import { isRefineKind, refineDraft } from "@/lib/chat-refine";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { traced } from "@/lib/perf-trace";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
@@ -344,4 +346,29 @@ export async function searchEventsForPicker(
       r.rawNotes?.trim().split("\n")[0]?.slice(0, 120) ||
       null,
   }));
+}
+
+/**
+ * Rewrite a draft from a recommendation card: one of a fixed set of chips (Shorter, Warmer,
+ * More direct, More formal), never free text — see `chat-refine.ts` for why.
+ *
+ * Returns the new draft, or a friendly failure that leaves the person's current text alone.
+ * The rate bucket is the chat one: this is a fast-tier call, but it is still the user's own
+ * key and a button that can be pressed in a loop.
+ */
+export async function refineChatDraft(draft: string, kind: string) {
+  try {
+    const userId = await requireUserForSurface("page.chat");
+    await consumeBucket("chat", userId, RATE_LIMITS.chat);
+    if (!isRefineKind(kind)) return { ok: false as const, error: TOAST_COPY.draftRefineFailed };
+    const writingInstructions = await loadWritingInstructions(userId).catch(() => null);
+    const next = await refineDraft(userId, { draft, kind, writingInstructions });
+    if (!next) return { ok: false as const, error: TOAST_COPY.draftRefineFailed };
+    return { ok: true as const, draft: next };
+  } catch (err) {
+    return {
+      ok: false as const,
+      error: await actionFailure(err, TOAST_COPY.draftRefineFailed, "chat.refine-draft"),
+    };
+  }
 }

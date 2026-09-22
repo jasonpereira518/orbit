@@ -43,6 +43,7 @@ import { isRecruiterIntent } from "@/lib/recruiters";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadRecruitersForChat } from "@/actions/recruiters";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
+import { sanitizeDraft } from "@/lib/chat-draft";
 
 /**
  * Everything the model is shown for one question, assembled with the independent lookups
@@ -728,10 +729,18 @@ export async function prepareChatContext(
       relevance: r.score / maxScore,
     })),
     filterRecommendations: (raw) =>
-      (raw || []).filter((r) => {
-        if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);
-        if (r.contact_id) return allowedContacts.has(r.contact_id);
-        return false;
-      }),
+      (raw || [])
+        .filter((r) => {
+          if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);
+          if (r.contact_id) return allowedContacts.has(r.contact_id);
+          return false;
+        })
+        // The draft is text a model wrote from records that can carry text someone else typed,
+        // and it becomes an editable, sendable message. Strip what a reader cannot see.
+        .map((r) =>
+          typeof r.draft_message === "string"
+            ? { ...r, draft_message: sanitizeDraft(r.draft_message) }
+            : r
+        ),
   };
 }
