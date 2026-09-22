@@ -221,6 +221,43 @@ function DialogBody({
     if (target) target.scrollIntoView({ block: "start" });
     else panelScroller.current?.scrollTo({ top: 0 });
     tabRefs.current.get(view)?.scrollIntoView({ block: "nearest" });
+    if (!target) return;
+
+    // The page's importers are still loading skeletons on this first scroll, and push the
+    // target down once they resolve — keep re-scrolling to it until the panel stops resizing,
+    // the person takes over, or 3s pass.
+    const scroller = panelScroller.current;
+    let stopped = false;
+    let observer: ResizeObserver | undefined;
+
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      observer?.disconnect();
+      clearTimeout(timer);
+      scroller?.removeEventListener("wheel", stop);
+      scroller?.removeEventListener("touchstart", stop);
+      scroller?.removeEventListener("pointerdown", stop);
+      scroller?.removeEventListener("keydown", stop);
+    }
+
+    scroller?.addEventListener("wheel", stop, { passive: true });
+    scroller?.addEventListener("touchstart", stop, { passive: true });
+    scroller?.addEventListener("pointerdown", stop);
+    scroller?.addEventListener("keydown", stop);
+    const timer = setTimeout(stop, 3_000);
+
+    if (typeof ResizeObserver !== "undefined") {
+      const panel = target.closest('[role="tabpanel"]');
+      if (panel) {
+        observer = new ResizeObserver(() => {
+          if (!stopped) target.scrollIntoView({ block: "start" });
+        });
+        observer.observe(panel);
+      }
+    }
+
+    return stop;
   }, [view, focus]);
 
   const runningTab = job?.status === "running" ? tabForImportJob(job.kind) : null;

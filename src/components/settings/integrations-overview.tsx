@@ -1,10 +1,17 @@
 "use client";
 
-import { TriangleAlert } from "lucide-react";
+import { useState } from "react";
+import { ChevronRight, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
-import { OVERVIEW_TABS, integrationLabel, type IntegrationTabId } from "@/components/settings/sections";
+import {
+  INTEGRATION_TABS,
+  OVERVIEW_TABS,
+  integrationLabel,
+  type IntegrationTabId,
+} from "@/components/settings/sections";
 import { overviewAction, type IntegrationStatuses } from "@/lib/integration-status";
+import { cn } from "@/lib/utils";
 
 const DESCRIPTIONS: Partial<Record<IntegrationTabId, string>> = {
   google: "Contacts, calendar and Gmail.",
@@ -17,8 +24,9 @@ const DESCRIPTIONS: Partial<Record<IntegrationTabId, string>> = {
 
 /**
  * The Integrations dialog's home: anything that needs fixing, then one card per account with
- * its status and the one thing to do next. Advanced pages get no card — they are reachable
- * from the nav for the people who want them.
+ * its status and the one thing to do next. Advanced pages get no card — on wide screens they
+ * are reachable from the nav, and on phones, where the nav is hidden, from a collapsed block
+ * below the cards.
  */
 export function IntegrationsOverview({
   tabs,
@@ -32,6 +40,8 @@ export function IntegrationsOverview({
 }) {
   const cards = OVERVIEW_TABS.filter((id) => tabs.includes(id));
   const attention = (statuses?.attention ?? []).filter((item) => tabs.includes(item.tab));
+  const advancedTabs = INTEGRATION_TABS.filter((t) => t.group === "advanced" && tabs.includes(t.id));
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   return (
     <div className="space-y-5">
@@ -93,6 +103,50 @@ export function IntegrationsOverview({
           );
         })}
       </ul>
+
+      {advancedTabs.length > 0 ? (
+        <div className="border-t border-border/60 pt-4 md:hidden">
+          <button
+            type="button"
+            aria-expanded={advancedOpen}
+            aria-controls="integration-overview-advanced"
+            onClick={() => setAdvancedOpen((wasOpen) => !wasOpen)}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-muted-foreground outline-none hover:bg-card/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70"
+          >
+            <ChevronRight
+              aria-hidden
+              className={cn(
+                "size-4 shrink-0 transition-transform duration-fast ease-house",
+                advancedOpen && "rotate-90"
+              )}
+            />
+            Advanced
+          </button>
+          <div id="integration-overview-advanced" hidden={!advancedOpen} className="space-y-1 pt-1">
+            <p className="px-2.5 pb-2 text-xs text-muted-foreground">
+              For developers and automation tools. You don’t need anything here to use Orbit.
+            </p>
+            {advancedTabs.map((tab) => {
+              const status = statuses?.pages[tab.id];
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => onOpen(tab.id)}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm outline-none hover:bg-card/60 focus-visible:ring-2 focus-visible:ring-ring/70"
+                >
+                  <IntegrationIcon id={tab.id} className="size-4 shrink-0 opacity-80" />
+                  <span className="min-w-0 flex-1 truncate font-medium text-ink">
+                    {integrationLabel(tab.id)}
+                  </span>
+                  <StatusDot status={status} />
+                  <span className="sr-only">, {statusText(status)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
