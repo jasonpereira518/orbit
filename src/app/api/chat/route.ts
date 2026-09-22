@@ -126,7 +126,7 @@ export async function POST(request: Request) {
               (delta) => send({ type: "answer", delta }),
               ctx.focusProfile,
               ctx.attachedContext,
-              { signal: request.signal }
+              { signal: request.signal, writingPreferences: ctx.writingInstructions }
             ),
           { userId }
         );

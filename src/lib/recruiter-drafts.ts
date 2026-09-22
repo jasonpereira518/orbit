@@ -1,4 +1,5 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { renderWritingPreferences } from "@/lib/writing-instructions";
 
 /**
  * Intent-shaped email drafting for recruiters.
@@ -58,6 +59,8 @@ export type RecruiterDraftInput = {
   senderName: string | null;
   /** Distinguishes drafts within a batch so a run of emails doesn't read as a mail merge. */
   variationHint?: string;
+  /** The sender's style notes, loaded once per batch by the caller. */
+  writingInstructions?: string | null;
 };
 
 export type GeneratedRecruiterDraft = { subject: string; body: string };
@@ -104,6 +107,7 @@ export async function generateRecruiterDraft(
       ? `What the sender is looking for: ${input.userGoals.join("; ")}`
       : null,
     input.senderName ? `Sender's name: ${input.senderName}` : null,
+    renderWritingPreferences(input.writingInstructions) || null,
   ]
     .filter(Boolean)
     .join("\n");

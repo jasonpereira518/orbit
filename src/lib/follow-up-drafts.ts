@@ -5,6 +5,7 @@ import { contacts, interactions, reminders } from "@/db/schema";
 import { parseAiJson } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import { formatHowMetSummary } from "@/lib/met-context";
+import { withWritingPreferences } from "@/lib/writing-instructions";
 
 const draftSchema = z.object({
   body: z.string().min(1),
@@ -137,6 +138,8 @@ async function draftFromContext(input: {
    * open shows the latest draft.
    */
   reuse?: boolean;
+  /** The sender's style notes, passed in by the action that owns the request. */
+  writingInstructions?: string | null;
 }): Promise<FollowUpDraft> {
   const contactName = input.contact.preferredName || input.contact.fullName;
   const profileBlock = buildProfileBlock(input.contact);
@@ -205,7 +208,7 @@ Rules:
 - Prefer a soft, specific CTA (one ask) over a laundry list.
 - ${signOffRule}
 ${intentBlock ? "- Honor the user's stated intent when drafting." : ""}`,
-    user: `${goalsBlock}
+    user: `${withWritingPreferences(goalsBlock, input.writingInstructions)}
 
 Contact:
 ${profileBlock}
@@ -235,7 +238,8 @@ ${transcript || "(no interactions logged yet)"}`,
 export async function generateFollowUpDraft(
   userId: string,
   reminderId: string,
-  userGoals: string[] = []
+  userGoals: string[] = [],
+  options?: { writingInstructions?: string | null }
 ): Promise<FollowUpDraft> {
   const db = await getDb();
 
@@ -267,6 +271,7 @@ export async function generateFollowUpDraft(
     recent,
     userGoals,
     reminderBlock,
+    writingInstructions: options?.writingInstructions,
   });
 }
 
@@ -279,6 +284,7 @@ export async function generateContactFollowUpDraft(
     channel?: "email" | "linkedin" | "sms";
     intent?: string | null;
     reuse?: boolean;
+    writingInstructions?: string | null;
   }
 ): Promise<FollowUpDraft> {
   const { contact, recent } = await loadContactContext(userId, contactId);
@@ -291,5 +297,6 @@ export async function generateContactFollowUpDraft(
     channel: options?.channel,
     intent: options?.intent,
     reuse: options?.reuse,
+    writingInstructions: options?.writingInstructions,
   });
 }

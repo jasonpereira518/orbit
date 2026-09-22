@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
+  writing_instructions text,
   onboarding_completed_at timestamptz,
   first_name text,
   last_name text,
@@ -1678,7 +1679,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // an answer. Checked against all 493 refs on Sep 20 2026 — main was at 77, and the only
 // other claimant of 77 is the unmerged mcp-server-vision branch, which has the same silent
 // collision described above waiting for it. 78 is free.
-export const SCHEMA_VERSION = 78;
+//
+// 80 = user_settings.writing_instructions, the user's own notes on how answers and drafts are
+// written (the second box in the chat Context sheet). 79 is deliberately skipped: the
+// chat-memory-chunks and chat-tool-loop branches (memory_chunks, PR #241/#243) hold it, and a
+// branch that reused it would merge silently and leave every database stamped 79 without this
+// column. Checked against every local and remote ref on Sep 21 2026 — nothing claims 80.
+export const SCHEMA_VERSION = 80;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2979,6 +2986,7 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS activity jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

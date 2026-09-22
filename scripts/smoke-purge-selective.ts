@@ -62,6 +62,8 @@ async function seed() {
     email: `${USER}@example.test`,
     geminiApiKeyEncrypted: "ciphertext",
     calendarFeedToken: "feed-token",
+    // User-written content, not a setting: a preferences delete must clear it.
+    writingInstructions: "Keep it short.",
     // `recomputeRecruiterRating` only counts links whose owner opted into the shared pool,
     // so without this the counter is 0 before and after and the check below proves nothing.
     recruiterSharing: 1,
@@ -398,12 +400,20 @@ async function main() {
     "a delete without preferences leaves settings alone",
     settingsKept?.calendarFeedToken === "feed-token"
   );
+  check(
+    "...including the writing notes",
+    settingsKept?.writingInstructions === "Keep it short."
+  );
 
   await purgeUserData(USER, { only: ["preferences"] });
   const settingsReset = await db.query.userSettings.findFirst({
     where: eq(schema.userSettings.userId, USER),
   });
   check("preferences resets the row", settingsReset?.calendarFeedToken === null);
+  check(
+    "...and clears the writing notes, which are content the user wrote",
+    settingsReset?.writingInstructions === null
+  );
   check(
     "...keeping the BYO provider key",
     settingsReset?.geminiApiKeyEncrypted === "ciphertext"
