@@ -41,7 +41,7 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
   return (
     <SettingsSection
       title="Decision model (optional)"
-      description="Add a TypeSafe key and Orbit hands its yes-or-no and ranking steps to Jev, TypeSafe’s decision model: spotting recruiters during a mail scan, and choosing which contacts a chat answer draws on. It answers in a fraction of a second, costs far less than a chat model, and runs on your own TypeSafe account. Keys are encrypted at rest and only used for your account."
+      description="Add a TypeSafe key and Orbit hands its yes-or-no and ranking steps to Jev, TypeSafe’s decision model: spotting recruiters during a mail scan, choosing which contacts a chat answer draws on, telling two people apart before merging them, working out which calendar events were real meetings, and skipping the bigger model on notes and messages that have nothing in them. It answers in a fraction of a second, costs far less than a chat model, and runs on your own TypeSafe account. Keys are encrypted at rest and only used for your account."
     >
       <p className="text-sm text-muted-foreground" role="status">
         Status: {status}
@@ -49,9 +49,15 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
 
       <SettingsRow title="What Jev reads">
         <p className="text-sm text-muted-foreground">
-          During a recruiter scan, each sender’s name, address, subject lines and message text —
-          the same mail your chat model reads there today. When chat ranks contacts, a short card
-          for each candidate: name, title, company, school, tags and summary.
+          The same material the step itself works from, and nothing more. During a recruiter scan,
+          each sender’s name, address, subject lines and message text. When chat answers, your
+          question and a short card for each candidate contact: name, title, company, school, tags
+          and summary. When two records might be one person, those same two cards. For a calendar
+          event, its title, description, and the domains of the organiser and guests — not their
+          addresses. For a captured note, the note itself, so it can tell a tag it already knows
+          from a new one and a real introduction offer from a turn of phrase. And in front of the
+          slower steps, a yes-or-no on whether there is anything there at all: a note with no
+          dates in it, a LinkedIn thread that is only “thanks for connecting”.
         </p>
       </SettingsRow>
 

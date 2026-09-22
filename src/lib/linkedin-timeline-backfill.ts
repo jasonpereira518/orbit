@@ -75,6 +75,10 @@ import {
   type LinkedInTimelineEvent,
 } from "@/lib/linkedin-timeline-events";
 import { MAX_BATCH_REQUESTS, submitAiBatch } from "@/lib/ai-batch";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import { SKIP_GATE_TUNING } from "@/lib/decisions/catalog";
+import { mapPool } from "@/lib/decisions/jev";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   TIMELINE_MIN_MESSAGES_FOR_AI,
@@ -268,7 +272,7 @@ export async function runLinkedInTimelineBackfill(
   userId: string,
   extract: typeof extractLinkedInTimelineEvents = extractLinkedInTimelineEvents,
   budgetMs: number = TIME_BUDGET_MS,
-  opts: { dailyCap?: number; now?: Date; submit?: typeof submitAiBatch } = {}
+  opts: { dailyCap?: number; now?: Date; submit?: typeof submitAiBatch; engines?: Engines } = {}
 ): Promise<{
   contactsProcessed: number;
   eventsCreated: number;
@@ -312,7 +316,7 @@ export async function runLinkedInTimelineBackfill(
    */
   const attempted = new Set<string>();
   /** Threads waiting to be sent as a batch, filled by the claim loop below. */
-  const queued: Array<{ contactId: string; prompt: { system: string; user: string }; baseEvents: LinkedInTimelineEvent[] }> = [];
+  let queued: Array<{ contactId: string; prompt: { system: string; user: string }; baseEvents: LinkedInTimelineEvent[] }> = [];
 
   claiming: while (Date.now() - start < budgetMs) {
     const claimed = rowsOf<{ id: string }>(
@@ -389,6 +393,20 @@ export async function runLinkedInTimelineBackfill(
 
       eventsCreated += await writeTimelineEvents(userId, contactId, events);
     }
+  }
+
+  // Most of these threads never arrange a meeting, and for those the rule-derived events
+  // are the entire answer — the batch would spend a call per thread to confirm it. With a
+  // decision model, the queue is gated in parallel first and a confident "no meeting here"
+  // writes the rule events and drops out of the batch. Without one the queue is untouched.
+  if (queued.length) {
+    const engines = opts.engines ?? (await openEngines(userId));
+    const keep = await mapPool(queued, SKIP_GATE_TUNING.concurrency, async (q) =>
+      !(await gateSkips(engines, "timeline", { messages: gateText(q.prompt.user) }))
+    );
+    const skipped = queued.filter((_, i) => !keep[i]);
+    queued = queued.filter((_, i) => keep[i]);
+    for (const q of skipped) eventsCreated += await writeTimelineEvents(userId, q.contactId, q.baseEvents);
   }
 
   // Submit what the claim loop queued. The rule-based events are written as each batch is

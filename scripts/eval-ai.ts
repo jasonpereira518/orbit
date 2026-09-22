@@ -72,6 +72,7 @@ const LLM_FREE_TASKS: ReadonlySet<TaskName> = new Set([
   "mentions",
   "calendar",
   "capture-checks",
+  "skip-gates",
 ]);
 
 if (process.env.DATABASE_URL) {
@@ -269,7 +270,7 @@ function fixtureDigest(): string {
     "ai-research-eval.json", "passage-search-eval.json",
     // The decision-model tasks' own fixtures.
     "ai-chat-routing-eval.json", "ai-duplicates-eval.json", "ai-mentions-eval.json",
-    "ai-calendar-eval.json", "ai-capture-checks-eval.json",
+    "ai-calendar-eval.json", "ai-capture-checks-eval.json", "ai-skip-gates-eval.json",
   ]) {
     try {
       hash.update(readFileSync(join(FIXTURE_DIR, file)));

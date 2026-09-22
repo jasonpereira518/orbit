@@ -30,7 +30,8 @@ import { calendarEventState, decideCalendarEvents } from "../../src/lib/decision
 import { classifyCalendarEvent } from "../../src/lib/calendar-classify";
 import type { ParsedCalendarEvent } from "../../src/lib/calendar-import";
 import { decide, decideEach } from "../../src/lib/decisions/engine";
-import { CAPTURE_CHECK_TUNING, calendarKindQuestion, presenceQuestion } from "../../src/lib/decisions/catalog";
+import { CAPTURE_CHECK_TUNING, SKIP_GATE_TUNING, calendarKindQuestion, presenceQuestion } from "../../src/lib/decisions/catalog";
+import { gateProbability, type GateName } from "../../src/lib/decisions/gates";
 import { looksLikeReferral } from "../../src/lib/opportunity-kinds";
 import type { BulkNotePersonPreview } from "../../src/lib/capture/types";
 import { DUPLICATE_TUNING } from "../../src/lib/decisions/catalog";
@@ -54,6 +55,7 @@ import { analyzeMeetingTranscript } from "../../src/lib/meeting-digest";
 import type {
   CalendarEvalFixture,
   CaptureChecksEvalFixture,
+  SkipGatesEvalFixture,
   DuplicatesEvalFixture,
   EvalCard,
   MentionsEvalFixture,
@@ -107,6 +109,7 @@ export type TaskName =
   | "mentions"
   | "calendar"
   | "capture-checks"
+  | "skip-gates"
   | "extension"
   | "ocr"
   | "transcribe"
@@ -124,6 +127,7 @@ export const TASK_NAMES: TaskName[] = [
   "mentions",
   "calendar",
   "capture-checks",
+  "skip-gates",
   "extension",
   "ocr",
   "transcribe",
@@ -685,6 +689,87 @@ export async function runCaptureChecksTask({ userId, limit, log }: RunOpts): Pro
       inventedRecall: invented ? inventedCaught / invented : null,
       presenceAct: CAPTURE_CHECK_TUNING.presenceAct,
     },
+  };
+}
+
+/* ----------------------------------------------------------------------- skip-gates --- */
+
+/**
+ * The five skip-gates (decisions/gates.ts): a Jev yes/no in front of a chat-model call that
+ * usually finds nothing. Every case carries what the gate SHOULD say, and the two numbers
+ * that matter pull against each other:
+ *
+ *  - `wrongSkips` — a call skipped that had something to find. Gated at zero: the output is
+ *    simply missing afterwards, and nothing downstream notices.
+ *  - `savedShare` — of the cases with nothing to find, how many were skipped. This is the
+ *    whole point of the gate; at zero it costs a decision call and saves nothing.
+ *
+ * Also prints, per gate, the highest threshold that still makes no wrong skip on this
+ * fixture — the number `SKIP_GATE_TUNING.skipAtOrBelow` should be tuned toward, with room
+ * left for Jev's run-to-run drift. Without `--decisions jev` nothing is skipped, which is
+ * exactly what the app does without a key, so the run is a (trivially perfect) baseline.
+ */
+export async function runSkipGatesTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const fx = fixture<SkipGatesEvalFixture>("ai-skip-gates-eval.json");
+  const engines = await openEngines(userId);
+  const cases = fx.cases.slice(0, limit);
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  const bins: Array<{ p: number; label: boolean }> = [];
+
+  let wrongSkips = 0;
+  let right = 0;
+  let saveable = 0;
+  let saved = 0;
+  /** Per gate: the lowest probability seen on a case that must NOT be skipped. */
+  const ceiling: Record<string, number> = {};
+  const perGate: Record<string, { right: number; n: number }> = {};
+
+  for (const c of cases) {
+    const p = await timed(latenciesMs, () => gateProbability(engines, c.gate, c.state));
+    const at = SKIP_GATE_TUNING.skipAtOrBelow[c.gate];
+    // What the app would do: an off gate never skips, however sure the answer is.
+    const skipped = p !== null && at !== null && p <= at;
+    if (p !== null) bins.push({ p, label: !c.skip });
+    if (!c.skip && p !== null) ceiling[c.gate] = Math.min(ceiling[c.gate] ?? 1, p);
+    if (c.skip) {
+      saveable += 1;
+      if (skipped) saved += 1;
+    } else if (skipped) {
+      wrongSkips += 1;
+    }
+    const ok = skipped === c.skip;
+    if (ok) right += 1;
+    else misses.push(c.id);
+    const g = (perGate[c.gate] ??= { right: 0, n: 0 });
+    g.n += 1;
+    if (ok) g.right += 1;
+    log(
+      `  ${ok ? "ok  " : "MISS"} skip-gates/${c.id} skip=${skipped} (want ${c.skip})` +
+        `${p === null ? " [rules: nothing skipped]" : ` p(something)=${p.toFixed(2)}`}`
+    );
+  }
+
+  for (const [g, v] of Object.entries(perGate)) {
+    // The headroom on this fixture. A threshold at or just under it skips everything it
+    // safely can; the shipped value sits below, for drift.
+    const safe = ceiling[g];
+    log(
+      `  --   ${g}: ${v.right}/${v.n} correct, shipped threshold ${SKIP_GATE_TUNING.skipAtOrBelow[g as GateName] ?? "off"}` +
+        `${safe === undefined ? "" : `, no wrong skip below ${safe.toFixed(2)}`}`
+    );
+  }
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      gateAccuracy: cases.length ? right / cases.length : null,
+      wrongSkips,
+      savedShare: saveable ? saved / saveable : null,
+    },
+    ...(bins.length ? { calibration: { "skip-gates": calibrationBins(bins) } } : {}),
   };
 }
 
@@ -1450,6 +1535,7 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   mentions: runMentionsTask,
   calendar: runCalendarTask,
   "capture-checks": runCaptureChecksTask,
+  "skip-gates": runSkipGatesTask,
   extension: runExtensionTask,
   ocr: runOcrTask,
   transcribe: runTranscribeTask,

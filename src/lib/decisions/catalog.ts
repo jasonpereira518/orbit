@@ -416,3 +416,85 @@ export const CAPTURE_CHECK_TUNING = {
   noteChars: 12_000,
   budgetMs: 1_500,
 } as const;
+
+/* ------------------------------------------------------------------ skip-gates -------- */
+
+/**
+ * "Is there anything here?" before a chat-model call whose answer is usually "nothing".
+ * Jev only: without a TypeSafe key every one of these calls runs exactly as before — the
+ * gate's whole point is to skip the model, so there is no model to fall back to.
+ *
+ * Each question asks about the INPUT's own words; a confident "no" skips the call and the
+ * step returns what it returns for an empty answer today.
+ */
+export const SKIP_GATES = {
+  dates: noul(
+    "Does `notes` state a date, deadline or time frame for something to happen, or a rhythm for staying in touch?",
+    {
+      true: "A meeting next Tuesday, a deadline, \"follow up in two weeks\", \"after the holidays\", \"check in monthly\".",
+      false: "No date, deadline, time frame or rhythm is stated for anything.",
+    },
+  ),
+  brief: noul(
+    "Does `new_input` contain anything `current_brief` does not already reflect — a newer interaction, a changed role or company, a new or closed opportunity or commitment?",
+    {
+      true: "Something in the input is newer than, or contradicts, what the brief says.",
+      false: "Everything in the input is already reflected in the brief.",
+    },
+  ),
+  starters: noul(
+    "Does `material` contain something specific about this person that an opening line could refer to — a shared interest, a recent post or role change, a mutual connection, or a concrete detail from the user's notes?",
+    {
+      true: "At least one concrete, person-specific detail.",
+      false: "Only generic facts: a name, a title, a company, a location.",
+    },
+  ),
+  enrich: noul(
+    "Is `messages` a real conversation with substance, beyond a connection-request note, a single greeting or automated text?",
+    {
+      true: "Back-and-forth, or at least one message with a real ask, update or detail.",
+      false: "Only boilerplate: \"I'd like to join your network\", \"thanks for connecting\", one-line pleasantries.",
+    },
+  ),
+  timeline: noul(
+    "Do `messages` propose, schedule or confirm a meeting, a call or an in-person get-together?",
+    {
+      true: "\"Let's grab coffee Thursday\", \"sent you an invite\", \"great meeting you at the conference\", \"call at 3?\".",
+      false: "No meeting, call or get-together is proposed, scheduled or confirmed.",
+    },
+  ),
+} as const;
+
+export const SKIP_GATE_TUNING = {
+  /**
+   * The call is skipped at or below this probability that there is something here. `null`
+   * turns a gate off: it is never asked and the call always runs.
+   *
+   * TUNED on `ai-skip-gates-eval.json`, two runs (docs/ai-evals/2026-09-22-*-jev). Each
+   * number sits in the gap that gate's own cases opened, on the safe side of the middle,
+   * and run-to-run drift across those two runs was at most 0.04:
+   *
+   *   dates     nothing-here ≤ 0.17, something-here ≥ 0.94  → 0.40
+   *   starters  nothing-here ≤ 0.29, something-here ≥ 0.94  → 0.45
+   *   enrich    nothing-here ≤ 0.46, something-here ≥ 0.87  → 0.35 (a mass InMail reads
+   *             as substance at 0.46, so it is asked about rather than risk the gap)
+   *   timeline  nothing-here ≤ 0.02, something-here ≥ 0.39  → 0.15 ("great meeting you at
+   *             SaaStr" is a real meeting and only scores 0.39, so this one stays low)
+   *
+   *   brief     OFF. Measured and it does not work: "the input changed but the
+   *             relationship did not" scored 0.45–0.96, overlapping the cases that had
+   *             genuinely changed (0.96–0.98). Diffing a long input against a prose brief
+   *             is past what a decision model can do, and the wrong-skip cost — a brief
+   *             that quietly stops updating — is high. The wiring and the fixture cases
+   *             stay so a later model version can be re-measured by flipping this number.
+   */
+  skipAtOrBelow: { dates: 0.4, brief: null, starters: 0.45, enrich: 0.35, timeline: 0.15 } as Record<
+    keyof typeof SKIP_GATES,
+    number | null
+  >,
+  /** In front of a call the person may be waiting on; past this the call just runs. */
+  budgetMs: 1_200,
+  /** Background paths gate a whole slice at once, this many in flight. */
+  concurrency: 4,
+  inputChars: 12_000,
+} as const;

@@ -221,3 +221,20 @@ export type CaptureChecksEvalFixture = {
   presence: Array<{ id: string; note: string; people: Record<string, "participant" | "mentioned" | "not_in_note"> }>;
 };
 
+
+/**
+ * One shape for all five skip-gates (decisions/gates.ts). `skip` is what the gate SHOULD
+ * say: true when the model call would find nothing, false when there is something in the
+ * input to find. A wrong skip — `skip: false` that the gate skipped — loses real output, so
+ * the task gates on that count being zero and reports the saved share separately.
+ */
+export type SkipGatesEvalFixture = {
+  cases: Array<{
+    id: string;
+    gate: "dates" | "brief" | "starters" | "enrich" | "timeline";
+    /** The gate's state, verbatim: the same keys the call site passes. */
+    state: Record<string, string>;
+    skip: boolean;
+    why?: string;
+  }>;
+};

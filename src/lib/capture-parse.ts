@@ -219,11 +219,15 @@ export async function runCaptureParse(
   // extraction is the core value and must survive a bad dates response. The duplicate
   // lookup only depends on userId, so it doesn't need to wait on either AI call.
   const today = opts.now ?? new Date();
+  // Opened here rather than at its first use below: the dates pass is gated on a decision
+  // model, and it starts inside this same Promise.all.
+  const enginesP = opts.engines ? Promise.resolve(opts.engines) : openEngines(userId, { llm: true });
   const [personParse, rawCommitments, existing] = await Promise.all([
     parseMultiPersonNotesWithAI(userId, corpus, mergedHints, { onProgress: opts.onProgress }),
     fetchRawCommitments(userId, corpus, {
       today,
       knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
+      engines: enginesP,
     }).catch(
       () => ({ commitments: [], cadences: [] }) as Awaited<ReturnType<typeof fetchRawCommitments>>
     ),
@@ -415,7 +419,7 @@ export async function runCaptureParse(
     // non-null assertion above would otherwise hand `resolveMentions` a null name.
     ...mentionedOnly.map((p) => ({ name: p.name, context: p.context, company: p.company, nearPerson: null })),
   ];
-  const engines = opts.engines ?? (await openEngines(userId, { llm: true }));
+  const engines = await enginesP;
 
   // A card's default target, where the rules only have a sub-0.85 name match to offer. Done
   // before mentions, which exclude whoever a card already saves into.
