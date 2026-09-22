@@ -198,3 +198,26 @@ export type MentionsEvalFixture = {
   }>;
 };
 
+export type CalendarEvalFixture = {
+  self: string;
+  events: Array<{
+    id: string;
+    summary: string;
+    description: string;
+    location: string;
+    minutes: number;
+    attendees: Array<{ name: string; email: string }>;
+    organizer?: { name: string; email: string };
+    selfResponse?: string;
+    /** A 1:1 or networking touch that should become a contact and a logged meeting. */
+    keep: boolean;
+    why?: string;
+  }>;
+};
+
+export type CaptureChecksEvalFixture = {
+  referrals: Array<{ id: string; label: string; sentence: string; referral: boolean }>;
+  tags: Array<{ id: string; existing: string[]; proposed: string; expect: string }>;
+  presence: Array<{ id: string; note: string; people: Record<string, "participant" | "mentioned" | "not_in_note"> }>;
+};
+

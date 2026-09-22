@@ -18,6 +18,7 @@ import {
   createContactForUser,
   logNoteInteractionForUser,
   updateContactForUser,
+  withExistingTagNames,
 } from "@/lib/contact-writes";
 import {
   DEFAULT_FOLLOW_UP_WINDOW_DAYS,
@@ -249,7 +250,20 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       };
       if (contactId) {
         // Merge: never overwrite contacts.notes — the new material lives on the timeline.
-        await updateContactForUser(userId, contactId, { fullName: parsed.name || undefined, ...fields }, WRITE_OPTS);
+        // Tags are ADDED to the contact's own, never a replacement list: `updateContactForUser`
+        // sets the full list, and the note's tags alone would delete the rest (an empty list
+        // deleted them all).
+        const { tagNames, ...rest } = fields;
+        await updateContactForUser(
+          userId,
+          contactId,
+          {
+            fullName: parsed.name || undefined,
+            ...rest,
+            ...(tagNames?.length ? { tagNames: await withExistingTagNames(userId, contactId, tagNames) } : {}),
+          },
+          WRITE_OPTS
+        );
         updated += 1;
       } else {
         if (!parsed.name) throw new Error("A name is required to create a contact");

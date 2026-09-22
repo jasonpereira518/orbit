@@ -25,7 +25,14 @@ import { understandQuery } from "../../src/lib/chat-retrieval";
 import { findOrgRosters } from "../../src/lib/chat-roster";
 import { openEngines } from "../../src/lib/decisions/engine";
 import { personCard, samePersonProbabilities } from "../../src/lib/decisions/duplicates";
-import { decideMentions, whichContact } from "../../src/lib/decisions/capture";
+import { decideCaptureChecks, decideMentions, whichContact } from "../../src/lib/decisions/capture";
+import { calendarEventState, decideCalendarEvents } from "../../src/lib/decisions/calendar";
+import { classifyCalendarEvent } from "../../src/lib/calendar-classify";
+import type { ParsedCalendarEvent } from "../../src/lib/calendar-import";
+import { decide, decideEach } from "../../src/lib/decisions/engine";
+import { CAPTURE_CHECK_TUNING, calendarKindQuestion, presenceQuestion } from "../../src/lib/decisions/catalog";
+import { looksLikeReferral } from "../../src/lib/opportunity-kinds";
+import type { BulkNotePersonPreview } from "../../src/lib/capture/types";
 import { DUPLICATE_TUNING } from "../../src/lib/decisions/catalog";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "../../src/lib/duplicates";
 import { resolveMentions } from "../../src/lib/mention-resolution";
@@ -45,6 +52,8 @@ import { loadPassageFixture, seedPassageNotes } from "./eval-passage-notes";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
 import { analyzeMeetingTranscript } from "../../src/lib/meeting-digest";
 import type {
+  CalendarEvalFixture,
+  CaptureChecksEvalFixture,
   DuplicatesEvalFixture,
   EvalCard,
   MentionsEvalFixture,
@@ -96,6 +105,8 @@ export type TaskName =
   | "chat-routing"
   | "duplicates"
   | "mentions"
+  | "calendar"
+  | "capture-checks"
   | "extension"
   | "ocr"
   | "transcribe"
@@ -111,6 +122,8 @@ export const TASK_NAMES: TaskName[] = [
   "chat-routing",
   "duplicates",
   "mentions",
+  "calendar",
+  "capture-checks",
   "extension",
   "ocr",
   "transcribe",
@@ -511,6 +524,167 @@ export async function runMentionsTask({ userId, limit, log }: RunOpts): Promise<
       pickAccuracy: picks ? picksRight / picks : null,
     },
     ...(pickBins.length ? { calibration: { "mentions.resolve": calibrationBins(pickBins) } } : {}),
+  };
+}
+
+/* ------------------------------------------------------------------------ calendar --- */
+
+/**
+ * Which calendar events become contacts and logged meetings (decisions/calendar.ts), through
+ * `decideCalendarEvents` — the rules, then Jev's veto. Also Jev's raw read on EVERY event
+ * (touch = P(one_on_one) + P(networking)), for the bins a future `act` would be read off.
+ */
+export async function runCalendarTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const fx = fixture<CalendarEvalFixture>("ai-calendar-eval.json");
+  const cases = fx.events.slice(0, limit);
+  const engines = await openEngines(userId);
+  const start = new Date("2026-08-04T15:00:00Z");
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  let right = 0;
+  let falseKeeps = 0;
+  let lostKeeps = 0;
+  let rulesRight = 0;
+  const bins: Array<{ p: number; label: boolean }> = [];
+
+  const events: ParsedCalendarEvent[] = cases.map((e) => ({
+    uid: e.id,
+    summary: e.summary,
+    description: e.description,
+    location: e.location,
+    start,
+    end: new Date(start.getTime() + e.minutes * 60_000),
+    attendees: e.attendees,
+    organizer: e.organizer ?? null,
+    selfResponse: e.selfResponse ?? null,
+  }));
+  const { decided } = await timed(latenciesMs, () => decideCalendarEvents(engines, events, [fx.self]));
+  const raw = engines.jev
+    ? await decideEach({ jev: engines.jev, llm: null }, { engines: ["jev"], budgetMs: 30_000 }, {
+        operation: "calendar.kind",
+        items: events.map((e) => calendarEventState(e, [fx.self])),
+        chunkSize: 6,
+        concurrency: 3,
+        state: (chunk) => ({ events: Object.fromEntries(chunk.map(({ key, item }) => [key, item])) }),
+        question: (key) => ({ ...calendarKindQuestion, instructions: `What kind of calendar entry is \`events.${key}\`?` }),
+      })
+    : [];
+
+  cases.forEach((c, i) => {
+    const keep = decided[i].classification.keep;
+    const rulesKeep = classifyCalendarEvent(events[i], [fx.self]).keep;
+    if (rulesKeep === c.keep) rulesRight += 1;
+    if (keep === c.keep) right += 1;
+    else if (keep) falseKeeps += 1;
+    else lostKeeps += 1;
+    const r = raw[i];
+    const touch = r && r.engine === "jev" ? (r.answer.probabilities.one_on_one ?? 0) + (r.answer.probabilities.networking ?? 0) : null;
+    if (touch !== null) bins.push({ p: Math.min(1, touch), label: c.keep });
+    if (keep !== c.keep) misses.push(c.id);
+    log(`  ${keep === c.keep ? "ok  " : "MISS"} calendar/${c.id} keep=${keep} (rules ${rulesKeep}, want ${c.keep})${touch === null ? "" : ` touch=${touch.toFixed(2)}`} [${decided[i].by}]`);
+  });
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      keepAccuracy: cases.length ? right / cases.length : null,
+      rulesKeepAccuracy: cases.length ? rulesRight / cases.length : null,
+      falseKeeps,
+      lostKeeps,
+    },
+    ...(bins.length ? { calibration: { "calendar.kind": calibrationBins(bins) } } : {}),
+  };
+}
+
+/* ------------------------------------------------------------------ capture checks --- */
+
+/**
+ * The capture checks (decisions/capture.ts `decideCaptureChecks`) on their own fixture:
+ * referral overrides, tag mapping, and — measured raw, because it ships disabled — presence.
+ */
+export async function runCaptureChecksTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const fx = fixture<CaptureChecksEvalFixture>("ai-capture-checks-eval.json");
+  const engines = await openEngines(userId);
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  const person = (tags: string[], opportunities: BulkNotePersonPreview["opportunities"]) =>
+    ({ parsed: { name: "x", tags }, opportunities }) as unknown as BulkNotePersonPreview;
+
+  // Referral: the language test decides; with Jev, a confident "no" reverts it.
+  let refRight = 0;
+  let wrongReferrals = 0;
+  for (const c of fx.referrals.slice(0, limit)) {
+    const rules = looksLikeReferral(c.label, c.sentence);
+    const item = person([], [
+      { kind: rules ? "referral" : "other", label: c.label, direction: null, sourceExcerpt: c.sentence, rawDatePhrase: null, confidenceScore: 50, dueDateIso: null, ...(rules ? { overriddenKind: "other" as const } : {}) },
+    ]);
+    await timed(latenciesMs, () => decideCaptureChecks(engines, { items: [item], corpus: c.sentence, existingTags: [] }));
+    const said = item.opportunities[0].kind === "referral";
+    if (said === c.referral) refRight += 1;
+    else if (said) wrongReferrals += 1;
+    if (said !== c.referral) misses.push(c.id);
+    log(`  ${said === c.referral ? "ok  " : "MISS"} capture-checks/${c.id} referral=${said} (rules ${rules}, want ${c.referral})`);
+  }
+
+  // Tags: exact (case-insensitive) match is the rule; Jev maps near-synonyms.
+  let tagRight = 0;
+  for (const c of fx.tags.slice(0, limit)) {
+    const item = person([c.proposed], []);
+    await decideCaptureChecks(engines, { items: [item], corpus: "", existingTags: c.existing });
+    const written = item.parsed.tags?.[0] ?? c.proposed;
+    const got = c.existing.includes(written) ? written : "keep_new";
+    const exact = c.existing.find((t) => t.toLowerCase() === c.proposed.toLowerCase());
+    const final = exact ?? got;
+    if (final === c.expect) tagRight += 1;
+    else misses.push(c.id);
+    log(`  ${final === c.expect ? "ok  " : "MISS"} capture-checks/${c.id} "${c.proposed}" → ${final} (want ${c.expect})`);
+  }
+
+  // Presence, raw (it acts only when `presenceAct` is set): Jev's 3-way read per name.
+  let presRight = 0;
+  let presAsked = 0;
+  let inventedCaught = 0;
+  let invented = 0;
+  for (const c of fx.presence.slice(0, limit)) {
+    const names = Object.keys(c.people);
+    const keys = names.map((_, i) => `c${String(i + 1).padStart(2, "0")}`);
+    const r = engines.jev
+      ? await decide({ jev: engines.jev, llm: null }, { engines: ["jev"], budgetMs: 10_000 }, {
+          operation: "capture.checks",
+          state: { note: c.note, people: Object.fromEntries(names.map((n, i) => [keys[i], n])) },
+          questions: Object.fromEntries(keys.map((k) => [k, presenceQuestion(k)])),
+        })
+      : null;
+    names.forEach((name, i) => {
+      const want = c.people[name];
+      // The rule fallback: a name none of whose words appear in the note is invented.
+      const ruleInvented = !name.toLowerCase().split(/\s+/).some((w) => c.note.toLowerCase().includes(w));
+      if (want === "not_in_note") {
+        invented += 1;
+        if (r?.engine === "jev" ? r.answers[keys[i]].choice === "not_in_note" : ruleInvented) inventedCaught += 1;
+      }
+      if (r?.engine === "jev") {
+        presAsked += 1;
+        if (r.answers[keys[i]].choice === want) presRight += 1;
+      }
+    });
+    log(`  ok   capture-checks/${c.id} presence ${r?.engine === "jev" ? names.map((n, i) => `${n}=${r.answers[keys[i]].choice}`).join(", ") : "(rules)"}`);
+  }
+
+  return {
+    cases: fx.referrals.length + fx.tags.length + fx.presence.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      referralAccuracy: fx.referrals.length ? refRight / Math.min(fx.referrals.length, limit ?? Infinity) : null,
+      wrongReferrals,
+      tagAccuracy: fx.tags.length ? tagRight / Math.min(fx.tags.length, limit ?? Infinity) : null,
+      presenceAccuracy: presAsked ? presRight / presAsked : null,
+      inventedRecall: invented ? inventedCaught / invented : null,
+      presenceAct: CAPTURE_CHECK_TUNING.presenceAct,
+    },
   };
 }
 
@@ -1274,6 +1448,8 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   "chat-routing": runChatRoutingTask,
   duplicates: runDuplicatesTask,
   mentions: runMentionsTask,
+  calendar: runCalendarTask,
+  "capture-checks": runCaptureChecksTask,
   extension: runExtensionTask,
   ocr: runOcrTask,
   transcribe: runTranscribeTask,

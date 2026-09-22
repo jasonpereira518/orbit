@@ -60,6 +60,8 @@ export type CaptureOpportunityPreview = {
   confidenceScore: number;
   /** YYYY-MM-DD, so a date input round-trips without timezone drift. */
   dueDateIso: string | null;
+  /** The model's kind when the referral language test overrode it (see ExtractedOpportunity). */
+  overriddenKind?: OpportunityKind;
 };
 
 /** A dated commitment awaiting the user's review, shaped for the client. */

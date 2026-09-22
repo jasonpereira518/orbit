@@ -33,6 +33,14 @@
     "outcomeAccuracy": { "maxDrop": 0.04 },
     "wrongLinks": { "maxRise": 0 }
   },
+  "calendar": {
+    "keepAccuracy": { "maxDrop": 0 },
+    "lostKeeps": { "maxRise": 0 }
+  },
+  "capture-checks": {
+    "referralAccuracy": { "maxDrop": 0 },
+    "tagAccuracy": { "maxDrop": 0.1 }
+  },
   "recruiter-gate": {
     "gateWrongSkips": { "maxRise": 0 }
   },

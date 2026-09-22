@@ -323,3 +323,96 @@ export const MERGE_TARGET_TUNING = {
   pickAbove: 0.6,
   budgetMs: 1_500,
 } as const;
+
+/* ------------------------------------------------------------------ calendar ---------- */
+
+/**
+ * What a calendar event is. Only the first two are relationship touches — they create
+ * contacts, log a meeting and (for ICS) schedule a follow-up. Counts, duration and dates are
+ * computed in code and passed as fields; Jev reads text, not arithmetic.
+ */
+export const CALENDAR_KINDS = {
+  one_on_one: "A one-to-one meeting with one other person the user knows or is getting to know",
+  networking: "A small intro, coffee, or networking conversation with a few people",
+  internal_team: "A work-internal meeting: a sync, standup, planning, review, or an interview the user conducts",
+  personal_block: "A personal appointment or block: doctor, dentist, gym, travel, focus time, errands, a vendor or service appointment",
+  invite: "A public or large event: a talk, party, webinar, conference or meetup invitation",
+  other: "Anything else",
+} as const;
+
+export const calendarKindQuestion = choice(
+  "What kind of calendar entry is `event`?",
+  CALENDAR_KINDS,
+);
+
+export const CALENDAR_TUNING = {
+  /**
+   * START. A rule "keep" is SKIPPED when Jev's probability that the event is a one-to-one
+   * or networking touch is at or below this — no contact, no fake meeting, no follow-up.
+   * Skipping is the direction today's rules already take silently for most events.
+   */
+  skipAtOrBelow: 0.2,
+  /**
+   * Keeping an event the rules skip creates contacts nobody asked for. DISABLED until the
+   * calibration bins clear the bar; while off, rule-skipped events are not even asked about.
+   */
+  act: null as number | null,
+  /**
+   * Events per call. Measured Sep 22 2026 (`calendar` eval): the other events in a call act
+   * as distractors — the same customer-onboarding call scored 0.10 in one batch and escaped
+   * the veto in another. 3 matched 1 and 6 on accuracy (90.6%) with fewer requests than 1.
+   */
+  chunkSize: 3,
+  concurrency: 3,
+  /** Background sync: a page of events at most. */
+  budgetMs: 6_000,
+  /** ICS feeds re-read a 150-day window every 30 minutes; an event is judged once. */
+  cacheDays: 90,
+  descriptionChars: 500,
+} as const;
+
+/* ------------------------------------------------------------------ capture: checks --- */
+
+/** Per extracted person, over the note: were they in the conversation, only named, or neither? */
+export function presenceQuestion(key: string) {
+  return choice(`In \`note\`, what is the person named \`people.${key}\`?`, {
+    participant: "Someone the user met, spoke with, or was in the conversation with",
+    mentioned: "Someone only talked ABOUT: named or referred to, but not part of the conversation",
+    not_in_note: "Not in the note at all — nobody by that name or description appears",
+  });
+}
+
+/** Per tag the model proposed: one of the account's existing tags, or genuinely new. */
+export function tagMatchQuestion(key: string, existing: Record<string, string>): ChoiceQuestion<string> {
+  return choice<string>(`Which of the user's existing tags means the same as \`proposed.${key}\`?`, {
+    ...existing,
+    keep_new: "None of them means the same thing — it is a new tag",
+  });
+}
+
+/** Per opportunity the referral LANGUAGE test relabelled, over its own sentence. */
+export function referralQuestion(key: string) {
+  return noul(
+    `In \`offers.${key}.sentence\`, is someone offering to put the user's name forward for a role, or to refer the user to someone hiring?`,
+    {
+      true: "An offer to refer, recommend, vouch for, or pass on the user's name for a job.",
+      false: "A refusal (\"they don't do referrals\"), advice, a recommendation of something other than the user (a book, a tool), or a general mention of referrals.",
+    },
+  );
+}
+
+export const CAPTURE_CHECK_TUNING = {
+  /**
+   * Dropping an invented person, or flipping participant/mentioned against the model, with
+   * no review of that decision. DISABLED until the calibration bins clear the bar.
+   */
+  presenceAct: null as number | null,
+  /** START. A proposed tag is written as the existing one when Jev's pick clears this. */
+  tagPickAbove: 0.6,
+  /** START. The language test's "referral" is reverted to the model's kind below this. */
+  referralVetoBelow: 0.3,
+  /** Existing tags offered per proposed tag (a choice takes at most 255 options). */
+  maxExistingTags: 200,
+  noteChars: 12_000,
+  budgetMs: 1_500,
+} as const;

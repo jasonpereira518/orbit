@@ -1,9 +1,15 @@
 import {
+  CAPTURE_CHECK_TUNING,
   MENTION_TUNING,
   MERGE_TARGET_TUNING,
   mergeTargetQuestion,
+  presenceQuestion,
+  referralQuestion,
+  tagMatchQuestion,
   whichContactQuestion,
 } from "@/lib/decisions/catalog";
+import type { BulkNotePersonPreview } from "@/lib/capture/types";
+import type { QuestionMap } from "@/lib/decisions/jev";
 import { canAct, decide, type Engines } from "@/lib/decisions/engine";
 import { mapPool } from "@/lib/decisions/jev";
 import type { DuplicateSubject } from "@/lib/duplicates";
@@ -209,3 +215,111 @@ export async function decideMergeTargets(
     return index >= 0 ? duplicates[index].id : null;
   });
 }
+
+const key = (i: number, prefix = "c") => `${prefix}${String(i + 1).padStart(2, "0")}`;
+
+/**
+ * Three checks on a parsed capture, as three small parallel Jev calls (~200ms together), each
+ * falling back to exactly what the parse produced:
+ *
+ *  - REFERRAL. A regex decides "referral" over the model's own label and has no negation —
+ *    "they don't do referrals" and "I'd recommend you read…" both matched, and a referral
+ *    drives the hourly job-match notifications. Jev reads the sentence; a confident "no"
+ *    restores the model's kind.
+ *  - TAGS. The model writes free-text tags without seeing the account's own. A proposed tag
+ *    Jev maps onto an existing one is written as that one ("ML" → "Machine learning"). The
+ *    person still sees and edits the tags on the card.
+ *  - PRESENCE. A name the model extracted that is nowhere in the note is an invented person.
+ *    Dropping one is an action with no review of it, so it ships disabled (`presenceAct`).
+ *
+ * Mutates `items` in place (the parse result is being built) and reports what it changed.
+ */
+export async function decideCaptureChecks(
+  engines: Engines,
+  input: { items: BulkNotePersonPreview[]; corpus: string; existingTags: readonly string[] },
+): Promise<{ referralsReverted: number; tagsMapped: number; peopleDropped: number }> {
+  const out = { referralsReverted: 0, tagsMapped: 0, peopleDropped: 0 };
+  if (!engines.jev || input.items.length === 0) return out;
+  const jevOnly = { jev: engines.jev, llm: null };
+  const policy = { engines: ["jev"] as const, budgetMs: CAPTURE_CHECK_TUNING.budgetMs };
+
+  // Referral overrides to check.
+  const overrides = input.items.flatMap((item) =>
+    item.opportunities.filter((o) => o.kind === "referral" && o.overriddenKind).map((o) => o),
+  );
+  // Proposed tags with no case-insensitive match among the account's own.
+  const existingByLower = new Map(input.existingTags.map((t) => [t.toLowerCase(), t]));
+  const proposed = [
+    ...new Set(input.items.flatMap((i) => i.parsed.tags ?? []).map((t) => t.trim()).filter((t) => t && !existingByLower.has(t.toLowerCase()))),
+  ];
+  const existing = input.existingTags.slice(0, CAPTURE_CHECK_TUNING.maxExistingTags);
+  const existingOptions = Object.fromEntries(existing.map((t, i) => [key(i, "e"), t]));
+  const presenceAct = CAPTURE_CHECK_TUNING.presenceAct;
+
+  const ask = <Q extends QuestionMap>(operationState: Record<string, unknown>, questions: Q) =>
+    decide(jevOnly, policy, { operation: "capture.checks", state: operationState, questions });
+
+  const [referral, tags, presence] = await Promise.all([
+    overrides.length
+      ? ask(
+          { offers: Object.fromEntries(overrides.map((o, i) => [key(i), { label: o.label, sentence: o.sourceExcerpt }])) },
+          Object.fromEntries(overrides.map((_, i) => [key(i), referralQuestion(key(i))])),
+        )
+      : null,
+    proposed.length && existing.length
+      ? ask(
+          { proposed: Object.fromEntries(proposed.map((t, i) => [key(i), t])), existing_tags: existingOptions },
+          Object.fromEntries(proposed.map((_, i) => [key(i), tagMatchQuestion(key(i), existingOptions)])),
+        )
+      : null,
+    presenceAct !== null
+      ? ask(
+          {
+            note: input.corpus.slice(0, CAPTURE_CHECK_TUNING.noteChars),
+            people: Object.fromEntries(input.items.map((item, i) => [key(i), item.parsed.name ?? ""])),
+          },
+          Object.fromEntries(input.items.map((_, i) => [key(i), presenceQuestion(key(i))])),
+        )
+      : null,
+  ]);
+
+  if (referral?.engine === "jev") {
+    overrides.forEach((o, i) => {
+      const a = referral.answers[key(i)];
+      if (a?.type === "noul" && a.probability < CAPTURE_CHECK_TUNING.referralVetoBelow && o.overriddenKind) {
+        o.kind = o.overriddenKind;
+        out.referralsReverted += 1;
+      }
+      delete o.overriddenKind;
+    });
+  }
+
+  if (tags?.engine === "jev") {
+    const mapped = new Map<string, string>();
+    proposed.forEach((t, i) => {
+      const a = tags.answers[key(i)];
+      if (a?.type !== "choice" || a.choice === "keep_new") return;
+      if ((a.probabilities[a.choice] ?? 0) < CAPTURE_CHECK_TUNING.tagPickAbove) return;
+      const target = existingOptions[a.choice];
+      if (target) mapped.set(t.toLowerCase(), target);
+    });
+    for (const item of input.items) {
+      if (!item.parsed.tags?.length) continue;
+      const next = item.parsed.tags.map((t) => mapped.get(t.trim().toLowerCase()) ?? t);
+      out.tagsMapped += next.filter((t, i) => t !== item.parsed.tags![i]).length;
+      item.parsed.tags = [...new Map(next.map((t) => [t.toLowerCase(), t])).values()];
+    }
+  }
+
+  if (presence?.engine === "jev" && presenceAct !== null) {
+    const keep = input.items.filter((_, i) => {
+      const a = presence.answers[key(i)];
+      const invented = a?.type === "choice" && a.choice === "not_in_note" && canAct("jev", a.probabilities.not_in_note, presenceAct);
+      if (invented) out.peopleDropped += 1;
+      return !invented;
+    });
+    input.items.splice(0, input.items.length, ...keep);
+  }
+  return out;
+}
+

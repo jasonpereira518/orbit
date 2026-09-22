@@ -185,6 +185,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-jev-recruiter-scan": "pglite",
   "smoke-decision-engine": "pglite",
   "smoke-decisions-contacts": "pglite",
+  "smoke-decisions-capture": "pglite",
   "smoke-ai-result-cache": "pglite",
   "smoke-ai-shared-prefix": "pglite",
   "smoke-ai-batch": "pglite",

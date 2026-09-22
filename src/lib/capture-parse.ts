@@ -13,7 +13,7 @@
  */
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts } from "@/db/schema";
+import { contacts, tags } from "@/db/schema";
 import {
   parseMultiPersonNotesWithAI,
   type ParseProgress,
@@ -43,7 +43,7 @@ import {
 import { isSelf } from "@/lib/meeting-digest";
 import { getMeetingTranscript, loadMeetingSelf } from "@/lib/meeting-sessions";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
-import { decideMentions, decideMergeTargets } from "@/lib/decisions/capture";
+import { decideCaptureChecks, decideMentions, decideMergeTargets } from "@/lib/decisions/capture";
 import { resolveMentionsWithPicks, type MentionCandidate } from "@/lib/mention-resolution";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type { PreviewMention } from "@/lib/note-batches";
@@ -382,6 +382,7 @@ export async function runCaptureParse(
         rawDatePhrase: o.rawDatePhrase,
         confidenceScore: o.confidenceScore,
         dueDateIso: o.dueDate ? isoDay(o.dueDate) : null,
+        ...(o.overriddenKind ? { overriddenKind: o.overriddenKind } : {}),
       })),
       impliedSteps: impliedResult.steps,
       cadence: (() => {
@@ -431,6 +432,16 @@ export async function runCaptureParse(
     if (target === "new") item.suggestedNew = true;
     else item.suggestedMergeId = target;
   });
+
+  // Referral overrides, tags and invented people, read against the note (Jev only).
+  if (engines.jev) {
+    const existingTags = await (async () => {
+      const db = await getDb();
+      const rows = await db.select({ name: tags.name }).from(tags).where(eq(tags.userId, userId));
+      return rows.map((r) => r.name);
+    })().catch(() => [] as string[]);
+    await decideCaptureChecks(engines, { items, corpus, existingTags }).catch(() => null);
+  }
 
   const subjects = existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title }));
   const ruled = resolveMentionsWithPicks(
