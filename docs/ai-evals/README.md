@@ -97,17 +97,35 @@ Two things are still owed here:
 
 Jev is TypeSafe's decision model: typed questions in, calibrated probabilities out, at
 $0.042 per million input tokens with output free. It runs only on a person's own TypeSafe
-key (Settings → AI → Decision model), in two places so far, each with its pre-Jev path as
-the fallback:
+key (Settings → AI → Decision model). Every decision keeps its pre-Jev path, and which
+path that is was chosen per decision (`src/lib/decisions/engine.ts`): a rare, costly
+judgement falls back to the person's own chat model, a frequent or latency-critical one
+falls back to today's rules, so nobody's bill or wait moves when there is no key.
 
 - **The recruiter scan.** A *prefilter* in discovery wins back senders the keyword test
   drops, and a *gate* in front of the LLM settles senders Jev is confident are not
   recruiters without an LLM call.
-- **The chat rerank.** One ordered-score question per candidate replaces the flash-model
-  rerank, whose cost was mostly output tokens spent *writing* 0–10 scores.
+- **The chat rerank**, and **chat routing**: how deep to go, whether to load the attention
+  brief, whether the question is about recruiters, and which matched org rosters the
+  question is actually about. Without Jev the question parser answers, on the call it
+  already makes.
+- **Duplicates and mentions.** Jev vetoes a merge the rules would have made on a name, ranks
+  the review queue, picks a card's merge target, and resolves an ambiguous `@mention`.
+- **Calendar and capture.** Which events were meetings with people, and inside a capture:
+  who was really in the note, which proposed tag is one you already have, and whether an
+  offer to put your name forward is real.
+- **Skip-gates.** In front of five slower calls, one question: is there anything here at
+  all? Only a confident no skips, and only Jev may answer, because asking a chat model
+  costs what the call it would save costs.
 
 Questions and thresholds live together in `src/lib/decisions/catalog.ts`, tuned against one
 pinned version (`JEV_MODEL`). Values marked START there have not been through a tuned run.
+
+**Only Jev may act on its own.** An LLM answer can veto, rank or suggest; it can never take
+an action, because its confidence is self-reported and nothing here has measured what it
+means. Every `act` threshold in the catalog ships `null` (disabled) and is enabled only when
+that decision's calibration bins show precision 1.0 on n ≥ 20 — which none has yet, so on
+this branch no decision acts autonomously.
 
 **The number to beat.** On the recruiter fixture, reading only what discovery has (the From
 line, the subject and a 200-character snippet), the keyword prefilter admits **7 of 18**
@@ -135,6 +153,29 @@ and a sender it drops is never looked at again. Measured Sep 21 2026 with the
 - *Still owed:* the end-to-end `recruiter` and `chat` tasks with `--decisions jev`, which need a
   paid Gemini key beside the TypeSafe one.
 
+**The rest of the decisions, measured Sep 22 2026** (`2026-09-22-jev-baseline/` against
+`2026-09-22-jev/`, `jev-1.13.0`). Left column is what ships without a TypeSafe key:
+
+| Decision | Without Jev | With Jev |
+|---|---|---|
+| Chat routing: depth | 87.0% | **94.3%** |
+| Chat routing: attention (precision / recall) | 52% / 65% | **100% / 100%** |
+| Chat routing: recruiter intent | 95.9% | **99.2%** |
+| Chat routing: roster relevance | 77.3% | **90.9%** |
+| Duplicates: wrong merges | 13 | **0** (0 merges lost; pair accuracy 91.1%) |
+| Mentions: outcome | 29% | **46%** (0 wrong links; raw pick 75%) |
+| Calendar: keep/skip | 56.3% | **90.6%** |
+| Capture: referral | 60% | **100%** |
+| Capture: tag matching | 30% | **90%** |
+| Skip-gates: useless calls skipped | 0% | **80.0%** (0 wrong skips, 4 runs) |
+
+Two things these numbers do *not* say. The routing, duplicate and gate thresholds were tuned
+against the same fixtures that then scored them, so each is optimistic by an unknown amount
+until it meets a private export of a real account (`scripts/export-decision-labels.ts`,
+`--labels-dir`). And `capture.presence` scored 13/13 raw, below the n ≥ 20 bar, so it ships
+measuring only; the `brief` skip-gate was measured and turned **off** — see its note in
+`catalog.ts`.
+
 **Running it.** First the spike, which measures what TypeSafe's docs leave open: whether
 real answers parse, whether a call with many questions bills its state once, latency, and
 whether identical calls give identical answers:
@@ -147,11 +188,17 @@ same tasks with it. The run with `--decisions jev` adds each decision's calibrat
 
     ORBIT_EVAL_GEMINI_KEY=… npx tsx scripts/eval-ai.ts --task recruiter --out docs/ai-evals/<date>-base/recruiter.json
     ORBIT_EVAL_GEMINI_KEY=… ORBIT_EVAL_TYPESAFE_KEY=… npx tsx scripts/eval-ai.ts --task recruiter --decisions jev --out docs/ai-evals/<date>-jev/recruiter.json
-    # the same for --task chat; recruiter-prefilter and recruiter-gate run no LLM, so they
-    # need only ORBIT_EVAL_TYPESAFE_KEY
+    # the same for --task chat; these run no LLM at all and need only ORBIT_EVAL_TYPESAFE_KEY:
+    #   recruiter-prefilter, recruiter-gate, chat-routing, duplicates, mentions, calendar,
+    #   capture-checks, skip-gates
+    # a real account's own decisions, as private labels (duplicates and mentions):
+    #   npx tsx scripts/export-decision-labels.ts --user <id> --database-url "<url>"
+    #   …then add --labels-dir ~/.orbit-private-labels to the run above
     npx tsx scripts/eval-ai-report.ts docs/ai-evals/<date>-base docs/ai-evals/<date>-jev
 
-What must hold: `recruiter-prefilter` recall may not drop (it should rise a long way),
-`recruiter.gateWrongSkips` stays 0 (a real recruiter ruled out before the LLM is a recruiter
-lost), and the chat task's `retrievalRecall` / `mentionRecall` stay within their thresholds.
+What must hold (the gate rules are in `scripts/eval-fixtures/ai-eval-thresholds.json`):
+`recruiter-prefilter` recall may not drop (it should rise a long way), and the counts that
+mean something was silently lost stay at 0 — `recruiter.gateWrongSkips`, `duplicates.wrongMerges`
+and `lostMerges`, `mentions.wrongLinks`, `calendar.lostKeeps`, `skip-gates.wrongSkips`. The
+chat task's `retrievalRecall` / `mentionRecall` stay within their thresholds.
 The rerank's chunk size (`RERANK_TUNING.chunkSize`) comes from the spike's billing answer.

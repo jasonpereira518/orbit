@@ -399,8 +399,8 @@ export async function runLinkedInTimelineBackfill(
   // are the entire answer — the batch would spend a call per thread to confirm it. With a
   // decision model, the queue is gated in parallel first and a confident "no meeting here"
   // writes the rule events and drops out of the batch. Without one the queue is untouched.
+  const engines = opts.engines ?? (await openEngines(userId));
   if (queued.length) {
-    const engines = opts.engines ?? (await openEngines(userId));
     const keep = await mapPool(queued, SKIP_GATE_TUNING.concurrency, async (q) =>
       !(await gateSkips(engines, "timeline", { messages: gateText(q.prompt.user) }))
     );
@@ -444,7 +444,10 @@ export async function runLinkedInTimelineBackfill(
           from: m.direction === "out" ? "you" : m.direction === "in" ? "them" : null,
           content: m.rawNotes || "",
           parsedDate: m.interactionDate ? new Date(m.interactionDate) : null,
-        }))
+        })),
+        // Already gated above, on its way into the queue. Passing the same engines means the
+        // second ask is answered from the decision cache rather than billed again.
+        { engines }
       );
       eventsCreated += await writeTimelineEvents(userId, q.contactId, events);
     }

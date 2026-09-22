@@ -496,5 +496,12 @@ export const SKIP_GATE_TUNING = {
   budgetMs: 1_200,
   /** Background paths gate a whole slice at once, this many in flight. */
   concurrency: 4,
+  /**
+   * The state IS the input text, so an identical input has an identical answer. Worth
+   * caching because several paths ask twice about one thing: a calendar feed re-read every
+   * half hour, a brief the page asks for on each visit, and a batch that falls back to the
+   * inline path after its queue was already gated.
+   */
+  cacheDays: 30,
   inputChars: 12_000,
 } as const;

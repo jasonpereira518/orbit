@@ -33,7 +33,7 @@ export async function gateProbability(
   if (!engines.jev) return null;
   const decided = await decide(
     { jev: engines.jev, llm: null },
-    { engines: ["jev"], budgetMs: SKIP_GATE_TUNING.budgetMs },
+    { engines: ["jev"], budgetMs: SKIP_GATE_TUNING.budgetMs, cacheDays: SKIP_GATE_TUNING.cacheDays },
     { operation: OPERATION[gate], state, questions: { yes: SKIP_GATES[gate] } },
   ).catch(() => null);
   return decided?.engine === "jev" ? decided.answers.yes.probability : null;
