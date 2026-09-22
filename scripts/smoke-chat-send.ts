@@ -108,7 +108,8 @@ async function main() {
 
   console.log("return paths");
   check("a same-origin path passes", safeReturnPath("/chat?thread=abc") === "/chat?thread=abc");
-  for (const bad of ["//evil.example", "/\\evil.example", "https://evil.example", "chat", "", null, "/a\nb"]) {
+  // "/\t/evil.example" too: a parser drops the tab before resolving, so it is "//evil.example".
+  for (const bad of ["//evil.example", "/\\evil.example", "https://evil.example", "chat", "", null, "/a\nb", "/\t/evil.example"]) {
     check(`${JSON.stringify(bad)} is refused`, safeReturnPath(bad as string | null) === null);
   }
 
