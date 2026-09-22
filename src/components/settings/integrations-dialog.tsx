@@ -207,6 +207,13 @@ function DialogBody({
   const [advancedOpen, setAdvancedOpen] = useState(() => isAdvanced(view));
   const tabRefs = useRef(new Map<IntegrationView, HTMLButtonElement>());
   const panelScroller = useRef<HTMLDivElement>(null);
+  // Where focus goes after the next view change, set only by changes that hide or remove the
+  // control that made them: an Overview button sends focus into the page it opens, and the
+  // phone's Back returns it to the Overview button for the page it leaves. The side nav never
+  // sets it, so its tabs keep focus.
+  const focusAfterViewChange = useRef<
+    { to: "panel" } | { to: "opener"; of: IntegrationTabId } | null
+  >(null);
 
   // Adjusted during render rather than in an effect: a page chosen from outside (a deep
   // link, the card) must be mounted — and its nav row shown — in the same paint it is
@@ -259,6 +266,36 @@ function DialogBody({
 
     return stop;
   }, [view, focus]);
+
+  // After the scroll above, so the page is already where it should be. The panel is named by
+  // its nav row. An opener can be out of reach — an Advanced page reached by a link leaves its
+  // row in a collapsed block — so the Overview itself takes focus when the opener didn't.
+  useEffect(() => {
+    const request = focusAfterViewChange.current;
+    focusAfterViewChange.current = null;
+    if (!request) return;
+    const panel = document.getElementById(`integration-panel-${view}`);
+    if (request.to === "opener") {
+      const opener = panel?.querySelector<HTMLElement>(`[data-integration-card="${request.of}"]`);
+      opener?.focus({ preventScroll: true });
+      if (opener && document.activeElement === opener) {
+        opener.scrollIntoView({ block: "nearest" });
+        return;
+      }
+    }
+    panel?.focus({ preventScroll: true });
+  }, [view]);
+
+  /** A page opened from the Overview's own buttons, which the Overview then hides. */
+  function openFromOverview(tab: IntegrationTabId) {
+    if (tab !== view) focusAfterViewChange.current = { to: "panel" };
+    onViewChange(tab);
+  }
+
+  function backToOverview() {
+    if (view !== OVERVIEW) focusAfterViewChange.current = { to: "opener", of: view };
+    onViewChange(OVERVIEW);
+  }
 
   const runningTab = job?.status === "running" ? tabForImportJob(job.kind) : null;
   const runningProgress = job?.status === "running" && job.progress ? job.progress : null;
@@ -352,7 +389,7 @@ function DialogBody({
           {view !== OVERVIEW ? (
             <button
               type="button"
-              onClick={() => onViewChange(OVERVIEW)}
+              onClick={backToOverview}
               aria-label="Back to overview"
               className="tap-target -ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-card/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 md:hidden"
             >
@@ -436,11 +473,12 @@ function DialogBody({
                 role="tabpanel"
                 id={`integration-panel-${id}`}
                 aria-labelledby={`integration-tab-${id}`}
+                tabIndex={-1}
                 hidden={id !== view}
-                className="space-y-5 p-5 md:p-7"
+                className="space-y-5 p-5 outline-none md:p-7"
               >
                 {id === OVERVIEW ? (
-                  <IntegrationsOverview tabs={tabs} statuses={statuses} onOpen={onViewChange} />
+                  <IntegrationsOverview tabs={tabs} statuses={statuses} onOpen={openFromOverview} />
                 ) : (
                   <>
                     {runningProgress && runningTab === id ? (

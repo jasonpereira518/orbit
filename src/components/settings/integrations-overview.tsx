@@ -27,6 +27,9 @@ const DESCRIPTIONS: Partial<Record<IntegrationTabId, string>> = {
  * its status and the one thing to do next. Advanced pages get no card — on wide screens they
  * are reachable from the nav, and on phones, where the nav is hidden, from a collapsed block
  * below the cards.
+ *
+ * The button that opens each page carries `data-integration-card`, so the dialog's phone Back
+ * can return focus to it.
  */
 export function IntegrationsOverview({
   tabs,
@@ -94,6 +97,7 @@ export function IntegrationsOverview({
                 <Button
                   size="sm"
                   variant={action.primary ? "default" : "outline"}
+                  data-integration-card={id}
                   onClick={() => onOpen(id)}
                 >
                   {action.label}
@@ -132,6 +136,7 @@ export function IntegrationsOverview({
                 <button
                   key={tab.id}
                   type="button"
+                  data-integration-card={tab.id}
                   onClick={() => onOpen(tab.id)}
                   className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm outline-none hover:bg-card/60 focus-visible:ring-2 focus-visible:ring-ring/70"
                 >
