@@ -1,8 +1,9 @@
 /**
  * Reading an OAuth callback's result off the URL: what to say, and what the URL becomes.
+ * Also: which returnTo values may become the redirect after the consent screen.
  * Run: npx tsx scripts/smoke-oauth-return.ts
  */
-import { readOAuthReturn } from "../src/lib/oauth-return";
+import { readOAuthReturn, safeReturnPath } from "../src/lib/oauth-return";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -33,6 +34,20 @@ check("anything else gets the generic copy", failed?.tone === "error" && failed.
 
 check("no param, no toast", readOAuthReturn("?tab=hosts&reason=x", OPTS) === null);
 check("an unknown value is ignored", readOAuthReturn("?eventbrite=maybe", OPTS) === null);
+
+// returnTo: only a path on this origin may become the post-consent redirect.
+check("a same-origin path passes", safeReturnPath("/settings?integration=google") === "/settings?integration=google");
+for (const [label, value] of [
+  ["a protocol-relative URL", "//evil.example"],
+  ["a backslash that parses as //", "/\\evil.example"],
+  ["an absolute URL", "https://evil.example"],
+  ["an empty string", ""],
+  ["null", null],
+  ["a newline", "/settings\n//evil.example"],
+  ["a tab between the slashes", "/\t/evil.example"],
+] as const) {
+  check(`${label} is rejected`, safeReturnPath(value) === null, JSON.stringify(value));
+}
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

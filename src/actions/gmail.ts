@@ -28,6 +28,7 @@ import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { safeReturnPath } from "@/lib/oauth-return";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
 
@@ -124,8 +125,7 @@ export async function startGmailOAuth(input: {
   });
 
   // returnTo is a same-origin path only — never an absolute/external URL.
-  const safeReturnTo =
-    input.returnTo && input.returnTo.startsWith("/") ? input.returnTo : "";
+  const safeReturnTo = safeReturnPath(input.returnTo) ?? "";
   // The purpose rides in the state so the callback can check that Google granted the one
   // scope this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
   const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${input.purpose}`;
@@ -171,7 +171,7 @@ export async function consumeGmailOAuthState(
   const returnTo = encodedReturnTo ? decodeURIComponent(encodedReturnTo) : "";
   return {
     userId,
-    returnTo: returnTo.startsWith("/") ? returnTo : null,
+    returnTo: safeReturnPath(returnTo),
     purpose: isGooglePurpose(rawPurpose) ? rawPurpose : null,
   };
 }

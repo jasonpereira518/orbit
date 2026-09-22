@@ -41,3 +41,20 @@ export function readOAuthReturn(
   const described = describeOAuthReason(reason, opts.provider);
   return { tone: described.cancelled ? "message" : "error", text: described.message, nextSearch };
 }
+
+/**
+ * `value` when it is a path on this origin, otherwise null. Every OAuth `returnTo` passes
+ * through here before it can become a redirect after the consent screen.
+ *
+ * `startsWith("/")` alone is an open redirect: "//host" is protocol-relative, URL parsers
+ * read "/\host" as "//host", and they drop tabs and newlines, so a control character
+ * between the slashes gets there too.
+ */
+export function safeReturnPath(value: string | null | undefined): string | null {
+  if (!value || value[0] !== "/" || value[1] === "/" || value[1] === "\\") return null;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return null;
+  }
+  return value;
+}

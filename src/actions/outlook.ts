@@ -26,6 +26,7 @@ import {
   hasMailScope,
 } from "@/lib/outlook";
 import { isMicrosoftPurpose, type MicrosoftPurpose } from "@/lib/microsoft-scopes";
+import { safeReturnPath } from "@/lib/oauth-return";
 
 const OAUTH_STATE_COOKIE = "orbit_outlook_oauth_state";
 
@@ -114,7 +115,7 @@ export async function startOutlookOAuth(input: {
   }
 
   // returnTo is a same-origin path only — never an absolute/external URL.
-  const safeReturnTo = input.returnTo && input.returnTo.startsWith("/") ? input.returnTo : "";
+  const safeReturnTo = safeReturnPath(input.returnTo) ?? "";
   // The purpose rides in the state so the callback can check that Microsoft granted the one
   // scope this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
   const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${input.purpose}`;
@@ -170,7 +171,7 @@ export async function consumeOutlookOAuthState(
   const returnTo = encodedReturnTo ? decodeURIComponent(encodedReturnTo) : "";
   return {
     userId,
-    returnTo: returnTo.startsWith("/") ? returnTo : null,
+    returnTo: safeReturnPath(returnTo),
     purpose: isMicrosoftPurpose(rawPurpose) ? rawPurpose : null,
   };
 }
