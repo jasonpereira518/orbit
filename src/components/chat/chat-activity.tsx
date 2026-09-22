@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { ChatOrbit } from "@/components/chat/chat-orbit";
+import { OrbitMark } from "@/components/chat/orbit-mark";
 import { collectOrbitPeople } from "@/lib/chat-orbit-people";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 
@@ -229,31 +230,6 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
   );
 }
 
-/**
- * The one brand touch: a dot on an orbit, rather than a generic spinner.
- *
- * Reduced motion gets a static ring instead of stopping at a random frame — the decision is
- * made at render time because `usePrefersReducedMotion` reports false on its first render,
- * and an effect that hid this and bailed would strand the indicator entirely.
- */
-function OrbitMark({ reduceMotion }: { reduceMotion: boolean }) {
-  return (
-    <span className="relative inline-flex size-3.5 shrink-0 items-center justify-center" aria-hidden="true">
-      <span className="absolute inset-0 rounded-full border border-primary/30" />
-      {reduceMotion ? (
-        <span className="absolute right-0 top-1/2 size-1 -translate-y-1/2 rounded-full bg-primary" />
-      ) : (
-        <motion.span
-          className="absolute inset-0"
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1.6, ease: "linear", repeat: Infinity }}
-        >
-          <span className="absolute right-0 top-1/2 size-1 -translate-y-1/2 rounded-full bg-primary" />
-        </motion.span>
-      )}
-    </span>
-  );
-}
 
 /** "Looked at 9 contacts · 4.2s" — built only from steps that reported real numbers. */
 function summarise(steps: ChatStep[]): string {

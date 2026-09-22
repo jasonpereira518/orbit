@@ -112,6 +112,7 @@ async function main() {
     goals: [] as string[],
     attentionLite: null as string | null,
     evidence: null as string | null,
+    notePassages: [] as { sourceId: string; contactId: string | null; date: string | null; snippet: string }[],
   };
   // The fence nonce is random per call; everything else must match exactly.
   const norm = (s: string) => s.replace(/_[0-9a-f]{12}\b/g, "_NONCE");

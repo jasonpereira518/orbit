@@ -583,6 +583,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   recommendations jsonb,
   attached_contacts jsonb DEFAULT '[]',
   activity jsonb DEFAULT '[]',
+  evidence jsonb DEFAULT '{}',
+  proposed_actions jsonb DEFAULT '[]',
   feedback text,
   feedback_note text,
   slot uuid,
@@ -1736,28 +1738,28 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // third time a number has been contested, so: the scan has to cover `git worktree list`, not
 // just the remote. Checked against every remote branch AND all 69 local worktrees on
 // Sep 20 2026; 78 was the highest found anywhere.
+// 82 = chat_messages.evidence — citations for a chat answer, keyed by the `[eN]` id each
+// interaction or contact's summary/notes was cited under. Branch B, item 1 of the chat plan.
+// #252 (chat UX branch) holds 80/81 unmerged; rescanned against every local and remote ref on
+// Sep 22 2026 — nothing else claims 82.
 //
-// 80 = user_settings.writing_instructions, the user's own notes on how answers and drafts are
-// written (the second box in the chat Context sheet). Checked against every local and remote
-// ref on Sep 21 2026, after 79 (memory_chunks) landed in main — nothing claims 80.
+// 83 = chat_messages.proposed_actions — log/remind/follow-up actions a chat answer PROPOSED,
+// never one it took; a person's own click is the only path to the real write. Branch B, item
+// 2. Rescanned against every local and remote ref on Sep 22 2026 — nothing claims 83.
 //
-// 81 = chat_messages.slot/version/is_active, for edit-and-regenerate on the last turn of a
-// chat. Rescanned against every local and remote ref on Sep 21 2026 — nothing claims 81.
+// 84 (landed in main via PR #256) = user_settings.typesafe_api_key_encrypted — a person's own
+// TypeSafe key, for Jev, the decision model behind the recruiter gate and the chat rerank
+// (src/lib/decisions/).
 //
-// 84 (landed in main via PR #256, merged ahead of this branch) = user_settings.
-// typesafe_api_key_encrypted — a person's own TypeSafe key, for Jev, the decision model
-// behind the recruiter gate and the chat rerank (src/lib/decisions/). That branch had also
-// passed through 82 and 83 before settling on 84, for the same reason this one is about to
-// move again: chat-source-chips (PR #255) had already taken those numbers.
+// 85 (landed in main via PR #252, chat-ux-features-v2) = user_settings.writing_instructions
+// and chat_messages.slot/version/is_active, for the chat Context sheet's writing preferences
+// and edit-and-regenerate on the last turn of a chat.
 //
-// NOT 81 anymore. By Sep 22 2026, PR #255 had moved on to 83, PR #256 had claimed and
-// landed 84, and this branch's own preview deployment was stuck recording an old
-// fingerprint and never actually running these alters — `isSchemaCurrent`'s never-downgrade
-// rule treats ANY database already past this branch's number as current without even
-// checking the fingerprint. Rescanned against every remote branch and every local worktree
-// on Sep 22 2026, after merging main (and its 84) into this branch; 85 was the highest
-// found anywhere and is still free.
-export const SCHEMA_VERSION = 85;
+// NOT 83 anymore. Both 84 and 85 above landed in main while this branch (chat-source-chips)
+// was still in review. Rescanned against every remote branch and every local worktree on
+// Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
+// the highest found anywhere and is still free.
+export const SCHEMA_VERSION = 86;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3108,6 +3110,8 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS activity jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS evidence jsonb DEFAULT '{}'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS proposed_actions jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,

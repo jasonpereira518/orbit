@@ -37,15 +37,27 @@ const MAX_RESULT_CHARS = 6_000;
 /** The whole evidence block the answer sees — the answer prompt's other blocks need room too. */
 const MAX_EVIDENCE_CHARS = 20_000;
 
+/**
+ * One `search_notes` result about a single interaction, structured rather than flattened into
+ * `evidence` — citable, unlike the rest of what the research step looks up. Only interaction-
+ * sourced passages: a note_batch or brief passage has no single dated event to cite and no
+ * profile page to deep-link to, so it stays inside the uncited `evidence` text instead.
+ */
+export type NotePassage = { sourceId: string; contactId: string | null; date: string | null; snippet: string };
+
 export type GatherResult = {
   /** Rendered for the answer prompt; null when nothing useful was gathered. */
   evidence: string | null;
+  /** `search_notes` results naming a single interaction — see `NotePassage`. */
+  notePassages: NotePassage[];
   /** Contacts the lookups surfaced — added to the recommendation allowlist. */
   contactIds: string[];
+  /** Same ids, with names — so a proposed action naming one of them has something to preview. */
+  namedContacts: Array<{ id: string; name: string }>;
   outcome: ToolLoopOutcome | null;
 };
 
-const EMPTY: GatherResult = { evidence: null, contactIds: [], outcome: null };
+const EMPTY: GatherResult = { evidence: null, notePassages: [], contactIds: [], namedContacts: [], outcome: null };
 
 const GATHER_SYSTEM = `You are the research step for Orbit, a personal networking assistant. You do NOT answer the user. Your only job is to decide which lookups — if any — would give the answer-writer facts it does not already have, and to make them.
 
@@ -165,6 +177,33 @@ function renderEvidence(calls: ExecutedCall[]): string | null {
   return parts.join("\n\n");
 }
 
+/**
+ * `search_notes` results, pulled out of the raw tool results for citation — the one lookup
+ * whose rows are single dated notes rather than records of a person or a reminder. Read from
+ * `call.result` (the structured JSON the tool returned) rather than re-parsing `c.content`
+ * (the string the research model saw, already possibly truncated at `MAX_RESULT_CHARS`), so a
+ * passage is never cited from text that got cut off mid-object.
+ */
+function extractNotePassages(calls: ExecutedCall[]): NotePassage[] {
+  const out: NotePassage[] = [];
+  for (const c of calls) {
+    if (!c.ok || c.call.name !== "search_notes") continue;
+    const rows = Array.isArray(c.result) ? c.result : [];
+    for (const row of rows) {
+      const r = row as { sourceId?: unknown; kind?: unknown; date?: unknown; contactIds?: unknown; snippet?: unknown };
+      if (r.kind !== "interaction" || typeof r.sourceId !== "string" || typeof r.snippet !== "string") continue;
+      const contactId = Array.isArray(r.contactIds) && typeof r.contactIds[0] === "string" ? r.contactIds[0] : null;
+      out.push({
+        sourceId: r.sourceId,
+        contactId,
+        date: typeof r.date === "string" ? r.date : null,
+        snippet: r.snippet,
+      });
+    }
+  }
+  return out;
+}
+
 /** Validate against the tool's own schema, then run it on the chat surface. */
 function executorFor(userId: string, tools: OrbitTool[]) {
   const byName = new Map(tools.map((t) => [t.name, t]));
@@ -271,7 +310,9 @@ export async function gatherEvidence(
 
   return {
     evidence: renderEvidence(outcome.calls),
+    notePassages: extractNotePassages(outcome.calls),
     contactIds: owned.map((c) => c.id),
+    namedContacts: named,
     outcome,
   };
 }
@@ -304,15 +345,20 @@ export async function maybeGather(
     /** Test seam, passed through to `gatherEvidence`. */
     driver?: Awaited<ReturnType<typeof createToolDriver>>;
   }
-): Promise<{ evidence: string | null; depth: DepthDecision; research: ResearchSummary | null }> {
+): Promise<{
+  evidence: string | null;
+  notePassages: NotePassage[];
+  depth: DepthDecision;
+  research: ResearchSummary | null;
+}> {
   // Decided with the rest of the routing (decisions/chat-route.ts) while retrieval ran; the
   // rules answer here only for a context built without it.
   const depth = ctx.route?.depth ?? chooseDepth(ctx.q, { hasPriorTurns: ctx.priorTurns.length > 0 });
-  if (depth.depth !== "research") return { evidence: null, depth, research: null };
+  if (depth.depth !== "research") return { evidence: null, notePassages: [], depth, research: null };
 
   const now = Date.now();
   const deadline = Math.min(options.requestStartedAt + GATHER_ENDS_BY_MS, now + GATHER_MAX_MS);
-  if (deadline - now < GATHER_MIN_MS) return { evidence: null, depth, research: null };
+  if (deadline - now < GATHER_MIN_MS) return { evidence: null, notePassages: [], depth, research: null };
 
   const gathered = await gatherEvidence(userId, ctx, {
     deadline,
@@ -322,9 +368,13 @@ export async function maybeGather(
     driver: options.driver,
   });
   for (const id of gathered.contactIds) ctx.allowedContacts.add(id);
+  // Same allowlist join `filterRecommendations` gets, so a proposed action naming someone
+  // research found (not retrieval) has a name to preview, not a blank.
+  for (const c of gathered.namedContacts) if (!ctx.contactNames.has(c.id)) ctx.contactNames.set(c.id, c.name);
   const o = gathered.outcome;
   return {
     evidence: gathered.evidence,
+    notePassages: gathered.notePassages,
     depth,
     research: o
       ? {

@@ -1251,7 +1251,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
         const ctx = await prepareChatContext(userId, c.question, {});
         // The research round runs here as it does in production (`askNetwork`, the route), so
         // this task's cost and latency include it — and a routing change shows up in both.
-        const { evidence } = await maybeGather(userId, ctx, { requestStartedAt });
+        const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
         const result = await chatWithNetwork(
           userId,
           ctx.scopedQuestion,
@@ -1265,6 +1265,7 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
           ctx.goals,
           ctx.attentionLite,
           evidence,
+          notePassages,
           ctx.writingInstructions
         );
         return { ctx, result };

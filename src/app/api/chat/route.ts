@@ -9,6 +9,8 @@ import { persistAssistantTurn } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
+import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
+import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
@@ -175,7 +177,7 @@ export async function POST(request: Request) {
         // One retrieval answers most questions; the ones whose shape says it cannot — what
         // was discussed and when, a path to someone, a follow-up that refers back — get a
         // bounded research loop first. See `chooseDepth` and `gatherEvidence`.
-        const { evidence } = await maybeGather(userId, ctx, {
+        const { evidence, notePassages } = await maybeGather(userId, ctx, {
           requestStartedAt,
           signal: request.signal,
           steps,
@@ -201,12 +203,25 @@ export async function POST(request: Request) {
                 goals: ctx.goals,
                 attentionLite: ctx.attentionLite,
                 evidence,
+                notePassages,
                 writingPreferences: ctx.writingInstructions,
               }
             ),
           { userId }
         );
         steps.done("answer", { label: "Wrote the answer" });
+
+        // The prose has already streamed live, marker and all — this only decides what gets
+        // PERSISTED and what the chips render from. `validIds` is every id the model was
+        // actually shown (`result.evidence`'s keys), not just the ones it used, so a marker
+        // for an id outside that set can only be an invented citation.
+        const validIds = new Set(Object.keys(result.evidence));
+        const { text: cleanAnswer, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
+        const cited = citedIds(cleanAnswer);
+        const citedEvidence = Object.fromEntries(cited.map((id) => [id, result.evidence[id]]));
+        if (strippedCount > 0) {
+          steps.done("verify", { label: `Removed ${plural(strippedCount, "unsupported citation")}` });
+        }
 
         const rawRecommendations = result.recommendations as ChatRecommendation[];
         const recommendations = ctx.filterRecommendations(rawRecommendations);
@@ -219,15 +234,27 @@ export async function POST(request: Request) {
           });
         }
         send({ type: "recommendations", items: recommendations });
+        if (cited.length > 0) send({ type: "evidence", items: citedEvidence });
+
+        // Never a chat tool call, never executed here — only stored, for a person to confirm
+        // from the transcript. See `@/lib/chat-proposed-actions` and the rule at the top of
+        // `src/lib/mcp/server.ts`, which this mirrors on the chat surface's own output.
+        const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
+        if (proposedActions.length > 0) send({ type: "actions", items: proposedActions });
+
         // A beat for a title that is nearly there, never longer: if it is not ready the thread
         // is named the old way (the first message, cut short) rather than holding the answer.
         const title = await settleWithin(titlePromise, TITLE_GRACE_MS);
-        // Persisted before `done` so the client learns the real message id and title.
+        // Persisted before `done` so the client learns the real message id and title. The
+        // CLEANED text, not what streamed live — an invented citation was already visible
+        // for that turn, but a reload should never show a dead `[e99]` nobody can resolve.
         const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
-          answer: result.answer,
+          answer: cleanAnswer,
           recommendations,
           activity: steps.snapshot(),
           title,
+          evidence: citedEvidence,
+          proposedActions,
           version:
             versionTarget && persistedUserMessageId
               ? { slot: versionTarget.slot, version: versionTarget.nextVersion, userMessageId: persistedUserMessageId }

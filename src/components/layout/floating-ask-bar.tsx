@@ -15,7 +15,7 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
-import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
+import { ArrowUp, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events";
@@ -29,6 +29,7 @@ import {
 } from "@/lib/stream-smoother";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import { ChatActivity } from "@/components/chat/chat-activity";
+import { OrbitMark } from "@/components/chat/orbit-mark";
 import { SuggestionPills } from "@/components/chat/suggestion-cards";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
@@ -44,6 +45,7 @@ import {
 } from "@/lib/keyword-search";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 /**
  * Split out of the shell's chunk.
@@ -154,6 +156,7 @@ export function FloatingAskBar() {
   // itself is the progress indicator.
   const awaitingFirstToken =
     chatPending && !messages.some((m) => m.role === "assistant" && m.streaming);
+  const reduceMotion = usePrefersReducedMotion();
 
   const [profileContact, setProfileContact] = useState<AskBarContact | null>(
     null
@@ -689,7 +692,7 @@ export function FloatingAskBar() {
                         claiming a search that may already be finished. */}
                     {awaitingFirstToken && (
                       <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" />
+                        <OrbitMark reduceMotion={reduceMotion} />
                         Starting…
                       </div>
                     )}
@@ -699,7 +702,7 @@ export function FloatingAskBar() {
 
                 {messages.length === 0 && chatPending && (
                   <div className="flex items-center gap-2 px-3.5 py-4 text-sm text-muted-foreground">
-                    <Loader2 className="size-3.5 animate-spin" />
+                    <OrbitMark reduceMotion={reduceMotion} />
                     Starting…
                   </div>
                 )}
@@ -827,7 +830,7 @@ export function FloatingAskBar() {
             aria-label={query.trim() ? "Ask" : "Recall last message"}
           >
             {chatPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <OrbitMark reduceMotion={reduceMotion} tone="current" />
             ) : (
               <ArrowUp className="size-3.5" />
             )}

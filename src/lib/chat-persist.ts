@@ -1,6 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
+import type { EvidenceSource } from "@/lib/chat-evidence";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 
 const TITLE_MAX = 72;
@@ -31,6 +33,10 @@ export async function persistAssistantTurn(
      * rename a conversation out from under the person.
      */
     title?: string | null;
+    /** Every source actually cited in `answer` — see `@/lib/chat-evidence`. */
+    evidence?: Record<string, EvidenceSource>;
+    /** Actions this answer proposed — see `@/lib/chat-proposed-actions`. */
+    proposedActions?: StoredProposedAction[];
     /**
      * Set for a version request: writes the assistant row into this slot/version, inactive,
      * and flips exactly it and its paired user row active once it lands — see
@@ -54,6 +60,8 @@ export async function persistAssistantTurn(
       content: turn.answer,
       recommendations: turn.recommendations,
       activity: turn.activity ?? [],
+      evidence: turn.evidence ?? {},
+      proposedActions: turn.proposedActions ?? [],
       ...(turn.version
         ? { slot: turn.version.slot, version: turn.version.version, isActive: false }
         : {}),

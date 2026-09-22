@@ -69,10 +69,14 @@ import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
+import { OrbitMark } from "@/components/chat/orbit-mark";
 import { AnswerActions } from "@/components/chat/answer-actions";
 import { ReminderButton } from "@/components/chat/reminder-button";
 import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
+import type { EvidenceSource } from "@/lib/chat-evidence";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
+import { ProposedActionsCard } from "@/components/chat/proposed-actions";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
@@ -93,6 +97,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import type { ChatRecommendation } from "@/db/schema";
 import { streamChat, type DoneInfo } from "@/lib/chat-stream-client";
 import {
@@ -164,6 +169,10 @@ type AssistantMessage = {
    * thread falls back to what the recommendation itself carries.
    */
   retrieved?: DoneInfo["retrieved"];
+  /** Every source this answer cited, keyed by its `[eN]` id — see `@/lib/chat-evidence`. */
+  evidence?: Record<string, EvidenceSource>;
+  /** Actions this answer proposed — see `@/lib/chat-proposed-actions`. */
+  proposedActions?: StoredProposedAction[];
   /** Thumbs already on this answer, when it came back from a saved thread. */
   feedback?: "up" | "down" | null;
   /**
@@ -296,6 +305,7 @@ export function ChatPanel() {
   // itself is the progress indicator.
   const awaitingFirstToken =
     busy && !messages.some((m) => m.role === "assistant" && m.streaming);
+  const reduceMotion = usePrefersReducedMotion();
   const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -602,6 +612,8 @@ export function ChatPanel() {
                 // Answers written before this column existed have none, and simply show no
                 // summary rather than a fabricated one.
                 steps: row.activity ?? undefined,
+                evidence: row.evidence ?? undefined,
+                proposedActions: row.proposedActions ?? undefined,
                 feedback: row.feedback ?? null,
                 // It came out of the database, so by definition there is a row to rate.
                 persisted: true,
@@ -802,6 +814,14 @@ export function ChatPanel() {
               smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
+            },
+            onEvidence: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, evidence: items }));
+            },
+            onActions: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, proposedActions: items }));
             },
             onStep: (step) => {
               // The first step arrives before any prose, which is the point: it replaces the
@@ -1314,6 +1334,15 @@ export function ChatPanel() {
                         }
                         retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
                         onFollowUp={(q) => sendQuestion(q)}
+                        onActionSettled={(actionId, next) =>
+                          setMessages((prev) =>
+                            prev.map((m) =>
+                              m.id === msg.id && m.role === "assistant"
+                                ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
+                                : m
+                            )
+                          )
+                        }
                         versions={isLastAssistant ? versions : []}
                         onSwitchVersion={
                           isLastAssistant
@@ -1341,7 +1370,7 @@ export function ChatPanel() {
                   {awaitingFirstToken && (
                     <div className="flex justify-start">
                       <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" />
+                        <OrbitMark reduceMotion={reduceMotion} />
                         Starting…
                       </div>
                     </div>
@@ -1710,6 +1739,7 @@ const AssistantBubble = memo(function AssistantBubble({
   onRetry,
   retryLabel,
   onFollowUp,
+  onActionSettled,
   versions = [],
   onSwitchVersion,
 }: {
@@ -1717,6 +1747,7 @@ const AssistantBubble = memo(function AssistantBubble({
   onRetry?: () => void;
   retryLabel?: string;
   onFollowUp?: (question: string) => void;
+  onActionSettled?: (actionId: string, next: StoredProposedAction) => void;
   /** Every version of this turn, when it is the last one. Otherwise empty — no switcher. */
   versions?: VersionRow[];
   onSwitchVersion?: (version: number) => void;
@@ -1735,6 +1766,15 @@ const AssistantBubble = memo(function AssistantBubble({
       else if (r.contact_id) out.push({ name: r.name, href: `/contacts/${r.contact_id}` });
     }
     return out;
+  }, [msg.retrieved, msg.recommendations]);
+
+  // A name for a proposed action's contact — same sources as `people`, keyed by id instead
+  // of assembled into link text.
+  const nameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of msg.retrieved ?? []) map.set(c.id, c.fullName);
+    for (const r of msg.recommendations) if (r.contact_id) map.set(r.contact_id, r.name);
+    return map;
   }, [msg.retrieved, msg.recommendations]);
 
   // Photos learned by the activity steps, so a card shows the same face the orbit did.
@@ -1769,7 +1809,11 @@ const AssistantBubble = memo(function AssistantBubble({
         )}
         {msg.answer && (
           <div className="text-sm leading-relaxed text-foreground">
-            <ChatMarkdown people={people}>{msg.answer}</ChatMarkdown>
+            {/* Only once persisted: `msg.id` is a client-minted placeholder until `done`
+                swaps in the real row id, and a chip needs the real id to fetch its snippet. */}
+            <ChatMarkdown people={people} messageId={msg.persisted ? msg.id : undefined} evidence={msg.evidence}>
+              {msg.answer}
+            </ChatMarkdown>
           </div>
         )}
         {msg.stopped && (
@@ -1789,6 +1833,20 @@ const AssistantBubble = memo(function AssistantBubble({
                 // person, and a streamed-but-unsaved one has no row to check against.
                 messageId={msg.persisted ? msg.id : undefined}
                 sentAt={r.contact_id ? msg.sentTo?.[r.contact_id] : undefined}
+              />
+            ))}
+          </div>
+        )}
+        {/* Only once persisted: committing needs a real row to address. */}
+        {msg.persisted && (msg.proposedActions?.length ?? 0) > 0 && (
+          <div className="flex flex-col gap-2">
+            {msg.proposedActions!.map((action) => (
+              <ProposedActionsCard
+                key={action.id}
+                messageId={msg.id}
+                action={action}
+                contactName={"contactId" in action.args && action.args.contactId ? nameById.get(action.args.contactId) : null}
+                onSettled={(next) => onActionSettled?.(action.id, next)}
               />
             ))}
           </div>

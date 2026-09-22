@@ -23,6 +23,7 @@ import {
   rerankCandidatesWithEngine,
   type RankEngine,
   understandQuery,
+  type ChatTimelineEntry,
 } from "@/lib/chat-retrieval";
 import { openDecider, type Decider } from "@/lib/decisions/jev";
 import {
@@ -70,6 +71,8 @@ const PRIOR_TURN_LIMIT = 8;
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
+export type { ChatTimelineEntry };
+
 type Recruiters = Awaited<ReturnType<typeof loadRecruitersForChat>>;
 type BudgetedContact = ReturnType<typeof budgetContactsContext>[number];
 
@@ -79,7 +82,7 @@ export type ChatContext = {
   priorTurns: ChatTurn[];
   retrieved: RankedContact[];
   /** Recent interactions per retrieved contact, as dated lines. */
-  snippets: Map<string, { timeline: string[] }>;
+  snippets: Map<string, { timeline: ChatTimelineEntry[] }>;
   scopedQuestion: string;
   /** Freeform context the user typed for this conversation, if any — never extracted into contacts. */
   userContext: string | null;
@@ -124,6 +127,8 @@ export type ChatContext = {
   route?: ChatRoute;
   /** Contacts the model may recommend: budgeted-in, on a roster, or in the attention brief. */
   allowedContacts: Set<string>;
+  /** A name for every id in `allowedContacts` — see `validateProposedActions`'s `contactNames`. */
+  contactNames: Map<string, string>;
   allowedRecruiters: Set<string>;
   /** The `contactsContext` argument of `chatWithNetwork`. */
   modelContacts: BudgetedContact[];
@@ -180,13 +185,14 @@ const TIMELINE_FETCH_PER_CONTACT = 8;
 async function loadRecentInteractions(
   userId: string,
   contactIds: string[]
-): Promise<Map<string, { timeline: string[] }>> {
-  const result = new Map<string, { timeline: string[] }>();
+): Promise<Map<string, { timeline: ChatTimelineEntry[] }>> {
+  const result = new Map<string, { timeline: ChatTimelineEntry[] }>();
   if (!contactIds.length) return result;
 
   const db = await getDb();
   const ranked = db
     .select({
+      id: interactions.id,
       contactId: interactions.contactId,
       interactionDate: interactions.interactionDate,
       interactionType: interactions.interactionType,
@@ -205,6 +211,7 @@ async function loadRecentInteractions(
 
   const rows = await db
     .select({
+      id: ranked.id,
       contactId: ranked.contactId,
       interactionDate: ranked.interactionDate,
       interactionType: ranked.interactionType,
@@ -215,17 +222,18 @@ async function loadRecentInteractions(
     .where(sql`${ranked.rn} <= ${TIMELINE_FETCH_PER_CONTACT}`)
     .orderBy(desc(ranked.interactionDate));
 
-  const byContact = new Map<string, string[]>();
+  const byContact = new Map<string, ChatTimelineEntry[]>();
   for (const row of rows) {
     const text = (row.aiSummary || row.rawNotes || "").trim();
     if (!text) continue;
     const list = byContact.get(row.contactId) || [];
     // Sanitized for the same reason the attached block sanitizes: a newline inside a note
     // would otherwise forge a row of its own inside the fenced contacts list.
-    const line = `${isoDay(new Date(row.interactionDate))} · ${interactionTypeLabel(
+    const date = isoDay(new Date(row.interactionDate));
+    const line = `${date} · ${interactionTypeLabel(
       row.interactionType
     )}: ${sanitizeProfileLine(text)}`;
-    list.push(line);
+    list.push({ id: row.id, date, line });
     byContact.set(row.contactId, list);
   }
 
@@ -737,14 +745,16 @@ export async function prepareChatContext(
     // the same dated shape as everyone else.
     snippets.set(focusContactId, {
       timeline: focusMsgs
-        .map((m) => {
+        .map((m): ChatTimelineEntry | null => {
           const text = (m.aiSummary || m.rawNotes || "").trim();
-          if (!text) return "";
-          return `${isoDay(new Date(m.interactionDate))} · ${interactionTypeLabel(
+          if (!text) return null;
+          const date = isoDay(new Date(m.interactionDate));
+          const line = `${date} · ${interactionTypeLabel(
             m.interactionType
           )}: ${sanitizeProfileLine(text).slice(0, 320)}`;
+          return { id: m.id, date, line };
         })
-        .filter(Boolean)
+        .filter((entry): entry is ChatTimelineEntry => entry !== null)
         .slice(0, 12),
     });
   }
@@ -779,6 +789,16 @@ export async function prepareChatContext(
     ...(attention?.overdue.map((c) => c.id) ?? []),
     ...(attention?.suggestions.map((c) => c.id) ?? []),
   ]);
+  // Every name paired with an id in `allowedContacts`, for a proposed action's preview text
+  // ("Log a note on Ada Lovelace…") — same sources, same order, so a name is never missing
+  // for an id the allowlist itself accepts.
+  const contactNames = new Map<string, string>([
+    ...modelContacts.map((c): [string, string] => [c.id, c.fullName]),
+    ...attachedPeople.map((p): [string, string] => [p.id, p.name]),
+    ...orgRosters.flatMap((r) => r.people.map((p): [string, string] => [p.id, p.name])),
+    ...(attention?.overdue.map((c): [string, string] => [c.id, c.name]) ?? []),
+    ...(attention?.suggestions.map((c): [string, string] => [c.id, c.name]) ?? []),
+  ]);
   const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
   const maxScore = Math.max(1, ...recruitersForChat.map((r) => r.score));
 
@@ -800,6 +820,7 @@ export async function prepareChatContext(
     attachedPeople,
     attachedContext: renderAttachedPeople(attachedPeople),
     allowedContacts,
+    contactNames,
     allowedRecruiters,
     modelContacts,
     focusProfile,
