@@ -1,0 +1,84 @@
+{
+  "label": "gemini-gemini-3.8-flash-jev",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T06:38:10.437Z",
+  "commit": "c5949a84",
+  "fixtures": "3040d1fd9c4a",
+  "runs": 1,
+  "decisions": "jev",
+  "tasks": {
+    "recruiter-gate": {
+      "cases": 40,
+      "metrics": {
+        "gateSkipped": 0.4,
+        "negativesRuledOut": 0.7272727272727273,
+        "gateWrongSkips": 0
+      },
+      "misses": [],
+      "p50LatencyMs": 178.5,
+      "costMicros": 1163,
+      "costPerCaseMicros": 29.075,
+      "usage": [
+        {
+          "operation": "recruiter.gate",
+          "model": "jev-1.13.0",
+          "calls": 40,
+          "failures": 0,
+          "inputTokens": 27661,
+          "outputTokens": 920,
+          "cachedInputTokens": 0,
+          "costMicros": 1163,
+          "unpriced": 0
+        }
+      ],
+      "decisionCostMicros": 1163,
+      "calibration": {
+        "recruiter.gate": [
+          {
+            "from": 0,
+            "to": 0.1,
+            "n": 16,
+            "meanP": 0.03375,
+            "observed": 0
+          },
+          {
+            "from": 0.1,
+            "to": 0.3,
+            "n": 3,
+            "meanP": 0.15666666666666668,
+            "observed": 0
+          },
+          {
+            "from": 0.3,
+            "to": 0.5,
+            "n": 2,
+            "meanP": 0.365,
+            "observed": 0
+          },
+          {
+            "from": 0.5,
+            "to": 0.7,
+            "n": 1,
+            "meanP": 0.62,
+            "observed": 0
+          },
+          {
+            "from": 0.7,
+            "to": 0.9,
+            "n": 1,
+            "meanP": 0.85,
+            "observed": 1
+          },
+          {
+            "from": 0.9,
+            "to": 1,
+            "n": 17,
+            "meanP": 0.9764705882352942,
+            "observed": 1
+          }
+        ]
+      }
+    }
+  }
+}

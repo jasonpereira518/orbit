@@ -1,4 +1,6 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { RERANK_TUNING, rerankQuestion } from "@/lib/decisions/catalog";
+import { askPerItem, type Decider } from "@/lib/decisions/jev";
 import type { RankedContact, SearchFilters } from "@/lib/hybrid-search";
 import { pickNoteWindow } from "@/lib/note-window";
 
@@ -143,8 +145,82 @@ function candidateCard(c: RankedContact): string {
 }
 
 /**
- * Accuracy-only stage: scores candidates with a flash-tier model and keeps the
- * best FINAL_CONTACT_COUNT. On any failure it falls back to RRF order. Never throws.
+ * The card the decision model reads: the same facts as `candidateCard`, as named fields,
+ * minus the id (nothing to copy back — answers come keyed) and minus the filter flag, which
+ * `rerankWithDecider` applies in code rather than asking the model to weigh.
+ */
+function decisionCard(c: RankedContact) {
+  const summary = (c.aiSummary || c.notes || "").replace(/\s+/g, " ").slice(0, 160);
+  return {
+    name: c.fullName,
+    title: c.title,
+    company: c.company,
+    school: c.school,
+    industry: c.industry,
+    closeness_tier: c.closenessTier,
+    tags: c.tags.length ? c.tags : null,
+    summary: summary || null,
+  };
+}
+
+/**
+ * The rerank on the decision model (TypeSafe's Jev): one ordered-score question per
+ * candidate, answered in ~100–500ms for a fraction of the flash model's cost — the LLM spent
+ * most of its tokens WRITING 0–10 scores, and Jev's output is free. Scores are calibrated
+ * and keyed, so there are no mistyped ids to drop and no 2048-token truncation.
+ *
+ * All-or-nothing: if any chunk of candidates goes unanswered it returns null and the caller
+ * runs the LLM rerank, because ranking answered candidates against unanswered ones would
+ * rank by who happened to be in the call that failed.
+ */
+export async function rerankWithDecider(
+  decider: Decider,
+  question: string,
+  candidates: RankedContact[],
+  semanticQuery?: string | null
+): Promise<RankedContact[] | null> {
+  const lookingFor =
+    semanticQuery?.trim() && semanticQuery.trim() !== question.trim() ? semanticQuery.trim() : null;
+  const answers = await askPerItem(
+    decider,
+    {
+      operation: "chat.rerank.decide",
+      items: candidates,
+      chunkSize: RERANK_TUNING.chunkSize,
+      // Every chunk at once: this sits on the critical path of a question.
+      concurrency: Math.ceil(candidates.length / RERANK_TUNING.chunkSize),
+      state: (chunk) => ({
+        question,
+        ...(lookingFor ? { looking_for: lookingFor } : {}),
+        candidates: Object.fromEntries(chunk.map(({ key, item }) => [key, decisionCard(item)])),
+      }),
+      question: rerankQuestion,
+    },
+    { timeoutMs: RERANK_TUNING.timeoutMs }
+  );
+  if (answers.some((a) => a === null)) return null;
+
+  // A stable sort, so candidates Jev scores alike keep their search (RRF) order.
+  const scored = candidates
+    .map((c, i) => {
+      const relevance = answers[i]!.normalized;
+      return { c, relevance, rank: relevance + (c.filterMatched ? RERANK_TUNING.filterBonus : 0) };
+    })
+    .sort((a, b) => b.rank - a.rank);
+
+  const kept = scored
+    .filter((s) => s.relevance >= RERANK_TUNING.keepMin)
+    .slice(0, FINAL_CONTACT_COUNT)
+    .map((s) => s.c);
+  if (kept.length >= RERANK_MIN_SURVIVORS) return kept;
+  // Threshold starved the set — the same smaller page the LLM path returns.
+  return scored.slice(0, 5).map((s) => s.c);
+}
+
+/**
+ * Accuracy-only stage: scores candidates and keeps the best FINAL_CONTACT_COUNT — on the
+ * decision model when the account has one, else (or when it gives no answer) on a
+ * flash-tier model. On any failure it falls back to RRF order. Never throws.
  */
 export async function rerankCandidates(
   userId: string,
@@ -162,9 +238,15 @@ export async function rerankCandidates(
    * the critical path of every question. The rerank already runs after the parse, so
    * passing it here costs nothing and is exactly the judgement it describes.
    */
-  semanticQuery?: string | null
+  semanticQuery?: string | null,
+  /** The account's decision model (`openDecider`), or null for the LLM rerank. */
+  decider: Decider | null = null
 ): Promise<RankedContact[]> {
   if (candidates.length <= FINAL_CONTACT_COUNT) return candidates;
+  if (decider) {
+    const decided = await rerankWithDecider(decider, question, candidates, semanticQuery).catch(() => null);
+    if (decided) return decided;
+  }
   try {
     const content = await withTimeout(
       completeFn(userId, {

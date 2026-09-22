@@ -98,6 +98,12 @@ export const userSettings = pgTable("user_settings", {
   geminiApiKeyEncrypted: text("gemini_api_key_encrypted"),
   openaiApiKeyEncrypted: text("openai_api_key_encrypted"),
   anthropicApiKeyEncrypted: text("anthropic_api_key_encrypted"),
+  /**
+   * The account's own TypeSafe key, for Jev — the decision model behind classification and
+   * ranking steps (`src/lib/decisions/`). Optional and BYOK only: with none saved, those
+   * steps run exactly as they did before Jev.
+   */
+  typesafeApiKeyEncrypted: text("typesafe_api_key_encrypted"),
   aiModel: text("ai_model").default("gemini-3.8-flash"),
   /**
    * The model this account was moved OFF when a default changed under it, so Settings can
@@ -2418,10 +2424,11 @@ export const usageEvents = pgTable(
     userId: text("user_id").notNull(),
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic">().notNull(),
+    /** "typesafe" is the decision model (Jev), which is not a selectable chat provider. */
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "typesafe">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
-      .$type<"completion" | "multimodal" | "embedding" | "transcription">()
+      .$type<"completion" | "multimodal" | "embedding" | "transcription" | "decision">()
       .notNull(),
     /**
      * Null means the provider did not report a count — Whisper bills per second of audio

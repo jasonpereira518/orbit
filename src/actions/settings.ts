@@ -31,8 +31,8 @@ import {
   resolveAiProvider,
   type AiProvider,
 } from "@/lib/ai";
-import { checkAiKey, keyCheckOutcome } from "@/lib/ai-key-check";
-import { getAiAccessStatus, managedKeysConfigured } from "@/lib/ai-access";
+import { checkAiKey, checkDecisionKey, keyCheckOutcome } from "@/lib/ai-key-check";
+import { getAiAccessStatus, jevSwitchedOff, managedKeysConfigured } from "@/lib/ai-access";
 import {
   chooseEmbeddingKey,
   managedEligibility,
@@ -76,6 +76,14 @@ export async function getSettings() {
       gemini: Boolean(settings?.geminiApiKeyEncrypted),
       openai: Boolean(settings?.openaiApiKeyEncrypted),
       anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
+    },
+    /**
+     * The optional decision model (TypeSafe's Jev) behind the recruiter scan's filters and
+     * the chat rerank. Presence only; `switchedOff` is the `ORBIT_JEV=off` kill switch.
+     */
+    decisionModel: {
+      keySaved: Boolean(settings?.typesafeApiKeyEncrypted),
+      switchedOff: jevSwitchedOff(),
     },
     /**
      * The AI gate's view of this account — plan-aware, allowance-aware. Everything that says
@@ -323,6 +331,45 @@ export async function clearApiKey(provider?: AiProvider) {
 
   revalidatePathIfRequestScoped("/settings");
   return { ok: true as const, embeddingReset };
+}
+
+/**
+ * The decision model's key (TypeSafe's Jev). Its own action, not a branch of
+ * `saveAiSettings`: TypeSafe is not a chat provider, so saving it changes no provider, no
+ * model and no embedding space — it only lets the steps in `src/lib/decisions/` run.
+ */
+export async function saveDecisionKey(apiKey: string) {
+  const userId = await requireUserId();
+  const key = apiKey.trim();
+  if (!key) return { ok: false as const, error: "Paste a TypeSafe key first" };
+
+  const outcome = keyCheckOutcome(await checkDecisionKey(key), "typesafe");
+  // Returned, not thrown: a thrown message is a digest in production.
+  if (!outcome.save) return { ok: false as const, error: outcome.error };
+
+  const encrypted = encrypt(key);
+  const db = await getDb();
+  await db
+    .insert(userSettings)
+    .values({ userId, typesafeApiKeyEncrypted: encrypted })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { typesafeApiKeyEncrypted: encrypted, updatedAt: new Date() },
+    });
+
+  revalidatePath("/settings");
+  return { ok: true as const, keyNote: outcome.note };
+}
+
+export async function clearDecisionKey() {
+  const userId = await requireUserId();
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ typesafeApiKeyEncrypted: null, updatedAt: new Date() })
+    .where(eq(userSettings.userId, userId));
+  revalidatePathIfRequestScoped("/settings");
+  return { ok: true as const };
 }
 
 export async function saveOutreachSettings(input: {

@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  typesafe_api_key_encrypted text,
   wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
@@ -1739,7 +1740,18 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 83 = chat_messages.proposed_actions — log/remind/follow-up actions a chat answer PROPOSED,
 // never one it took; a person's own click is the only path to the real write. Branch B, item
 // 2. Rescanned against every local and remote ref on Sep 22 2026 — nothing claims 83.
-export const SCHEMA_VERSION = 83;
+//
+// 84 (landed in main via PR #256, merged ahead of this branch) = user_settings.
+// typesafe_api_key_encrypted — a person's own TypeSafe key, for Jev, the decision model
+// behind the recruiter gate and the chat rerank (src/lib/decisions/).
+//
+// 85 (claimed by PR #252, claude/chat-ux-features-v2, merging around the same time as this
+// branch) = user_settings.writing_instructions and chat_messages.slot/version/is_active.
+//
+// NOT 83 anymore. Rescanned against every remote branch and every local worktree on
+// Sep 22 2026, after merging main (with its 84) into this branch; 85 was the highest found
+// anywhere (PR #252), so this is 86.
+export const SCHEMA_VERSION = 86;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2950,6 +2962,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS typesafe_api_key_encrypted text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS preferred_name text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS website text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS met_context text`,
