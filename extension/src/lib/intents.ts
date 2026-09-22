@@ -22,6 +22,13 @@
 
 export const INTENT_KEY = "orbit:intent";
 
+/**
+ * The other hand-off through session storage: "the web app says the user just
+ * signed in" (lib/handshake). A timestamp, nothing else. Any window's panel
+ * may act on it — it names no tab.
+ */
+export const SESSION_POKE_KEY = "orbit:session-poke";
+
 /** How long a click stays actionable. Older ones describe a moment that's gone. */
 export const INTENT_TTL_MS = 10_000;
 

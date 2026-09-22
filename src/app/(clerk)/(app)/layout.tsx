@@ -12,6 +12,7 @@ import { MANAGED_AI_ENABLED } from "@/lib/managed-ai-policy";
 import { SectionFlash } from "@/components/layout/section-flash";
 import { TermsUpdateNotice } from "@/components/legal/terms-update-notice";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
+import { ExtensionSessionBridge } from "@/components/extension/extension-session-bridge";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
@@ -147,6 +148,10 @@ export default async function AppLayout({
           at a card — every account alert does — lands with that card called out. Mounted
           here so it works on every route rather than being wired up page by page. */}
       <SectionFlash />
+
+      {/* Also renders nothing: tells an installed extension's panel there is a
+          session to pick up, so it stops asking the user to sign in. */}
+      <ExtensionSessionBridge />
       {showTermsNotice && <TermsUpdateNotice />}
       {children}
       </AppShell>

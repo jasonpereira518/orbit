@@ -5,20 +5,9 @@ import { ExternalLink, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { WarpLink } from "@/components/warp/warp-link";
+import { useExtensionPresence } from "@/components/extension/use-extension-presence";
+import { EXTENSION_STORE_URL } from "@/lib/extension/links";
 import { cn } from "@/lib/utils";
-
-/**
- * Where "Add to Chrome" goes. There is no published listing yet, so this falls
- * back to a Chrome Web Store search rather than hiding the button — the store
- * is the destination either way, and a search still lands somewhere real.
- *
- * Set `NEXT_PUBLIC_EXTENSION_URL` to the listing URL
- * (https://chromewebstore.google.com/detail/<slug>/<id>) once it is published;
- * that is the only change needed here.
- */
-const STORE_URL =
-  process.env.NEXT_PUBLIC_EXTENSION_URL ??
-  "https://chromewebstore.google.com/search/orbit";
 
 /**
  * In dark mode this banner keeps its light-mode face: a white card in a dark
@@ -98,8 +87,11 @@ export function ExtensionPromo({
   // render here: the panel holds this component back until its client-side
   // fetch resolves, so it has no server-rendered output to mismatch.
   const [dismissed, setDismissed] = useState(wasDismissed);
+  // Nobody should be pitched what they already have. Held back while the
+  // extension is asked (instant when no ID is configured) so it never flashes.
+  const presence = useExtensionPresence();
 
-  if (dismissed) return null;
+  if (dismissed || presence !== null) return null;
 
   return (
     <div
@@ -140,7 +132,7 @@ export function ExtensionPromo({
 
           <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             <a
-              href={STORE_URL}
+              href={EXTENSION_STORE_URL}
               target="_blank"
               rel="noreferrer"
               className={CTA_CLASS}

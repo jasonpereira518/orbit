@@ -7,6 +7,7 @@ import { listApiKeys } from "@/actions/api-keys";
 import { listWebhookEndpoints } from "@/actions/webhook-endpoints";
 import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
+import { getExtensionStatus } from "@/actions/extension";
 import type { IntegrationTabId } from "@/components/settings/sections";
 
 export type IntegrationStatus = {
@@ -40,6 +41,14 @@ async function settle<T>(promise: Promise<T>): Promise<T | "unknown"> {
   }
 }
 
+function usedAgo(iso: string): string {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days} days ago`;
+  return `${plural(Math.floor(days / 30), "month")} ago`;
+}
+
 function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
@@ -50,13 +59,14 @@ function plural(n: number, word: string) {
  * lookups — two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook] = await Promise.all([
+  const [settings, feed, keys, webhooks, google, outlook, extension] = await Promise.all([
     settle(getSettings()),
     settle(getCalendarFeedStatus()),
     settle(listApiKeys()),
     settle(listWebhookEndpoints()),
     settle(getGmailConnectionStatus()),
     settle(getOutlookConnectionStatus()),
+    settle(getExtensionStatus()),
   ]);
 
   const statuses: IntegrationStatuses = {};
@@ -115,6 +125,15 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
   statuses.gmail = googleStatus;
 
   statuses.outlook = outlook === "unknown" ? "unknown" : connectionSummary(outlook);
+
+  // From the server's side only: "used recently" from any browser. Whether it is
+  // installed in this one is the tab's own question to the extension.
+  statuses.extension =
+    extension === "unknown"
+      ? "unknown"
+      : extension.lastSeenAt
+        ? { state: "on", detail: `Used ${usedAgo(extension.lastSeenAt)}` }
+        : { state: "off", detail: "Not used yet" };
 
   // LinkedIn has no connection to report — it is a CSV you upload each time.
   statuses.linkedin = { state: "off", detail: "Upload a CSV export" };

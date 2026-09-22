@@ -41,6 +41,7 @@ export function createFakeBrowser(
     readIntent: async () => undefined,
     clearIntent: async () => {},
     onIntent: () => () => {},
+    onSessionPoke: () => () => {},
     actionShortcut: async () => "⇧⌘O",
     extensionVersion: () => over.version ?? "1.0.0",
     requestUpdateCheck: async () => "no_update",

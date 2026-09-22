@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { format } from "date-fns";
 import { Building2, GraduationCap, Sparkles } from "lucide-react";
 import {
@@ -8,9 +9,18 @@ import {
   type ExperienceEntry,
 } from "@/lib/contact-profile-format";
 import { fillContactProfileFromApollo } from "@/actions/contact-profile";
+import { integrationHref } from "@/components/settings/sections";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ExpandableText } from "@/components/ui/expandable-text";
+
+/** Profile warnings meaning the page showed less than the whole history (see profile-capture.ts). */
+const INCOMPLETE_WARNINGS = new Set([
+  "experience-shortened",
+  "education-shortened",
+  "text-truncated",
+  "parse-incomplete",
+]);
 
 /**
  * Client component: it has a collapsible About and a button wired to a server
@@ -113,6 +123,15 @@ export function ContactExperienceSection({
           {!linkedinUrl && (
             <p className="text-sm text-muted-foreground">
               Add a LinkedIn URL to this contact to fill their profile.
+            </p>
+          )}
+          {linkedinUrl && (
+            <p className="text-sm text-muted-foreground">
+              Or open their LinkedIn with the{" "}
+              <Link href={integrationHref("extension")} className="font-medium text-primary underline-offset-2 hover:underline">
+                Orbit extension
+              </Link>{" "}
+              and save it from there.
             </p>
           )}
           {linkedinUrl && canUseApollo && (
@@ -227,9 +246,11 @@ export function ContactExperienceSection({
         */}
         <p className="border-t border-border/50 pt-3 text-xs text-muted-foreground">
           {profile.source === "extension"
-            ? `From LinkedIn · captured ${format(new Date(profile.capturedAt), "MMM d, yyyy")}`
+            ? `From their LinkedIn, saved with the Orbit extension · ${format(new Date(profile.capturedAt), "MMM d, yyyy")}`
             : "From Apollo, not their LinkedIn page directly"}
-          {profile.warnings.length > 0 && " · This capture may be incomplete."}
+          {/* Only the warnings that mean "there may be more": a capture that
+              dropped something it couldn't find on the page is not incomplete. */}
+          {profile.warnings.some((w) => INCOMPLETE_WARNINGS.has(w)) && " · This capture may be incomplete."}
         </p>
       </CardContent>
     </Card>

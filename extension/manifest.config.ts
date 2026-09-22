@@ -115,6 +115,11 @@ export default defineManifest(({ mode }) => {
       "https://github.com/*",
     ],
 
+    // Lets the Orbit web app — and only it — ask whether the extension is
+    // installed, and tell it the user just signed in (src/lib/handshake.ts).
+    // No install-time warning. Neither message returns user data.
+    externally_connectable: { matches: [`${appOrigin}/*`] },
+
     commands: {
       _execute_action: {
         suggested_key: { default: "Ctrl+Shift+O", mac: "Command+Shift+O" },

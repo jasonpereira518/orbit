@@ -60,8 +60,8 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   { label: "Chrome extension", cells: [true, true, true] },
   { label: "Recruiter tracking", cells: [false, true, true] },
   { label: "Gmail, Outlook, calendar sync", cells: [false, true, true] },
-  // Name only what has shipped. Work history is also `canUseExtensionPro`, but
-  // it joins this label when it exists — a pricing table is a promise.
+  // Name only what has shipped — a pricing table is a promise. Everything here is
+  // `canUseExtensionPro`; a new Pro section joins this label in the PR that ships it.
   {
     label: "Extension: AI opening lines, smart search, work history, who you know at a company",
     cells: [false, true, true],
