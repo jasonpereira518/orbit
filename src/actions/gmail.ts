@@ -29,6 +29,7 @@ import {
   type GooglePurpose,
 } from "@/lib/google-scopes";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
+import { pauseSync, resumeSync } from "@/lib/provider-connections";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
@@ -58,6 +59,8 @@ export type GmailConnectionStatus = {
   canImportContacts: boolean;
   /** The grant covers calendar.readonly: meetings can come in. */
   hasCalendarScope: boolean;
+  /** True when the person switched meetings off with the Meetings switch (`setCalendarSync`). */
+  syncPaused: boolean;
   /** Safe: configured redirect URI only (no secrets). */
   redirectUri: string | null;
 };
@@ -78,6 +81,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       canRead: false,
       canImportContacts: false,
       hasCalendarScope: false,
+      syncPaused: false,
       redirectUri: summary.redirectUri,
     };
   }
@@ -98,6 +102,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
           status: conn.status,
           nextSyncAt: conn.nextSyncAt,
           syncError: conn.syncError,
+          syncStatus: conn.syncStatus,
           calendarScopeGranted: hasCalendarScope(conn.scopes),
         })
       : null,
@@ -106,6 +111,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     canRead: Boolean(conn && conn.status === "active" && hasGmailReadScope(conn.scopes)),
     canImportContacts: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
     hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
+    syncPaused: Boolean(conn && conn.syncStatus === "paused"),
     redirectUri: summary.redirectUri,
   };
 }
@@ -156,6 +162,14 @@ export async function startGmailOAuth(input: {
   });
 
   return { url: buildGmailAuthUrl(state, purposes) };
+}
+
+/** The Meetings switch on the Google account page. Off leaves the grant alone. */
+export async function setCalendarSync(enabled: boolean): Promise<void> {
+  const userId = await requireUserId();
+  if (enabled) await resumeSync("google", userId);
+  else await pauseSync("google", userId);
+  revalidatePath("/settings");
 }
 
 export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {

@@ -10,6 +10,7 @@ import { getDb } from "@/db";
 import { outlookConnections, imports } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
+import { pauseSync, resumeSync } from "@/lib/provider-connections";
 import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
@@ -48,6 +49,8 @@ export type OutlookConnectionStatus = {
   hasCalendarScope: boolean;
   /** False until the person allows mail access for the recruiter scan. */
   hasMailScope: boolean;
+  /** True when the person switched meetings off with the Meetings switch (`setCalendarSync`). */
+  syncPaused: boolean;
   /** Null when there is no connection row. See `deriveConnectionHealth`. */
   status: ConnectionHealth | null;
   /** The scheduler's last error, verbatim — never rendered as-is (`calendarPauseLine`). */
@@ -70,6 +73,7 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
       hasContactsScope: false,
       hasCalendarScope: false,
       hasMailScope: false,
+      syncPaused: false,
       status: null,
       syncError: null,
       nextSyncAt: null,
@@ -90,11 +94,13 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
     hasContactsScope: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
     hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
     hasMailScope: Boolean(conn && conn.status === "active" && hasMailScope(conn.scopes)),
+    syncPaused: Boolean(conn && conn.syncStatus === "paused"),
     status: conn
       ? deriveConnectionHealth({
           status: conn.status,
           nextSyncAt: conn.nextSyncAt,
           syncError: conn.syncError,
+          syncStatus: conn.syncStatus,
           calendarScopeGranted: hasCalendarScope(conn.scopes),
         })
       : null,
@@ -150,6 +156,14 @@ export async function startOutlookOAuth(input: {
   });
 
   return { url: buildMicrosoftAuthUrl(state, purposes, existing?.scopes) };
+}
+
+/** The Meetings switch on the Microsoft account page. Off leaves the grant alone. */
+export async function setCalendarSync(enabled: boolean): Promise<void> {
+  const userId = await requireUserId();
+  if (enabled) await resumeSync("microsoft", userId);
+  else await pauseSync("microsoft", userId);
+  revalidatePath("/settings");
 }
 
 /**

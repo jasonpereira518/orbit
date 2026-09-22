@@ -237,6 +237,45 @@ export async function disarmSync(
 }
 
 /**
+ * The person switched meetings off. Distinct from `disarmSync`, which is the scheduler giving
+ * up: no error is recorded, and the row is taken out of the queue rather than marked broken,
+ * because the claim predicate only skips rows that are already syncing.
+ *
+ * Keyed by user, not connection id: the switch lives on an account page, which knows who is
+ * signed in and not which row id backs it.
+ */
+export async function pauseSync(provider: SyncProvider, userId: string, now = new Date()): Promise<void> {
+  const db = await getDb();
+  const table = sql.raw(PROVIDER_TABLES[provider]);
+  await db.execute(sql`
+    UPDATE ${table}
+       SET sync_status = 'paused',
+           next_sync_at = NULL,
+           sync_started_at = NULL,
+           sync_error = NULL,
+           sync_failures = 0,
+           updated_at = ${now}
+     WHERE user_id = ${userId}
+  `);
+}
+
+/** Back into the queue, starting now, with the failure counters cleared. */
+export async function resumeSync(provider: SyncProvider, userId: string, now = new Date()): Promise<void> {
+  const db = await getDb();
+  const table = sql.raw(PROVIDER_TABLES[provider]);
+  await db.execute(sql`
+    UPDATE ${table}
+       SET sync_status = NULL,
+           next_sync_at = ${now},
+           sync_started_at = NULL,
+           sync_error = NULL,
+           sync_failures = 0,
+           updated_at = ${now}
+     WHERE user_id = ${userId}
+  `);
+}
+
+/**
  * Which kinds of connected source could plausibly have seen this user's contacts.
  *
  * Feeds `coveredByConnectedSource` in the closeness evidence model, which is why the bar is

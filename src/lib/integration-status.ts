@@ -17,9 +17,10 @@ export type AccountCapability = "contacts" | "meetings" | "inbox" | "send";
 /**
  * `available` is granted but not in continuous use (contacts to import, an inbox to scan);
  * `on` is granted and running (meetings) or simply allowed (sending). `locked` is the plan,
- * never the grant.
+ * never the grant. `off` is the person's own choice (the Meetings switch) — distinct from
+ * `paused`, which is the sync having broken on its own.
  */
-export type CapabilityState = "on" | "available" | "not_allowed" | "paused" | "locked";
+export type CapabilityState = "on" | "available" | "not_allowed" | "paused" | "off" | "locked";
 export type CapabilityStatus = { state: CapabilityState; detail?: string };
 
 export type AccountState = "not_configured" | "not_connected" | "connected" | "needs_reauth";
@@ -91,6 +92,7 @@ function meetingsStatus(
   provider: ProviderName
 ): CapabilityStatus {
   if (!granted) return { state: "not_allowed" };
+  if (health === "paused") return { state: "off", detail: "Off" };
   if (health !== "disarmed") return { state: "on" };
   const scopeMissing = Boolean(syncError && /not granted|insufficient|scope/i.test(syncError));
   return {

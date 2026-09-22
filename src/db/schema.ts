@@ -2201,7 +2201,13 @@ function syncStateColumns() {
      * routinely lags 5-30 minutes.
      */
     nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
-    syncStatus: text("sync_status").$type<"idle" | "syncing" | "error">(),
+    /**
+     * `'paused'` is written only by `pauseSync` (Gmail/Outlook meetings switch, see
+     * `provider-connections.ts`) — event provider connections never take that state. Plain
+     * `text` with no CHECK constraint, so this widened union is a type-level fact only; it
+     * needs no migration and no `SCHEMA_VERSION` bump.
+     */
+    syncStatus: text("sync_status").$type<"idle" | "syncing" | "error" | "paused">(),
     /**
      * Lease timestamp, set when a run claims this row. Load-bearing: without it
      * `syncStatus = 'syncing'` latches forever the first time an invocation is killed

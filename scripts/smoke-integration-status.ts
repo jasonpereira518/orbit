@@ -93,6 +93,21 @@ check(
   Object.keys(googleAccountStatus(google({ connected: false, status: null }), pro).capabilities).length === 0
 );
 
+console.log("\nmeetings, off versus broken");
+const off = googleAccountStatus(google({ status: "paused" }), pro).capabilities.meetings;
+check("turned off reads off", off?.state === "off");
+check("and says so plainly", off?.detail === "Off");
+const broke = googleAccountStatus(google({ status: "disarmed", syncError: "x" }), pro).capabilities.meetings;
+check("broken still reads paused", broke?.state === "paused");
+check(
+  "only the broken one is worth flagging",
+  attentionItems({ accounts: { google: googleAccountStatus(google({ status: "paused" }), pro) }, ai: { ready: true } }).length === 0
+);
+check(
+  "the page reads connected while meetings are off",
+  accountPageStatus(googleAccountStatus(google({ status: "paused" }), pro)).state === "on"
+);
+
 console.log("\nmicrosoftAccountStatus");
 const m = microsoftAccountStatus(microsoft(), pro);
 check("connected, with the account's email", m.state === "connected" && m.email === "jo@outlook.com");

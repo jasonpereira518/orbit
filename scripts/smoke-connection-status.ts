@@ -20,7 +20,7 @@ function check(label: string, ok: boolean, detail = "") {
 
 const row = (over: Partial<Parameters<typeof deriveConnectionHealth>[0]> = {}) => ({
   status: "active", nextSyncAt: new Date() as Date | null, syncError: null as string | null,
-  calendarScopeGranted: true, ...over,
+  syncStatus: null as string | null, calendarScopeGranted: true, ...over,
 });
 
 console.log("deriveConnectionHealth");
@@ -30,6 +30,11 @@ check("parked with an error is disarmed", deriveConnectionHealth(row({ nextSyncA
 check("in backoff (still scheduled) is not disarmed", deriveConnectionHealth(row({ syncError: "Google Calendar 503" })) === "active");
 check("never scheduled, no error, is not disarmed", deriveConnectionHealth(row({ nextSyncAt: null })) === "active");
 check("no calendar scope is never disarmed", deriveConnectionHealth(row({ nextSyncAt: null, syncError: "Calendar access not granted", calendarScopeGranted: false })) === "active");
+check("a connection the person paused reads paused", deriveConnectionHealth(row({ syncStatus: "paused", nextSyncAt: null })) === "paused");
+check("paused wins over a stale error", deriveConnectionHealth(row({ syncStatus: "paused", nextSyncAt: null, syncError: "old" })) === "paused");
+check("a failure is still disarmed", deriveConnectionHealth(row({ nextSyncAt: null, syncError: "Google Calendar 403" })) === "disarmed");
+check("needs_reauth still wins over everything", deriveConnectionHealth(row({ status: "needs_reauth", syncStatus: "paused", nextSyncAt: null })) === "needs_reauth");
+check("a paused connection is not a problem on the card", connectionSummary({ configured: true, connected: true, status: "paused" }).state === "on");
 
 console.log("calendarPauseLine");
 check("scope trouble asks for calendar access", calendarPauseLine("Google Calendar 403: insufficient scope") === "Calendar sync paused — reconnect Google and allow calendar access");

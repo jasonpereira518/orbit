@@ -19,6 +19,8 @@ import {
   disarmSync,
   loadCoverageSources,
   markSyncResult,
+  pauseSync,
+  resumeSync,
 } from "../src/lib/provider-connections";
 
 let failures = 0;
@@ -215,6 +217,32 @@ run(async () => {
 
   const stranger = await loadCoverageSources("nobody-at-all");
   check("an unconnected user has no coverage", !stranger.mailConnected && !stranger.calendarConnected);
+
+  // --- pauseSync/resumeSync take a connection out of the queue and put it back again ---------
+  console.log("\npausing and resuming on purpose");
+  const pauseUserId = "pause-resume-user";
+  const pauseId = await seed(pauseUserId, past);
+  await pauseSync("google", pauseUserId);
+  const pausedRow = await readRow(pauseId);
+  check("a paused connection is not queued", pausedRow.next_sync_at === null);
+  check(
+    "and is marked paused, not failed",
+    pausedRow.sync_status === "paused" && pausedRow.sync_error === null
+  );
+  check(
+    "the scheduler does not claim it",
+    !(await claimDueConnections("google", 10)).some((c) => c.id === pauseId)
+  );
+  await resumeSync("google", pauseUserId);
+  const resumedRow = await readRow(pauseId);
+  check(
+    "resuming queues it again",
+    resumedRow.next_sync_at !== null && resumedRow.sync_status === null
+  );
+  check(
+    "the scheduler claims it once more",
+    (await claimDueConnections("google", 10)).some((c) => c.id === pauseId)
+  );
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
