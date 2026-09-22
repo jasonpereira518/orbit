@@ -53,7 +53,9 @@ import {
   managedKeysConfigured,
   resolveAiAccess,
   runOnGrant,
+  typesafeClient,
   type AiGrant,
+  type DecisionGrant,
 } from "../src/lib/ai-access";
 import {
   AI_ACCESS_COPY,
@@ -155,6 +157,13 @@ const GATE = "src/lib/ai-access.ts";
  * merge does not fail this guard.
  */
 const KEY_PROBE = "src/lib/ai-key-check.ts";
+/**
+ * TypeSafe's transport (the decision model). It takes a raw key, so it is guarded like an
+ * SDK: only the gate and the key probe may import it, and it is the one file allowed to name
+ * TypeSafe's host. Its own smoke tests it directly, with a stubbed fetch.
+ */
+const TYPESAFE_TRANSPORT = "src/lib/typesafe-api.ts";
+const TYPESAFE_TRANSPORT_TEST = "scripts/smoke-jev-client.ts";
 
 function sourceGuard() {
   console.log("\nOnly the gate can reach a provider");
@@ -165,8 +174,9 @@ function sourceGuard() {
   );
   const dynamicImport = new RegExp(String.raw`import\(\s*["'](${SDKS.map((s) => s.replace(/[/@.-]/g, (c) => `\\${c}`)).join("|")})["']\s*\)`);
   const construct = /new\s+(GoogleGenAI|OpenAI|Anthropic)\s*\(/;
-  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY)\b/;
-  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com/;
+  const transportImport = /^\s*import\s+(?!type\b)[^;]*?from\s+["'](?:@\/lib|\.\.?(?:\/[\w.-]+)*)\/typesafe-api["']|import\(\s*["'][^"']*typesafe-api["']\s*\)/m;
+  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|TYPESAFE_API_KEY)\b/;
+  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai/;
 
   const offenders: string[] = [];
   for (const file of [...walk("src"), ...walk("scripts")]) {
@@ -176,13 +186,20 @@ function sourceGuard() {
     const probe = file === KEY_PROBE;
     if (!probe && (valueImport.test(code) || dynamicImport.test(code))) offenders.push(`${file}: imports an AI SDK`);
     if (!probe && construct.test(code)) offenders.push(`${file}: constructs an AI client`);
+    if (!probe && file !== TYPESAFE_TRANSPORT_TEST && transportImport.test(code)) offenders.push(`${file}: imports TypeSafe's raw-key transport`);
     if (envKey.test(code) && file !== "scripts/smoke-contact-brief.ts") offenders.push(`${file}: reads an AI key from the environment`);
-    if (providerHost.test(code)) offenders.push(`${file}: talks to a provider host directly`);
+    if (providerHost.test(code) && file !== TYPESAFE_TRANSPORT) offenders.push(`${file}: talks to a provider host directly`);
   }
   check("no file outside the gate imports an SDK, builds a client, reads a key or calls a provider", offenders.length === 0, offenders.join("\n       "));
 
   const gate = readFileSync(GATE, "utf8");
   check("the gate itself holds all three SDK constructors", ["new GoogleGenAI(", "new OpenAI(", "new Anthropic("].every((c) => gate.includes(c)));
+  check("…and the only hand-off of a TypeSafe key to its transport", /systemOneRequest\(key,/.test(gate));
+  // The rules above are regexes over source text; prove each new one bites on a sample.
+  check("the transport-import rule catches a stray import", transportImport.test(`import { systemOneRequest } from "@/lib/typesafe-api";`) && transportImport.test(`import { x } from "../src/lib/typesafe-api";`));
+  check("…but not a type-only one", !transportImport.test(`import type { SystemOneRequest } from "@/lib/typesafe-api";`));
+  check("the env rule catches TYPESAFE_API_KEY", envKey.test("process.env.TYPESAFE_API_KEY"));
+  check("the host rule catches TypeSafe's host", providerHost.test("https://api.typesafe.ai/v1/systemone"));
   const ai = readFileSync("src/lib/ai.ts", "utf8");
   check("ai.ts imports the SDKs for types only", !valueImport.test(ai) && /import type OpenAI/.test(ai));
   check("every ai.ts provider path starts at resolveAiAccess", (ai.match(/resolveAiAccess\(/g) ?? []).length >= 6);
@@ -558,6 +575,7 @@ function setNodeEnv(value: string | undefined) {
 async function byokOnly() {
   const db = await getDb();
   const DEV_KEY = "dev-laptop-gemini-key";
+  const DEV_TYPESAFE_KEY = "dev-laptop-typesafe-key";
   const saved = {
     VERCEL: process.env.VERCEL,
     DEMO: process.env.DEMO_ACCOUNT_USER_ID,
@@ -568,6 +586,7 @@ async function byokOnly() {
     process.env[`ORBIT_MANAGED_${p}_API_KEY`] = MANAGED;
     process.env[`${p}_API_KEY`] = DEV_KEY;
   }
+  process.env.TYPESAFE_API_KEY = DEV_TYPESAFE_KEY;
   process.env.DEMO_ACCOUNT_USER_ID = U.demoNone;
 
   try {
@@ -598,6 +617,8 @@ async function byokOnly() {
       check(`${u}: the UI is told to add a key`, !s.ready && s.reason === "key_required" && s.source === null && s.allowance === null, JSON.stringify(s));
       const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, u) });
       check(`${u}: the notification alert agrees`, aiReadyFromSettings(u, row ?? null) === false);
+      check(`${u}: no decision grant — TypeSafe is BYOK, and .env.local is not a deployment's`,
+        (await resolveAiAccess(u)).decision("chat.rerank.decide") === null);
     }
 
     for (const u of [U.lifetimeOwn, U.freeOwn]) {
@@ -638,6 +659,20 @@ async function byokOnly() {
     local = await lastSent(() => json(U.localDev));
     check("a saved key still wins over .env.local", local.req?.key === USER_KEY, local.req?.key ?? local.err);
 
+    console.log("\nThe decision model: the account's own TypeSafe key, or .env.local on a dev server");
+    let decision = (await resolveAiAccess(U.localDev)).decision("chat.rerank.decide");
+    check("`next dev`: .env.local's TypeSafe key backs a decision grant",
+      decision?.provider === "typesafe" && decision.source === "managed", JSON.stringify(decision));
+    await db.update(userSettings).set({ typesafeApiKeyEncrypted: encrypt("user-typesafe-key") }).where(eq(userSettings.userId, U.localDev));
+    decision = (await resolveAiAccess(U.localDev)).decision("chat.rerank.decide");
+    check("…and a saved TypeSafe key wins over it, on the user's bill",
+      decision?.source === "personal" && decision.keyOwner === "user", JSON.stringify(decision));
+    process.env.ORBIT_JEV = "off";
+    check("ORBIT_JEV=off: no decision grant, even with a key saved",
+      (await resolveAiAccess(U.localDev)).decision("chat.rerank.decide") === null);
+    delete process.env.ORBIT_JEV;
+    await db.update(userSettings).set({ typesafeApiKeyEncrypted: null }).where(eq(userSettings.userId, U.localDev));
+
     process.env.ORBIT_DEMO_MANAGED_AI = "off";
     await account(U.localDev, {});
     local = await lastSent(() => json(U.localDev));
@@ -665,11 +700,21 @@ async function byokOnly() {
       threw = true;
     }
     check("a hand-built grant gets no client", threw);
+    const forgedDecision = Object.freeze({ provider: "typesafe", model: "x", source: "personal", keyOwner: "user", operation: "x" }) as DecisionGrant;
+    threw = false;
+    try {
+      typesafeClient(forgedDecision);
+    } catch {
+      threw = true;
+    }
+    check("…nor does a hand-built decision grant", threw);
   } finally {
     for (const p of ["GEMINI", "OPENAI", "ANTHROPIC"]) {
       delete process.env[`${p}_API_KEY`];
       delete process.env[`ORBIT_MANAGED_${p}_API_KEY`];
     }
+    delete process.env.TYPESAFE_API_KEY;
+    delete process.env.ORBIT_JEV;
     process.env.ORBIT_MANAGED_GEMINI_API_KEY = MANAGED;
     if (saved.VERCEL === undefined) delete process.env.VERCEL;
     else process.env.VERCEL = saved.VERCEL;

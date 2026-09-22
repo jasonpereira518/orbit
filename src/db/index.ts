@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  typesafe_api_key_encrypted text,
   wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
@@ -1743,13 +1744,19 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 81 = chat_messages.slot/version/is_active, for edit-and-regenerate on the last turn of a
 // chat. Rescanned against every local and remote ref on Sep 21 2026 — nothing claims 81.
 //
-// NOT 81 anymore. By Sep 22 2026, PR #255 (claude/chat-source-chips) had moved on to 83 and
-// PR #256 (claude/jev-orbit-ai-integration) had claimed 84 — this branch's own preview
-// deployment was stuck recording an old fingerprint and never actually running these
-// alters, because `isSchemaCurrent`'s never-downgrade rule treats ANY database already
-// past this branch's number as current without even checking the fingerprint. Rescanned
-// against every remote branch and every local worktree on Sep 22 2026; 84 was the highest
-// found anywhere, so this is 85.
+// 84 (landed in main via PR #256, merged ahead of this branch) = user_settings.
+// typesafe_api_key_encrypted — a person's own TypeSafe key, for Jev, the decision model
+// behind the recruiter gate and the chat rerank (src/lib/decisions/). That branch had also
+// passed through 82 and 83 before settling on 84, for the same reason this one is about to
+// move again: chat-source-chips (PR #255) had already taken those numbers.
+//
+// NOT 81 anymore. By Sep 22 2026, PR #255 had moved on to 83, PR #256 had claimed and
+// landed 84, and this branch's own preview deployment was stuck recording an old
+// fingerprint and never actually running these alters — `isSchemaCurrent`'s never-downgrade
+// rule treats ANY database already past this branch's number as current without even
+// checking the fingerprint. Rescanned against every remote branch and every local worktree
+// on Sep 22 2026, after merging main (and its 84) into this branch; 85 was the highest
+// found anywhere and is still free.
 export const SCHEMA_VERSION = 85;
 
 /**
@@ -2961,6 +2968,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS typesafe_api_key_encrypted text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS preferred_name text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS website text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS met_context text`,

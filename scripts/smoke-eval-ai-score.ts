@@ -15,6 +15,7 @@ import {
   scoreResearchAnswer,
   tally,
   wordErrorRate,
+  calibrationBins,
 } from "./lib/eval-ai-score";
 
 let failures = 0;
@@ -162,6 +163,19 @@ check(
   missedFact.mentioned.join() === "true,false" && missedFact.said.join() === "false",
   JSON.stringify(missedFact)
 );
+
+const bins = calibrationBins([
+  { p: 0.95, label: true },
+  { p: 1, label: true },
+  { p: 0.92, label: false },
+  { p: 0.05, label: false },
+  { p: 0.5, label: true },
+]);
+check("calibration: p = 1 lands in the top band, which is closed", bins[bins.length - 1].n === 3, JSON.stringify(bins));
+check("…whose observed rate is the share of true labels", Math.abs((bins[bins.length - 1].observed ?? 0) - 2 / 3) < 1e-9);
+check("…with the band's mean claimed probability beside it", Math.abs((bins[bins.length - 1].meanP ?? 0) - (0.95 + 1 + 0.92) / 3) < 1e-9);
+check("a band's lower edge is inclusive, its upper exclusive", bins[3].n === 1 && bins[2].n === 0, JSON.stringify(bins.map((b) => b.n)));
+check("an empty band reports nulls, not zeros", bins[1].n === 0 && bins[1].meanP === null && bins[1].observed === null);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

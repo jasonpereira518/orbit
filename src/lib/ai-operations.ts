@@ -20,11 +20,14 @@ import type { ThinkingLevel } from "@/lib/ai-request-options";
  *  - `vision`      `VISION_MODELS[provider]` — OCR, where a misread name can't be recovered
  *  - `embed`       the embedding model for the account's embedding backend
  *  - `transcribe`  the transcription chain (Whisper → Gemini)
+ *  - `decision`    TypeSafe's Jev (`JEV_MODEL`), the decision model: typed questions in,
+ *                  calibrated probabilities out. Runs only on the account's own TypeSafe key,
+ *                  and every decision operation has the pre-Jev path to fall back to.
  *
  * This DRIVES routing: `modelForOperation` in `ai-models.ts` reads the tier, and the AI
  * entry points read that — there is no per-call-site model argument to disagree with it.
  */
-export type AiTier = "user" | "fast" | "vision" | "embed" | "transcribe";
+export type AiTier = "user" | "fast" | "vision" | "embed" | "transcribe" | "decision";
 
 type OperationSpec = {
   /** In words a person would use — the settings usage card shows this. */
@@ -92,6 +95,12 @@ export const AI_OPERATIONS = {
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },
   "recruiter.draft": { label: "Recruiter drafts", tier: "user" },
   "import.enrich": { label: "LinkedIn import summaries", tier: "fast", thinking: "minimal", background: true },
+  // Jev (the decision model). Own ids, never an LLM operation's: `ai_result_cache` keys on
+  // the operation and not the model, so a shared id would replay one engine's answer as the
+  // other's.
+  "recruiter.prefilter": { label: "Recruiter scan: spotting recruiters", tier: "decision", background: true },
+  "recruiter.gate": { label: "Recruiter scan: ruling out non-recruiters", tier: "decision", background: true },
+  "chat.rerank.decide": { label: "Chat: ranking results (decision model)", tier: "decision" },
   "import.linkedin.timeline": {
     label: "LinkedIn timeline events",
     tier: "fast",
@@ -101,6 +110,11 @@ export const AI_OPERATIONS = {
 } as const satisfies Record<string, OperationSpec>;
 
 export type AiOperationId = keyof typeof AI_OPERATIONS;
+
+/** The operations that run on the decision model — the only ids `Decider.ask` accepts. */
+export type DecisionOperationId = {
+  [K in AiOperationId]: (typeof AI_OPERATIONS)[K]["tier"] extends "decision" ? K : never;
+}[AiOperationId];
 
 /**
  * Ids that only exist in history: rows written before a call site was renamed or given its
