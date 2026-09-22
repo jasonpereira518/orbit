@@ -7,6 +7,7 @@ import {
   upsertGmailConnection,
 } from "@/lib/gmail";
 import { isDemoMode } from "@/lib/auth";
+import { deleteEventConnection } from "@/lib/events/connections";
 import { missingGooglePurposes, serializeGooglePurposes } from "@/lib/google-scopes";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
@@ -82,7 +83,16 @@ export async function GET(request: Request) {
     // The upsert has already run by here — whatever it did (including swapping the account
     // and resetting scopes/cursor to the new grant alone) is true regardless of what the
     // missing-scope check below decides, so every redirect from this point on must say so.
-    if (switchedFrom) redirectBase.searchParams.set("switched", "1");
+    if (switchedFrom) {
+      redirectBase.searchParams.set("switched", "1");
+      // The confirmation-email scan is opted into PER MAILBOX, and its row carries no token of
+      // its own — `events/sync.ts` resolves one from `gmail_connections` by user. Left behind
+      // after a switch it still bears the old address while pointing at the new mailbox: either
+      // failing every pass up the backoff ladder, or reading a mailbox whose owner never opted
+      // in. Disconnecting already takes it; switching accounts has to as well. (Microsoft has
+      // no equivalent row.)
+      await deleteEventConnection(sessionUserId, "gmail");
+    }
 
     // Google's granular consent lets people untick a box. Only a grant that covers none of
     // what was asked is a failed connect; a partial one is connected, and the feature whose

@@ -31,7 +31,11 @@ import { gmailConnections } from "../src/db/schema";
 import { disconnectGmail } from "../src/actions/gmail";
 import { upsertGmailConnection } from "../src/lib/gmail";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
-import { listEventConnections, upsertEventConnection } from "../src/lib/events/connections";
+import {
+  deleteEventConnection,
+  listEventConnections,
+  upsertEventConnection,
+} from "../src/lib/events/connections";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "demo-user";
@@ -95,6 +99,33 @@ run(async () => {
     "an unrelated event connection for the same user survives",
     (await listEventConnections(USER)).some((c) => c.provider === "luma_ics")
   );
+
+  console.log("\nconnecting a different mailbox takes the old one's event scan with it");
+  await cleanup();
+  await upsertGmailConnection(USER, tokensWithScope(GOOGLE_SCOPES.gmailRead), "jo@gmail.com");
+  await upsertEventConnection(USER, { provider: "gmail", authKind: "google_grant", secret: "", label: "jo@gmail.com" });
+  await upsertEventConnection(USER, { provider: "luma_ics", authKind: "ics", secret: "https://lu.ma/ics/smoke-switch" });
+
+  // What the Gmail callback does on a switch. The route itself needs a Clerk session and a
+  // live token exchange, so this drives the two steps it takes: the upsert reports the
+  // switch, and the callback acts on that report.
+  const { switchedFrom } = await upsertGmailConnection(
+    USER,
+    tokensWithScope(GOOGLE_SCOPES.gmailRead),
+    "jo@newjob.com"
+  );
+  check("the upsert reports the account change", switchedFrom === "jo@gmail.com", String(switchedFrom));
+  if (switchedFrom) await deleteEventConnection(USER, "gmail");
+
+  check(
+    "the previous mailbox's confirmation-email scan is gone",
+    (await listEventConnections(USER)).every((c) => c.provider !== "gmail")
+  );
+  check(
+    "an unrelated event connection for the same user survives the switch",
+    (await listEventConnections(USER)).some((c) => c.provider === "luma_ics")
+  );
+  check("and the new sign-in is the one that stands", (await readGmailRow())?.emailAddress === "jo@newjob.com");
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
