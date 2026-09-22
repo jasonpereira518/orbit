@@ -68,7 +68,7 @@ export function AssistantsSettings() {
   return (
     <SettingsSection
       title="Claude and ChatGPT"
-      description="Ask Claude or ChatGPT about your network, and let them log notes for you. They sign in to Orbit, so there's no key to copy. Works on every plan."
+      description="Ask Claude or ChatGPT about your network, and let them log notes for you. They sign in to Orbit, so there’s no key to copy. Works on every plan."
     >
       <div
         role="group"
