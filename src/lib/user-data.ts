@@ -598,7 +598,7 @@ export function countedTableNames(category: DataCategory): string[] {
  * delete. The reasoning is that "delete all data" means "delete the data I put in," not
  * "erase the account":
  *   - the BYO provider keys (`*_api_key_encrypted` for Gemini/OpenAI/Anthropic/Apollo/Resend/
- *     Twilio/Wispr) plus `aiProvider`/`aiModel`, since a key without the selection that uses
+ *     Twilio) plus `aiProvider`/`aiModel`, since a key without the selection that uses
  *     it is inert — these are credentials for third-party services the user pays for
  *     directly, not Orbit data about them, unlike the Gmail/Outlook OAuth tokens the
  *     `connections` step purges
@@ -630,7 +630,6 @@ const PRESERVED_SETTINGS_COLUMNS = {
   twilioAccountSidEncrypted: true,
   twilioAuthTokenEncrypted: true,
   twilioFromNumber: true,
-  wisprApiKeyEncrypted: true,
   aiProvider: true,
   aiModel: true,
   theme: true,

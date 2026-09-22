@@ -1,8 +1,8 @@
 /**
- * Transcription vocabulary selection, and the shaping of a Wispr request. No DOM, no
- * network, no DB — `loadNetworkVocabulary` is the only DB-touching export and is not
- * exercised here; everything it depends on is.
- * Run: npx tsx scripts/smoke-wispr.ts
+ * Transcription vocabulary selection and per-engine shaping. No DOM, no network, no DB —
+ * `loadNetworkVocabulary` is the only DB-touching export and is covered by
+ * `smoke-transcription-vocabulary.ts`; everything it depends on is exercised here.
+ * Run: npx tsx scripts/smoke-vocabulary-terms.ts
  */
 import {
   MAX_VOCABULARY_TERMS,
@@ -12,12 +12,6 @@ import {
   vocabularyToWhisperPrompt,
   type VocabularySource,
 } from "../src/lib/transcription-vocabulary";
-import {
-  buildTranscribeBody,
-  parseTranscribeResponse,
-  transcribeWithWisprOutcome,
-  type WisprContext,
-} from "../src/lib/wispr";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -227,101 +221,6 @@ check("no terms is an empty line", vocabularyToPromptLine([]) === "");
   check("tells the model not to invent them", line.includes("do not add them"));
 }
 
-// ── buildTranscribeBody ───────────────────────────────────────────────────────────────
-console.log("\nbuildTranscribeBody");
 
-const ctx: WisprContext = {
-  dictionary_context: ["Priya Raman", "Stripe"],
-  app: { name: "Orbit", type: "other" },
-};
-
-{
-  const body = buildTranscribeBody({ audioBase64: "UklGRiQA", context: ctx });
-  check("sends the audio under `audio`", body.audio === "UklGRiQA");
-  const context = body.context as Record<string, unknown>;
-  check("sends the dictionary", JSON.stringify(context.dictionary_context) === '["Priya Raman","Stripe"]');
-  check("sends the app descriptor", JSON.stringify(context.app) === '{"name":"Orbit","type":"other"}');
-  check("sends explicit empty textbox contents", JSON.stringify(context.textbox_contents) === '{"before_text":"","selected_text":"","after_text":""}');
-  // Empty means autodetect; sending `language: []` would be a different request.
-  check("omits `language` when no languages are given", !("language" in body));
-  check("omits an absent user first name", !("user_first_name" in context));
-}
-
-{
-  const body = buildTranscribeBody({
-    audioBase64: "AAAA",
-    languages: ["en"],
-    context: { ...ctx, user_first_name: "Jason", user_last_name: "Pereira" },
-  });
-  check("forces a single language when one is given", JSON.stringify(body.language) === '["en"]');
-  const context = body.context as Record<string, unknown>;
-  check("passes the user's first name", context.user_first_name === "Jason");
-  check("passes the user's last name", context.user_last_name === "Pereira");
-}
-
-check(
-  "an empty dictionary is still a valid body",
-  Array.isArray(
-    (buildTranscribeBody({
-      audioBase64: "AAAA",
-      context: { ...ctx, dictionary_context: [] },
-    }).context as Record<string, unknown>).dictionary_context,
-  ),
-);
-
-check("the body is JSON-serialisable", typeof JSON.stringify(buildTranscribeBody({ audioBase64: "AAAA", context: ctx })) === "string");
-
-// ── parseTranscribeResponse ───────────────────────────────────────────────────────────
-console.log("\nparseTranscribeResponse");
-
-check("reads the documented REST shape", parseTranscribeResponse({ text: "Met Priya." }) === "Met Priya.");
-// The WebSocket surface nests under `body`; accepting both turns a schema surprise into a
-// working transcript instead of a silent fallback.
-check("also reads the nested socket shape", parseTranscribeResponse({ body: { text: "Met Priya." } }) === "Met Priya.");
-check("trims surrounding whitespace", parseTranscribeResponse({ text: "  hello  " }) === "hello");
-
-// An empty transcript is a successful call that heard nothing — the caller must try the
-// next engine rather than save a blank note.
-check("an empty transcript is null", parseTranscribeResponse({ text: "" }) === null);
-check("a whitespace transcript is null", parseTranscribeResponse({ text: "   " }) === null);
-
-for (const bad of [null, undefined, "", 0, [], { error: "nope" }, { text: 42 }, { body: {} }]) {
-  check(`rejects ${JSON.stringify(bad) ?? "undefined"}`, parseTranscribeResponse(bad) === null);
-}
-
-// ── transcribeWithWisprOutcome ────────────────────────────────────────────────────────
-async function outcomeChecks() {
-  console.log("\ntranscribeWithWisprOutcome");
-  const realFetch = globalThis.fetch;
-  const input = { audioBase64: "AAAA", context: { dictionary_context: [], app: { name: "Orbit", type: "other" as const } } };
-  const answer = (res: Response) => { globalThis.fetch = (async () => res) as typeof fetch; };
-  try {
-    answer(new Response('{"error":"bad key"}', { status: 401 }));
-    const r401 = await transcribeWithWisprOutcome("k", input);
-    check("a 401 is a rejected key", r401.text === null && "reason" in r401 && r401.reason === "rejected_key");
-    answer(new Response("{}", { status: 403 }));
-    const r403 = await transcribeWithWisprOutcome("k", input);
-    check("a 403 is a rejected key", "reason" in r403 && r403.reason === "rejected_key");
-    answer(Response.json({ text: "Met Priya." }));
-    check("a transcript comes back", (await transcribeWithWisprOutcome("k", input)).text === "Met Priya.");
-    answer(Response.json({ text: "  " }));
-    const empty = await transcribeWithWisprOutcome("k", input);
-    check("silence is empty, not an error", "reason" in empty && empty.reason === "empty");
-    answer(new Response("oops", { status: 500 }));
-    const down = await transcribeWithWisprOutcome("k", input);
-    check("an outage is an error", "reason" in down && down.reason === "error");
-  } finally {
-    globalThis.fetch = realFetch;
-  }
-}
-
-outcomeChecks().then(
-  () => {
-    console.log("\nsmoke-wispr: all checks passed");
-    process.exit(0);
-  },
-  (err) => {
-    console.error(err);
-    process.exit(1);
-  }
-);
+console.log("\nsmoke-vocabulary-terms: all checks passed");
+process.exit(0);

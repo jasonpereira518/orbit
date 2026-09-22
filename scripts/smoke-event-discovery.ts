@@ -16,6 +16,7 @@ import {
 import {
   canonicalEventKey,
   candidateKeys,
+  keyId,
   mergeCandidates,
 } from "../src/lib/events/discovery/keys";
 import {
@@ -179,6 +180,16 @@ function main() {
     check("the provider id is the strongest key", keys[0]?.value === "luma:evt-6mLuOvNx", keys[0]?.value);
     check("the url is a key too", keys.some((k) => k.kind === "url"));
     check("and so is the source's own ref", keys.some((k) => k.value === "gcal:uid-9"));
+  }
+  {
+    // keyId's separator is a single NUL (char code 0). Its source spells it as an escape so the
+    // file stays text for grep and git diff; this pins the runtime string so the format can't drift.
+    const id = keyId({ kind: "url", value: "lu.ma/abc" });
+    check(
+      "a key id is kind, one NUL, value",
+      id === "url" + String.fromCharCode(0) + "lu.ma/abc" && id.charCodeAt(3) === 0,
+      JSON.stringify(id)
+    );
   }
 
   console.log("\nmerging two reports of one event");
