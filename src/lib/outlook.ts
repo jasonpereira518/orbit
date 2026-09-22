@@ -272,6 +272,11 @@ export async function upsertOutlookConnection(
   // paused" to someone who never asked for calendar. A row the old code armed by mistake
   // heals here on its next connect.
   const armed = hasCalendarScope(scopes);
+  // The pause is the person's own choice (`pauseSync`) and only they undo it (`resumeSync`,
+  // the Meetings switch) — reconnecting the SAME account to add another feature (mail, say)
+  // must not silently arm meetings back on. A different account already drops `syncStatus`
+  // via `switchedFrom` above, so switching accounts still starts fresh and armed.
+  const pausedByUser = !switchedFrom && existing?.syncStatus === "paused";
 
   if (existing) {
     const [row] = await db
@@ -283,7 +288,7 @@ export async function upsertOutlookConnection(
         tokenExpiresAt: expiresAt,
         scopes,
         status: "active",
-        nextSyncAt: armed ? new Date() : null,
+        nextSyncAt: armed && !pausedByUser ? new Date() : null,
         syncFailures: 0,
         syncError: null,
         ...(switchedFrom ? { syncCursor: null, syncStatus: null, syncStartedAt: null, lastSyncedAt: null } : {}),

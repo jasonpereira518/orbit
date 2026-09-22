@@ -24,6 +24,7 @@ import { GOOGLE_SCOPES, hasScope } from "../src/lib/google-scopes";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { findGmailGrant } from "../src/lib/events/connections";
 import { decrypt } from "../src/lib/crypto";
+import { pauseSync } from "../src/lib/provider-connections";
 
 const USER = "smoke-gmail-scope-user";
 let failures = 0;
@@ -119,6 +120,30 @@ run(async () => {
   check("the same account keeps its scopes", sameAccount.switchedFrom === null);
   const sameAccountDifferentCasing = await upsertGmailConnection(USER, { access_token: "at11", scope: GOOGLE_SCOPES.calendar, expires_in: 3600 }, " Someone-Else@Gmail.com ");
   check("case and spacing don't count as a switch", sameAccountDifferentCasing.switchedFrom === null);
+
+  console.log("\na paused calendar survives a same-account reconnect, not a switch");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertGmailConnection(USER, { access_token: "atPause1", refresh_token: "rtPause1", scope: `${GOOGLE_SCOPES.contacts} ${GOOGLE_SCOPES.calendar}`, expires_in: 3600 }, "jo@gmail.com");
+  await pauseSync("google", USER);
+  const pausedBefore = await readRow();
+  check(
+    "paused before reconnecting",
+    pausedBefore?.syncStatus === "paused" && pausedBefore?.nextSyncAt === null
+  );
+  await upsertGmailConnection(USER, { access_token: "atPause2", scope: `${GOOGLE_SCOPES.contacts} ${GOOGLE_SCOPES.calendar} ${GOOGLE_SCOPES.gmailRead}`, expires_in: 3600 }, "jo@gmail.com");
+  const afterReconnect = await readRow();
+  check(
+    "a same-account reconnect with a calendar-covering grant does not re-arm it",
+    afterReconnect?.nextSyncAt === null,
+    String(afterReconnect?.nextSyncAt)
+  );
+  check("sync_status is still paused after the reconnect", afterReconnect?.syncStatus === "paused");
+  const switchedWhilePaused = await upsertGmailConnection(USER, { access_token: "atPause3", scope: GOOGLE_SCOPES.calendar, expires_in: 3600 }, "different@gmail.com");
+  check("switching accounts while paused is still reported as a switch", switchedWhilePaused.switchedFrom === "jo@gmail.com");
+  const afterSwitchWhilePaused = await readRow();
+  check("switching to a different account arms it, even though the old one was paused", afterSwitchWhilePaused?.nextSyncAt !== null);
+  check("switching accounts clears the paused sync_status", afterSwitchWhilePaused?.syncStatus === null);
 
   console.log("\nrefresh token on account switch");
   await cleanup();

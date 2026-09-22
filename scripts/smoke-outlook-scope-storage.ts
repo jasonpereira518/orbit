@@ -28,6 +28,7 @@ import { MICROSOFT_SCOPES, grantCovers } from "../src/lib/microsoft-scopes";
 import { describeOAuthReason } from "../src/lib/errors";
 import { decrypt, encrypt } from "../src/lib/crypto";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { pauseSync } from "../src/lib/provider-connections";
 
 const USER = "smoke-outlook-scope-user";
 let failures = 0;
@@ -169,6 +170,30 @@ run(async () => {
   check("the same account keeps its scopes", sameAccount.switchedFrom === null);
   const sameAccountDifferentCasing = await upsertOutlookConnection(USER, { access_token: "at11", scope: MICROSOFT_SCOPES.calendar, expires_in: 3600 }, " Someone-Else@Outlook.test ");
   check("case and spacing don't count as a switch", sameAccountDifferentCasing.switchedFrom === null);
+
+  console.log("\na paused calendar survives a same-account reconnect, not a switch");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertOutlookConnection(USER, { access_token: "atPause1", refresh_token: "rtPause1", scope: `${MICROSOFT_SCOPES.contacts} ${MICROSOFT_SCOPES.calendar}`, expires_in: 3600 }, "jo@outlook.test");
+  await pauseSync("microsoft", USER);
+  const pausedBefore = await stored();
+  check(
+    "paused before reconnecting",
+    pausedBefore?.syncStatus === "paused" && pausedBefore?.nextSyncAt === null
+  );
+  await upsertOutlookConnection(USER, { access_token: "atPause2", scope: `${MICROSOFT_SCOPES.contacts} ${MICROSOFT_SCOPES.calendar} ${MICROSOFT_SCOPES.mail}`, expires_in: 3600 }, "jo@outlook.test");
+  const afterReconnect = await stored();
+  check(
+    "a same-account reconnect with a calendar-covering grant does not re-arm it",
+    afterReconnect?.nextSyncAt === null,
+    String(afterReconnect?.nextSyncAt)
+  );
+  check("sync_status is still paused after the reconnect", afterReconnect?.syncStatus === "paused");
+  const switchedWhilePaused = await upsertOutlookConnection(USER, { access_token: "atPause3", scope: MICROSOFT_SCOPES.calendar, expires_in: 3600 }, "different@outlook.test");
+  check("switching accounts while paused is still reported as a switch", switchedWhilePaused.switchedFrom === "jo@outlook.test");
+  const afterSwitchWhilePaused = await stored();
+  check("switching to a different account arms it, even though the old one was paused", afterSwitchWhilePaused?.nextSyncAt !== null);
+  check("switching accounts clears the paused sync_status", afterSwitchWhilePaused?.syncStatus === null);
 
   console.log("\nrefresh token on account switch");
   await cleanup();

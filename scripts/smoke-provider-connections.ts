@@ -244,6 +244,46 @@ run(async () => {
     (await claimDueConnections("google", 10)).some((c) => c.id === pauseId)
   );
 
+  // --- a sync claimed before the pause cannot resurrect or mislabel it once it finishes -------
+  console.log("\na sync in flight cannot undo a pause");
+  const raceSuccessId = await seed("pause-race-success", past);
+  await claimDueConnections("google", 10);
+  await pauseSync("google", "pause-race-success");
+  await markSyncResult("google", raceSuccessId, {
+    ok: true,
+    cursor: null,
+    nextSyncAt: new Date(Date.now() + 15 * 60_000),
+  });
+  const afterLateSuccess = await readRow(raceSuccessId);
+  check(
+    "a success that lands after the pause does not re-arm it",
+    afterLateSuccess.next_sync_at === null && afterLateSuccess.sync_status === "paused"
+  );
+
+  const raceDisarmId = await seed("pause-race-disarm", past);
+  await claimDueConnections("google", 10);
+  await pauseSync("google", "pause-race-disarm");
+  await markSyncResult("google", raceDisarmId, { ok: false, error: "scope revoked", retryable: false });
+  const afterLateDisarm = await readRow(raceDisarmId);
+  check(
+    "a disarm that lands after the pause does not relabel it broken",
+    afterLateDisarm.sync_status === "paused" && afterLateDisarm.sync_error === null
+  );
+
+  // Same race on the retryable-but-not-yet-disarmed path — not explicitly called out, but the
+  // same unguarded `WHERE id = …` pattern, so it gets the same guard and the same coverage.
+  const raceRetryId = await seed("pause-race-retry", past);
+  await claimDueConnections("google", 10);
+  await pauseSync("google", "pause-race-retry");
+  await markSyncResult("google", raceRetryId, { ok: false, error: "transient", retryable: true });
+  const afterLateRetry = await readRow(raceRetryId);
+  check(
+    "a retryable failure that lands after the pause does not arm a retry either",
+    afterLateRetry.sync_status === "paused" &&
+      afterLateRetry.next_sync_at === null &&
+      afterLateRetry.sync_error === null
+  );
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);
