@@ -161,8 +161,25 @@ export async function startOutlookOAuth(input: {
 /** The Meetings switch on the Microsoft account page. Off leaves the grant alone. */
 export async function setCalendarSync(enabled: boolean): Promise<void> {
   const userId = await requireUserId();
-  if (enabled) await resumeSync("microsoft", userId);
-  else await pauseSync("microsoft", userId);
+  if (enabled) {
+    // Same guard as the Google twin: `resumeSync` arms the row whatever the grant covers, and
+    // arming one without Calendars.Read only gets it claimed, disarmed for the missing scope,
+    // and reported as paused to someone who never asked for calendar. `hasCalendarScope`
+    // normalizes Graph's several spellings, so a real grant is never read as none.
+    const db = await getDb();
+    const conn = await db.query.outlookConnections.findFirst({
+      where: eq(outlookConnections.userId, userId),
+      columns: { scopes: true },
+    });
+    if (!hasCalendarScope(conn?.scopes)) {
+      throw new UserFacingError(
+        "Allow Orbit to see your calendar first — reconnect Outlook and accept calendar access"
+      );
+    }
+    await resumeSync("microsoft", userId);
+  } else {
+    await pauseSync("microsoft", userId);
+  }
   revalidatePath("/settings");
 }
 

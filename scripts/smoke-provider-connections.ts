@@ -9,6 +9,15 @@
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
+
+// The Meetings switch runs as a server action, so it calls requireUserId(), which resolves to
+// "demo-user" only when Clerk is unconfigured (demo mode) — the route smoke-disconnect-cleanup
+// already uses. The env is read when the action runs, not when its module loads.
+delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+delete process.env.CLERK_SECRET_KEY;
+(process.env as Record<string, string>).NODE_ENV = "development";
+process.env.ORBIT_DEMO_DATA = "off";
+
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import {
@@ -22,6 +31,11 @@ import {
   pauseSync,
   resumeSync,
 } from "../src/lib/provider-connections";
+import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
+import { MICROSOFT_SCOPES } from "../src/lib/microsoft-scopes";
+import { setCalendarSync as setGoogleCalendarSync } from "../src/actions/gmail";
+import { setCalendarSync as setOutlookCalendarSync } from "../src/actions/outlook";
+import { ensureUserSettings } from "../src/lib/user-settings";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -46,23 +60,34 @@ function asDate(value: string | Date | null): Date | null {
   return value === null ? null : value instanceof Date ? value : new Date(value);
 }
 
-async function seed(userId: string, armedAt: Date | null): Promise<string> {
+async function seed(userId: string, armedAt: Date | null, scopes: string | null = null): Promise<string> {
   const db = await getDb();
   await db.execute(sql`DELETE FROM gmail_connections WHERE user_id = ${userId}`);
   const inserted = await db.execute(sql`
-    INSERT INTO gmail_connections (user_id, email_address, access_token_encrypted, status, next_sync_at)
-    VALUES (${userId}, ${userId + "@example.com"}, 'enc', 'active', ${armedAt})
+    INSERT INTO gmail_connections (user_id, email_address, access_token_encrypted, status, next_sync_at, scopes)
+    VALUES (${userId}, ${userId + "@example.com"}, 'enc', 'active', ${armedAt}, ${scopes})
     RETURNING id
   `);
   return rowsOf<{ id: string }>(inserted)[0].id;
 }
 
-async function readRow(id: string): Promise<Row> {
+async function seedOutlook(userId: string, armedAt: Date | null, scopes: string | null): Promise<string> {
+  const db = await getDb();
+  await db.execute(sql`DELETE FROM outlook_connections WHERE user_id = ${userId}`);
+  const inserted = await db.execute(sql`
+    INSERT INTO outlook_connections (user_id, email_address, access_token_encrypted, status, next_sync_at, scopes)
+    VALUES (${userId}, ${userId + "@example.com"}, 'enc', 'active', ${armedAt}, ${scopes})
+    RETURNING id
+  `);
+  return rowsOf<{ id: string }>(inserted)[0].id;
+}
+
+async function readRow(id: string, table = "gmail_connections"): Promise<Row> {
   const db = await getDb();
   return rowsOf<Row>(
     await db.execute(sql`
       SELECT id, sync_status, next_sync_at, sync_failures, sync_error
-      FROM gmail_connections WHERE id = ${id}
+      FROM ${sql.raw(table)} WHERE id = ${id}
     `)
   )[0];
 }
@@ -243,6 +268,66 @@ run(async () => {
     "the scheduler claims it once more",
     (await claimDueConnections("google", 10)).some((c) => c.id === pauseId)
   );
+
+  // --- turning meetings back on needs a grant that actually covers calendar --------------------
+  //
+  // `resumeSync` arms the row whatever the grant covers, and the upsert deliberately never arms
+  // one that lacks calendar: the scheduler would claim it, disarm it for the missing scope, and
+  // report "paused" to someone who never asked for calendar. So the guard has to live in the
+  // action — which a direct POST can reach without ever passing the switch.
+  console.log("\nturning meetings on needs a grant that covers calendar");
+  const DEMO = "demo-user";
+  await ensureUserSettings(DEMO);
+
+  /**
+   * The refusal message, or null when the switch went through. `revalidatePath` has no router
+   * cache to invalidate outside a real Next.js request, so a successful call ends in that
+   * invariant — after every write it makes has landed. The same swallow smoke-disconnect-cleanup
+   * uses; a refusal throws before it and is reported.
+   */
+  async function switchOn(turnOn: () => Promise<void>): Promise<string | null> {
+    try {
+      await turnOn();
+      return null;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return message.startsWith("Invariant: static generation store missing") ? null : message;
+    }
+  }
+
+  const gContactsOnlyId = await seed(DEMO, null, `openid ${GOOGLE_SCOPES.contacts}`);
+  const gRefusal = await switchOn(() => setGoogleCalendarSync(true));
+  check("a contacts-only Google grant is refused", gRefusal !== null, String(gRefusal));
+  check(
+    "and is left out of the queue",
+    (await readRow(gContactsOnlyId)).next_sync_at === null
+  );
+  check(
+    "the refusal says what to do about it",
+    (gRefusal ?? "").includes("calendar access"),
+    String(gRefusal)
+  );
+
+  const gCalendarId = await seed(DEMO, null, `openid ${GOOGLE_SCOPES.calendar}`);
+  check("a calendar-covering Google grant is accepted", (await switchOn(() => setGoogleCalendarSync(true))) === null);
+  check("and is armed", (await readRow(gCalendarId)).next_sync_at !== null);
+
+  const mContactsOnlyId = await seedOutlook(DEMO, null, `openid ${MICROSOFT_SCOPES.contacts}`);
+  const mRefusal = await switchOn(() => setOutlookCalendarSync(true));
+  check("a contacts-only Microsoft grant is refused", mRefusal !== null, String(mRefusal));
+  check(
+    "and is left out of the queue",
+    (await readRow(mContactsOnlyId, "outlook_connections")).next_sync_at === null
+  );
+
+  // Graph echoes a real grant as a short name in any case, so the guard must read it through
+  // `hasCalendarScope` — a raw string test here would refuse a connection that has calendar.
+  const mCalendarId = await seedOutlook(DEMO, null, "openid calendars.read");
+  check("a calendar-covering Microsoft grant is accepted, in Graph's short spelling", (await switchOn(() => setOutlookCalendarSync(true))) === null);
+  check("and is armed", (await readRow(mCalendarId, "outlook_connections")).next_sync_at !== null);
+
+  await db.execute(sql`DELETE FROM gmail_connections WHERE user_id = ${DEMO}`);
+  await db.execute(sql`DELETE FROM outlook_connections WHERE user_id = ${DEMO}`);
 
   // --- a sync claimed before the pause cannot resurrect or mislabel it once it finishes -------
   console.log("\na sync in flight cannot undo a pause");

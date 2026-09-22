@@ -168,8 +168,26 @@ export async function startGmailOAuth(input: {
 /** The Meetings switch on the Google account page. Off leaves the grant alone. */
 export async function setCalendarSync(enabled: boolean): Promise<void> {
   const userId = await requireUserId();
-  if (enabled) await resumeSync("google", userId);
-  else await pauseSync("google", userId);
+  if (enabled) {
+    // `resumeSync` arms the row whatever the grant covers, and the upsert deliberately never
+    // arms a grant without calendar: the scheduler would claim it, disarm it for the missing
+    // scope, and leave the account page saying calendar sync is paused to someone who never
+    // asked for calendar — the defect this phase removes. A server action takes a direct POST,
+    // so the check belongs here and not only in front of the switch.
+    const db = await getDb();
+    const conn = await db.query.gmailConnections.findFirst({
+      where: eq(gmailConnections.userId, userId),
+      columns: { scopes: true },
+    });
+    if (!hasCalendarScope(conn?.scopes)) {
+      throw new UserFacingError(
+        "Allow Orbit to see your calendar first — reconnect Google and tick calendar access"
+      );
+    }
+    await resumeSync("google", userId);
+  } else {
+    await pauseSync("google", userId);
+  }
   revalidatePath("/settings");
 }
 
