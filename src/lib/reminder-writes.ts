@@ -31,6 +31,16 @@ export type CreateReminderInput = {
 
 export async function createReminderForUser(userId: string, input: CreateReminderInput) {
   const db = await getDb();
+  // The tenant check every contact-scoped write needs, moved in from the MCP tool's own ad
+  // hoc version of it: a caller that reaches this function some other way — the proposed-
+  // action commit in `chat-actions.ts`, today — must not be able to skip it by construction.
+  if (input.contactId) {
+    const owned = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, input.contactId), eq(contacts.userId, userId)),
+      columns: { id: true },
+    });
+    if (!owned) throw new Error("Contact not found");
+  }
   const inboxId = await getInboxListId(userId);
 
   let listId = input.listId || inboxId;

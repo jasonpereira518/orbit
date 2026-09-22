@@ -61,6 +61,8 @@ import { ReminderButton } from "@/components/chat/reminder-button";
 import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource } from "@/lib/chat-evidence";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
+import { ProposedActionsCard } from "@/components/chat/proposed-actions";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
@@ -150,6 +152,8 @@ type AssistantMessage = {
   retrieved?: DoneInfo["retrieved"];
   /** Every source this answer cited, keyed by its `[eN]` id — see `@/lib/chat-evidence`. */
   evidence?: Record<string, EvidenceSource>;
+  /** Actions this answer proposed — see `@/lib/chat-proposed-actions`. */
+  proposedActions?: StoredProposedAction[];
   /** Thumbs already on this answer, when it came back from a saved thread. */
   feedback?: "up" | "down" | null;
   /**
@@ -555,6 +559,7 @@ export function ChatPanel() {
                 // summary rather than a fabricated one.
                 steps: row.activity ?? undefined,
                 evidence: row.evidence ?? undefined,
+                proposedActions: row.proposedActions ?? undefined,
                 feedback: row.feedback ?? null,
                 // It came out of the database, so by definition there is a row to rate.
                 persisted: true,
@@ -711,6 +716,10 @@ export function ChatPanel() {
             onEvidence: (items) => {
               ensurePlaceholder();
               patch((m) => ({ ...m, evidence: items }));
+            },
+            onActions: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, proposedActions: items }));
             },
             onStep: (step) => {
               // The first step arrives before any prose, which is the point: it replaces the
@@ -1080,6 +1089,15 @@ export function ChatPanel() {
                         msg={msg}
                         onRetry={() => sendQuestion(lastUserQuery)}
                         onFollowUp={(q) => sendQuestion(q)}
+                        onActionSettled={(actionId, next) =>
+                          setMessages((prev) =>
+                            prev.map((m) =>
+                              m.id === msg.id && m.role === "assistant"
+                                ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
+                                : m
+                            )
+                          )
+                        }
                       />
                     )
                   )}
@@ -1340,10 +1358,12 @@ const AssistantBubble = memo(function AssistantBubble({
   msg,
   onRetry,
   onFollowUp,
+  onActionSettled,
 }: {
   msg: AssistantMessage;
   onRetry?: () => void;
   onFollowUp?: (question: string) => void;
+  onActionSettled?: (actionId: string, next: StoredProposedAction) => void;
 }) {
   const steps = msg.steps ?? [];
 
@@ -1359,6 +1379,15 @@ const AssistantBubble = memo(function AssistantBubble({
       else if (r.contact_id) out.push({ name: r.name, href: `/contacts/${r.contact_id}` });
     }
     return out;
+  }, [msg.retrieved, msg.recommendations]);
+
+  // A name for a proposed action's contact — same sources as `people`, keyed by id instead
+  // of assembled into link text.
+  const nameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of msg.retrieved ?? []) map.set(c.id, c.fullName);
+    for (const r of msg.recommendations) if (r.contact_id) map.set(r.contact_id, r.name);
+    return map;
   }, [msg.retrieved, msg.recommendations]);
 
   // Photos learned by the activity steps, so a card shows the same face the orbit did.
@@ -1413,6 +1442,20 @@ const AssistantBubble = memo(function AssistantBubble({
                 rec={r}
                 subtitle={r.contact_id ? subtitleById.get(r.contact_id) : undefined}
                 photoUrl={r.contact_id ? photoById.get(r.contact_id) : undefined}
+              />
+            ))}
+          </div>
+        )}
+        {/* Only once persisted: committing needs a real row to address. */}
+        {msg.persisted && (msg.proposedActions?.length ?? 0) > 0 && (
+          <div className="flex flex-col gap-2">
+            {msg.proposedActions!.map((action) => (
+              <ProposedActionsCard
+                key={action.id}
+                messageId={msg.id}
+                action={action}
+                contactName={"contactId" in action.args && action.args.contactId ? nameById.get(action.args.contactId) : null}
+                onSettled={(next) => onActionSettled?.(action.id, next)}
               />
             ))}
           </div>

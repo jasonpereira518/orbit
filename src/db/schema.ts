@@ -15,6 +15,7 @@ import { relations, sql } from "drizzle-orm";
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
+import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -2379,6 +2380,13 @@ export const chatMessages = pgTable(
      * duplicates the most private table in the schema.
      */
     evidence: jsonb("evidence").$type<Record<string, EvidenceSourceRecord>>().default({}),
+    /**
+     * Actions this answer PROPOSED — log a note, set a reminder, schedule a follow-up —
+     * never ones it took. See `@/lib/chat-proposed-actions` for the shape and validation, and
+     * `commitProposedAction` (@/actions/chat-actions) for the only path that turns one into a
+     * real write, which always starts with a person's own click.
+     */
+    proposedActions: jsonb("proposed_actions").$type<StoredProposedActionRecord[]>().default([]),
     /** Thumbs on the answer. Null until the user says something. */
     feedback: text("feedback").$type<"up" | "down">(),
     /** The optional note a thumbs-down can carry. */

@@ -15,6 +15,7 @@ import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
+import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -260,11 +261,13 @@ async function askNetworkInner(
     const validIds = new Set(Object.keys(result.evidence));
     const { text: cleanAnswer } = stripUnresolvedMarkers(result.answer, validIds);
     const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
+    const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
 
     const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
       answer: cleanAnswer,
       recommendations,
       evidence: citedEvidence,
+      proposedActions,
     });
 
     return {
@@ -274,6 +277,7 @@ async function askNetworkInner(
       messageId: saved.messageId,
       answer: cleanAnswer,
       recommendations,
+      proposedActions,
       retrieved: ctx.retrieved.map((c) => ({
         id: c.id,
         fullName: c.fullName,

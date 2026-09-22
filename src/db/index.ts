@@ -582,6 +582,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   attached_contacts jsonb DEFAULT '[]',
   activity jsonb DEFAULT '[]',
   evidence jsonb DEFAULT '{}',
+  proposed_actions jsonb DEFAULT '[]',
   feedback text,
   feedback_note text,
   created_at timestamptz NOT NULL DEFAULT now()
@@ -1734,7 +1735,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // interaction or contact's summary/notes was cited under. Branch B, item 1 of the chat plan.
 // #252 (chat UX branch) holds 80/81 unmerged; rescanned against every local and remote ref on
 // Sep 22 2026 — nothing else claims 82.
-export const SCHEMA_VERSION = 82;
+//
+// 83 = chat_messages.proposed_actions — log/remind/follow-up actions a chat answer PROPOSED,
+// never one it took; a person's own click is the only path to the real write. Branch B, item
+// 2. Rescanned against every local and remote ref on Sep 22 2026 — nothing claims 83.
+export const SCHEMA_VERSION = 83;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3085,6 +3090,7 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS activity jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS evidence jsonb DEFAULT '{}'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS proposed_actions jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,

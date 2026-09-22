@@ -52,10 +52,12 @@ export type GatherResult = {
   notePassages: NotePassage[];
   /** Contacts the lookups surfaced — added to the recommendation allowlist. */
   contactIds: string[];
+  /** Same ids, with names — so a proposed action naming one of them has something to preview. */
+  namedContacts: Array<{ id: string; name: string }>;
   outcome: ToolLoopOutcome | null;
 };
 
-const EMPTY: GatherResult = { evidence: null, notePassages: [], contactIds: [], outcome: null };
+const EMPTY: GatherResult = { evidence: null, notePassages: [], contactIds: [], namedContacts: [], outcome: null };
 
 const GATHER_SYSTEM = `You are the research step for Orbit, a personal networking assistant. You do NOT answer the user. Your only job is to decide which lookups — if any — would give the answer-writer facts it does not already have, and to make them.
 
@@ -310,6 +312,7 @@ export async function gatherEvidence(
     evidence: renderEvidence(outcome.calls),
     notePassages: extractNotePassages(outcome.calls),
     contactIds: owned.map((c) => c.id),
+    namedContacts: named,
     outcome,
   };
 }
@@ -363,6 +366,9 @@ export async function maybeGather(
     driver: options.driver,
   });
   for (const id of gathered.contactIds) ctx.allowedContacts.add(id);
+  // Same allowlist join `filterRecommendations` gets, so a proposed action naming someone
+  // research found (not retrieval) has a name to preview, not a blank.
+  for (const c of gathered.namedContacts) if (!ctx.contactNames.has(c.id)) ctx.contactNames.set(c.id, c.name);
   const o = gathered.outcome;
   return {
     evidence: gathered.evidence,

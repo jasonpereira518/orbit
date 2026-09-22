@@ -112,6 +112,8 @@ export type ChatContext = {
   attachedContext: string | null;
   /** Contacts the model may recommend: budgeted-in, on a roster, or in the attention brief. */
   allowedContacts: Set<string>;
+  /** A name for every id in `allowedContacts` — see `validateProposedActions`'s `contactNames`. */
+  contactNames: Map<string, string>;
   allowedRecruiters: Set<string>;
   /** The `contactsContext` argument of `chatWithNetwork`. */
   modelContacts: BudgetedContact[];
@@ -688,6 +690,16 @@ export async function prepareChatContext(
     ...(attention?.overdue.map((c) => c.id) ?? []),
     ...(attention?.suggestions.map((c) => c.id) ?? []),
   ]);
+  // Every name paired with an id in `allowedContacts`, for a proposed action's preview text
+  // ("Log a note on Ada Lovelace…") — same sources, same order, so a name is never missing
+  // for an id the allowlist itself accepts.
+  const contactNames = new Map<string, string>([
+    ...modelContacts.map((c): [string, string] => [c.id, c.fullName]),
+    ...attachedPeople.map((p): [string, string] => [p.id, p.name]),
+    ...orgRosters.flatMap((r) => r.people.map((p): [string, string] => [p.id, p.name])),
+    ...(attention?.overdue.map((c): [string, string] => [c.id, c.name]) ?? []),
+    ...(attention?.suggestions.map((c): [string, string] => [c.id, c.name]) ?? []),
+  ]);
   const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
   const maxScore = Math.max(1, ...recruitersForChat.map((r) => r.score));
 
@@ -708,6 +720,7 @@ export async function prepareChatContext(
     attachedPeople,
     attachedContext: renderAttachedPeople(attachedPeople),
     allowedContacts,
+    contactNames,
     allowedRecruiters,
     modelContacts,
     focusProfile,

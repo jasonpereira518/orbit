@@ -9,6 +9,7 @@ import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
+import { validateProposedActions } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
@@ -170,6 +171,13 @@ export async function POST(request: Request) {
         }
         send({ type: "recommendations", items: recommendations });
         if (cited.length > 0) send({ type: "evidence", items: citedEvidence });
+
+        // Never a chat tool call, never executed here — only stored, for a person to confirm
+        // from the transcript. See `@/lib/chat-proposed-actions` and the rule at the top of
+        // `src/lib/mcp/server.ts`, which this mirrors on the chat surface's own output.
+        const proposedActions = validateProposedActions(result.proposedActions, ctx.allowedContacts, ctx.contactNames);
+        if (proposedActions.length > 0) send({ type: "actions", items: proposedActions });
+
         // A beat for a title that is nearly there, never longer: if it is not ready the thread
         // is named the old way (the first message, cut short) rather than holding the answer.
         const title = await settleWithin(titlePromise, TITLE_GRACE_MS);
@@ -182,6 +190,7 @@ export async function POST(request: Request) {
           activity: steps.snapshot(),
           title,
           evidence: citedEvidence,
+          proposedActions,
         });
         send({
           type: "done",

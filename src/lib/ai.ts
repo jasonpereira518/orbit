@@ -2085,13 +2085,35 @@ async function streamText(
   ));
 }
 
+/**
+ * Shared by both response shapes: the model may PROPOSE an action, never claim to have done
+ * one. A person's own click is what commits it — see `commitProposedAction` (@/actions/chat-
+ * actions) and the rule at the top of `src/lib/mcp/server.ts`, which this mirrors on the chat
+ * surface's own output rather than through a tool. At most three per answer, and only when the
+ * user asked for one or the answer's own single clear next step is worth turning into one — a
+ * proposal on every answer would train a person to stop reading the confirm card.
+ */
+const PROPOSED_ACTIONS_TAIL = `"proposed_actions" is an array of at most 3 objects, one of:
+{"kind":"log_interaction","contact_id":string,"text":string}
+{"kind":"create_reminder","contact_id":string|null,"title":string,"description":string|null,"due_date":string|null}
+{"kind":"schedule_follow_up","contact_id":string,"days":number|null}
+Only propose when the user asked you to log/remind/follow up, or the answer's single clear next
+step is exactly one of these three things. Only use contact_ids from the provided lists.
+"due_date" is an ISO date or date-time, or null for no date. Never phrase the answer's prose as
+though the action already happened — it has not; a person still has to confirm it. Leave
+"proposed_actions" as an empty array when none of this applies, which is most answers.`;
+
 const CHAT_STREAM_TAIL = `
 Write the answer as plain prose (markdown is fine), then on its own line write exactly
 ${RECOMMENDATIONS_MARKER}
-followed by a JSON array of recommendations, each an object with the fields
-"contact_id" (string|null), "recruiter_id" (string|null), "name", "reason",
-"suggested_action" and "draft_message" (string|null). Nothing after the JSON.
-Only use contact_ids and recruiter_ids from the provided lists. For recruiter recommendations set recruiter_id and leave contact_id null (unless recommending a contact who is also a recruiter).`;
+followed by a JSON object: {"recommendations": [...], "proposed_actions": [...]}. Nothing after
+the JSON.
+"recommendations" is an array of objects with the fields "contact_id" (string|null),
+"recruiter_id" (string|null), "name", "reason", "suggested_action" and "draft_message"
+(string|null). Only use contact_ids and recruiter_ids from the provided lists. For recruiter
+recommendations set recruiter_id and leave contact_id null (unless recommending a contact who
+is also a recruiter).
+${PROPOSED_ACTIONS_TAIL}`;
 
 /**
  * The streaming twin of `chatWithNetwork`: same prompt, same grounding rules, but the model
@@ -2162,9 +2184,11 @@ Return JSON:
       "suggested_action": string,
       "draft_message": string|null
     }
-  ]
+  ],
+  "proposed_actions": [...]
 }
-Only use contact_ids and recruiter_ids from the provided lists. For recruiter recommendations set recruiter_id and leave contact_id null (unless recommending a contact who is also a recruiter).`;
+Only use contact_ids and recruiter_ids from the provided lists. For recruiter recommendations set recruiter_id and leave contact_id null (unless recommending a contact who is also a recruiter).
+${PROPOSED_ACTIONS_TAIL}`;
 
 export async function chatWithNetwork(
   userId: string,
@@ -2297,18 +2321,21 @@ export async function chatWithNetwork(
     system: `${prompt.systemCore}${CHAT_JSON_TAIL}`,
   });
 
+  const parsed = parseAiJson<{
+    answer: string;
+    recommendations: Array<{
+      contact_id?: string | null;
+      recruiter_id?: string | null;
+      name: string;
+      reason: string;
+      suggested_action: string;
+      draft_message: string | null;
+    }>;
+    proposed_actions?: unknown[];
+  }>(content);
   return {
-    ...parseAiJson<{
-      answer: string;
-      recommendations: Array<{
-        contact_id?: string | null;
-        recruiter_id?: string | null;
-        name: string;
-        reason: string;
-        suggested_action: string;
-        draft_message: string | null;
-      }>;
-    }>(content),
+    ...parsed,
+    proposedActions: parsed.proposed_actions ?? [],
     evidence: prompt.evidence,
   };
 }

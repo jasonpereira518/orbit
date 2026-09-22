@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
 import type { EvidenceSource } from "@/lib/chat-evidence";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 
 const TITLE_MAX = 72;
@@ -34,6 +35,8 @@ export async function persistAssistantTurn(
     title?: string | null;
     /** Every source actually cited in `answer` — see `@/lib/chat-evidence`. */
     evidence?: Record<string, EvidenceSource>;
+    /** Actions this answer proposed — see `@/lib/chat-proposed-actions`. */
+    proposedActions?: StoredProposedAction[];
   }
 ): Promise<{ messageId: string | null; title: string | null }> {
   if (!threadId) return { messageId: null, title: existingTitle };
@@ -48,6 +51,7 @@ export async function persistAssistantTurn(
       recommendations: turn.recommendations,
       activity: turn.activity ?? [],
       evidence: turn.evidence ?? {},
+      proposedActions: turn.proposedActions ?? [],
     })
     .returning();
   // Precedence: the name the thread already has, then a written summary, then the old cut of
