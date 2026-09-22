@@ -385,6 +385,45 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   content text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- The user's own writing, cut into passages that can be retrieved on their own.
+--
+-- Deliberately NOT more source_type rows in contact_embeddings. Two reasons, and the first is
+-- the expensive one: semanticArm selects contact_id ordered by distance with a 4x overscan
+-- and takes the best row per contact, so several rows per contact would spend that overscan
+-- on duplicates of one person and move a recall floor that is currently measured and passing.
+-- The second is that contact_embeddings.contact_id is NOT NULL, while a passage does not
+-- always have exactly one subject: a note about a dinner names four people, and one written
+-- before anyone was resolved names none.
+--
+-- No backticks in this block. It is inside a template literal, and a pair of them would both
+-- end the string and read as a statement to the schema-DDL smoke.
+CREATE TABLE IF NOT EXISTS memory_chunks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  -- 'interaction' | 'note_batch' | 'brief'. Text, not an enum, for the same reason every
+  -- other discriminator here is: a new kind must not need a migration to be writable.
+  source_kind text NOT NULL,
+  source_id uuid NOT NULL,
+  -- The passage's primary subject. Nullable so a note nobody has been resolved from is still
+  -- indexed. contact_ids carries the full set including anyone merely mentioned.
+  --
+  -- NO SEMICOLONS IN THESE COMMENTS, not even quoted ones. This template is split into
+  -- statements on that character by a splitter that does not respect quotes, so one inside a
+  -- comment cuts the CREATE TABLE in half and both halves fail at runtime — while the
+  -- schema-DDL guard, which reads the source rather than running it, still passes.
+  contact_id uuid REFERENCES contacts(id) ON DELETE CASCADE,
+  contact_ids uuid[] NOT NULL DEFAULT '{}',
+  occurred_at timestamptz,
+  chunk_index integer NOT NULL DEFAULT 0,
+  content text NOT NULL,
+  content_hash text NOT NULL,
+  -- The staleness predicate is embedded_hash IS DISTINCT FROM content_hash, per chunk.
+  -- Deliberately not contacts.embedding_stale_at, which is contact-grained and already has
+  -- five writers stamping it.
+  embedded_hash text,
+  embedding jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS embedding_failures (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1678,7 +1717,19 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // an answer. Checked against all 493 refs on Sep 20 2026 — main was at 77, and the only
 // other claimant of 77 is the unmerged mcp-server-vision branch, which has the same silent
 // collision described above waiting for it. 78 is free.
-export const SCHEMA_VERSION = 78;
+//
+// 79 = memory_chunks: the user's own writing, chunked and retrievable at passage level, plus
+// tsvector columns on `interactions` and `reminders` — the first full-text index either has
+// ever had. Chat could rank a contact by a note it then could not quote from, because notes
+// were embedded as one blob per contact and the prompt took the head of the field.
+//
+// NOT 78. 78 was claimed by the unpushed `recursing-matsumoto-4f1d1d` worktree (chat ask-bar
+// narration), whose own changelog note says "78 is free" — it was, when that line was
+// written. 76 is likewise claimed by the unpushed `brave-bouman-df6c4f` worktree. This is the
+// third time a number has been contested, so: the scan has to cover `git worktree list`, not
+// just the remote. Checked against every remote branch AND all 69 local worktrees on
+// Sep 20 2026; 78 was the highest found anywhere.
+export const SCHEMA_VERSION = 79;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -1905,6 +1956,47 @@ export const SCALE_DDL: string[] = [
   // Lets upsertContactEmbedding and rebuildContactEmbeddingsBatch skip the embedding API
   // call entirely when a row's source content hasn't changed since it was last embedded.
   `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS content_hash text`,
+
+  // --- Passage retrieval over the user's own writing (v79) -------------------------------
+  //
+  // `interactions` — the real note, meeting and call rows — has never had a full-text index.
+  // Only `contacts` did, which is why the only way to find a note was to already know whose
+  // it was: "what did I discuss about fundraising in March" had no query plan at all.
+  //
+  // 'simple', matching `contacts.search_tsv`, so one `websearch_to_tsquery('simple', …)`
+  // string serves both and the stopword handling cannot diverge between them. A generated
+  // column is legal here because every source column lives on the same row — unlike the tags
+  // that could not join `contacts.search_tsv`.
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (
+       setweight(to_tsvector('simple', coalesce(ai_summary, '')), 'B') ||
+       setweight(to_tsvector('simple', coalesce(topics::text, '') || ' ' || coalesce(action_items::text, '')), 'C') ||
+       setweight(to_tsvector('simple', coalesce(raw_notes, '')), 'D')
+     ) STORED`,
+  `CREATE INDEX IF NOT EXISTS interactions_search_gin ON interactions USING gin(search_tsv)`,
+  // Reminders are the other thing the user wrote that chat could not find by its words.
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (
+       to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(description, ''))
+     ) STORED`,
+  `CREATE INDEX IF NOT EXISTS reminders_search_gin ON reminders USING gin(search_tsv)`,
+
+  `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED`,
+  `CREATE INDEX IF NOT EXISTS memory_chunks_search_gin ON memory_chunks USING gin(search_tsv)`,
+  // The identity of a chunk: one row per (source, position). `syncMemoryChunks` writes
+  // against it, so re-chunking an edited note replaces rather than accumulates.
+  `CREATE UNIQUE INDEX IF NOT EXISTS memory_chunks_source_uidx
+     ON memory_chunks(user_id, source_kind, source_id, chunk_index)`,
+  // Date-scoped recall — "in March" — is a plain range predicate on this.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_user_date_idx ON memory_chunks(user_id, occurred_at DESC)`,
+  // Anyone named in the passage, not just its subject: this is what makes a note about a
+  // dinner findable from any of the four people at it.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_contacts_gin ON memory_chunks USING gin(contact_ids)`,
+  // The backfill's claim. Partial, so it stays the size of the work outstanding rather than
+  // the size of the table — the same shape as `contacts.embedding_stale_at`'s index.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_pending_idx ON memory_chunks(user_id)
+     WHERE embedded_hash IS DISTINCT FROM content_hash`,
 
   // --- YC-mode admin console --------------------------------------------------------
   //
@@ -2781,6 +2873,16 @@ async function migratePgvector(run: StatementRunner) {
     await run(
       `CREATE INDEX IF NOT EXISTS embeddings_vector_hnsw_idx
        ON contact_embeddings USING hnsw (embedding_vector vector_cosine_ops)`
+    );
+    // The passage index (v79). Its own column and its own HNSW, for the same reason
+    // `memory_chunks` is its own table: sharing `contact_embeddings`' index would have put
+    // many rows per contact into an overscan that assumes roughly one.
+    await run(
+      `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)`
+    );
+    await run(
+      `CREATE INDEX IF NOT EXISTS memory_chunks_vector_hnsw_idx
+       ON memory_chunks USING hnsw (embedding_vector vector_cosine_ops)`
     );
     globalForDb.orbitPgvector = true;
   } catch {
