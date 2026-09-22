@@ -33,11 +33,14 @@ import {
   preferField,
   type PageContext,
   type PageKind,
+  type ProfileSection,
   type SiteAdapter,
 } from "./types";
 
-const ADAPTER_VERSION = "linkedin-2";
+const ADAPTER_VERSION = "linkedin-3";
 const PROFILE_BLOB_CHARS = 10_000;
+/** Work history's read — matches the server's MAX_PROFILE_TEXT_CHARS. */
+const FULL_PROFILE_CHARS = 40_000;
 const THREAD_BLOB_CHARS = 6_000;
 const POST_BLOB_CHARS = 4_000;
 const MAX_CANDIDATES = 10;
@@ -52,6 +55,24 @@ function pageKind(url: URL): PageKind {
   if (/^\/company\//i.test(path) || /^\/school\//i.test(path)) return "company";
   if (/^\/feed\/update\//i.test(path) || /^\/posts\//i.test(path)) return "post";
   return "unknown";
+}
+
+/** `/in/<slug>/details/experience/` — one section, listed in full. */
+function profileSection(url: URL): ProfileSection | undefined {
+  const match = url.pathname.match(/^\/in\/[^/]+\/details\/(experience|education)\b/i);
+  return match ? (match[1].toLowerCase() as ProfileSection) : undefined;
+}
+
+/**
+ * LinkedIn lists a few roles on the profile and links the rest ("Show all 9
+ * experiences"). Read from textContent, which costs no layout; the server
+ * checks the same words in the text it gets.
+ */
+function listsOnlySome(section: ProfileSection): boolean {
+  const text = document.querySelector("main")?.textContent ?? "";
+  return section === "experience"
+    ? /show all \d+ experiences?/i.test(text)
+    : /show all \d+ educations?/i.test(text);
 }
 
 function looksLikeLoginWall(): boolean {
@@ -71,7 +92,7 @@ function splitHeadline(headline: string | null): {
   return { title: match[1].trim(), company: match[2].trim() };
 }
 
-function profileIdentity(url: URL, warnings: string[]) {
+function profileIdentity(url: URL, warnings: string[], section?: ProfileSection) {
   const identity = emptyIdentity();
   const slug = linkedinSlug(url.href);
   const canonical = canonicalLinkedInUrl(url.href);
@@ -85,16 +106,18 @@ function profileIdentity(url: URL, warnings: string[]) {
   }
 
   const ld = attempt(warnings, "ld+json", () => jsonLdPerson());
-  const titleParts = attempt(warnings, "title", () =>
+  const titleParts = section ? null : attempt(warnings, "title", () =>
     parseTitle(document.title, ["| LinkedIn", "- LinkedIn", "LinkedIn"])
   );
-  const h1 = attempt(warnings, "h1", () => {
+  // A details page's heading and title name the SECTION ("Experience"), not
+  // the person: the slug is the identity there, and the resolver names them.
+  const h1 = section ? null : attempt(warnings, "h1", () => {
     const node =
       document.querySelector("main h1") ?? document.querySelector("h1");
     const text = node?.textContent?.trim() ?? "";
     return isLikelyPersonName(text) ? text : null;
   });
-  const ogTitle = attempt(warnings, "og:title", () => metaContent("og:title"));
+  const ogTitle = section ? null : attempt(warnings, "og:title", () => metaContent("og:title"));
   const ogDescription = attempt(warnings, "og:description", () =>
     metaContent("og:description")
   );
@@ -253,9 +276,10 @@ export const linkedinAdapter: SiteAdapter = {
   adapterVersion: ADAPTER_VERSION,
   matches: (url) => /(^|\.)linkedin\.com$/i.test(url.hostname),
 
-  extract(url) {
+  extract(url, options = {}) {
     const warnings: string[] = [];
     const kind = pageKind(url);
+    const section = kind === "person" ? profileSection(url) : undefined;
 
     if (looksLikeLoginWall()) warnings.push("login-wall");
 
@@ -266,7 +290,12 @@ export const linkedinAdapter: SiteAdapter = {
     let blobLimit = PROFILE_BLOB_CHARS;
 
     if (kind === "person") {
-      identity = profileIdentity(url, warnings);
+      identity = profileIdentity(url, warnings, section);
+      if (options.full) blobLimit = FULL_PROFILE_CHARS;
+      if (!section) {
+        if (listsOnlySome("experience")) warnings.push("experience-shortened");
+        if (listsOnlySome("education")) warnings.push("education-shortened");
+      }
     } else if (kind === "thread") {
       const thread = threadIdentity(warnings);
       identity = thread.identity;
@@ -307,7 +336,8 @@ export const linkedinAdapter: SiteAdapter = {
       blobRoot = null;
     }
 
-    const selection = selectionText(blobLimit);
+    // A full read is for work history: the whole page, never a selection.
+    const selection = options.full ? null : selectionText(blobLimit);
     const text =
       selection ??
       (blobRoot
@@ -328,6 +358,7 @@ export const linkedinAdapter: SiteAdapter = {
       identity,
       candidates,
       org,
+      ...(section ? { section } : {}),
       text: { ...text, fromSelection: Boolean(selection) },
       warnings,
     };

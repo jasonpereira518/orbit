@@ -5,9 +5,10 @@ import type {
   PageContext,
   PageIdentity,
   PageKind,
+  ProfileSection,
 } from "@contract";
 
-export type { PageCandidate, PageContext, PageIdentity, PageKind };
+export type { PageCandidate, PageContext, PageIdentity, PageKind, ProfileSection };
 
 export interface SiteAdapter {
   id: string;
@@ -15,8 +16,16 @@ export interface SiteAdapter {
    *  in telemetry rather than arriving as a support email. */
   adapterVersion: string;
   matches(url: URL): boolean;
-  extract(url: URL): PageContext;
+  extract(url: URL, options?: ExtractOptions): PageContext;
 }
+
+export type ExtractOptions = {
+  /**
+   * The whole page's text, not the light copy: work history, on the user's
+   * click. Only the LinkedIn adapter reads more for it.
+   */
+  full?: boolean;
+};
 
 export function field(
   value: string | null | undefined,

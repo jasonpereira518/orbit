@@ -17,6 +17,8 @@ import type {
   ReminderActionResponse,
   ResolveBatchRequest,
   ResolveBatchResponse,
+  ProfileCaptureRequest,
+  ProfileCaptureResponse,
   ResolveResponse,
   SaveContactRequest,
   SaveContactResponse,
@@ -122,6 +124,10 @@ export function createApi(getToken: TokenGetter) {
 
     company: (body: CompanyLookupRequest, signal?: AbortSignal) =>
       post<CompanyLookupResponse>("/company", body, signal),
+
+    /** Work history from the page's full text. Pro; 402 `feature_locked` otherwise. */
+    profile: (body: ProfileCaptureRequest, signal?: AbortSignal) =>
+      post<ProfileCaptureResponse>("/profile", body, signal),
 
     searchContacts: (q: string, signal?: AbortSignal) =>
       request<ContactSearchResponse>(
