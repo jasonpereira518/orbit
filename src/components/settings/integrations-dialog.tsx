@@ -1,10 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, LayoutGrid } from "lucide-react";
 import type { getSettings } from "@/actions/settings";
-import type { IntegrationStatuses } from "@/lib/integration-status";
-import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import {
   Dialog,
   DialogContent,
@@ -14,17 +13,22 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
 import { AiUsageCard } from "@/components/settings/ai-usage-card";
-import { OutreachSettings } from "@/components/settings/outreach-settings";
-import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { ApiSettings } from "@/components/settings/api-settings";
-import { WebhookSettings } from "@/components/settings/webhook-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
+import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
+import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
+import { IntegrationsOverview } from "@/components/settings/integrations-overview";
+import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { SettingsSurfaceProvider } from "@/components/settings/settings-section";
+import { WebhookSettings } from "@/components/settings/webhook-settings";
 import {
   INTEGRATION_TAB_GROUPS,
   INTEGRATION_TABS,
+  OVERVIEW,
   integrationHref,
+  type IntegrationFocus,
   type IntegrationTabId,
+  type IntegrationView,
 } from "@/components/settings/sections";
 import { ImportProgress } from "@/components/imports/import-utils";
 import {
@@ -32,13 +36,14 @@ import {
   useImportJob,
   type ImportJobKind,
 } from "@/lib/import-job-runner";
+import type { IntegrationStatuses } from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
 /**
- * The importer tab an in-flight import job belongs to. The calendar-file and contacts-file
- * imports live only on /imports, so they have none.
+ * The page an in-flight import job belongs to. The calendar-file and contacts-file imports
+ * live only on /imports, so they have none.
  */
 export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
   switch (kind) {
@@ -65,7 +70,7 @@ const PanelSkeleton = () => (
 );
 
 // The importers are the heavy half of this dialog — CSV parsing, review tables — and most
-// visits never open them, so they load on first open of their tab, as on /imports.
+// visits never open them, so they load on first open of their page, as on /imports.
 const GoogleContactsImport = dynamic(
   () =>
     import("@/components/imports/google-contacts-import").then((m) => ({
@@ -102,54 +107,50 @@ const GmailTab = dynamic(
   { loading: () => <PanelSkeleton /> }
 );
 
-const MD_QUERY = "(min-width: 768px)";
+function isAdvanced(view: IntegrationView): boolean {
+  return INTEGRATION_TABS.some((tab) => tab.id === view && tab.group === "advanced");
+}
 
-/** Side nav on `md`+, a horizontal strip below it — `aria-orientation` has to say which. */
-function useIsWide() {
-  return useSyncExternalStore(
-    (onChange) => {
-      const mql = window.matchMedia(MD_QUERY);
-      mql.addEventListener("change", onChange);
-      return () => mql.removeEventListener("change", onChange);
-    },
-    () => window.matchMedia(MD_QUERY).matches,
-    () => true
-  );
+/** The element a `focus` lands on, e.g. `integration-google-inbox`. */
+function focusTargetId(view: IntegrationView, focus: IntegrationFocus) {
+  return `integration-${view}-${focus}`;
 }
 
 /**
- * Settings → Integrations: every key, feed, API and importer behind one card, in a dialog
- * with a vertical side nav.
+ * Settings → Integrations: the accounts Orbit works with, one page each, with the developer
+ * tools folded into Advanced.
  *
- * Panels mount the first time their tab opens and then stay mounted (hidden) for as long as
- * the dialog is open — the same rule as /imports — so a half-reviewed Google import or an
- * API key still waiting to be copied survives a detour to another tab. Import jobs outlive
- * the dialog altogether: the job runner is a module singleton, and the app shell's watcher
- * and progress bar keep reporting after it closes.
- *
- * False when /recruiters is hidden: the Google page then leaves out its Gmail inbox block.
+ * Pages mount the first time they open and then stay mounted (hidden) for as long as the
+ * dialog is open — the same rule as /imports — so a half-reviewed Google import or an API key
+ * still waiting to be copied survives a detour to another page. Import jobs outlive the
+ * dialog altogether: the job runner is a module singleton, and the app shell's watcher and
+ * progress bar keep reporting after it closes.
  */
 export function IntegrationsDialog({
   open,
   onOpenChange,
-  tab,
-  onTabChange,
+  view,
+  onViewChange,
+  focus,
   tabs,
   statuses,
+  inboxVisible,
   initialSettings,
   canUseRecruiters,
-  inboxVisible,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  tab: IntegrationTabId;
-  onTabChange: (tab: IntegrationTabId) => void;
-  /** The tabs this viewer may see, in order — already filtered for hidden surfaces. */
+  view: IntegrationView;
+  onViewChange: (view: IntegrationView) => void;
+  /** Where inside `view` to land — set by links like `?integration=gmail`. */
+  focus: IntegrationFocus | null;
+  /** The pages this viewer may see, in order — already filtered for hidden surfaces. */
   tabs: IntegrationTabId[];
   statuses: IntegrationStatuses | null;
+  /** False when /recruiters is hidden: the Google page then leaves out its Gmail inbox block. */
+  inboxVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
-  inboxVisible: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -161,13 +162,14 @@ export function IntegrationsDialog({
       >
         <DialogBody
           active={open}
-          tab={tab}
-          onTabChange={onTabChange}
+          view={view}
+          onViewChange={onViewChange}
+          focus={focus}
           tabs={tabs}
           statuses={statuses}
+          inboxVisible={inboxVisible}
           initialSettings={initialSettings}
           canUseRecruiters={canUseRecruiters}
-          inboxVisible={inboxVisible}
         />
       </DialogContent>
     </Dialog>
@@ -176,13 +178,14 @@ export function IntegrationsDialog({
 
 function DialogBody({
   active,
-  tab,
-  onTabChange,
+  view,
+  onViewChange,
+  focus,
   tabs,
   statuses,
+  inboxVisible,
   initialSettings,
   canUseRecruiters,
-  inboxVisible,
 }: {
   /**
    * False from the moment the dialog starts closing. Base UI only unmounts the body once
@@ -190,166 +193,235 @@ function DialogBody({
    * polls has to stop on this, not on unmount.
    */
   active: boolean;
-  tab: IntegrationTabId;
-  onTabChange: (tab: IntegrationTabId) => void;
+  view: IntegrationView;
+  onViewChange: (view: IntegrationView) => void;
+  focus: IntegrationFocus | null;
   tabs: IntegrationTabId[];
   statuses: IntegrationStatuses | null;
+  inboxVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
-  inboxVisible: boolean;
 }) {
-  const wide = useIsWide();
   const job = useImportJob();
-  const [visited, setVisited] = useState<ReadonlySet<IntegrationTabId>>(() => new Set([tab]));
-  const tabRefs = useRef(new Map<IntegrationTabId, HTMLButtonElement>());
+  const [visited, setVisited] = useState<ReadonlySet<IntegrationView>>(() => new Set([view]));
+  const [advancedOpen, setAdvancedOpen] = useState(() => isAdvanced(view));
+  const tabRefs = useRef(new Map<IntegrationView, HTMLButtonElement>());
   const panelScroller = useRef<HTMLDivElement>(null);
 
-  // Adjusting state during render rather than in an effect: a tab chosen from outside (a
-  // deep link, the card) must be mounted in the same paint it is shown in.
-  if (!visited.has(tab)) setVisited(new Set(visited).add(tab));
+  // Adjusted during render rather than in an effect: a page chosen from outside (a deep
+  // link, the card) must be mounted — and its nav row shown — in the same paint it is
+  // selected in.
+  if (!visited.has(view)) setVisited(new Set(visited).add(view));
+  if (isAdvanced(view) && !advancedOpen) setAdvancedOpen(true);
 
-  // Each tab starts at its own top rather than wherever the last one was scrolled to, and
-  // its nav entry is brought into view — on a phone the strip scrolls sideways, and a tab
-  // opened by a deep link can otherwise sit off its right edge.
+  // Each page starts at its own top (or at the spot a link asked for) rather than wherever
+  // the last one was scrolled to, and its nav row is brought into view.
   useEffect(() => {
-    panelScroller.current?.scrollTo({ top: 0 });
-    tabRefs.current.get(tab)?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [tab]);
+    const target = focus ? document.getElementById(focusTargetId(view, focus)) : null;
+    if (target) target.scrollIntoView({ block: "start" });
+    else panelScroller.current?.scrollTo({ top: 0 });
+    tabRefs.current.get(view)?.scrollIntoView({ block: "nearest" });
+  }, [view, focus]);
 
-  const runningTab =
-    job?.status === "running" ? tabForImportJob(job.kind) : null;
-  const runningProgress =
-    job?.status === "running" && job.progress ? job.progress : null;
+  const runningTab = job?.status === "running" ? tabForImportJob(job.kind) : null;
+  const runningProgress = job?.status === "running" && job.progress ? job.progress : null;
 
-  const groups = INTEGRATION_TAB_GROUPS.map((group) => ({
-    ...group,
-    tabs: INTEGRATION_TABS.filter((t) => t.group === group.key && tabs.includes(t.id)),
-  })).filter((group) => group.tabs.length > 0);
+  const visibleTabs = INTEGRATION_TABS.filter((tab) => tabs.includes(tab.id));
+  const mainGroups = INTEGRATION_TAB_GROUPS.filter((group) => group.key !== "advanced")
+    .map((group) => ({ ...group, tabs: visibleTabs.filter((tab) => tab.group === group.key) }))
+    .filter((group) => group.tabs.length > 0);
+  const advancedTabs = visibleTabs.filter((tab) => tab.group === "advanced");
+  const mainIds: IntegrationView[] = [OVERVIEW, ...mainGroups.flatMap((g) => g.tabs.map((t) => t.id))];
+  const advancedIds: IntegrationView[] = advancedTabs.map((tab) => tab.id);
+  const views: IntegrationView[] = [OVERVIEW, ...visibleTabs.map((tab) => tab.id)];
 
-  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    const index = tabs.indexOf(tab);
+  function onTabKeyDown(event: React.KeyboardEvent<HTMLDivElement>, ids: IntegrationView[]) {
+    const index = ids.indexOf(view);
     let next: number;
     switch (event.key) {
       case "ArrowDown":
-      case "ArrowRight":
-        next = (index + 1) % tabs.length;
+        next = index < 0 ? 0 : (index + 1) % ids.length;
         break;
       case "ArrowUp":
-      case "ArrowLeft":
-        next = (index - 1 + tabs.length) % tabs.length;
+        next = index < 0 ? ids.length - 1 : (index - 1 + ids.length) % ids.length;
         break;
       case "Home":
         next = 0;
         break;
       case "End":
-        next = tabs.length - 1;
+        next = ids.length - 1;
         break;
       default:
         return;
     }
     event.preventDefault();
-    const id = tabs[next];
-    onTabChange(id);
+    const id = ids[next];
+    onViewChange(id);
     tabRefs.current.get(id)?.focus();
+  }
+
+  function tabRow(id: IntegrationView, label: string, ids: IntegrationView[]) {
+    const selected = id === view;
+    // Roving tabindex per tablist: the selected row, or the first row when the selection
+    // is in the other list.
+    const tabbable = selected || (!ids.includes(view) && id === ids[0]);
+    const status = id === OVERVIEW ? undefined : statuses?.pages[id];
+    const iconClass = cn("size-4 shrink-0", selected ? "text-primary" : "opacity-80");
+    return (
+      <button
+        key={id}
+        ref={(el) => {
+          if (el) tabRefs.current.set(id, el);
+          else tabRefs.current.delete(id);
+        }}
+        type="button"
+        role="tab"
+        id={`integration-tab-${id}`}
+        aria-selected={selected}
+        aria-controls={`integration-panel-${id}`}
+        tabIndex={tabbable ? 0 : -1}
+        onClick={() => onViewChange(id)}
+        className={cn(
+          "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm whitespace-nowrap",
+          "outline-none transition-colors duration-fast ease-house focus-visible:ring-2 focus-visible:ring-ring/70",
+          selected
+            ? "bg-card text-ink shadow-sm ring-1 ring-border/70"
+            : "text-muted-foreground hover:bg-card/60 hover:text-foreground"
+        )}
+      >
+        {id === OVERVIEW ? (
+          <LayoutGrid aria-hidden className={iconClass} />
+        ) : (
+          <IntegrationIcon id={id} className={iconClass} />
+        )}
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {label}
+          {runningTab === id ? <span className="text-muted-foreground"> · running</span> : null}
+        </span>
+        {id === OVERVIEW ? null : (
+          <>
+            <StatusDot status={status} />
+            <span className="sr-only">, {statusText(status)}</span>
+          </>
+        )}
+      </button>
+    );
   }
 
   return (
     <>
-      <aside className="flex min-h-0 shrink-0 flex-col border-b border-border/60 bg-muted/30 md:border-r md:border-b-0">
-        <div className="px-4 pt-4 pb-3 pr-12 md:px-5 md:pt-5 md:pr-5">
-          <DialogTitle className="font-[family-name:var(--font-display)] text-xl text-ink">
-            Integrations
-          </DialogTitle>
-          <DialogDescription className="mt-1.5 text-xs">
-            Keys, feeds and imports that connect Orbit to the rest of your tools.
-          </DialogDescription>
+      <aside className="flex shrink-0 flex-col border-b border-border/60 bg-muted/30 md:min-h-0 md:border-r md:border-b-0">
+        <div className="flex items-center gap-1.5 px-4 pt-4 pb-3 pr-12 md:block md:px-5 md:pt-5 md:pr-5">
+          {view !== OVERVIEW ? (
+            <button
+              type="button"
+              onClick={() => onViewChange(OVERVIEW)}
+              aria-label="Back to overview"
+              className="tap-target -ml-1.5 flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-card/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 md:hidden"
+            >
+              <ChevronLeft aria-hidden className="size-5" />
+            </button>
+          ) : null}
+          <div className="min-w-0">
+            <DialogTitle className="font-[family-name:var(--font-display)] text-xl text-ink">
+              Integrations
+            </DialogTitle>
+            <DialogDescription className="mt-1.5 hidden text-xs md:block">
+              Connect the accounts Orbit works with.
+            </DialogDescription>
+          </div>
         </div>
-        <div
-          role="tablist"
+
+        <nav
           aria-label="Integrations"
-          aria-orientation={wide ? "vertical" : "horizontal"}
-          onKeyDown={onKeyDown}
-          className="flex gap-1 overflow-x-auto px-3 pb-3 [scrollbar-width:none] md:min-h-0 md:flex-1 md:flex-col md:overflow-x-visible md:overflow-y-auto md:pb-4 [&::-webkit-scrollbar]:hidden"
+          className="hidden min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-4 md:flex"
         >
-          {groups.map((group) => (
-            <div key={group.key} className="contents md:block">
-              <p
-                aria-hidden
-                className="hidden px-2.5 pt-3 pb-1.5 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground/80 uppercase md:block"
+          <div
+            role="tablist"
+            aria-label="Integrations"
+            aria-orientation="vertical"
+            onKeyDown={(event) => onTabKeyDown(event, mainIds)}
+          >
+            {tabRow(OVERVIEW, "Overview", mainIds)}
+            {mainGroups.map((group) => (
+              <div key={group.key}>
+                <p
+                  aria-hidden
+                  className="px-2.5 pt-3 pb-1.5 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground/80 uppercase"
+                >
+                  {group.label}
+                </p>
+                {group.tabs.map((tab) => tabRow(tab.id, tab.label, mainIds))}
+              </div>
+            ))}
+          </div>
+
+          {advancedTabs.length > 0 ? (
+            <div className="mt-3 border-t border-border/60 pt-2">
+              <button
+                type="button"
+                aria-expanded={advancedOpen}
+                aria-controls="integration-advanced-tabs"
+                onClick={() => setAdvancedOpen((wasOpen) => !wasOpen)}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-muted-foreground outline-none hover:bg-card/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70"
               >
-                {group.label}
-              </p>
-              {group.tabs.map((t) => {
-                const selected = t.id === tab;
-                const status = statuses?.pages[t.id];
-                return (
-                  <button
-                    key={t.id}
-                    ref={(el) => {
-                      if (el) tabRefs.current.set(t.id, el);
-                      else tabRefs.current.delete(t.id);
-                    }}
-                    type="button"
-                    role="tab"
-                    id={`integration-tab-${t.id}`}
-                    aria-selected={selected}
-                    aria-controls={`integration-panel-${t.id}`}
-                    tabIndex={selected ? 0 : -1}
-                    onClick={() => onTabChange(t.id)}
-                    className={cn(
-                      "flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm whitespace-nowrap md:w-full",
-                      "outline-none transition-colors duration-fast ease-house focus-visible:ring-2 focus-visible:ring-ring/70",
-                      selected
-                        ? "bg-card text-ink shadow-sm ring-1 ring-border/70"
-                        : "text-muted-foreground hover:bg-card/60 hover:text-foreground"
-                    )}
-                  >
-                    <IntegrationIcon
-                      id={t.id}
-                      className={cn("size-4 shrink-0", selected ? "text-primary" : "opacity-80")}
-                    />
-                    <span className="min-w-0 flex-1 truncate font-medium">
-                      {t.label}
-                      {runningTab === t.id ? (
-                        <span className="text-muted-foreground"> · running</span>
-                      ) : null}
-                    </span>
-                    <StatusDot status={status} className="hidden md:block" />
-                    <span className="sr-only">, {statusText(status)}</span>
-                  </button>
-                );
-              })}
+                <ChevronRight
+                  aria-hidden
+                  className={cn(
+                    "size-4 shrink-0 transition-transform duration-fast ease-house",
+                    advancedOpen && "rotate-90"
+                  )}
+                />
+                Advanced
+              </button>
+              {advancedOpen ? (
+                <div
+                  id="integration-advanced-tabs"
+                  role="tablist"
+                  aria-label="Advanced"
+                  aria-orientation="vertical"
+                  onKeyDown={(event) => onTabKeyDown(event, advancedIds)}
+                >
+                  {advancedTabs.map((tab) => tabRow(tab.id, tab.label, advancedIds))}
+                </div>
+              ) : null}
             </div>
-          ))}
-        </div>
+          ) : null}
+        </nav>
       </aside>
 
       <div ref={panelScroller} className="min-h-0 flex-1 overflow-y-auto">
         <SettingsSurfaceProvider surface="panel">
-          {tabs.map((id) =>
+          {views.map((id) =>
             visited.has(id) ? (
               <div
                 key={id}
                 role="tabpanel"
                 id={`integration-panel-${id}`}
                 aria-labelledby={`integration-tab-${id}`}
-                hidden={id !== tab}
+                hidden={id !== view}
                 className="space-y-5 p-5 md:p-7"
               >
-                {runningProgress && runningTab === id ? (
-                  <ImportProgress
-                    {...runningProgress}
-                    cancelling={Boolean(job?.cancelling)}
-                    onCancel={cancelImportJob}
-                  />
-                ) : null}
-                <Panel
-                  id={id}
-                  active={active}
-                  initialSettings={initialSettings}
-                  canUseRecruiters={canUseRecruiters}
-                  inboxVisible={inboxVisible}
-                />
+                {id === OVERVIEW ? (
+                  <IntegrationsOverview tabs={tabs} statuses={statuses} onOpen={onViewChange} />
+                ) : (
+                  <>
+                    {runningProgress && runningTab === id ? (
+                      <ImportProgress
+                        {...runningProgress}
+                        cancelling={Boolean(job?.cancelling)}
+                        onCancel={cancelImportJob}
+                      />
+                    ) : null}
+                    <Panel
+                      id={id}
+                      active={active}
+                      inboxVisible={inboxVisible}
+                      initialSettings={initialSettings}
+                      canUseRecruiters={canUseRecruiters}
+                    />
+                  </>
+                )}
               </div>
             ) : null
           )}
@@ -362,15 +434,15 @@ function DialogBody({
 function Panel({
   id,
   active,
+  inboxVisible,
   initialSettings,
   canUseRecruiters,
-  inboxVisible,
 }: {
   id: IntegrationTabId;
   active: boolean;
+  inboxVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
-  inboxVisible: boolean;
 }) {
   switch (id) {
     case "google":
@@ -378,7 +450,7 @@ function Panel({
         <div className="space-y-5">
           <GoogleContactsImport returnTo={integrationHref("google")} />
           {inboxVisible ? (
-            <div id="integration-google-inbox" className="scroll-mt-4">
+            <div id={focusTargetId("google", "inbox")} className="scroll-mt-4">
               <GmailTab active={active} canUseRecruiters={canUseRecruiters} returnTo={integrationHref("gmail")} />
             </div>
           ) : null}
