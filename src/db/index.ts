@@ -541,6 +541,9 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   content text NOT NULL,
   recommendations jsonb,
   attached_contacts jsonb DEFAULT '[]',
+  activity jsonb DEFAULT '[]',
+  feedback text,
+  feedback_note text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
@@ -1669,7 +1672,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // table forever. Renumbered past 74-76, claimed by the unpushed integrations-strategy
 // worktree (connector_connections, external_links + connector_outbox, and the outbox lease).
 // Checked against every remote branch and local worktree on Sep 20 2026.
-export const SCHEMA_VERSION = 77;
+//
+// 78 = showing the chat its own work: chat_messages.activity (the stages an answer actually
+// ran, with their real counts and durations), plus feedback and feedback_note for thumbs on
+// an answer. Checked against all 493 refs on Sep 20 2026 — main was at 77, and the only
+// other claimant of 77 is the unmerged mcp-server-vision branch, which has the same silent
+// collision described above waiting for it. 78 is free.
+export const SCHEMA_VERSION = 78;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2967,6 +2976,9 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS activity jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

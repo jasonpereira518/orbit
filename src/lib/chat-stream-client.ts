@@ -1,19 +1,25 @@
 import type { ChatRecommendation } from "@/db/schema";
-import { parseSseChunk, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
+import { parseSseChunk, type ChatStep, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 
 /**
  * Browser side of `/api/chat`: POST the question, read the event stream, dispatch.
  *
- * A plain `fetch` + `ReadableStream` reader rather than a chat SDK: the protocol is three
- * event types and the app already owns its message state. Errors before the stream starts
- * (no key, paywall, bad input) arrive as a JSON body with a non-2xx status; errors after
- * it starts arrive as an `error` event, since the status line has already been sent.
+ * A plain `fetch` + `ReadableStream` reader rather than a chat SDK: the protocol is a
+ * handful of event types and the app already owns its message state. Errors before the
+ * stream starts (no key, paywall, bad input) arrive as a JSON body with a non-2xx status;
+ * errors from retrieval onwards arrive as an `error` event, since the status line has
+ * already been sent.
  */
 export type DoneInfo = Extract<ChatStreamEvent, { type: "done" }>;
 
 export type ChatStreamHandlers = {
   onAnswer: (delta: string) => void;
   onRecommendations: (items: ChatRecommendation[]) => void;
+  /**
+   * A stage of the work starting or finishing. Steps are keyed by `step.id`, and a later
+   * step with the same id replaces the earlier one rather than being appended.
+   */
+  onStep?: (step: ChatStep) => void;
   onDone: (info: DoneInfo) => void;
   onError: (message: string) => void;
 };
@@ -114,6 +120,9 @@ function dispatch(event: ChatStreamEvent, handlers: ChatStreamHandlers) {
       return;
     case "recommendations":
       handlers.onRecommendations(event.items as ChatRecommendation[]);
+      return;
+    case "step":
+      handlers.onStep?.(event.step);
       return;
     case "done":
       handlers.onDone(event);

@@ -22,6 +22,8 @@ import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events"
 import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
+import type { ChatStep } from "@/lib/chat-stream-protocol";
+import { ChatActivity } from "@/components/chat/chat-activity";
 import { SuggestionPills } from "@/components/chat/suggestion-cards";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
@@ -78,6 +80,8 @@ type AssistantMessage = {
   retrieved: ChatResult["retrieved"];
   /** True while the answer is still arriving from `/api/chat`. */
   streaming?: boolean;
+  /** The stages the server reported, so this bar narrates the same work `/chat` does. */
+  steps?: ChatStep[];
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -411,6 +415,17 @@ export function FloatingAskBar() {
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
             },
+            onStep: (step) => {
+              ensurePlaceholder();
+              patch((m) => {
+                const steps = m.steps ?? [];
+                const at = steps.findIndex((s) => s.id === step.id);
+                if (at === -1) return { ...m, steps: [...steps, step] };
+                const next = steps.slice();
+                next[at] = step;
+                return { ...m, steps: next };
+              });
+            },
             onDone: (info) => {
               ensurePlaceholder();
               patch((m) => ({ ...m, retrieved: info.retrieved, streaming: false }));
@@ -649,10 +664,13 @@ export function FloatingAskBar() {
                         />
                       )
                     )}
+                    {/* Only until the first step lands, which is now near-immediate — after
+                        that ChatActivity names the stage actually running, rather than
+                        claiming a search that may already be finished. */}
                     {awaitingFirstToken && (
                       <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                         <Loader2 className="size-3.5 animate-spin" />
-                        Searching your network…
+                        Starting…
                       </div>
                     )}
                     <div ref={threadEndRef} />
@@ -662,7 +680,7 @@ export function FloatingAskBar() {
                 {messages.length === 0 && chatPending && (
                   <div className="flex items-center gap-2 px-3.5 py-4 text-sm text-muted-foreground">
                     <Loader2 className="size-3.5 animate-spin" />
-                    Searching your network…
+                    Starting…
                   </div>
                 )}
               </div>
@@ -817,11 +835,22 @@ const AssistantBubble = memo(function AssistantBubble({
   msg: AssistantMessage;
   onNavigate: (open: boolean) => void;
 }) {
+  const steps = msg.steps ?? [];
   return (
     <div className="space-y-2">
-      <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
-        <ChatMarkdown>{msg.answer}</ChatMarkdown>
-      </div>
+      {steps.length > 0 && (
+        <ChatActivity
+          steps={steps}
+          state={msg.streaming ? "live" : "final"}
+          variant="compact"
+          className="px-1"
+        />
+      )}
+      {msg.answer && (
+        <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
+          <ChatMarkdown>{msg.answer}</ChatMarkdown>
+        </div>
+      )}
       {msg.recommendations.map((r) => (
         <MiniRecommendation
           key={r.recruiter_id || r.contact_id || r.name}
