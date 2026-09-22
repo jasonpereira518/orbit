@@ -88,8 +88,25 @@ check("nothing granted reports both", missingGooglePurposes(GOOGLE_CONNECT_PURPO
 console.log("\ncarrying the purposes through the consent round trip");
 check("a list round-trips", parseGooglePurposes(serializeGooglePurposes(GOOGLE_CONNECT_PURPOSES)).join(",") === "contacts,calendar");
 check("a consent screen already in flight still parses", parseGooglePurposes("recruiter_scan").join(",") === "recruiter_scan");
-check("junk is dropped, not trusted", parseGooglePurposes("contacts+nonsense").join(",") === "contacts");
+check("junk is dropped, not trusted", parseGooglePurposes("contacts.nonsense").join(",") === "contacts");
 check("empty is empty", parseGooglePurposes("").length === 0 && parseGooglePurposes(null).length === 0);
+
+// Through a real URL rather than through memory. RFC 6749 sends the state back to the redirect
+// URI form-urlencoded, where a literal `+` decodes to a SPACE — so a separator that only looks
+// safe in a string comparison still turns `contacts+calendar` into `contacts calendar` the
+// moment a provider echoes the value it decoded, and `consumeGmailOAuthState` rejects it.
+const state = `user_2abc:11111111-2222-3333-4444-555555555555::${serializeGooglePurposes(GOOGLE_CONNECT_PURPOSES)}`;
+const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({ state })}`;
+const sentState = new URL(authUrl).searchParams.get("state");
+check("the state reaches the consent screen unchanged", sentState === state, String(sentState));
+// And the way back, with the state placed on the redirect raw — a provider re-emitting what it
+// decoded, which is the leg that percent-encoding on the way out does not protect.
+const echoedState = new URL(`https://orbit.test/api/gmail/callback?code=abc&state=${state}`).searchParams.get("state");
+check("and comes back off the redirect unchanged", echoedState === state, String(echoedState));
+check(
+  "its fourth field still names both purposes",
+  parseGooglePurposes((echoedState ?? "").split(":")[3]).join(",") === "contacts,calendar"
+);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

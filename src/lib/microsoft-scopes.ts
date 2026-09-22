@@ -121,12 +121,19 @@ export function missingMicrosoftPurposes(
   return purposes.filter((purpose) => !grantCovers(purpose, scopes));
 }
 
+/**
+ * How the purpose list rides in the OAuth state and comes back on the URL. `.`, not `+`, for
+ * the reason `serializeGooglePurposes` gives: the redirect carries the state form-urlencoded,
+ * where a literal `+` decodes to a SPACE, and a provider that echoes the decoded value would
+ * break the cookie comparison in `consumeOutlookOAuthState` on every two-purpose Connect.
+ */
 export function serializeMicrosoftPurposes(purposes: readonly MicrosoftPurpose[]): string {
-  return purposes.join("+");
+  return purposes.join(".");
 }
 
+/** Tolerates a single purpose — a consent screen opened before this shipped says just `contacts`. */
 export function parseMicrosoftPurposes(raw: string | null | undefined): MicrosoftPurpose[] {
-  return (raw ?? "").split("+").filter(isMicrosoftPurpose);
+  return (raw ?? "").split(".").filter(isMicrosoftPurpose);
 }
 
 /**

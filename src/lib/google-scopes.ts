@@ -60,14 +60,22 @@ export function missingGooglePurposes(
   return purposes.filter((purpose) => !grantCovers(purpose, scopes));
 }
 
-/** How the purpose list rides in the OAuth state and comes back on the URL. */
+/**
+ * How the purpose list rides in the OAuth state and comes back on the URL.
+ *
+ * The separator is `.` and not `+` because of the way back. RFC 6749 sends the state to the
+ * redirect URI form-urlencoded, where a literal `+` decodes to a SPACE — so a provider that
+ * decodes the value and echoes it raw hands back `contacts calendar`, the comparison against
+ * the cookie in `consumeGmailOAuthState` fails, and every two-purpose Connect dies as
+ * `oauth_failed`. `.` is unreserved in RFC 3986 and form decoding leaves it alone.
+ */
 export function serializeGooglePurposes(purposes: readonly GooglePurpose[]): string {
-  return purposes.join("+");
+  return purposes.join(".");
 }
 
 /** Tolerates a single purpose — a consent screen opened before this shipped says just `contacts`. */
 export function parseGooglePurposes(raw: string | null | undefined): GooglePurpose[] {
-  return (raw ?? "").split("+").filter(isGooglePurpose);
+  return (raw ?? "").split(".").filter(isGooglePurpose);
 }
 
 /** Google returns granted scopes space-separated; so does `gmail_connections.scopes`. */

@@ -136,8 +136,24 @@ check(
 console.log("\ncarrying the purposes through the consent round trip");
 check("a list round-trips", parseMicrosoftPurposes(serializeMicrosoftPurposes(MICROSOFT_CONNECT_PURPOSES)).join(",") === "contacts,calendar");
 check("a consent screen already in flight still parses", parseMicrosoftPurposes("recruiter_scan").join(",") === "recruiter_scan");
-check("junk is dropped, not trusted", parseMicrosoftPurposes("contacts+nonsense").join(",") === "contacts");
+check("junk is dropped, not trusted", parseMicrosoftPurposes("contacts.nonsense").join(",") === "contacts");
 check("empty is empty", parseMicrosoftPurposes("").length === 0 && parseMicrosoftPurposes(null).length === 0);
+
+// Through a real URL rather than through memory, for the reason the Google twin gives: the
+// redirect carries the state form-urlencoded, where a literal `+` decodes to a SPACE, and
+// `consumeOutlookOAuthState` compares the returned state to the cookie byte for byte.
+const state = `user_2abc:11111111-2222-3333-4444-555555555555::${serializeMicrosoftPurposes(MICROSOFT_CONNECT_PURPOSES)}`;
+const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${new URLSearchParams({ state })}`;
+const sentState = new URL(authUrl).searchParams.get("state");
+check("the state reaches the consent screen unchanged", sentState === state, String(sentState));
+// And the way back, with the state placed on the redirect raw — a provider re-emitting what it
+// decoded, which is the leg that percent-encoding on the way out does not protect.
+const echoedState = new URL(`https://orbit.test/api/outlook/callback?code=abc&state=${state}`).searchParams.get("state");
+check("and comes back off the redirect unchanged", echoedState === state, String(echoedState));
+check(
+  "its fourth field still names both purposes",
+  parseMicrosoftPurposes((echoedState ?? "").split(":")[3]).join(",") === "contacts,calendar"
+);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
