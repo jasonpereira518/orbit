@@ -229,7 +229,7 @@ export default function TermsPage() {
         >
           <p>
             Orbit integrates with services including Clerk, Vercel, Neon, Stripe,
-            AI providers (Google Gemini, OpenAI, Anthropic), Wispr Flow, Apollo,
+            AI providers (Google Gemini, OpenAI, Anthropic), Apollo,
             Resend, Twilio, Google (Gmail, Contacts and Calendar), Microsoft
             (Outlook contacts), Eventbrite, Luma and Partiful. The{" "}
             <Link href="/privacy">Privacy Policy</Link> lists every service that

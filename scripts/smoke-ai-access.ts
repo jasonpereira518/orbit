@@ -25,7 +25,7 @@ import "./smoke/_env";
 // Production's key rules: the local-dev key names are ignored on Vercel, so the only managed
 // key is the explicit one set here. Set BEFORE the gate is imported or first called.
 process.env.VERCEL = "1";
-for (const name of ["GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "WISPR_API_KEY"]) {
+for (const name of ["GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
   delete process.env[name];
   delete process.env[`ORBIT_MANAGED_${name}`];
 }
@@ -137,7 +137,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
  *
  * `join` uses the OS separator, so on Windows this yielded `src\lib\ai-access.ts` while every
  * exemption below is written `src/lib/ai-access.ts`. Nothing matched, and the guard reported
- * the gate itself — plus `wispr.ts` and its own source file — as offenders on a clean tree.
+ * the gate itself — plus its own source file — as offenders on a clean tree.
  */
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -165,8 +165,7 @@ function sourceGuard() {
   );
   const dynamicImport = new RegExp(String.raw`import\(\s*["'](${SDKS.map((s) => s.replace(/[/@.-]/g, (c) => `\\${c}`)).join("|")})["']\s*\)`);
   const construct = /new\s+(GoogleGenAI|OpenAI|Anthropic)\s*\(/;
-  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|WISPR_API_KEY|GOOGLE_API_KEY)\b/;
-  const wisprCall = /\btranscribeWithWispr\s*\(/;
+  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY)\b/;
   const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com/;
 
   const offenders: string[] = [];
@@ -178,7 +177,6 @@ function sourceGuard() {
     if (!probe && (valueImport.test(code) || dynamicImport.test(code))) offenders.push(`${file}: imports an AI SDK`);
     if (!probe && construct.test(code)) offenders.push(`${file}: constructs an AI client`);
     if (envKey.test(code) && file !== "scripts/smoke-contact-brief.ts") offenders.push(`${file}: reads an AI key from the environment`);
-    if (wisprCall.test(code) && file !== "src/lib/wispr.ts") offenders.push(`${file}: calls Wispr directly`);
     if (providerHost.test(code)) offenders.push(`${file}: talks to a provider host directly`);
   }
   check("no file outside the gate imports an SDK, builds a client, reads a key or calls a provider", offenders.length === 0, offenders.join("\n       "));
@@ -566,7 +564,7 @@ async function byokOnly() {
     NODE_ENV: process.env.NODE_ENV,
   };
   delete process.env.VERCEL;
-  for (const p of ["GEMINI", "OPENAI", "ANTHROPIC", "WISPR"]) {
+  for (const p of ["GEMINI", "OPENAI", "ANTHROPIC"]) {
     process.env[`ORBIT_MANAGED_${p}_API_KEY`] = MANAGED;
     process.env[`${p}_API_KEY`] = DEV_KEY;
   }
@@ -668,7 +666,7 @@ async function byokOnly() {
     }
     check("a hand-built grant gets no client", threw);
   } finally {
-    for (const p of ["GEMINI", "OPENAI", "ANTHROPIC", "WISPR"]) {
+    for (const p of ["GEMINI", "OPENAI", "ANTHROPIC"]) {
       delete process.env[`${p}_API_KEY`];
       delete process.env[`ORBIT_MANAGED_${p}_API_KEY`];
     }

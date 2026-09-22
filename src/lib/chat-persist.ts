@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
+import type { ChatStep } from "@/lib/chat-stream-protocol";
 
 const TITLE_MAX = 72;
 
@@ -19,7 +20,18 @@ export async function persistAssistantTurn(
   threadId: string | null,
   existingTitle: string | null,
   question: string,
-  turn: { answer: string; recommendations: ChatRecommendation[] }
+  turn: {
+    answer: string;
+    recommendations: ChatRecommendation[];
+    /** The stages this answer actually ran, so a reloaded thread still shows its work. */
+    activity?: ChatStep[];
+    /**
+     * A summary of the first message, when one was written in time. Only ever used to NAME an
+     * untitled thread; a thread that already has a title keeps it, so a later turn cannot
+     * rename a conversation out from under the person.
+     */
+    title?: string | null;
+  }
 ): Promise<{ messageId: string | null; title: string | null }> {
   if (!threadId) return { messageId: null, title: existingTitle };
   const db = await getDb();
@@ -31,9 +43,13 @@ export async function persistAssistantTurn(
       role: "assistant",
       content: turn.answer,
       recommendations: turn.recommendations,
+      activity: turn.activity ?? [],
     })
     .returning();
-  const title = existingTitle || titleFromQuestion(question);
+  // Precedence: the name the thread already has, then a written summary, then the old cut of
+  // the first message — which is what a summary that failed or ran late falls back to, so a
+  // conversation is never left unnamed.
+  const title = existingTitle || turn.title?.trim() || titleFromQuestion(question);
   await db
     .update(chatThreads)
     .set({ updatedAt: new Date(), title })

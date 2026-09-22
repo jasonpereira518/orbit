@@ -19,7 +19,7 @@ import type { ThinkingLevel } from "@/lib/ai-request-options";
  *  - `fast`        `FAST_MODELS[provider]` — the cheap tier
  *  - `vision`      `VISION_MODELS[provider]` — OCR, where a misread name can't be recovered
  *  - `embed`       the embedding model for the account's embedding backend
- *  - `transcribe`  the transcription chain (Wispr → Whisper → Gemini)
+ *  - `transcribe`  the transcription chain (Whisper → Gemini)
  *
  * This DRIVES routing: `modelForOperation` in `ai-models.ts` reads the tier, and the AI
  * entry points read that — there is no per-call-site model argument to disagree with it.
@@ -73,6 +73,7 @@ export const AI_OPERATIONS = {
   "chat.answer": { label: "Chat answers", tier: "user" },
   "chat.understand": { label: "Chat: understanding the question", tier: "fast", thinking: "minimal" },
   "chat.rerank": { label: "Chat: ranking results", tier: "fast", thinking: "minimal" },
+  "chat.title": { label: "Chat: naming the conversation", tier: "fast", thinking: "minimal" },
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },

@@ -11,6 +11,9 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
+// Type-only, and that file imports nothing at all — so the wire shape and the stored shape
+// cannot drift, without the schema dragging any runtime dependency behind it.
+import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -93,11 +96,6 @@ export const userSettings = pgTable("user_settings", {
   geminiApiKeyEncrypted: text("gemini_api_key_encrypted"),
   openaiApiKeyEncrypted: text("openai_api_key_encrypted"),
   anthropicApiKeyEncrypted: text("anthropic_api_key_encrypted"),
-  /**
-   * Wispr Flow transcription. Not an `AiProvider`: Wispr transcribes and does not
-   * complete, so it never participates in provider/model selection. See `src/lib/wispr.ts`.
-   */
-  wisprApiKeyEncrypted: text("wispr_api_key_encrypted"),
   aiModel: text("ai_model").default("gemini-3.8-flash"),
   /**
    * The model this account was moved OFF when a default changed under it, so Settings can
@@ -1200,7 +1198,7 @@ export const contactOpportunities = pgTable(
 );
 
 export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
-export type MeetingSegmentEngine = "wispr" | "whisper" | "gemini" | "silent";
+export type MeetingSegmentEngine = "whisper" | "gemini" | "silent";
 
 /**
  * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
@@ -2365,6 +2363,18 @@ export const chatMessages = pgTable(
     attachedContacts: jsonb("attached_contacts")
       .$type<Array<{ id: string; name: string }>>()
       .default([]),
+    /**
+     * The stages this answer actually ran — see `ChatStep` in `@/lib/chat-stream-protocol`.
+     *
+     * Persisted rather than recomputed because it is a record of one particular run: the
+     * counts, durations and people it names describe the network as it was when the
+     * question was asked. Re-deriving it later would quietly answer a different question.
+     */
+    activity: jsonb("activity").$type<ChatStepRecord[]>().default([]),
+    /** Thumbs on the answer. Null until the user says something. */
+    feedback: text("feedback").$type<"up" | "down">(),
+    /** The optional note a thumbs-down can carry. */
+    feedbackNote: text("feedback_note"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -2392,7 +2402,7 @@ export const usageEvents = pgTable(
     userId: text("user_id").notNull(),
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "wispr">().notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
       .$type<"completion" | "multimodal" | "embedding" | "transcription">()
