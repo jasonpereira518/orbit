@@ -124,6 +124,7 @@ export const PLAN_COPY: PlanCopy[] = [
       "Contact enrichment on Orbit's credits",
       "Outreach campaigns with email and SMS sending",
       "Recruiter tracking",
+      "Calendar links and event sources",
       "Chrome extension",
     ],
     caveat: "AI runs on your own provider key, billed to you at cost.",
@@ -143,6 +144,7 @@ export const PLAN_COPY: PlanCopy[] = [
       "Unlimited contacts, forever",
       "Outreach campaigns with email and SMS sending",
       "Recruiter tracking",
+      "Calendar links and event sources",
       "Chrome extension",
     ],
     caveat:

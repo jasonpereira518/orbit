@@ -169,7 +169,11 @@ export function ImportHub({
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
-  /** Calendar sync is a paid feature; LinkedIn import stays free on every plan. */
+  /**
+   * What is paid on this tab: pasting a calendar’s own link and keeping it in sync, plus
+   * one-off calendar files. Connecting Google or Outlook — and the meetings and people that
+   * come with it — is free on every plan now, and so is LinkedIn import.
+   */
   canUseSync?: boolean;
 }) {
   const job = useImportJob();
@@ -317,15 +321,14 @@ export function ImportHub({
             />
           ) : (
             <LockedFeature
-              title="Calendar sync"
-              description="Point Orbit at your calendar and it turns meetings into logged interactions, so your follow-ups stay current without any typing."
+              title="Calendar links"
+              description="Connecting Google or Outlook is free and brings in your own calendar. This is for every other one — paste a calendar’s private link and Orbit polls it, keeping networking events and the people in them up to date."
               highlights={[
                 "Subscribe to a calendar once and keep it in sync",
-                "Networking meetings become logged interactions",
-                "New people from invites land in your contacts",
-                "Follow-up reminders created automatically",
+                "Any calendar you can get a private link to, not only your own",
+                "One-off .ics and .csv calendar files too",
               ]}
-              note="LinkedIn imports stay free on every plan."
+              note="Connecting Google and Outlook is free on every plan, and so are LinkedIn imports."
             />
           )}
         </div>
