@@ -51,9 +51,23 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
     chips.push({ label: label(n), tone, href });
   };
 
+  // The engine counts every person it merges into an existing contact under BOTH
+  // `contactsUpdated` and `duplicatesFound` (import-engine.ts, the merge batch), so for any
+  // engine-era import they are one group of people. Showing both read as "2 updated · 2 already
+  // here" — four people where there were two — next to a row count and a People list that
+  // (correctly) said two. Rows written before the engine can carry different numbers, and those
+  // keep both chips, because there the two counters did mean different things.
+  const updated = item.contactsUpdated ?? 0;
+  const duplicates = item.duplicatesFound ?? 0;
+  const sameGroup = updated === duplicates;
+
   if (createsContacts(item.importType)) {
     add(item.contactsCreated, (n) => `${n} added`, "good");
-    add(item.contactsUpdated, (n) => `${n} updated`, "neutral");
+    add(
+      updated,
+      (n) => (sameGroup ? `${n} already in Orbit` : `${n} updated`),
+      "neutral",
+    );
   }
 
   // Calendar's real output, and the one every calendar row used to be missing.
@@ -64,7 +78,9 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
   add(stats.messagesImported, (n) => `${n} messages`, "neutral");
   add(stats.meetingsLogged, (n) => `${n} meetings`, "neutral");
 
-  add(item.duplicatesFound, (n) => `${n} already here`, "neutral");
+  if (!sameGroup || !createsContacts(item.importType)) {
+    add(item.duplicatesFound, (n) => `${n} already here`, "neutral");
+  }
   add(stats.skipped, (n) => `${n} skipped`, "neutral");
   add(
     stats.blockedByPlan,
