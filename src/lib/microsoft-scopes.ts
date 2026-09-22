@@ -131,9 +131,12 @@ export function serializeMicrosoftPurposes(purposes: readonly MicrosoftPurpose[]
   return purposes.join(".");
 }
 
-/** Tolerates a single purpose — a consent screen opened before this shipped says just `contacts`. */
+/**
+ * Tolerates a single purpose — a consent screen opened before the list shipped says just
+ * `contacts` — and the `+` this used to join with, for a screen opened before that changed.
+ */
 export function parseMicrosoftPurposes(raw: string | null | undefined): MicrosoftPurpose[] {
-  return (raw ?? "").split(".").filter(isMicrosoftPurpose);
+  return (raw ?? "").split(/[.+]/).filter(isMicrosoftPurpose);
 }
 
 /**

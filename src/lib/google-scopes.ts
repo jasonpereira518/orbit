@@ -73,9 +73,12 @@ export function serializeGooglePurposes(purposes: readonly GooglePurpose[]): str
   return purposes.join(".");
 }
 
-/** Tolerates a single purpose — a consent screen opened before this shipped says just `contacts`. */
+/**
+ * Tolerates a single purpose — a consent screen opened before the list shipped says just
+ * `contacts` — and the `+` this used to join with, for a screen opened before that changed.
+ */
 export function parseGooglePurposes(raw: string | null | undefined): GooglePurpose[] {
-  return (raw ?? "").split(".").filter(isGooglePurpose);
+  return (raw ?? "").split(/[.+]/).filter(isGooglePurpose);
 }
 
 /** Google returns granted scopes space-separated; so does `gmail_connections.scopes`. */

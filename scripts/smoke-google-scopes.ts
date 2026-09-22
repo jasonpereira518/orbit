@@ -91,6 +91,12 @@ check("a consent screen already in flight still parses", parseGooglePurposes("re
 check("junk is dropped, not trusted", parseGooglePurposes("contacts.nonsense").join(",") === "contacts");
 check("empty is empty", parseGooglePurposes("").length === 0 && parseGooglePurposes(null).length === 0);
 
+console.log("\nbackward compatibility with old separator");
+check("a consent screen that left before the separator changed still parses", parseGooglePurposes("contacts+calendar").join(",") === "contacts,calendar");
+check("and the current form still parses", parseGooglePurposes("contacts.calendar").join(",") === "contacts,calendar");
+check("a mixed pair parses too", parseGooglePurposes("contacts+calendar.recruiter_scan").length === 3);
+check("junk in either form is still dropped", parseGooglePurposes("contacts+nonsense.calendar").join(",") === "contacts,calendar");
+
 // Through a real URL rather than through memory. RFC 6749 sends the state back to the redirect
 // URI form-urlencoded, where a literal `+` decodes to a SPACE — so a separator that only looks
 // safe in a string comparison still turns `contacts+calendar` into `contacts calendar` the

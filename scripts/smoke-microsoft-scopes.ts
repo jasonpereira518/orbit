@@ -139,6 +139,12 @@ check("a consent screen already in flight still parses", parseMicrosoftPurposes(
 check("junk is dropped, not trusted", parseMicrosoftPurposes("contacts.nonsense").join(",") === "contacts");
 check("empty is empty", parseMicrosoftPurposes("").length === 0 && parseMicrosoftPurposes(null).length === 0);
 
+console.log("\nbackward compatibility with old separator");
+check("a consent screen that left before the separator changed still parses", parseMicrosoftPurposes("contacts+calendar").join(",") === "contacts,calendar");
+check("and the current form still parses", parseMicrosoftPurposes("contacts.calendar").join(",") === "contacts,calendar");
+check("a mixed pair parses too", parseMicrosoftPurposes("contacts+calendar.recruiter_scan").length === 3);
+check("junk in either form is still dropped", parseMicrosoftPurposes("contacts+nonsense.calendar").join(",") === "contacts,calendar");
+
 // Through a real URL rather than through memory, for the reason the Google twin gives: the
 // redirect carries the state form-urlencoded, where a literal `+` decodes to a SPACE, and
 // `consumeOutlookOAuthState` compares the returned state to the cookie byte for byte.
