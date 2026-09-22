@@ -155,6 +155,24 @@ Two menu items, each shown only where it means something:
 
 Either one waits behind an unsaved draft instead of replacing it.
 
+### Work history
+
+On a LinkedIn profile, or its `/details/experience/` or `/details/education/`
+page, a known contact has **Save work history from this page** (Pro). It is the
+one click that sends a page's whole text — up to 40,000 characters, against the
+light copy every other call gets — and only on that click. The server:
+
+- refuses a page that is someone else's LinkedIn before any model call, and
+  asks the user instead;
+- drops any role whose employer the page never names;
+- writes nothing when the page shows fewer roles than Orbit already holds
+  (LinkedIn's "Show all 9 experiences" top few, or text cut off at the cap),
+  and points at the details page, which lists them all;
+- on a details page, replaces only that section.
+
+No clicks, expansion or scrolling on the page: if LinkedIn shortened the list,
+the panel says so and the user opens the full one.
+
 `optional_host_permissions` (LinkedIn, X, Gmail, GitHub) are the opt-in on
 top: turned on from Settings, they let the panel read each page on that site
 as you open it, with no click. Never required, always revocable from the same
@@ -167,7 +185,8 @@ no pagination, no "add all" on list pages, no background fetching, and never any
 injected UI on the host page. Every extraction is one read of what the user's own
 browser already rendered, because they clicked the icon.
 
-Page text is never persisted — it's model input only. The raw blob is never
+Page text is never persisted — it's model input only. Work history stores
+the roles and schools read out of it, never the text. The raw blob is never
 cached locally either. The only first-party use of extension storage is the
 click hand-off above: a tab id, a timestamp and — for a right-click — the link
 or the selected text (capped at 4,000 characters), in `storage.session` (memory

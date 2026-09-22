@@ -21,6 +21,7 @@ import type {
   GateIntentRequest,
   LogInteractionRequest,
   PageContext,
+  ProfileCaptureRequest,
   ReminderActionRequest,
   ResolveBatchRequest,
   ResolveRequest,
@@ -32,6 +33,13 @@ import type {
 export const MAX_BODY_BYTES = 64_000;
 /** Page text is truncated to this before it ever reaches a prompt. */
 export const MAX_RAW_TEXT_CHARS = 8_000;
+/**
+ * The one exception: a work-history capture reads a whole profile, which the
+ * light copy cannot hold — a career sits below the top card, the About, and
+ * the activity feed. Only `/profile` takes this, and only on a user's click.
+ */
+export const MAX_PROFILE_TEXT_CHARS = 40_000;
+export const MAX_PROFILE_BODY_BYTES = 256_000;
 
 /** Compile-time proof that a schema matches its contract type in both directions. */
 type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
@@ -95,31 +103,40 @@ const pageOrgSchema = z.object({
   githubLogin: z.string().trim().max(39).optional(),
 });
 
-export const pageContextSchema = z.object({
-  schemaVersion: z.literal(1),
-  site: z.enum(["linkedin", "x", "gmail", "github", "generic"]),
-  adapterVersion: z.string().max(32),
-  kind: z.enum(["person", "thread", "list", "company", "post", "unknown"]),
-  url: z.string().trim().max(2_048),
-  sourceUrl: z.string().trim().max(2_048),
-  capturedAt: isoDate,
-  identity: pageIdentitySchema,
-  candidates: z.array(pageCandidateSchema).max(10).optional(),
-  org: pageOrgSchema.optional(),
-  text: z.object({
-    // The outer bound catches abuse; the transform handles the normal case of a
-    // big-but-legitimate profile. Truncate rather than reject — a 200KB DOM
-    // dump should still produce starters.
-    blob: z
-      .string()
-      .max(200_000)
-      .transform((value) => value.slice(0, MAX_RAW_TEXT_CHARS)),
-    truncated: z.boolean(),
-    charCount: z.number().int().nonnegative(),
-    fromSelection: z.boolean(),
-  }),
-  warnings: z.array(z.string().max(64)).max(20),
-});
+function pageContextSchemaWith(maxChars: number) {
+  return z.object({
+    schemaVersion: z.literal(1),
+    site: z.enum(["linkedin", "x", "gmail", "github", "generic"]),
+    adapterVersion: z.string().max(32),
+    kind: z.enum(["person", "thread", "list", "company", "post", "unknown"]),
+    url: z.string().trim().max(2_048),
+    sourceUrl: z.string().trim().max(2_048),
+    capturedAt: isoDate,
+    identity: pageIdentitySchema,
+    candidates: z.array(pageCandidateSchema).max(10).optional(),
+    org: pageOrgSchema.optional(),
+    section: z.enum(["experience", "education"]).optional(),
+    text: z
+      .object({
+        // The outer bound catches abuse; the transform handles the normal case of
+        // a big-but-legitimate profile. Truncate rather than reject — a 200KB DOM
+        // dump should still produce starters. Cutting here makes it `truncated`,
+        // which work history relies on to know the page may hold more.
+        blob: z.string().max(200_000),
+        truncated: z.boolean(),
+        charCount: z.number().int().nonnegative(),
+        fromSelection: z.boolean(),
+      })
+      .transform((text) =>
+        text.blob.length > maxChars
+          ? { ...text, blob: text.blob.slice(0, maxChars), truncated: true }
+          : text
+      ),
+    warnings: z.array(z.string().max(64)).max(20),
+  });
+}
+
+export const pageContextSchema = pageContextSchemaWith(MAX_RAW_TEXT_CHARS);
 
 export const resolveRequestSchema = z.object({
   page: pageContextSchema,
@@ -228,6 +245,12 @@ export const resolveBatchRequestSchema = z.object({
 
 export const companyLookupRequestSchema = z.object({ org: pageOrgSchema });
 
+export const profileCaptureRequestSchema = z.object({
+  contactId: z.uuid(),
+  page: pageContextSchemaWith(MAX_PROFILE_TEXT_CHARS),
+  confirmMismatch: z.boolean().optional(),
+});
+
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;
@@ -243,6 +266,7 @@ const _reminder: Exact<
 const _gate: Exact<z.infer<typeof gateIntentRequestSchema>, GateIntentRequest> = true;
 const _batch: Exact<z.infer<typeof resolveBatchRequestSchema>, ResolveBatchRequest> = true;
 const _company: Exact<z.infer<typeof companyLookupRequestSchema>, CompanyLookupRequest> = true;
-void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _reminder, _gate, _batch, _company];
+const _profile: Exact<z.infer<typeof profileCaptureRequestSchema>, ProfileCaptureRequest> = true;
+void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _reminder, _gate, _batch, _company, _profile];
 
 export type { ContactSearchResponse };

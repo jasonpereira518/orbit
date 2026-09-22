@@ -29,6 +29,7 @@ import { unlockFeature } from "@/lib/unlock";
 import { cn } from "@/lib/cn";
 import { interactionLabel, relativeTime, shortAgo } from "@/lib/format";
 import { StarterList } from "../components/StarterList";
+import { WorkHistory } from "../components/WorkHistory";
 import { Button, Chip, Meta, MicroLabel, Section } from "../components/ui";
 import type { PanelState } from "../state/usePanel";
 
@@ -407,6 +408,20 @@ export function KnownContactView({
             </div>
           )}
         </Section>
+
+        {/* Right under who they are: where they've been is the same question
+            asked of the past. */}
+        <WorkHistory
+          contact={contact}
+          page={page}
+          api={api}
+          locked={
+            state.me?.entitlements
+              ? !state.me.entitlements.features.workHistory
+              : undefined
+          }
+          onSaved={onChanged}
+        />
 
         <Section title="How you met">
           {contact.howMet || contact.dateMet ? (

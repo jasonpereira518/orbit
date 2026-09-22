@@ -27,7 +27,9 @@ import type {
 import { installBrowser } from "@/lib/browser";
 import type { OrbitApi } from "@/lib/api";
 import { createFakeBrowser } from "./fake-browser";
-const fakeBrowser = createFakeBrowser();
+// A read of "the tab" returns the profile fixture, so work history's full read
+// has a page to send. Declared functions hoist; this runs only on a click.
+const fakeBrowser = createFakeBrowser({ runExtractor: async () => page() });
 installBrowser(fakeBrowser);
 // Exposed so a CDP check can assert what a click actually did (e.g. which URL
 // "See plans" opened), not merely that the button exists.
@@ -295,6 +297,27 @@ Object.assign(API_FIXTURES, {
   },
 });
 
+const workHistory = {
+  roles: [
+    { organization: "Stripe", title: "VP Engineering", dates: "Mar 2022 – Present", isCurrent: true },
+    { organization: "Stripe", title: "Director of Engineering", dates: "Jan 2019 – Mar 2022", isCurrent: false },
+    { organization: "Square", title: "Staff Engineer", dates: "2015 – 2019", isCurrent: false },
+    { organization: "Google", title: "Software Engineer", dates: "2011 – 2015", isCurrent: false },
+  ],
+  roleCount: 6,
+  schools: [{ organization: "University of Ghana", title: "Computer Science", dates: "2007 – 2011", isCurrent: false }],
+  schoolCount: 1,
+  source: "extension" as const,
+  capturedAt: new Date(Date.now() - 40 * 864e5).toISOString(),
+};
+
+const proEntitlements = {
+  ...freeEntitlements,
+  plan: "pro" as const,
+  planLabel: "Pro",
+  features: { starters: true, workHistory: true, company: true, search: true },
+};
+
 /** A fake API; `over` replaces individual methods' answers (e.g. a Pro plan). */
 function makeApi(over: Record<string, unknown> = {}): OrbitApi {
   const answers: Record<string, unknown> = { ...API_FIXTURES, ...over };
@@ -309,7 +332,19 @@ function makeApi(over: Record<string, unknown> = {}): OrbitApi {
   }) as unknown as OrbitApi;
 }
 
-const api = makeApi();
+const api = makeApi({
+  profile: { status: "saved", dropped: 0, shortened: ["experience"], workHistory: { ...workHistory, roleCount: 4, capturedAt: new Date().toISOString() } },
+});
+const conflictApi = makeApi({
+  profile: (body: { confirmMismatch?: boolean }) =>
+    body.confirmMismatch
+      ? { status: "saved", dropped: 0, workHistory }
+      : {
+          status: "conflict",
+          dropped: 0,
+          conflict: { pageSlug: "amara-osei-2", contactSlug: "amara-osei", contactName: "Amara Osei" },
+        },
+});
 const proApi = makeApi({
   company: {
     currentTotal: 3,
@@ -502,6 +537,58 @@ function States() {
             startersDegraded: true,
             startersDegradedReason: "plan",
           })}
+          api={api}
+          onChanged={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Work history — Pro" note="stored history; the profile lists only some roles">
+        <PanelHeader />
+        <IdentityZone page={page()} />
+        <VerdictZone>
+          <OrbitGlyph tier="inner" size={16} />
+          <span style={{ flex: 1 }}>Inner orbit · last spoke 5 months ago</span>
+        </VerdictZone>
+        <KnownContactView
+          contact={contact({ workHistory, openReminders: [], notesPreview: null })}
+          page={{ ...page(), warnings: ["experience-shortened"] }}
+          state={panelState({ me: { ...me(), contractVersion: 2, entitlements: proEntitlements } })}
+          api={api}
+          onChanged={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Work history — details page" note="click to see the conflict question">
+        <PanelHeader />
+        <IdentityZone page={{ ...page({ name: null }), section: "experience" }} />
+        <VerdictZone>
+          <OrbitGlyph tier="mid" size={16} />
+          <span style={{ flex: 1 }}>Mid orbit · last spoke 2 months ago</span>
+        </VerdictZone>
+        <KnownContactView
+          contact={contact({ openReminders: [], notesPreview: null, keyFacts: [], sharedInterests: [] })}
+          page={{ ...page({ name: null }), section: "experience" }}
+          state={panelState({ me: { ...me(), contractVersion: 2, entitlements: proEntitlements } })}
+          api={conflictApi}
+          onChanged={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Work history — free plan" note="Apollo history shows; reading is Pro">
+        <PanelHeader />
+        <IdentityZone page={page()} />
+        <VerdictZone>
+          <OrbitGlyph tier="inner" size={16} />
+          <span style={{ flex: 1 }}>Inner orbit · last spoke 5 months ago</span>
+        </VerdictZone>
+        <KnownContactView
+          contact={contact({
+            workHistory: { ...workHistory, source: "apollo", roles: workHistory.roles.slice(0, 2), roleCount: 2 },
+            openReminders: [],
+            notesPreview: null,
+          })}
+          page={page()}
+          state={panelState({ me: { ...me(), contractVersion: 2, entitlements: freeEntitlements } })}
           api={api}
           onChanged={() => {}}
         />

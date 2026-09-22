@@ -1,0 +1,9 @@
+{
+  "url": "https://www.linkedin.com/in/example-person/",
+  "name": "Riley Example",
+  "text": "Riley Example\nStaff Engineer at Northwind\nSan Francisco Bay Area\nAbout\nI build payments infrastructure.\nExperience\nStaff Engineer\nNorthwind · Full-time\nMar 2022 - Present · 2 yrs 7 mos\nSenior Engineer\nNorthwind\nJan 2019 - Mar 2022 · 3 yrs 3 mos\nSoftware Engineer\nContoso Labs\n2015 - 2018 · 3 yrs\nShow all 5 experiences\nEducation\nState University\nBachelor of Science - BS, Computer Science\n2011 - 2015\nPeople also viewed\nJordan Other\nHead of Design at Fabrikam",
+  "expect": {
+    "employers": ["Northwind", "Contoso Labs"],
+    "schools": ["State University"]
+  }
+}

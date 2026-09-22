@@ -11,18 +11,22 @@
  */
 
 import { adapterFor } from "./adapters/registry";
-import type { PageContext } from "./adapters/types";
+import type { ExtractOptions, PageContext } from "./adapters/types";
 
 declare global {
   interface Window {
     __orbitPageContext?: PageContext | { error: string };
+    /** Set by the panel just before injecting; read once and cleared. */
+    __orbitExtractOptions?: ExtractOptions;
   }
 }
 
 function run(): PageContext | { error: string } {
+  const options = window.__orbitExtractOptions ?? {};
+  delete window.__orbitExtractOptions;
   try {
     const url = new URL(window.location.href);
-    return adapterFor(url).extract(url);
+    return adapterFor(url).extract(url, options);
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }

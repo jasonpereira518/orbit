@@ -136,6 +136,8 @@ export type PageOrg = {
   githubLogin?: string;
 };
 
+export type ProfileSection = "experience" | "education";
+
 export type PageText = {
   blob: string;
   truncated: boolean;
@@ -159,6 +161,12 @@ export type PageContext = {
   candidates?: PageCandidate[];
   /** Present on company and school pages. */
   org?: PageOrg;
+  /**
+   * A LinkedIn `/in/<slug>/details/<section>` page: one section of a profile,
+   * listed in full. Absent on the profile itself. Optional: v1 adapters never
+   * send it.
+   */
+  section?: ProfileSection;
   text: PageText;
   /** Extractor diagnostics: "login-wall", "opaque-slug", "no-main", … */
   warnings: string[];
@@ -235,6 +243,30 @@ export type ContactSnapshot = {
    */
   howMet?: string | null;
   dateMet?: string | null;
+  /**
+   * Where they have worked and studied, when Orbit holds any — from a capture
+   * or from Apollo. Optional: servers before contract v2 omit it.
+   */
+  workHistory?: SnapshotWorkHistory | null;
+};
+
+export type SnapshotExperience = {
+  organization: string;
+  /** A role's title, or a school's field of study. */
+  title: string | null;
+  /** "Mar 2019 – Present", "2016 – 2019", or "" when undated. */
+  dates: string;
+  isCurrent: boolean;
+};
+
+export type SnapshotWorkHistory = {
+  /** The first few, in display order. */
+  roles: SnapshotExperience[];
+  roleCount: number;
+  schools: SnapshotExperience[];
+  schoolCount: number;
+  source: "extension" | "apollo";
+  capturedAt: string;
 };
 
 /** Field values proposed for the create form, derived from the page. */
@@ -605,3 +637,58 @@ export type CompanyLookupResponse = {
 /** A click on a locked section — recorded (throttled) as demand for the feature. */
 export type GateIntentRequest = { feature: ExtensionFeature; site?: string };
 export type GateIntentResponse = { recorded: boolean; upgradeUrl: string };
+
+/* -------------------------------------------------------------------------- */
+/* Work history                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Read someone's work history off the LinkedIn page the user is looking at.
+ * Pro. The page's text is sent in full (the light copy other routes get is
+ * too short to hold a career), and only because the user clicked.
+ */
+export type ProfileCaptureRequest = {
+  contactId: string;
+  page: PageContext;
+  /** The user saw the conflict and said this page IS that contact. */
+  confirmMismatch?: boolean;
+};
+
+export type ProfileCaptureStatus =
+  /** Written. */
+  | "saved"
+  /** The page is someone else's LinkedIn. Nothing read, nothing written. */
+  | "conflict"
+  /**
+   * The page shows less than Orbit already holds — LinkedIn's shortened list,
+   * or text cut off. Nothing written; the details page has the full list.
+   */
+  | "partial"
+  /** Nothing usable: no key, no text, no roles found, or the model failed. */
+  | "degraded";
+
+export type ProfileCaptureDegradedReason =
+  | "no_api_key"
+  | "no_text"
+  | "ai_error"
+  | "nothing_found";
+
+export type ProfileCaptureResponse = {
+  status: ProfileCaptureStatus;
+  conflict?: { pageSlug: string; contactSlug: string; contactName: string };
+  degradedReason?: ProfileCaptureDegradedReason;
+  /** "partial": which section to open in full. */
+  openSection?: ProfileSection;
+  /**
+   * Entries the model returned whose organization appears nowhere on the page.
+   * Always dropped — logged so a rising count is visible.
+   */
+  dropped: number;
+  /**
+   * "saved" off a shortened list with nothing stored to lose: kept, and the
+   * panel says the full list is on the details page.
+   */
+  shortened?: ProfileSection[];
+  /** What is now stored, after a "saved". */
+  workHistory?: SnapshotWorkHistory | null;
+};

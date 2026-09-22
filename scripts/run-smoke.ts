@@ -291,6 +291,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-extension-resolve": "pglite",
   "smoke-extension-home": "pglite",
   "smoke-extension-people": "pglite",
+  "smoke-extension-profile": "pglite",
   "smoke-token-refresh": "pglite",
   "smoke-toast-undo": "pglite",
   "smoke-feedback-admin": "pglite",

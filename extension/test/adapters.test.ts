@@ -146,3 +146,52 @@ describe("Gmail threads", () => {
     expect(page.candidates?.[0].email).toBe("person0@example.com");
   });
 });
+
+describe("LinkedIn work history pages", () => {
+  const profile = (extra = "") => `<head><title>Amara Osei | LinkedIn</title></head>
+    <body><main><h1>Amara Osei</h1>
+      <section><h2>About</h2><p>${"Builds payments infrastructure. ".repeat(400)}</p></section>
+      <section><h2>Experience</h2><p>Staff Engineer</p><p>Stripe</p>${extra}</section>
+    </main></body>`;
+
+  it("a details page is one section of that person, named by the slug alone", () => {
+    const page = read(
+      "https://www.linkedin.com/in/amara-osei/details/experience/",
+      `<head><title>Experience | Amara Osei | LinkedIn</title></head>
+       <body><main><h1>Experience</h1><p>Staff Engineer</p><p>Stripe</p></main></body>`
+    );
+    expect(page.kind).toBe("person");
+    expect(page.section).toBe("experience");
+    expect(page.identity.handle?.value).toBe("amara-osei");
+    expect(page.url).toBe("https://www.linkedin.com/in/amara-osei");
+    // Not "Experience", which a title parse or the h1 would give.
+    expect(page.identity.name).toBeNull();
+  });
+
+  it("the profile itself has no section", () => {
+    expect(read("https://www.linkedin.com/in/amara-osei/", profile()).section).toBeUndefined();
+  });
+
+  it("says when the profile lists only some roles", () => {
+    const page = read(
+      "https://www.linkedin.com/in/amara-osei/",
+      profile(`<a href="/in/amara-osei/details/experience/">Show all 9 experiences</a>`)
+    );
+    expect(page.warnings).toContain("experience-shortened");
+    expect(read("https://www.linkedin.com/in/amara-osei/", profile()).warnings).not.toContain(
+      "experience-shortened"
+    );
+  });
+
+  it("a full read keeps the whole profile; the light read stays light", () => {
+    const url = "https://www.linkedin.com/in/amara-osei/";
+    read(url, profile());
+    const parsed = new URL(url);
+    const light = adapterFor(parsed).extract(parsed);
+    const full = adapterFor(parsed).extract(parsed, { full: true });
+    expect(light.text.blob.length).toBeLessThanOrEqual(10_000);
+    expect(light.text.truncated).toBe(true);
+    expect(full.text.blob.length).toBeGreaterThan(10_000);
+    expect(full.text.blob).toContain("Stripe");
+  });
+});

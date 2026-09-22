@@ -29,7 +29,9 @@ function restrictedReason(url: string): string | null {
  * Injection happens on demand under `activeTab` — there is no declared content
  * script, so nothing runs on any page until the user clicks the toolbar icon.
  */
-export async function readActivePage(): Promise<PageReadResult> {
+export async function readActivePage(
+  options: { full?: boolean } = {}
+): Promise<PageReadResult> {
   const tab = await browser().activeTab();
   if (!tab?.id) {
     return { ok: false, reason: "no-tab", message: "No active tab." };
@@ -52,7 +54,7 @@ export async function readActivePage(): Promise<PageReadResult> {
   }
 
   try {
-    const value = (await browser().runExtractor(tab.id)) as
+    const value = (await browser().runExtractor(tab.id, options)) as
       | PageContext
       | { error: string }
       | undefined;

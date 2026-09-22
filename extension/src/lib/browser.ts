@@ -31,7 +31,8 @@ export type Browser = {
    * Inject the bundled extractor into a tab and return what it parked on
    * `window.__orbitPageContext`. Throws when the tab can't be scripted.
    */
-  runExtractor(tabId: number): Promise<unknown>;
+  /** `full`: the whole page's text, for work history (see ExtractOptions). */
+  runExtractor(tabId: number, options?: { full?: boolean }): Promise<unknown>;
   /** The tab's serialized DOM. Dev-only: feeds the fixture saver. */
   readDocumentHtml(tabId: number): Promise<string | null>;
   /**
@@ -82,7 +83,16 @@ export const chromeBrowser: Browser = {
     return tab ? { id: tab.id, url: tab.url } : undefined;
   },
 
-  async runExtractor(tabId) {
+  async runExtractor(tabId, options = {}) {
+    // Options ride a global the extractor reads once and deletes: a file
+    // injection takes no arguments.
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (full: boolean) => {
+        (window as unknown as { __orbitExtractOptions?: { full: boolean } }).__orbitExtractOptions = { full };
+      },
+      args: [Boolean(options.full)],
+    });
     // Two injections rather than one: the extractor is a bundled IIFE, and a
     // bundled IIFE's completion value is not reliably what `executeScript`
     // reports. So the file parks its result on a global and a second trivial
