@@ -131,6 +131,7 @@ export function GmailImportPanel({
     params.delete("google");
     params.delete("reason");
     params.delete("purpose");
+    params.delete("switched");
     const next = params.toString();
     // The current path, not a hardcoded one: this panel also lives in Settings.
     window.history.replaceState(

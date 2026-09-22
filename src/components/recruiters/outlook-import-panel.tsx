@@ -129,6 +129,7 @@ export function OutlookImportPanel({
     params.delete("outlook");
     params.delete("reason");
     params.delete("purpose");
+    params.delete("switched");
     const next = params.toString();
     // The current path, not a hardcoded one: the callback returns to wherever it was started.
     window.history.replaceState(

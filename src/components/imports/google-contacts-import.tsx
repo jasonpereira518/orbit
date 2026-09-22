@@ -86,6 +86,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
       params.delete("gmail");
       params.delete("reason");
       params.delete("purpose");
+      params.delete("switched");
       const next = params.toString();
       // The current path, not a hardcoded one: this card also lives in Settings.
       window.history.replaceState(
@@ -105,6 +106,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
       params.delete("gmail");
       params.delete("reason");
       params.delete("purpose");
+      params.delete("switched");
       const next = params.toString();
       // The current path, not a hardcoded one: this card also lives in Settings.
       window.history.replaceState(

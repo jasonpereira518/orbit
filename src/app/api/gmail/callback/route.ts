@@ -79,6 +79,11 @@ export async function GET(request: Request) {
     const email = await fetchGoogleProfileEmail(tokens.access_token);
     const { row: connection, switchedFrom } = await upsertGmailConnection(sessionUserId, tokens, email);
 
+    // The upsert has already run by here — whatever it did (including swapping the account
+    // and resetting scopes/cursor to the new grant alone) is true regardless of what the
+    // missing-scope check below decides, so every redirect from this point on must say so.
+    if (switchedFrom) redirectBase.searchParams.set("switched", "1");
+
     // Google's granular consent lets people untick a box. Only a grant that covers none of
     // what was asked is a failed connect; a partial one is connected, and the feature whose
     // scope is missing offers its own Allow button on the account page.
@@ -98,7 +103,6 @@ export async function GET(request: Request) {
 
     redirectBase.searchParams.set("gmail", "connected");
     redirectBase.searchParams.set("google", "connected");
-    if (switchedFrom) redirectBase.searchParams.set("switched", "1");
     return NextResponse.redirect(redirectBase);
   } catch (err) {
     await recordErrorEvent({

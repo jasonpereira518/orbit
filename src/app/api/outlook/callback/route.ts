@@ -76,6 +76,11 @@ export async function GET(request: Request) {
     const email = await fetchMicrosoftProfileEmail(tokens.access_token);
     const { row: connection, switchedFrom } = await upsertOutlookConnection(sessionUserId, tokens, email);
 
+    // The upsert has already run by here — whatever it did (including swapping the account
+    // and resetting scopes/cursor to the new grant alone) is true regardless of what the
+    // missing-scope check below decides, so every redirect from this point on must say so.
+    if (switchedFrom) redirectBase.searchParams.set("switched", "1");
+
     // Consent can finish without every scope this entry point asked for (a work or school
     // tenant's policy, or an admin-consent requirement). Only a grant that covers none of
     // what was asked is a failed connect; a partial one is connected, and the feature whose
@@ -94,7 +99,6 @@ export async function GET(request: Request) {
     }
 
     redirectBase.searchParams.set("outlook", "connected");
-    if (switchedFrom) redirectBase.searchParams.set("switched", "1");
     return NextResponse.redirect(redirectBase);
   } catch (err) {
     await recordErrorEvent({
