@@ -2,20 +2,9 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { LucideIcon } from "lucide-react";
-import {
-  BookUser,
-  Bot,
-  CalendarDays,
-  FileSpreadsheet,
-  KeyRound,
-  Send,
-  Sparkles,
-  Users,
-  Webhook,
-} from "lucide-react";
 import type { getSettings } from "@/actions/settings";
-import type { IntegrationStatus, IntegrationStatuses } from "@/actions/integrations";
+import type { IntegrationStatuses } from "@/lib/integration-status";
+import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import {
   Dialog,
   DialogContent,
@@ -46,18 +35,6 @@ import {
 import { cn } from "@/lib/utils";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
-
-export const INTEGRATION_ICONS: Record<IntegrationTabId, LucideIcon> = {
-  google: Users,
-  microsoft: BookUser,
-  linkedin: FileSpreadsheet,
-  ai: Sparkles,
-  assistants: Bot,
-  reminders: CalendarDays,
-  api: KeyRound,
-  webhooks: Webhook,
-  outreach: Send,
-};
 
 /**
  * The importer tab an in-flight import job belongs to. The calendar-file and contacts-file
@@ -124,42 +101,6 @@ const GmailTab = dynamic(
     })),
   { loading: () => <PanelSkeleton /> }
 );
-
-export function StatusDot({
-  status,
-  className,
-}: {
-  status: IntegrationStatus | "unknown" | undefined;
-  className?: string;
-}) {
-  if (status === undefined) {
-    return (
-      <span
-        aria-hidden
-        className={cn("size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground/30", className)}
-      />
-    );
-  }
-  const state = status === "unknown" ? "off" : status.state;
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "size-1.5 shrink-0 rounded-full",
-        state === "on" && "bg-primary",
-        state === "partial" && "bg-warning",
-        state === "off" && "bg-muted-foreground/35",
-        className
-      )}
-    />
-  );
-}
-
-export function statusText(status: IntegrationStatus | "unknown" | undefined) {
-  if (status === undefined) return "Checking…";
-  if (status === "unknown") return "Couldn’t check";
-  return status.detail;
-}
 
 const MD_QUERY = "(min-width: 768px)";
 
@@ -339,9 +280,8 @@ function DialogBody({
                 {group.label}
               </p>
               {group.tabs.map((t) => {
-                const Icon = INTEGRATION_ICONS[t.id];
                 const selected = t.id === tab;
-                const status = statuses?.[t.id];
+                const status = statuses?.pages[t.id];
                 return (
                   <button
                     key={t.id}
@@ -364,8 +304,8 @@ function DialogBody({
                         : "text-muted-foreground hover:bg-card/60 hover:text-foreground"
                     )}
                   >
-                    <Icon
-                      aria-hidden
+                    <IntegrationIcon
+                      id={t.id}
                       className={cn("size-4 shrink-0", selected ? "text-primary" : "opacity-80")}
                     />
                     <span className="min-w-0 flex-1 truncate font-medium">

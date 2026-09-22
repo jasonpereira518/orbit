@@ -4,10 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import type { getSettings } from "@/actions/settings";
-import {
-  getIntegrationStatuses,
-  type IntegrationStatuses,
-} from "@/actions/integrations";
+import { getIntegrationStatuses } from "@/actions/integrations";
+import type { IntegrationStatuses } from "@/lib/integration-status";
 import { Button } from "@/components/ui/button";
 import { SettingsSection } from "@/components/settings/settings-section";
 import {
@@ -19,13 +17,8 @@ import {
   resolveIntegrationParam,
   type IntegrationTabId,
 } from "@/components/settings/sections";
-import {
-  INTEGRATION_ICONS,
-  IntegrationsDialog,
-  StatusDot,
-  statusText,
-  tabForImportJob,
-} from "@/components/settings/integrations-dialog";
+import { IntegrationsDialog, tabForImportJob } from "@/components/settings/integrations-dialog";
+import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import { useImportJob } from "@/lib/import-job-runner";
 import { cn } from "@/lib/utils";
 
@@ -158,7 +151,7 @@ export function IntegrationsSettings({
 
   const connected = statuses
     ? tabs.filter((id) => {
-        const s = statuses[id];
+        const s = statuses.pages[id];
         return s !== undefined && s !== "unknown" && s.state === "on";
       }).length
     : null;
@@ -183,8 +176,7 @@ export function IntegrationsSettings({
           <p className="text-xs font-medium text-muted-foreground">{group.label}</p>
           <ul className="grid gap-2 sm:grid-cols-2">
             {group.tabs.map((t) => {
-              const Icon = INTEGRATION_ICONS[t.id];
-              const status = statuses?.[t.id];
+              const status = statuses?.pages[t.id];
               return (
                 <li key={t.id}>
                   <button
@@ -197,7 +189,7 @@ export function IntegrationsSettings({
                     )}
                   >
                     <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/70 text-muted-foreground transition-colors group-hover/row:text-primary">
-                      <Icon className="size-4" aria-hidden />
+                      <IntegrationIcon id={t.id} className="size-4" />
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-ink">

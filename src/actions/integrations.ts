@@ -1,28 +1,26 @@
 "use server";
 
 import { getSettings } from "@/actions/settings";
-import { connectionSummary } from "@/lib/connection-status";
 import { getCalendarFeedStatus } from "@/actions/calendar-feed";
 import { listApiKeys } from "@/actions/api-keys";
 import { listWebhookEndpoints } from "@/actions/webhook-endpoints";
 import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
-import type { IntegrationTabId } from "@/components/settings/sections";
-
-export type IntegrationStatus = {
-  /** `on` is fully set up, `partial` is some of it, `off` is nothing yet. */
-  state: "on" | "partial" | "off";
-  detail: string;
-};
-
-/** `unknown` stands in for a lookup that failed or timed out — see `settle`. */
-export type IntegrationStatuses = Partial<
-  Record<IntegrationTabId, IntegrationStatus | "unknown">
->;
+import { getLastLinkedInImportAt } from "@/actions/imports";
+import {
+  accountPageStatus,
+  aiPageStatus,
+  attentionItems,
+  googleAccountStatus,
+  linkedinPageStatus,
+  microsoftAccountStatus,
+  remindersPageStatus,
+  type IntegrationStatuses,
+} from "@/lib/integration-status";
 
 /**
  * Per-lookup budget. The calendar feed status has hung in production rather than failed
- * (see `calendar-feed-settings.tsx`), and one hung lookup must not hold up the other eight.
+ * (see `calendar-feed-settings.tsx`), and one hung lookup must not hold up the others.
  */
 const LOOKUP_TIMEOUT_MS = 8_000;
 
@@ -45,34 +43,34 @@ function plural(n: number, word: string) {
 }
 
 /**
- * One line per integration for the Integrations card and the dialog's side nav: whether it
- * is set up, in a few words. Loaded after the page paints rather than with it, so nine
- * lookups — two of them to third-party config — never sit in front of the settings page.
+ * Every Integrations page's one-line status, Google and Microsoft per feature, and what the
+ * Overview should flag. Loaded after the page paints rather than with it, so these lookups —
+ * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook] = await Promise.all([
+  const [settings, feed, keys, webhooks, google, outlook, linkedin] = await Promise.all([
     settle(getSettings()),
     settle(getCalendarFeedStatus()),
     settle(listApiKeys()),
     settle(listWebhookEndpoints()),
     settle(getGmailConnectionStatus()),
     settle(getOutlookConnectionStatus()),
+    settle(getLastLinkedInImportAt()),
   ]);
-
-  const statuses: IntegrationStatuses = {};
+  const now = new Date();
+  const pages: IntegrationStatuses["pages"] = {};
+  const accounts: IntegrationStatuses["accounts"] = {};
 
   if (settings === "unknown") {
-    statuses.ai = "unknown";
-    statuses.outreach = "unknown";
+    pages.ai = "unknown";
+    pages.outreach = "unknown";
   } else {
     const provider = settings.providers.find((p) => p.id === settings.aiProvider);
-    statuses.ai = settings.hasApiKey
-      ? { state: "on", detail: provider ? `${provider.label} key saved` : "Key saved" }
-      : { state: "off", detail: "No key yet" };
+    pages.ai = aiPageStatus({ ready: settings.hasApiKey, providerLabel: provider?.label ?? null });
 
     const outreach = [settings.outreach.apollo, settings.outreach.resend, settings.outreach.twilio];
     const configured = outreach.filter(Boolean).length;
-    statuses.outreach =
+    pages.outreach =
       configured === 0
         ? { state: "off", detail: "Not set up" }
         : {
@@ -81,14 +79,9 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
           };
   }
 
-  statuses.reminders =
-    feed === "unknown"
-      ? "unknown"
-      : feed.enabled
-        ? { state: "on", detail: "Feed on" }
-        : { state: "off", detail: "Off" };
+  pages.reminders = feed === "unknown" ? "unknown" : remindersPageStatus(feed, now);
 
-  statuses.api =
+  pages.api =
     keys === "unknown"
       ? "unknown"
       : keys.length > 0
@@ -96,10 +89,10 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
         : { state: "off", detail: "No keys" };
 
   if (webhooks === "unknown") {
-    statuses.webhooks = "unknown";
+    pages.webhooks = "unknown";
   } else {
     const live = webhooks.filter((w) => w.status === "active").length;
-    statuses.webhooks =
+    pages.webhooks =
       webhooks.length === 0
         ? { state: "off", detail: "None" }
         : {
@@ -108,11 +101,23 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
           };
   }
 
-  statuses.google = google === "unknown" ? "unknown" : connectionSummary(google);
-  statuses.microsoft = outlook === "unknown" ? "unknown" : connectionSummary(outlook);
+  // Without the plan, a locked inbox can't be told from an open one — so the accounts read as
+  // unknown rather than guessing either way.
+  const plan = settings === "unknown" ? null : { canUseRecruiters: settings.plan.canUseRecruiters };
+  accounts.google = google === "unknown" || !plan ? "unknown" : googleAccountStatus(google, plan);
+  accounts.microsoft = outlook === "unknown" || !plan ? "unknown" : microsoftAccountStatus(outlook, plan);
+  pages.google = accounts.google === "unknown" ? "unknown" : accountPageStatus(accounts.google);
+  pages.microsoft = accounts.microsoft === "unknown" ? "unknown" : accountPageStatus(accounts.microsoft);
 
-  // LinkedIn has no connection to report — it is a CSV you upload each time.
-  statuses.linkedin = { state: "off", detail: "Upload a CSV export" };
+  pages.linkedin = linkedin === "unknown" ? "unknown" : linkedinPageStatus(linkedin, now);
 
-  return statuses;
+  // Assistants sign in through Clerk and leave no record in Orbit, so there is nothing to report.
+  pages.assistants = { state: "none", detail: "Works on every plan" };
+
+  const attention = attentionItems({
+    accounts,
+    ai: settings === "unknown" ? "unknown" : { ready: settings.hasApiKey },
+  });
+
+  return { pages, accounts, attention };
 }
