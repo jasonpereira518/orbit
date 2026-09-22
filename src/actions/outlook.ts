@@ -25,7 +25,12 @@ import {
   hasContactsScope,
   hasMailScope,
 } from "@/lib/outlook";
-import { isMicrosoftPurpose, type MicrosoftPurpose } from "@/lib/microsoft-scopes";
+import {
+  isMicrosoftPurpose,
+  parseMicrosoftPurposes,
+  serializeMicrosoftPurposes,
+  type MicrosoftPurpose,
+} from "@/lib/microsoft-scopes";
 
 const OAUTH_STATE_COOKIE = "orbit_outlook_oauth_state";
 
@@ -100,10 +105,16 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
 }
 
 export async function startOutlookOAuth(input: {
-  purpose: MicrosoftPurpose;
+  /** One purpose — the way every feature button asks. */
+  purpose?: MicrosoftPurpose;
+  /** Several at once — what Connect sends (`MICROSOFT_CONNECT_PURPOSES`). */
+  purposes?: readonly MicrosoftPurpose[];
   returnTo?: string;
 }): Promise<{ url: string }> {
-  if (!isMicrosoftPurpose(input.purpose)) throw new Error("Unknown Microsoft connection purpose");
+  const purposes = input.purposes ?? (input.purpose ? [input.purpose] : []);
+  if (purposes.length === 0 || !purposes.every(isMicrosoftPurpose)) {
+    throw new Error("Unknown Microsoft connection purpose");
+  }
   const userId = await requireSyncUser();
   const summary = getOutlookOAuthConfigSummary();
   if (!summary.configured) {
@@ -115,9 +126,9 @@ export async function startOutlookOAuth(input: {
 
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo = input.returnTo && input.returnTo.startsWith("/") ? input.returnTo : "";
-  // The purpose rides in the state so the callback can check that Microsoft granted the one
-  // scope this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
-  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${input.purpose}`;
+  // The purposes ride in the state so the callback can check that Microsoft granted the
+  // scopes this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
+  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${serializeMicrosoftPurposes(purposes)}`;
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
@@ -136,7 +147,7 @@ export async function startOutlookOAuth(input: {
     columns: { scopes: true },
   });
 
-  return { url: buildMicrosoftAuthUrl(state, input.purpose, existing?.scopes) };
+  return { url: buildMicrosoftAuthUrl(state, purposes, existing?.scopes) };
 }
 
 /**
@@ -158,7 +169,7 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
 
 export async function consumeOutlookOAuthState(
   state: string | null
-): Promise<{ userId: string; returnTo: string | null; purpose: MicrosoftPurpose | null }> {
+): Promise<{ userId: string; returnTo: string | null; purposes: MicrosoftPurpose[] }> {
   const jar = await cookies();
   const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
   jar.delete(OAUTH_STATE_COOKIE);
@@ -171,7 +182,7 @@ export async function consumeOutlookOAuthState(
   return {
     userId,
     returnTo: returnTo.startsWith("/") ? returnTo : null,
-    purpose: isMicrosoftPurpose(rawPurpose) ? rawPurpose : null,
+    purposes: parseMicrosoftPurposes(rawPurpose),
   };
 }
 

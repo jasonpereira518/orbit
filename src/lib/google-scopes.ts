@@ -41,8 +41,33 @@ export function requiredScopeFor(purpose: GooglePurpose): GoogleScope {
   return PURPOSE_SCOPE[purpose];
 }
 
-export function googleScopesFor(purpose: GooglePurpose): GoogleScope[] {
-  return [...IDENTITY_SCOPES, PURPOSE_SCOPE[purpose]];
+/** What one Connect asks for: the everyday features, never mail (see the spec's consent decision). */
+export const GOOGLE_CONNECT_PURPOSES: readonly GooglePurpose[] = ["contacts", "calendar"];
+
+/** The scopes one consent screen should ask for, identity included, each listed once. */
+export function googleScopesFor(purposes: readonly GooglePurpose[]): GoogleScope[] {
+  return [...new Set<GoogleScope>([...IDENTITY_SCOPES, ...purposes.map((p) => PURPOSE_SCOPE[p])])];
+}
+
+/**
+ * Which of the requested purposes the grant does not cover. Google's granular consent lets
+ * people untick boxes, so a connect can come back covering some of what it asked for.
+ */
+export function missingGooglePurposes(
+  purposes: readonly GooglePurpose[],
+  scopes: string | null | undefined
+): GooglePurpose[] {
+  return purposes.filter((purpose) => !grantCovers(purpose, scopes));
+}
+
+/** How the purpose list rides in the OAuth state and comes back on the URL. */
+export function serializeGooglePurposes(purposes: readonly GooglePurpose[]): string {
+  return purposes.join("+");
+}
+
+/** Tolerates a single purpose — a consent screen opened before this shipped says just `contacts`. */
+export function parseGooglePurposes(raw: string | null | undefined): GooglePurpose[] {
+  return (raw ?? "").split("+").filter(isGooglePurpose);
 }
 
 /** Google returns granted scopes space-separated; so does `gmail_connections.scopes`. */

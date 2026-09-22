@@ -22,7 +22,12 @@ import {
   hasGmailReadScope,
   hasSendScope,
 } from "@/lib/gmail";
-import { isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
+import {
+  isGooglePurpose,
+  parseGooglePurposes,
+  serializeGooglePurposes,
+  type GooglePurpose,
+} from "@/lib/google-scopes";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { purgeUserData } from "@/lib/user-data";
@@ -106,10 +111,16 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
 }
 
 export async function startGmailOAuth(input: {
-  purpose: GooglePurpose;
+  /** One purpose — the way every feature button asks. */
+  purpose?: GooglePurpose;
+  /** Several at once — what Connect sends (`GOOGLE_CONNECT_PURPOSES`). */
+  purposes?: readonly GooglePurpose[];
   returnTo?: string;
 }): Promise<{ url: string }> {
-  if (!isGooglePurpose(input.purpose)) throw new Error("Unknown Google connection purpose");
+  const purposes = input.purposes ?? (input.purpose ? [input.purpose] : []);
+  if (purposes.length === 0 || !purposes.every(isGooglePurpose)) {
+    throw new Error("Unknown Google connection purpose");
+  }
   const userId = await requireSyncUser();
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
@@ -130,9 +141,9 @@ export async function startGmailOAuth(input: {
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo =
     input.returnTo && input.returnTo.startsWith("/") ? input.returnTo : "";
-  // The purpose rides in the state so the callback can check that Google granted the one
-  // scope this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
-  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${input.purpose}`;
+  // The purposes ride in the state so the callback can check that Google granted the scopes
+  // this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
+  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${serializeGooglePurposes(purposes)}`;
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
@@ -142,7 +153,7 @@ export async function startGmailOAuth(input: {
     maxAge: 600,
   });
 
-  return { url: buildGmailAuthUrl(state, input.purpose) };
+  return { url: buildGmailAuthUrl(state, purposes) };
 }
 
 export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
@@ -163,7 +174,7 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
 
 export async function consumeGmailOAuthState(
   state: string | null
-): Promise<{ userId: string; returnTo: string | null; purpose: GooglePurpose | null }> {
+): Promise<{ userId: string; returnTo: string | null; purposes: GooglePurpose[] }> {
   const jar = await cookies();
   const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
   jar.delete(OAUTH_STATE_COOKIE);
@@ -176,7 +187,7 @@ export async function consumeGmailOAuthState(
   return {
     userId,
     returnTo: returnTo.startsWith("/") ? returnTo : null,
-    purpose: isGooglePurpose(rawPurpose) ? rawPurpose : null,
+    purposes: parseGooglePurposes(rawPurpose),
   };
 }
 

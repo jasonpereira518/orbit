@@ -43,7 +43,8 @@ export async function GET(request: Request) {
     // "Cancel" on Google's screen dumped the user on /recruiters whichever page they
     // started from. Best-effort: a bad or missing state just keeps the default.
     try {
-      const { returnTo, purpose } = await consumeGmailOAuthState(state);
+      const { returnTo, purposes } = await consumeGmailOAuthState(state);
+      const [purpose] = purposes;
       if (returnTo) redirectBase = new URL(returnTo, url.origin);
       if (purpose) redirectBase.searchParams.set("purpose", purpose);
     } catch {
@@ -58,7 +59,8 @@ export async function GET(request: Request) {
   try {
     if (!code) throw new Error("Missing authorization code");
 
-    const { userId: stateUserId, returnTo, purpose } = await consumeGmailOAuthState(state);
+    const { userId: stateUserId, returnTo, purposes } = await consumeGmailOAuthState(state);
+    const [purpose] = purposes;
     if (returnTo) redirectBase = new URL(returnTo, url.origin);
     if (purpose) redirectBase.searchParams.set("purpose", purpose);
 

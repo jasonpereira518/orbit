@@ -95,27 +95,38 @@ export function grantCovers(purpose: MicrosoftPurpose, scopes: string | null | u
   return hasScope(scopes, PURPOSE_SCOPE[purpose]);
 }
 
+/** What one Connect asks for. Microsoft has no mail-free equivalent of `event_mail`. */
+export const MICROSOFT_CONNECT_PURPOSES: readonly MicrosoftPurpose[] = ["contacts", "calendar"];
+
 /**
- * The scopes to put on an authorization request: identity plus this purpose's one scope.
- *
- * `alreadyGranted` is the scopes stored on the person's connection. Microsoft has no
- * `include_granted_scopes`, and a refresh token redeemed without a `scope` can be limited to
- * the most recent request, so each request also names the Orbit scopes the person already
- * enabled — the newest grant then covers everything ever consented to, and the consent screen
- * still lists nothing they did not turn on. Only scopes that are a feature's own are carried
- * over: a stored grant also holds whatever Microsoft added on its own (personal accounts often
- * return extras such as `AuditLog.Create`), and asking for a scope the app registration does
- * not have fails the whole request.
+ * The scopes one consent screen should ask for. Microsoft has no `include_granted_scopes`, so
+ * every Orbit scope the account already granted is re-requested alongside the new ones —
+ * otherwise consenting to one feature drops the others.
  */
 export function microsoftScopesFor(
-  purpose: MicrosoftPurpose,
+  purposes: readonly MicrosoftPurpose[],
   alreadyGranted?: string | null
 ): MicrosoftScope[] {
-  const out: MicrosoftScope[] = [...IDENTITY_SCOPES, PURPOSE_SCOPE[purpose]];
-  for (const other of MICROSOFT_PURPOSES) {
-    if (other !== purpose && grantCovers(other, alreadyGranted)) out.push(PURPOSE_SCOPE[other]);
+  const wanted = new Set<MicrosoftScope>([...IDENTITY_SCOPES, ...purposes.map((p) => PURPOSE_SCOPE[p])]);
+  for (const purpose of MICROSOFT_PURPOSES) {
+    if (hasScope(alreadyGranted, PURPOSE_SCOPE[purpose])) wanted.add(PURPOSE_SCOPE[purpose]);
   }
-  return out;
+  return [...wanted];
+}
+
+export function missingMicrosoftPurposes(
+  purposes: readonly MicrosoftPurpose[],
+  scopes: string | null | undefined
+): MicrosoftPurpose[] {
+  return purposes.filter((purpose) => !grantCovers(purpose, scopes));
+}
+
+export function serializeMicrosoftPurposes(purposes: readonly MicrosoftPurpose[]): string {
+  return purposes.join("+");
+}
+
+export function parseMicrosoftPurposes(raw: string | null | undefined): MicrosoftPurpose[] {
+  return (raw ?? "").split("+").filter(isMicrosoftPurpose);
 }
 
 /**

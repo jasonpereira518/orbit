@@ -54,18 +54,18 @@ const scopesOf = (url: string) => new URL(url).searchParams.get("scope")?.split(
 
 run(async () => {
   console.log("Authorization URLs");
-  const contactsUrl = buildMicrosoftAuthUrl("state-contacts", "contacts");
+  const contactsUrl = buildMicrosoftAuthUrl("state-contacts", ["contacts"]);
   const contacts = scopesOf(contactsUrl);
   check("contacts asks for Contacts.Read", contacts.includes(MICROSOFT_SCOPES.contacts));
   check("contacts never asks to read mail or calendar", !contacts.includes(MICROSOFT_SCOPES.mail) && !contacts.includes(MICROSOFT_SCOPES.calendar), contacts.join(" "));
   check("identity scopes ride along", ["openid", "profile", "email", "offline_access", MICROSOFT_SCOPES.userRead].every((s) => contacts.includes(s)));
   check("consent is prompted for", new URL(contactsUrl).searchParams.get("prompt") === "consent");
   check("the state is passed through", new URL(contactsUrl).searchParams.get("state") === "state-contacts");
-  const calendar = scopesOf(buildMicrosoftAuthUrl("s", "calendar"));
+  const calendar = scopesOf(buildMicrosoftAuthUrl("s", ["calendar"]));
   check("calendar asks for Calendars.Read without mail or contacts", calendar.includes(MICROSOFT_SCOPES.calendar) && !calendar.includes(MICROSOFT_SCOPES.mail) && !calendar.includes(MICROSOFT_SCOPES.contacts));
-  const mail = scopesOf(buildMicrosoftAuthUrl("s", "recruiter_scan"));
+  const mail = scopesOf(buildMicrosoftAuthUrl("s", ["recruiter_scan"]));
   check("the recruiter scan asks for Mail.Read without calendar", mail.includes(MICROSOFT_SCOPES.mail) && !mail.includes(MICROSOFT_SCOPES.calendar));
-  const later = scopesOf(buildMicrosoftAuthUrl("s", "calendar", "openid Contacts.Read"));
+  const later = scopesOf(buildMicrosoftAuthUrl("s", ["calendar"], "openid Contacts.Read"));
   check("a later request names the earlier grant too, so the newest token covers both", later.includes(MICROSOFT_SCOPES.calendar) && later.includes(MICROSOFT_SCOPES.contacts) && !later.includes(MICROSOFT_SCOPES.mail));
 
   console.log("Stored grants");

@@ -128,7 +128,7 @@ export function getGmailOAuthConfigSummary(): {
   };
 }
 
-export function buildGmailAuthUrl(state: string, purpose: GooglePurpose) {
+export function buildGmailAuthUrl(state: string, purposes: readonly GooglePurpose[]) {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   if (!clientId) throw new Error("GOOGLE_CLIENT_ID is not configured");
   const redirectUri = getGoogleRedirectUri();
@@ -137,7 +137,7 @@ export function buildGmailAuthUrl(state: string, purpose: GooglePurpose) {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: googleScopesFor(purpose).join(" "),
+    scope: googleScopesFor(purposes).join(" "),
     access_type: "offline",
     prompt: "consent",
     // Incremental authorization: the new token also covers what this person granted

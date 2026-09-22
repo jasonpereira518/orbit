@@ -126,7 +126,7 @@ export function getOutlookOAuthConfigSummary(): {
  */
 export function buildMicrosoftAuthUrl(
   state: string,
-  purpose: MicrosoftPurpose,
+  purposes: readonly MicrosoftPurpose[],
   alreadyGranted?: string | null
 ) {
   const clientId = process.env.MICROSOFT_CLIENT_ID?.trim();
@@ -138,7 +138,7 @@ export function buildMicrosoftAuthUrl(
     redirect_uri: redirectUri,
     response_type: "code",
     response_mode: "query",
-    scope: microsoftScopesFor(purpose, alreadyGranted).join(" "),
+    scope: microsoftScopesFor(purposes, alreadyGranted).join(" "),
     prompt: "consent",
     state,
   });

@@ -7,14 +7,18 @@
  * Run: npx tsx scripts/smoke-google-scopes.ts
  */
 import {
+  GOOGLE_CONNECT_PURPOSES,
   GOOGLE_PURPOSES,
   GOOGLE_SCOPES,
   googleScopesFor,
   grantCovers,
   hasGmailReadScope,
   isGooglePurpose,
+  missingGooglePurposes,
   missingScopeMessage,
+  parseGooglePurposes,
   requiredScopeFor,
+  serializeGooglePurposes,
   unionScopes,
 } from "../src/lib/google-scopes";
 
@@ -32,12 +36,12 @@ const legacyAllSix = Object.values(GOOGLE_SCOPES).join(" ");
 
 console.log("Scopes per purpose");
 for (const purpose of GOOGLE_PURPOSES) {
-  const scopes = googleScopesFor(purpose);
+  const scopes = googleScopesFor([purpose]);
   check(`${purpose} asks for exactly identity + one scope`, scopes.length === 3 && identity.every((s) => scopes.includes(s)), scopes.join(" "));
   check(`${purpose}'s one scope is its required scope`, scopes[2] === requiredScopeFor(purpose));
 }
-check("contacts never asks to send or read mail", !googleScopesFor("contacts").some((s) => s === GOOGLE_SCOPES.gmailSend || s === GOOGLE_SCOPES.gmailRead));
-check("send asks for gmail.send, not gmail.readonly", requiredScopeFor("send") === GOOGLE_SCOPES.gmailSend && !googleScopesFor("send").includes(GOOGLE_SCOPES.gmailRead));
+check("contacts never asks to send or read mail", !googleScopesFor(["contacts"]).some((s) => s === GOOGLE_SCOPES.gmailSend || s === GOOGLE_SCOPES.gmailRead));
+check("send asks for gmail.send, not gmail.readonly", requiredScopeFor("send") === GOOGLE_SCOPES.gmailSend && !googleScopesFor(["send"]).includes(GOOGLE_SCOPES.gmailRead));
 check("the recruiter scan and confirmation emails both need gmail.readonly", requiredScopeFor("recruiter_scan") === GOOGLE_SCOPES.gmailRead && requiredScopeFor("event_mail") === GOOGLE_SCOPES.gmailRead);
 check("calendar asks for calendar.readonly", requiredScopeFor("calendar") === GOOGLE_SCOPES.calendar);
 
@@ -63,6 +67,29 @@ check("an unknown purpose falls back to the mail copy", missingScopeMessage(null
 check("contacts says contacts", missingScopeMessage("contacts") === "Google didn’t grant contacts access — reconnect and allow it");
 check("calendar says calendar", missingScopeMessage("calendar") === "Google didn’t grant calendar access — reconnect and allow it");
 check("send says send", missingScopeMessage("send") === "Google didn’t grant permission to send — reconnect and allow it");
+
+console.log("\nconnecting to several features at once");
+const connect = googleScopesFor(GOOGLE_CONNECT_PURPOSES);
+check("one connect asks for contacts and calendar", connect.includes(GOOGLE_SCOPES.contacts) && connect.includes(GOOGLE_SCOPES.calendar));
+check("and never for mail", !connect.includes(GOOGLE_SCOPES.gmailRead) && !connect.includes(GOOGLE_SCOPES.gmailSend));
+check("identity scopes ride along once", connect.filter((s) => s === GOOGLE_SCOPES.openid).length === 1);
+check("a repeated purpose asks once", googleScopesFor(["contacts", "contacts"]).filter((s) => s === GOOGLE_SCOPES.contacts).length === 1);
+check("one purpose still works", googleScopesFor(["recruiter_scan"]).includes(GOOGLE_SCOPES.gmailRead));
+
+console.log("\nwhat the consent screen came back with");
+const both = `${GOOGLE_SCOPES.contacts} ${GOOGLE_SCOPES.calendar}`;
+check("nothing missing when both were granted", missingGooglePurposes(GOOGLE_CONNECT_PURPOSES, both).length === 0);
+check(
+  "calendar unticked is reported, contacts is not",
+  missingGooglePurposes(GOOGLE_CONNECT_PURPOSES, GOOGLE_SCOPES.contacts).join(",") === "calendar"
+);
+check("nothing granted reports both", missingGooglePurposes(GOOGLE_CONNECT_PURPOSES, "").length === 2);
+
+console.log("\ncarrying the purposes through the consent round trip");
+check("a list round-trips", parseGooglePurposes(serializeGooglePurposes(GOOGLE_CONNECT_PURPOSES)).join(",") === "contacts,calendar");
+check("a consent screen already in flight still parses", parseGooglePurposes("recruiter_scan").join(",") === "recruiter_scan");
+check("junk is dropped, not trusted", parseGooglePurposes("contacts+nonsense").join(",") === "contacts");
+check("empty is empty", parseGooglePurposes("").length === 0 && parseGooglePurposes(null).length === 0);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

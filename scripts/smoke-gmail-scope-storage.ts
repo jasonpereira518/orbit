@@ -39,13 +39,13 @@ const scopesOf = (url: string) => new URL(url).searchParams.get("scope")?.split(
 
 run(async () => {
   console.log("Authorization URLs");
-  const contactsUrl = buildGmailAuthUrl("state-contacts", "contacts");
+  const contactsUrl = buildGmailAuthUrl("state-contacts", ["contacts"]);
   const contacts = scopesOf(contactsUrl);
   check("contacts asks for contacts.readonly", contacts.includes(GOOGLE_SCOPES.contacts));
   check("contacts never asks to read or send mail", !contacts.includes(GOOGLE_SCOPES.gmailRead) && !contacts.includes(GOOGLE_SCOPES.gmailSend), contacts.join(" "));
   check("incremental consent is on", new URL(contactsUrl).searchParams.get("include_granted_scopes") === "true");
   check("a refresh token is still requested", new URL(contactsUrl).searchParams.get("access_type") === "offline");
-  const send = scopesOf(buildGmailAuthUrl("state-send", "send"));
+  const send = scopesOf(buildGmailAuthUrl("state-send", ["send"]));
   check("send asks for gmail.send without gmail.readonly", send.includes(GOOGLE_SCOPES.gmailSend) && !send.includes(GOOGLE_SCOPES.gmailRead));
 
   console.log("Stored grants");

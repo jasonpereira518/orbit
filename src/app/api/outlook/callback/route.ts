@@ -41,7 +41,8 @@ export async function GET(request: Request) {
     // "Cancel" on Microsoft's screen ignored where the user started from. Best-effort: a
     // bad or missing state just keeps the default.
     try {
-      const { returnTo, purpose } = await consumeOutlookOAuthState(state);
+      const { returnTo, purposes } = await consumeOutlookOAuthState(state);
+      const [purpose] = purposes;
       if (returnTo) redirectBase = new URL(returnTo, url.origin);
       if (purpose) redirectBase.searchParams.set("purpose", purpose);
     } catch {
@@ -55,7 +56,8 @@ export async function GET(request: Request) {
   try {
     if (!code) throw new Error("Missing authorization code");
 
-    const { userId: stateUserId, returnTo, purpose } = await consumeOutlookOAuthState(state);
+    const { userId: stateUserId, returnTo, purposes } = await consumeOutlookOAuthState(state);
+    const [purpose] = purposes;
     if (returnTo) redirectBase = new URL(returnTo, url.origin);
     if (purpose) redirectBase.searchParams.set("purpose", purpose);
 
