@@ -153,3 +153,20 @@ export type ResearchEvalFixture = {
     forbidden?: string[];
   }>;
 };
+
+export type ChatRoutingEvalFixture = {
+  cases: Array<{
+    id: string;
+    question: string;
+    priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
+    expect: {
+      depth: "single" | "research";
+      attention: boolean;
+      recruiters: boolean;
+      /** Seeded company names whose rosters should attach. */
+      roster: string[];
+    };
+    why?: string;
+  }>;
+};
+

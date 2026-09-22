@@ -64,7 +64,7 @@ import { formatMetric, gate, median, type GateRules, type TaskMetrics } from "./
 
 const USER = "eval-ai-user";
 /** Tasks that never call a chat model. */
-const LLM_FREE_TASKS: ReadonlySet<TaskName> = new Set(["recruiter-prefilter", "recruiter-gate"]);
+const LLM_FREE_TASKS: ReadonlySet<TaskName> = new Set(["recruiter-prefilter", "recruiter-gate", "chat-routing"]);
 
 if (process.env.DATABASE_URL) {
   throw new Error("eval-ai runs on a throwaway local PGlite only — unset DATABASE_URL (and SMOKE_ALLOW_REMOTE).");
@@ -256,6 +256,8 @@ function fixtureDigest(): string {
     "ai-transcribe-eval.json", "ai-chat-eval.json", "ai-digest-eval.json", "contact-search-eval.json",
     // The research task's cases, and the notes both it and eval-retrieval seed.
     "ai-research-eval.json", "passage-search-eval.json",
+    // The decision-model tasks' own fixtures.
+    "ai-chat-routing-eval.json",
   ]) {
     try {
       hash.update(readFileSync(join(FIXTURE_DIR, file)));

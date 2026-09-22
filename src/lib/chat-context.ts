@@ -14,7 +14,6 @@ import {
 } from "@/lib/chat-attached";
 import {
   getAttentionBrief,
-  isAttentionQuestion,
   renderAttentionLite,
   type AttentionBrief,
 } from "@/lib/chat-attention";
@@ -25,7 +24,14 @@ import {
   type RankEngine,
   understandQuery,
 } from "@/lib/chat-retrieval";
-import { openDecider } from "@/lib/decisions/jev";
+import { openDecider, type Decider } from "@/lib/decisions/jev";
+import {
+  gateRosters,
+  routeChatQuestion,
+  rulesRoute,
+  type ChatRoute,
+  type ParsedIntent,
+} from "@/lib/decisions/chat-route";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
@@ -41,7 +47,6 @@ import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
-import { isRecruiterIntent } from "@/lib/recruiters";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadRecruitersForChat } from "@/actions/recruiters";
 
@@ -109,6 +114,12 @@ export type ChatContext = {
   attachedPeople: AttachedPerson[];
   /** The `attachedContext` argument of `chatWithNetwork` — the block above, as text. */
   attachedContext: string | null;
+  /**
+   * How this question was routed — depth (one lookup or research), whether the attention
+   * brief and the recruiter list loaded — and which engine decided. `maybeGather` reads the
+   * depth from here instead of re-deciding it. Optional so hand-built contexts in tests work.
+   */
+  route?: ChatRoute;
   /** Contacts the model may recommend: budgeted-in, on a roster, or in the attention brief. */
   allowedContacts: Set<string>;
   allowedRecruiters: Set<string>;
@@ -235,7 +246,12 @@ async function retrieveRankedContacts(
   userId: string,
   q: string,
   steps: StepEmitter = NULL_STEPS,
-  photos: PhotoCache = createPhotoCache()
+  photos: PhotoCache = createPhotoCache(),
+  /**
+   * Shared with the router (`prepareChatContext`): the decider it already opened, and a hook
+   * that hands it the parser's intent flags the moment they exist.
+   */
+  routing?: { decider: Promise<Decider | null>; onIntent: (intent: ParsedIntent | null) => void }
 ): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[] }> {
   const activeGoals = await loadActiveGoalTexts(userId);
   let searchNotice: string | null = null;
@@ -248,10 +264,13 @@ async function retrieveRankedContacts(
       searchNotice = embeddingFailureNotice(err);
       return null;
     }),
-    understandQuery(userId, q, activeGoals),
+    understandQuery(userId, q, activeGoals).then((parsed) => {
+      routing?.onIntent(parsed.intent ?? null);
+      return parsed;
+    }),
     // Beside the two above, so an account read costs the question no time. Null (no
     // TypeSafe key) for most accounts, and the rank step then runs the LLM rerank.
-    openDecider(userId),
+    routing?.decider ?? openDecider(userId),
   ]);
   steps.done("understand", {
     label: "Worked out what you're asking for",
@@ -463,6 +482,35 @@ export async function prepareChatContext(
   const steps = options.steps ?? NULL_STEPS;
   const photos = createPhotoCache();
 
+  // ROUTING (decisions/chat-route.ts). Decided beside retrieval, never in front of it: the
+  // decision model answers in ~200ms and retrieval takes 1–5s, so the branches it gates
+  // (attention brief, recruiter list) chain off it without adding to the question's time.
+  // Without a decision model it waits for the parser's intent flags (the call retrieval
+  // already makes), and without those, the keyword rules route as they always did.
+  const priorRowsP = threadId
+    ? db.query.chatMessages.findMany({
+        where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
+        orderBy: [desc(chatMessages.createdAt)],
+        limit: PRIOR_TURN_LIMIT,
+        columns: { role: true, content: true },
+      })
+    : Promise.resolve([] as Array<{ role: string; content: string }>);
+  const deciderP = openDecider(userId);
+  let settleIntent: (intent: ParsedIntent | null) => void = () => {};
+  const intentP = new Promise<ParsedIntent | null>((resolve) => {
+    settleIntent = resolve;
+  });
+  const routeP: Promise<ChatRoute> = Promise.all([deciderP, priorRowsP])
+    .then(([decider, rows]) =>
+      routeChatQuestion({
+        decider,
+        question: q,
+        priorTurns: rows.slice().reverse(),
+        intent: () => intentP,
+      })
+    )
+    .catch(() => rulesRoute(q, false));
+
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
   const [
@@ -481,21 +529,20 @@ export async function prepareChatContext(
             columns: { id: true, title: true, contextNote: true },
           })
         : Promise.resolve(null),
-      threadId
-        ? db.query.chatMessages.findMany({
-            where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
-            orderBy: [desc(chatMessages.createdAt)],
-            limit: PRIOR_TURN_LIMIT,
-            columns: { role: true, content: true },
-          })
-        : Promise.resolve([]),
-      retrieveRankedContacts(userId, q, steps, photos),
+      priorRowsP,
+      // Whatever happens to retrieval, the router is never left waiting on the parser.
+      retrieveRankedContacts(userId, q, steps, photos, { decider: deciderP, onIntent: settleIntent }).finally(
+        () => settleIntent(null)
+      ),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.
       // Runs for every question, but only worth reporting when it actually names an org.
       findOrgRosters(userId, q)
         .catch(() => [] as OrgRoster[])
-        .then((rosters) => {
+        // Only rosters the question is ABOUT — an org name used as an ordinary word, or
+        // named in passing, no longer attaches an "authoritative" roster (decision model).
+        .then((matched) => deciderP.then((decider) => gateRosters(decider, q, matched)))
+        .then(({ rosters }) => {
           const named = rosters[0];
           if (named) {
             steps.done("roster", {
@@ -506,7 +553,8 @@ export async function prepareChatContext(
           return rosters;
         }),
       // Who the dashboard would say needs attention, only for questions that ask.
-      isAttentionQuestion(q)
+      routeP.then((route) =>
+      route.attention
         ? (() => {
             steps.start("attention", "Checking who is overdue");
             return getClosenessCohort(userId)
@@ -530,11 +578,12 @@ export async function prepareChatContext(
                 return brief;
               });
           })()
-        : Promise.resolve(null),
+        : Promise.resolve(null)),
       // The same queue as one line, for every other question — see `renderAttentionLite`.
       // Never fatal, and never carries an instruction to act on it.
       renderAttentionLite(userId).catch(() => null),
-      isRecruiterIntent(q)
+      routeP.then((route) =>
+      route.recruiters
         ? (() => {
             steps.start("recruiters", "Checking your recruiter list");
             return loadRecruitersForChat(q, 8).then((list) => {
@@ -548,7 +597,7 @@ export async function prepareChatContext(
               return list;
             });
           })()
-        : Promise.resolve([] as Recruiters),
+        : Promise.resolve([] as Recruiters)),
       // Depends on ids the client already resolved, so it needs neither the question nor
       // the search. Never fatal: a question with a dead attachment is still a question.
       attachedIds.length
@@ -708,6 +757,7 @@ export async function prepareChatContext(
     q,
     thread: thread ?? null,
     priorTurns,
+    route: await routeP,
     retrieved,
     snippets,
     scopedQuestion,

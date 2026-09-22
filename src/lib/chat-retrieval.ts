@@ -8,6 +8,12 @@ export type ParsedQuery = {
   semanticQuery: string;
   filters: SearchFilters;
   expansionTerms: string[];
+  /**
+   * How the question should be routed, from the same call — the fallback router when the
+   * account has no decision model (decisions/chat-route.ts). Absent when the parser did not
+   * answer, or answered without it; the keyword rules route then.
+   */
+  intent?: { needsResearch: boolean; attention: boolean; recruiters: boolean };
 };
 
 const UNDERSTAND_TIMEOUT_MS = 2500;
@@ -67,10 +73,20 @@ export function sanitizeParsedQuery(raw: unknown, question: string): ParsedQuery
   ) as Array<"inner" | "mid" | "outer">;
   if (tiers.length) filters.closenessTiers = tiers;
 
+  const rawIntent = (obj.intent ?? null) as Record<string, unknown> | null;
+  const intent =
+    rawIntent &&
+    typeof rawIntent.needs_research === "boolean" &&
+    typeof rawIntent.attention === "boolean" &&
+    typeof rawIntent.recruiters === "boolean"
+      ? { needsResearch: rawIntent.needs_research, attention: rawIntent.attention, recruiters: rawIntent.recruiters }
+      : undefined;
+
   return {
     semanticQuery,
     filters,
     expansionTerms: cleanStringArray(obj.expansionTerms),
+    ...(intent ? { intent } : {}),
   };
 }
 
@@ -83,7 +99,11 @@ Filters narrow a database query over the user's contacts:
 Self-references ("my school", "my company") can only be resolved from the user context provided; if it does not name one, OMIT that filter — never invent a value.
 expansionTerms: up to 4 synonyms/adjacent terms that widen a keyword search (e.g. question about "AI" -> ["machine learning", "ML"]).
 semanticQuery: the question rewritten as a dense retrieval query describing the ideal matching contact.
-Return JSON: {"semanticQuery": string, "filters": {"companies"?: string[], "industries"?: string[], "schools"?: string[], "locations"?: string[], "tags"?: string[], "closenessTiers"?: string[]}, "expansionTerms": string[]}`;
+intent — how to answer it:
+- needs_research: true ONLY when answering needs what was said or written in notes or conversations, an introduction or path to someone, events in a specific past period, or refers back to people from earlier turns. False for "who do I know at/in/with X", "who fits this description", and profile questions.
+- attention: true ONLY when asking which people across the network to reconnect or follow up with, or who has gone quiet or is overdue. False for one named person, drafting a message, or "who should I ask about X".
+- recruiters: true ONLY when asking for recruiters, headhunters or talent-acquisition people themselves.
+Return JSON: {"semanticQuery": string, "filters": {"companies"?: string[], "industries"?: string[], "schools"?: string[], "locations"?: string[], "tags"?: string[], "closenessTiers"?: string[]}, "expansionTerms": string[], "intent": {"needs_research": boolean, "attention": boolean, "recruiters": boolean}}`;
 
 /**
  * Accuracy-only stage: on any failure or timeout it returns the pass-through

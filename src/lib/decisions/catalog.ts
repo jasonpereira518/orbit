@@ -120,3 +120,102 @@ export const RERANK_TUNING = {
   /** Jev answers in ~100–500ms; past this the LLM rerank runs instead. */
   timeoutMs: 1500,
 } as const;
+
+/* ------------------------------------------------------------------ chat routing ----- */
+
+/**
+ * The routing questions every chat question is asked, in ONE call over `{question,
+ * prior_turns}` (state billed once). They replace keyword rules that each had documented
+ * misses: `chooseDepth` (chat-depth.ts) sent "who should I talk to about X" to a research
+ * round, `isAttentionQuestion` fired on "Who should I ask?" and "cold email", and
+ * `isRecruiterIntent` missed "recruitment" and "head hunter".
+ *
+ * Depth is four yes/no questions, not one five-way pick: the first eval run asked a single
+ * `choice` and it blurred them — attention-style questions ("which relationships are going
+ * cold?") landed on "what was said". One judgment per question, as TypeSafe advises.
+ */
+export const DEPTH_REASONS = {
+  said: "asks what was said",
+  path: "asks for a path to someone",
+  period: "asks about a time",
+  followUp: "follows up on the last answer",
+} as const;
+
+export type DepthReason = keyof typeof DEPTH_REASONS;
+
+export const chatRouteQuestions = {
+  // Each asks about the QUESTION's own words, never about data Jev cannot see: the first
+  // wording ("is the answer in the user's notes?") was indirect, and Jev read it literally.
+  said: noul(
+    "Does `question` ask what someone said, discussed, promised, asked for, advised, thought or wrote — or what the user's notes say?",
+    {
+      true: "\"What did Priya say about…\", \"what did I promise…\", \"what feedback did…\", \"summarize my notes on…\", \"did anyone recommend…\".",
+      false: "Asks who someone is, where they work, who fits a description or has some expertise, who needs a follow-up, or asks to write a new message.",
+    },
+  ),
+  path: noul(
+    "Does `question` ask for an introduction to, or a way in to, a specific person or organisation the user does not already know?",
+    {
+      true: "\"Who can introduce me to…\", \"a warm path to…\", \"who could connect me with…\", \"who knows someone at…\", \"who could vouch for me at…\".",
+      false: "Finding people the user already knows who fit a description, work somewhere, or have some expertise — even if the user then plans to contact them.",
+    },
+  ),
+  period: noul(
+    "Does `question` ask about a specific past date or time period?",
+    {
+      true: "A named month or season, last week, last month, last year, \"when did…\", \"how long ago…\".",
+      false: "No time at all, \"this week\", \"lately\", \"in a while\", \"recently\", or a cohort or batch name.",
+    },
+  ),
+  followUp: noul(
+    "Does `question` refer back to people or answers in `prior_turns` (a pronoun, \"the second one\", \"them\")?",
+    {
+      true: "It cannot be understood without the earlier turns.",
+      false: "It stands on its own, even if it continues the same topic.",
+    },
+  ),
+  attention: noul(
+    "Is `question` asking which people across the user's network to reconnect or follow up with, or who has gone quiet or is overdue for contact?",
+    {
+      true: "Asks for people to reach out to, reconnect with, follow up with, or who the user has lost touch with or is neglecting, across the network.",
+      false: "Asks about one named person or one organisation, asks to draft a message, asks who knows about a topic, or asks who the user met or caught up with in the past.",
+    },
+  ),
+  recruiters: noul(
+    "Is `question` asking for recruiters, headhunters or talent-acquisition people themselves?",
+    {
+      true: "Wants recruiters, headhunters, sourcers, recruiting agencies or talent-acquisition partners the user knows.",
+      false: "Asks about people at a company who are hiring, a company's own hiring, hiring managers, or general hiring advice.",
+    },
+  ),
+};
+
+/** One per organisation `findOrgRosters` matched, over `{question, orgs}`. */
+export function rosterQuestion(key: string) {
+  return noul(
+    `Would the list of everyone the user knows at the organisation in \`orgs.${key}\` help answer \`question\`?`,
+    {
+      true: "The question is about that organisation: its people, its teams, its hiring, or reaching someone there.",
+      false: "The name only appears as an ordinary word (\"ramp up\", \"a notion of\", \"square this\", \"the block editor\"), or as someone's past employer mentioned in passing.",
+    },
+  );
+}
+
+export const CHAT_ROUTE_TUNING = {
+  /** START. Research runs when any depth question's probability reaches this. */
+  researchAbove: 0.5,
+  /**
+   * START. The attention brief carries an imperative prompt rule ("answer from it"), so it is
+   * precision-biased; the always-on attention line still covers a missed one.
+   */
+  attentionAbove: 0.6,
+  /** START. */
+  recruitersAbove: 0.5,
+  /** START. A roster is attached (with its "authoritative" rule) only above this. */
+  rosterAbove: 0.5,
+  /** Runs beside retrieval, which takes 1–5s; this is a ceiling, not a cost. */
+  timeoutMs: 1_200,
+  /** Prior turns in the state: the last two, trimmed. */
+  priorTurns: 2,
+  priorTurnChars: 400,
+} as const;

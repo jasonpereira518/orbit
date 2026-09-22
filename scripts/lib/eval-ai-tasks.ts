@@ -20,6 +20,9 @@ import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT 
 import { looksLikeRecruiter } from "../../src/lib/recruiter-detect";
 import { openDecider, type AnswerFor, type Decider, type Question } from "../../src/lib/decisions/jev";
 import { admitRecruiterCandidates, rulesOutRecruiter } from "../../src/lib/decisions/recruiter";
+import { gateRosters, routeChatQuestion } from "../../src/lib/decisions/chat-route";
+import { understandQuery } from "../../src/lib/chat-retrieval";
+import { findOrgRosters } from "../../src/lib/chat-roster";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
 import {
@@ -36,6 +39,7 @@ import { loadPassageFixture, seedPassageNotes } from "./eval-passage-notes";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
 import { analyzeMeetingTranscript } from "../../src/lib/meeting-digest";
 import type {
+  ChatRoutingEvalFixture,
   CaptureEvalFixture,
   ChatEvalFixture,
   DigestEvalFixture,
@@ -80,6 +84,7 @@ export type TaskName =
   | "recruiter"
   | "recruiter-prefilter"
   | "recruiter-gate"
+  | "chat-routing"
   | "extension"
   | "ocr"
   | "transcribe"
@@ -92,6 +97,7 @@ export const TASK_NAMES: TaskName[] = [
   "recruiter",
   "recruiter-prefilter",
   "recruiter-gate",
+  "chat-routing",
   "extension",
   "ocr",
   "transcribe",
@@ -336,6 +342,107 @@ export async function runRecruiterTask({ userId, limit, log }: RunOpts): Promise
       gateWrongSkips: jev ? wrongRuleOuts : null,
     },
     ...(jev ? { calibration: { "recruiter.gate": calibrationBins(gatePairs) } } : {}),
+  };
+}
+
+/* -------------------------------------------------------------------- chat routing --- */
+
+/** Companies whose names are also ordinary words — the roster traps — plus two plain ones. */
+const ROUTING_COMPANIES = ["Stripe", "Ramp", "Notion", "Square", "Block", "Figma"];
+
+/**
+ * How chat questions are routed (decisions/chat-route.ts), end to end through the same
+ * function the chat path calls. What answers depends on the run:
+ *  - `--decisions jev` → Jev;
+ *  - an LLM key and no `--decisions` → the question parser's intent flags;
+ *  - neither → the keyword rules (the baseline).
+ * Rosters go through `findOrgRosters` over a few seeded contacts, then the roster gate.
+ * No chat answer is generated, so a Jev or rules run needs no LLM key.
+ */
+export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<ChatRoutingEvalFixture>("ai-chat-routing-eval.json").cases.slice(0, limit);
+  const db = await getDb();
+  await db.delete(contacts).where(eq(contacts.userId, userId));
+  for (const [i, company] of ROUTING_COMPANIES.entries()) {
+    await db.insert(contacts).values([
+      { userId, fullName: `Routing Person ${i}a`, company, title: "Engineer" },
+      { userId, fullName: `Routing Person ${i}b`, company, title: "Product Manager" },
+    ]);
+  }
+  const decider = await openDecider(userId);
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  let depthOk = 0;
+  let tpR = 0;
+  let fpR = 0;
+  let fnR = 0;
+  let attOk = 0;
+  let tpA = 0;
+  let fpA = 0;
+  let recOk = 0;
+  let rosterCases = 0;
+  let rosterOk = 0;
+  const engines = new Map<string, number>();
+
+  for (const c of cases) {
+    const priorTurns = c.priorTurns ?? [];
+    const route = await timed(latenciesMs, () =>
+      routeChatQuestion({
+        decider,
+        question: c.question,
+        priorTurns,
+        intent: async () => (await understandQuery(userId, c.question, [])).intent ?? null,
+      })
+    );
+    engines.set(route.engine, (engines.get(route.engine) ?? 0) + 1);
+    const matched = await findOrgRosters(userId, c.question).catch(() => []);
+    const { rosters } = await gateRosters(decider, c.question, matched);
+
+    const research = route.depth.depth === "research";
+    const wantResearch = c.expect.depth === "research";
+    if (research === wantResearch) depthOk += 1;
+    if (research && wantResearch) tpR += 1;
+    else if (research && !wantResearch) fpR += 1;
+    else if (!research && wantResearch) fnR += 1;
+    if (route.attention === c.expect.attention) attOk += 1;
+    if (route.attention && c.expect.attention) tpA += 1;
+    if (route.attention && !c.expect.attention) fpA += 1;
+    if (route.recruiters === c.expect.recruiters) recOk += 1;
+
+    const got = rosters.map((r) => r.name).sort().join(",");
+    const want = [...c.expect.roster].sort().join(",");
+    const rosterCase = matched.length > 0 || c.expect.roster.length > 0;
+    if (rosterCase) {
+      rosterCases += 1;
+      if (got === want) rosterOk += 1;
+    }
+
+    const wrong: string[] = [];
+    if (research !== wantResearch) wrong.push(`depth ${route.depth.depth} (${route.depth.reason})`);
+    if (route.attention !== c.expect.attention) wrong.push(`attention ${route.attention}`);
+    if (route.recruiters !== c.expect.recruiters) wrong.push(`recruiters ${route.recruiters}`);
+    if (rosterCase && got !== want) wrong.push(`roster [${got}]`);
+    if (wrong.length) misses.push(c.id);
+    log(`  ${wrong.length ? "MISS" : "ok  "} routing/${c.id} [${route.engine}]${wrong.length ? ` — ${wrong.join("; ")}` : ""}`);
+  }
+  await db.delete(contacts).where(eq(contacts.userId, userId));
+  log(`  engines: ${[...engines].map(([k, v]) => `${k} ${v}`).join(", ")}`);
+
+  const attPositives = cases.filter((c) => c.expect.attention).length;
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      depthAccuracy: cases.length ? depthOk / cases.length : null,
+      researchPrecision: tpR + fpR === 0 ? null : tpR / (tpR + fpR),
+      researchRecall: tpR + fnR === 0 ? null : tpR / (tpR + fnR),
+      attentionAccuracy: cases.length ? attOk / cases.length : null,
+      attentionPrecision: tpA + fpA === 0 ? null : tpA / (tpA + fpA),
+      attentionRecall: attPositives ? tpA / attPositives : null,
+      recruiterAccuracy: cases.length ? recOk / cases.length : null,
+      rosterAccuracy: rosterCases ? rosterOk / rosterCases : null,
+    },
   };
 }
 
@@ -712,7 +819,11 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
   for (const c of cases) {
     try {
       const { ctx, result } = await timed(latenciesMs, async () => {
+        const requestStartedAt = Date.now();
         const ctx = await prepareChatContext(userId, c.question, {});
+        // The research round runs here as it does in production (`askNetwork`, the route), so
+        // this task's cost and latency include it — and a routing change shows up in both.
+        const { evidence } = await maybeGather(userId, ctx, { requestStartedAt });
         const result = await chatWithNetwork(
           userId,
           ctx.scopedQuestion,
@@ -724,7 +835,8 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
           ctx.focusProfile,
           ctx.attachedContext,
           ctx.goals,
-          ctx.attentionLite
+          ctx.attentionLite,
+          evidence
         );
         return { ctx, result };
       });
@@ -990,6 +1102,7 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   recruiter: runRecruiterTask,
   "recruiter-prefilter": runRecruiterPrefilterTask,
   "recruiter-gate": runRecruiterGateTask,
+  "chat-routing": runChatRoutingTask,
   extension: runExtensionTask,
   ocr: runOcrTask,
   transcribe: runTranscribeTask,
