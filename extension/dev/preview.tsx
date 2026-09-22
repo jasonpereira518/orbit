@@ -43,7 +43,7 @@ const { Button, Meta, Skeleton } = await import("@/panel/components/ui");
 const { CaptureView } = await import("@/panel/views/CaptureView");
 const { KnownContactView } = await import("@/panel/views/KnownContactView");
 const { AmbiguousView } = await import("@/panel/views/AmbiguousView");
-const { TabHintView } = await import("@/panel/views/TabHintView");
+const { HomeView } = await import("@/panel/views/HomeView");
 const { SettingsView } = await import("@/panel/views/SettingsView");
 const { UpdateBand } = await import("@/panel/components/UpdateBand");
 import "@/styles/panel.css";
@@ -184,6 +184,14 @@ const candidates: MatchCandidate[] = [
   },
 ];
 
+const freeEntitlements = {
+  plan: "free" as const,
+  planLabel: "Free Plan",
+  contactLimit: 250,
+  contactsRemaining: 12,
+  features: { starters: false, workHistory: false, company: false, search: false },
+};
+
 function me(over: { hasAiKey?: boolean } = {}): MeResponse {
   return {
     contractVersion: 1,
@@ -198,10 +206,59 @@ function me(over: { hasAiKey?: boolean } = {}): MeResponse {
   };
 }
 
+/** What the panel's API returns in the harness — per method, so each view
+ *  gets the shape it actually reads. Anything not listed gets a save result. */
+const person = (id: string, fullName: string, title: string | null, company: string | null) => ({
+  id,
+  fullName,
+  title,
+  company,
+  photoUrl: null,
+});
+const API_FIXTURES: Record<string, unknown> = {
+  home: {
+    today: new Date().toISOString().slice(0, 10),
+    dueReminders: [
+      {
+        id: "h1",
+        title: "Send the payments RFC",
+        dueDate: new Date(Date.now() - 4 * 864e5).toISOString(),
+        overdue: true,
+        contact: { id: "c1", fullName: "Amara Osei", photoUrl: null },
+      },
+      {
+        id: "h2",
+        title: "Book the offsite venue",
+        dueDate: new Date().toISOString(),
+        overdue: false,
+        contact: null,
+      },
+    ],
+    dueReminderTotal: 7,
+    recentContacts: [
+      person("c1", "Amara Osei", "VP Engineering", "Stripe"),
+      person("c2", "Ben Tate", "Founder", "Tidepool"),
+      person("c3", "Chioma Eze", null, "Anthropic"),
+    ],
+  },
+  searchContacts: {
+    results: [person("c1", "Amara Osei", "VP Engineering", "Stripe")],
+    mode: "keyword",
+  },
+  reminder: { reminderId: "h1", completion: null, restored: false },
+  logInteraction: { interactionId: "i9" },
+  gate: { recorded: true, upgradeUrl: "http://localhost:3000/pricing?from=extension&feature=search" },
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const api: any = new Proxy(
   {},
-  { get: () => async () => ({ contact: contact(), created: true, warnings: [] }) }
+  {
+    get: (_target, method: string) => async () =>
+      method in API_FIXTURES
+        ? API_FIXTURES[method]
+        : { contact: contact(), created: true, warnings: [] },
+  }
 );
 
 function panelState(over: Record<string, unknown> = {}) {
@@ -427,11 +484,52 @@ function States() {
         <AmbiguousView candidates={candidates} onPick={() => {}} onCreateNew={() => {}} />
       </Frame>
 
-      <Frame label="Tab not read yet" note="an unclicked tab — a hint, not a wall">
+      <Frame label="Home — unclicked tab" note="a hint, then useful anyway">
         <PanelHeader onSettings={() => {}} />
         <IdentityZone page={null} unread />
         <VerdictZone tone="accent">Not read yet — click the icon</VerdictZone>
-        <TabHintView onOpenSettings={() => {}} />
+        <HomeView
+          reason="no-grant"
+          detail={null}
+          lostAccess={false}
+          me={{ ...me({ hasAiKey: true }), entitlements: freeEntitlements }}
+          signedIn
+          api={api}
+          onOpenSettings={() => {}}
+          onSignIn={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Home — page about nobody" note="was 'Nothing to add here'">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={page({ name: "Stripe", title: null, company: null, headline: "Payments infrastructure" })} />
+        <VerdictZone>Not about a person</VerdictZone>
+        <HomeView
+          reason="no-person"
+          detail={null}
+          lostAccess={false}
+          me={me()}
+          signedIn
+          api={api}
+          onOpenSettings={() => {}}
+          onSignIn={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Home — signed out">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={null} unread />
+        <VerdictZone tone="accent">Not read yet — click the icon</VerdictZone>
+        <HomeView
+          reason="no-grant"
+          detail={null}
+          lostAccess={false}
+          me={null}
+          signedIn={false}
+          api={api}
+          onOpenSettings={() => {}}
+          onSignIn={() => {}}
+        />
       </Frame>
 
       <Frame label="Settings" note="who am I, is AI on, which sites">

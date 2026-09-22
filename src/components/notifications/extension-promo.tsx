@@ -152,7 +152,7 @@ export function ExtensionPromo({
                 the first a free user hears of it. */}
             {!hasExtensionPro && (
               <span className="text-xs text-muted-foreground">
-                Free. AI opening lines come with Pro —{" "}
+                Free. AI opening lines and smart search come with Pro —{" "}
                 <WarpLink
                   href="/pricing"
                   className="font-medium text-import-connections underline underline-offset-2 hover:opacity-80"
