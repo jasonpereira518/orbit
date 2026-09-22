@@ -98,9 +98,10 @@ openssl rsa -in key.pem -pubout -outform DER | base64 | tr -d '\n'
 ## Architecture
 
 ```
-toolbar click ─► background worker (onClicked)
+toolbar click  ─► background worker (action.onClicked)
+right-click    ─►                   (contextMenus.onClicked)
                    ├─ sidePanel.open()          ← inside the gesture: grants activeTab
-                   └─ storage.session intent    ← "re-read", for a panel already open
+                   └─ storage.session intent    ← what was asked: re-read, a link, a selection
 side panel (React + Clerk) ──fetch──► <app>/api/extension/*
   └─ chrome.scripting.executeScript
        └─ inject/extract.js (IIFE, no deps)
@@ -141,6 +142,19 @@ tab. Measured on Chrome 153 — see [docs/permission-spike.md](docs/permission-s
 A tab without a grant shows "click the Orbit icon to read this tab", never the
 previous person.
 
+### Right-click
+
+Two menu items, each shown only where it means something:
+
+- **Look up in Orbit**, on a LinkedIn, X or GitHub profile link. The panel
+  resolves that person from the link alone; their page is never visited or
+  fetched. A link that isn't a profile says so instead of guessing.
+- **Save to Orbit as a note**, on selected text. The panel opens a note with
+  the text quoted, the person on the tab suggested, and anyone else one search
+  away.
+
+Either one waits behind an unsaved draft instead of replacing it.
+
 `optional_host_permissions` (LinkedIn, X, Gmail, GitHub) are the opt-in on
 top: turned on from Settings, they let the panel read each page on that site
 as you open it, with no click. Never required, always revocable from the same
@@ -155,7 +169,8 @@ browser already rendered, because they clicked the icon.
 
 Page text is never persisted — it's model input only. The raw blob is never
 cached locally either. The only first-party use of extension storage is the
-click hand-off above: a tab id and a timestamp in `storage.session` (memory
+click hand-off above: a tab id, a timestamp and — for a right-click — the link
+or the selected text (capped at 4,000 characters), in `storage.session` (memory
 only, extension pages only), deleted as soon as the panel acts on it.
 
 ## Keeping in sync with the app

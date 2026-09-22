@@ -21,7 +21,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "Is the Chrome extension free?",
-    a: "Yes, on every plan. It recognizes the people you already know as you browse, saves new ones, and logs notes and follow-ups without leaving the page. Orbit Pro and Lifetime add AI-written opening lines (using your own AI key) and smart search that finds people by what you know about them.",
+    a: "Yes, on every plan. It recognizes the people you already know as you browse, saves new ones, and logs notes and follow-ups without leaving the page. Orbit Pro and Lifetime add AI-written opening lines (using your own AI key) smart search that finds people by what you know about them, and the names of who you know at any company you look at.",
   },
   {
     q: "What is the difference between Orbit Pro and Orbit Lifetime?",

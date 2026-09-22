@@ -60,10 +60,12 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   { label: "Chrome extension", cells: [true, true, true] },
   { label: "Recruiter tracking", cells: [false, true, true] },
   { label: "Gmail, Outlook, calendar sync", cells: [false, true, true] },
-  // Name only what has shipped. Work history and company lookup are also
-  // `canUseExtensionPro`, but they join this label when they exist — a pricing
-  // table is a promise.
-  { label: "Extension: AI opening lines and smart search", cells: [false, true, true] },
+  // Name only what has shipped. Work history is also `canUseExtensionPro`, but
+  // it joins this label when it exists — a pricing table is a promise.
+  {
+    label: "Extension: AI opening lines, smart search, who you know at a company",
+    cells: [false, true, true],
+  },
   { label: "Outreach campaigns", cells: [false, true, true] },
   { label: "Email and SMS sending", cells: [false, true, true] },
   { label: "API and webhooks", cells: [false, true, true] },

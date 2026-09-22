@@ -63,7 +63,7 @@ function PersonRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] leading-[18px]">{person.fullName}</span>
         <span className="block truncate text-[11px] text-[var(--muted-foreground)]">
-          {[person.title, person.company].filter(Boolean).join(" · ") || " "}
+          {[person.title, person.company].filter(Boolean).join(" · ") || "\u00a0"}
         </span>
       </span>
     </button>
@@ -142,7 +142,14 @@ export function HomeView({
   onOpenSettings,
   onSignIn,
   onDirtyChange,
+  note: noteMode,
 }: {
+  /**
+   * Note mode: the user right-clicked selected text, "Save to Orbit as a
+   * note". Home narrows to that one job — the quote, who it's about (the
+   * person on screen preselected, if any), and the composer prefilled.
+   */
+  note?: { text: string; suggested: ContactSearchResult | null; onDone: () => void };
   reason: HomeReason;
   detail: string | null;
   lostAccess: boolean;
@@ -159,8 +166,10 @@ export function HomeView({
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<ContactSearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
-  const [selected, setSelected] = useState<ContactSearchResult | null>(null);
-  const [note, setNote] = useState("");
+  const [selected, setSelected] = useState<ContactSearchResult | null>(
+    noteMode?.suggested ?? null
+  );
+  const [note, setNote] = useState(noteMode?.text ?? "");
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<{ message: string; undo?: () => void } | null>(null);
   const searchAbort = useRef<AbortController | null>(null);
@@ -230,6 +239,11 @@ export function HomeView({
       toast(`Note added for ${firstName(selected.fullName)}`);
       setNote("");
       setSelected(null);
+      if (noteMode) {
+        // Let the confirmation be seen before Home returns to normal.
+        window.setTimeout(noteMode.onDone, 900);
+        return;
+      }
       void loadHome();
     } catch {
       toast("Couldn't save that");
@@ -262,10 +276,22 @@ export function HomeView({
     <Hint reason={reason} detail={detail} lostAccess={lostAccess} onOpenSettings={onOpenSettings} />
   );
 
+  const quote = noteMode ? (
+    <Section hairline={false}>
+      <p className="text-[13px] font-medium leading-snug">Save as a note</p>
+      <blockquote className="mt-1.5 line-clamp-4 border-l-2 border-[var(--border)] pl-2 text-[12px] leading-[17px] text-[var(--muted-foreground)]">
+        {noteMode.text}
+      </blockquote>
+      <Meta className="mt-1.5">
+        {selected ? "Edit it below, or choose someone else." : "Who is it about?"}
+      </Meta>
+    </Section>
+  ) : null;
+
   if (signedIn === false) {
     return (
       <div className="scroll-area flex-1">
-        {hint}
+        {quote ?? hint}
         <Section title="Your orbit" hairline={reason !== "no-person"}>
           <Meta className="mb-2 max-w-[38ch]">
             Sign in to see what&apos;s due and find anyone in your orbit from here.
@@ -279,15 +305,23 @@ export function HomeView({
   }
 
   const q = query.trim();
-  const people = q.length >= 2 ? (search?.results ?? []) : (home?.recentContacts ?? []);
+  const recent = home?.recentContacts ?? [];
+  const suggested = noteMode?.suggested;
+  const people =
+    q.length >= 2
+      ? (search?.results ?? [])
+      : suggested
+        ? [suggested, ...recent.filter((p) => p.id !== suggested.id)]
+        : recent;
   const searchLocked = me?.entitlements?.features.search === false;
   const due = home?.dueReminders ?? [];
 
   return (
     <>
       <div className="scroll-area flex-1">
-        {hint}
+        {quote ?? hint}
 
+        {noteMode ? null : (
         <Section title="Due" hairline={reason !== "no-person"}>
           {homeFailed ? (
             <Meta>
@@ -342,6 +376,7 @@ export function HomeView({
             </>
           )}
         </Section>
+        )}
 
         <Section>
           <label className="flex items-center gap-2 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 focus-within:border-[var(--ring)]">
@@ -426,6 +461,7 @@ export function HomeView({
               onClick={() => {
                 setSelected(null);
                 setNote("");
+                noteMode?.onDone();
               }}
             >
               Cancel

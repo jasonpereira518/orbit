@@ -18,24 +18,77 @@
     "paper over a new one. Adding an `app` override is a design decision; if you",
     "reach for one to make a test pass, the two files have drifted instead."
   ],
-
   "linkedinSlug": [
-    { "input": "https://www.linkedin.com/in/amara-osei", "expected": "amara-osei", "note": "the plain case" },
-    { "input": "https://linkedin.com/in/amara-osei", "expected": "amara-osei", "note": "no www" },
-    { "input": "https://de.linkedin.com/in/amara-osei", "expected": "amara-osei", "note": "locale subdomain — the same person" },
-    { "input": "https://www.linkedin.com/in/amara-osei/", "expected": "amara-osei", "note": "trailing slash" },
-    { "input": "https://www.linkedin.com/in/amara-osei/details/experience", "expected": "amara-osei", "note": "sub-route: work-history capture must bind to the same contact" },
-    { "input": "https://www.linkedin.com/in/amara-osei?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3AACoAAA", "expected": "amara-osei", "note": "LinkedIn's own tracking param" },
-    { "input": "https://www.linkedin.com/in/amara-osei#experience", "expected": "amara-osei", "note": "fragment" },
-    { "input": "https://www.linkedin.com/in/Amara-Osei", "expected": "amara-osei", "note": "case folds" },
-    { "input": "HTTPS://WWW.LINKEDIN.COM/IN/Amara-Osei", "expected": "amara-osei", "note": "the host match is case-insensitive too" },
-    { "input": "https://www.linkedin.com/in/jos%C3%A9-garcia", "expected": "jos%c3%a9-garcia", "note": "percent-encoding is NOT decoded: the app compares raw captures, so decoding on one side only would split one person into two" },
-    { "input": "https://www.linkedin.com/in/ACoAAB1234567890", "expected": "acoaab1234567890", "note": "opaque slug — still a stable match key, even though it is useless to show a human" },
-    { "input": "https://m.linkedin.com/in/amara-osei", "expected": "amara-osei", "note": "mobile subdomain" },
-
-    { "input": null, "expected": "", "note": "no signal" },
-    { "input": "", "expected": "", "note": "no signal" },
-
+    {
+      "input": "https://www.linkedin.com/in/amara-osei",
+      "expected": "amara-osei",
+      "note": "the plain case"
+    },
+    {
+      "input": "https://linkedin.com/in/amara-osei",
+      "expected": "amara-osei",
+      "note": "no www"
+    },
+    {
+      "input": "https://de.linkedin.com/in/amara-osei",
+      "expected": "amara-osei",
+      "note": "locale subdomain — the same person"
+    },
+    {
+      "input": "https://www.linkedin.com/in/amara-osei/",
+      "expected": "amara-osei",
+      "note": "trailing slash"
+    },
+    {
+      "input": "https://www.linkedin.com/in/amara-osei/details/experience",
+      "expected": "amara-osei",
+      "note": "sub-route: work-history capture must bind to the same contact"
+    },
+    {
+      "input": "https://www.linkedin.com/in/amara-osei?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3AACoAAA",
+      "expected": "amara-osei",
+      "note": "LinkedIn's own tracking param"
+    },
+    {
+      "input": "https://www.linkedin.com/in/amara-osei#experience",
+      "expected": "amara-osei",
+      "note": "fragment"
+    },
+    {
+      "input": "https://www.linkedin.com/in/Amara-Osei",
+      "expected": "amara-osei",
+      "note": "case folds"
+    },
+    {
+      "input": "HTTPS://WWW.LINKEDIN.COM/IN/Amara-Osei",
+      "expected": "amara-osei",
+      "note": "the host match is case-insensitive too"
+    },
+    {
+      "input": "https://www.linkedin.com/in/jos%C3%A9-garcia",
+      "expected": "jos%c3%a9-garcia",
+      "note": "percent-encoding is NOT decoded: the app compares raw captures, so decoding on one side only would split one person into two"
+    },
+    {
+      "input": "https://www.linkedin.com/in/ACoAAB1234567890",
+      "expected": "acoaab1234567890",
+      "note": "opaque slug — still a stable match key, even though it is useless to show a human"
+    },
+    {
+      "input": "https://m.linkedin.com/in/amara-osei",
+      "expected": "amara-osei",
+      "note": "mobile subdomain"
+    },
+    {
+      "input": null,
+      "expected": "",
+      "note": "no signal"
+    },
+    {
+      "input": "",
+      "expected": "",
+      "note": "no signal"
+    },
     {
       "input": "https://example.com/team/amara",
       "expected": "",
@@ -49,31 +102,178 @@
       "note": "same divergence, bare-string input"
     }
   ],
-
   "xHandle": [
-    { "input": "https://x.com/amaraosei", "expected": "amaraosei", "note": "the plain case" },
-    { "input": "https://twitter.com/amaraosei", "expected": "amaraosei", "note": "twitter.com is the same account" },
-    { "input": "https://www.x.com/amaraosei", "expected": "amaraosei", "note": "www" },
-    { "input": "https://mobile.twitter.com/amaraosei", "expected": "amaraosei", "note": "mobile subdomain" },
-    { "input": "https://x.com/amaraosei/status/1234567890", "expected": "amaraosei", "note": "a post still identifies its author" },
-    { "input": "https://x.com/amaraosei?s=20", "expected": "amaraosei", "note": "share param" },
-    { "input": "https://x.com/#!/amaraosei", "expected": "amaraosei", "note": "the old hash-bang form" },
-    { "input": "@amaraosei", "expected": "amaraosei", "note": "as a user would type it" },
-    { "input": "amaraosei", "expected": "amaraosei", "note": "bare handle" },
-    { "input": "  @AmaraOsei  ", "expected": "amaraosei", "note": "trimmed and case-folded" },
-    { "input": "https://x.com/Amara_Osei", "expected": "amara_osei", "note": "underscores are legal" },
-
-    { "input": null, "expected": "", "note": "no signal" },
-    { "input": "", "expected": "", "note": "no signal" },
-    { "input": "amara osei", "expected": "", "note": "a space is not a handle" },
-    { "input": "amara-osei", "expected": "", "note": "hyphens are not legal in an X handle — this is a LinkedIn slug" },
-    { "input": "sixteencharacter", "expected": "", "note": "16 chars: over X's limit, so not a handle" },
-    { "input": "amara@example.com", "expected": "", "note": "an email is not a handle" },
-
+    {
+      "input": "https://x.com/amaraosei",
+      "expected": "amaraosei",
+      "note": "the plain case"
+    },
+    {
+      "input": "https://twitter.com/amaraosei",
+      "expected": "amaraosei",
+      "note": "twitter.com is the same account"
+    },
+    {
+      "input": "https://www.x.com/amaraosei",
+      "expected": "amaraosei",
+      "note": "www"
+    },
+    {
+      "input": "https://mobile.twitter.com/amaraosei",
+      "expected": "amaraosei",
+      "note": "mobile subdomain"
+    },
+    {
+      "input": "https://x.com/amaraosei/status/1234567890",
+      "expected": "amaraosei",
+      "note": "a post still identifies its author"
+    },
+    {
+      "input": "https://x.com/amaraosei?s=20",
+      "expected": "amaraosei",
+      "note": "share param"
+    },
+    {
+      "input": "https://x.com/#!/amaraosei",
+      "expected": "amaraosei",
+      "note": "the old hash-bang form"
+    },
+    {
+      "input": "@amaraosei",
+      "expected": "amaraosei",
+      "note": "as a user would type it"
+    },
+    {
+      "input": "amaraosei",
+      "expected": "amaraosei",
+      "note": "bare handle"
+    },
+    {
+      "input": "  @AmaraOsei  ",
+      "expected": "amaraosei",
+      "note": "trimmed and case-folded"
+    },
+    {
+      "input": "https://x.com/Amara_Osei",
+      "expected": "amara_osei",
+      "note": "underscores are legal"
+    },
+    {
+      "input": null,
+      "expected": "",
+      "note": "no signal"
+    },
+    {
+      "input": "",
+      "expected": "",
+      "note": "no signal"
+    },
+    {
+      "input": "amara osei",
+      "expected": "",
+      "note": "a space is not a handle"
+    },
+    {
+      "input": "amara-osei",
+      "expected": "",
+      "note": "hyphens are not legal in an X handle — this is a LinkedIn slug"
+    },
+    {
+      "input": "sixteencharacter",
+      "expected": "",
+      "note": "16 chars: over X's limit, so not a handle"
+    },
+    {
+      "input": "amara@example.com",
+      "expected": "",
+      "note": "an email is not a handle"
+    },
     {
       "input": "https://help.x.com/en/using-x/something",
       "expected": "en",
       "note": "NOT a bug, and the reason isXProfileUrl exists. This function is deliberately loose because it also parses handles typed by hand; link scanning must go through the stricter host check instead. A real page produced exactly this."
+    }
+  ],
+  "githubLogin": [
+    {
+      "input": "https://github.com/amaraosei",
+      "expected": "amaraosei",
+      "note": "the plain case"
+    },
+    {
+      "input": "https://github.com/AmaraOsei",
+      "expected": "amaraosei",
+      "note": "case folds"
+    },
+    {
+      "input": "https://www.github.com/amaraosei/",
+      "expected": "amaraosei",
+      "note": "www and trailing slash"
+    },
+    {
+      "input": "https://github.com/amaraosei?tab=repositories",
+      "expected": "amaraosei",
+      "note": "a profile tab is still the profile"
+    },
+    {
+      "input": "https://github.com/amaraosei/orbit",
+      "expected": "amaraosei",
+      "note": "a repo identifies its owner"
+    },
+    {
+      "input": "https://github.com/amara-osei",
+      "expected": "amara-osei",
+      "note": "single hyphens are legal"
+    },
+    {
+      "input": "@amaraosei",
+      "expected": "amaraosei",
+      "note": "as typed"
+    },
+    {
+      "input": "amaraosei",
+      "expected": "amaraosei",
+      "note": "bare login"
+    },
+    {
+      "input": null,
+      "expected": "",
+      "note": "no signal"
+    },
+    {
+      "input": "",
+      "expected": "",
+      "note": "no signal"
+    },
+    {
+      "input": "https://github.com/settings/profile",
+      "expected": "",
+      "note": "GitHub's own pages are not people"
+    },
+    {
+      "input": "https://github.com/orgs/anthropic",
+      "expected": "",
+      "note": "an org path is not a login"
+    },
+    {
+      "input": "https://github.com/-amara",
+      "expected": "",
+      "note": "cannot start with a hyphen"
+    },
+    {
+      "input": "amara--osei",
+      "expected": "",
+      "note": "no double hyphens"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "",
+      "note": "40 characters: over GitHub's limit"
+    },
+    {
+      "input": "https://gist.github.com/amaraosei",
+      "expected": "amaraosei",
+      "note": "gists live under the same login"
     }
   ]
 }

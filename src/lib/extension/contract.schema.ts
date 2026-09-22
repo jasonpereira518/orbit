@@ -17,10 +17,12 @@ import type {
   ContactSearchResponse,
   ParseRequest,
   FollowUpRequest,
+  CompanyLookupRequest,
   GateIntentRequest,
   LogInteractionRequest,
   PageContext,
   ReminderActionRequest,
+  ResolveBatchRequest,
   ResolveRequest,
   SaveContactRequest,
   StartersRequest,
@@ -71,27 +73,39 @@ const pageIdentitySchema = z.object({
   handle: extractedField,
   profileUrl: extractedField,
   photoUrl: extractedField,
+  links: z
+    .object({
+      linkedin: z.string().trim().max(2_048).optional(),
+      x: z.string().trim().max(2_048).optional(),
+      github: z.string().trim().max(2_048).optional(),
+    })
+    .optional(),
+});
+
+const pageCandidateSchema = z.object({
+  name: z.string().max(200),
+  profileUrl: z.string().max(2_048).optional(),
+  subtitle: z.string().max(300).optional(),
+  email: z.string().trim().max(320).optional(),
+});
+
+const pageOrgSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  linkedinSlug: z.string().trim().max(200).optional(),
+  githubLogin: z.string().trim().max(39).optional(),
 });
 
 export const pageContextSchema = z.object({
   schemaVersion: z.literal(1),
-  site: z.enum(["linkedin", "x", "gmail", "generic"]),
+  site: z.enum(["linkedin", "x", "gmail", "github", "generic"]),
   adapterVersion: z.string().max(32),
   kind: z.enum(["person", "thread", "list", "company", "post", "unknown"]),
   url: z.string().trim().max(2_048),
   sourceUrl: z.string().trim().max(2_048),
   capturedAt: isoDate,
   identity: pageIdentitySchema,
-  candidates: z
-    .array(
-      z.object({
-        name: z.string().max(200),
-        profileUrl: z.string().max(2_048).optional(),
-        subtitle: z.string().max(300).optional(),
-      })
-    )
-    .max(10)
-    .optional(),
+  candidates: z.array(pageCandidateSchema).max(10).optional(),
+  org: pageOrgSchema.optional(),
   text: z.object({
     // The outer bound catches abuse; the transform handles the normal case of a
     // big-but-legitimate profile. Truncate rather than reject — a 200KB DOM
@@ -208,6 +222,12 @@ export const gateIntentRequestSchema = z.object({
   site: z.string().trim().max(40).optional(),
 });
 
+export const resolveBatchRequestSchema = z.object({
+  candidates: z.array(pageCandidateSchema).min(1).max(10),
+});
+
+export const companyLookupRequestSchema = z.object({ org: pageOrgSchema });
+
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;
@@ -221,6 +241,8 @@ const _reminder: Exact<
   ReminderActionRequest
 > = true;
 const _gate: Exact<z.infer<typeof gateIntentRequestSchema>, GateIntentRequest> = true;
-void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _reminder, _gate];
+const _batch: Exact<z.infer<typeof resolveBatchRequestSchema>, ResolveBatchRequest> = true;
+const _company: Exact<z.infer<typeof companyLookupRequestSchema>, CompanyLookupRequest> = true;
+void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _reminder, _gate, _batch, _company];
 
 export type { ContactSearchResponse };

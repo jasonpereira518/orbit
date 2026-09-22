@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CircleAlert, WifiOff } from "lucide-react";
-import type { MatchCandidate } from "@contract";
+import type { MatchCandidate, PageContext } from "@contract";
 import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
 import { relativeTime } from "@/lib/format";
@@ -17,8 +17,12 @@ import { Button, Meta, Skeleton } from "./components/ui";
 import { AmbiguousView } from "./views/AmbiguousView";
 import { CaptureView } from "./views/CaptureView";
 import { HomeView } from "./views/HomeView";
+import { CompanyView } from "./views/CompanyView";
+import { PeopleView } from "./views/PeopleView";
+import { PickedPersonView } from "./views/PickedPersonView";
+import { identityOnlyPage } from "@/lib/identity-page";
 import { KnownContactView } from "./views/KnownContactView";
-import { usePanel } from "./state/usePanel";
+import { usePanel, type ContextIntent } from "./state/usePanel";
 import { deriveRoute } from "./state/route";
 import { isOutdated } from "./state/update-status";
 import { UpdateBand } from "./components/UpdateBand";
@@ -40,19 +44,44 @@ function usePageScopedState(url: string | null) {
   return {
     forceCreate: current.forceCreate,
     sealed: current.sealed,
+    picked: current.picked,
     setForceCreate: (value: boolean) =>
       setHeld({ ...current, url, forceCreate: value }),
     setSealed: (value: boolean) => setHeld({ ...current, url, sealed: value }),
+    setPicked: (value: PageContext | null) => setHeld({ ...current, url, picked: value }),
   };
 }
 
 export function App() {
-  const { state, api, signedIn, reload, refresh, setDirty, followPending } = usePanel();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Right-click, handed up from the worker via usePanel. Declared before the
+  // hook so it can be passed in; it runs later, after render.
+  const [selectionNote, setSelectionNote] = useState<string | null>(null);
+  const [contextNotice, setContextNotice] = useState<string | null>(null);
+  const onContextIntent = (intent: ContextIntent) => {
+    setSettingsOpen(false);
+    if (intent.kind === "selection") {
+      setSelectionNote(intent.text);
+      return;
+    }
+    const linked = identityOnlyPage({ profileUrl: intent.linkUrl });
+    if (!linked) {
+      setContextNotice("That link isn't a profile Orbit can look up.");
+      window.setTimeout(() => setContextNotice(null), 3500);
+      return;
+    }
+    setSelectionNote(null);
+    setPicked(linked);
+  };
+
+  const { state, api, signedIn, reload, refresh, setDirty, followPending } = usePanel({
+    onContextIntent,
+  });
   const pageUrl = state.page?.url ?? null;
-  const { forceCreate, sealed, setForceCreate, setSealed } =
+  const { forceCreate, sealed, picked, setForceCreate, setSealed, setPicked } =
     usePageScopedState(pageUrl);
   const [signInClicked, setSignInClicked] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+
   const outdated = isOutdated(state.me?.contractVersion);
 
   const signIn = () => {
@@ -79,26 +108,30 @@ export function App() {
     candidateCount: state.resolved?.candidates.length ?? 0,
     forceCreate,
     staleOffline,
+    listedPeople: state.page?.candidates?.length ?? 0,
+    hasOrg: Boolean(state.page?.org),
   });
 
+  // Once a draft exists the panel is bound to the draft, not to the tab — so
+  // navigating away (or right-clicking something new) asks rather than
+  // discarding what was typed. Rendered in EVERY branch: a picked person or a
+  // note has its own verdict, and a hold nobody can see is held forever.
+  const pendingBand = state.pendingUrl ? (
+    <VerdictZone tone="accent">
+      <span className="flex-1 truncate">
+        You&apos;ve moved on — this isn&apos;t saved yet
+      </span>
+      <button
+        onClick={followPending}
+        className="shrink-0 text-[var(--primary)] hover:underline"
+      >
+        Discard
+      </button>
+    </VerdictZone>
+  ) : null;
+
   const verdict = () => {
-    // Once a draft exists the panel is bound to the draft, not to the tab —
-    // so navigating away asks rather than discarding what was typed.
-    if (state.pendingUrl) {
-      return (
-        <VerdictZone tone="accent">
-          <span className="flex-1 truncate">
-            You&apos;ve moved on — this isn&apos;t saved yet
-          </span>
-          <button
-            onClick={followPending}
-            className="shrink-0 text-[var(--primary)] hover:underline"
-          >
-            Discard
-          </button>
-        </VerdictZone>
-      );
-    }
+    if (pendingBand) return pendingBand;
     if (state.phase === "signed-out") {
       return <VerdictZone tone="accent">Not signed in</VerdictZone>;
     }
@@ -129,6 +162,12 @@ export function App() {
           ) : null}
         </VerdictZone>
       );
+    }
+    if (route.name === "people") {
+      return <VerdictZone>{state.page?.candidates?.length ?? 0} people on this page</VerdictZone>;
+    }
+    if (route.name === "company") {
+      return <VerdictZone>Who you know at {state.page?.org?.name}</VerdictZone>;
     }
     if (route.name === "home" && route.reason === "no-person") {
       return <VerdictZone>Not about a person</VerdictZone>;
@@ -185,6 +224,23 @@ export function App() {
           }
         />
       );
+    }
+
+    if (route.name === "people" && state.page) {
+      return (
+        <PeopleView
+          page={state.page}
+          api={api}
+          onPick={(candidate) => {
+            const page = identityOnlyPage(candidate);
+            if (page) setPicked(page);
+          }}
+        />
+      );
+    }
+
+    if (route.name === "company" && state.page) {
+      return <CompanyView page={state.page} api={api} />;
     }
 
     if (route.name === "home") {
@@ -300,15 +356,77 @@ export function App() {
       {/* Hidden, not unmounted: a capture draft or a half-typed note lives in
           this subtree, and opening Settings must not throw it away. */}
       <div hidden={settingsOpen} className="flex min-h-0 flex-1 flex-col">
-        <IdentityZone
-          page={state.page}
-          sealed={sealed}
-          stale={staleOffline}
-          unread={state.phase === "needs-permission" || state.phase === "unsupported"}
-        />
-        {verdict()}
-        {outdated ? <UpdateBand /> : null}
-        {body()}
+        {contextNotice ? (
+          <div className="flex h-[28px] shrink-0 items-center border-b border-[var(--border)] px-3 text-[11px] text-[var(--muted-foreground)]">
+            {contextNotice}
+          </div>
+        ) : null}
+        {selectionNote !== null ? (
+          <>
+            <IdentityZone page={state.page} unread={!state.page} />
+            {pendingBand ?? (
+              <VerdictZone tone="accent">
+                <span className="flex-1 truncate">Save to Orbit as a note</span>
+              </VerdictZone>
+            )}
+            <HomeView
+              key={selectionNote}
+              reason="no-person"
+              detail={null}
+              lostAccess={false}
+              me={state.me}
+              signedIn={signedIn}
+              api={api}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onSignIn={signIn}
+              onDirtyChange={setDirty}
+              note={{
+                text: selectionNote,
+                // The person on screen is the likeliest subject; preselect them.
+                suggested:
+                  route.name === "known" && contact
+                    ? {
+                        id: contact.id,
+                        fullName: contact.fullName,
+                        company: contact.company,
+                        title: contact.title,
+                        photoUrl: contact.photoUrl,
+                      }
+                    : null,
+                onDone: () => setSelectionNote(null),
+              }}
+            />
+          </>
+        ) : picked ? (
+          <>
+          {pendingBand}
+          <PickedPersonView
+            key={picked.url}
+            page={picked}
+            backLabel={
+              state.page?.candidates?.length
+                ? `${state.page.candidates.length} on this page`
+                : "Back"
+            }
+            onBack={() => setPicked(null)}
+            baseState={state}
+            api={api}
+            onDirtyChange={setDirty}
+          />
+          </>
+        ) : (
+          <>
+            <IdentityZone
+              page={state.page}
+              sealed={sealed}
+              stale={staleOffline}
+              unread={state.phase === "needs-permission" || state.phase === "unsupported"}
+            />
+            {verdict()}
+            {outdated ? <UpdateBand /> : null}
+            {body()}
+          </>
+        )}
       </div>
     </>
   );

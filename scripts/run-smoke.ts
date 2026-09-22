@@ -290,6 +290,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-extension-api": "pglite",
   "smoke-extension-resolve": "pglite",
   "smoke-extension-home": "pglite",
+  "smoke-extension-people": "pglite",
   "smoke-token-refresh": "pglite",
   "smoke-toast-undo": "pglite",
   "smoke-feedback-admin": "pglite",

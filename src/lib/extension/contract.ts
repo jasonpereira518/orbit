@@ -78,7 +78,7 @@ export type ExtractedField = {
   confidence: FieldConfidence;
 } | null;
 
-export type PageSite = "linkedin" | "x" | "gmail" | "generic";
+export type PageSite = "linkedin" | "x" | "gmail" | "github" | "generic";
 
 /**
  * What kind of thing the page is. Drives which popup state renders, and keeps
@@ -104,6 +104,18 @@ export type PageIdentity = {
   handle: ExtractedField;
   profileUrl: ExtractedField;
   photoUrl: ExtractedField;
+  /**
+   * The person's other profiles, as linked from this page — a GitHub bio's
+   * LinkedIn, a personal site's X. Each is an exact-match key the resolver can
+   * use whatever site the page is on. Optional: v1 adapters never send it.
+   */
+  links?: PageLinks;
+};
+
+export type PageLinks = {
+  linkedin?: string;
+  x?: string;
+  github?: string;
 };
 
 /** A person visible on a list/thread page that the user may want to pick. */
@@ -111,6 +123,17 @@ export type PageCandidate = {
   name: string;
   profileUrl?: string;
   subtitle?: string;
+  /** Gmail's multi-party threads know addresses, not profiles. */
+  email?: string;
+};
+
+/** The organization a company/school page is about. */
+export type PageOrg = {
+  name: string;
+  /** linkedin.com/company/<slug> or /school/<slug>. */
+  linkedinSlug?: string;
+  /** github.com/<org> */
+  githubLogin?: string;
 };
 
 export type PageText = {
@@ -134,6 +157,8 @@ export type PageContext = {
   capturedAt: string;
   identity: PageIdentity;
   candidates?: PageCandidate[];
+  /** Present on company and school pages. */
+  org?: PageOrg;
   text: PageText;
   /** Extractor diagnostics: "login-wall", "opaque-slug", "no-main", … */
   warnings: string[];
@@ -544,6 +569,37 @@ export type HomeResponse = {
   /** All of them, exactly — the list above is capped, this is not. */
   dueReminderTotal: number;
   recentContacts: ContactSearchResult[];
+};
+
+/**
+ * `POST /resolve-batch` — who on a list page do you already know? One request
+ * for the whole list (≤ 10), so a search-results page costs one call, not ten.
+ */
+export type ResolveBatchRequest = { candidates: PageCandidate[] };
+export type ResolveBatchItem = {
+  index: number;
+  /**
+   * `known`: an exact identity (profile URL, handle, email) owned by one contact.
+   * `possible`: a name match only — names are not identities, so never "known".
+   * `new`: nobody.
+   */
+  status: "known" | "possible" | "new";
+  contact: ContactSearchResult | null;
+};
+export type ResolveBatchResponse = { items: ResolveBatchItem[] };
+
+/** `POST /company` — who do you know at this organization? */
+export type CompanyLookupRequest = { org: PageOrg };
+export type CompanyPerson = ContactSearchResult & {
+  /** Works there now (by their contact record), or worked there (by history). */
+  relation: "current" | "former";
+};
+export type CompanyLookupResponse = {
+  currentTotal: number;
+  formerTotal: number;
+  /** Empty when `locked`: the counts are free, the names are Pro. */
+  people: CompanyPerson[];
+  locked: boolean;
 };
 
 /** A click on a locked section — recorded (throttled) as demand for the feature. */

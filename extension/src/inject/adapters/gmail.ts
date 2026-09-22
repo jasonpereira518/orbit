@@ -21,7 +21,7 @@ import {
   type SiteAdapter,
 } from "./types";
 
-const ADAPTER_VERSION = "gmail-1";
+const ADAPTER_VERSION = "gmail-2";
 
 function participants(warnings: string[]) {
   return (
@@ -69,7 +69,10 @@ export const gmailAdapter: SiteAdapter = {
       identity.name = field(others[0].name, "span[email]", "medium");
       identity.email = field(others[0].email, "span[email]", "high");
     } else if (others.length > 1) {
-      candidates = others.map((p) => ({ name: p.name, subtitle: p.email }));
+      // The address is the identity (and the subtitle a person reads).
+      candidates = others
+        .slice(0, 10)
+        .map((p) => ({ name: p.name || p.email, subtitle: p.email, email: p.email }));
     }
 
     const kind = others.length >= 1 ? "thread" : "unknown";

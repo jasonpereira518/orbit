@@ -13,6 +13,9 @@
  *   4. Browsing within the same site keeps following, with no click.
  *   5. Leaving for another site drops the grant, and the panel says so.
  *   6. Going back to a tab that was clicked earlier reads it again.
+ *   7–9. Right-click: a profile link shows that person from the link alone; a
+ *      link that isn't a profile says so; selected text opens a note. (The
+ *      menu click itself can't be driven over CDP; everything after it is.)
  *
  * The build talks to an unreachable API on purpose (see build:e2e) — none of
  * this depends on the server, and the test must never touch a real account.
@@ -91,6 +94,23 @@ try {
   await chrome.activate("T");
   r = await chrome.waitForPanel((t) => t.includes("Avery Quill"));
   check("back on the first tab, the panel names Avery", r.ok, r.text);
+
+  console.log("7. right-click a profile link: that person, from the link alone");
+  await chrome.sendIntent({ kind: "link", linkUrl: "https://www.linkedin.com/in/dana-wells/?trk=x" });
+  r = await chrome.waitForPanel((t) => t.includes("dana-wells"));
+  check("the panel shows the linked person", r.ok, r.text);
+  check("…not the person on the tab", r.ok && !r.text.includes("Avery Quill"), r.text);
+
+  console.log("8. right-click a link that isn't a profile");
+  await chrome.sendIntent({ kind: "link", linkUrl: "https://example.com/about" });
+  r = await chrome.waitForPanel((t) => t.includes("isn't a profile Orbit can look up"));
+  check("the panel says so, instead of guessing", r.ok, r.text);
+
+  console.log("9. right-click selected text: save it as a note");
+  await chrome.sendIntent({ kind: "selection", text: "Met at the Stripe offsite — hiring for infra" });
+  r = await chrome.waitForPanel((t) => t.includes("Save to Orbit as a note"));
+  check("the panel opens the note", r.ok, r.text);
+  check("…quoting what was selected", r.ok && r.text.includes("Met at the Stripe offsite"), r.text);
 } finally {
   await chrome.close();
   server.close();

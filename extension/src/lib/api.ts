@@ -1,4 +1,6 @@
 import type {
+  CompanyLookupRequest,
+  CompanyLookupResponse,
   ContactSearchResponse,
   ExtensionResponse,
   FollowUpRequest,
@@ -13,6 +15,8 @@ import type {
   ParseResponse,
   ReminderActionRequest,
   ReminderActionResponse,
+  ResolveBatchRequest,
+  ResolveBatchResponse,
   ResolveResponse,
   SaveContactRequest,
   SaveContactResponse,
@@ -112,6 +116,12 @@ export function createApi(getToken: TokenGetter) {
 
     gate: (body: GateIntentRequest, signal?: AbortSignal) =>
       post<GateIntentResponse>("/gate", body, signal),
+
+    resolveBatch: (body: ResolveBatchRequest, signal?: AbortSignal) =>
+      post<ResolveBatchResponse>("/resolve-batch", body, signal),
+
+    company: (body: CompanyLookupRequest, signal?: AbortSignal) =>
+      post<CompanyLookupResponse>("/company", body, signal),
 
     searchContacts: (q: string, signal?: AbortSignal) =>
       request<ContactSearchResponse>(

@@ -9,7 +9,7 @@ import type {
 } from "@contract";
 import { ApiError, createApi } from "@/lib/api";
 import { browser } from "@/lib/browser";
-import { shouldAccept, targetKey } from "@/lib/intents";
+import { shouldAccept, targetKey, type Intent } from "@/lib/intents";
 import { startersPolicy } from "./starters-policy";
 import { readActivePage, type PageReadReason, type PageReadResult } from "@/lib/page";
 import { useSession } from "./useSession";
@@ -76,8 +76,18 @@ const INITIAL: PanelState = {
  */
 const ME_TTL_MS = 5 * 60_000;
 
-export function usePanel() {
+/** A right-click the panel hands up to App: a link to look up, or text to note. */
+export type ContextIntent = Extract<Intent, { kind: "link" | "selection" }>;
+
+export function usePanel(
+  options: { onContextIntent?: (intent: ContextIntent) => void } = {}
+) {
   const session = useSession();
+  const onContextIntentRef = useRef(options.onContextIntent);
+  onContextIntentRef.current = options.onContextIntent;
+  // A right-click that arrived while a draft was open, held until the user
+  // decides — exactly as a tab change is held (see `follow`).
+  const heldIntentRef = useRef<ContextIntent | null>(null);
   const [state, setState] = useState<PanelState>(INITIAL);
   const abortRef = useRef<AbortController | null>(null);
   const dirtyRef = useRef(false);
@@ -344,7 +354,19 @@ export function usePanel() {
       }
       lastIntentRef.current = value.id;
       void browser().clearIntent();
-      return true;
+      return value;
+    };
+
+    const deliver = (intent: ContextIntent) => {
+      if (dirtyRef.current) {
+        heldIntentRef.current = intent;
+        setState((s) => ({
+          ...s,
+          pendingUrl: intent.kind === "link" ? "a link you right-clicked" : "text you selected",
+        }));
+        return;
+      }
+      onContextIntentRef.current?.(intent);
     };
 
     void (async () => {
@@ -352,12 +374,18 @@ export function usePanel() {
       // The click that OPENED the panel is already being served by the mount
       // read; consume it so the change event below doesn't run it again.
       const pending = await browser().readIntent();
-      if (!cancelled) accept(pending);
+      const opening = cancelled ? false : accept(pending);
+      // …but a right-click that opened the panel still has to be delivered:
+      // the mount read only covers "read the tab", not "look up this link".
+      if (opening && opening.kind !== "action") deliver(opening);
       lastTargetRef.current = targetKey(await browser().activeTab());
     })();
 
     const unsubscribe = browser().onIntent((value) => {
-      if (accept(value)) void follow(true);
+      const intent = accept(value);
+      if (!intent) return;
+      if (intent.kind === "action") void follow(true);
+      else deliver(intent);
     });
     return () => {
       cancelled = true;
@@ -386,7 +414,10 @@ export function usePanel() {
   const followPending = useCallback(() => {
     dirtyRef.current = false;
     setState((s) => ({ ...s, pendingUrl: null }));
-    void run();
+    const held = heldIntentRef.current;
+    heldIntentRef.current = null;
+    if (held) onContextIntentRef.current?.(held);
+    else void run();
   }, [run]);
 
   /** null while Clerk is still loading; Home's sign-in prompt needs the difference. */

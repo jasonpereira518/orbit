@@ -10,6 +10,7 @@
  * The rule is one line, but it is the rule the panel kept getting wrong, so it
  * lives here where it can be tested without a browser.
  */
+import type { PageContext } from "@contract";
 
 export type PageScope = {
   /** The page these decisions were taken on. */
@@ -18,10 +19,15 @@ export type PageScope = {
   forceCreate: boolean;
   /** The seal ring has been drawn for a save on this page. */
   sealed: boolean;
+  /**
+   * Someone picked from this page's list (or a right-clicked link), shown in
+   * place of the list until the user goes back — or the tab moves on.
+   */
+  picked: PageContext | null;
 };
 
 export function emptyScope(url: string | null): PageScope {
-  return { url, forceCreate: false, sealed: false };
+  return { url, forceCreate: false, sealed: false, picked: null };
 }
 
 /**

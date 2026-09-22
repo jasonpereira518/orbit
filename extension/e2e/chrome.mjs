@@ -140,11 +140,45 @@ export async function launchWithExtension(extensionDir) {
     return { ok: false, text: last };
   }
 
+  /**
+   * Do what a context-menu click does after the click: hand the panel an
+   * intent through storage.session, from the extension's own worker. CDP can't
+   * open Chrome's context menu, so this covers everything downstream of it.
+   */
+  async function sendIntent(detail) {
+    const { targetInfos } = await send("Target.getTargets");
+    const worker = targetInfos.find(
+      (t) => t.type === "service_worker" && t.url.startsWith(`chrome-extension://${extensionId}/`)
+    );
+    if (!worker) throw new Error("extension worker not running");
+    const { sessionId } = await send("Target.attachToTarget", { targetId: worker.targetId, flatten: true });
+    const result = await send(
+      "Runtime.evaluate",
+      {
+        expression: `(async () => {
+          const w = await chrome.windows.getLastFocused();
+          const [t] = await chrome.tabs.query({ active: true, windowId: w.id });
+          await chrome.storage.session.set({ "orbit:intent": {
+            id: crypto.randomUUID(), at: Date.now(), tabId: t.id, windowId: w.id,
+            ...${JSON.stringify(detail)},
+          } });
+          return true;
+        })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      },
+      sessionId
+    );
+    await send("Target.detachFromTarget", { sessionId }).catch(() => {});
+    if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description);
+    await sleep(600);
+  }
+
   async function close() {
     proc.kill();
     await sleep(300);
     rmSync(profile, { recursive: true, force: true });
   }
 
-  return { send, extensionId, openTab, activate, navigate, clickAction, panelText, waitForPanel, close };
+  return { send, extensionId, openTab, activate, navigate, clickAction, panelText, waitForPanel, sendIntent, close };
 }
