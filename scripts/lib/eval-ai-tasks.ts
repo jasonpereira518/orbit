@@ -23,6 +23,12 @@ import { admitRecruiterCandidates, rulesOutRecruiter } from "../../src/lib/decis
 import { gateRosters, routeChatQuestion } from "../../src/lib/decisions/chat-route";
 import { understandQuery } from "../../src/lib/chat-retrieval";
 import { findOrgRosters } from "../../src/lib/chat-roster";
+import { openEngines } from "../../src/lib/decisions/engine";
+import { personCard, samePersonProbabilities } from "../../src/lib/decisions/duplicates";
+import { decideMentions, whichContact } from "../../src/lib/decisions/capture";
+import { DUPLICATE_TUNING } from "../../src/lib/decisions/catalog";
+import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "../../src/lib/duplicates";
+import { resolveMentions } from "../../src/lib/mention-resolution";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
 import {
@@ -39,6 +45,9 @@ import { loadPassageFixture, seedPassageNotes } from "./eval-passage-notes";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
 import { analyzeMeetingTranscript } from "../../src/lib/meeting-digest";
 import type {
+  DuplicatesEvalFixture,
+  EvalCard,
+  MentionsEvalFixture,
   ChatRoutingEvalFixture,
   CaptureEvalFixture,
   ChatEvalFixture,
@@ -85,6 +94,8 @@ export type TaskName =
   | "recruiter-prefilter"
   | "recruiter-gate"
   | "chat-routing"
+  | "duplicates"
+  | "mentions"
   | "extension"
   | "ocr"
   | "transcribe"
@@ -98,6 +109,8 @@ export const TASK_NAMES: TaskName[] = [
   "recruiter-prefilter",
   "recruiter-gate",
   "chat-routing",
+  "duplicates",
+  "mentions",
   "extension",
   "ocr",
   "transcribe",
@@ -111,6 +124,21 @@ export const FIXTURE_DIR = process.env.ORBIT_EVAL_FIXTURE_DIR || join(process.cw
 
 function fixture<T>(file: string): T {
   return JSON.parse(readFileSync(join(FIXTURE_DIR, file), "utf8")) as T;
+}
+
+/**
+ * Private labels exported from a real account (`scripts/export-decision-labels.ts`), when the
+ * run names a folder with `--labels-dir`. Never committed: the folder lives outside the repo
+ * and holds real contacts. Same shape as the committed fixture; ids prefixed `own-`.
+ */
+function privateLabels<T>(file: string): T | null {
+  const dir = process.env.ORBIT_EVAL_LABELS_DIR;
+  if (!dir) return null;
+  try {
+    return JSON.parse(readFileSync(join(dir, file), "utf8")) as T;
+  } catch {
+    return null;
+  }
 }
 
 async function timed<T>(latencies: number[], run: () => Promise<T>): Promise<T> {
@@ -342,6 +370,147 @@ export async function runRecruiterTask({ userId, limit, log }: RunOpts): Promise
       gateWrongSkips: jev ? wrongRuleOuts : null,
     },
     ...(jev ? { calibration: { "recruiter.gate": calibrationBins(gatePairs) } } : {}),
+  };
+}
+
+/* ---------------------------------------------------------------------- duplicates --- */
+
+const subjectOf = (id: string, c: EvalCard) => ({
+  id,
+  fullName: c.fullName,
+  email: c.email ?? null,
+  linkedinUrl: null,
+  xHandle: null,
+  company: c.company ?? null,
+  title: c.title ?? null,
+});
+
+/**
+ * "Same person?" over card pairs (decisions/duplicates.ts), scored where it matters:
+ *  - wrongMerges: different people that would merge automatically — today, every pair the
+ *    rules score at or above 0.85; with Jev, those it does not veto;
+ *  - lostMerges: the same person, which the rules would merge, vetoed (a veto's cost);
+ *  - pairAccuracy: the engine's P(same) ≥ 0.5 against the label, for the review ranking.
+ * Engines: Jev with `--decisions jev`, else the person's own model with an LLM key, else the
+ * rules alone (the baseline: pairAccuracy is then null).
+ */
+export async function runDuplicatesTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const own = privateLabels<DuplicatesEvalFixture>("duplicates.json")?.pairs ?? [];
+  const pairs = [
+    ...fixture<DuplicatesEvalFixture>("ai-duplicates-eval.json").pairs,
+    ...own.map((p) => ({ ...p, id: `own-${p.id}` })),
+  ].slice(0, limit);
+  const engines = await openEngines(userId, { llm: true });
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  let wrongMergesRules = 0;
+  let wrongMerges = 0;
+  let lostMerges = 0;
+  let answered = 0;
+  let right = 0;
+  const bins: Array<{ p: number; label: boolean }> = [];
+
+  for (const pair of pairs) {
+    const index = buildDuplicateIndex([subjectOf("b", pair.b)]);
+    const tier = findDuplicateCandidatesIndexed(index, { fullName: pair.a.fullName, email: pair.a.email, company: pair.a.company, title: pair.a.title })[0];
+    const rulesMerge = Boolean(tier && tier.confidence >= DUPLICATE_MERGE_CONFIDENCE);
+    const [answer] = await timed(latenciesMs, () =>
+      samePersonProbabilities(engines, [[personCard(pair.a), personCard(pair.b)]], { engines: ["jev", "llm"], budgetMs: 20_000 })
+    );
+    const p = answer && answer.engine !== "rules" ? answer.answer.probability : null;
+    const vetoed = answer?.engine === "jev" && p !== null && p <= DUPLICATE_TUNING.jev.rejectAtOrBelow;
+    const merges = rulesMerge && !vetoed;
+    if (rulesMerge && !pair.same) wrongMergesRules += 1;
+    if (merges && !pair.same) wrongMerges += 1;
+    if (rulesMerge && pair.same && vetoed) lostMerges += 1;
+    if (p !== null) {
+      answered += 1;
+      if (p >= 0.5 === pair.same) right += 1;
+      bins.push({ p, label: pair.same });
+    }
+    const bad = (merges && !pair.same) || (rulesMerge && pair.same && vetoed) || (p !== null && p >= 0.5 !== pair.same);
+    if (bad) misses.push(pair.id);
+    log(`  ${bad ? "MISS" : "ok  "} duplicates/${pair.id} [${answer?.engine ?? "rules"}] same=${pair.same} rules=${tier ? tier.confidence.toFixed(2) : "—"}${p === null ? "" : ` P=${p.toFixed(2)}`}${vetoed ? " VETO" : ""}`);
+  }
+
+  return {
+    cases: pairs.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      wrongMergesRules,
+      wrongMerges,
+      lostMerges,
+      pairAccuracy: answered ? right / answered : null,
+    },
+    ...(bins.length ? { calibration: { "duplicates.same_person": calibrationBins(bins) } } : {}),
+  };
+}
+
+/* ------------------------------------------------------------------------ mentions --- */
+
+/**
+ * Which contact a name in a note means (decisions/capture.ts), through the production path:
+ * the rules (`resolveMentions`) and then `decideMentions` over the candidates as contacts.
+ *  - outcomeAccuracy: what would be saved (a link, or none) against the label;
+ *  - wrongLinks: links to the wrong contact, or where the label says none;
+ *  - pickAccuracy: the engine's raw pick on the AMBIGUOUS cases — what an `act` threshold
+ *    would let it link; reported so that threshold can be judged, not used today.
+ */
+export async function runMentionsTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const own = privateLabels<MentionsEvalFixture>("mentions.json")?.cases ?? [];
+  const cases = [
+    ...fixture<MentionsEvalFixture>("ai-mentions-eval.json").cases,
+    ...own.map((c) => ({ ...c, id: `own-${c.id}` })),
+  ].slice(0, limit);
+  const engines = await openEngines(userId, { llm: true });
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  let outcomeRight = 0;
+  let wrongLinks = 0;
+  let picks = 0;
+  let picksRight = 0;
+  // Jev's confidence in its pick against whether the pick was right — the bins an `act`
+  // threshold for linking ambiguous mentions would be read off.
+  const pickBins: Array<{ p: number; label: boolean }> = [];
+
+  for (const c of cases) {
+    const subjects = c.candidates.map((card, i) => subjectOf(`c${i}`, card));
+    const ruled = resolveMentions(subjects, [{ name: c.mention, context: c.sentence, nearPerson: c.nearPerson ?? null }]);
+    const decided = await timed(latenciesMs, () =>
+      decideMentions(engines, { ...ruled, subjects, corpus: c.sentence })
+    );
+    const linked = decided.resolved[0]?.contactId ?? null;
+    const outcome = linked === null ? "none" : Number(linked.slice(1));
+    if (outcome === c.expect) outcomeRight += 1;
+    else if (outcome !== "none") wrongLinks += 1;
+
+    // The engine's raw pick on the ambiguous ones, for judging an `act` threshold later.
+    let pick: number | "none" | null = null;
+    if (c.candidates.length > 1) {
+      const r = await whichContact(engines, { text: c.mention, context: c.sentence, nearPerson: c.nearPerson ?? null }, c.candidates, c.sentence);
+      if (r) {
+        pick = r.choice;
+        picks += 1;
+        if (r.choice === c.expect) picksRight += 1;
+        if (r.engine === "jev") pickBins.push({ p: r.p, label: r.choice === c.expect });
+      }
+    }
+    const wrong = outcome !== c.expect;
+    if (wrong) misses.push(c.id);
+    log(`  ${wrong ? "MISS" : "ok  "} mentions/${c.id} → ${outcome} (want ${c.expect})${pick === null ? "" : ` pick ${pick}`}`);
+  }
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      outcomeAccuracy: cases.length ? outcomeRight / cases.length : null,
+      wrongLinks,
+      pickAccuracy: picks ? picksRight / picks : null,
+    },
+    ...(pickBins.length ? { calibration: { "mentions.resolve": calibrationBins(pickBins) } } : {}),
   };
 }
 
@@ -1103,6 +1272,8 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   "recruiter-prefilter": runRecruiterPrefilterTask,
   "recruiter-gate": runRecruiterGateTask,
   "chat-routing": runChatRoutingTask,
+  duplicates: runDuplicatesTask,
+  mentions: runMentionsTask,
   extension: runExtensionTask,
   ocr: runOcrTask,
   transcribe: runTranscribeTask,

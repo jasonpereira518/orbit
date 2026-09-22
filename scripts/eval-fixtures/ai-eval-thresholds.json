@@ -24,6 +24,15 @@
     "recruiterAccuracy": { "maxDrop": 0.02 },
     "rosterAccuracy": { "maxDrop": 0 }
   },
+  "duplicates": {
+    "wrongMerges": { "maxRise": 0 },
+    "lostMerges": { "maxRise": 0 },
+    "pairAccuracy": { "maxDrop": 0.05 }
+  },
+  "mentions": {
+    "outcomeAccuracy": { "maxDrop": 0.04 },
+    "wrongLinks": { "maxRise": 0 }
+  },
   "recruiter-gate": {
     "gateWrongSkips": { "maxRise": 0 }
   },

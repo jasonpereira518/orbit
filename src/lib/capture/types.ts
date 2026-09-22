@@ -39,6 +39,11 @@ export type BulkNotePersonPreview = {
   cadence: { days: number; phrase: string; sourceExcerpt: string } | null;
   duplicates: BulkNoteDuplicate[];
   suggestedMergeId: string | null;
+  /**
+   * The decision model is confident this is a NEW person, not any of `duplicates` — so the
+   * card should default to "create" rather than to the top name match. Absent otherwise.
+   */
+  suggestedNew?: boolean;
   /** Shared group/event notes folded into this person's save payload. */
   sharedNoteTexts: string[];
   interactionDate: string | null;

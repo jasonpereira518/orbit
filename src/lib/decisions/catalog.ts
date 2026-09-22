@@ -1,4 +1,4 @@
-import { noul, score } from "@/lib/decisions/jev";
+import { choice, noul, score, type ChoiceQuestion } from "@/lib/decisions/jev";
 
 /**
  * Every question Orbit asks the decision model, and every threshold it acts on.
@@ -218,4 +218,108 @@ export const CHAT_ROUTE_TUNING = {
   /** Prior turns in the state: the last two, trimmed. */
   priorTurns: 2,
   priorTurnChars: 400,
+} as const;
+
+/* ------------------------------------------------------------------ duplicates ------- */
+
+/**
+ * "Same person?" over two contact cards. Asked only where the matcher's evidence is a NAME
+ * (same name + company or title, a fuzzy name, a bare shared name). Identifier matches — a
+ * shared email, LinkedIn or X handle — stay rule-only: they are facts, not judgements.
+ */
+export function samePersonQuestion(key: string) {
+  return noul(
+    `Are \`pairs.${key}.a\` and \`pairs.${key}.b\` the same person?`,
+    {
+      true: "The same individual: the same name or an obvious nickname or short form, and nothing that contradicts it. A job change, a new title or a missing field is normal for one person.",
+      false: "Two different people who share or resemble a name: different employers or roles held at the same time, different schools or cities, or other facts that cannot both be true of one person.",
+    },
+  );
+}
+
+export const DUPLICATE_TUNING = {
+  jev: {
+    /**
+     * At or below this, an automatic merge or fold on name evidence is VETOED: the two are
+     * kept apart and the pair goes to the review queue instead.
+     *
+     * Tuned Sep 22 2026 (`duplicates` eval, 45 pairs, jev-1.13.0, two runs): every
+     * different-people pair scored ≤ 0.59 and every same-person pair ≥ 0.81. The START value
+     * (0.15) vetoed 2 of the 13 wrong merges the rules make; 0.7 sits mid-gap — ~0.1 of
+     * margin either side for Jev's run-to-run drift — vetoes all 13 and loses no real one.
+     * A wrong veto costs one review click; a wrong merge silently collapses two people.
+     */
+    rejectAtOrBelow: 0.7,
+    /**
+     * Auto-merge of a bare shared-name pair (0.60, which today always waits for a person).
+     * DISABLED until the calibration bins show precision 1.0 on n ≥ 20 at the threshold.
+     */
+    act: null as number | null,
+  },
+  /** Pairs per call. Cards are small, so several share a state. */
+  chunkSize: 5,
+  concurrency: 3,
+  /** The sweep runs during the duplicates page render. */
+  sweepBudgetMs: 800,
+  /** A single in-request resolve (new-contact form, promoting a set-aside person). */
+  resolveBudgetMs: 700,
+  /** Background imports, sync and capture saves. */
+  backgroundBudgetMs: 4_000,
+  /** Ranking the review queue on render: Jev, or the person's own model (cached per pair). */
+  reviewBudgetMs: 2_500,
+  reviewMaxPairs: 40,
+  cacheDays: 30,
+} as const;
+
+/* ------------------------------------------------------------------ capture: who ------ */
+
+/**
+ * Which existing contact a name in a note refers to. Options are the candidate contacts,
+ * each described by name, title and company, plus "none". State: the sentence from the NOTE
+ * (never the model's paraphrase of it), and the participant it sits beside.
+ */
+export function whichContactQuestion(options: Record<string, string>): ChoiceQuestion<string> {
+  return choice<string>("Which contact does `mention` refer to, judging from `sentence`?", {
+    ...options,
+    none: "None of these: someone else with that name, or not enough to tell.",
+  });
+}
+
+/** The same shape for a note's participant: an existing contact, or a new person. */
+export function mergeTargetQuestion(options: Record<string, string>): ChoiceQuestion<string> {
+  return choice<string>("Is `person` one of these existing contacts?", {
+    ...options,
+    new: "None of them: a different person who is not in the user's contacts yet.",
+  });
+}
+
+export const MENTION_TUNING = {
+  /**
+   * START. The rules link a one-word mention to the only contact with that first name, at
+   * 0.7, blind ("Sam" → your one Sam, whoever the note meant). An engine answer below this
+   * for that contact UN-links it — the mention is offered as a new person instead. Vetoing
+   * a guess is not acting, so the person's own model may do it too.
+   */
+  vetoBelow: 0.3,
+  /**
+   * Linking a mention the rules left ambiguous, with no one to review it (mentions are saved
+   * with the note). DISABLED until the calibration bins clear the bar. Jev only.
+   */
+  act: null as number | null,
+  /** Candidates offered per mention. */
+  maxCandidates: 8,
+  /** Jev ~200ms; the person's own model gets the rest (it runs after the parse). */
+  budgetMs: 2_000,
+  jevMs: 800,
+  sentenceChars: 400,
+} as const;
+
+export const MERGE_TARGET_TUNING = {
+  /**
+   * START. The review card's DEFAULT only — the person still confirms every card. Today a
+   * bare 0.6 name match defaults to "update existing"; with Jev the default follows its pick
+   * when the pick clears this, including "a new person".
+   */
+  pickAbove: 0.6,
+  budgetMs: 1_500,
 } as const;

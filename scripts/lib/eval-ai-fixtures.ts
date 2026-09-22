@@ -170,3 +170,31 @@ export type ChatRoutingEvalFixture = {
   }>;
 };
 
+/** A contact card as the duplicate and mention fixtures write one. */
+export type EvalCard = {
+  fullName: string;
+  title?: string;
+  company?: string;
+  school?: string;
+  location?: string;
+  email?: string;
+  aiSummary?: string;
+};
+
+export type DuplicatesEvalFixture = {
+  pairs: Array<{ id: string; a: EvalCard; b: EvalCard; same: boolean; why?: string }>;
+};
+
+export type MentionsEvalFixture = {
+  cases: Array<{
+    id: string;
+    sentence: string;
+    mention: string;
+    nearPerson?: string;
+    candidates: EvalCard[];
+    /** The candidate index the mention means, or "none". */
+    expect: number | "none";
+    why?: string;
+  }>;
+};
+

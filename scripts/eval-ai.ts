@@ -49,7 +49,7 @@ import { parse as parseEnv } from "dotenv";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -64,7 +64,13 @@ import { formatMetric, gate, median, type GateRules, type TaskMetrics } from "./
 
 const USER = "eval-ai-user";
 /** Tasks that never call a chat model. */
-const LLM_FREE_TASKS: ReadonlySet<TaskName> = new Set(["recruiter-prefilter", "recruiter-gate", "chat-routing"]);
+const LLM_FREE_TASKS: ReadonlySet<TaskName> = new Set([
+  "recruiter-prefilter",
+  "recruiter-gate",
+  "chat-routing",
+  "duplicates",
+  "mentions",
+]);
 
 if (process.env.DATABASE_URL) {
   throw new Error("eval-ai runs on a throwaway local PGlite only — unset DATABASE_URL (and SMOKE_ALLOW_REMOTE).");
@@ -87,6 +93,8 @@ type Args = {
   config?: string;
   /** "jev": give the synthetic user a TypeSafe key, so decision-model paths run. */
   decisions: "jev" | null;
+  /** A folder of PRIVATE labels exported from a real account (never committed). */
+  labelsDir?: string;
 };
 
 type CandidateConfig = {
@@ -126,6 +134,7 @@ function parseArgs(argv: string[]): Args {
     keysFrom: get("--keys-from"),
     config: get("--config"),
     decisions,
+    labelsDir: get("--labels-dir"),
   };
 }
 
@@ -257,7 +266,7 @@ function fixtureDigest(): string {
     // The research task's cases, and the notes both it and eval-retrieval seed.
     "ai-research-eval.json", "passage-search-eval.json",
     // The decision-model tasks' own fixtures.
-    "ai-chat-routing-eval.json",
+    "ai-chat-routing-eval.json", "ai-duplicates-eval.json", "ai-mentions-eval.json",
   ]) {
     try {
       hash.update(readFileSync(join(FIXTURE_DIR, file)));
@@ -311,6 +320,8 @@ export type EvalReport = {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // Read by the tasks (`privateLabels`); a run without it uses the committed fixtures only.
+  if (args.labelsDir) process.env.ORBIT_EVAL_LABELS_DIR = args.labelsDir.replace(/^~(?=\/)/, homedir());
   const candidate: CandidateConfig = args.config
     ? (JSON.parse(readFileSync(args.config, "utf8")) as CandidateConfig)
     : {};

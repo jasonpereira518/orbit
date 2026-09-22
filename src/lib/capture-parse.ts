@@ -42,6 +42,8 @@ import {
 } from "@/lib/linkedin-paste";
 import { isSelf } from "@/lib/meeting-digest";
 import { getMeetingTranscript, loadMeetingSelf } from "@/lib/meeting-sessions";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
+import { decideMentions, decideMergeTargets } from "@/lib/decisions/capture";
 import { resolveMentionsWithPicks, type MentionCandidate } from "@/lib/mention-resolution";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type { PreviewMention } from "@/lib/note-batches";
@@ -81,6 +83,11 @@ export type CaptureParseOptions = {
   mentionPicks?: readonly MentionPick[];
   /** Injectable clock, for the smoke suite. */
   now?: Date;
+  /**
+   * The account's decision engines — who a mention means, and a card's default save target
+   * (decisions/capture.ts). Opened here when absent; pass `NO_ENGINES` for the rules alone.
+   */
+  engines?: Engines;
   /**
    * Called after each model call of the people parse. The capture runner heartbeats its
    * claim here so a long multi-call parse is never mistaken for a dead one and run twice.
@@ -407,12 +414,38 @@ export async function runCaptureParse(
     // non-null assertion above would otherwise hand `resolveMentions` a null name.
     ...mentionedOnly.map((p) => ({ name: p.name, context: p.context, company: p.company, nearPerson: null })),
   ];
-  const { resolved, unresolved } = resolveMentionsWithPicks(
-    existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title })),
+  const engines = opts.engines ?? (await openEngines(userId, { llm: true }));
+
+  // A card's default target, where the rules only have a sub-0.85 name match to offer. Done
+  // before mentions, which exclude whoever a card already saves into.
+  const targets = await decideMergeTargets(
+    engines,
+    items.map((item) => ({
+      person: { name: item.parsed.name, company: item.parsed.company ?? null, role: item.parsed.role ?? null, excerpt: item.notes },
+      duplicates: item.duplicates,
+    }))
+  ).catch(() => items.map(() => null));
+  items.forEach((item, i) => {
+    const target = targets[i];
+    if (!target || item.suggestedMergeId) return;
+    if (target === "new") item.suggestedNew = true;
+    else item.suggestedMergeId = target;
+  });
+
+  const subjects = existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title }));
+  const ruled = resolveMentionsWithPicks(
+    subjects,
     candidates,
     opts.mentionPicks ?? [],
     { excludeContactIds: items.map((i) => i.suggestedMergeId).filter((id): id is string => Boolean(id)) }
   );
+  // The rules' blind first-name guesses and unsettled names, read against their sentence.
+  const excluded = new Set(items.map((i) => i.suggestedMergeId).filter((id): id is string => Boolean(id)));
+  const { resolved, unresolved } = await decideMentions(engines, {
+    ...ruled,
+    subjects: subjects.filter((s) => !excluded.has(s.id)),
+    corpus,
+  }).catch(() => ruled);
   const mentions: PreviewMention[] = [
     ...resolved.map((m) => ({ text: m.text, context: m.context, nearPerson: m.nearPerson, contactId: m.contactId, confidence: m.confidence, matchedBy: m.matchedBy })),
     ...unresolved.map((m) => ({ text: m.text, context: m.context, nearPerson: m.nearPerson, contactId: null, confidence: 0, matchedBy: null })),
