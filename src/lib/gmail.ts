@@ -213,11 +213,29 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
   return res.json();
 }
 
+type GmailConnectionRow = typeof gmailConnections.$inferSelect;
+
+/**
+ * Stores a Gmail OAuth grant and decides two things the caller cannot: whether this
+ * connect just armed calendar sync, and whether it just replaced a different Google
+ * account.
+ *
+ * Arming: `nextSyncAt` is only set when the union of old and new scopes covers calendar.
+ * A contacts-only (or mail-only) grant is left unscheduled — arming it unconditionally
+ * used to get the row claimed by the scheduler, disarmed for a missing scope, and the UI
+ * then told someone who never asked for calendar that their sync was paused.
+ *
+ * Inheriting: the row is keyed by `userId` alone, so reconnecting with a *different*
+ * Google account would otherwise keep the previous account's scope union and calendar
+ * cursor. Comparing the normalized previous and incoming email catches that switch here —
+ * the only place it can be noticed — and drops the old scopes and sync cursor instead of
+ * carrying them into the new account.
+ */
 export async function upsertGmailConnection(
   userId: string,
   tokens: TokenResponse,
   emailAddress: string
-) {
+): Promise<{ row: GmailConnectionRow; switchedFrom: string | null }> {
   const db = await getDb();
   const expiresAt = tokens.expires_in
     ? new Date(Date.now() + tokens.expires_in * 1000)
@@ -232,29 +250,40 @@ export async function upsertGmailConnection(
     ? encrypt(tokens.refresh_token)
     : existing?.refreshTokenEncrypted || null;
 
+  const normalized = emailAddress?.trim().toLowerCase() ?? null;
+  const previous = existing?.emailAddress?.trim().toLowerCase() ?? null;
+  // A different Google account is a different mailbox and a different calendar: its grant
+  // cannot inherit the last account's scopes, and its cursor would resume a sync that never
+  // happened here. The row is keyed by Orbit's user, so this is the only place to notice.
+  const switchedFrom = previous && normalized && previous !== normalized ? existing!.emailAddress : null;
+  const scopes = switchedFrom ? unionScopes(null, tokens.scope) : unionScopes(existing?.scopes, tokens.scope);
+  // Only a grant that covers calendar belongs in the sync queue. Arming a contacts-only grant
+  // made the scheduler claim it once, disarm it for a missing scope, and leave the UI saying
+  // "Calendar sync paused" to someone who never asked for calendar.
+  const armed = hasCalendarScope(scopes);
+
   if (existing) {
-    const [updated] = await db
+    const [row] = await db
       .update(gmailConnections)
       .set({
         emailAddress,
         accessTokenEncrypted: accessEnc,
         refreshTokenEncrypted: refreshEnc,
         tokenExpiresAt: expiresAt,
-        scopes: unionScopes(existing.scopes, tokens.scope),
+        scopes,
         status: "active",
-        // Re-arm: this is the only path from needs_reauth back to active, so it is also
-        // the only place a disarmed connection can rejoin the sync schedule.
-        nextSyncAt: new Date(),
+        nextSyncAt: armed ? new Date() : switchedFrom ? null : (existing?.nextSyncAt ?? null),
         syncFailures: 0,
         syncError: null,
+        ...(switchedFrom ? { syncCursor: null, syncStatus: null, syncStartedAt: null, lastSyncedAt: null } : {}),
         updatedAt: new Date(),
       })
       .where(eq(gmailConnections.id, existing.id))
       .returning();
-    return updated;
+    return { row, switchedFrom };
   }
 
-  const [created] = await db
+  const [row] = await db
     .insert(gmailConnections)
     .values({
       userId,
@@ -262,12 +291,12 @@ export async function upsertGmailConnection(
       accessTokenEncrypted: accessEnc,
       refreshTokenEncrypted: refreshEnc,
       tokenExpiresAt: expiresAt,
-      scopes: unionScopes(null, tokens.scope),
+      scopes,
       status: "active",
-      nextSyncAt: new Date(),
+      nextSyncAt: armed ? new Date() : null,
     })
     .returning();
-  return created;
+  return { row, switchedFrom };
 }
 
 /**

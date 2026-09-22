@@ -14,7 +14,12 @@ process.env.GOOGLE_REDIRECT_URI ||= "http://localhost:3001/api/gmail/callback";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { gmailConnections, userSettings } from "../src/db/schema";
-import { buildGmailAuthUrl, hasGmailReadScope, upsertGmailConnection } from "../src/lib/gmail";
+import {
+  buildGmailAuthUrl,
+  hasCalendarScope,
+  hasGmailReadScope,
+  upsertGmailConnection,
+} from "../src/lib/gmail";
 import { GOOGLE_SCOPES, hasScope } from "../src/lib/google-scopes";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { findGmailGrant } from "../src/lib/events/connections";
@@ -35,6 +40,11 @@ async function cleanup() {
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
 }
 
+async function readRow() {
+  const db = await getDb();
+  return db.query.gmailConnections.findFirst({ where: eq(gmailConnections.userId, USER) });
+}
+
 const scopesOf = (url: string) => new URL(url).searchParams.get("scope")?.split(" ") ?? [];
 
 run(async () => {
@@ -51,19 +61,51 @@ run(async () => {
   console.log("Stored grants");
   await cleanup();
   await ensureUserSettings(USER);
-  const created = await upsertGmailConnection(USER, { access_token: "at1", refresh_token: "rt1", expires_in: 3600 }, "scope@example.test");
+  const { row: created } = await upsertGmailConnection(USER, { access_token: "at1", refresh_token: "rt1", expires_in: 3600 }, "scope@example.test");
   check("a token response with no scope stores an empty grant", created?.scopes === "", JSON.stringify(created?.scopes));
 
   await upsertGmailConnection(USER, { access_token: "at2", scope: `openid ${GOOGLE_SCOPES.email} ${GOOGLE_SCOPES.contacts}`, expires_in: 3600 }, "scope@example.test");
-  const widened = await upsertGmailConnection(USER, { access_token: "at3", scope: `openid ${GOOGLE_SCOPES.gmailRead}`, expires_in: 3600 }, "scope@example.test");
+  const { row: widened } = await upsertGmailConnection(USER, { access_token: "at3", scope: `openid ${GOOGLE_SCOPES.gmailRead}`, expires_in: 3600 }, "scope@example.test");
   check("a later grant adds to the stored scopes", hasScope(widened?.scopes, GOOGLE_SCOPES.contacts) && hasGmailReadScope(widened?.scopes), String(widened?.scopes));
 
-  const refreshed = await upsertGmailConnection(USER, { access_token: "at4", expires_in: 3600 }, "scope@example.test");
+  const { row: refreshed } = await upsertGmailConnection(USER, { access_token: "at4", expires_in: 3600 }, "scope@example.test");
   check("a refresh that omits scope keeps what was granted", refreshed?.scopes === widened?.scopes);
 
   console.log("Event connections read the grant");
   const grant = await findGmailGrant(USER);
   check("findGmailGrant returns the stored scopes", grant !== null && hasGmailReadScope(grant.scopes), JSON.stringify(grant));
+
+  console.log("\narming calendar sync");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertGmailConnection(USER, { access_token: "at5", refresh_token: "rt5", scope: GOOGLE_SCOPES.contacts, expires_in: 3600 }, "jo@gmail.com");
+  check("a contacts-only connect is not queued for calendar sync", (await readRow())?.nextSyncAt === null);
+  await upsertGmailConnection(USER, { access_token: "at6", scope: `${GOOGLE_SCOPES.contacts} ${GOOGLE_SCOPES.calendar}`, expires_in: 3600 }, "jo@gmail.com");
+  check("granting calendar queues it", (await readRow())?.nextSyncAt !== null);
+  await upsertGmailConnection(USER, { access_token: "at7", scope: GOOGLE_SCOPES.gmailRead, expires_in: 3600 }, "jo@gmail.com");
+  check("a later mail-only connect leaves calendar queued", (await readRow())?.nextSyncAt !== null);
+
+  console.log("\nconnecting a different account");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertGmailConnection(USER, { access_token: "at8", refresh_token: "rt8", scope: `${GOOGLE_SCOPES.contacts} ${GOOGLE_SCOPES.calendar}`, expires_in: 3600 }, "jo@gmail.com");
+  {
+    const db = await getDb();
+    await db
+      .update(gmailConnections)
+      .set({ syncCursor: { calendar: { syncToken: "old" } } })
+      .where(eq(gmailConnections.userId, USER));
+  }
+  const switched = await upsertGmailConnection(USER, { access_token: "at9", scope: GOOGLE_SCOPES.contacts, expires_in: 3600 }, "someone-else@gmail.com");
+  check("the switch is reported", switched.switchedFrom === "jo@gmail.com");
+  const afterSwitch = await readRow();
+  check("the new account's email is stored", afterSwitch?.emailAddress === "someone-else@gmail.com");
+  check("the old account's scopes are dropped", !hasCalendarScope(afterSwitch?.scopes));
+  check("the old account's cursor is dropped", afterSwitch?.syncCursor === null);
+  const sameAccount = await upsertGmailConnection(USER, { access_token: "at10", scope: GOOGLE_SCOPES.calendar, expires_in: 3600 }, "someone-else@gmail.com");
+  check("the same account keeps its scopes", sameAccount.switchedFrom === null);
+  const sameAccountDifferentCasing = await upsertGmailConnection(USER, { access_token: "at11", scope: GOOGLE_SCOPES.calendar, expires_in: 3600 }, " Someone-Else@Gmail.com ");
+  check("case and spacing don't count as a switch", sameAccountDifferentCasing.switchedFrom === null);
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);

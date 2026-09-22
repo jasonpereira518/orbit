@@ -75,7 +75,8 @@ export async function GET(request: Request) {
 
     const tokens = await exchangeCodeForTokens(code);
     const email = await fetchMicrosoftProfileEmail(tokens.access_token);
-    const connection = await upsertOutlookConnection(sessionUserId, tokens, email);
+    // switchedFrom is unused here — Task 3 wires it into the redirect/copy logic.
+    const { row: connection, switchedFrom: _switchedFrom } = await upsertOutlookConnection(sessionUserId, tokens, email);
 
     // Consent can finish without the scope this entry point asked for (a work or school
     // tenant's policy, or an admin-consent requirement). The connection is kept — whatever

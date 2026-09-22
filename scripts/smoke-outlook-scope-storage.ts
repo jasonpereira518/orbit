@@ -71,17 +71,17 @@ run(async () => {
   console.log("Stored grants");
   await cleanup();
   await ensureUserSettings(USER);
-  const created = await upsertOutlookConnection(USER, { access_token: "at1", refresh_token: "rt1", expires_in: 3600 }, "scope@example.test");
+  const { row: created } = await upsertOutlookConnection(USER, { access_token: "at1", refresh_token: "rt1", expires_in: 3600 }, "scope@example.test");
   check("a token response with no scope stores an empty grant", created?.scopes === "", JSON.stringify(created?.scopes));
   check("…which is not calendar, contacts or mail", !hasCalendarScope(created?.scopes) && !hasContactsScope(created?.scopes) && !hasMailScope(created?.scopes));
 
   await upsertOutlookConnection(USER, { access_token: "at2", scope: "openid profile email User.Read Contacts.Read", expires_in: 3600 }, "scope@example.test");
-  const widened = await upsertOutlookConnection(USER, { access_token: "at3", scope: "https://graph.microsoft.com/Calendars.Read openid", expires_in: 3600 }, "scope@example.test");
+  const { row: widened } = await upsertOutlookConnection(USER, { access_token: "at3", scope: "https://graph.microsoft.com/Calendars.Read openid", expires_in: 3600 }, "scope@example.test");
   check("contacts then calendar leaves both granted", hasContactsScope(widened?.scopes) && hasCalendarScope(widened?.scopes), String(widened?.scopes));
   check("…and not mail", !hasMailScope(widened?.scopes));
   check("openid is stored once", (widened?.scopes ?? "").split(" ").filter((s) => s === "openid").length === 1, String(widened?.scopes));
 
-  const refreshedUpsert = await upsertOutlookConnection(USER, { access_token: "at4", expires_in: 3600 }, "scope@example.test");
+  const { row: refreshedUpsert } = await upsertOutlookConnection(USER, { access_token: "at4", expires_in: 3600 }, "scope@example.test");
   check("an upsert that omits scope keeps what was granted", refreshedUpsert?.scopes === widened?.scopes);
 
   console.log("A refresh never touches scopes");
@@ -111,12 +111,12 @@ run(async () => {
   for (const form of ["Calendars.Read", "https://graph.microsoft.com/Calendars.Read", "calendars.read", "openid CALENDARS.READ"]) {
     await cleanup();
     await ensureUserSettings(USER);
-    const row = await upsertOutlookConnection(USER, { access_token: "a", refresh_token: "r", scope: form, expires_in: 3600 }, "scope@example.test");
+    const { row } = await upsertOutlookConnection(USER, { access_token: "a", refresh_token: "r", scope: form, expires_in: 3600 }, "scope@example.test");
     check(`"${form}" is stored and read as calendar access`, hasCalendarScope(row?.scopes) && grantCovers("calendar", row?.scopes), String(row?.scopes));
   }
   await cleanup();
   await ensureUserSettings(USER);
-  const lookalike = await upsertOutlookConnection(USER, { access_token: "a", refresh_token: "r", scope: "Calendars.ReadWrite", expires_in: 3600 }, "scope@example.test");
+  const { row: lookalike } = await upsertOutlookConnection(USER, { access_token: "a", refresh_token: "r", scope: "Calendars.ReadWrite", expires_in: 3600 }, "scope@example.test");
   check("a look-alike grant is not calendar access", !hasCalendarScope(lookalike?.scopes));
 
   console.log("Callback copy");
@@ -125,6 +125,38 @@ run(async () => {
   check("…worded for Microsoft, not Google", missing.message === "Microsoft didn’t grant mail access — reconnect and allow it", missing.message);
   check("…and for calendar", describeOAuthReason("missing_scope", "Outlook", "calendar").message === "Microsoft didn’t grant calendar access — reconnect and allow it");
   check("Google copy is unchanged for the same purpose name", describeOAuthReason("missing_scope", "Google", "calendar").message === "Google didn’t grant calendar access — reconnect and allow it");
+
+  console.log("\narming calendar sync");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertOutlookConnection(USER, { access_token: "at5", refresh_token: "rt5", scope: MICROSOFT_SCOPES.contacts, expires_in: 3600 }, "jo@outlook.test");
+  check("a contacts-only connect is not queued for calendar sync", (await stored())?.nextSyncAt === null);
+  await upsertOutlookConnection(USER, { access_token: "at6", scope: `${MICROSOFT_SCOPES.contacts} ${MICROSOFT_SCOPES.calendar}`, expires_in: 3600 }, "jo@outlook.test");
+  check("granting calendar queues it", (await stored())?.nextSyncAt !== null);
+  await upsertOutlookConnection(USER, { access_token: "at7", scope: MICROSOFT_SCOPES.mail, expires_in: 3600 }, "jo@outlook.test");
+  check("a later mail-only connect leaves calendar queued", (await stored())?.nextSyncAt !== null);
+
+  console.log("\nconnecting a different account");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertOutlookConnection(USER, { access_token: "at8", refresh_token: "rt8", scope: `${MICROSOFT_SCOPES.contacts} ${MICROSOFT_SCOPES.calendar}`, expires_in: 3600 }, "jo@outlook.test");
+  {
+    const db = await getDb();
+    await db
+      .update(outlookConnections)
+      .set({ syncCursor: { calendar: { syncToken: "old" } } })
+      .where(eq(outlookConnections.userId, USER));
+  }
+  const switched = await upsertOutlookConnection(USER, { access_token: "at9", scope: MICROSOFT_SCOPES.contacts, expires_in: 3600 }, "someone-else@outlook.test");
+  check("the switch is reported", switched.switchedFrom === "jo@outlook.test");
+  const afterSwitch = await stored();
+  check("the new account's email is stored", afterSwitch?.emailAddress === "someone-else@outlook.test");
+  check("the old account's scopes are dropped", !hasCalendarScope(afterSwitch?.scopes));
+  check("the old account's cursor is dropped", afterSwitch?.syncCursor === null);
+  const sameAccount = await upsertOutlookConnection(USER, { access_token: "at10", scope: MICROSOFT_SCOPES.calendar, expires_in: 3600 }, "someone-else@outlook.test");
+  check("the same account keeps its scopes", sameAccount.switchedFrom === null);
+  const sameAccountDifferentCasing = await upsertOutlookConnection(USER, { access_token: "at11", scope: MICROSOFT_SCOPES.calendar, expires_in: 3600 }, " Someone-Else@Outlook.test ");
+  check("case and spacing don't count as a switch", sameAccountDifferentCasing.switchedFrom === null);
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);

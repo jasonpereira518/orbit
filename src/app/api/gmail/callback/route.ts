@@ -78,7 +78,8 @@ export async function GET(request: Request) {
 
     const tokens = await exchangeCodeForTokens(code);
     const email = await fetchGoogleProfileEmail(tokens.access_token);
-    const connection = await upsertGmailConnection(sessionUserId, tokens, email);
+    // switchedFrom is unused here — Task 3 wires it into the redirect/copy logic.
+    const { row: connection, switchedFrom: _switchedFrom } = await upsertGmailConnection(sessionUserId, tokens, email);
 
     // Google's granular consent lets a person untick a scope and still press Allow. The
     // connection is kept (whatever WAS granted still works), but the feature that asked
