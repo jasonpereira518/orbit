@@ -12,7 +12,7 @@
  * API. The background worker and the injected extractor do not use it — they
  * only ever run inside the real browser.
  */
-import { INTENT_KEY } from "./intents";
+import { INTENT_KEY, SESSION_POKE_KEY } from "./intents";
 
 export type ActiveTab = { id?: number; url?: string };
 
@@ -59,6 +59,8 @@ export type Browser = {
   clearIntent(): Promise<void>;
   /** Hear toolbar clicks as the worker records them. Returns unsubscribe. */
   onIntent(listener: (value: unknown) => void): () => void;
+  /** The web app said the user signed in (see lib/handshake). Returns unsubscribe. */
+  onSessionPoke(listener: () => void): () => void;
   /**
    * The keyboard shortcut that does what clicking the icon does, as the user
    * actually has it set — they can change it in chrome://extensions/shortcuts.
@@ -176,6 +178,17 @@ export const chromeBrowser: Browser = {
       if (area !== "session" || !(INTENT_KEY in changes)) return;
       const next = changes[INTENT_KEY].newValue;
       if (next !== undefined) listener(next);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  },
+
+  onSessionPoke(listener) {
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: string
+    ) => {
+      if (area === "session" && SESSION_POKE_KEY in changes) listener();
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => chrome.storage.onChanged.removeListener(onChanged);

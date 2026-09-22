@@ -174,11 +174,39 @@ export async function launchWithExtension(extensionDir) {
     await sleep(600);
   }
 
+  /** Evaluate in a page tab opened with openTab, awaiting a promise. */
+  async function evaluateIn(name, expression) {
+    const result = await send(
+      "Runtime.evaluate",
+      { expression, awaitPromise: true, returnByValue: true },
+      tabs.get(name).session
+    );
+    if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description);
+    return result.result.value;
+  }
+
+  /** Evaluate in the extension's service worker. */
+  async function evaluateInWorker(expression) {
+    const { targetInfos } = await send("Target.getTargets");
+    const worker = targetInfos.find(
+      (t) => t.type === "service_worker" && t.url.startsWith(`chrome-extension://${extensionId}/`)
+    );
+    if (!worker) throw new Error("extension worker not running");
+    const { sessionId } = await send("Target.attachToTarget", { targetId: worker.targetId, flatten: true });
+    const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    await send("Target.detachFromTarget", { sessionId }).catch(() => {});
+    if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description);
+    return result.result.value;
+  }
+
   async function close() {
     proc.kill();
     await sleep(300);
     rmSync(profile, { recursive: true, force: true });
   }
 
-  return { send, extensionId, openTab, activate, navigate, clickAction, panelText, waitForPanel, sendIntent, close };
+  return {
+    send, extensionId, openTab, activate, navigate, clickAction, panelText, waitForPanel,
+    sendIntent, evaluateIn, evaluateInWorker, close,
+  };
 }

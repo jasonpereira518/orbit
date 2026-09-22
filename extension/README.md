@@ -178,6 +178,23 @@ top: turned on from Settings, they let the panel read each page on that site
 as you open it, with no click. Never required, always revocable from the same
 list, and declaring them costs no install-time warning.
 
+### Talking to the web app
+
+The manifest's `externally_connectable` lets the Orbit web app — its origin
+only — send two messages, and the worker checks the origin again
+(`src/lib/handshake.ts`):
+
+- `orbit/hello` → `{ ok, version, sites }`: installed, which build, and which
+  sites it follows without a click. Settings uses it to say "Installed"; the
+  promo and the setup card use it to stop pitching what you already have.
+- `orbit/session-changed` → `{ ok }`: the web app has a signed-in session, so
+  a panel showing "Sign in" reloads and picks it up.
+
+Neither answer says anything about the user, neither message carries anything
+the extension acts on, and any other message or origin gets no reply at all.
+`npm run e2e:handshake` checks all of it in real Chrome. On install, the worker
+opens `<app>/extension/welcome`: pin it, sign in once, and what it reads.
+
 ### What it deliberately does not do
 
 No navigation, no programmatic clicks, no expanding "see more", no auto-scroll,

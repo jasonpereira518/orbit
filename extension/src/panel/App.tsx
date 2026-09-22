@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CircleAlert, WifiOff } from "lucide-react";
 import type { MatchCandidate, PageContext } from "@contract";
 import { browser } from "@/lib/browser";
@@ -88,6 +88,15 @@ export function App() {
     browser().openTab(`${APP_URL}/sign-in`);
     setSignInClicked(true);
   };
+
+  // The web app says the user just signed in (lib/handshake). A signed-out
+  // panel starts over, which is what brings Clerk's synced session in — the
+  // same thing "I've signed in" asks the user to do by hand. Only while signed
+  // out: a signed-out panel holds no draft to lose.
+  useEffect(() => {
+    if (signedIn !== false) return;
+    return browser().onSessionPoke(() => window.location.reload());
+  }, [signedIn]);
 
   const contact = state.resolved?.contact ?? null;
   // Offline with prior data for *this same page* (usePanel only keeps

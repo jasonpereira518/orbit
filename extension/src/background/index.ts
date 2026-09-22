@@ -6,6 +6,7 @@
  * too; the panel is an extension page, so it shares the same trust boundary.
  * There is no alarm, no polling, and no background fetching of anything.
  */
+import { handleExternalMessage, SESSION_POKE_KEY } from "@/lib/handshake";
 import { INTENT_KEY, SELECTION_MAX_CHARS, type Intent } from "@/lib/intents";
 
 const APP_URL = import.meta.env.VITE_ORBIT_APP_URL ?? "http://localhost:3000";
@@ -104,8 +105,30 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   }
 });
 
+/**
+ * The web app asking "are you installed?" and "the user just signed in" — see
+ * lib/handshake. Only the app's origin can reach this (externally_connectable
+ * in the manifest), and the handler checks the origin again.
+ */
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  void handleExternalMessage(message, sender.origin, {
+    appOrigin: new URL(APP_URL).origin,
+    version: () => chrome.runtime.getManifest().version,
+    grantedOrigins: async () => (await chrome.permissions.getAll()).origins ?? [],
+    poke: () => chrome.storage.session.set({ [SESSION_POKE_KEY]: Date.now() }),
+  }).then((reply) => {
+    // No reply to a stranger: to the page that reads as no extension at all.
+    if (reply) sendResponse(reply);
+  });
+  return true; // the reply is async
+});
+
+/**
+ * First install: a page that says how to pin it, the shortcut, and what it
+ * does and doesn't read — static and signed-out, so it works before sign-in.
+ */
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === "install") {
-    chrome.tabs.create({ url: `${APP_URL}/dashboard` });
+    chrome.tabs.create({ url: `${APP_URL}/extension/welcome` });
   }
 });
