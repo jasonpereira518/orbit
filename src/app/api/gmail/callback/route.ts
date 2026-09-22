@@ -7,7 +7,7 @@ import {
   upsertGmailConnection,
 } from "@/lib/gmail";
 import { isDemoMode } from "@/lib/auth";
-import { grantCovers } from "@/lib/google-scopes";
+import { missingGooglePurposes, serializeGooglePurposes } from "@/lib/google-scopes";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 
 /** Keeps `error_events.kind` low-cardinality so the admin console can group on it. */
@@ -60,9 +60,8 @@ export async function GET(request: Request) {
     if (!code) throw new Error("Missing authorization code");
 
     const { userId: stateUserId, returnTo, purposes } = await consumeGmailOAuthState(state);
-    const [purpose] = purposes;
     if (returnTo) redirectBase = new URL(returnTo, url.origin);
-    if (purpose) redirectBase.searchParams.set("purpose", purpose);
+    if (purposes.length > 0) redirectBase.searchParams.set("purpose", purposes[0]);
 
     let sessionUserId: string | null = null;
     if (isDemoMode()) {
@@ -78,18 +77,19 @@ export async function GET(request: Request) {
 
     const tokens = await exchangeCodeForTokens(code);
     const email = await fetchGoogleProfileEmail(tokens.access_token);
-    // switchedFrom is unused here — Task 3 wires it into the redirect/copy logic.
-    const { row: connection, switchedFrom: _switchedFrom } = await upsertGmailConnection(sessionUserId, tokens, email);
+    const { row: connection, switchedFrom } = await upsertGmailConnection(sessionUserId, tokens, email);
 
-    // Google's granular consent lets a person untick a scope and still press Allow. The
-    // connection is kept (whatever WAS granted still works), but the feature that asked
-    // cannot run, so say so instead of "connected".
-    if (purpose && !grantCovers(purpose, connection?.scopes)) {
+    // Google's granular consent lets people untick a box. Only a grant that covers none of
+    // what was asked is a failed connect; a partial one is connected, and the feature whose
+    // scope is missing offers its own Allow button on the account page.
+    const missing = missingGooglePurposes(purposes, connection?.scopes);
+    if (purposes.length > 0 && missing.length === purposes.length) {
       await recordErrorEvent({
         source: ERROR_SOURCES.oauthGmailCallback,
         kind: "missing_scope",
-        message: purpose,
+        message: serializeGooglePurposes(missing),
       });
+      redirectBase.searchParams.set("purpose", missing[0]);
       redirectBase.searchParams.set("gmail", "error");
       redirectBase.searchParams.set("google", "error");
       redirectBase.searchParams.set("reason", "missing_scope");
@@ -98,6 +98,7 @@ export async function GET(request: Request) {
 
     redirectBase.searchParams.set("gmail", "connected");
     redirectBase.searchParams.set("google", "connected");
+    if (switchedFrom) redirectBase.searchParams.set("switched", "1");
     return NextResponse.redirect(redirectBase);
   } catch (err) {
     await recordErrorEvent({
