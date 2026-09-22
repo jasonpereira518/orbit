@@ -30,12 +30,14 @@ type Settings = Awaited<ReturnType<typeof getSettings>>;
  * The Integrations group's one card: each account at a glance, and the way into the dialog
  * where it is set up.
  *
- * Opened three ways besides a click, all of which have to land on the right page:
+ * Opened by Manage or a row, or by either of two links, each of which has to land on the
+ * right page:
  *   - `?integration=<page>` — the link every other part of the app uses (`integrationHref`),
  *     and the `returnTo` a Google or Microsoft consent screen sends the user back to. Old ids
  *     (`gmail`, `outlook`, `calendar`) still resolve, `gmail` to the Google page's inbox;
- *   - `#settings-ai` and the other anchors these pages had when they were cards on the page;
- *   - an import job running when Settings loads, which opens on its importer's page.
+ *   - `#settings-ai` and the other anchors these pages had when they were cards on the page.
+ * Manage opens on the Overview, or on an importer's page while its import job is running —
+ * a running job never opens the dialog by itself.
  */
 export function IntegrationsSettings({
   tabs,
@@ -227,6 +229,9 @@ export function IntegrationsSettings({
         }}
         view={view}
         onViewChange={(next) => {
+          // Back on the Overview after a page: show what was just turned on or connected
+          // there, not what was true when the dialog opened.
+          if (next === OVERVIEW && view !== OVERVIEW) refreshStatuses();
           setView(next);
           setFocus(null);
         }}
