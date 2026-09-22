@@ -16,7 +16,10 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "../../src/db";
 import { chatMessages, chatThreads, contactTags, contacts, interactions, memoryChunks, tags } from "../../src/db/schema";
 import { runCaptureParse } from "../../src/lib/capture-parse";
-import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR } from "../../src/lib/recruiter-scan";
+import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT } from "../../src/lib/recruiter-scan";
+import { looksLikeRecruiter } from "../../src/lib/recruiter-detect";
+import { openDecider, type Decider } from "../../src/lib/decisions/jev";
+import { admitRecruiterCandidates, rulesOutRecruiter } from "../../src/lib/decisions/recruiter";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
 import {
@@ -53,6 +56,8 @@ import {
   sameName,
   tally,
   wordErrorRate,
+  calibrationBins,
+  type CalibrationBin,
   type TaskMetrics,
 } from "./eval-ai-score";
 
@@ -62,11 +67,38 @@ export type TaskResult = {
   /** Case ids that failed outright (threw) or missed something the gate cares about. */
   misses: string[];
   latenciesMs: number[];
+  /**
+   * With `--decisions jev`: the decision model's probabilities against the labels, per
+   * decision operation — the reliability table its thresholds (decisions/catalog.ts) are
+   * tuned from. Reported, never gated.
+   */
+  calibration?: Record<string, CalibrationBin[]>;
 };
 
-export type TaskName = "capture" | "recruiter" | "extension" | "ocr" | "transcribe" | "chat" | "research" | "digest";
+export type TaskName =
+  | "capture"
+  | "recruiter"
+  | "recruiter-prefilter"
+  | "recruiter-gate"
+  | "extension"
+  | "ocr"
+  | "transcribe"
+  | "chat"
+  | "research"
+  | "digest";
 
-export const TASK_NAMES: TaskName[] = ["capture", "recruiter", "extension", "ocr", "transcribe", "chat", "research", "digest"];
+export const TASK_NAMES: TaskName[] = [
+  "capture",
+  "recruiter",
+  "recruiter-prefilter",
+  "recruiter-gate",
+  "extension",
+  "ocr",
+  "transcribe",
+  "chat",
+  "research",
+  "digest",
+];
 
 /** Overridable so the harness itself can be exercised on throwaway fixtures. */
 export const FIXTURE_DIR = process.env.ORBIT_EVAL_FIXTURE_DIR || join(process.cwd(), "scripts", "eval-fixtures");
@@ -85,6 +117,31 @@ async function timed<T>(latencies: number[], run: () => Promise<T>): Promise<T> 
 }
 
 type RunOpts = { userId: string; limit?: number; log: (line: string) => void };
+
+/**
+ * The account's decider, wrapped to remember every yes/no probability it hands back, by
+ * operation, in call order — so a task can line the model's claims up against its labels
+ * without asking anything twice. Null when the run has no TypeSafe key (no `--decisions`).
+ */
+async function recordingDecider(userId: string): Promise<{ decider: Decider; seen: Map<string, number[]> } | null> {
+  const inner = await openDecider(userId);
+  if (!inner) return null;
+  const seen = new Map<string, number[]>();
+  const decider: Decider = {
+    async ask(request, opts) {
+      const result = await inner.ask(request, opts);
+      if (result) {
+        const list = seen.get(request.operation) ?? [];
+        for (const answer of Object.values(result.answers) as Array<{ type: string; probability?: number }>) {
+          if (answer.type === "noul" && typeof answer.probability === "number") list.push(answer.probability);
+        }
+        seen.set(request.operation, list);
+      }
+      return result;
+    },
+  };
+  return { decider, seen };
+}
 
 /* ------------------------------------------------------------------------ capture ----- */
 
@@ -194,9 +251,15 @@ export async function runRecruiterTask({ userId, limit, log }: RunOpts): Promise
   const details = tally();
   const misses: string[] = [];
   const latenciesMs: number[] = [];
+  // With `--decisions jev`, the gate runs in front of the LLM exactly as the scan runs it.
+  const jev = await recordingDecider(userId);
+  const gatePairs: Array<{ p: number; label: boolean }> = [];
+  let ruledOut = 0;
+  let wrongRuleOuts = 0;
 
   for (const c of cases) {
     try {
+      const gateSeen = jev?.seen.get("recruiter.gate")?.length ?? 0;
       const result = await timed(latenciesMs, () =>
         classifyRecruiterSender(userId, {
           senderName: c.senderName,
@@ -215,8 +278,14 @@ export async function runRecruiterTask({ userId, limit, log }: RunOpts): Promise
             precedence: "",
             body: m.body,
           })),
-        })
+        }, { decider: jev?.decider ?? null })
       );
+      const p = jev?.seen.get("recruiter.gate")?.[gateSeen];
+      if (p !== undefined) gatePairs.push({ p, label: c.expect.isRecruiter });
+      if (result === RULED_OUT_VERDICT) {
+        ruledOut += 1;
+        if (c.expect.isRecruiter) wrongRuleOuts += 1;
+      }
       // Production keeps a sender only above the confidence floor, so the eval does too.
       const said = result.isRecruiter && result.confidence >= RECRUITER_CONFIDENCE_FLOOR;
       const want = c.expect.isRecruiter;
@@ -256,7 +325,135 @@ export async function runRecruiterTask({ userId, limit, log }: RunOpts): Promise
       recall: tp + fn === 0 ? null : tp / (tp + fn),
       accuracy: cases.length === 0 ? null : (tp + tn) / cases.length,
       detailRecall: rate(details),
+      // Jev runs only: the share of senders settled without an LLM call, and how many of
+      // them were real recruiters (must be 0 — a wrong rule-out is a recruiter lost).
+      gateSkipped: jev && cases.length ? ruledOut / cases.length : null,
+      gateWrongSkips: jev ? wrongRuleOuts : null,
     },
+    ...(jev ? { calibration: { "recruiter.gate": calibrationBins(gatePairs) } } : {}),
+  };
+}
+
+/* ------------------------------------------------------------------ recruiter gate --- */
+
+/**
+ * The gate alone, on the full messages the LLM would read: which senders it settles without
+ * an LLM call, and whether any of them was a real recruiter. The `recruiter` task measures
+ * the same gate end to end with the LLM behind it; this one needs no LLM key, so the safety
+ * question — does it ever rule out a recruiter? — can be answered on a TypeSafe key alone.
+ * Without a decider it rules nobody out, and its metrics are null.
+ */
+export async function runRecruiterGateTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<RecruiterEvalFixture>("ai-recruiter-eval.json").cases.slice(0, limit);
+  const jev = await recordingDecider(userId);
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  const pairs: Array<{ p: number; label: boolean }> = [];
+  let ruledOut = 0;
+  let wrong = 0;
+  let negativesRuledOut = 0;
+  const negatives = cases.filter((c) => !c.expect.isRecruiter).length;
+
+  for (const c of cases) {
+    if (!jev) break;
+    const seen = jev.seen.get("recruiter.gate")?.length ?? 0;
+    const out = await timed(latenciesMs, () =>
+      rulesOutRecruiter(jev.decider, {
+        senderName: c.senderName,
+        senderEmail: c.senderEmail,
+        firmGuess: c.firmGuess,
+        messages: c.messages.map((m) => ({ subject: m.subject, snippet: m.body.slice(0, 120), body: m.body, internalDate: Date.parse(m.date) })),
+      })
+    );
+    const p = jev.seen.get("recruiter.gate")?.[seen];
+    if (p !== undefined) pairs.push({ p, label: c.expect.isRecruiter });
+    if (out) {
+      ruledOut += 1;
+      if (c.expect.isRecruiter) wrong += 1;
+      else negativesRuledOut += 1;
+    }
+    const bad = out && c.expect.isRecruiter;
+    if (bad) misses.push(c.id);
+    log(`  ${bad ? "MISS" : "ok  "} gate/${c.id} (${c.kind}) — ${out ? "ruled out" : "to the LLM"}${p === undefined ? "" : ` (P=${p.toFixed(2)})`}`);
+  }
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      // The LLM calls it saves, as a share of all senders.
+      gateSkipped: jev && cases.length ? ruledOut / cases.length : null,
+      // …and as a share of the senders that were not recruiters: the most it could save.
+      negativesRuledOut: jev && negatives ? negativesRuledOut / negatives : null,
+      // Real recruiters it ruled out. Must be 0.
+      gateWrongSkips: jev ? wrong : null,
+    },
+    ...(jev ? { calibration: { "recruiter.gate": calibrationBins(pairs) } } : {}),
+  };
+}
+
+/* -------------------------------------------------------------- recruiter prefilter --- */
+
+/** Roughly what Gmail and Graph hand back as a snippet: the opening of the body. */
+const SNIPPET_CHARS = 200;
+
+/**
+ * The scan's DISCOVERY step on the recruiter fixture: which senders become candidates at all,
+ * judged from the From line, subject and snippet — the only things discovery has. Without a
+ * decider this measures the keyword prefilter alone (the baseline); with `--decisions jev` it
+ * measures keywords plus Jev, through the same `admitRecruiterCandidates` the runners call.
+ * A sender it drops is never looked at again, so recall is the number that matters.
+ */
+export async function runRecruiterPrefilterTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<RecruiterEvalFixture>("ai-recruiter-eval.json").cases.slice(0, limit);
+  const jev = await recordingDecider(userId);
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  let tp = 0;
+  let fp = 0;
+  let fn = 0;
+  let keywordTp = 0;
+  const pairs: Array<{ p: number; label: boolean }> = [];
+
+  for (const c of cases) {
+    const first = c.messages[0];
+    const line = {
+      id: c.id,
+      from: `${c.senderName} <${c.senderEmail}>`,
+      subject: first?.subject ?? "",
+      snippet: (first?.body ?? "").replace(/\s+/g, " ").slice(0, SNIPPET_CHARS),
+    };
+    const seen = jev?.seen.get("recruiter.prefilter")?.length ?? 0;
+    const admitted = await timed(latenciesMs, () =>
+      admitRecruiterCandidates([line], jev?.decider ?? null, { alreadyCandidate: () => false })
+    );
+    const p = jev?.seen.get("recruiter.prefilter")?.[seen];
+    if (p !== undefined) pairs.push({ p, label: c.expect.isRecruiter });
+
+    const said = admitted.has(c.id);
+    const want = c.expect.isRecruiter;
+    if (looksLikeRecruiter(line) && want) keywordTp += 1;
+    if (said && want) tp += 1;
+    else if (said && !want) fp += 1;
+    else if (!said && want) fn += 1;
+    const missed = said !== want;
+    if (missed) misses.push(c.id);
+    log(`  ${missed ? "MISS" : "ok  "} prefilter/${c.id} (${c.kind}) — ${said ? "admitted" : "dropped"}${p === undefined ? "" : ` (P=${p.toFixed(2)})`}`);
+  }
+
+  const positives = tp + fn;
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      recall: positives === 0 ? null : tp / positives,
+      precision: tp + fp === 0 ? null : tp / (tp + fp),
+      // The keywords alone, on the same text — the number Jev is there to beat.
+      keywordRecall: positives === 0 ? null : keywordTp / positives,
+    },
+    ...(jev ? { calibration: { "recruiter.prefilter": calibrationBins(pairs) } } : {}),
   };
 }
 
@@ -786,6 +983,8 @@ export async function runDigestTask({ userId, limit, log }: RunOpts): Promise<Ta
 export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   capture: runCaptureTask,
   recruiter: runRecruiterTask,
+  "recruiter-prefilter": runRecruiterPrefilterTask,
+  "recruiter-gate": runRecruiterGateTask,
   extension: runExtensionTask,
   ocr: runOcrTask,
   transcribe: runTranscribeTask,

@@ -24,6 +24,7 @@ import {
   rerankCandidates,
   understandQuery,
 } from "@/lib/chat-retrieval";
+import { openDecider } from "@/lib/decisions/jev";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
 import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
@@ -234,12 +235,15 @@ async function retrieveRankedContacts(
   // The embedding still degrades to keywords — but now says so, instead of letting the
   // model conclude the user knows nobody like that. (The comment lives above the call:
   // smoke-chat-pipeline asserts these two run in one Promise.all by source shape.)
-  const [queryEmbedding, parsedQuery] = await Promise.all([
+  const [queryEmbedding, parsedQuery, decider] = await Promise.all([
     getQueryEmbedding(userId, q).catch((err) => {
       searchNotice = embeddingFailureNotice(err);
       return null;
     }),
     understandQuery(userId, q, activeGoals),
+    // Beside the two above, so an account read costs the question no time. Null (no
+    // TypeSafe key) for most accounts, and the rank step then runs the LLM rerank.
+    openDecider(userId),
   ]);
   steps.done("understand", {
     label: "Worked out what you're asking for",
@@ -270,7 +274,7 @@ async function retrieveRankedContacts(
   attachPhotos(steps, "search", candidateRefs, userId, photos);
 
   steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
-  const ranked = await rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery);
+  const ranked = await rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery, decider);
   const keptRefs = toRefs(
     ranked.map((c) => ({ id: c.id, name: c.fullName })),
     "contact"

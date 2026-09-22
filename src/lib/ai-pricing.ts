@@ -89,6 +89,11 @@ const PRICES: Record<string, PriceEntry> = {
   // historical usage rows priced. Longest-prefix matching keeps every claude-opus-4-N row
   // above on its own price.
   "claude-opus-4": { input: 15, output: 75, cachedInput: 1.5 },
+
+  // TypeSafe — Jev, the decision model (docs.typesafe.ai/models, Sep 21 2026). $42 per BILLION
+  // input tokens, and output is free ("too cheap to meter"). A prefix row so every pinned
+  // `jev-1.x.y` resolves; move it to exact ids if TypeSafe ever prices versions differently.
+  "jev-": { input: 0.042, output: 0 },
 };
 
 /**

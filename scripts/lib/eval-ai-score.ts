@@ -104,6 +104,39 @@ export function median(values: number[]): number | null {
 }
 
 /**
+ * One band of a reliability table: of the answers whose probability fell in [from, to), how
+ * many there were, what they claimed on average, and how often the claim was true.
+ */
+export type CalibrationBin = { from: number; to: number; n: number; meanP: number | null; observed: number | null };
+
+/**
+ * A decision model's probabilities against the labels — what its thresholds are read off.
+ * Calibrated means `observed` tracks `meanP` band by band: of the senders it put at 0.9,
+ * about 90% really were recruiters. The last band is closed so p = 1 lands somewhere. Pure,
+ * so `smoke-eval-ai-score` can pin it.
+ */
+export function calibrationBins(
+  pairs: ReadonlyArray<{ p: number; label: boolean }>,
+  edges: readonly number[] = [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1]
+): CalibrationBin[] {
+  const bins: CalibrationBin[] = [];
+  for (let i = 0; i < edges.length - 1; i++) {
+    const from = edges[i];
+    const to = edges[i + 1];
+    const last = i === edges.length - 2;
+    const inBin = pairs.filter((x) => x.p >= from && (last ? x.p <= to : x.p < to));
+    bins.push({
+      from,
+      to,
+      n: inBin.length,
+      meanP: inBin.length ? inBin.reduce((n, x) => n + x.p, 0) / inBin.length : null,
+      observed: inBin.length ? inBin.filter((x) => x.label).length / inBin.length : null,
+    });
+  }
+  return bins;
+}
+
+/**
  * One gate rule. `higherIsBetter` metrics may not drop by more than `maxDrop`; the others
  * (error rates, hallucination counts) may not rise by more than `maxRise`.
  */
@@ -194,7 +227,7 @@ export function scoreResearchAnswer(input: {
  * counts. Printing `meanLookups 1.5` as "150.0%" would read as a broken metric.
  */
 export function formatMetric(key: string, value: number): string {
-  if (/Hits$|^phantom|Ids$|^filtered/.test(key)) return String(value);
+  if (/Hits$|^phantom|Ids$|^filtered|WrongSkips$/.test(key)) return String(value);
   if (/^mean/.test(key)) return value.toFixed(2);
   return `${(value * 100).toFixed(1)}%`;
 }

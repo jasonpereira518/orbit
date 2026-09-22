@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  typesafe_api_key_encrypted text,
   wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
@@ -1729,7 +1730,15 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // third time a number has been contested, so: the scan has to cover `git worktree list`, not
 // just the remote. Checked against every remote branch AND all 69 local worktrees on
 // Sep 20 2026; 78 was the highest found anywhere.
-export const SCHEMA_VERSION = 79;
+//
+// 84 = user_settings.typesafe_api_key_encrypted — a person's own TypeSafe key, for Jev, the
+// decision model behind the recruiter gate and the chat rerank (src/lib/decisions/). NOT 80–83:
+// 80 and 81 are held by `claude/chat-ux-features-v2` (writing_instructions, chat_messages
+// slots) and 82 and 83 by `claude/chat-source-chips` (chat_messages evidence and
+// proposed_actions), all unmerged. This branch first took 82 and had to move when
+// chat-source-chips was pushed mid-review — the rescan before a PR is not optional. Scanned
+// every remote branch and all local worktrees on Sep 22 2026; 83 was the highest anywhere.
+export const SCHEMA_VERSION = 84;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2940,6 +2949,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS typesafe_api_key_encrypted text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS preferred_name text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS website text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS met_context text`,
