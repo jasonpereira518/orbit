@@ -26,6 +26,7 @@ import {
   companies,
   contactBriefs,
   contactEmbeddings,
+  memoryChunks,
   contactExperiences,
   contactIdentities,
   contactMerges,
@@ -189,8 +190,8 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
-    counts: [aiSuggestions, contactEmbeddings, closenessCohorts],
+    exports: [own(aiSuggestions), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
+    counts: [aiSuggestions, contactEmbeddings, memoryChunks, closenessCohorts],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
       // holding this person's prompts, and deleting our row would only lose the handle to
@@ -203,6 +204,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, userId));
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+      // Passages of the person's own notes. Derived, but derived from the most personal text
+      // in the product — leaving these behind after a deletion would leave the notes behind.
+      await db.delete(memoryChunks).where(eq(memoryChunks.userId, userId));
       await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
     },
   },
@@ -621,6 +625,7 @@ const PRESERVED_SETTINGS_COLUMNS = {
   geminiApiKeyEncrypted: true,
   openaiApiKeyEncrypted: true,
   anthropicApiKeyEncrypted: true,
+  typesafeApiKeyEncrypted: true,
   apolloApiKeyEncrypted: true,
   resendApiKeyEncrypted: true,
   twilioAccountSidEncrypted: true,

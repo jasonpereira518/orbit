@@ -19,7 +19,6 @@ import {
   firmFromEmail,
   getValidAccessToken,
   listGmailMessagePage,
-  looksLikeRecruiter,
   parseFromHeader,
   type GmailMessageContent,
 } from "@/lib/gmail";
@@ -32,6 +31,8 @@ import {
   type RecruiterScanResult,
 } from "@/lib/recruiter-scan";
 import { submitAiBatch } from "@/lib/ai-batch";
+import { openDecider, type Decider } from "@/lib/decisions/jev";
+import { admitRecruiterCandidates, ruleOutRecruiters } from "@/lib/decisions/recruiter";
 import { markScanCompleted, resolveScanWindow } from "@/lib/recruiter-scan-state";
 import { ensureUserLink, isViewerSharing, upsertCanonicalRecruiter } from "@/lib/recruiters";
 import { reportError } from "@/lib/report-error";
@@ -96,6 +97,11 @@ export type ScanDeps = {
   /** Submits the batch. Injectable so the smoke suite can run both paths. */
   submit: typeof submitAiBatch;
   continueLater: (importId: string) => Promise<void>;
+  /**
+   * The account's decision model, opened once per invocation. Optional so a test that does
+   * not name one runs the scan exactly as it ran before Jev.
+   */
+  openDecider?: (userId: string) => Promise<Decider | null>;
 };
 
 async function patchStats(importId: string, patch: Partial<ImportStats>) {
@@ -126,6 +132,7 @@ const DEFAULT_SCAN_DEPS: ScanDeps = {
   classify: classifyRecruiterSender,
   submit: submitAiBatch,
   continueLater: scheduleContinuation,
+  openDecider,
 };
 
 /**
@@ -143,7 +150,8 @@ async function runDiscovery(
   accessToken: string,
   jobStart: number,
   scanAfter: Date,
-  deps: ScanDeps
+  deps: ScanDeps,
+  decider: Decider | null
 ): Promise<boolean> {
   const db = await getDb();
 
@@ -184,15 +192,14 @@ async function runDiscovery(
     if (page.messages.length > 0) {
       const headers = await deps.fetchHeaders(accessToken, page.messages);
       scanned += page.messages.length;
+      // The keyword prefilter, plus — for an account with a decision model — the senders it
+      // would have dropped but Jev reads as recruiters (see decisions/recruiter.ts).
+      const admitted = await admitRecruiterCandidates(headers, decider, {
+        alreadyCandidate: (email) => byEmail.has(email),
+      });
 
       for (const msg of headers) {
-        if (!looksLikeRecruiter({
-          from: msg.from,
-          subject: msg.subject,
-          snippet: msg.snippet,
-        })) {
-          continue;
-        }
+        if (!admitted.has(msg.id)) continue;
         const parsed = parseFromHeader(msg.from);
         if (!parsed) continue;
 
@@ -331,7 +338,8 @@ async function processSender(
   userId: string,
   payload: GmailSenderRowPayload,
   accessToken: string,
-  deps: ScanDeps
+  deps: ScanDeps,
+  decider: Decider | null
 ): Promise<"recruiter" | "rejected"> {
   const messages = await deps.fetchMessages(
     accessToken,
@@ -339,12 +347,16 @@ async function processSender(
   );
   if (messages.length === 0) return "rejected";
 
-  const result = await deps.classify(userId, {
-    senderName: payload.name,
-    senderEmail: payload.email,
-    firmGuess: payload.firm,
-    messages,
-  });
+  const result = await deps.classify(
+    userId,
+    {
+      senderName: payload.name,
+      senderEmail: payload.email,
+      firmGuess: payload.firm,
+      messages,
+    },
+    { decider }
+  );
 
   return applyRecruiterVerdict(userId, payload, mailMetaOf(payload, messages), result);
 }
@@ -461,6 +473,10 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
     });
   }
 
+  // Null for most accounts (no TypeSafe key), and then every step below runs as it did
+  // before Jev. A test's deps without `openDecider` get null too.
+  const decider = deps.openDecider ? await deps.openDecider(userId) : null;
+
   try {
     if (!importRow.stats?.discoveryComplete) {
       const finished = await runDiscovery(
@@ -468,9 +484,9 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
         userId,
         accessToken,
         jobStart,
-        scanAfter
-      ,
-        deps
+        scanAfter,
+        deps,
+        decider
       );
       if (!finished) return;
     }
@@ -508,13 +524,41 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
       // job waits for them. Whatever the batch will not take is classified inline below,
       // one sender at a time, exactly as before.
       const queued = new Set<string>();
-      const batchable: Array<{ row: (typeof pending)[number]; payload: GmailSenderRowPayload; messages: GmailMessageContent[] }> = [];
+      let batchable: Array<{ row: (typeof pending)[number]; payload: GmailSenderRowPayload; messages: GmailMessageContent[] }> = [];
       for (const row of pending) {
         if (!isGmailSenderRow(row.payload)) continue;
         const messages = await deps.fetchMessages(accessToken, row.payload.messageIds.slice(0, 5));
         if (messages.length === 0) continue; // the inline pass below records it as rejected
         batchable.push({ row, payload: row.payload, messages });
       }
+
+      // Senders the decision model is confident are not recruiters never reach the LLM, in
+      // the batch or inline. The same outcome as an LLM "no": a skipped row, one rejection.
+      const ruledOut = new Set<string>();
+      if (decider && batchable.length > 0) {
+        const verdicts = await ruleOutRecruiters(
+          decider,
+          batchable.map((b) => ({
+            senderName: b.payload.name,
+            senderEmail: b.payload.email,
+            firmGuess: b.payload.firm,
+            messages: b.messages,
+          }))
+        );
+        batchable.forEach((b, i) => {
+          if (verdicts[i]) ruledOut.add(b.row.id);
+        });
+        if (ruledOut.size > 0) {
+          await db
+            .update(importJobRows)
+            .set({ status: "skipped", updatedAt: new Date() })
+            .where(inArray(importJobRows.id, [...ruledOut]));
+          rejected += ruledOut.size;
+          processed += ruledOut.size;
+          batchable = batchable.filter((b) => !ruledOut.has(b.row.id));
+        }
+      }
+
       if (batchable.length > 0) {
         const items = batchable.map((b, i) => ({
           customId: `s${i}`,
@@ -553,7 +597,7 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
       // the time budget is only checked at the top of the loop.
       let inlineProcessed = 0;
       for (const row of pending) {
-        if (queued.has(row.id)) continue;
+        if (queued.has(row.id) || ruledOut.has(row.id)) continue;
         if (inlineProcessed >= CHUNK_SIZE) break;
         inlineProcessed += 1;
         if (!isGmailSenderRow(row.payload)) {
@@ -565,7 +609,7 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
         }
 
         try {
-          const outcome = await processSender(userId, row.payload, accessToken, deps);
+          const outcome = await processSender(userId, row.payload, accessToken, deps, decider);
           consecutiveFailures = 0;
           if (outcome === "recruiter") found += 1;
           else rejected += 1;

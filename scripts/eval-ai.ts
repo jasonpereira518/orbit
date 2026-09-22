@@ -18,7 +18,7 @@
  *     "visionModels": { "gemini": "gemini-3.8-flash" } }
  *
  * Flags: --provider gemini|openai|anthropic (default gemini) · --model <id> (default: the
- * provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,digest
+ * provider's default model) · --task capture,recruiter,extension,ocr,transcribe,chat,research,digest
  * (default all) · --runs N (default 1; use 2+ for a gate decision — models are not
  * deterministic) · --limit N (cases per task, for a quick look) · --label <name> ·
  * --out <file> (default docs/ai-evals/<date>-<label>.json) · --compare <baseline.json>
@@ -33,6 +33,13 @@
  * `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` as the eval
  * keys (an `ORBIT_EVAL_*` variable still wins). A full run costs roughly a dollar or two per
  * provider.
+ *
+ * DECISIONS. `--decisions jev` also stores `ORBIT_EVAL_TYPESAFE_KEY` (or, with `--keys-from`,
+ * that file's `TYPESAFE_API_KEY`) as the synthetic user's own TypeSafe key, so every step with
+ * a decision-model path (src/lib/decisions/) takes it: the recruiter gate, the recruiter
+ * prefilter, the chat rerank. Without the flag no TypeSafe key is stored and the same tasks
+ * measure the pre-Jev path — which is the baseline to `--compare` a Jev run against. Runs
+ * with a decider add each decision's calibration table to the report.
  *
  * SAFETY. `./smoke/_env` removes `DATABASE_URL` (never the shared Neon database) and points
  * PGlite at a throwaway directory, so this never contends with a dev server.
@@ -53,9 +60,11 @@ import { FIXTURE_DIR, TASKS, TASK_NAMES, type TaskName, type TaskResult } from "
 import { AI_OPERATIONS, AI_OPERATION_IDS, type AiOperationId, type AiTier } from "../src/lib/ai-operations";
 import { FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
 import type { ThinkingLevel } from "../src/lib/ai-request-options";
-import { gate, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
+import { formatMetric, gate, median, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
 
 const USER = "eval-ai-user";
+/** Tasks that never call a chat model. */
+const LLM_FREE_TASKS: ReadonlySet<TaskName> = new Set(["recruiter-prefilter", "recruiter-gate"]);
 
 if (process.env.DATABASE_URL) {
   throw new Error("eval-ai runs on a throwaway local PGlite only — unset DATABASE_URL (and SMOKE_ALLOW_REMOTE).");
@@ -76,6 +85,8 @@ type Args = {
   compare?: string;
   keysFrom?: string;
   config?: string;
+  /** "jev": give the synthetic user a TypeSafe key, so decision-model paths run. */
+  decisions: "jev" | null;
 };
 
 type CandidateConfig = {
@@ -98,7 +109,10 @@ function parseArgs(argv: string[]): Args {
   for (const t of tasks) {
     if (!TASK_NAMES.includes(t)) throw new Error(`Unknown task "${t}". Tasks: ${TASK_NAMES.join(", ")}`);
   }
-  const label = get("--label") ?? `${provider}-${model}`;
+  const decisionsArg = get("--decisions");
+  if (decisionsArg && decisionsArg !== "jev") throw new Error(`Unknown --decisions "${decisionsArg}". Only "jev".`);
+  const decisions = decisionsArg === "jev" ? "jev" : null;
+  const label = get("--label") ?? `${provider}-${model}${decisions ? `-${decisions}` : ""}`;
   const date = new Date().toISOString().slice(0, 10);
   return {
     provider,
@@ -111,6 +125,7 @@ function parseArgs(argv: string[]): Args {
     compare: get("--compare"),
     keysFrom: get("--keys-from"),
     config: get("--config"),
+    decisions,
   };
 }
 
@@ -155,6 +170,7 @@ function evalKeys(keysFrom?: string) {
     gemini: read("ORBIT_EVAL_GEMINI_KEY", "GEMINI_API_KEY"),
     openai: read("ORBIT_EVAL_OPENAI_KEY", "OPENAI_API_KEY"),
     anthropic: read("ORBIT_EVAL_ANTHROPIC_KEY", "ANTHROPIC_API_KEY"),
+    typesafe: read("ORBIT_EVAL_TYPESAFE_KEY", "TYPESAFE_API_KEY"),
   };
 }
 
@@ -166,6 +182,8 @@ async function setUpUser(args: Args, keys: ReturnType<typeof evalKeys>) {
     geminiApiKeyEncrypted: keys.gemini ? encrypt(keys.gemini) : null,
     openaiApiKeyEncrypted: keys.openai ? encrypt(keys.openai) : null,
     anthropicApiKeyEncrypted: keys.anthropic ? encrypt(keys.anthropic) : null,
+    // Only on a `--decisions jev` run: a baseline must measure the path without Jev.
+    typesafeApiKeyEncrypted: args.decisions === "jev" && keys.typesafe ? encrypt(keys.typesafe) : null,
   };
   await db
     .insert(userSettings)
@@ -232,6 +250,8 @@ function fixtureDigest(): string {
   for (const file of [
     "ai-capture-eval.json", "ai-recruiter-eval.json", "ai-extension-eval.json", "ai-ocr-eval.json",
     "ai-transcribe-eval.json", "ai-chat-eval.json", "ai-digest-eval.json", "contact-search-eval.json",
+    // The research task's cases, and the notes both it and eval-retrieval seed.
+    "ai-research-eval.json", "passage-search-eval.json",
   ]) {
     try {
       hash.update(readFileSync(join(FIXTURE_DIR, file)));
@@ -250,7 +270,6 @@ function gitCommit(): string | null {
   }
 }
 
-const pct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 const usd = (micros: number) => `$${(micros / 1_000_000).toFixed(4)}`;
 
 export type EvalReport = {
@@ -263,6 +282,8 @@ export type EvalReport = {
   runs: number;
   /** The candidate applied to the registry for this run, if any. */
   candidate?: CandidateConfig;
+  /** "jev" when the decision-model paths ran (older reports lack the field: they did not). */
+  decisions?: "jev" | null;
   tasks: Partial<
     Record<
       TaskName,
@@ -274,6 +295,9 @@ export type EvalReport = {
         costMicros: number;
         costPerCaseMicros: number | null;
         usage: CostRow[];
+        /** The decision model's share of `costMicros`. */
+        decisionCostMicros?: number;
+        calibration?: TaskResult["calibration"];
       }
     >
   >;
@@ -288,16 +312,22 @@ async function main() {
   const applied = applyCandidate(candidate);
   if (applied.length) console.log(`eval-ai: candidate — ${applied.join(", ")}`);
   const keys = evalKeys(args.keysFrom);
-  if (!keys[args.provider]) {
+  // `recruiter-prefilter` and `recruiter-gate` run keywords and Jev only — no LLM — so a run
+  // of only those tasks needs no provider key.
+  const needsLlm = args.tasks.some((t) => !LLM_FREE_TASKS.has(t));
+  if (needsLlm && !keys[args.provider]) {
     throw new Error(
       `Set ORBIT_EVAL_${args.provider.toUpperCase()}_KEY (or pass --keys-from <env file>) to evaluate ${args.provider}.`
     );
+  }
+  if (args.decisions === "jev" && !keys.typesafe) {
+    throw new Error("Set ORBIT_EVAL_TYPESAFE_KEY (or pass --keys-from <env file> with TYPESAFE_API_KEY) for --decisions jev.");
   }
   const present = Object.entries(keys).filter(([, v]) => v).map(([k]) => k);
   console.log(`eval-ai: keys for ${present.join(", ")}${args.keysFrom ? ` (from ${args.keysFrom})` : ""}`);
   await setUpUser(args, keys);
 
-  console.log(`eval-ai: ${args.label} — ${args.provider} / ${args.model}, ${args.runs} run(s), tasks: ${args.tasks.join(", ")}`);
+  console.log(`eval-ai: ${args.label} — ${args.provider} / ${args.model}${args.decisions ? ` + ${args.decisions}` : ""}, ${args.runs} run(s), tasks: ${args.tasks.join(", ")}`);
   const report: EvalReport = {
     label: args.label,
     provider: args.provider,
@@ -307,6 +337,7 @@ async function main() {
     fixtures: fixtureDigest(),
     runs: args.runs,
     ...(applied.length ? { candidate } : {}),
+    decisions: args.decisions,
     tasks: {},
   };
 
@@ -327,6 +358,10 @@ async function main() {
     const usage = await usageSince(started);
     const costMicros = usage.reduce((n, r) => n + r.costMicros, 0) / args.runs;
     const cases = perRun[0]?.cases ?? 0;
+    const decisionCostMicros =
+      usage.filter((r) => r.model.startsWith("jev-")).reduce((n, r) => n + r.costMicros, 0) / args.runs;
+    // The last run's table: calibration is a property of the model, not something to average.
+    const calibration = perRun[perRun.length - 1]?.calibration;
     report.tasks[task] = {
       cases,
       metrics: averageMetrics(perRun.map((r) => r.metrics)),
@@ -335,18 +370,27 @@ async function main() {
       costMicros,
       costPerCaseMicros: cases ? costMicros / cases : null,
       usage,
+      ...(args.decisions ? { decisionCostMicros } : {}),
+      ...(calibration ? { calibration } : {}),
     };
   }
 
   console.log("\nSummary");
   for (const [task, t] of Object.entries(report.tasks)) {
     const metrics = Object.entries(t.metrics)
-      .map(([k, v]) => `${k} ${v == null ? "—" : k.endsWith("Hits") || k.startsWith("phantom") ? v.toFixed(1) : pct(v)}`)
+      .map(([k, v]) => `${k} ${v == null ? "—" : formatMetric(k, v)}`)
       .join(" · ");
     console.log(`  ${task.padEnd(11)} ${metrics}`);
     console.log(
-      `  ${"".padEnd(11)} ${t.cases} case(s) · ${usd(t.costMicros)} total · ${t.costPerCaseMicros == null ? "—" : usd(t.costPerCaseMicros)}/case · p50 ${t.p50LatencyMs == null ? "—" : `${Math.round(t.p50LatencyMs)}ms`}${t.usage.some((u) => u.unpriced) ? " · some calls unpriced" : ""}`
+      `  ${"".padEnd(11)} ${t.cases} case(s) · ${usd(t.costMicros)} total · ${t.costPerCaseMicros == null ? "—" : usd(t.costPerCaseMicros)}/case · p50 ${t.p50LatencyMs == null ? "—" : `${Math.round(t.p50LatencyMs)}ms`}${t.usage.some((u) => u.unpriced) ? " · some calls unpriced" : ""}${t.decisionCostMicros ? ` · Jev ${usd(t.decisionCostMicros)}` : ""}`
     );
+    for (const [operation, bins] of Object.entries(t.calibration ?? {})) {
+      const bands = bins
+        .filter((b) => b.n > 0)
+        .map((b) => `${b.from.toFixed(1)}–${b.to.toFixed(1)}: n=${b.n} said ${(b.meanP! * 100).toFixed(0)}% was ${(b.observed! * 100).toFixed(0)}%`)
+        .join(" · ");
+      console.log(`  ${"".padEnd(11)} calibration ${operation} — ${bands || "no answers"}`);
+    }
   }
 
   mkdirSync(dirname(args.out), { recursive: true });

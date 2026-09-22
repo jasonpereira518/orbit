@@ -66,10 +66,17 @@ export type RankedContact = {
   filterMatched: boolean;
 };
 
-/** Standard RRF constant: dampens the gap between adjacent ranks. */
-const RRF_K = 60;
+/**
+ * Standard RRF constant: dampens the gap between adjacent ranks.
+ *
+ * Reciprocal-rank fusion's damping constant, shared with `@/lib/memory-search`.
+ *
+ * Exported rather than copied so the two fusions cannot drift: passages and contacts are
+ * ranked by the same curve, which is what lets a future caller compare them at all.
+ */
+export const RRF_K = 60;
 /** Below this cosine similarity a semantic hit is noise (matches pgvectorSearchContacts). */
-const SEMANTIC_SIMILARITY_FLOOR = 0.25;
+export const SEMANTIC_SIMILARITY_FLOOR = 0.25;
 /** ANN over-fetch multiplier: several embedding rows collapse into one contact. */
 const OVERSCAN_FOR_DEDUPE = 4;
 /** Ceiling on the JS cosine fallback scan (1,536 floats per row). */

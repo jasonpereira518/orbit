@@ -24,7 +24,10 @@ import {
   rerankCandidates,
   understandQuery,
 } from "@/lib/chat-retrieval";
+import { openDecider } from "@/lib/decisions/jev";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
+import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
+import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { getCareerLines, getContactProfile } from "@/lib/contact-profile";
 import {
@@ -222,20 +225,32 @@ async function loadActiveGoalTexts(userId: string): Promise<string[]> {
 /** Stage 0-3: query embedding + parse (parallel), wide hybrid retrieval, flash rerank. */
 async function retrieveRankedContacts(
   userId: string,
-  q: string
+  q: string,
+  steps: StepEmitter = NULL_STEPS,
+  photos: PhotoCache = createPhotoCache()
 ): Promise<{ ranked: RankedContact[]; searchNotice: string | null; goals: string[] }> {
   const activeGoals = await loadActiveGoalTexts(userId);
   let searchNotice: string | null = null;
+  steps.start("understand", "Working out what you're asking for");
   // The embedding still degrades to keywords — but now says so, instead of letting the
   // model conclude the user knows nobody like that. (The comment lives above the call:
   // smoke-chat-pipeline asserts these two run in one Promise.all by source shape.)
-  const [queryEmbedding, parsedQuery] = await Promise.all([
+  const [queryEmbedding, parsedQuery, decider] = await Promise.all([
     getQueryEmbedding(userId, q).catch((err) => {
       searchNotice = embeddingFailureNotice(err);
       return null;
     }),
     understandQuery(userId, q, activeGoals),
+    // Beside the two above, so an account read costs the question no time. Null (no
+    // TypeSafe key) for most accounts, and the rank step then runs the LLM rerank.
+    openDecider(userId),
   ]);
+  steps.done("understand", {
+    label: "Worked out what you're asking for",
+    detail: describeParsedQuery(parsedQuery),
+  });
+
+  steps.start("search", "Searching your network");
   const candidates = await hybridSearchContacts(userId, {
     query: q,
     embedding: queryEmbedding,
@@ -243,13 +258,60 @@ async function retrieveRankedContacts(
     expansionTerms: parsedQuery.expansionTerms,
     limit: CANDIDATE_POOL,
   });
-  const ranked = await rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery);
+  // The strongest few candidates, so the activity scene can show who is in play the moment
+  // they are found rather than waiting for the rerank. They are candidates, not answers —
+  // the rank step below replaces them with whoever survives — so the summary and the
+  // finished view deliberately ignore this step's refs.
+  const candidateRefs = toRefs(
+    candidates.map((c) => ({ id: c.id, name: c.fullName })),
+    "contact"
+  );
+  steps.done("search", {
+    label: `Searched your network, found ${plural(candidates.length, "candidate")}`,
+    detail: describeArms(candidates.flatMap((c) => c.matchedArms ?? [])),
+    refs: candidateRefs,
+  });
+  attachPhotos(steps, "search", candidateRefs, userId, photos);
+
+  steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
+  const ranked = await rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery, decider);
+  const keptRefs = toRefs(
+    ranked.map((c) => ({ id: c.id, name: c.fullName })),
+    "contact"
+  );
+  steps.done("rank", {
+    label: `Kept the ${plural(ranked.length, "closest match", "closest matches")}`,
+    refs: keptRefs,
+  });
+  attachPhotos(steps, "rank", keptRefs, userId, photos);
   // The goals come back out because they belong in the ANSWER prompt too, not just in the
   // query parse. They were loaded here and used only to help `understandQuery` read the
   // question, so the model that actually wrote the answer never learned what the user was
   // trying to accomplish — every other AI surface in the product (outreach, starters,
   // follow-up drafts) has been given them for months.
   return { ranked, searchNotice, goals: activeGoals };
+}
+
+/** What the query parser actually understood, as a line a person can check. */
+function describeParsedQuery(parsed: {
+  filters?: Record<string, unknown> | null;
+  expansionTerms?: readonly string[] | null;
+}): string | undefined {
+  const parts: string[] = [];
+  const filters = parsed.filters ?? {};
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === null || value === undefined) continue;
+    if (Array.isArray(value)) {
+      if (value.length) parts.push(`${key}: ${value.join(", ")}`);
+    } else if (typeof value === "string" && value.trim()) {
+      parts.push(`${key}: ${value}`);
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      parts.push(`${key}: ${String(value)}`);
+    }
+  }
+  const expansions = parsed.expansionTerms ?? [];
+  if (expansions.length) parts.push(`also: ${expansions.slice(0, 5).join(", ")}`);
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 // Every field below is written by the profile's owner, so it is exactly as
@@ -366,6 +428,11 @@ export async function prepareChatContext(
     focusContactId?: string | null;
     /** Contact ids the user attached with the composer's `+`. See `@/lib/chat-attached`. */
     contextContactIds?: readonly string[] | null;
+    /**
+     * Narrates each stage as it runs. Supplied by the streaming route; omitted by
+     * `askNetwork`, which has no channel to report on. See `@/lib/chat-steps`.
+     */
+    steps?: StepEmitter;
   }
 ): Promise<ChatContext> {
   const db = await getDb();
@@ -376,6 +443,8 @@ export async function prepareChatContext(
   const attachedIds = (options.contextContactIds ?? []).filter(
     (id): id is string => typeof id === "string" && id.trim().length > 0
   );
+  const steps = options.steps ?? NULL_STEPS;
+  const photos = createPhotoCache();
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
@@ -403,25 +472,86 @@ export async function prepareChatContext(
             columns: { role: true, content: true },
           })
         : Promise.resolve([]),
-      retrieveRankedContacts(userId, q),
+      retrieveRankedContacts(userId, q, steps, photos),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.
-      findOrgRosters(userId, q).catch(() => [] as OrgRoster[]),
+      // Runs for every question, but only worth reporting when it actually names an org.
+      findOrgRosters(userId, q)
+        .catch(() => [] as OrgRoster[])
+        .then((rosters) => {
+          const named = rosters[0];
+          if (named) {
+            steps.done("roster", {
+              label: `You know ${plural(named.total, "person", "people")} at ${named.name}`,
+              refs: toRefs([{ id: named.name, name: named.name }], "org"),
+            });
+          }
+          return rosters;
+        }),
       // Who the dashboard would say needs attention, only for questions that ask.
       isAttentionQuestion(q)
-        ? getClosenessCohort(userId)
-            .catch(() => null)
-            .then((cohort) => getAttentionBrief(userId, cohort?.interactedIds))
-            .catch(() => null)
+        ? (() => {
+            steps.start("attention", "Checking who is overdue");
+            return getClosenessCohort(userId)
+              .catch(() => null)
+              .then((cohort) => getAttentionBrief(userId, cohort?.interactedIds))
+              .catch(() => null)
+              .then((brief) => {
+                const overdueRefs = brief
+                  ? toRefs(
+                      brief.overdue.map((c) => ({ id: c.id, name: c.name })),
+                      "contact"
+                    )
+                  : undefined;
+                steps.done("attention", {
+                  label: brief
+                    ? `Checked ${plural(brief.overdue.length, "overdue follow-up")}`
+                    : "Checked overdue follow-ups",
+                  refs: overdueRefs,
+                });
+                attachPhotos(steps, "attention", overdueRefs, userId, photos);
+                return brief;
+              });
+          })()
         : Promise.resolve(null),
       // The same queue as one line, for every other question — see `renderAttentionLite`.
       // Never fatal, and never carries an instruction to act on it.
       renderAttentionLite(userId).catch(() => null),
-      isRecruiterIntent(q) ? loadRecruitersForChat(q, 8) : Promise.resolve([] as Recruiters),
+      isRecruiterIntent(q)
+        ? (() => {
+            steps.start("recruiters", "Checking your recruiter list");
+            return loadRecruitersForChat(q, 8).then((list) => {
+              steps.done("recruiters", {
+                label: `Checked ${plural(list.length, "recruiter")}`,
+                refs: toRefs(
+                  list.map((r) => ({ id: r.id, name: r.fullName })),
+                  "recruiter"
+                ),
+              });
+              return list;
+            });
+          })()
+        : Promise.resolve([] as Recruiters),
       // Depends on ids the client already resolved, so it needs neither the question nor
       // the search. Never fatal: a question with a dead attachment is still a question.
       attachedIds.length
-        ? loadAttachedPeople(userId, attachedIds).catch(() => [] as AttachedPerson[])
+        ? (() => {
+            steps.start("attached", `Reading ${plural(attachedIds.length, "person", "people")} you named`);
+            return loadAttachedPeople(userId, attachedIds)
+              .catch(() => [] as AttachedPerson[])
+              .then((people) => {
+                const namedRefs = toRefs(
+                  people.map((p) => ({ id: p.id, name: p.name })),
+                  "contact"
+                );
+                steps.done("attached", {
+                  label: `Read ${plural(people.length, "person", "people")} you named`,
+                  refs: namedRefs,
+                });
+                attachPhotos(steps, "attached", namedRefs, userId, photos);
+                return people;
+              });
+          })()
         : Promise.resolve([] as AttachedPerson[]),
     ]);
 
@@ -474,6 +604,9 @@ export async function prepareChatContext(
   // contactId and simply returns null for a contact the user does not own — so it belongs
   // in this parallel batch rather than a serial await gated on that lookup.
   const retrievedIds = retrieved.map((c) => c.id);
+  if (retrievedIds.length) {
+    steps.start("read", `Reading notes on ${plural(retrievedIds.length, "person", "people")}`);
+  }
   const [snippets, careerLines, focusMsgs, focusProfileData] = await Promise.all([
     loadRecentInteractions(userId, retrievedIds),
     getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
@@ -488,6 +621,21 @@ export async function prepareChatContext(
       ? getContactProfile(userId, focusContactId).catch(() => null)
       : Promise.resolve(null),
   ]);
+  if (retrievedIds.length) {
+    // Count the people who actually had something written about them, not the page size —
+    // "read notes on 9 people" when six of them are blank would be a lie.
+    const withNotes = retrieved.filter((c) => (snippets.get(c.id)?.timeline?.length ?? 0) > 0);
+    steps.done("read", {
+      label: withNotes.length
+        ? `Read notes on ${plural(withNotes.length, "person", "people")}`
+        : "No notes written on these people yet",
+      detail: careerLines.size ? `${plural(careerLines.size, "career history", "career histories")}` : undefined,
+      refs: toRefs(
+        withNotes.map((c) => ({ id: c.id, name: c.fullName })),
+        "contact"
+      ),
+    });
+  }
   const focusProfile = renderFocusProfile(focusProfileData);
   if (focusContactId) {
     // The focused contact still gets a deeper slice than the tiers would allow, and now in

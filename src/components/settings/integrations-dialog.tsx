@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
+import { DecisionModelSettings } from "@/components/settings/decision-model-settings";
 import { AiUsageCard } from "@/components/settings/ai-usage-card";
 import { ApiSettings } from "@/components/settings/api-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
@@ -544,6 +545,7 @@ function Panel({
       return (
         <div className="space-y-5">
           <AiSettings initialSettings={initialSettings} />
+          <DecisionModelSettings initialSettings={initialSettings} />
           <AiUsageCard />
         </div>
       );

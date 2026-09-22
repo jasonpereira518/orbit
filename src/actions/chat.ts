@@ -13,6 +13,7 @@ import { chatWithNetwork } from "@/lib/ai";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
+import { maybeGather } from "@/lib/chat-gather";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -96,6 +97,37 @@ export async function updateChatThreadContext(threadId: string, note: string | n
   return { contextNote: row.contextNote };
 }
 
+/**
+ * Thumbs on one answer. Scoped to the user's own rows, and to assistant turns only — there
+ * is nothing to rate about your own question.
+ *
+ * Passing the value already stored clears it, so the same button both sets and un-sets.
+ */
+export async function setChatMessageFeedback(
+  messageId: string,
+  value: "up" | "down" | null,
+  note?: string | null
+) {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+  const existing = await db.query.chatMessages.findFirst({
+    where: and(eq(chatMessages.id, messageId), eq(chatMessages.userId, userId)),
+    columns: { id: true, role: true, feedback: true },
+  });
+  if (!existing || existing.role !== "assistant") throw new Error("Answer not found");
+
+  const next = existing.feedback === value ? null : value;
+  await db
+    .update(chatMessages)
+    .set({
+      feedback: next,
+      // A note only belongs to the rating it was written for; clearing the rating clears it.
+      feedbackNote: next ? (note?.trim() || null) : null,
+    })
+    .where(and(eq(chatMessages.id, messageId), eq(chatMessages.userId, userId)));
+  return { feedback: next };
+}
+
 export async function deleteChatThread(threadId: string) {
   const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
@@ -123,6 +155,7 @@ async function askNetworkInner(
   question: string,
   options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
 ) {
+  const requestStartedAt = Date.now();
   try {
     const userId = await requireUserForSurface("page.chat");
     await consumeBucket("chat", userId, RATE_LIMITS.chat);
@@ -147,6 +180,9 @@ async function askNetworkInner(
       });
     }
 
+    // The same routing as the streaming route, so the two paths cannot answer differently.
+    const { evidence } = await maybeGather(userId, ctx, { requestStartedAt });
+
     const result = await chatWithNetwork(
       userId,
       ctx.scopedQuestion,
@@ -158,7 +194,8 @@ async function askNetworkInner(
       ctx.focusProfile,
       ctx.attachedContext,
       ctx.goals,
-      ctx.attentionLite
+      ctx.attentionLite,
+      evidence
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]

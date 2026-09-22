@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useTransition,
@@ -28,7 +29,6 @@ import {
   listChatThreads,
   updateChatThreadContext,
 } from "@/actions/chat";
-import { createReminder } from "@/actions/reminders";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { ScanControls } from "@/components/scan/scan-controls";
@@ -55,6 +55,13 @@ import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
+import { ChatActivity } from "@/components/chat/chat-activity";
+import { AnswerActions } from "@/components/chat/answer-actions";
+import { ReminderButton } from "@/components/chat/reminder-button";
+import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
+import type { ChatStep } from "@/lib/chat-stream-protocol";
+import type { ChatPerson } from "@/components/chat/chat-markdown";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -75,7 +82,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
-import { streamChat } from "@/lib/chat-stream-client";
+import { streamChat, type DoneInfo } from "@/lib/chat-stream-client";
 import { activeMentions } from "@/lib/chat-mentions";
 import { addMentionPick } from "@/lib/mentions/mention-picks";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
@@ -124,12 +131,53 @@ type AssistantMessage = {
   recommendations: ChatRecommendation[];
   /** True while the answer is still arriving from `/api/chat`. */
   streaming?: boolean;
+  /**
+   * The stages the server reported for this answer, newest state per stage.
+   *
+   * Kept per message rather than in one panel-level slot so scrolling back through a thread
+   * still shows what each individual answer did, and so a new question cannot overwrite the
+   * record of the previous one.
+   */
+  steps?: ChatStep[];
+  /** Next questions derived from what retrieval found. Never model-generated. */
+  followUps?: string[];
+  /**
+   * The contacts retrieval grounded this answer in. Gives a recommendation card its role and
+   * company, and tells the prose which names are safe to link. Not persisted, so a reloaded
+   * thread falls back to what the recommendation itself carries.
+   */
+  retrieved?: DoneInfo["retrieved"];
+  /** Thumbs already on this answer, when it came back from a saved thread. */
+  feedback?: "up" | "down" | null;
+  /**
+   * True once the server has a row for this answer.
+   *
+   * A stopped or failed turn keeps its text on screen but was never persisted, so it has
+   * nothing to rate — and saying so is better than offering a button that would fail.
+   */
+  persisted?: boolean;
+  /** The user cut this answer short. */
+  stopped?: boolean;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Whether the history rail is open is a per-browser preference, kept across visits. */
+const RAIL_OPEN_KEY = "orbit:chat-rail-open";
+
+function readRailOpen(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    // Open unless it was explicitly closed: a first visit, or storage that cannot be read,
+    // gets the rail — the default that shows the feature exists.
+    return window.localStorage.getItem(RAIL_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
 }
 
 function formatThreadLabel(thread: ThreadSummary) {
@@ -166,6 +214,20 @@ export function ChatPanel() {
   // are not.
   const { setNotes: setContextNotes, reset: resetContext } = contextIngest;
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Read in the initializer, which is safe because this panel is `ssr: false` — there is no
+  // server render for a stored value to disagree with (same reasoning as the `?q=` seed).
+  const [railOpen, setRailOpen] = useState(readRailOpen);
+  const toggleRail = useCallback(() => {
+    setRailOpen((open) => {
+      const next = !open;
+      try {
+        window.localStorage.setItem(RAIL_OPEN_KEY, next ? "1" : "0");
+      } catch {
+        // Private mode or blocked storage: the toggle still works, it just is not remembered.
+      }
+      return next;
+    });
+  }, []);
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
   /**
@@ -183,6 +245,9 @@ export function ChatPanel() {
   // Streaming is deliberately NOT a transition: updates inside `startTransition` are
   // deferred, which would hold every streamed token back until the whole answer landed.
   const [streaming, setStreaming] = useState(false);
+  // Lets the user cut a long answer short. `streamChat` has always accepted a signal and
+  // the route already honours `request.signal`; nothing was passing one.
+  const abortRef = useRef<AbortController | null>(null);
   const busy = pending || streaming;
   // The "searching" bubble makes sense until the first token; after that the answer
   // itself is the progress indicator.
@@ -483,6 +548,12 @@ export function ChatPanel() {
                 role: "assistant" as const,
                 answer: row.content,
                 recommendations: row.recommendations || [],
+                // Answers written before this column existed have none, and simply show no
+                // summary rather than a fabricated one.
+                steps: row.activity ?? undefined,
+                feedback: row.feedback ?? null,
+                // It came out of the database, so by definition there is a row to rate.
+                persisted: true,
               }
         )
       );
@@ -616,6 +687,8 @@ export function ChatPanel() {
           ]);
         };
 
+        const controller = new AbortController();
+        abortRef.current = controller;
         await streamChat(
           {
             question: q,
@@ -631,9 +704,31 @@ export function ChatPanel() {
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
             },
+            onStep: (step) => {
+              // The first step arrives before any prose, which is the point: it replaces the
+              // old blank wait. Steps are keyed by id, so a stage finishing updates its own
+              // line in place instead of appending a second copy of itself.
+              ensurePlaceholder();
+              patch((m) => {
+                const steps = m.steps ?? [];
+                const at = steps.findIndex((s) => s.id === step.id);
+                if (at === -1) return { ...m, steps: [...steps, step] };
+                const next = steps.slice();
+                next[at] = step;
+                return { ...m, steps: next };
+              });
+            },
             onDone: (info) => {
               ensurePlaceholder();
-              patch((m) => ({ ...m, id: info.messageId || assistantId, streaming: false }));
+              patch((m) => ({
+                ...m,
+                id: info.messageId || assistantId,
+                streaming: false,
+                followUps: info.followUps ?? [],
+                retrieved: info.retrieved,
+                // Only a real message id means there is a row to rate.
+                persisted: Boolean(info.messageId),
+              }));
               if (info.notice) toast.message(info.notice);
               if (info.title) setThreadTitle(info.title);
               setThreads((prev) => {
@@ -650,17 +745,40 @@ export function ChatPanel() {
               });
             },
             onError: (message) => {
+              // A stop is the user's own doing, not a failure: keep whatever arrived and
+              // say plainly that it was cut short rather than deleting it and apologising.
+              if (controller.signal.aborted) return;
               toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               resetQuestion(q);
             },
-          }
+          },
+          controller.signal
         );
+        if (controller.signal.aborted) {
+          // Stopping during retrieval means no answer bubble was ever placed, which used to
+          // leave the question sitting alone with nothing to say what happened. The user
+          // message may already be saved server-side by then, so the honest move is to mark
+          // the turn stopped rather than delete a question that was really asked.
+          if (!placed) ensurePlaceholder();
+          patch((m) => ({ ...m, streaming: false, stopped: true }));
+        }
+        abortRef.current = null;
         setStreaming(false);
       })();
     },
     [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
   );
+
+  /**
+   * Cut the answer short.
+   *
+   * The partial text stays on screen, but the server never reaches `persistAssistantTurn`,
+   * so nothing is saved — the bubble says so rather than letting a reload silently lose it.
+   */
+  const stopStreaming = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   function fillMostRecentUserMessage() {
     const fromThread = [...messages]
@@ -801,7 +919,22 @@ export function ChatPanel() {
           the suggestion chips. The whole ancestor chain is bounded (app-shell `h-dvh` →
           `min-h-0 flex-1` → page `flex min-h-0 flex-1`), and ChatPanelSkeleton already sized
           itself this way — so this also removes the height jump when the panel swaps in. */}
-      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card">
+      <div className="flex min-h-0 w-full flex-1 flex-row overflow-hidden rounded-2xl border border-border/70 bg-card">
+        {/* From md up the history is a rail beside the conversation. Below that the header
+            keeps its dropdown (`md:hidden` on both of its controls), because on a phone the
+            conversation should have the full width. */}
+        <ChatHistoryRail
+          id="chat-history-rail"
+          open={railOpen}
+          onToggle={toggleRail}
+          threads={threads}
+          activeId={threadId}
+          busy={busy}
+          onSelect={(id) => void loadThread(id)}
+          onNew={startNewChat}
+          onDelete={removeThread}
+        />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
@@ -810,7 +943,7 @@ export function ChatPanel() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="shrink-0 text-muted-foreground"
+                  className="shrink-0 text-muted-foreground md:hidden"
                   aria-label="Chat history"
                 />
               }
@@ -876,7 +1009,7 @@ export function ChatPanel() {
             type="button"
             variant="ghost"
             size="sm"
-            className="shrink-0 text-muted-foreground"
+            className="shrink-0 text-muted-foreground md:hidden"
             onClick={startNewChat}
             disabled={busy}
           >
@@ -934,15 +1067,26 @@ export function ChatPanel() {
                     msg.role === "user" ? (
                       <UserBubble key={msg.id} msg={msg} />
                     ) : (
-                      <AssistantBubble key={msg.id} msg={msg} />
+                      <AssistantBubble
+                        key={msg.id}
+                        msg={msg}
+                        onRetry={() => sendQuestion(lastUserQuery)}
+                        onFollowUp={(q) => sendQuestion(q)}
+                      />
                     )
                   )}
 
+                  {/*
+                    Only reachable before the first `step` event lands — which is now within
+                    a few milliseconds of sending, because the route opens the stream before
+                    it starts retrieving. After that the assistant bubble's own ChatActivity
+                    takes over and says what is actually happening.
+                  */}
                   {awaitingFirstToken && (
                     <div className="flex justify-start">
-                      <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
                         <Loader2 className="size-3.5 animate-spin" />
-                        Searching your network…
+                        Starting…
                       </div>
                     </div>
                   )}
@@ -1048,6 +1192,7 @@ export function ChatPanel() {
                     loadingThread ||
                     (!question.trim() && !lastUserQuery)
                   }
+                  onStop={stopStreaming}
                   onClick={() => {
                     if (!question.trim()) {
                       fillMostRecentUserMessage();
@@ -1086,6 +1231,7 @@ export function ChatPanel() {
                 ))}
             </div>
           </div>
+        </div>
         </div>
       </div>
 
@@ -1184,22 +1330,101 @@ const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
 
 const AssistantBubble = memo(function AssistantBubble({
   msg,
+  onRetry,
+  onFollowUp,
 }: {
   msg: AssistantMessage;
+  onRetry?: () => void;
+  onFollowUp?: (question: string) => void;
 }) {
+  const steps = msg.steps ?? [];
+
+  // Who this answer may name, from its own grounding only: the contacts retrieval returned
+  // and the people it recommended. Exact names, so the prose links only what is known.
+  const people = useMemo<ChatPerson[]>(() => {
+    const out: ChatPerson[] = [];
+    for (const c of msg.retrieved ?? []) {
+      out.push({ name: c.fullName, href: `/contacts/${c.id}` });
+    }
+    for (const r of msg.recommendations) {
+      if (r.recruiter_id) out.push({ name: r.name, href: `/recruiters/${r.recruiter_id}` });
+      else if (r.contact_id) out.push({ name: r.name, href: `/contacts/${r.contact_id}` });
+    }
+    return out;
+  }, [msg.retrieved, msg.recommendations]);
+
+  // Photos learned by the activity steps, so a card shows the same face the orbit did.
+  const photoById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const step of msg.steps ?? []) {
+      for (const ref of step.refs ?? []) {
+        if (ref.kind === "contact" && ref.photoUrl && !map.has(ref.id)) map.set(ref.id, ref.photoUrl);
+      }
+    }
+    return map;
+  }, [msg.steps]);
+
+  // Role and company for a card come from retrieval's own rows, not from the model.
+  const subtitleById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of msg.retrieved ?? []) {
+      const line = [c.title, c.company].filter(Boolean).join(" · ");
+      if (line) map.set(c.id, line);
+    }
+    return map;
+  }, [msg.retrieved]);
+
   return (
+    // No bubble on the assistant side: the answer is the page's content, not a chat turn
+    // from a stranger. The user's own words keep a bubble, so the two are still easy to
+    // tell apart while scanning.
     <div className="flex justify-start">
-      <div className="max-w-[92%] space-y-3">
-        <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm leading-relaxed text-foreground">
-          <ChatMarkdown>{msg.answer}</ChatMarkdown>
-        </div>
+      <div className="w-full max-w-[92%] space-y-3">
+        {steps.length > 0 && (
+          <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} />
+        )}
+        {msg.answer && (
+          <div className="text-sm leading-relaxed text-foreground">
+            <ChatMarkdown people={people}>{msg.answer}</ChatMarkdown>
+          </div>
+        )}
+        {msg.stopped && (
+          <p className="text-xs text-muted-foreground">
+            Stopped — this answer wasn’t saved.
+          </p>
+        )}
         {msg.recommendations.length > 0 && (
-          <div className="space-y-2">
+          <div className="grid gap-2 sm:grid-cols-2">
             {msg.recommendations.map((r) => (
               <RecommendationCard
                 key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
                 rec={r}
+                subtitle={r.contact_id ? subtitleById.get(r.contact_id) : undefined}
+                photoUrl={r.contact_id ? photoById.get(r.contact_id) : undefined}
               />
+            ))}
+          </div>
+        )}
+        {!msg.streaming && msg.answer && (
+          <AnswerActions
+            messageId={msg.id}
+            answer={msg.answer}
+            persisted={Boolean(msg.persisted)}
+            initialFeedback={msg.feedback ?? null}
+            onRetry={onRetry}
+          />
+        )}
+        {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {msg.followUps?.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => onFollowUp?.(q)}
+                className="rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                {q}
+              </button>
             ))}
           </div>
         )}
@@ -1210,69 +1435,83 @@ const AssistantBubble = memo(function AssistantBubble({
 
 const RecommendationCard = memo(function RecommendationCard({
   rec,
+  subtitle,
+  photoUrl,
 }: {
   rec: ChatResult["recommendations"][number];
+  /** Role and company from retrieval — absent on a reloaded thread, which is fine. */
+  subtitle?: string | null;
+  /** The contact's stored photo, when the activity steps learned it. */
+  photoUrl?: string | null;
 }) {
-  const [pending, start] = useTransition();
   const href = rec.recruiter_id
     ? `/recruiters/${rec.recruiter_id}`
     : rec.contact_id
       ? `/contacts/${rec.contact_id}`
       : "#";
   const canRemind = Boolean(rec.contact_id);
+  const line = rec.recruiter_id ? "Recruiter" : subtitle;
 
   return (
-    <div className="rounded-xl border border-border/70 bg-background p-3.5">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <div className="flex h-full flex-col rounded-xl border border-border/70 bg-background p-3">
+      <div className="flex items-center gap-2.5">
+        {/* The picture opens the profile too — it is the obvious thing to click. The name
+            beside it is the same link and stays the keyboard and screen-reader route, so this
+            one is left out of both (`tabIndex`, `aria-hidden`) rather than announced twice. */}
+        {href !== "#" ? (
+          <Link
+            href={href}
+            tabIndex={-1}
+            aria-hidden="true"
+            className="shrink-0 rounded-full ring-2 ring-transparent transition-[transform,box-shadow] hover:scale-105 hover:ring-primary/40"
+          >
+            <ContactAvatar
+              contactId={rec.contact_id ?? null}
+              fullName={rec.name}
+              profileImageUrl={photoUrl}
+              size="sm"
+              className="size-9"
+            />
+          </Link>
+        ) : (
+          <ContactAvatar
+            contactId={rec.contact_id ?? null}
+            fullName={rec.name}
+            profileImageUrl={photoUrl}
+            size="sm"
+            className="size-9 shrink-0"
+          />
+        )}
         <div className="min-w-0 flex-1">
           <Link
             href={href}
-            className="text-sm font-medium text-primary hover:underline"
+            className="block truncate text-sm font-medium text-foreground hover:text-primary hover:underline"
           >
             {rec.name}
           </Link>
-          {rec.recruiter_id && (
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Recruiter
-            </p>
-          )}
-          <p className="mt-0.5 text-xs text-muted-foreground">{rec.reason}</p>
-          <p className="mt-1.5 text-xs">
-            <span className="font-medium">Next: </span>
-            {rec.suggested_action}
-          </p>
+          {line && <p className="truncate text-xs text-muted-foreground">{line}</p>}
         </div>
-        {canRemind && (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={pending}
-            onClick={() =>
-              start(async () => {
-                await createReminder({
-                  contactId: rec.contact_id!,
-                  title: `Reach out to ${rec.name}`,
-                  description: rec.suggested_action,
-                  dueDate: new Date(
-                    Date.now() + 3 * 24 * 60 * 60 * 1000
-                  ).toISOString(),
-                });
-                toast.success(TOAST_COPY.reminderSet);
-              })
-            }
-          >
-            Reminder
-          </Button>
-        )}
       </div>
+      <p className="mt-2 text-xs leading-snug text-muted-foreground">{rec.reason}</p>
+      <p className="mt-1.5 text-xs leading-snug">
+        <span className="font-medium">Next: </span>
+        {rec.suggested_action}
+      </p>
       {rec.draft_message && (
-        <div className="mt-2.5 rounded-lg bg-muted/50 p-2.5 text-xs">
-          <Badge variant="secondary" className="mb-1.5 text-[10px]">
+        <div className="mt-2 rounded-lg bg-muted/50 p-2 text-xs">
+          <Badge variant="secondary" className="mb-1 text-[10px]">
             Draft
           </Badge>
-          <p className="whitespace-pre-wrap text-muted-foreground">
-            {rec.draft_message}
-          </p>
+          <p className="whitespace-pre-wrap text-muted-foreground">{rec.draft_message}</p>
+        </div>
+      )}
+      {canRemind && (
+        <div className="mt-auto pt-2.5">
+          <ReminderButton
+            contactId={rec.contact_id!}
+            name={rec.name}
+            suggestedAction={rec.suggested_action}
+          />
         </div>
       )}
     </div>

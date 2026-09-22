@@ -21,7 +21,9 @@ import {
   listOutlookMessagePage,
 } from "@/lib/outlook";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
-import { firmFromEmail, looksLikeRecruiter, parseFromHeader } from "@/lib/recruiter-detect";
+import { firmFromEmail, parseFromHeader } from "@/lib/recruiter-detect";
+import { openDecider, type Decider } from "@/lib/decisions/jev";
+import { admitRecruiterCandidates } from "@/lib/decisions/recruiter";
 import {
   RECRUITER_CONFIDENCE_FLOOR,
   classifyRecruiterSender,
@@ -79,6 +81,8 @@ export type OutlookScanDeps = {
   fetchMessages: typeof fetchOutlookMessages;
   classify: typeof classifyRecruiterSender;
   continueLater: (importId: string) => Promise<void>;
+  /** The account's decision model — see `ScanDeps.openDecider` in the Gmail runner. */
+  openDecider?: (userId: string) => Promise<Decider | null>;
 };
 
 async function patchStats(importId: string, patch: Partial<ImportStats>) {
@@ -109,6 +113,7 @@ const DEFAULT_SCAN_DEPS: OutlookScanDeps = {
   fetchMessages: fetchOutlookMessages,
   classify: classifyRecruiterSender,
   continueLater: scheduleContinuation,
+  openDecider,
 };
 
 /**
@@ -130,7 +135,8 @@ async function runDiscovery(
   accessToken: string,
   jobStart: number,
   scanAfter: Date,
-  deps: OutlookScanDeps
+  deps: OutlookScanDeps,
+  decider: Decider | null
 ): Promise<boolean> {
   const db = await getDb();
 
@@ -176,21 +182,23 @@ async function runDiscovery(
       const headers = await deps.fetchHeaders(accessToken, page.messages);
       scanned += page.messages.length;
 
-      for (const msg of headers) {
-        if (msg.internalDate != null && msg.internalDate < scanAfterMs) continue;
-        if (msg.folderId && excludedFolders.has(msg.folderId)) continue;
+      const eligible = headers.filter((msg) => {
+        if (msg.internalDate != null && msg.internalDate < scanAfterMs) return false;
+        if (msg.folderId && excludedFolders.has(msg.folderId)) return false;
         // Outlook's answer to Gmail's `-category:promotions -category:social -from:<job
         // boards>`: newsletters and job-board mail are cut here, by `List-Unsubscribe` /
         // `List-Id` / `Precedence` and the job-board domain list, before they cost a
         // classification. ATS mail is deliberately NOT cut (see `classifySenderKind`).
-        if (classifySenderKind(msg) === "bulk") continue;
-        if (!looksLikeRecruiter({
-          from: msg.from,
-          subject: msg.subject,
-          snippet: msg.snippet,
-        })) {
-          continue;
-        }
+        return classifySenderKind(msg) !== "bulk";
+      });
+      // The keyword prefilter, plus the senders a decision model wins back — the same
+      // function the Gmail scan calls, so the two mailboxes judge senders alike.
+      const admitted = await admitRecruiterCandidates(eligible, decider, {
+        alreadyCandidate: (email) => byEmail.has(email),
+      });
+
+      for (const msg of eligible) {
+        if (!admitted.has(msg.id)) continue;
         const parsed = parseFromHeader(msg.from);
         if (!parsed) continue;
 
@@ -257,17 +265,22 @@ async function processSender(
   userId: string,
   payload: OutlookSenderRowPayload,
   accessToken: string,
-  deps: OutlookScanDeps
+  deps: OutlookScanDeps,
+  decider: Decider | null
 ): Promise<"recruiter" | "rejected"> {
   const messages = await deps.fetchMessages(accessToken, payload.messageIds.slice(0, 5));
   if (messages.length === 0) return "rejected";
 
-  const result = await deps.classify(userId, {
-    senderName: payload.name,
-    senderEmail: payload.email,
-    firmGuess: payload.firm,
-    messages,
-  });
+  const result = await deps.classify(
+    userId,
+    {
+      senderName: payload.name,
+      senderEmail: payload.email,
+      firmGuess: payload.firm,
+      messages,
+    },
+    { decider }
+  );
 
   if (!result.isRecruiter || result.confidence < RECRUITER_CONFIDENCE_FLOOR) {
     return "rejected";
@@ -377,9 +390,12 @@ export async function runOutlookRecruiterScanJob(
     });
   }
 
+  // Null for most accounts (no TypeSafe key), and then every step runs as before Jev.
+  const decider = deps.openDecider ? await deps.openDecider(userId) : null;
+
   try {
     if (!importRow.stats?.discoveryComplete) {
-      const finished = await runDiscovery(importId, userId, accessToken, jobStart, scanAfter, deps);
+      const finished = await runDiscovery(importId, userId, accessToken, jobStart, scanAfter, deps, decider);
       if (!finished) return;
     }
 
@@ -421,7 +437,7 @@ export async function runOutlookRecruiterScanJob(
         }
 
         try {
-          const outcome = await processSender(userId, row.payload, accessToken, deps);
+          const outcome = await processSender(userId, row.payload, accessToken, deps, decider);
           consecutiveFailures = 0;
           if (outcome === "recruiter") found += 1;
           else rejected += 1;

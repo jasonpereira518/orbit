@@ -3,7 +3,10 @@ import { chatMessages, type ChatRecommendation } from "@/db/schema";
 import { getDb } from "@/db";
 import { chatWithNetworkStream } from "@/lib/ai";
 import { prepareChatContext } from "@/lib/chat-context";
+import { maybeGather } from "@/lib/chat-gather";
 import { persistAssistantTurn } from "@/lib/chat-persist";
+import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
+import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
@@ -22,10 +25,18 @@ export const maxDuration = 60;
  * model produces it and sends the recommendations once the stream ends. Retrieval and
  * persistence are shared with the action (`prepareChatContext`, `persistAssistantTurn`).
  *
- * Errors before the stream starts are a JSON body with a real status; after it starts the
- * status line is gone, so they are an `error` event.
+ * Retrieval runs inside the stream rather than before it, so each stage can narrate itself
+ * as `step` events — see `@/lib/chat-steps`. That is also why the headers now flush almost
+ * immediately instead of after several seconds of search.
+ *
+ * Errors are split by what has already been sent. Auth, rate limiting and body validation
+ * happen before the stream opens and return a JSON body with a real status; anything from
+ * retrieval onwards arrives as an `error` event, because the status line is long gone.
  */
 export async function POST(request: Request) {
+  // The research step budgets against this, not against its own start: retrieval has
+  // already spent part of `maxDuration` by the time it runs.
+  const requestStartedAt = Date.now();
   let userId: string;
   try {
     userId = await requireUserForSurface("page.chat");
@@ -64,36 +75,56 @@ export async function POST(request: Request) {
     ? body.contextContactIds.filter((id): id is string => typeof id === "string").slice(0, 10)
     : [];
 
-  let ctx: Awaited<ReturnType<typeof prepareChatContext>>;
-  try {
-    ctx = await prepareChatContext(userId, question, {
-      threadId,
-      focusContactId: contactId,
-      contextContactIds,
-    });
-    if (threadId) {
-      const db = await getDb();
-      await db.insert(chatMessages).values({
-        threadId,
-        userId,
-        role: "user",
-        content: ctx.q,
-        // Resolved server-side rather than trusted from the client: these are the people
-        // `loadAttachedPeople` actually found and put in front of the model, so the mark on
-        // a reloaded thread describes what the answer was really given.
-        attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
-      });
-    }
-  } catch (err) {
-    const failure = reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.prepare", userId });
-    return NextResponse.json({ error: failure.error, ref: failure.ref }, { status: 400 });
-  }
-
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const send = (event: ChatStreamEvent) => controller.enqueue(encoder.encode(formatSse(event)));
+      const steps = createStepEmitter((step) => send({ type: "step", step }));
       try {
+        // Retrieval runs INSIDE the stream so it can narrate itself. It used to be awaited
+        // before the response existed, which meant the several seconds of query
+        // understanding, hybrid search and reranking had no channel to report on and the
+        // user watched one undifferentiated spinner. The cost of moving it is that a
+        // retrieval failure now arrives as an `error` event rather than a 400, since the
+        // status line is already gone — auth, rate limiting and validation stay above,
+        // where they can still set a real status code.
+        const ctx = await prepareChatContext(userId, question, {
+          threadId,
+          focusContactId: contactId,
+          contextContactIds,
+          steps,
+        });
+        if (threadId) {
+          const db = await getDb();
+          await db.insert(chatMessages).values({
+            threadId,
+            userId,
+            role: "user",
+            content: ctx.q,
+            // Resolved server-side rather than trusted from the client: these are the people
+            // `loadAttachedPeople` actually found and put in front of the model, so the mark on
+            // a reloaded thread describes what the answer was really given.
+            attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+          });
+        }
+
+        // Name a NEW conversation from its first message. Started here, once retrieval is done,
+        // so it runs alongside the answer stream — the answer takes far longer than the fast
+        // model does, and the title is normally waiting by the time it lands. Only for a
+        // thread with no title yet: a later turn must never rename the conversation.
+        const titlePromise =
+          threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q) : null;
+
+        // One retrieval answers most questions; the ones whose shape says it cannot — what
+        // was discussed and when, a path to someone, a follow-up that refers back — get a
+        // bounded research loop first. See `chooseDepth` and `gatherEvidence`.
+        const { evidence } = await maybeGather(userId, ctx, {
+          requestStartedAt,
+          signal: request.signal,
+          steps,
+        });
+
+        steps.start("answer", "Writing the answer");
         const result = await traced(
           "chat.stream",
           () =>
@@ -108,18 +139,32 @@ export async function POST(request: Request) {
               (delta) => send({ type: "answer", delta }),
               ctx.focusProfile,
               ctx.attachedContext,
-              { signal: request.signal, goals: ctx.goals, attentionLite: ctx.attentionLite }
+              { signal: request.signal, goals: ctx.goals, attentionLite: ctx.attentionLite, evidence }
             ),
           { userId }
         );
-        const recommendations = ctx.filterRecommendations(
-          result.recommendations as ChatRecommendation[]
-        );
+        steps.done("answer", { label: "Wrote the answer" });
+
+        const rawRecommendations = result.recommendations as ChatRecommendation[];
+        const recommendations = ctx.filterRecommendations(rawRecommendations);
+        // Only worth a step when it actually caught something — a filter that passed
+        // everything through did no work the user needs to hear about.
+        const dropped = (rawRecommendations?.length ?? 0) - recommendations.length;
+        if (dropped > 0) {
+          steps.done("verify", {
+            label: `Dropped ${plural(dropped, "suggestion")} not in your network`,
+          });
+        }
         send({ type: "recommendations", items: recommendations });
+        // A beat for a title that is nearly there, never longer: if it is not ready the thread
+        // is named the old way (the first message, cut short) rather than holding the answer.
+        const title = await settleWithin(titlePromise, TITLE_GRACE_MS);
         // Persisted before `done` so the client learns the real message id and title.
         const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
           answer: result.answer,
           recommendations,
+          activity: steps.snapshot(),
+          title,
         });
         send({
           type: "done",
@@ -127,6 +172,12 @@ export async function POST(request: Request) {
           threadId,
           title: saved.title,
           notice: ctx.searchNotice,
+          followUps: deriveFollowUps({
+            question: ctx.q,
+            topRosterCompany: ctx.orgRosters[0]?.name ?? null,
+            firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
+            topContactName: ctx.retrieved[0]?.fullName ?? null,
+          }),
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,
             fullName: c.fullName,

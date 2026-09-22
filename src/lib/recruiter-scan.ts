@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { parseAiJson } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
+import type { Decider } from "@/lib/decisions/jev";
+import { rulesOutRecruiter } from "@/lib/decisions/recruiter";
 
 /**
  * Classification + summarization for one candidate sender found by the Gmail scan.
@@ -115,6 +117,21 @@ export function recruiterResultFromContent(content: string): RecruiterScanResult
   };
 }
 
+/**
+ * The verdict for a sender the decision model ruled out before any LLM call. Nothing about
+ * them is written anywhere — a rejected sender only ever becomes a skipped row — so there is
+ * no summary to invent, and no name or firm to guess.
+ */
+export const RULED_OUT_VERDICT: RecruiterScanResult = Object.freeze({
+  isRecruiter: false,
+  confidence: 0,
+  fullName: null,
+  firm: null,
+  companiesMentioned: [],
+  rolesDiscussed: [],
+  summary: null,
+}) as RecruiterScanResult;
+
 export async function classifyRecruiterSender(
   userId: string,
   input: {
@@ -122,8 +139,17 @@ export async function classifyRecruiterSender(
     senderEmail: string;
     firmGuess: string | null;
     messages: RecruiterScanMessage[];
-  }
+  },
+  opts: {
+    /**
+     * The account's decision model (`openDecider`), when it has one. A sender it is confident
+     * is not a recruiter skips the LLM entirely; anything else is classified as before.
+     */
+    decider?: Decider | null;
+  } = {}
 ): Promise<RecruiterScanResult> {
+  if (opts.decider && (await rulesOutRecruiter(opts.decider, input))) return RULED_OUT_VERDICT;
+
   // Re-scans see the same senders again, and an overlap window re-reads the last two days of
   // mail on purpose. A sender whose rendered mail is byte-identical gets the verdict it got
   // last time instead of another model call; one new message changes the prompt and the key.

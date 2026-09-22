@@ -1,0 +1,90 @@
+{
+  "label": "jev",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T04:41:06.984Z",
+  "commit": "c5949a84",
+  "fixtures": "3040d1fd9c4a",
+  "runs": 1,
+  "decisions": "jev",
+  "tasks": {
+    "recruiter-prefilter": {
+      "cases": 40,
+      "metrics": {
+        "recall": 1,
+        "precision": 0.782608695652174,
+        "keywordRecall": 0.3888888888888889
+      },
+      "misses": [
+        "not-ats-greenhouse-01-application-received",
+        "not-ats-workday-02-assessment-invite",
+        "not-jobboard-01-hirewire-matches",
+        "not-sales-01-observability-sequence",
+        "not-backgroundcheck-01-automated"
+      ],
+      "p50LatencyMs": 177,
+      "costMicros": 704,
+      "costPerCaseMicros": 17.6,
+      "usage": [
+        {
+          "operation": "recruiter.prefilter",
+          "model": "jev-1.13.0",
+          "calls": 32,
+          "failures": 0,
+          "inputTokens": 16755,
+          "outputTokens": 704,
+          "cachedInputTokens": 0,
+          "costMicros": 704,
+          "unpriced": 0
+        }
+      ],
+      "decisionCostMicros": 704,
+      "calibration": {
+        "recruiter.prefilter": [
+          {
+            "from": 0,
+            "to": 0.1,
+            "n": 11,
+            "meanP": 0.03454545454545455,
+            "observed": 0
+          },
+          {
+            "from": 0.1,
+            "to": 0.3,
+            "n": 6,
+            "meanP": 0.17333333333333334,
+            "observed": 0
+          },
+          {
+            "from": 0.3,
+            "to": 0.5,
+            "n": 1,
+            "meanP": 0.47,
+            "observed": 0
+          },
+          {
+            "from": 0.5,
+            "to": 0.7,
+            "n": 2,
+            "meanP": 0.56,
+            "observed": 0
+          },
+          {
+            "from": 0.7,
+            "to": 0.9,
+            "n": 2,
+            "meanP": 0.87,
+            "observed": 0.5
+          },
+          {
+            "from": 0.9,
+            "to": 1,
+            "n": 10,
+            "meanP": 0.9489999999999998,
+            "observed": 1
+          }
+        ]
+      }
+    }
+  }
+}
