@@ -37,6 +37,7 @@ const TOC: readonly TocItem[] = [
   { id: "use", label: "How it's used" },
   { id: "google", label: "Google user data" },
   { id: "recruiters", label: "Recruiter scan & directory" },
+  { id: "extension", label: "Browser extension" },
   { id: "third-parties", label: "Who else sees it" },
   { id: "ai", label: "AI processing" },
   { id: "payments", label: "Payments" },
@@ -139,9 +140,10 @@ export default function PrivacyPage() {
               account&rsquo;s app permissions.
             </li>
             <li>
-              <strong>The browser extension</strong> — when you open its panel on a LinkedIn profile,
-              it sends that page&rsquo;s text to Orbit, which fills in a contact using your AI key. A
-              contact is created only when you save it.
+              <strong>The browser extension</strong> — only when you click it (or on a site you have
+              let it follow): the address and visible text of the page beside its panel, to tell you
+              whether you know the person and fill in their details. See{" "}
+              <a href="#extension">The browser extension</a> for exactly what, when, and what is kept.
             </li>
             <li>
               <strong>Secrets you provide</strong> — API keys for AI, enrichment, email, SMS and
@@ -288,7 +290,62 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="third-parties" index={6} title="Who else touches your data">
+        <DocSection id="extension" index={6} title="The browser extension">
+          <p>
+            <strong>When it reads.</strong> The Orbit extension reads a page only when you ask: by
+            clicking its icon, pressing its keyboard shortcut, or choosing one of its right-click
+            items. It then reads the tab beside its panel, and nothing else — not other tabs, not
+            your browsing history. If you turn on &ldquo;follow me&rdquo; for LinkedIn, X, Gmail
+            or GitHub in its settings, it also reads each page on that site as you open it while
+            its panel is open; that is off until you turn it on. It never reads or fetches a page
+            in the background, never clicks, scrolls or expands anything, and never adds anything
+            to the pages you visit.
+          </p>
+          <p>
+            <strong>What it reads.</strong> The page&rsquo;s address and the details it shows about
+            the person or organization it is about — name, headline, title, company, location,
+            profile links and photo address — and the visible text of the page&rsquo;s main
+            content, up to 10,000 characters, with sections about other people (&ldquo;People also
+            viewed&rdquo; and the like) left out. On a page listing several people it reads up to
+            ten names and profile links. On Gmail it reads only the names and addresses of the people
+            on the open thread — never the email itself. If you have selected text on the page, it
+            reads that instead. &ldquo;Save work history from this
+            page&rdquo; (Pro) reads up to 40,000 characters of the page you are on, only when you
+            press it. A right-clicked link sends only the link; the page behind it is never opened.
+            Selected text you choose to save as a note is sent only when you save it.
+          </p>
+          <p>
+            <strong>What happens to it.</strong> The extension sends what it read to Orbit, which
+            compares it with your contacts to tell you whether you already know the person. To fill
+            in details, suggest opening lines (Pro) or read work history (Pro), Orbit sends it to
+            your AI provider on your key, as described in <a href="#ai">AI processing</a>. The page
+            text itself is never stored. What Orbit keeps is what you save — the contact, your
+            note, a follow-up, the roles and schools read from their LinkedIn — plus, for up to 7
+            days, the details and opening lines produced from a page, so that opening the same
+            page again does not call your AI provider again. Orbit also records when your
+            extension was last used and how many requests it made, to enforce rate limits, and
+            which Pro section you clicked when you click a locked one.
+          </p>
+          <p>
+            <strong>In the extension itself.</strong> It keeps your Orbit sign-in (the same session
+            as the web app), and the sites you have let it follow. A click or right-click is handed
+            from the extension&rsquo;s background to its panel through the browser&rsquo;s session
+            storage, which lives in memory and is deleted as soon as the panel acts on it. When the
+            Orbit web app is open, it can ask the extension whether it is installed; the answer is
+            the extension&rsquo;s version and which sites it follows, nothing about you.
+          </p>
+          <p>
+            Orbit&rsquo;s use of information received from the extension adheres to the{" "}
+            <a href="https://developer.chrome.com/docs/webstore/program-policies/policies">
+              Chrome Web Store User Data Policy
+            </a>
+            , including its Limited Use requirements. It is used only to provide the extension&rsquo;s
+            features, never sold, never used for advertising, and never read by people except as
+            described in <a href="#operator-access">Operator access</a>.
+          </p>
+        </DocSection>
+
+        <DocSection id="third-parties" index={7} title="Who else touches your data">
           <p>
             Orbit relies on the processors and integrations below. &ldquo;Required&rdquo; ones handle
             every account; &ldquo;Automatic&rdquo; ones run without a setting (photo lookups for
@@ -317,10 +374,11 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="ai" index={7} title="AI processing">
+        <DocSection id="ai" index={8} title="AI processing">
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
-            meeting audio, photos of pages you scan, recruiter emails when you run the scan — is sent
+            meeting audio, photos of pages you scan, recruiter emails when you run the scan, the page
+            text the browser extension read — is sent
             to the provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On every plan,
             every call runs on an API key you supply, so the request lands on your own account with
             that provider and is governed by the retention settings you have agreed with them. Orbit
@@ -336,6 +394,13 @@ export default function PrivacyPage() {
             its estimated cost.
           </p>
           <p>
+            Some answers are kept so the same question is not paid for twice: the recruiter
+            verdict for an email already scanned, a follow-up draft you reopen, the details read
+            from a page the extension has read before. Each is stored against a fingerprint of the
+            exact question — never the question itself — for at most 90 days (7 for pages the
+            extension read), and deleted with your data or your account.
+          </p>
+          <p>
             <strong>
               Don&rsquo;t store anything in Orbit you would be unwilling to send to an AI provider
             </strong>
@@ -344,7 +409,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="payments" index={8} title="Payments">
+        <DocSection id="payments" index={9} title="Payments">
           <p>
             The Free Plan needs no payment details. Orbit Pro and Orbit Lifetime are sold through
             Stripe.
@@ -356,7 +421,7 @@ export default function PrivacyPage() {
             id removed. Pricing is on the <Link href="/pricing">pricing page</Link>.
           </p>
         </DocSection>
-        <DocSection id="cookies" index={9} title="Cookies, local storage, and analytics">
+        <DocSection id="cookies" index={10} title="Cookies, local storage, and analytics">
           <p>
             Orbit uses Clerk session cookies to keep you signed in. On your very
             first visit it also sets one first-party cookie,{" "}
@@ -414,7 +479,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="controls" index={10} title="Your controls">
+        <DocSection id="controls" index={11} title="Your controls">
           <p>
             In Settings, under <Link href="/settings">Data and privacy</Link>, on every plan
             including Free:
@@ -443,7 +508,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="retention" index={11} title="How long data is kept">
+        <DocSection id="retention" index={12} title="How long data is kept">
           <p>
             Your Orbit data is kept while your account is active, until you delete it with the
             controls above. Downgrading never deletes anything: contacts added while you were
@@ -466,7 +531,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="security" index={12} title="Security">
+        <DocSection id="security" index={13} title="Security">
           <p>
             Traffic runs over HTTPS, every database query is scoped to your account, and API keys and
             account tokens are encrypted at rest (AES-256-GCM). Sign-in is handled by Clerk, and card
@@ -479,7 +544,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="operator-access" index={13} title="Operator access">
+        <DocSection id="operator-access" index={14} title="Operator access">
           <p>
             Running Orbit means occasionally looking at how it is doing, and at one account when
             something goes wrong for it. There is an internal operator console for that. This is what
@@ -522,7 +587,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="transfers" index={14} title="Where data is processed">
+        <DocSection id="transfers" index={15} title="Where data is processed">
           <p>
             Orbit&rsquo;s hosting, database, payment and AI providers operate globally, so your data
             may be processed outside the country you live in — most often the United States. Where
@@ -531,7 +596,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="children" index={15} title="Children">
+        <DocSection id="children" index={16} title="Children">
           <p>
             Orbit is not directed at children under 13, and we do not knowingly collect personal
             information from them. If you believe a child has provided information to Orbit, get in
@@ -539,7 +604,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="changes" index={16} title="Changes to this policy">
+        <DocSection id="changes" index={17} title="Changes to this policy">
           <p>
             This policy will change as the product does. The <strong>Last updated</strong> date at
             the top is revised whenever it happens, and material changes are called out in the app.
@@ -547,7 +612,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="contact" index={17} title="Questions">
+        <DocSection id="contact" index={18} title="Questions">
           <p>
             Questions about this policy, or about what Orbit holds on you, can go to the operator
             through the <Link href="/contact">contact page</Link>. For routine export or deletion,

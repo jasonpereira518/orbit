@@ -60,6 +60,15 @@ check("the usage view is pointed to", privacy.includes("Integrations → AI prov
 check("the timeline cap is quoted from code", privacy.includes("TIMELINE_DAILY_CONTACT_CAP"));
 check("the date comes from legal.ts", privacy.includes("LEGAL_LAST_UPDATED"));
 
+console.log("The browser extension (Chrome Web Store requires this disclosure)");
+check("the extension has its own section", privacy.includes('id="extension"'));
+check("the Chrome Web Store Limited Use statement is present", privacy.includes("Limited Use requirements") && privacy.includes("Chrome Web Store User Data Policy"));
+check("reading only on a click is stated", privacy.includes("reads a page only when you ask"));
+check("the work-history read is disclosed with its size", privacy.includes("40,000 characters"));
+check("the 7-day cache of what a page produced is disclosed", privacy.includes("for up to 7") && privacy.includes("days, the details and opening lines produced from a page"));
+check("Gmail is said to read participants, never the email", privacy.includes("never the email itself"));
+check("the old LinkedIn-only description is gone", !privacy.includes("when you open its panel on a LinkedIn profile"));
+
 console.log("Terms");
 check("subscriptions are no longer said to run through Clerk", !terms.includes("Clerk&apos;s billing") && !terms.includes("Clerk's billing"));
 check("billing is said to run through Stripe", terms.includes("Payments are handled by Stripe"));
