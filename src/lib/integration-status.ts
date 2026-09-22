@@ -215,3 +215,38 @@ export function attentionItems(input: {
   }
   return items;
 }
+
+/**
+ * The one button on each Overview card. Only "Connect …", "Sign in again" and "Turn on AI"
+ * are primary: they are the steps that make something work, not ways to look at it.
+ */
+export function overviewAction(
+  id: IntegrationTabId,
+  page: PageStatus | "unknown" | undefined,
+  account?: AccountStatus | "unknown"
+): { label: string; primary: boolean } {
+  const on = page !== undefined && page !== "unknown" && page.state === "on";
+  switch (id) {
+    case "google":
+    case "microsoft": {
+      if (!account || account === "unknown" || account.state === "not_configured") {
+        return { label: "Open", primary: false };
+      }
+      if (account.state === "not_connected") {
+        return { label: `Connect ${id === "google" ? "Google" : "Microsoft"}`, primary: true };
+      }
+      if (account.state === "needs_reauth") return { label: "Sign in again", primary: true };
+      return { label: "Manage", primary: false };
+    }
+    case "linkedin":
+      return { label: on ? "Import again" : "Import", primary: false };
+    case "ai":
+      return on ? { label: "Manage", primary: false } : { label: "Turn on AI", primary: true };
+    case "assistants":
+      return { label: "Set up", primary: false };
+    case "reminders":
+      return { label: on ? "Manage" : "Set up", primary: false };
+    default:
+      return { label: "Open", primary: false };
+  }
+}

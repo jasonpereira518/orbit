@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { IntegrationTabId } from "@/components/settings/sections";
+import { GoogleMark, LinkedInMark, MicrosoftMark } from "@/components/settings/provider-marks";
 import type { PageStatus } from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
 
@@ -28,8 +29,16 @@ const ICONS: Record<IntegrationTabId, LucideIcon> = {
   outreach: Send,
 };
 
-/** Decorative: every use sits beside the page's name. */
+const MARKS: Partial<Record<IntegrationTabId, (props: { className?: string }) => React.JSX.Element>> = {
+  google: GoogleMark,
+  microsoft: MicrosoftMark,
+  linkedin: LinkedInMark,
+};
+
+/** Decorative: every use sits beside the page's name. Accounts get their provider's mark. */
 export function IntegrationIcon({ id, className }: { id: IntegrationTabId; className?: string }) {
+  const Mark = MARKS[id];
+  if (Mark) return <Mark className={className} />;
   const Icon = ICONS[id];
   return <Icon aria-hidden className={className} />;
 }

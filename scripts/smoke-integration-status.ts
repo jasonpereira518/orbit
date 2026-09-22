@@ -14,6 +14,7 @@ import {
   googleAccountStatus,
   linkedinPageStatus,
   microsoftAccountStatus,
+  overviewAction,
   remindersPageStatus,
   type GoogleConnectionInput,
   type MicrosoftConnectionInput,
@@ -145,6 +146,26 @@ check(
 check("every item opens a page", items.every((i) => ["google", "microsoft", "ai"].includes(i.tab)));
 check("unknown lookups add nothing", attentionItems({ accounts: { google: "unknown" }, ai: "unknown" }).length === 0);
 check("healthy accounts and AI on add nothing", attentionItems({ accounts: { google: g, microsoft: m }, ai: { ready: true } }).length === 0);
+
+console.log("\noverviewAction");
+const label = (...args: Parameters<typeof overviewAction>) => overviewAction(...args).label;
+const offGoogle = googleAccountStatus(google({ connected: false, status: null }), pro);
+check("an unconnected account offers Connect", label("google", accountPageStatus(offGoogle), offGoogle) === "Connect Google");
+check("Connect is the primary action", overviewAction("google", accountPageStatus(offGoogle), offGoogle).primary);
+const offMicrosoft = microsoftAccountStatus(microsoft({ connected: false, status: null }), pro);
+check("names Microsoft", label("microsoft", accountPageStatus(offMicrosoft), offMicrosoft) === "Connect Microsoft");
+const expiredGoogle = googleAccountStatus(google({ connected: false, status: "needs_reauth" }), pro);
+check("an expired account offers Sign in again", label("google", accountPageStatus(expiredGoogle), expiredGoogle) === "Sign in again");
+check("a connected account offers Manage", label("google", accountPageStatus(g), g) === "Manage");
+check("a still-loading account offers Open", label("google", undefined, undefined) === "Open");
+check("an unavailable account offers Open", label("google", undefined, googleAccountStatus(google({ configured: false }), pro)) === "Open");
+check("LinkedIn never imported", label("linkedin", linkedinPageStatus(null, now)) === "Import");
+check("LinkedIn imported before", label("linkedin", linkedinPageStatus(new Date("2026-09-01T00:00:00Z"), now)) === "Import again");
+check("AI off", label("ai", aiOff) === "Turn on AI" && overviewAction("ai", aiOff).primary);
+check("AI on", label("ai", aiPageStatus({ ready: true, providerLabel: null })) === "Manage");
+check("assistants", label("assistants", { state: "none", detail: "" }) === "Set up");
+check("reminders off", label("reminders", remindersPageStatus({ enabled: false, lastFetchedAt: null }, now)) === "Set up");
+check("reminders on", label("reminders", remindersPageStatus({ enabled: true, lastFetchedAt: null }, now)) === "Manage");
 
 if (failures > 0) {
   console.error(`\nsmoke-integration-status: ${failures} failure(s)`);
