@@ -1,0 +1,541 @@
+{
+ "cases": [
+  {
+   "id": "dates-01",
+   "gate": "dates",
+   "state": {
+    "notes": "Coffee with Marcus next Tuesday at 10 at the Blue Bottle on Market."
+   },
+   "skip": false
+  },
+  {
+   "id": "dates-02",
+   "gate": "dates",
+   "state": {
+    "notes": "Priya said she'd send the deck by Friday so I can read it before the partner meeting."
+   },
+   "skip": false
+  },
+  {
+   "id": "dates-03",
+   "gate": "dates",
+   "state": {
+    "notes": "Good call with Ines. We agreed to check in monthly — she'll take the first one."
+   },
+   "skip": false,
+   "why": "a cadence, not a date"
+  },
+  {
+   "id": "dates-04",
+   "gate": "dates",
+   "state": {
+    "notes": "Follow up in two weeks about the referral to their head of data."
+   },
+   "skip": false
+  },
+  {
+   "id": "dates-05",
+   "gate": "dates",
+   "state": {
+    "notes": "Board meeting is Sept 30. Need Dana's intro before then."
+   },
+   "skip": false
+  },
+  {
+   "id": "dates-06",
+   "gate": "dates",
+   "state": {
+    "notes": "He said to ping him after the holidays, things are frozen until then."
+   },
+   "skip": false,
+   "why": "vague but dated"
+  },
+  {
+   "id": "dates-07",
+   "gate": "dates",
+   "state": {
+    "notes": "Met Alex at the Figma meetup. Works on design systems, very sharp on tokens."
+   },
+   "skip": true
+  },
+  {
+   "id": "dates-08",
+   "gate": "dates",
+   "state": {
+    "notes": "Long chat with Sam about hiring. Frustrated with their recruiter, thinking about going in-house."
+   },
+   "skip": true
+  },
+  {
+   "id": "dates-09",
+   "gate": "dates",
+   "state": {
+    "notes": "Jordan runs growth at Ramp. Grew up in Lisbon, moved here for school."
+   },
+   "skip": true
+  },
+  {
+   "id": "dates-10",
+   "gate": "dates",
+   "state": {
+    "notes": "Caught up with Nina. She's doing well — new team, likes the manager, no complaints."
+   },
+   "skip": true
+  },
+  {
+   "id": "dates-11",
+   "gate": "dates",
+   "state": {
+    "notes": "Let's reconnect soon, maybe end of the quarter once their reorg settles."
+   },
+   "skip": false,
+   "why": "\"end of the quarter\" is a time frame"
+  },
+  {
+   "id": "dates-12",
+   "gate": "dates",
+   "state": {
+    "notes": "We first met back in March 2024 at the conference in Lisbon."
+   },
+   "skip": true,
+   "why": "a past date, nothing to happen"
+  },
+  {
+   "id": "dates-13",
+   "gate": "dates",
+   "state": {
+    "notes": "Tomás asked good questions about our pricing. Sharp on unit economics."
+   },
+   "skip": true
+  },
+  {
+   "id": "dates-14",
+   "gate": "dates",
+   "state": {
+    "notes": "Dinner on the 14th with the Antler crew — he's bringing his cofounder."
+   },
+   "skip": false
+  },
+  {
+   "id": "brief-01",
+   "gate": "brief",
+   "state": {
+    "current_brief": "Seed-stage founder you met through Priya. Early conversations about their round; you offered to look at the deck.",
+    "new_input": "Profile:\nName: Omar Haddad\nRole: Cofounder\nCompany: Fernweh\n\nInteractions (newest first):\n2026-09-18 Call: term sheet signed with Index, closing in two weeks. Asked if you'd take a small angel allocation.\n2026-08-02 Coffee: walked through the deck."
+   },
+   "skip": false,
+   "why": "the round closed and there is a live ask"
+  },
+  {
+   "id": "brief-02",
+   "gate": "brief",
+   "state": {
+    "current_brief": "Design lead at Figma. Met at Config; you talk about design systems and she has strong opinions on tokens.",
+    "new_input": "Profile:\nName: Hana Okafor\nRole: Design lead\nCompany: Figma\nTags: Design\n\nInteractions (newest first):\n2026-05-11 Config: talked about design systems and tokens."
+   },
+   "skip": true,
+   "why": "only a tag was added"
+  },
+  {
+   "id": "brief-03",
+   "gate": "brief",
+   "state": {
+    "current_brief": "Product manager at Stripe. You met at a hiring panel and swap notes on pricing.",
+    "new_input": "Profile:\nName: Wes Lindqvist\nRole: VP Product\nCompany: Ramp\n\nInteractions (newest first):\n2026-09-10 LinkedIn: started a new role, VP Product at Ramp."
+   },
+   "skip": false,
+   "why": "role and company changed"
+  },
+  {
+   "id": "brief-04",
+   "gate": "brief",
+   "state": {
+    "current_brief": "A recruiter you connected with in June. Nothing has come of it yet.",
+    "new_input": "Profile:\nName: Tanya Brill\nRole: Recruiter\nCompany: Hatch\n\nInteractions (newest first):\n2026-09-14 LinkedIn: sent a connection note.\n2026-06-02 LinkedIn: connected."
+   },
+   "skip": true,
+   "why": "a connection note says nothing new"
+  },
+  {
+   "id": "brief-05",
+   "gate": "brief",
+   "state": {
+    "current_brief": "Former colleague, now at Anthropic. You catch up a couple of times a year.",
+    "new_input": "Profile:\nName: Dev Ramanathan\nRole: Engineer\nCompany: Anthropic\n\nInteractions (newest first):\n2026-09-19 Call: offered to introduce you to their CFO about the finance role."
+   },
+   "skip": false,
+   "why": "a new offer of an introduction"
+  },
+  {
+   "id": "brief-06",
+   "gate": "brief",
+   "state": {
+    "current_brief": "Angel investor in your last company. Supportive, slow to reply, worth keeping warm.",
+    "new_input": "Profile:\nName: Claudia Renn\nRole: Angel\nCompany: Independent\nLocation: Zurich\n\nInteractions (newest first):\n2026-04-08 Email: congratulated you on the launch."
+   },
+   "skip": true,
+   "why": "the same facts, reformatted"
+  },
+  {
+   "id": "brief-07",
+   "gate": "brief",
+   "state": {
+    "current_brief": "A former manager. Open ask: you asked them for an intro to Dana at Sequoia and are waiting.",
+    "new_input": "Profile:\nName: Ruth Adeyemi\nRole: Partner\nCompany: Forge\n\nInteractions (newest first):\n2026-09-15 Email: made the intro to Dana, cc'd you both."
+   },
+   "skip": false,
+   "why": "the open ask is now closed"
+  },
+  {
+   "id": "brief-08",
+   "gate": "brief",
+   "state": {
+    "current_brief": "Growth lead in San Francisco you met through the Ramp crowd. Chatty, generous with intros.",
+    "new_input": "Profile:\nName: Bex Moreau\nRole: Growth lead\nCompany: Ramp\nLocation: San Francisco\n\nInteractions (newest first):\n2026-07-01 Dinner: the Ramp crowd, talked about intros."
+   },
+   "skip": true,
+   "why": "the location was already in the brief prose"
+  },
+  {
+   "id": "brief-09",
+   "gate": "brief",
+   "state": {
+    "current_brief": "You met once at a conference in 2024 and have not spoken since.",
+    "new_input": "Profile:\nName: Aurel Costa\nRole: Head of Data\nCompany: Bolt\n\nInteractions (newest first):\n2026-09-20 Call: first conversation in two years; they're hiring and asked what you're building."
+   },
+   "skip": false,
+   "why": "silence broken, and they are hiring"
+  },
+  {
+   "id": "brief-10",
+   "gate": "brief",
+   "state": {
+    "current_brief": "A designer you worked with at Stripe. Tagged as design, no open threads.",
+    "new_input": "Profile:\nName: Marta Kelleher\nRole: Designer\nCompany: Stripe\nTags: Design, Ex-Stripe\n\nInteractions (newest first):\n2026-02-14 Coffee: caught up, nothing pending."
+   },
+   "skip": true,
+   "why": "a tag was renamed"
+  },
+  {
+   "id": "starters-01",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Chris Doyle\nRole: Account Executive\nCompany: Oracle\nLocation: Austin"
+   },
+   "skip": true
+  },
+  {
+   "id": "starters-02",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Nadia Fischer\nRole: Engineer\nCompany: Datadog\nNotes: We both ran the Chicago marathon; she's training for Boston in April."
+   },
+   "skip": false
+  },
+  {
+   "id": "starters-03",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Theo Lindgren\nRole: Product\nCompany: Linear\nRecent post: shipped a new pricing page and wrote about moving to usage-based billing."
+   },
+   "skip": false
+  },
+  {
+   "id": "starters-04",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Dana Whitfield\nRole: Manager"
+   },
+   "skip": true
+  },
+  {
+   "id": "starters-05",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Sol Abara\nRole: Founder\nCompany: Kestrel\nMutual connection: Priya Raman, who worked with him at Monzo."
+   },
+   "skip": false
+  },
+  {
+   "id": "starters-06",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Sam Ortiz\nRole: Software Engineer\nIndustry: Technology"
+   },
+   "skip": true
+  },
+  {
+   "id": "starters-07",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Jonas Weil\nRole: Head of Ops\nCompany: Flink\nHow you met: introduced by Priya at the Antler dinner; talked about his move from Berlin and why he misses it."
+   },
+   "skip": false
+  },
+  {
+   "id": "starters-08",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Lee Chan\nCompany: Deloitte\nLocation: Toronto"
+   },
+   "skip": true
+  },
+  {
+   "id": "starters-09",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Rae Donnelly\nRole: Counsel\nCompany: Wilson Sonsini\nNotes: Just had a baby, out until March."
+   },
+   "skip": false
+  },
+  {
+   "id": "starters-10",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Priyanka Shah\nIndustry: Financial Services\nSeniority: Director"
+   },
+   "skip": true
+  },
+  {
+   "id": "starters-11",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Gus Whelan\nRole: CTO\nCompany: Tallow\nKey facts: collects vintage synths; ran product at two fintechs before this one."
+   },
+   "skip": false
+  },
+  {
+   "id": "starters-12",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Morgan Vale"
+   },
+   "skip": true
+  },
+  {
+   "id": "starters-13",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Elif Tunç\nRole: Partner\nCompany: Northzone\nLocation: London\nIndustry: Venture Capital\nSeniority: Partner"
+   },
+   "skip": true,
+   "why": "a full profile is still only job facts"
+  },
+  {
+   "id": "starters-14",
+   "gate": "starters",
+   "state": {
+    "material": "Name: Dmitri Vale\nRole: Engineer\nCompany: Ramp\nNotes: He asked about our migration off Postgres — going through the same thing."
+   },
+   "skip": false
+  },
+  {
+   "id": "enrich-01",
+   "gate": "enrich",
+   "state": {
+    "contact": "Kara Milos",
+    "messages": "Kara: Hi, I'd like to add you to my professional network on LinkedIn.\nYou: Thanks for connecting!"
+   },
+   "skip": true
+  },
+  {
+   "id": "enrich-02",
+   "gate": "enrich",
+   "state": {
+    "contact": "Ben Ortuno",
+    "messages": "Ben: Saw you're hiring a staff engineer — is it still open?\nYou: It is, closing in two weeks.\nBen: I'd like to put my name in. I've been leading the payments platform at Mollie for three years and I'm looking for something earlier stage.\nYou: Send me your CV and I'll walk it through."
+   },
+   "skip": false
+  },
+  {
+   "id": "enrich-03",
+   "gate": "enrich",
+   "state": {
+    "contact": "Tilda Frank",
+    "messages": "Tilda: Happy birthday!\nYou: Thanks!"
+   },
+   "skip": true
+  },
+  {
+   "id": "enrich-04",
+   "gate": "enrich",
+   "state": {
+    "contact": "Marcus Oyelaran",
+    "messages": "Marcus: Would love to pick your brain about pricing — free Thursday?\nYou: Thursday works, 3pm?\nMarcus: Perfect. Mainly want to understand how you landed on seat-based vs usage."
+   },
+   "skip": false
+  },
+  {
+   "id": "enrich-05",
+   "gate": "enrich",
+   "state": {
+    "contact": "Jin Park",
+    "messages": "Jin: Congrats on the new role!\nYou: Appreciate it."
+   },
+   "skip": true
+  },
+  {
+   "id": "enrich-06",
+   "gate": "enrich",
+   "state": {
+    "contact": "Alma Ruiz",
+    "messages": "Alma: Long shot — you know Dana at Sequoia, right? We're raising a seed and she's the one partner I can't get to. Happy to send our deck first so you can decide if it's worth passing on."
+   },
+   "skip": false
+  },
+  {
+   "id": "enrich-07",
+   "gate": "enrich",
+   "state": {
+    "contact": "Hiring at Vertex",
+    "messages": "Hiring at Vertex: We're hiring! Vertex is looking for talented engineers to join our growing team. Competitive salary, equity and benefits. Apply at vertex.example/careers."
+   },
+   "skip": true,
+   "why": "a mass InMail"
+  },
+  {
+   "id": "enrich-08",
+   "gate": "enrich",
+   "state": {
+    "contact": "Ola Bergström",
+    "messages": "Ola: We raised our Series A last month — Accel led. Team's at 40 now and I'm finally hiring a design lead.\nYou: Huge. Congrats.\nOla: Thanks. If you know anyone good, send them my way."
+   },
+   "skip": false
+  },
+  {
+   "id": "enrich-09",
+   "gate": "enrich",
+   "state": {
+    "contact": "Reza Sadeghi",
+    "messages": "Reza: 👍\nYou: 🙏"
+   },
+   "skip": true
+  },
+  {
+   "id": "enrich-10",
+   "gate": "enrich",
+   "state": {
+    "contact": "Nina Castellanos",
+    "messages": "Nina: Hey! Long time. Are you around next week? I'm in town Tues–Thurs.\nYou: Tuesday evening works.\nNina: Great. I've moved to the infra team at Cloudflare, so I've got a lot of questions for you about the migration you did."
+   },
+   "skip": false
+  },
+  {
+   "id": "enrich-11",
+   "gate": "enrich",
+   "state": {
+    "contact": "Pat Ngo",
+    "messages": "Pat: Hey! Long time."
+   },
+   "skip": true
+  },
+  {
+   "id": "enrich-12",
+   "gate": "enrich",
+   "state": {
+    "contact": "Sabine Arnoux",
+    "messages": "Sabine: I left Klarna in June — the reorg put my whole team under a VP who wanted it all in Stockholm, and I wasn't moving. Taking the summer and then looking at seed-stage fintech."
+   },
+   "skip": false
+  },
+  {
+   "id": "timeline-01",
+   "gate": "timeline",
+   "state": {
+    "messages": "Ana: Coffee Thursday at 3?\nYou: Works. The place on Valencia?\nAna: Perfect."
+   },
+   "skip": false
+  },
+  {
+   "id": "timeline-02",
+   "gate": "timeline",
+   "state": {
+    "messages": "Kofi: I'd like to add you to my professional network on LinkedIn."
+   },
+   "skip": true
+  },
+  {
+   "id": "timeline-03",
+   "gate": "timeline",
+   "state": {
+    "messages": "You: Sent you an invite for Tuesday, 11am your time.\nRaul: Got it, accepted."
+   },
+   "skip": false
+  },
+  {
+   "id": "timeline-04",
+   "gate": "timeline",
+   "state": {
+    "messages": "Ivy: Your post on retrieval evals was good — the bit about distractors especially.\nYou: Thanks, it came out of a bad week."
+   },
+   "skip": true
+  },
+  {
+   "id": "timeline-05",
+   "gate": "timeline",
+   "state": {
+    "messages": "Sven: Great meeting you at SaaStr! Glad we ended up at the same table.\nYou: Likewise."
+   },
+   "skip": false,
+   "why": "a meeting that happened"
+  },
+  {
+   "id": "timeline-06",
+   "gate": "timeline",
+   "state": {
+    "messages": "Lia: Is the staff role still open?\nYou: Yes, until the 30th.\nLia: I'll apply today."
+   },
+   "skip": true,
+   "why": "no meeting arranged"
+  },
+  {
+   "id": "timeline-07",
+   "gate": "timeline",
+   "state": {
+    "messages": "Noor: Let's grab lunch when you're next in NYC.\nYou: I'm there the 12th–14th.\nNoor: The 13th then."
+   },
+   "skip": false
+  },
+  {
+   "id": "timeline-08",
+   "gate": "timeline",
+   "state": {
+    "messages": "Emil: Congrats on the raise!\nYou: Thank you — long process."
+   },
+   "skip": true
+  },
+  {
+   "id": "timeline-09",
+   "gate": "timeline",
+   "state": {
+    "messages": "You: Call at 3 your time?\nHiro: 3 works. I'll send a link."
+   },
+   "skip": false
+  },
+  {
+   "id": "timeline-10",
+   "gate": "timeline",
+   "state": {
+    "messages": "Mei: Here's the paper I mentioned: example.com/paper.pdf\nYou: Reading it now, thanks."
+   },
+   "skip": true
+  },
+  {
+   "id": "timeline-11",
+   "gate": "timeline",
+   "state": {
+    "messages": "Bram: It was good catching up on the call yesterday. I'll introduce you to Dana this week.\nYou: Appreciate it."
+   },
+   "skip": false,
+   "why": "a call that happened"
+  },
+  {
+   "id": "timeline-12",
+   "gate": "timeline",
+   "state": {
+    "messages": "Zoe: Thanks for the referral — applied yesterday.\nYou: Fingers crossed."
+   },
+   "skip": true
+  }
+ ]
+}

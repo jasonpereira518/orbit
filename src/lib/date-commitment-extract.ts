@@ -16,6 +16,8 @@ import { MONTHS, atLocalNoon } from "@/lib/interaction-date";
 import { resolveRelativeDate, type DateBasis } from "@/lib/relative-date";
 import { containsVerbatim, normalizeForMatch } from "@/lib/verbatim";
 import { nextCadenceOccurrence, parseCadencePhrase } from "@/lib/cadence-phrase";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import type { Engines } from "@/lib/decisions/engine";
 import {
   isReminderActionKind,
   inferReminderActionKind,
@@ -516,10 +518,16 @@ CADENCES. Separately, extract any RECURRING rhythm the notes state for staying i
 export async function fetchRawCommitments(
   userId: string,
   notes: string,
-  options?: { today?: Date; knownPeople?: string[] }
+  options?: { today?: Date; knownPeople?: string[]; engines?: Engines | Promise<Engines> }
 ): Promise<{ commitments: RawCommitmentItem[]; cadences: RawCadenceItem[] }> {
   const trimmed = notes.trim();
   if (!trimmed) return { commitments: [], cadences: [] };
+  // Most notes name no date at all. A ~200ms decision-model "no" saves the whole pass;
+  // without a decision model, or on anything short of a confident no, it runs as always.
+  const engines = await options?.engines;
+  if (engines && (await gateSkips(engines, "dates", { notes: gateText(trimmed) }))) {
+    return { commitments: [], cadences: [] };
+  }
   const today = options?.today ?? new Date();
   const todayIso = toIsoDay(today);
   const todayWeekday = WEEKDAY_NAMES[today.getDay()];

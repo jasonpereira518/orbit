@@ -518,6 +518,12 @@ export async function completeJson(
      * prefix on their own, and `cacheKey` routes OpenAI's lookups to the same cache.
      */
     sharedPrefix?: { text: string; cacheKey: string };
+    /**
+     * The caller's own deadline. Racing a timeout outside the call is not enough — the
+     * provider request kept running (and billing) for up to AI_CALL_TIMEOUT_MS after the
+     * caller had moved on. With a signal, the request itself is aborted.
+     */
+    signal?: AbortSignal;
   },
 ): Promise<string> {
   const { operation } = input;
@@ -529,6 +535,7 @@ export async function completeJson(
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
   const prefix = input.sharedPrefix?.text ?? "";
   const userText = prefix + input.user;
+  const callSignal = () => (input.signal ? AbortSignal.any([aiSignal(), input.signal]) : aiSignal());
 
   return runOnGrant(grant, withUsage(
     {
@@ -546,7 +553,7 @@ export async function completeJson(
           const response = await client.models.generateContent({
             model,
             contents: userText,
-            config: { abortSignal: aiSignal(),
+            config: { abortSignal: callSignal(),
               temperature,
               maxOutputTokens,
               responseMimeType: "application/json",
@@ -571,7 +578,7 @@ export async function completeJson(
               { role: "user", content: userText },
             ],
             ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
-          }, { signal: aiSignal() });
+          }, { signal: callSignal() });
           report(tokensFromOpenAi(response));
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
@@ -597,7 +604,7 @@ export async function completeJson(
                 : input.user,
             },
           ],
-        }, { signal: aiSignal() });
+        }, { signal: callSignal() });
         report(tokensFromAnthropic(response));
         const block = response.content.find((b) => b.type === "text");
         if (!block || block.type !== "text" || !block.text) {
@@ -616,6 +623,7 @@ export async function completeJson(
         throw new Error(aiProviderErrorMessage(err, aiProviderLabel(provider)));
       }
     },
+    { cancelSignal: input.signal },
   ));
 }
 

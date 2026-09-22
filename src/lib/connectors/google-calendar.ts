@@ -29,6 +29,8 @@ import type { ParsedCalendarEvent } from "@/lib/calendar-import";
 import { classifyCalendarEvent, counterpartsOf } from "@/lib/calendar-classify";
 import { calendarExternalIdBase } from "@/lib/ingest/external-id";
 import type { NetworkEvent } from "@/lib/ingest/events";
+import type { Engines } from "@/lib/decisions/engine";
+import { decideCalendarEvents } from "@/lib/decisions/calendar";
 import type { CalendarSyncCursor } from "@/db/schema";
 
 const CALENDAR_API = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
@@ -248,6 +250,28 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
  * is already tested. This function's only opinions are which identifier to key on and how to
  * phrase the note.
  */
+function toNetworkEvent(event: ParsedCalendarEvent & { start: Date }, selfEmails: string[]): NetworkEvent | null {
+  const people = counterpartsOf(event, selfEmails);
+  if (people.length === 0) return null;
+  return {
+    externalIdBase: calendarExternalIdBase(event.uid),
+    type: "meeting",
+    timestamp: event.start,
+    participants: people.map((p) => ({
+      name: p.name || null,
+      email: p.email || null,
+    })),
+    summary: event.summary || null,
+    notes: [
+      event.summary ? `Meeting: ${event.summary}` : "Calendar meeting",
+      event.location ? `Location: ${event.location}` : "",
+      event.description ? event.description.slice(0, 500) : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
 export function toNetworkEvents(
   events: ParsedCalendarEvent[],
   selfEmails: string[]
@@ -257,29 +281,29 @@ export function toNetworkEvents(
     if (!event.start) continue;
     const classification = classifyCalendarEvent(event, selfEmails);
     if (!classification.keep) continue;
-
-    const people = counterpartsOf(event, selfEmails);
-    if (people.length === 0) continue;
-
-    out.push({
-      externalIdBase: calendarExternalIdBase(event.uid),
-      type: "meeting",
-      timestamp: event.start,
-      participants: people.map((p) => ({
-        name: p.name || null,
-        email: p.email || null,
-      })),
-      summary: event.summary || null,
-      notes: [
-        event.summary ? `Meeting: ${event.summary}` : "Calendar meeting",
-        event.location ? `Location: ${event.location}` : "",
-        event.description ? event.description.slice(0, 500) : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    });
+    const shaped = toNetworkEvent({ ...event, start: event.start }, selfEmails);
+    if (shaped) out.push(shaped);
   }
   return out;
+}
+
+/**
+ * `toNetworkEvents` with the decision model reading each event the rules would keep
+ * (decisions/calendar.ts). Without Jev it is exactly `toNetworkEvents`.
+ */
+export async function toNetworkEventsDecided(
+  engines: Engines,
+  events: ParsedCalendarEvent[],
+  selfEmails: string[]
+): Promise<{ events: NetworkEvent[]; skippedByDecision: number; keptByDecision: number }> {
+  const { decided, skippedByDecision, keptByDecision } = await decideCalendarEvents(engines, events, selfEmails);
+  const out: NetworkEvent[] = [];
+  for (const { event, classification } of decided) {
+    if (!event.start || !classification.keep) continue;
+    const shaped = toNetworkEvent({ ...event, start: event.start }, selfEmails);
+    if (shaped) out.push(shaped);
+  }
+  return { events: out, skippedByDecision, keptByDecision };
 }
 
 /**

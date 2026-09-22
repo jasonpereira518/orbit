@@ -12,6 +12,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contactMerges, contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { openEngines } from "@/lib/decisions/engine";
 import {
   dismissDuplicatePair as dismissPair,
   mergeContacts,
@@ -32,7 +33,10 @@ function revalidateContactSurfaces() {
 }
 
 export async function listDuplicates(): Promise<DuplicateReview> {
-  return getDuplicateReview(await requireUserId());
+  const userId = await requireUserId();
+  // Jev when the account has a TypeSafe key, else the person's own model — only to order the
+  // queue and hint at each pair (cached per pair, so a revisit is free).
+  return getDuplicateReview(userId, { engines: await openEngines(userId, { llm: true }) });
 }
 
 export async function countDuplicates(): Promise<number> {

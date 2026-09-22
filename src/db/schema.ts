@@ -1097,7 +1097,7 @@ export const interactionMentions = pgTable(
     contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
     mentionText: text("mention_text").notNull(),
     confidence: real("confidence").notNull(),
-    matchedBy: text("matched_by").$type<"exact_name" | "name_company" | "first_name_unique" | "user_pick">().notNull(),
+    matchedBy: text("matched_by").$type<"exact_name" | "name_company" | "first_name_unique" | "user_pick" | "decision">().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [

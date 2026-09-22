@@ -4,6 +4,8 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { contactBriefs, contactOpportunities, contacts, interactions, reminders } from "@/db/schema";
 import { completeJson, getAiConfig } from "@/lib/ai";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { formatHowMetSummary, metContextLabel } from "@/lib/met-context";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { listOpenActionItems } from "@/lib/action-items";
@@ -229,7 +231,7 @@ function buildDeterministicSummary(input: {
 export async function generateAndStoreContactBrief(
   userId: string,
   contactId: string,
-  options?: { force?: boolean }
+  options?: { force?: boolean; engines?: Engines }
 ): Promise<{ summary: string | null; standing: string | null; nextStep?: string | null } | null> {
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
@@ -375,6 +377,26 @@ export async function generateAndStoreContactBrief(
         .set({ generatedAt: new Date() })
         .where(and(eq(contactBriefs.contactId, contactId), eq(contactBriefs.userId, userId)));
       return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep };
+    }
+    // The input changed — a tag, a logged call, an edited note — but a changed input is not
+    // the same as a changed relationship, and rewriting the brief to say what it already
+    // says costs a full-model call. With a decision model, a confident "nothing new here"
+    // keeps the brief on file and marks it current against the new input. Without one, or
+    // on any less certain answer, it regenerates exactly as it always has. `force` (the
+    // Regenerate button) never reaches this.
+    if (onFile && contact.aiSummary) {
+      const engines = options?.engines ?? (await openEngines(userId));
+      const skip = await gateSkips(engines, "brief", {
+        current_brief: [contact.aiSummary, onFile.standing, onFile.nextStep].filter(Boolean).join(" "),
+        new_input: gateText(userPrompt),
+      });
+      if (skip) {
+        await db
+          .update(contactBriefs)
+          .set({ generatedAt: new Date(), inputHash })
+          .where(and(eq(contactBriefs.contactId, contactId), eq(contactBriefs.userId, userId)));
+        return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep };
+      }
     }
   }
 

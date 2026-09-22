@@ -675,6 +675,12 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
     return statements;
   });
 
+  // An undo is the strongest "these are two people" there is. Recorded as a dismissal, so
+  // neither the sweep (which re-runs on every duplicates-page render and skips only
+  // dismissed pairs) nor a decision-model merge puts them back together — before this, an
+  // undone automatic merge came straight back on the page refresh that followed the Undo.
+  await dismissDuplicatePair(userId, winnerId, loserId, "Merge undone");
+
   // Both contacts changed; both need rescoring.
   await invalidateAfterMerge(userId, winnerId);
   await scheduleEmbeddingRebuild(userId, loserId);
@@ -723,7 +729,8 @@ export async function recordDuplicateSuggestion(
 export async function dismissDuplicatePair(
   userId: string,
   contactIdA: string,
-  contactIdB: string
+  contactIdB: string,
+  reason = "Dismissed by hand"
 ) {
   if (contactIdA === contactIdB) return;
   // Same canonical ordering as `recordDuplicateSuggestion`, so this writes the row a write
@@ -737,7 +744,7 @@ export async function dismissDuplicatePair(
       userId,
       contactAId: a,
       contactBId: b,
-      reason: "Dismissed by hand",
+      reason,
       confidence: 0,
       status: "dismissed",
       resolvedAt: now,
