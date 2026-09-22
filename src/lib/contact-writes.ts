@@ -1029,6 +1029,38 @@ export async function logInteractionForUser(
 }
 
 /**
+ * The consequences of an interaction row that was written some other way.
+ *
+ * `logInteractionForUser` inserts the row and THEN does everything a new touch implies. A send
+ * cannot work in that order: the row has to exist first, as the claim that stops a second click
+ * emailing the same person, and the touch only really happened once the mail went. So the claim
+ * inserts the row itself and calls this after a confirmed send — the same last-touch stamp,
+ * embedding and brief refresh, closeness re-score and revalidation, in the same order, so a
+ * sent email moves a contact's ring exactly as a logged one does.
+ */
+export async function settleWrittenInteraction(
+  userId: string,
+  contactId: string,
+  when: Date,
+  options?: ContactWriteOptions
+) {
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ lastInteractionAt: when, updatedAt: new Date() })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+  if (!options?.skipEmbedding) await scheduleEmbeddingRebuild(userId, contactId);
+  if (!options?.skipSummary) deferBriefRefresh(userId, contactId);
+  await scoreAfterWrite(userId, contactId, options);
+  if (!options?.skipRevalidate) {
+    revalidatePath(`/contacts/${contactId}`);
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/graph");
+  }
+}
+
+/**
  * `logInteractionForUser` for note pastes: keyed on `externalId` so a second paste of the
  * same note is a no-op rather than a duplicate timeline row. When the row already exists the
  * side effects (embedding, summary, closeness) are skipped — nothing changed.

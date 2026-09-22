@@ -48,6 +48,8 @@ for (const qualified of encrypted) {
 console.log("Private content with no support use");
 for (const qualified of [
   "chat_messages.content",
+  "chat_threads.context_note",
+  "user_settings.writing_instructions",
   "note_batches.source_text",
   "meeting_transcript_segments.text",
   "capture_photos.inline_data",

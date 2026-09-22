@@ -52,6 +52,11 @@ export async function streamChat(
     contactId?: string | null;
     /** Contact ids the composer's `@Name` chips resolved to. */
     contextContactIds?: string[];
+    /**
+     * Ask for another version of the last turn instead of a new one — omitting `question`
+     * regenerates the same ask, a `question` edits it. See `@/lib/chat-versions`.
+     */
+    versionOf?: { assistantMessageId: string; question?: string };
   },
   handlers: ChatStreamHandlers,
   signal?: AbortSignal

@@ -29,6 +29,7 @@
  * full width, while a notes box anchors it to the field itself.
  */
 
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useId,
@@ -47,10 +48,14 @@ import {
 import { ComposerHighlights } from "@/components/composer/composer-highlights";
 import {
   MentionAutocomplete,
+  type CommandOption,
   type MentionMenuPlacement,
+  type MenuOption,
   type MentionOption,
 } from "@/components/composer/mention-autocomplete";
 import { useMentionAutocomplete } from "@/components/composer/use-mention-autocomplete";
+import { useSlashCommands } from "@/components/composer/use-slash-commands";
+import { useHiddenSurfaces } from "@/components/layout/hidden-surfaces";
 import { Textarea } from "@/components/ui/textarea";
 import {
   mentionAfterCaret,
@@ -127,6 +132,7 @@ export function MentionComposer({
   textareaRef,
   handleRef,
   events = false,
+  commands = false,
   menuPlacement = "above",
   menuEnabled = true,
   boxClassName = DEFAULT_FIELD_BOX,
@@ -149,6 +155,11 @@ export function MentionComposer({
   handleRef?: RefObject<MentionComposerHandle | null>;
   /** Offer past conversations alongside people. Chat only — see `useMentionAutocomplete`. */
   events?: boolean;
+  /**
+   * Open a `/` command menu at the start of a line. Chat only: a command prefills the box or
+   * opens a page, which is not something a notes field should offer.
+   */
+  commands?: boolean;
   /** Which side of the anchor the menu opens on. See `MentionAutocomplete`. */
   menuPlacement?: MentionMenuPlacement;
   /** The caller's own reasons to keep the menu shut (busy, dictating, loading). */
@@ -173,6 +184,14 @@ export function MentionComposer({
   // know as well (the dictation ghost) get told.
   const [composing, setComposing] = useState(false);
   const mention = useMentionAutocomplete(menuEnabled && !composing, { events });
+  const router = useRouter();
+  const slash = useSlashCommands(commands && menuEnabled && !composing, useHiddenSurfaces());
+  // One menu at a time. A `/` command is only ever at the start of a line and an `@` needs a
+  // token character before its caret, so the two cannot both be live — but if they ever were,
+  // the command wins because it is the one that replaced text the person has not finished.
+  const menuOptions: readonly MenuOption[] = slash.open ? slash.options : mention.options;
+  const menuOpen = slash.open || mention.open;
+  const menuActiveIndex = slash.open ? slash.activeIndex : mention.activeIndex;
   const listboxId = useId();
   const optionId = useCallback(
     (index: number) => `${listboxId}-${index}`,
@@ -263,6 +282,45 @@ export function MentionComposer({
     [mention, picks, onPicksChange, splice, textareaRef],
   );
 
+  /**
+   * Take a command row. Prefills replace the typed `/word` and leave the caret at the end, so
+   * the person carries on from there; a `mention` prefill ends in `@` and opens the people menu
+   * at once. Navigations drop the token and go — nothing is sent and nothing is written.
+   */
+  const acceptCommand = useCallback(
+    (option: CommandOption) => {
+      const el = textareaRef.current;
+      if (!el || slash.start === null) return;
+      const to = el.selectionStart ?? el.value.length;
+      const current = el.value;
+      const { command } = option;
+      slash.reset();
+      if (command.prefill) {
+        // Not `splice`: it pads a trailing space, which would strand the caret one space past
+        // the `@` and close the very menu this is about to open.
+        const next = current.slice(0, slash.start) + command.prefill.text + current.slice(to);
+        const caret = slash.start + command.prefill.text.length;
+        pendingCaretRef.current = caret;
+        onValueChange(next);
+        requestAnimationFrame(() => textareaRef.current?.focus());
+        if (command.prefill.mention) mention.refresh(next, caret);
+        return;
+      }
+      pendingCaretRef.current = slash.start;
+      onValueChange(current.slice(0, slash.start) + current.slice(to));
+      if (command.href) router.push(command.href);
+    },
+    [slash, mention, onValueChange, router, textareaRef],
+  );
+
+  const acceptOption = useCallback(
+    (option: MenuOption) => {
+      if (option.kind === "command") acceptCommand(option);
+      else acceptMention(option);
+    },
+    [acceptCommand, acceptMention],
+  );
+
   function handleChange(e: ChangeEvent<HTMLTextAreaElement>) {
     const next = e.target.value;
     onValueChange(next);
@@ -272,28 +330,30 @@ export function MentionComposer({
     const caret = e.target.selectionStart ?? next.length;
     lastCaretRef.current = caret;
     mention.refresh(next, caret);
+    slash.refresh(next, caret);
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     // First refusal, before the caller's Enter sends anything: while the type-ahead is up
     // those keys belong to it, and the caret never leaves the textarea to say so.
-    if (mention.open) {
+    const menu = slash.open ? slash : mention.open ? mention : null;
+    if (menu) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        mention.move(e.key === "ArrowDown" ? 1 : -1);
+        menu.move(e.key === "ArrowDown" ? 1 : -1);
         return;
       }
       if (e.key === "Enter" || e.key === "Tab") {
-        const option = mention.active();
+        const option: MenuOption | null = menu.active();
         if (option) {
           e.preventDefault();
-          acceptMention(option);
+          acceptOption(option);
           return;
         }
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        mention.dismiss();
+        menu.dismiss();
         return;
       }
     }
@@ -323,14 +383,14 @@ export function MentionComposer({
 
   return (
     <>
-      {mention.open && (
+      {menuOpen && (
         <MentionAutocomplete
-          options={mention.options}
-          activeIndex={mention.activeIndex}
-          loading={mention.loading}
+          options={menuOptions}
+          activeIndex={menuActiveIndex}
+          loading={slash.open ? false : mention.loading}
           listboxId={listboxId}
           optionId={optionId}
-          onPick={acceptMention}
+          onPick={acceptOption}
           placement={menuPlacement}
         />
       )}
@@ -356,6 +416,7 @@ export function MentionComposer({
             if (!collapsed) {
               lastCaretRef.current = null;
               mention.reset();
+              slash.reset();
               return;
             }
             // The caret may not come to rest inside a token. Re-setting the range fires
@@ -376,6 +437,7 @@ export function MentionComposer({
             lastCaretRef.current = caret;
             // Arrowing into an existing `@Marcus` should offer it again.
             mention.refresh(el.value, caret);
+            slash.refresh(el.value, caret);
           }}
           onCompositionStart={() => {
             setComposing(true);
@@ -387,13 +449,14 @@ export function MentionComposer({
           }}
           onBlur={(e) => {
             mention.reset();
+            slash.reset();
             onBlur?.(e);
           }}
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={mention.open}
-          aria-controls={mention.open ? listboxId : undefined}
-          aria-activedescendant={mention.open ? optionId(mention.activeIndex) : undefined}
+          aria-expanded={menuOpen}
+          aria-controls={menuOpen ? listboxId : undefined}
+          aria-activedescendant={menuOpen ? optionId(menuActiveIndex) : undefined}
           className={cn(
             // `relative z-[1]` is load-bearing: it lifts the field above the marks, which
             // are positioned and would otherwise paint over the glyphs whatever the DOM

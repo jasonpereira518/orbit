@@ -38,6 +38,7 @@ import {
   prospectSearchStatus,
 } from "@/lib/outreach-quality";
 import { sendOutreachMessage } from "@/lib/outreach-send";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
   BULK_SEND_LIMIT,
   type OutreachChannel,
@@ -552,6 +553,7 @@ export async function generateOutreachDrafts(input: {
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
   const goals = await listActiveGoalTexts();
+  const writingInstructions = await loadWritingInstructions(userId);
 
   const channel = (input.channel ||
     campaign.defaultChannel ||
@@ -613,6 +615,7 @@ export async function generateOutreachDrafts(input: {
       },
       templateSeed: input.templateSeed,
       variationHint: `Variant ${index + 1} of ${targetProspects.length}`,
+      writingInstructions,
     }))
   );
 
@@ -644,6 +647,7 @@ export async function regenerateOutreachDraft(input: {
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
   const goals = await listActiveGoalTexts();
+  const writingInstructions = await loadWritingInstructions(userId);
 
   const prospect = await db.query.outreachProspects.findFirst({
     where: and(
@@ -684,6 +688,7 @@ export async function regenerateOutreachDraft(input: {
     },
     stepIndex,
     previousBody: previous?.body,
+    writingInstructions,
   });
 
   const message = await upsertMessageForProspect(prospect.id, channel, draft, {
@@ -946,6 +951,7 @@ export async function generateDueFollowUps(campaignId: string) {
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
   const goals = await listActiveGoalTexts();
+  const writingInstructions = await loadWritingInstructions(userId);
   const now = new Date();
 
   const campaignProspectIds = await db.query.outreachProspects.findMany({
@@ -1028,6 +1034,7 @@ export async function generateDueFollowUps(campaignId: string) {
       },
       stepIndex: message.stepIndex ?? 1,
       previousBody: parent?.body,
+      writingInstructions,
     });
 
     await db

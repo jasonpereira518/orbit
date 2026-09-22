@@ -14,6 +14,7 @@ import { listActiveGoalTexts } from "@/actions/goals";
 import { requireUserId, getDisplayProfile } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
   inferReminderActionKind,
   isReminderActionKind,
@@ -716,7 +717,8 @@ export async function reopenDoneReminderAction(id: string) {
 export async function draftFollowUpResponse(reminderId: string) {
   const userId = await requireUserId();
   const goals = await listActiveGoalTexts();
-  return generateFollowUpDraft(userId, reminderId, goals);
+  const writingInstructions = await loadWritingInstructions(userId);
+  return generateFollowUpDraft(userId, reminderId, goals, { writingInstructions });
 }
 
 export async function snoozeReminderAction(id: string, days = 7) {

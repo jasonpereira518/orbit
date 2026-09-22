@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { chatMessages, type ChatRecommendation } from "@/db/schema";
+import { discardCountAfter, NotLastTurnError, resolveVersionTarget, truncateAfter } from "@/lib/chat-versions";
 import { getDb } from "@/db";
 import { chatWithNetworkStream } from "@/lib/ai";
 import { prepareChatContext } from "@/lib/chat-context";
@@ -63,10 +64,9 @@ export async function POST(request: Request) {
         threadId?: unknown;
         contactId?: unknown;
         contextContactIds?: unknown;
+        versionOf?: unknown;
       }
     | null;
-  const question = typeof body?.question === "string" ? body.question.trim() : "";
-  if (!question) return NextResponse.json({ error: "Question is required" }, { status: 400 });
   const threadId = typeof body?.threadId === "string" ? body.threadId : null;
   const contactId = typeof body?.contactId === "string" ? body.contactId : null;
   // Ids the composer resolved from its `@Name` chips. Bounded and re-checked against the
@@ -74,6 +74,49 @@ export async function POST(request: Request) {
   const contextContactIds = Array.isArray(body?.contextContactIds)
     ? body.contextContactIds.filter((id): id is string => typeof id === "string").slice(0, 10)
     : [];
+
+  // Editing or regenerating the last turn. `versionOf` names the answer being replaced; a
+  // question means "edit the text", its absence means "regenerate" (same question again).
+  const versionOfRaw = body?.versionOf as
+    | { assistantMessageId?: unknown; question?: unknown; confirmDiscard?: unknown }
+    | undefined;
+  const versionAssistantId =
+    typeof versionOfRaw?.assistantMessageId === "string" ? versionOfRaw.assistantMessageId : null;
+  const confirmDiscard = versionOfRaw?.confirmDiscard === true;
+
+  let question: string;
+  let versionTarget: Awaited<ReturnType<typeof resolveVersionTarget>> | null = null;
+  if (versionAssistantId) {
+    if (!threadId) return NextResponse.json({ error: "No conversation to version" }, { status: 400 });
+    const db = await getDb();
+    try {
+      // Editing an OLDER turn discards everything after it and then behaves exactly like
+      // regenerating the (now) last turn — see `chat-versions.ts`. Requires confirmation
+      // first: this is destructive, and the count is what the confirm dialog shows.
+      const discard = await discardCountAfter(db, userId, threadId, versionAssistantId).catch(() => 0);
+      if (discard > 0) {
+        if (!confirmDiscard) {
+          return NextResponse.json(
+            { error: "confirm_discard", discardCount: discard },
+            { status: 409 }
+          );
+        }
+        await truncateAfter(db, userId, threadId, versionAssistantId);
+      }
+      versionTarget = await resolveVersionTarget(db, userId, threadId, versionAssistantId);
+    } catch (err) {
+      if (err instanceof NotLastTurnError) {
+        return NextResponse.json({ error: err.message }, { status: 409 });
+      }
+      return NextResponse.json({ error: friendlyError(err, "That answer couldn’t be found") }, { status: 404 });
+    }
+    question =
+      (typeof versionOfRaw?.question === "string" ? versionOfRaw.question.trim() : "") ||
+      versionTarget.priorUserRow.content;
+  } else {
+    question = typeof body?.question === "string" ? body.question.trim() : "";
+  }
+  if (!question) return NextResponse.json({ error: "Question is required" }, { status: 400 });
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -91,21 +134,35 @@ export async function POST(request: Request) {
         const ctx = await prepareChatContext(userId, question, {
           threadId,
           focusContactId: contactId,
-          contextContactIds,
+          // A version request keeps the version being replaced's own attachments when the
+          // client did not send new ones (a plain regenerate never does).
+          contextContactIds:
+            contextContactIds.length || !versionTarget
+              ? contextContactIds
+              : versionTarget.priorUserRow.attachedContacts.map((p) => p.id),
           steps,
+          excludeSlot: versionTarget?.slot ?? null,
         });
+        let persistedUserMessageId: string | null = null;
         if (threadId) {
           const db = await getDb();
-          await db.insert(chatMessages).values({
-            threadId,
-            userId,
-            role: "user",
-            content: ctx.q,
-            // Resolved server-side rather than trusted from the client: these are the people
-            // `loadAttachedPeople` actually found and put in front of the model, so the mark on
-            // a reloaded thread describes what the answer was really given.
-            attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
-          });
+          const [userRow] = await db
+            .insert(chatMessages)
+            .values({
+              threadId,
+              userId,
+              role: "user",
+              content: ctx.q,
+              // Resolved server-side rather than trusted from the client: these are the people
+              // `loadAttachedPeople` actually found and put in front of the model, so the mark
+              // on a reloaded thread describes what the answer was really given.
+              attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+              ...(versionTarget
+                ? { slot: versionTarget.slot, version: versionTarget.nextVersion, isActive: false }
+                : {}),
+            })
+            .returning();
+          persistedUserMessageId = userRow?.id ?? null;
         }
 
         // Name a NEW conversation from its first message. Started here, once retrieval is done,
@@ -139,7 +196,13 @@ export async function POST(request: Request) {
               (delta) => send({ type: "answer", delta }),
               ctx.focusProfile,
               ctx.attachedContext,
-              { signal: request.signal, goals: ctx.goals, attentionLite: ctx.attentionLite, evidence }
+              {
+                signal: request.signal,
+                goals: ctx.goals,
+                attentionLite: ctx.attentionLite,
+                evidence,
+                writingPreferences: ctx.writingInstructions,
+              }
             ),
           { userId }
         );
@@ -165,12 +228,18 @@ export async function POST(request: Request) {
           recommendations,
           activity: steps.snapshot(),
           title,
+          version:
+            versionTarget && persistedUserMessageId
+              ? { slot: versionTarget.slot, version: versionTarget.nextVersion, userMessageId: persistedUserMessageId }
+              : undefined,
         });
         send({
           type: "done",
           messageId: saved.messageId,
+          userMessageId: persistedUserMessageId,
           threadId,
           title: saved.title,
+          version: versionTarget ? { slot: versionTarget.slot, version: versionTarget.nextVersion } : null,
           notice: ctx.searchNotice,
           followUps: deriveFollowUps({
             question: ctx.q,

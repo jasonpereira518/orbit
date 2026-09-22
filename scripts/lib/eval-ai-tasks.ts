@@ -1264,7 +1264,8 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
           ctx.attachedContext,
           ctx.goals,
           ctx.attentionLite,
-          evidence
+          evidence,
+          ctx.writingInstructions
         );
         return { ctx, result };
       });

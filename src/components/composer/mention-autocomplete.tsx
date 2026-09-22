@@ -11,8 +11,11 @@
 
 import { useEffect, useRef } from "react";
 
+import { Bell, FilePlus2, FileText, CornerUpRight, PenLine, UserRound, type LucideIcon } from "lucide-react";
+
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { EventAvatar } from "@/components/composer/event-avatar";
+import type { ChatCommand } from "@/lib/chat-commands";
 import { cn } from "@/lib/utils";
 
 /** One row, flattened from either source so the list can be one keyboard sequence. */
@@ -52,6 +55,28 @@ export type MentionOption =
       nameCandidates: string[];
     };
 
+/** A slash command row. Not a mention: it mints no token and attaches nobody. */
+export type CommandOption = {
+  kind: "command";
+  id: string;
+  /** `/draft` */
+  title: string;
+  subtitle: string | null;
+  command: ChatCommand;
+};
+
+/** Anything the composer's type-ahead can offer. */
+export type MenuOption = MentionOption | CommandOption;
+
+const COMMAND_ICONS: Record<string, LucideIcon> = {
+  "cmd:draft": PenLine,
+  "cmd:followup": CornerUpRight,
+  "cmd:summarize": FileText,
+  "cmd:intro": UserRound,
+  "cmd:remind": Bell,
+  "cmd:log": FilePlus2,
+};
+
 export type MentionMenuPlacement = "above" | "below";
 
 export function MentionAutocomplete({
@@ -63,13 +88,13 @@ export function MentionAutocomplete({
   onPick,
   placement = "above",
 }: {
-  options: readonly MentionOption[];
+  options: readonly MenuOption[];
   activeIndex: number;
   loading: boolean;
   listboxId: string;
   /** Builds the id the textarea's `aria-activedescendant` points at. */
   optionId: (index: number) => string;
-  onPick: (option: MentionOption) => void;
+  onPick: (option: MenuOption) => void;
   /**
    * Which side of the anchor to open on.
    *
@@ -117,7 +142,9 @@ export function MentionAutocomplete({
               i === activeIndex ? "bg-muted" : "hover:bg-muted/60",
             )}
           >
-            {option.kind === "person" ? (
+            {option.kind === "command" ? (
+              <CommandGlyph id={option.id} />
+            ) : option.kind === "person" ? (
               <ContactAvatar
                 contactId={option.contactId}
                 firstName={option.firstName}
@@ -136,7 +163,14 @@ export function MentionAutocomplete({
               />
             )}
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm text-foreground">{option.title}</span>
+              <span
+                className={cn(
+                  "block truncate text-sm text-foreground",
+                  option.kind === "command" && "font-mono",
+                )}
+              >
+                {option.title}
+              </span>
               {option.subtitle && (
                 <span className="block truncate text-xs text-muted-foreground">
                   {option.subtitle}
@@ -147,6 +181,15 @@ export function MentionAutocomplete({
         ))}
       </div>
     </Shell>
+  );
+}
+
+function CommandGlyph({ id }: { id: string }) {
+  const Icon = COMMAND_ICONS[id] ?? PenLine;
+  return (
+    <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+      <Icon className="size-3.5" aria-hidden />
+    </span>
   );
 }
 
