@@ -5,10 +5,10 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   BookUser,
+  Bot,
   CalendarDays,
   FileSpreadsheet,
   KeyRound,
-  MailSearch,
   Send,
   Sparkles,
   Users,
@@ -29,6 +29,7 @@ import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { ApiSettings } from "@/components/settings/api-settings";
 import { WebhookSettings } from "@/components/settings/webhook-settings";
+import { AssistantsSettings } from "@/components/settings/assistants-settings";
 import { SettingsSurfaceProvider } from "@/components/settings/settings-section";
 import {
   INTEGRATION_TAB_GROUPS,
@@ -47,15 +48,15 @@ import { cn } from "@/lib/utils";
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
 export const INTEGRATION_ICONS: Record<IntegrationTabId, LucideIcon> = {
+  google: Users,
+  microsoft: BookUser,
+  linkedin: FileSpreadsheet,
   ai: Sparkles,
-  outreach: Send,
-  calendar: CalendarDays,
+  assistants: Bot,
+  reminders: CalendarDays,
   api: KeyRound,
   webhooks: Webhook,
-  google: Users,
-  linkedin: FileSpreadsheet,
-  outlook: BookUser,
-  gmail: MailSearch,
+  outreach: Send,
 };
 
 /**
@@ -70,7 +71,7 @@ export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
     case "google_contacts":
       return "google";
     case "outlook_contacts":
-      return "outlook";
+      return "microsoft";
     case "contacts_file":
     case "calendar":
       return null;
@@ -184,6 +185,8 @@ function useIsWide() {
  * API key still waiting to be copied survives a detour to another tab. Import jobs outlive
  * the dialog altogether: the job runner is a module singleton, and the app shell's watcher
  * and progress bar keep reporting after it closes.
+ *
+ * False when /recruiters is hidden: the Google page then leaves out its Gmail inbox block.
  */
 export function IntegrationsDialog({
   open,
@@ -194,6 +197,7 @@ export function IntegrationsDialog({
   statuses,
   initialSettings,
   canUseRecruiters,
+  inboxVisible,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -204,6 +208,7 @@ export function IntegrationsDialog({
   statuses: IntegrationStatuses | null;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  inboxVisible: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -221,6 +226,7 @@ export function IntegrationsDialog({
           statuses={statuses}
           initialSettings={initialSettings}
           canUseRecruiters={canUseRecruiters}
+          inboxVisible={inboxVisible}
         />
       </DialogContent>
     </Dialog>
@@ -235,6 +241,7 @@ function DialogBody({
   statuses,
   initialSettings,
   canUseRecruiters,
+  inboxVisible,
 }: {
   /**
    * False from the moment the dialog starts closing. Base UI only unmounts the body once
@@ -248,6 +255,7 @@ function DialogBody({
   statuses: IntegrationStatuses | null;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  inboxVisible: boolean;
 }) {
   const wide = useIsWide();
   const job = useImportJob();
@@ -400,6 +408,7 @@ function DialogBody({
                   active={active}
                   initialSettings={initialSettings}
                   canUseRecruiters={canUseRecruiters}
+                  inboxVisible={inboxVisible}
                 />
               </div>
             ) : null
@@ -415,32 +424,28 @@ function Panel({
   active,
   initialSettings,
   canUseRecruiters,
+  inboxVisible,
 }: {
   id: IntegrationTabId;
   active: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  inboxVisible: boolean;
 }) {
   switch (id) {
-    case "ai":
+    case "google":
       return (
         <div className="space-y-5">
-          <AiSettings initialSettings={initialSettings} />
-          <AiUsageCard />
+          <GoogleContactsImport returnTo={integrationHref("google")} />
+          {inboxVisible ? (
+            <div id="integration-google-inbox" className="scroll-mt-4">
+              <GmailTab active={active} canUseRecruiters={canUseRecruiters} returnTo={integrationHref("gmail")} />
+            </div>
+          ) : null}
         </div>
       );
-    case "outreach":
-      return <OutreachSettings initial={initialSettings.outreach} />;
-    case "calendar":
-      return <CalendarFeedSettings />;
-    case "api":
-      return <ApiSettings />;
-    case "webhooks":
-      return <WebhookSettings />;
-    case "google":
-      return <GoogleContactsImport returnTo={integrationHref("google")} />;
-    case "outlook":
-      return <OutlookContactsImport returnTo={integrationHref("outlook")} />;
+    case "microsoft":
+      return <OutlookContactsImport returnTo={integrationHref("microsoft")} />;
     case "linkedin":
       return (
         <div className="space-y-5">
@@ -448,13 +453,22 @@ function Panel({
           <LinkedInMessagesImport />
         </div>
       );
-    case "gmail":
+    case "ai":
       return (
-        <GmailTab
-          active={active}
-          canUseRecruiters={canUseRecruiters}
-          returnTo={integrationHref("gmail")}
-        />
+        <div className="space-y-5">
+          <AiSettings initialSettings={initialSettings} />
+          <AiUsageCard />
+        </div>
       );
+    case "assistants":
+      return <AssistantsSettings />;
+    case "reminders":
+      return <CalendarFeedSettings />;
+    case "api":
+      return <ApiSettings />;
+    case "webhooks":
+      return <WebhookSettings />;
+    case "outreach":
+      return <OutreachSettings initial={initialSettings.outreach} />;
   }
 }

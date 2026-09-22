@@ -104,8 +104,9 @@ export default async function SettingsPage() {
   const { hidden } = visibility;
   const shows = (id: SettingsSectionId) => !hidden.has(surfaceKeyForSettingsId(id));
 
-  // Service tabs follow their own settings surface; importer tabs follow the page they
-  // were lifted from, so hiding /imports cannot be undone by reaching it through Settings.
+  // Section pages follow their own settings surface; account pages follow /imports, so
+  // hiding it can't be undone by reaching it through Settings. The Google page's Gmail
+  // block follows /recruiters.
   const integrationTabs = INTEGRATION_TABS.filter((tab) =>
     "section" in tab ? shows(tab.section) : !hidden.has(tab.surface)
   ).map((tab) => tab.id);
@@ -180,6 +181,7 @@ export default async function SettingsPage() {
           tabs={integrationTabs}
           initialSettings={initialSettings}
           canUseRecruiters={initialSettings.plan.canUseRecruiters}
+          inboxVisible={!hidden.has("page.recruiters")}
         />
       </Group>
 

@@ -81,7 +81,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
           };
   }
 
-  statuses.calendar =
+  statuses.reminders =
     feed === "unknown"
       ? "unknown"
       : feed.enabled
@@ -108,13 +108,8 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
           };
   }
 
-  // Google Contacts and the Gmail recruiter scan share one Google connection.
-  const googleStatus: IntegrationStatus | "unknown" =
-    google === "unknown" ? "unknown" : connectionSummary(google);
-  statuses.google = googleStatus;
-  statuses.gmail = googleStatus;
-
-  statuses.outlook = outlook === "unknown" ? "unknown" : connectionSummary(outlook);
+  statuses.google = google === "unknown" ? "unknown" : connectionSummary(google);
+  statuses.microsoft = outlook === "unknown" ? "unknown" : connectionSummary(outlook);
 
   // LinkedIn has no connection to report — it is a CSV you upload each time.
   statuses.linkedin = { state: "off", detail: "Upload a CSV export" };

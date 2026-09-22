@@ -3,7 +3,7 @@
  * each, and which of those live in the Integrations dialog rather than on the page.
  *
  * `page.tsx` renders the groups and cards from these lists, `SettingsSectionNav` renders the
- * rail from `SETTINGS_GROUPS`, and `IntegrationsDialog` renders its side nav from
+ * rail from `SETTINGS_GROUPS`, and `IntegrationsDialog` renders its side nav and Overview from
  * `INTEGRATION_TABS` — so none of the three can drift from the others.
  *
  * Section ids are load-bearing beyond this page: `src/lib/surfaces.ts` derives each
@@ -46,26 +46,38 @@ export const SETTINGS_SECTIONS = [
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 
+export const INTEGRATION_TAB_GROUPS = [
+  { key: "accounts", label: "Your accounts" },
+  { key: "ai", label: "AI and calendar" },
+  { key: "advanced", label: "Advanced" },
+] as const;
+
+export type IntegrationTabGroupKey = (typeof INTEGRATION_TAB_GROUPS)[number]["key"];
+
 /**
- * The Integrations dialog's side nav, in order.
+ * The Integrations dialog's pages, in nav order.
  *
- * `section` tabs are settings sections moved off the page; they keep their surface key, so an
- * operator hiding `settings.webhooks` hides the Webhooks tab. `surface` tabs embed an importer
- * whose home is another page, and follow that page's surface — a hidden /imports page should
- * not leak back in through Settings.
+ * Organised by account rather than by technology: one Google page holds contacts, meetings
+ * and Gmail, which used to be three places. `section` pages are settings sections moved off
+ * the page and keep their surface key, so an operator hiding `settings.webhooks` hides
+ * Webhooks. `surface` pages embed importers whose home is another page and follow that page's
+ * surface — a hidden /imports must not leak back in through Settings. Claude and ChatGPT and
+ * API keys share `settings-api` because the old card held both.
+ *
+ * Overview is not a page here: it is the dialog's home view, shown whenever any page is.
  */
 export const INTEGRATION_TABS = [
-  { id: "ai", label: "AI provider", group: "services", section: "settings-ai" },
-  { id: "outreach", label: "Outreach", group: "services", section: "settings-outreach" },
-  { id: "calendar", label: "Calendar feed", group: "services", section: "settings-calendar" },
-  { id: "api", label: "API & connectors", group: "services", section: "settings-api" },
-  { id: "webhooks", label: "Webhooks", group: "services", section: "settings-webhooks" },
-  { id: "google", label: "Google Contacts", group: "imports", surface: "page.imports" },
-  { id: "linkedin", label: "LinkedIn", group: "imports", surface: "page.imports" },
-  { id: "outlook", label: "Outlook", group: "imports", surface: "page.imports" },
-  { id: "gmail", label: "Gmail", group: "imports", surface: "page.recruiters" },
+  { id: "google", label: "Google", group: "accounts", surface: "page.imports" },
+  { id: "microsoft", label: "Microsoft", group: "accounts", surface: "page.imports" },
+  { id: "linkedin", label: "LinkedIn", group: "accounts", surface: "page.imports" },
+  { id: "ai", label: "AI", group: "ai", section: "settings-ai" },
+  { id: "assistants", label: "Claude and ChatGPT", group: "ai", section: "settings-api" },
+  { id: "reminders", label: "Reminders in calendar", group: "ai", section: "settings-calendar" },
+  { id: "api", label: "API keys", group: "advanced", section: "settings-api" },
+  { id: "webhooks", label: "Webhooks", group: "advanced", section: "settings-webhooks" },
+  { id: "outreach", label: "Outreach keys", group: "advanced", section: "settings-outreach" },
 ] as const satisfies ReadonlyArray<
-  { id: string; label: string; group: "services" | "imports" } & (
+  { id: string; label: string; group: IntegrationTabGroupKey } & (
     | { section: SettingsSectionId }
     | { surface: string }
   )
@@ -73,30 +85,80 @@ export const INTEGRATION_TABS = [
 
 export type IntegrationTabId = (typeof INTEGRATION_TABS)[number]["id"];
 
-export const INTEGRATION_TAB_GROUPS = [
-  { key: "services", label: "Services" },
-  { key: "imports", label: "Import contacts" },
-] as const;
+/** The dialog's home view. */
+export const OVERVIEW = "overview";
+export type IntegrationView = typeof OVERVIEW | IntegrationTabId;
 
-/** Query param that opens the Integrations dialog on a tab: `/settings?integration=ai`. */
+/** The pages the Overview gives a card — everything outside Advanced. */
+export const OVERVIEW_TABS: readonly IntegrationTabId[] = INTEGRATION_TABS.filter(
+  (tab) => tab.group !== "advanced"
+).map((tab) => tab.id);
+
+/** A place inside a page a link can land on. Only the Google page has one so far. */
+export type IntegrationFocus = "inbox";
+
+/**
+ * Ids the dialog used before it was organised by account. Links, bookmarks and the
+ * `returnTo` of Google and Microsoft consent screens already in flight still say these, and
+ * `gmail` stays the way to link straight to the Google page's inbox.
+ */
+export const INTEGRATION_TAB_ALIASES = {
+  gmail: { view: "google", focus: "inbox" },
+  outlook: { view: "microsoft" },
+  calendar: { view: "reminders" },
+} as const satisfies Record<string, { view: IntegrationTabId; focus?: IntegrationFocus }>;
+
+export type IntegrationLinkTarget = IntegrationView | keyof typeof INTEGRATION_TAB_ALIASES;
+
+/** Query param that opens the Integrations dialog: `/settings?integration=google`. */
 export const INTEGRATION_PARAM = "integration";
 
-export function integrationHref(tab: IntegrationTabId) {
-  return `/settings?${INTEGRATION_PARAM}=${tab}`;
+export function integrationHref(target: IntegrationLinkTarget) {
+  return `/settings?${INTEGRATION_PARAM}=${target}`;
 }
 
 export function isIntegrationTabId(value: string | null | undefined): value is IntegrationTabId {
   return INTEGRATION_TABS.some((tab) => tab.id === value);
 }
 
+function ownKey<T extends object>(record: T, key: string): key is Extract<keyof T, string> {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+/** What `?integration=` asks for — a page, the overview, or an old id — or null. */
+export function resolveIntegrationParam(
+  value: string | null | undefined
+): { view: IntegrationView; focus: IntegrationFocus | null } | null {
+  if (!value) return null;
+  if (value === OVERVIEW) return { view: OVERVIEW, focus: null };
+  if (isIntegrationTabId(value)) return { view: value, focus: null };
+  if (!ownKey(INTEGRATION_TAB_ALIASES, value)) return null;
+  const alias: { view: IntegrationTabId; focus?: IntegrationFocus } = INTEGRATION_TAB_ALIASES[value];
+  return { view: alias.view, focus: alias.focus ?? null };
+}
+
 /**
- * The anchors these tabs had when they were cards on the page. Bookmarks and old links still
- * say `/settings#settings-ai`; the dialog opens the matching tab for them.
+ * The anchors these pages had when they were cards on the settings page. `#settings-api`
+ * held both API keys and the Claude/ChatGPT connector; it opens API keys, the literal
+ * meaning of the old anchor.
  */
-export const INTEGRATION_TAB_FOR_LEGACY_HASH: Partial<Record<string, IntegrationTabId>> =
-  Object.fromEntries(
-    INTEGRATION_TABS.flatMap((tab) => ("section" in tab ? [[tab.section, tab.id]] : []))
-  );
+const LEGACY_HASH_TAB = {
+  "settings-ai": "ai",
+  "settings-outreach": "outreach",
+  "settings-calendar": "reminders",
+  "settings-api": "api",
+  "settings-webhooks": "webhooks",
+} as const satisfies Record<string, IntegrationTabId>;
+
+/** The page an old `#settings-*` anchor stands for, or null. Accepts the hash with or without `#`. */
+export function legacyHashTab(hash: string): IntegrationTabId | null {
+  const key = hash.replace(/^#/, "");
+  return ownKey(LEGACY_HASH_TAB, key) ? LEGACY_HASH_TAB[key] : null;
+}
+
+export function integrationLabel(id: IntegrationTabId): string {
+  return INTEGRATION_TABS.find((tab) => tab.id === id)?.label ?? id;
+}
 
 /** Gap left above a section when the rail scrolls to it. Mirrors `scroll-mt-8`. */
 export const SECTION_SCROLL_OFFSET = 32;

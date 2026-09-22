@@ -12,10 +12,11 @@ import { Button } from "@/components/ui/button";
 import { SettingsSection } from "@/components/settings/settings-section";
 import {
   INTEGRATION_PARAM,
-  INTEGRATION_TAB_FOR_LEGACY_HASH,
   INTEGRATION_TAB_GROUPS,
   INTEGRATION_TABS,
-  isIntegrationTabId,
+  OVERVIEW,
+  legacyHashTab,
+  resolveIntegrationParam,
   type IntegrationTabId,
 } from "@/components/settings/sections";
 import {
@@ -46,11 +47,14 @@ export function IntegrationsSettings({
   tabs,
   initialSettings,
   canUseRecruiters,
+  inboxVisible,
 }: {
   /** Visible tabs, in order — hidden surfaces already filtered out by the page. */
   tabs: IntegrationTabId[];
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  /** False when /recruiters is hidden — the Google page drops its inbox block. */
+  inboxVisible: boolean;
 }) {
   const searchParams = useSearchParams();
   const job = useImportJob();
@@ -99,8 +103,11 @@ export function IntegrationsSettings({
   const [handled, setHandled] = useState<string | null>(null);
   if (requested !== handled) {
     setHandled(requested);
-    if (requested && isIntegrationTabId(requested) && tabs.includes(requested)) {
-      setTab(requested);
+    const resolved = resolveIntegrationParam(requested);
+    // The Overview arrives with the new dialog shell; until then it opens on the first page.
+    const target = resolved ? (resolved.view === OVERVIEW ? tabs[0] : resolved.view) : undefined;
+    if (target && tabs.includes(target)) {
+      setTab(target);
       setOpen(true);
     }
   }
@@ -108,7 +115,7 @@ export function IntegrationsSettings({
   // The old per-card anchors.
   useEffect(() => {
     function openForHash() {
-      const target = INTEGRATION_TAB_FOR_LEGACY_HASH[window.location.hash.slice(1)];
+      const target = legacyHashTab(window.location.hash);
       if (!target || !tabs.includes(target)) return;
       setTab(target);
       setOpen(true);
@@ -132,7 +139,7 @@ export function IntegrationsSettings({
     const params = new URLSearchParams(window.location.search);
     const hadParam = params.has(INTEGRATION_PARAM);
     params.delete(INTEGRATION_PARAM);
-    const legacyHash = INTEGRATION_TAB_FOR_LEGACY_HASH[window.location.hash.slice(1)];
+    const legacyHash = legacyHashTab(window.location.hash);
     if (!hadParam && !legacyHash) return;
     const rest = params.toString();
     window.history.replaceState(
@@ -229,6 +236,7 @@ export function IntegrationsSettings({
         statuses={statuses}
         initialSettings={initialSettings}
         canUseRecruiters={canUseRecruiters}
+        inboxVisible={inboxVisible}
       />
     </SettingsSection>
   );

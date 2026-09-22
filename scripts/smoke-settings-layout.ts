@@ -11,12 +11,15 @@
  */
 import { readFileSync } from "node:fs";
 import {
-  INTEGRATION_TAB_FOR_LEGACY_HASH,
+  INTEGRATION_TAB_GROUPS,
   INTEGRATION_TABS,
+  OVERVIEW,
+  OVERVIEW_TABS,
   SETTINGS_GROUPS,
   SETTINGS_SECTIONS,
   integrationHref,
-  isIntegrationTabId,
+  legacyHashTab,
+  resolveIntegrationParam,
 } from "../src/components/settings/sections";
 import { getSurface } from "../src/lib/surfaces";
 
@@ -55,32 +58,97 @@ check(
 );
 
 console.log("\nintegrations dialog");
-const tabIds = INTEGRATION_TABS.map((t) => t.id);
-check("tab ids are unique", new Set(tabIds).size === tabIds.length);
+const tabIds: string[] = INTEGRATION_TABS.map((t) => t.id);
+check("page ids are unique", new Set(tabIds).size === tabIds.length);
+check("overview is the home view, not a page", !tabIds.includes(OVERVIEW));
+const tabGroupKeys = new Set<string>(INTEGRATION_TAB_GROUPS.map((g) => g.key));
+for (const tab of INTEGRATION_TABS) {
+  check(`page "${tab.id}" is in a real group`, tabGroupKeys.has(tab.group), tab.group);
+}
 for (const section of SETTINGS_SECTIONS.filter((s) => s.group === "integrations")) {
   const tabs = INTEGRATION_TABS.filter((t) => "section" in t && t.section === section.id);
-  check(`${section.id} has exactly one dialog tab`, tabs.length === 1, `found ${tabs.length}`);
+  check(`${section.id} has a dialog page`, tabs.length >= 1, `found ${tabs.length}`);
+  const legacy = legacyHashTab(`#${section.id}`);
   check(
-    `#${section.id} still opens its tab`,
-    INTEGRATION_TAB_FOR_LEGACY_HASH[section.id] === tabs[0]?.id
+    `#${section.id} still opens one of its pages`,
+    legacy !== null && tabs.some((t) => t.id === legacy),
+    String(legacy)
   );
 }
 for (const tab of INTEGRATION_TABS) {
   if ("section" in tab) {
     const section = SETTINGS_SECTIONS.find((s) => s.id === tab.section);
     check(
-      `tab "${tab.id}" points at an Integrations section`,
+      `page "${tab.id}" points at an Integrations section`,
       section?.group === "integrations",
       tab.section
     );
   } else {
-    check(`tab "${tab.id}" follows a real surface`, getSurface(tab.surface) !== undefined, tab.surface);
+    check(`page "${tab.id}" follows a real surface`, getSurface(tab.surface) !== undefined, tab.surface);
   }
-  check(
-    `integrationHref("${tab.id}") round-trips`,
-    isIntegrationTabId(new URL(integrationHref(tab.id), "http://x").searchParams.get("integration"))
+  const resolved = resolveIntegrationParam(
+    new URL(integrationHref(tab.id), "http://x").searchParams.get("integration")
   );
+  check(`integrationHref("${tab.id}") round-trips`, resolved?.view === tab.id && resolved.focus === null);
 }
+check(
+  "integrationHref(overview) round-trips",
+  resolveIntegrationParam(new URL(integrationHref(OVERVIEW), "http://x").searchParams.get("integration"))
+    ?.view === OVERVIEW
+);
+check(
+  "Overview cards skip Advanced",
+  OVERVIEW_TABS.length > 0 &&
+    OVERVIEW_TABS.every((id) => INTEGRATION_TABS.find((t) => t.id === id)?.group !== "advanced")
+);
+
+console.log("\nold dialog ids");
+// Links, bookmarks and consent screens already in flight still use these.
+const OLD_IDS: Array<[string, string, string | null]> = [
+  ["gmail", "google", "inbox"],
+  ["outlook", "microsoft", null],
+  ["calendar", "reminders", null],
+  ["google", "google", null],
+  ["linkedin", "linkedin", null],
+  ["ai", "ai", null],
+  ["api", "api", null],
+  ["webhooks", "webhooks", null],
+  ["outreach", "outreach", null],
+];
+for (const [old, view, focus] of OLD_IDS) {
+  const r = resolveIntegrationParam(old);
+  check(`?integration=${old} opens ${view}${focus ? ` at ${focus}` : ""}`, r?.view === view && r.focus === focus);
+}
+check("an unknown id opens nothing", resolveIntegrationParam("nope") === null);
+check("empty opens nothing", resolveIntegrationParam("") === null && resolveIntegrationParam(null) === null);
+check(
+  "prototype keys are not ids",
+  resolveIntegrationParam("constructor") === null && legacyHashTab("#toString") === null
+);
+check("the gmail link keeps its alias", integrationHref("gmail") === "/settings?integration=gmail");
+
+console.log("\nsurface keys");
+// Operator hide-lists are stored by these; renaming one silently un-hides its surface.
+const FROZEN_SECTION_IDS = [
+  "settings-profile",
+  "settings-plan",
+  "settings-appearance",
+  "settings-notifications",
+  "settings-goals",
+  "settings-targets",
+  "settings-ai",
+  "settings-outreach",
+  "settings-calendar",
+  "settings-api",
+  "settings-webhooks",
+  "settings-knowledge",
+  "settings-help",
+  "settings-data",
+];
+check(
+  "section ids are unchanged",
+  SETTINGS_SECTIONS.map((s) => s.id).join(",") === FROZEN_SECTION_IDS.join(",")
+);
 
 console.log("\npage");
 // Sections outside Integrations are rendered by the page itself, by id — as a card's anchor
