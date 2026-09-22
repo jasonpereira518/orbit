@@ -43,11 +43,11 @@ export type Entitlements = {
    * The public API, outbound webhooks and the MCP server.
    *
    * A key of its own rather than folding into `canUseSync`, for two reasons. The denial copy
-   * for sync says "Mailbox and calendar sync are available on…", which is simply wrong on an
-   * API 402. More importantly `gate_events` is the only place demand for a gated feature is
-   * observable, and the pricing question depends entirely on it — conflating "someone wanted
-   * to connect Zapier" with "someone wanted mailbox sync" destroys exactly the signal that
-   * table exists to collect.
+   * for sync says "Calendar subscriptions and event sources are available on…", which is
+   * simply wrong on an API 402. More importantly `gate_events` is the only place demand for a
+   * gated feature is observable, and the pricing question depends entirely on it — conflating
+   * "someone wanted to connect Zapier" with "someone wanted a calendar subscription" destroys
+   * exactly the signal that table exists to collect.
    */
   canUseApi: boolean;
   /**
@@ -207,7 +207,7 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
     "Contact enrichment on Orbit's credits requires Orbit Pro. On any other plan, add your own Apollo key in Settings.",
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
   api: "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime. Claude and ChatGPT connect on any plan, with no key.",
-  sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
+  sync: "Calendar subscriptions and event sources are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
 };
 
