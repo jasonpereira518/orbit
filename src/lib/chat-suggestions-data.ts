@@ -206,6 +206,7 @@ export async function loadSuggestionSignals(
         and(
           eq(chatMessages.userId, userId),
           eq(chatMessages.role, "user"),
+          eq(chatMessages.isActive, true),
           gte(chatMessages.createdAt, since(RECENT_QUESTION_DAYS))
         )
       )

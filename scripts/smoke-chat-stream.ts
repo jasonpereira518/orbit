@@ -76,7 +76,7 @@ function main() {
   const events: ChatStreamEvent[] = [
     { type: "answer", delta: "Hello\n\nworld" },
     { type: "recommendations", items: [] },
-    { type: "done", messageId: "m1", threadId: "t1", title: "Hi", retrieved: [] },
+    { type: "done", messageId: "m1", userMessageId: "u1", threadId: "t1", title: "Hi", retrieved: [] },
   ];
   const wire = events.map(formatSse).join("");
   check("each event is one data: line ending in a blank line", wire.split("\n\n").filter(Boolean).length === 3, JSON.stringify(wire));
@@ -127,6 +127,7 @@ function main() {
     formatSse({
       type: "done",
       messageId: "m1",
+      userMessageId: "u1",
       threadId: "t1",
       title: "Hi",
       retrieved: [],
@@ -141,7 +142,7 @@ function main() {
   );
   check(
     "done without follow-ups still parses",
-    parseSseChunk(formatSse({ type: "done", messageId: null, threadId: null, title: null, retrieved: [] }), "")
+    parseSseChunk(formatSse({ type: "done", messageId: null, userMessageId: null, threadId: null, title: null, retrieved: [] }), "")
       .events[0]?.type === "done"
   );
 
