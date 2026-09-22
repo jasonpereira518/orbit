@@ -1002,6 +1002,10 @@ export async function logInteractionForUser(
         kindLabel: interactionTypeLabel(row.interactionType),
         contactId: input.contactId,
         contactName: owned.preferredName || owned.fullName,
+        // No mentions to fold in: `interaction_mentions` hangs off the row that was just
+        // inserted, so nothing can name it yet. The paths that DO write mentions widen the
+        // array themselves (`syncMemoryChunkMentions`, called from `note-batch-save`), and
+        // the sweep reads them for everything it indexes.
         contactIds: [],
       }),
     }).catch((err) => {

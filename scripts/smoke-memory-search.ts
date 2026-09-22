@@ -16,13 +16,14 @@ import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, memoryChunks } from "../src/db/schema";
+import { contacts, interactionMentions, interactions, memoryChunks } from "../src/db/schema";
 import {
   buildMemoryChunks,
   deleteMemoryChunks,
-  repointMemoryChunks,
+  syncMemoryChunkMentions,
   syncMemoryChunks,
 } from "../src/lib/memory-chunks";
+import { mergeContacts, unmergeContacts } from "../src/lib/contact-merge";
 import { backfillMemoryChunks, pruneOrphanedMemoryChunks } from "../src/lib/memory-backfill";
 import { searchMemories } from "../src/lib/memory-search";
 import { logNoteInteractionForUser } from "../src/lib/contact-writes";
@@ -214,18 +215,6 @@ async function main() {
     JSON.stringify(reSynced)
   );
 
-  // --- a merge must rewrite the array, or the note stops being findable ---------------------
-
-  await repointMemoryChunks(USER, sam.id, priya.id);
-  const merged = await searchMemories(USER, { query: "rotation", contactIds: [priya.id] });
-  check(
-    "after a merge the loser's passages are findable from the winner",
-    merged.length > 0,
-    String(merged.length)
-  );
-  const stale = await searchMemories(USER, { query: "rotation", contactIds: [sam.id] });
-  check("and no longer from the merged-away id", stale.length === 0, String(stale.length));
-
   // --- deletion ------------------------------------------------------------------------------
 
   await deleteMemoryChunks(USER, { sourceKind: "interaction", sourceIds: [marchSourceId] });
@@ -300,6 +289,133 @@ async function main() {
   check("the prune removes it", pruned > 0, String(pruned));
   const afterPrune = await searchMemories(USER, { query: "infrastructure group" });
   check("and the deleted note is no longer quotable", afterPrune.length === 0, String(afterPrune.length));
+
+  // --- a note that names several people is findable from any of them ---------------------------
+
+  // Filed under Sam, naming Priya. `interaction_mentions` is written after the interaction
+  // row, so the chunker cannot see it — the sweep is what reads it, which is also the path
+  // every batch-saved note takes (they all pass `skipEmbedding`).
+  const dinner = await logNoteInteractionForUser(
+    USER,
+    {
+      contactId: sam.id,
+      interactionType: "meeting",
+      rawNotes: "Dinner at the harbour with the whole group; we argued about warehouse pricing.",
+      interactionDate: new Date("2026-07-09T19:00:00Z"),
+      externalId: `smoke-dinner:${Date.now()}`,
+    },
+    { skipEmbedding: true, skipRevalidate: true }
+  );
+  await db.insert(interactionMentions).values({
+    userId: USER,
+    interactionId: dinner.row.id,
+    contactId: priya.id,
+    mentionText: "Priya",
+    confidence: 0.9,
+    matchedBy: "user_pick",
+  });
+  await backfillMemoryChunks(USER);
+  const asMentioned = await searchMemories(USER, {
+    query: "warehouse pricing",
+    contactIds: [priya.id],
+  });
+  check(
+    "a note filed under one person is findable from someone it only mentions",
+    asMentioned.length > 0,
+    String(asMentioned.length)
+  );
+  check(
+    "without losing the person it was filed under",
+    asMentioned[0]?.contactIds.includes(sam.id) === true,
+    JSON.stringify(asMentioned[0]?.contactIds)
+  );
+
+  // A mention added to a note that was indexed already. The sweep will never revisit it — it
+  // claims only interactions with no passages at all — so the mention writer widens the array
+  // itself, which is what `syncMemoryChunkMentions` is for.
+  const [theo] = await db
+    .insert(contacts)
+    .values({ userId: USER, fullName: "Theo Lindqvist", company: "Harbour Labs" })
+    .returning();
+  await db.insert(interactionMentions).values({
+    userId: USER,
+    interactionId: dinner.row.id,
+    contactId: theo.id,
+    mentionText: "Theo",
+    confidence: 0.8,
+    matchedBy: "user_pick",
+  });
+  const beforeWiden = await searchMemories(USER, { query: "warehouse pricing", contactIds: [theo.id] });
+  check(
+    "a mention added after indexing does not reach the passage on its own",
+    beforeWiden.length === 0,
+    String(beforeWiden.length)
+  );
+  await syncMemoryChunkMentions(USER, [dinner.row.id]);
+  const afterWiden = await searchMemories(USER, { query: "warehouse pricing", contactIds: [theo.id] });
+  check("applying the mentions makes it findable from them too", afterWiden.length > 0, String(afterWiden.length));
+  await syncMemoryChunkMentions(USER, [dinner.row.id]);
+  const twice = await searchMemories(USER, { query: "warehouse pricing", contactIds: [theo.id] });
+  check(
+    "and applying them twice changes nothing — the array is recomputed, not appended to",
+    twice[0]?.contactIds.length === afterWiden[0]?.contactIds.length,
+    `${JSON.stringify(afterWiden[0]?.contactIds)} -> ${JSON.stringify(twice[0]?.contactIds)}`
+  );
+
+  // --- a merge moves the passages instead of dropping them -------------------------------------
+
+  // Last, because it deletes one of the two contacts everything above is written against.
+  // The dinner note names BOTH of them by now, which is the case the merge has to collapse
+  // rather than replace: two ids becoming one.
+  // A note about the loser and nobody else, so both array cases are exercised: this one is
+  // replaced outright, the dinner note above collapses two ids into one. (The June note at
+  // the top of this file is gone by now — the prune took it, because its source id was never
+  // a real interaction row.)
+  await logNoteInteractionForUser(
+    USER,
+    {
+      contactId: sam.id,
+      interactionType: "note",
+      rawNotes: "Sam is rebuilding the on-call rotation before the winter freeze.",
+      interactionDate: new Date("2026-07-11T09:00:00Z"),
+      externalId: `smoke-solo:${Date.now()}`,
+    },
+    { skipRevalidate: true }
+  );
+
+  const merge = await mergeContacts(USER, priya.id, sam.id, { deferInvalidation: true });
+  const fromWinner = await searchMemories(USER, { query: "warehouse pricing", contactIds: [priya.id] });
+  check(
+    "after a merge the loser's passages are findable from the winner",
+    fromWinner.length > 0,
+    String(fromWinner.length)
+  );
+  check(
+    "and the merged-away id is gone from the array rather than dangling in it",
+    fromWinner[0]?.contactIds.includes(sam.id) === false,
+    JSON.stringify(fromWinner[0]?.contactIds)
+  );
+  const rotation = await searchMemories(USER, { query: "winter freeze", contactIds: [priya.id] });
+  check(
+    "including passages that named only the loser",
+    rotation.length > 0,
+    String(rotation.length)
+  );
+
+  await unmergeContacts(USER, merge.mergeId);
+  const restored = await searchMemories(USER, { query: "warehouse pricing", contactIds: [sam.id] });
+  check("undoing the merge gives the loser its passages back", restored.length > 0, String(restored.length));
+  check(
+    "and does not take them from the winner — a passage naming both still names both",
+    restored[0]?.contactIds.includes(priya.id) === true,
+    JSON.stringify(restored[0]?.contactIds)
+  );
+  const rotationBack = await searchMemories(USER, { query: "winter freeze", contactIds: [sam.id] });
+  check(
+    "a passage that named only the loser goes back to naming only the loser",
+    rotationBack.length > 0 && rotationBack[0]?.contactIds.includes(priya.id) === false,
+    JSON.stringify(rotationBack[0]?.contactIds)
+  );
 
   for (const u of [USER, OTHER]) {
     await db.delete(memoryChunks).where(eq(memoryChunks.userId, u));

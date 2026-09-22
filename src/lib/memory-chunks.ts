@@ -255,32 +255,46 @@ export async function deleteMemoryChunks(
 }
 
 /**
- * Repoint chunks when two contacts merge.
+ * Fold an interaction's mentions into its passages' `contact_ids`.
  *
- * `contact_id` moves by foreign key, but `contact_ids` is an array the database will not
- * rewrite on its own — leave it and a merged-away id stays in the index forever, so the
- * dinner note stops being findable from the surviving contact.
+ * `contact_ids` is what makes a note naming four people findable from any of them, but the
+ * chunker cannot fill it on its own: `interaction_mentions` is written AFTER the interaction
+ * row it hangs off (`note-batch-save.ts`), so at chunk time there is nothing to read. Without
+ * this, a dinner note stays findable only from the person it happened to be filed under.
+ *
+ * Reads the mentions in SQL rather than taking rows, which makes it idempotent — it
+ * recomputes the union instead of appending to it, so a re-saved batch cannot grow the array
+ * with duplicates. Content is untouched, so nothing becomes stale and nothing is re-embedded.
+ *
+ * Raw SQL because this is one set-based UPDATE over a uuid[] with a correlated subquery;
+ * expressing it through the builder would render the array functions by hand anyway.
  */
-export async function repointMemoryChunks(
+export async function syncMemoryChunkMentions(
   userId: string,
-  fromContactId: string,
-  toContactId: string,
+  interactionIds: string[],
   options: { db?: Awaited<ReturnType<typeof getDb>> } = {}
 ): Promise<void> {
+  const ids = [...new Set(interactionIds)];
+  if (!ids.length) return;
   const db = options.db ?? (await getDb());
-  await db
-    .update(memoryChunks)
-    .set({
-      contactId: sql`case when ${memoryChunks.contactId} = ${fromContactId}::uuid then ${toContactId}::uuid else ${memoryChunks.contactId} end`,
-      contactIds: sql`(
-        select coalesce(array_agg(distinct elem), '{}')
-        from unnest(array_replace(${memoryChunks.contactIds}, ${fromContactId}::uuid, ${toContactId}::uuid)) as elem
-      )`,
-    })
-    .where(
-      and(
-        eq(memoryChunks.userId, userId),
-        sql`${fromContactId}::uuid = any(${memoryChunks.contactIds}) or ${memoryChunks.contactId} = ${fromContactId}::uuid`
-      )
-    );
+  await db.execute(sql`
+    UPDATE memory_chunks m
+       SET contact_ids = (
+             SELECT coalesce(array_agg(DISTINCT e), '{}')
+               FROM unnest(
+                      m.contact_ids || coalesce(
+                        (SELECT array_agg(im.contact_id)
+                           FROM interaction_mentions im
+                          WHERE im.user_id = m.user_id
+                            AND im.interaction_id = m.source_id),
+                        '{}'::uuid[])
+                    ) AS e
+           )
+     WHERE m.user_id = ${userId}
+       AND m.source_kind = 'interaction'
+       AND m.source_id = ANY(${sql`ARRAY[${sql.join(
+         ids.map((id) => sql`${id}::uuid`),
+         sql`, `
+       )}]`})
+  `);
 }
