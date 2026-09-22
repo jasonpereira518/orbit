@@ -3,6 +3,7 @@
  * LinkedIn page text, scored for the one failure that matters most — naming an
  * employer or school the page never mentions.
  *
+ *   npx tsx scripts/eval-extension-profile.ts --dry-run   # check fixtures, no cost
  *   ORBIT_EVAL_GEMINI_KEY=… npx tsx scripts/eval-extension-profile.ts
  *   ORBIT_EVAL_ANTHROPIC_KEY=… npx tsx scripts/eval-extension-profile.ts --provider anthropic
  *
@@ -115,11 +116,39 @@ run(async () => {
   };
   const provider = resolveAiProvider(flag("--provider") ?? "gemini");
   const model = flag("--model") ?? DEFAULT_MODELS[provider];
-  const key = evalKey(provider);
-  if (!key) throw new Error(`Set ORBIT_EVAL_${provider.toUpperCase()}_KEY to run the work-history eval.`);
 
   const fixtures = loadFixtures();
   if (!fixtures.length) throw new Error(`No fixtures in ${DIR} — see its README.`);
+
+  // --dry-run: are the fixtures the shape this expects? No key, no model, no
+  // cost — and it prints nothing from inside a page, so the output is safe to
+  // paste anywhere.
+  if (argv.includes("--dry-run")) {
+    const real = fixtures.filter((f) => !f.synthetic);
+    for (const fixture of fixtures) {
+      const page = pageFor(fixture);
+      const wanted = [...(fixture.expect?.employers ?? []), ...(fixture.expect?.schools ?? [])];
+      console.log(
+        `  ${fixture.file}${fixture.synthetic ? " (synthetic — doesn't count)" : ""}\n` +
+          `    ${page.text.blob.length.toLocaleString()} chars${page.text.truncated ? " (cut at the cap)" : ""}` +
+          ` · section: ${page.section ?? "profile"}` +
+          ` · name: ${fixture.name ? "given" : "missing"}` +
+          ` · ground truth: ${wanted.length ? `${wanted.length} names` : "none"}` +
+          `${/show all \d+ experiences?/i.test(page.text.blob) ? " · lists only some roles" : ""}`
+      );
+    }
+    const sections = new Set(fixtures.filter((f) => !f.synthetic).map((f) => sectionOf(f.url) ?? "profile"));
+    console.log(
+      `\n  ${real.length} real fixture(s) of ${MIN_REAL_FIXTURES} needed` +
+        `\n  sections covered: ${[...sections].join(", ") || "none"}` +
+        `\n  with ground truth: ${real.filter((f) => (f.expect?.employers?.length ?? 0) + (f.expect?.schools?.length ?? 0) > 0).length}` +
+        `\n\n  ${real.length >= MIN_REAL_FIXTURES ? "Ready. Run it for real with ORBIT_EVAL_<PROVIDER>_KEY set." : "Add more fixtures with scripts/save-profile-fixture.ts."}`
+    );
+    process.exit(0);
+  }
+
+  const key = evalKey(provider);
+  if (!key) throw new Error(`Set ORBIT_EVAL_${provider.toUpperCase()}_KEY to run the work-history eval.`);
 
   const db = await getDb();
   const settings = {
