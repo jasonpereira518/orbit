@@ -173,6 +173,15 @@ export function usePanel() {
         page: null,
         resolved: null,
       }));
+      // Home shows beside an unreadable tab, and it needs to know the plan
+      // (whether search is ranked). /me is cached, so this is usually free.
+      if (session.isLoaded && session.isSignedIn) {
+        void loadMe(controller.signal)
+          .then((me) => {
+            if (!controller.signal.aborted) setState((s) => ({ ...s, me }));
+          })
+          .catch(() => null);
+      }
       return;
     }
     const page = read.page;
@@ -380,5 +389,8 @@ export function usePanel() {
     void run();
   }, [run]);
 
-  return { state, setState, api, reload: run, refresh, setDirty, followPending };
+  /** null while Clerk is still loading; Home's sign-in prompt needs the difference. */
+  const signedIn = session.isLoaded ? session.isSignedIn : null;
+
+  return { state, setState, api, signedIn, reload: run, refresh, setDirty, followPending };
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CircleAlert, MousePointerClick, UserX, WifiOff } from "lucide-react";
+import { CircleAlert, WifiOff } from "lucide-react";
 import type { MatchCandidate } from "@contract";
 import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
@@ -16,9 +16,10 @@ import { Notice } from "./components/Notice";
 import { Button, Meta, Skeleton } from "./components/ui";
 import { AmbiguousView } from "./views/AmbiguousView";
 import { CaptureView } from "./views/CaptureView";
-import { TabHintView } from "./views/TabHintView";
+import { HomeView } from "./views/HomeView";
 import { KnownContactView } from "./views/KnownContactView";
 import { usePanel } from "./state/usePanel";
+import { deriveRoute } from "./state/route";
 import { isOutdated } from "./state/update-status";
 import { UpdateBand } from "./components/UpdateBand";
 import { SettingsView } from "./views/SettingsView";
@@ -46,7 +47,7 @@ function usePageScopedState(url: string | null) {
 }
 
 export function App() {
-  const { state, api, reload, refresh, setDirty, followPending } = usePanel();
+  const { state, api, signedIn, reload, refresh, setDirty, followPending } = usePanel();
   const pageUrl = state.page?.url ?? null;
   const { forceCreate, sealed, setForceCreate, setSealed } =
     usePageScopedState(pageUrl);
@@ -65,6 +66,20 @@ export function App() {
   // record to show, stale, instead of a dead end.
   const offlineError = state.phase === "error" && state.errorCode === "offline";
   const staleOffline = offlineError && Boolean(state.resolved);
+
+  const route = deriveRoute({
+    phase: state.phase,
+    pageError: state.pageError,
+    pageErrorReason: state.pageErrorReason,
+    resolving: state.resolving,
+    hasPage: Boolean(state.page),
+    pageIsPerson: state.page ? isPersonPage(state.page) : false,
+    status: state.resolved?.status ?? null,
+    hasContact: Boolean(contact),
+    candidateCount: state.resolved?.candidates.length ?? 0,
+    forceCreate,
+    staleOffline,
+  });
 
   const verdict = () => {
     // Once a draft exists the panel is bound to the draft, not to the tab —
@@ -115,6 +130,9 @@ export function App() {
         </VerdictZone>
       );
     }
+    if (route.name === "home" && route.reason === "no-person") {
+      return <VerdictZone>Not about a person</VerdictZone>;
+    }
     if (state.resolving || !state.resolved) return <VerdictSkeleton />;
 
     if (contact) {
@@ -136,7 +154,7 @@ export function App() {
   };
 
   const body = () => {
-    if (state.phase === "signed-out") {
+    if (route.name === "signed-out") {
       return (
         <Notice
           title="Orbit isn't signed in"
@@ -169,31 +187,18 @@ export function App() {
       );
     }
 
-    if (state.phase === "needs-permission") {
-      return <TabHintView onOpenSettings={() => setSettingsOpen(true)} />;
-    }
-
-    if (state.phase === "unsupported") {
-      const lostAccess = state.pageErrorReason === "injection-failed";
+    if (route.name === "home") {
       return (
-        <Notice
-          icon={lostAccess ? <MousePointerClick size={18} /> : undefined}
-          title={lostAccess ? "This page reloaded" : "Orbit can't read this page"}
-          body={
-            lostAccess
-              ? "Orbit reads a page only when you ask it to. Click the Orbit icon to read this one."
-              : (state.pageError ?? undefined)
-          }
-          action={
-            <Button
-              variant="outline"
-              onClick={() =>
-                browser().openTab(`${APP_URL}/contacts/new`)
-              }
-            >
-              Add someone manually
-            </Button>
-          }
+        <HomeView
+          reason={route.reason}
+          detail={route.detail}
+          lostAccess={route.lostAccess}
+          me={state.me}
+          signedIn={signedIn}
+          api={api}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onSignIn={signIn}
+          onDirtyChange={setDirty}
         />
       );
     }
@@ -201,7 +206,7 @@ export function App() {
     // A genuine failure with nothing to fall back on — the true-failure
     // Notice. Offline-with-stale-data falls through instead, rendering the
     // last-known KnownContactView/CaptureView/AmbiguousView below.
-    if (state.phase === "error" && !staleOffline) {
+    if (route.name === "error") {
       return (
         <Notice
           icon={offlineError ? <WifiOff size={18} /> : <CircleAlert size={18} />}
@@ -216,7 +221,7 @@ export function App() {
       );
     }
 
-    if (state.resolving || !state.resolved || !state.page) {
+    if (route.name === "loading" || !state.resolved || !state.page) {
       return (
         <div className="flex-1 space-y-2 px-3 py-3">
           <Skeleton className="h-2.5 w-24" />
@@ -226,17 +231,7 @@ export function App() {
       );
     }
 
-    if (!isPersonPage(state.page) && state.resolved.status === "none") {
-      return (
-        <Notice
-          icon={<UserX size={18} />}
-          title="Nothing to add here"
-          body="Orbit works on someone's profile. Open a person and it'll tell you whether you already know them."
-        />
-      );
-    }
-
-    if (contact && !forceCreate) {
+    if (route.name === "known" && contact) {
       return (
         <KnownContactView
           // Without this the view is reused across people, and every piece of
@@ -254,11 +249,7 @@ export function App() {
       );
     }
 
-    if (
-      state.resolved.status === "ambiguous" &&
-      state.resolved.candidates.length > 0 &&
-      !forceCreate
-    ) {
+    if (route.name === "ambiguous") {
       return (
         <AmbiguousView
           candidates={state.resolved.candidates}

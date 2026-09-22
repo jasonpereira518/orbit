@@ -473,6 +473,12 @@ export type ContactSearchResult = {
 
 export type ContactSearchResponse = {
   results: ContactSearchResult[];
+  /**
+   * Which search actually ran. "hybrid" is the ranked search (Pro); a Pro
+   * request that ran over budget answers "keyword", so the panel never claims
+   * a smarter search than it did. Optional: older servers omit it.
+   */
+  mode?: "keyword" | "hybrid";
 };
 
 export type MeResponse = {
@@ -514,6 +520,30 @@ export type ExtensionEntitlements = {
   /** null = unlimited. How many more people this account can save. */
   contactsRemaining: number | null;
   features: Record<ExtensionFeature, boolean>;
+};
+
+/**
+ * `GET /home?tz=<IANA zone>` — what the panel shows beside a page that isn't
+ * about anyone: what's due, and who you've touched lately (the quick-note
+ * picker's starting list).
+ */
+export type HomeReminder = {
+  id: string;
+  title: string;
+  dueDate: string | null;
+  /** Due before today, in the viewer's zone — the reminders page's own rule. */
+  overdue: boolean;
+  contact: { id: string; fullName: string; photoUrl: string | null } | null;
+};
+
+export type HomeResponse = {
+  /** The viewer's today, YYYY-MM-DD, as the server read it. */
+  today: string;
+  /** Overdue and due today, oldest first, at most 10. */
+  dueReminders: HomeReminder[];
+  /** All of them, exactly — the list above is capped, this is not. */
+  dueReminderTotal: number;
+  recentContacts: ContactSearchResult[];
 };
 
 /** A click on a locked section — recorded (throttled) as demand for the feature. */

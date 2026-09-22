@@ -1,9 +1,11 @@
 import type {
+  ContactSearchResponse,
   ExtensionResponse,
   FollowUpRequest,
   FollowUpResponse,
   GateIntentRequest,
   GateIntentResponse,
+  HomeResponse,
   LogInteractionRequest,
   LogInteractionResponse,
   MeResponse,
@@ -111,8 +113,17 @@ export function createApi(getToken: TokenGetter) {
     gate: (body: GateIntentRequest, signal?: AbortSignal) =>
       post<GateIntentResponse>("/gate", body, signal),
 
-    // GET /contacts?q= exists server-side but has no client here yet: it is
-    // the seam for a future "link this page to an existing contact" flow.
+    searchContacts: (q: string, signal?: AbortSignal) =>
+      request<ContactSearchResponse>(
+        `/contacts?q=${encodeURIComponent(q)}`,
+        { method: "GET" },
+        getToken,
+        signal
+      ),
+
+    /** `tz`: the viewer's IANA zone — "due today" is their today. */
+    home: (tz: string, signal?: AbortSignal) =>
+      request<HomeResponse>(`/home?tz=${encodeURIComponent(tz)}`, { method: "GET" }, getToken, signal),
   };
 }
 
