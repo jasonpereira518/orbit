@@ -14,16 +14,21 @@ import {
 import Link from "next/link";
 import {
   ArrowDown,
+  Check,
   History,
   Loader2,
+  Mail,
   NotebookPen,
   Plus,
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { ChatThreadProvider } from "@/components/chat/chat-thread-context";
 import { DraftEditor } from "@/components/chat/draft-editor";
+import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
 import { WritingInstructionsField } from "@/components/chat/writing-instructions-field";
-import { friendlyError } from "@/lib/errors";
+import { clearSendResume, peekSendResumeFor } from "@/lib/chat-send-resume";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import {
   askNetwork,
   createChatThread,
@@ -165,6 +170,11 @@ type AssistantMessage = {
   persisted?: boolean;
   /** The user cut this answer short. */
   stopped?: boolean;
+  /**
+   * Drafts on this answer that have already been emailed, by contact id → send time. Read
+   * from the timeline when a thread loads, so a card cannot offer to send again what has gone.
+   */
+  sentTo?: Record<string, string>;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -185,6 +195,12 @@ function readRailOpen(): boolean {
   } catch {
     return true;
   }
+}
+
+function formatSentAt(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
 }
 
 function formatThreadLabel(thread: ThreadSummary) {
@@ -545,7 +561,7 @@ export function ChatPanel() {
   const loadThread = useCallback(async (id: string) => {
     setLoadingThread(true);
     try {
-      const { thread, messages: rows } = await getChatThread(id);
+      const { thread, messages: rows, sent } = await getChatThread(id);
       setThreadId(thread.id);
       setThreadTitle(thread.title);
       setContextNotes(thread.contextNote ?? "");
@@ -572,6 +588,7 @@ export function ChatPanel() {
                 feedback: row.feedback ?? null,
                 // It came out of the database, so by definition there is a row to rate.
                 persisted: true,
+                sentTo: sent[row.id],
               }
         )
       );
@@ -599,6 +616,38 @@ export function ChatPanel() {
       setContextSaving(false);
     }
   }, [ensureThread, contextIngest.notes]);
+
+  // Coming back from the Gmail connect redirect lands on `/chat?thread=<id>&gmail=connected`:
+  // reopen that conversation (the draft's own edits are restored by its card) and say what
+  // happened. The params come out only once the thread has loaded — a server action that is
+  // still in flight when the URL is rewritten can be dropped, so nothing here does both at once.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const thread = params.get("thread");
+    const gmail = params.get("gmail");
+    if (!thread && !gmail) return;
+    if (gmail === "connected") {
+      toast.success("Gmail connected — you can send now");
+    } else if (gmail === "error") {
+      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
+      if (oauth.cancelled) toast.message(oauth.message);
+      else toast.error(oauth.message);
+    }
+    const strip = () => {
+      const next = new URLSearchParams(window.location.search);
+      for (const key of ["thread", "gmail", "google", "purpose", "reason"]) next.delete(key);
+      const rest = next.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+    };
+    // A thread id from the address bar is only ever passed to `getChatThread`, which scopes it
+    // to the signed-in user; anything that is not an id is dropped without a request.
+    const isId = thread ? /^[0-9a-f-]{36}$/i.test(thread) : false;
+    // A microtask, so the load's first state update is not made inside the effect body itself.
+    if (isId) queueMicrotask(() => void loadThread(thread!).finally(strip));
+    else strip();
+    // Once, on arrival. `loadThread` is stable enough for that: it closes over refs and setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startNewChat = useCallback(() => {
     start(async () => {
@@ -940,7 +989,7 @@ export function ChatPanel() {
   const headerTitle = threadTitle?.trim() || "New chat";
 
   return (
-    <>
+    <ChatThreadProvider value={threadId}>
       {/*
         Always bounded; the internal message list is the only scroller (flex 1 1 0 +
         overflow-y-auto). On phones the chat page bounds itself and this card fills
@@ -1384,7 +1433,7 @@ export function ChatPanel() {
           <WritingInstructionsField active={contextOpen} />
         </SheetContent>
       </Sheet>
-    </>
+    </ChatThreadProvider>
   );
 }
 
@@ -1471,6 +1520,10 @@ const AssistantBubble = memo(function AssistantBubble({
                 rec={r}
                 subtitle={r.contact_id ? subtitleById.get(r.contact_id) : undefined}
                 photoUrl={r.contact_id ? photoById.get(r.contact_id) : undefined}
+                // Only a saved answer can send: the server checks the message recommended this
+                // person, and a streamed-but-unsaved one has no row to check against.
+                messageId={msg.persisted ? msg.id : undefined}
+                sentAt={r.contact_id ? msg.sentTo?.[r.contact_id] : undefined}
               />
             ))}
           </div>
@@ -1507,13 +1560,32 @@ const RecommendationCard = memo(function RecommendationCard({
   rec,
   subtitle,
   photoUrl,
+  messageId,
+  sentAt,
 }: {
   rec: ChatResult["recommendations"][number];
   /** Role and company from retrieval — absent on a reloaded thread, which is fine. */
   subtitle?: string | null;
   /** The contact's stored photo, when the activity steps learned it. */
   photoUrl?: string | null;
+  /** The saved answer this card belongs to. Absent until it is saved, which hides Send. */
+  messageId?: string;
+  /** When this draft was already emailed to this person, from the timeline. */
+  sentAt?: string;
 }) {
+  // A draft edited before the Gmail connect redirect comes back with the person. Read-only
+  // here and cleared in an effect, so a StrictMode double render cannot lose it.
+  const [resume] = useState(() =>
+    messageId && rec.contact_id ? peekSendResumeFor(messageId, rec.contact_id) : null
+  );
+  useEffect(() => {
+    if (resume) clearSendResume();
+  }, [resume]);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendBody, setSendBody] = useState("");
+  const [sent, setSent] = useState<{ at: string; maybe: boolean } | null>(
+    sentAt ? { at: sentAt, maybe: false } : null
+  );
   const href = rec.recruiter_id
     ? `/recruiters/${rec.recruiter_id}`
     : rec.contact_id
@@ -1567,7 +1639,46 @@ const RecommendationCard = memo(function RecommendationCard({
         <span className="font-medium">Next: </span>
         {rec.suggested_action}
       </p>
-      {rec.draft_message && <DraftEditor initial={rec.draft_message} name={rec.name} />}
+      {rec.draft_message && (
+        <DraftEditor
+          initial={resume?.body ?? rec.draft_message}
+          name={rec.name}
+          actions={
+            messageId && rec.contact_id
+              ? (text) =>
+                  sent ? (
+                    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <Check className="size-3.5" aria-hidden />
+                      {sent.maybe ? "May have been sent — check your Sent folder" : `Sent to ${rec.name}`}
+                      {!sent.maybe && ` · ${formatSentAt(sent.at)}`}
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSendBody(text);
+                        setSendOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    >
+                      <Mail className="size-3.5" aria-hidden /> Send email…
+                    </button>
+                  )
+              : undefined
+          }
+        />
+      )}
+      {messageId && rec.contact_id && (
+        <GmailSendDialog
+          open={sendOpen}
+          onOpenChange={setSendOpen}
+          messageId={messageId}
+          contactId={rec.contact_id}
+          name={rec.name}
+          body={sendBody}
+          onSent={(at, maybe) => setSent({ at, maybe })}
+        />
+      )}
       {canRemind && (
         <div className="mt-auto pt-2.5">
           <ReminderButton

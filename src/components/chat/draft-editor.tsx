@@ -2,7 +2,7 @@
 
 import { Check, Copy, Loader2, Pencil, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 import { refineChatDraft } from "@/actions/chat";
 import { Badge } from "@/components/ui/badge";
