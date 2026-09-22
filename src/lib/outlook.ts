@@ -248,11 +248,6 @@ export async function upsertOutlookConnection(
     where: eq(outlookConnections.userId, userId),
   });
 
-  const accessEnc = encrypt(tokens.access_token);
-  const refreshEnc = tokens.refresh_token
-    ? encrypt(tokens.refresh_token)
-    : existing?.refreshTokenEncrypted || null;
-
   const normalized = emailAddress?.trim().toLowerCase() ?? null;
   const previous = existing?.emailAddress?.trim().toLowerCase() ?? null;
   // A different Microsoft account is a different mailbox and a different calendar: its
@@ -260,10 +255,22 @@ export async function upsertOutlookConnection(
   // that never happened here. The row is keyed by Orbit's user, so this is the only place
   // to notice.
   const switchedFrom = previous && normalized && previous !== normalized ? existing!.emailAddress : null;
+
+  const accessEnc = encrypt(tokens.access_token);
+  const refreshEnc = tokens.refresh_token
+    ? encrypt(tokens.refresh_token)
+    : switchedFrom
+      ? // A different account's refresh token would mint access tokens for the OLD
+        // mailbox under a row everyone believes now belongs to the new one.
+        null
+      : existing?.refreshTokenEncrypted || null;
+
   const scopes = switchedFrom ? unionScopes(null, tokens.scope) : unionScopes(existing?.scopes, tokens.scope);
-  // Only a grant that covers calendar belongs in the sync queue. Arming a contacts-only grant
-  // made the scheduler claim it once, disarm it for a missing scope, and leave the UI saying
-  // "Calendar sync paused" to someone who never asked for calendar.
+  // Only a grant that covers calendar belongs in the sync queue. A grant without calendar is
+  // never queued — arming a contacts-only grant unconditionally used to get the row claimed
+  // by the scheduler, disarmed for a missing scope, and left the UI saying "Calendar sync
+  // paused" to someone who never asked for calendar. A row the old code armed by mistake
+  // heals here on its next connect.
   const armed = hasCalendarScope(scopes);
 
   if (existing) {
@@ -276,7 +283,7 @@ export async function upsertOutlookConnection(
         tokenExpiresAt: expiresAt,
         scopes,
         status: "active",
-        nextSyncAt: armed ? new Date() : switchedFrom ? null : (existing?.nextSyncAt ?? null),
+        nextSyncAt: armed ? new Date() : null,
         syncFailures: 0,
         syncError: null,
         ...(switchedFrom ? { syncCursor: null, syncStatus: null, syncStartedAt: null, lastSyncedAt: null } : {}),

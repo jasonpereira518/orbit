@@ -26,7 +26,7 @@ import {
 } from "../src/lib/outlook";
 import { MICROSOFT_SCOPES, grantCovers } from "../src/lib/microsoft-scopes";
 import { describeOAuthReason } from "../src/lib/errors";
-import { encrypt } from "../src/lib/crypto";
+import { decrypt, encrypt } from "../src/lib/crypto";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-outlook-scope-user";
@@ -136,6 +136,18 @@ run(async () => {
   await upsertOutlookConnection(USER, { access_token: "at7", scope: MICROSOFT_SCOPES.mail, expires_in: 3600 }, "jo@outlook.test");
   check("a later mail-only connect leaves calendar queued", (await stored())?.nextSyncAt !== null);
 
+  console.log("\nhealing a mistakenly-armed row");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertOutlookConnection(USER, { access_token: "at12", refresh_token: "rt12", scope: MICROSOFT_SCOPES.contacts, expires_in: 3600 }, "jo@outlook.test");
+  {
+    // Simulates a row the old (pre-fix) code armed by mistake for a contacts-only grant.
+    const db = await getDb();
+    await db.update(outlookConnections).set({ nextSyncAt: new Date() }).where(eq(outlookConnections.userId, USER));
+  }
+  await upsertOutlookConnection(USER, { access_token: "at13", scope: MICROSOFT_SCOPES.contacts, expires_in: 3600 }, "jo@outlook.test");
+  check("a contacts-only connect clears a next_sync_at the old code armed by mistake", (await stored())?.nextSyncAt === null);
+
   console.log("\nconnecting a different account");
   await cleanup();
   await ensureUserSettings(USER);
@@ -157,6 +169,28 @@ run(async () => {
   check("the same account keeps its scopes", sameAccount.switchedFrom === null);
   const sameAccountDifferentCasing = await upsertOutlookConnection(USER, { access_token: "at11", scope: MICROSOFT_SCOPES.calendar, expires_in: 3600 }, " Someone-Else@Outlook.test ");
   check("case and spacing don't count as a switch", sameAccountDifferentCasing.switchedFrom === null);
+
+  console.log("\nrefresh token on account switch");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertOutlookConnection(USER, { access_token: "atRefreshA", refresh_token: "old-refresh-token", scope: MICROSOFT_SCOPES.contacts, expires_in: 3600 }, "jo@outlook.test");
+  const switchNoRefresh = await upsertOutlookConnection(USER, { access_token: "atRefreshB", scope: MICROSOFT_SCOPES.contacts, expires_in: 3600 }, "someone-else@outlook.test");
+  check("a switch is reported here too", switchNoRefresh.switchedFrom === "jo@outlook.test");
+  check(
+    "a switch with no new refresh token does not inherit the old account's",
+    (await stored())?.refreshTokenEncrypted === null
+  );
+
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertOutlookConnection(USER, { access_token: "atRefreshC", refresh_token: "still-good-refresh-token", scope: MICROSOFT_SCOPES.contacts, expires_in: 3600 }, "jo@outlook.test");
+  const sameAccountNoRefresh = await upsertOutlookConnection(USER, { access_token: "atRefreshD", scope: MICROSOFT_SCOPES.contacts, expires_in: 3600 }, "jo@outlook.test");
+  check("the same account is not reported as a switch", sameAccountNoRefresh.switchedFrom === null);
+  const keptRow = await stored();
+  check(
+    "the same account with no new refresh token keeps the existing one",
+    Boolean(keptRow?.refreshTokenEncrypted) && decrypt(keptRow!.refreshTokenEncrypted!) === "still-good-refresh-token"
+  );
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);

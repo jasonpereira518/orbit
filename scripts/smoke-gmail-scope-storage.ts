@@ -23,6 +23,7 @@ import {
 import { GOOGLE_SCOPES, hasScope } from "../src/lib/google-scopes";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { findGmailGrant } from "../src/lib/events/connections";
+import { decrypt } from "../src/lib/crypto";
 
 const USER = "smoke-gmail-scope-user";
 let failures = 0;
@@ -85,6 +86,18 @@ run(async () => {
   await upsertGmailConnection(USER, { access_token: "at7", scope: GOOGLE_SCOPES.gmailRead, expires_in: 3600 }, "jo@gmail.com");
   check("a later mail-only connect leaves calendar queued", (await readRow())?.nextSyncAt !== null);
 
+  console.log("\nhealing a mistakenly-armed row");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertGmailConnection(USER, { access_token: "at12", refresh_token: "rt12", scope: GOOGLE_SCOPES.contacts, expires_in: 3600 }, "jo@gmail.com");
+  {
+    // Simulates a row the old (pre-fix) code armed by mistake for a contacts-only grant.
+    const db = await getDb();
+    await db.update(gmailConnections).set({ nextSyncAt: new Date() }).where(eq(gmailConnections.userId, USER));
+  }
+  await upsertGmailConnection(USER, { access_token: "at13", scope: GOOGLE_SCOPES.contacts, expires_in: 3600 }, "jo@gmail.com");
+  check("a contacts-only connect clears a next_sync_at the old code armed by mistake", (await readRow())?.nextSyncAt === null);
+
   console.log("\nconnecting a different account");
   await cleanup();
   await ensureUserSettings(USER);
@@ -106,6 +119,28 @@ run(async () => {
   check("the same account keeps its scopes", sameAccount.switchedFrom === null);
   const sameAccountDifferentCasing = await upsertGmailConnection(USER, { access_token: "at11", scope: GOOGLE_SCOPES.calendar, expires_in: 3600 }, " Someone-Else@Gmail.com ");
   check("case and spacing don't count as a switch", sameAccountDifferentCasing.switchedFrom === null);
+
+  console.log("\nrefresh token on account switch");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertGmailConnection(USER, { access_token: "atRefreshA", refresh_token: "old-refresh-token", scope: GOOGLE_SCOPES.contacts, expires_in: 3600 }, "jo@gmail.com");
+  const switchNoRefresh = await upsertGmailConnection(USER, { access_token: "atRefreshB", scope: GOOGLE_SCOPES.contacts, expires_in: 3600 }, "someone-else@gmail.com");
+  check("a switch is reported here too", switchNoRefresh.switchedFrom === "jo@gmail.com");
+  check(
+    "a switch with no new refresh token does not inherit the old account's",
+    (await readRow())?.refreshTokenEncrypted === null
+  );
+
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertGmailConnection(USER, { access_token: "atRefreshC", refresh_token: "still-good-refresh-token", scope: GOOGLE_SCOPES.contacts, expires_in: 3600 }, "jo@gmail.com");
+  const sameAccountNoRefresh = await upsertGmailConnection(USER, { access_token: "atRefreshD", scope: GOOGLE_SCOPES.contacts, expires_in: 3600 }, "jo@gmail.com");
+  check("the same account is not reported as a switch", sameAccountNoRefresh.switchedFrom === null);
+  const keptRow = await readRow();
+  check(
+    "the same account with no new refresh token keeps the existing one",
+    Boolean(keptRow?.refreshTokenEncrypted) && decrypt(keptRow!.refreshTokenEncrypted!) === "still-good-refresh-token"
+  );
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
