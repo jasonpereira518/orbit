@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { INTENT_TTL_MS, shouldAccept, targetKey, type Intent } from "@/lib/intents";
+import { INTENT_TTL_MS, SELECTION_MAX_CHARS, shouldAccept, targetKey, type Intent } from "@/lib/intents";
 
 const NOW = 1_800_000_000_000;
-const click = (over: Partial<Intent> = {}): Intent => ({
-  id: "click-1",
-  at: NOW - 200,
-  kind: "action",
-  tabId: 7,
-  windowId: 1,
-  ...over,
-});
+const click = (over: Record<string, unknown> = {}): Intent =>
+  ({
+    id: "click-1",
+    at: NOW - 200,
+    kind: "action",
+    tabId: 7,
+    windowId: 1,
+    ...over,
+  }) as Intent;
 const ctx = (over: Partial<Parameters<typeof shouldAccept>[1]> = {}) => ({
   now: NOW,
   windowId: 1,
@@ -38,6 +39,20 @@ describe("shouldAccept", () => {
   it("accepts before the panel knows its own window", () => {
     // Right at mount, before windows.getCurrent resolves.
     expect(shouldAccept(click({ windowId: 2 }), ctx({ windowId: null }))).toBe(true);
+  });
+
+  it("a right-clicked link carries its URL", () => {
+    const link = { ...click(), kind: "link", linkUrl: "https://www.linkedin.com/in/amara-osei" } as Intent;
+    expect(shouldAccept(link, ctx())).toBe(true);
+    expect(shouldAccept({ ...link, linkUrl: "" }, ctx())).toBe(false);
+  });
+
+  it("a right-clicked selection carries its text, within the cap", () => {
+    const sel = { ...click(), kind: "selection", text: "She's hiring for infra." } as Intent;
+    expect(shouldAccept(sel, ctx())).toBe(true);
+    expect(shouldAccept({ ...sel, text: "   " }, ctx())).toBe(false);
+    // The worker truncates; anything over the cap didn't come from it.
+    expect(shouldAccept({ ...sel, text: "x".repeat(SELECTION_MAX_CHARS + 1) }, ctx())).toBe(false);
   });
 
   it("rejects anything that isn't an intent", () => {

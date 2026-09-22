@@ -25,26 +25,48 @@ export const INTENT_KEY = "orbit:intent";
 /** How long a click stays actionable. Older ones describe a moment that's gone. */
 export const INTENT_TTL_MS = 10_000;
 
-export type Intent = {
+/**
+ * The most text a right-clicked selection hands over. A note, not a document —
+ * and it sits in session storage until the panel takes it, so it stays small.
+ */
+export const SELECTION_MAX_CHARS = 4_000;
+
+type IntentBase = {
   /** Unique per click, so the same click is never acted on twice. */
   id: string;
   /** When the click happened (ms since epoch). */
   at: number;
-  kind: "action";
   tabId: number;
   windowId: number;
 };
 
+export type Intent =
+  /** The toolbar icon (or its shortcut): read the tab beside the panel. */
+  | (IntentBase & { kind: "action" })
+  /** "Look up in Orbit" on a profile link: that person, by the link alone. */
+  | (IntentBase & { kind: "link"; linkUrl: string })
+  /** "Save to Orbit as a note" on selected text. */
+  | (IntentBase & { kind: "selection"; text: string });
+
 export function isIntent(value: unknown): value is Intent {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  return (
+  const base =
     typeof v.id === "string" &&
     typeof v.at === "number" &&
-    v.kind === "action" &&
     typeof v.tabId === "number" &&
-    typeof v.windowId === "number"
-  );
+    typeof v.windowId === "number";
+  if (!base) return false;
+  if (v.kind === "action") return true;
+  if (v.kind === "link") return typeof v.linkUrl === "string" && v.linkUrl.length > 0;
+  if (v.kind === "selection") {
+    return (
+      typeof v.text === "string" &&
+      v.text.trim().length > 0 &&
+      v.text.length <= SELECTION_MAX_CHARS
+    );
+  }
+  return false;
 }
 
 /**

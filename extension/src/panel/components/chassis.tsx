@@ -109,7 +109,10 @@ export function IdentityZone({
   const name =
     pageDisplayName(page) ??
     page.org?.name ??
-    (listed >= 2 ? `${listed} people` : null);
+    (listed >= 2 ? `${listed} people` : null) ??
+    // A right-clicked link carries no name — only the handle it points at.
+    page.identity.handle?.value ??
+    null;
   const subtitle = pageSubtitle(page);
   const rawCompany = page.identity.company?.value ?? null;
   // An org page's company IS its name; don't say it twice.

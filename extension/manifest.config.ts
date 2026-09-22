@@ -96,7 +96,9 @@ export default defineManifest(({ mode }) => {
     // the worker hands a toolbar click to the panel through storage.session —
     // in memory only, readable only by the extension's own pages, and deleted
     // as soon as the panel acts on it (src/lib/intents.ts).
-    permissions: ["activeTab", "scripting", "storage", "cookies", "sidePanel"],
+    // "contextMenus": "Look up in Orbit" on profile links, "Save to Orbit as a
+    // note" on selected text. No install-time warning.
+    permissions: ["activeTab", "scripting", "storage", "cookies", "sidePanel", "contextMenus"],
     host_permissions: [`${appOrigin}/*`, ...clerkHosts],
 
     // Opt-in "follow me on this site without a click", requested only from
