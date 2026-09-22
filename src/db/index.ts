@@ -1742,7 +1742,15 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 81 = chat_messages.slot/version/is_active, for edit-and-regenerate on the last turn of a
 // chat. Rescanned against every local and remote ref on Sep 21 2026 — nothing claims 81.
-export const SCHEMA_VERSION = 81;
+//
+// NOT 81 anymore. By Sep 22 2026, PR #255 (claude/chat-source-chips) had moved on to 83 and
+// PR #256 (claude/jev-orbit-ai-integration) had claimed 84 — this branch's own preview
+// deployment was stuck recording an old fingerprint and never actually running these
+// alters, because `isSchemaCurrent`'s never-downgrade rule treats ANY database already
+// past this branch's number as current without even checking the fingerprint. Rescanned
+// against every remote branch and every local worktree on Sep 22 2026; 84 was the highest
+// found anywhere, so this is 85.
+export const SCHEMA_VERSION = 85;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
