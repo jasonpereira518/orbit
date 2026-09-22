@@ -9,7 +9,7 @@
  * run the existing scoring over that.
  */
 
-import { and, eq, ilike, ne, or, sql } from "drizzle-orm";
+import { and, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
 import { interactionTypeLabel } from "@/lib/interaction-types";
@@ -24,11 +24,13 @@ import {
 import {
   DUPLICATE_MERGE_CONFIDENCE,
   daysAgo,
+  identityKeysFor,
   matchAgainst,
   linkedinSlug,
   normalizeXHandle,
   type DuplicateMatch,
 } from "@/lib/duplicates";
+import { findIdentityOwners } from "@/lib/contact-identity";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import type {
   ContactFieldSuggestion,
@@ -80,28 +82,45 @@ export type PageProbe = {
   photoUrl: string | null;
 };
 
+/** True only for linkedin.com itself — a slug is a LinkedIn key, never a path. */
+function isLinkedInHost(url: string | null | undefined) {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "linkedin.com" || host.endsWith(".linkedin.com");
+  } catch {
+    return false;
+  }
+}
+
 export function probeFromPage(page: PageContext): PageProbe {
   const id = page.identity;
   const profileUrl = pageValue(id.profileUrl) ?? page.url;
 
-  // The adapter canonicalizes `handle`, but fall back to parsing the URL so a
-  // broken selector degrades to "we still know who this is".
-  const linkedinUrlValue =
-    page.site === "linkedin" ? profileUrl : null;
+  // On LinkedIn itself the adapter canonicalizes `handle`; fall back to parsing
+  // the URL so a broken selector degrades to "we still know who this is".
+  //
+  // Anywhere else — a personal site, a speaker bio, a team page — the generic
+  // adapter's best evidence is a LINK to the person's LinkedIn (profileUrl) or
+  // X (handle). Those are exact-match keys, and this used to throw them away
+  // because the *site* wasn't LinkedIn or X. What counts is the link's host.
   const slug =
     page.site === "linkedin"
-      ? linkedinSlug(pageValue(id.handle) ?? profileUrl) ||
-        linkedinSlug(profileUrl)
-      : "";
+      ? linkedinSlug(pageValue(id.handle) ?? profileUrl) || linkedinSlug(profileUrl)
+      : isLinkedInHost(profileUrl)
+        ? linkedinSlug(profileUrl)
+        : "";
   const xHandle =
     page.site === "x"
       ? normalizeXHandle(pageValue(id.handle) ?? profileUrl)
-      : "";
+      : page.site === "generic"
+        ? normalizeXHandle(pageValue(id.handle))
+        : "";
 
   return {
     fullName: pageValue(id.name),
     email: pageValue(id.email),
-    linkedinUrl: slug ? linkedinUrlValue : null,
+    linkedinUrl: slug ? `https://www.linkedin.com/in/${slug}` : null,
     linkedinSlugValue: slug,
     xHandle,
     company: pageValue(id.company),
@@ -118,21 +137,35 @@ export function probeFromPage(page: PageContext): PageProbe {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Pull only rows that could plausibly match, using the indexed columns.
+ * Pull only rows that could plausibly match — every lookup indexed.
  *
- * The LinkedIn predicate matches on the slug rather than the whole URL because
- * stored values vary by locale subdomain, `www`, trailing slash, and
- * `?miniProfileUrn=` — all of which `linkedinSlug` already collapses on the
- * incoming side.
+ * Two sources, in parallel:
+ *
+ *  - The identity spine: `contact_identities`, the unique index that is the
+ *    app's real duplicate guard. Its values are normalized when written, so it
+ *    finds a contact whose stored X handle is "@Amara" or whose email carries
+ *    stray spaces — the column comparisons below miss both.
+ *  - The columns: the `linkedin_slug` generated column (indexed; it replaced a
+ *    leading-wildcard ILIKE over every contact — `smoke-linkedin-slug-guard`
+ *    keeps its expression equal to `linkedinSlug`), handle and email, and the
+ *    name clauses the fuzzy tier needs.
+ *
+ * Both feed the same `matchAgainst` scoring as before, so the tiers, the
+ * confidence values and the ambiguity rule are unchanged: an identity owner
+ * and a column match that are different contacts still come back ambiguous,
+ * which is a genuine duplicate the user should see.
  */
 async function loadCandidates(userId: string, probe: PageProbe) {
   const db = await getDb();
-  const clauses = [];
+  const keys = identityKeysFor({
+    linkedinUrl: probe.linkedinUrl,
+    xHandle: probe.xHandle || null,
+    email: probe.email,
+  });
 
+  const clauses = [];
   if (probe.linkedinSlugValue) {
-    clauses.push(
-      ilike(contacts.linkedinUrl, `%/in/${escapeLike(probe.linkedinSlugValue)}%`)
-    );
+    clauses.push(eq(contacts.linkedinSlug, probe.linkedinSlugValue));
   }
   if (probe.xHandle) {
     clauses.push(ilike(contacts.xHandle, escapeLike(probe.xHandle)));
@@ -149,12 +182,25 @@ async function loadCandidates(userId: string, probe: PageProbe) {
     }
   }
 
-  if (clauses.length === 0) return [];
+  const [owners, rows] = await Promise.all([
+    findIdentityOwners(userId, keys),
+    clauses.length
+      ? db.query.contacts.findMany({
+          where: and(eq(contacts.userId, userId), or(...clauses)),
+          limit: CANDIDATE_LIMIT,
+        })
+      : Promise.resolve([] as (typeof contacts.$inferSelect)[]),
+  ]);
 
-  return db.query.contacts.findMany({
-    where: and(eq(contacts.userId, userId), or(...clauses)),
-    limit: CANDIDATE_LIMIT,
+  // An identity owner the columns didn't surface: rare (it takes a stored
+  // value the columns can't compare), so it costs a third lookup only then.
+  const seen = new Set(rows.map((row) => row.id));
+  const missing = [...new Set(owners.map((o) => o.contactId))].filter((id) => !seen.has(id));
+  if (missing.length === 0) return rows;
+  const extra = await db.query.contacts.findMany({
+    where: and(eq(contacts.userId, userId), inArray(contacts.id, missing)),
   });
+  return [...extra, ...rows];
 }
 
 function classify(matches: DuplicateMatch[]): MatchStatus {
