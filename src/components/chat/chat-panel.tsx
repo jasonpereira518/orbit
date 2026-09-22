@@ -21,6 +21,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { WritingInstructionsField } from "@/components/chat/writing-instructions-field";
 import { friendlyError } from "@/lib/errors";
 import {
   askNetwork,
@@ -1320,6 +1321,7 @@ export function ChatPanel() {
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-col gap-3 p-4">
+            <h3 className="text-sm font-medium text-foreground">This chat</h3>
             <Textarea
               ref={contextTextareaRef}
               rows={8}
@@ -1379,6 +1381,7 @@ export function ChatPanel() {
               </Button>
             </div>
           </div>
+          <WritingInstructionsField active={contextOpen} />
         </SheetContent>
       </Sheet>
     </>

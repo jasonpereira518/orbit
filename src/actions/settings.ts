@@ -11,6 +11,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
+import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
 import {
   DATA_CATEGORY_IDS,
   deletionOutcome,
@@ -323,6 +324,24 @@ export async function clearApiKey(provider?: AiProvider) {
 
   revalidatePathIfRequestScoped("/settings");
   return { ok: true as const, embeddingReset };
+}
+
+/**
+ * The user's standing notes on how answers and drafts should read — the second box in the
+ * chat Context sheet. Applied to chat and to the draft-writing features by the callers that
+ * own those requests; nothing here decides where it applies. See `writing-instructions.ts`.
+ */
+export async function getWritingInstructions() {
+  const userId = await requireUserId();
+  return { text: await loadWritingInstructions(userId) };
+}
+
+/** Saves the notes, or clears them for empty/whitespace-only text. Returns what was stored. */
+export async function saveWritingInstructions(text: string) {
+  const userId = await requireUserId();
+  if (typeof text !== "string") throw new Error("Invalid writing instructions");
+  const stored = await saveWritingInstructionsFor(userId, text);
+  return { ok: true as const, text: stored };
 }
 
 export async function saveOutreachSettings(input: {

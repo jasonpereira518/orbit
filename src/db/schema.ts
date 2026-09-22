@@ -102,6 +102,15 @@ export const userSettings = pgTable("user_settings", {
    * say so once and offer the old one back. Null for everyone who chose their own.
    */
   aiModelMigratedFrom: text("ai_model_migrated_from"),
+  /**
+   * The user's own standing notes on how answers and drafts should read — tone, length,
+   * sign-off. Free text they wrote, capped and cleaned by `src/lib/writing-instructions.ts`.
+   * Null means none, and every prompt is then byte-identical to what it was before this
+   * column existed. It is content, not a setting: a preferences purge clears it, and it is
+   * never a credential, so it must not take a `_hash`/`_token`/`_secret` suffix (export
+   * redacts those by name).
+   */
+  writingInstructions: text("writing_instructions"),
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),

@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
+  writing_instructions text,
   onboarding_completed_at timestamptz,
   first_name text,
   last_name text,
@@ -1729,7 +1730,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // third time a number has been contested, so: the scan has to cover `git worktree list`, not
 // just the remote. Checked against every remote branch AND all 69 local worktrees on
 // Sep 20 2026; 78 was the highest found anywhere.
-export const SCHEMA_VERSION = 79;
+//
+// 80 = user_settings.writing_instructions, the user's own notes on how answers and drafts are
+// written (the second box in the chat Context sheet). Checked against every local and remote
+// ref on Sep 21 2026, after 79 (memory_chunks) landed in main — nothing claims 80.
+export const SCHEMA_VERSION = 80;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3081,6 +3086,7 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS activity jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

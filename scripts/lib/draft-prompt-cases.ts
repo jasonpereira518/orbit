@@ -150,7 +150,6 @@ export async function runDraftCases(
   contactId: string,
   writingInstructions?: string | null
 ): Promise<CaseResults> {
-  void writingInstructions;
   const out: CaseResults = {};
 
   out["outreach.email.first-touch"] = await only(() =>
@@ -170,6 +169,7 @@ export async function runDraftCases(
         priorNotes: "Replied to a previous note.",
       },
       templateSeed: "Hi {{first}},",
+      writingInstructions,
     })
   );
   out["outreach.linkedin.follow-up"] = await only(() =>
@@ -182,6 +182,7 @@ export async function runDraftCases(
       stepIndex: 2,
       previousBody: "Hi Alan, a quick question about onboarding.",
       variationHint: "open with a question",
+      writingInstructions,
     })
   );
 
@@ -189,10 +190,11 @@ export async function runDraftCases(
     generateContactFollowUpDraft(CASE_USER, contactId, ["Raise a pre-seed round"], {
       channel: "email",
       intent: "Congratulate her on the seed round",
+      writingInstructions,
     })
   );
   out["followup.default"] = await only(() =>
-    generateContactFollowUpDraft(CASE_USER, contactId, [])
+    generateContactFollowUpDraft(CASE_USER, contactId, [], { writingInstructions })
   );
 
   out["recruiter.set_up_chat"] = await only(() =>
@@ -206,6 +208,7 @@ export async function runDraftCases(
       userGoals: ["Land a summer internship"],
       senderName: "Jason",
       variationHint: "keep it to three sentences",
+      writingInstructions,
     })
   );
   out["recruiter.no-history"] = await only(() =>
@@ -218,14 +221,15 @@ export async function runDraftCases(
       lastEmailAt: null,
       userGoals: [],
       senderName: null,
+      writingInstructions,
     })
   );
 
   out["starters.warm"] = await only(() =>
-    generateConversationStarters(CASE_USER, starterContext("warm", contactId), 3)
+    generateConversationStarters(CASE_USER, { ...starterContext("warm", contactId), writingInstructions }, 3)
   );
   out["starters.cold"] = await only(() =>
-    generateConversationStarters(CASE_USER, starterContext("cold", contactId), 3)
+    generateConversationStarters(CASE_USER, { ...starterContext("cold", contactId), writingInstructions }, 3)
   );
 
   return out;

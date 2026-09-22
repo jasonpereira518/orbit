@@ -42,6 +42,7 @@ import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import { isRecruiterIntent } from "@/lib/recruiters";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadRecruitersForChat } from "@/actions/recruiters";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 
 /**
  * Everything the model is shown for one question, assembled with the independent lookups
@@ -136,6 +137,12 @@ export type ChatContext = {
    * retrieved people. Rationing the subject of the question is the wrong trade.
    */
   focusProfile: string | null;
+  /**
+   * The user's own notes on how answers should read (`user_settings.writing_instructions`),
+   * or null. Read here, beside the rest of the request's context, so the streaming route and
+   * `askNetwork` cannot disagree about whether it applies. The client never sends it.
+   */
+  writingInstructions: string | null;
 };
 
 /** Per contact, before the rank tiers trim it further. */
@@ -453,6 +460,7 @@ export async function prepareChatContext(
     attentionLite,
     recruitersForChat,
     attachedPeople,
+    writingInstructions,
   ] = await Promise.all([
       threadId
         ? db.query.chatThreads.findFirst({
@@ -549,6 +557,8 @@ export async function prepareChatContext(
               });
           })()
         : Promise.resolve([] as AttachedPerson[]),
+      // Style notes never block an answer: a failed read is "no preferences".
+      loadWritingInstructions(userId).catch(() => null),
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
@@ -703,6 +713,7 @@ export async function prepareChatContext(
     allowedRecruiters,
     modelContacts,
     focusProfile,
+    writingInstructions,
     modelRecruiters: recruitersForChat.map((r) => ({
       id: r.id,
       fullName: r.fullName,

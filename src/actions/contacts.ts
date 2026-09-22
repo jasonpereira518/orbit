@@ -70,6 +70,7 @@ import {
   fetchOutlookContactPhoto,
 } from "@/lib/contact-avatar-connectors";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
   countAvatarBackfillCandidates,
   findAvatarBackfillCandidates,
@@ -1324,7 +1325,8 @@ export async function draftContactFollowUp(
 ) {
   const userId = await requireUserId();
   const goals = await listActiveGoalTexts();
-  return generateContactFollowUpDraft(userId, contactId, goals, options);
+  const writingInstructions = await loadWritingInstructions(userId);
+  return generateContactFollowUpDraft(userId, contactId, goals, { ...options, writingInstructions });
 }
 
 export type ContactFollowUpSendOptions = {
