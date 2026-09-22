@@ -7,7 +7,7 @@
  * rather than a silent "new to your orbit" for someone known for years.
  */
 import { describe, expect, it } from "vitest";
-import { linkedinSlug, xHandle } from "@/inject/dom/url";
+import { githubLogin, linkedinSlug, xHandle } from "@/inject/dom/url";
 import vectors from "./vectors/identity.json";
 
 type Vector = {
@@ -33,6 +33,16 @@ describe("xHandle", () => {
       vector.note ? ` (${vector.note})` : ""
     }`, () => {
       expect(xHandle(vector.input)).toBe(vector.expected);
+    });
+  }
+});
+
+describe("githubLogin", () => {
+  for (const vector of vectors.githubLogin as Vector[]) {
+    it(`${JSON.stringify(vector.input)} → ${JSON.stringify(vector.expected)}${
+      vector.note ? ` (${vector.note})` : ""
+    }`, () => {
+      expect(githubLogin(vector.input)).toBe(vector.expected);
     });
   }
 });

@@ -19,6 +19,7 @@
 import { z } from "zod";
 import type {
   ConversationStarter,
+  ExtractedField,
   FieldChange,
   PageContext,
   StarterKind,
@@ -84,9 +85,7 @@ type Ranked = { rank: number; starter: Omit<ConversationStarter, "id" | "source"
 /* Small helpers                                                              */
 /* -------------------------------------------------------------------------- */
 
-export function pageValue(
-  field: PageContext["identity"][keyof PageContext["identity"]]
-): string | null {
+export function pageValue(field: ExtractedField | undefined): string | null {
   const value = field?.value?.trim();
   return value ? value : null;
 }

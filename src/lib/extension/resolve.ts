@@ -31,6 +31,7 @@ import {
   type DuplicateMatch,
 } from "@/lib/duplicates";
 import { findIdentityOwners } from "@/lib/contact-identity";
+import { githubLogin } from "./github";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import type {
   ContactFieldSuggestion,
@@ -74,6 +75,8 @@ export type PageProbe = {
   linkedinUrl: string | null;
   linkedinSlugValue: string;
   xHandle: string;
+  /** Lowercased GitHub login, or "". Matched against the stored website. */
+  githubLogin: string;
   company: string | null;
   title: string | null;
   location: string | null;
@@ -104,18 +107,29 @@ export function probeFromPage(page: PageContext): PageProbe {
   // adapter's best evidence is a LINK to the person's LinkedIn (profileUrl) or
   // X (handle). Those are exact-match keys, and this used to throw them away
   // because the *site* wasn't LinkedIn or X. What counts is the link's host.
+  //
+  // `identity.links` is the same evidence made explicit: the adapter found
+  // this person's other profiles linked on the page (a GitHub bio's LinkedIn,
+  // say). Each is used whatever site the page is on.
+  const links = id.links ?? {};
   const slug =
     page.site === "linkedin"
       ? linkedinSlug(pageValue(id.handle) ?? profileUrl) || linkedinSlug(profileUrl)
       : isLinkedInHost(profileUrl)
         ? linkedinSlug(profileUrl)
-        : "";
+        : isLinkedInHost(links.linkedin)
+          ? linkedinSlug(links.linkedin)
+          : "";
   const xHandle =
     page.site === "x"
       ? normalizeXHandle(pageValue(id.handle) ?? profileUrl)
-      : page.site === "generic"
+      : page.site === "generic" && pageValue(id.handle)
         ? normalizeXHandle(pageValue(id.handle))
-        : "";
+        : normalizeXHandle(links.x);
+  const github =
+    page.site === "github"
+      ? githubLogin(pageValue(id.handle) ?? page.url)
+      : githubLogin(links.github);
 
   return {
     fullName: pageValue(id.name),
@@ -123,6 +137,7 @@ export function probeFromPage(page: PageContext): PageProbe {
     linkedinUrl: slug ? `https://www.linkedin.com/in/${slug}` : null,
     linkedinSlugValue: slug,
     xHandle,
+    githubLogin: github,
     company: pageValue(id.company),
     title: pageValue(id.title),
     location: pageValue(id.location),
@@ -173,6 +188,13 @@ async function loadCandidates(userId: string, probe: PageProbe) {
   if (probe.email) {
     clauses.push(ilike(contacts.email, escapeLike(probe.email)));
   }
+  if (probe.githubLogin) {
+    // Stored as a website in every shape people paste: with or without the
+    // scheme, www, a trailing slash. Confirmed exactly by `githubMatches`.
+    const login = escapeLike(probe.githubLogin);
+    clauses.push(ilike(contacts.website, `%github.com/${login}`));
+    clauses.push(ilike(contacts.website, `%github.com/${login}/%`));
+  }
   if (probe.fullName) {
     clauses.push(ilike(contacts.fullName, escapeLike(probe.fullName)));
     // Widen enough that the fuzzy-name tier has something to score against.
@@ -201,6 +223,37 @@ async function loadCandidates(userId: string, probe: PageProbe) {
     where: and(eq(contacts.userId, userId), inArray(contacts.id, missing)),
   });
   return [...extra, ...rows];
+}
+
+/** Same confidence as a shared email: an exact account, not a name. */
+const GITHUB_MATCH_CONFIDENCE = 0.95;
+
+/**
+ * The shared matcher knows LinkedIn, X and email; GitHub is the extension's
+ * own addition, kept here rather than in `duplicates.ts` because it is not an
+ * identity the rest of the app dedupes on. A contact whose stored website IS
+ * this GitHub profile is an exact match — upgraded if the matcher already had
+ * them on a weaker tier, added if it didn't.
+ */
+function withGithubMatches<T extends Contact>(
+  matches: DuplicateMatch<T>[],
+  rows: T[],
+  login: string
+): DuplicateMatch<T>[] {
+  if (!login) return matches;
+  const byId = new Map(matches.map((m) => [m.contact.id, m]));
+  for (const row of rows) {
+    if (githubLogin(row.website) !== login) continue;
+    const existing = byId.get(row.id);
+    if (existing && existing.confidence >= GITHUB_MATCH_CONFIDENCE) continue;
+    byId.set(row.id, {
+      contact: row,
+      reason: "Same GitHub profile",
+      confidence: GITHUB_MATCH_CONFIDENCE,
+      strong: true,
+    });
+  }
+  return [...byId.values()].sort((a, b) => b.confidence - a.confidence);
 }
 
 function classify(matches: DuplicateMatch[]): MatchStatus {
@@ -398,7 +451,9 @@ function suggestionFromProbe(
         ? "Found on X"
         : page.site === "gmail"
           ? "Email thread"
-          : null;
+          : page.site === "github"
+            ? "Found on GitHub"
+            : null;
 
   return {
     fullName: probe.fullName,
@@ -411,7 +466,10 @@ function suggestionFromProbe(
     email: probe.email,
     linkedinUrl: probe.linkedinUrl,
     xHandle: probe.xHandle || null,
-    website: null,
+    // No GitHub identity kind exists (it would need a column, and an identity
+    // with no column is released on the contact's next edit), so a GitHub
+    // profile is kept as the website — which is what `githubMatches` reads.
+    website: probe.githubLogin ? `https://github.com/${probe.githubLogin}` : null,
     photoUrl: probe.photoUrl,
     tagNames: page.site === "generic" ? [] : [page.site],
     howMet,
@@ -479,14 +537,18 @@ export async function loadNetworkOverlap(
 export async function matchesForPage(userId: string, page: PageContext) {
   const probe = probeFromPage(page);
   const candidateRows = await loadCandidates(userId, probe);
-  const matches = matchAgainst(candidateRows, {
-    fullName: probe.fullName,
-    email: probe.email,
-    linkedinUrl: probe.linkedinUrl,
-    xHandle: probe.xHandle || null,
-    company: probe.company,
-    title: probe.title,
-  });
+  const matches = withGithubMatches(
+    matchAgainst(candidateRows, {
+      fullName: probe.fullName,
+      email: probe.email,
+      linkedinUrl: probe.linkedinUrl,
+      xHandle: probe.xHandle || null,
+      company: probe.company,
+      title: probe.title,
+    }),
+    candidateRows,
+    probe.githubLogin
+  );
   return { probe, matches, status: classify(matches) };
 }
 

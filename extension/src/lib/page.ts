@@ -97,6 +97,7 @@ const SITE_LABELS: Record<PageContext["site"], string> = {
   linkedin: "LinkedIn",
   x: "X",
   gmail: "Gmail",
+  github: "GitHub",
   generic: "Web",
 };
 

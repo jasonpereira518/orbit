@@ -22,6 +22,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { linkedinSlug, normalizeXHandle } from "@/lib/duplicates";
+import { githubLogin } from "@/lib/extension/github";
 
 type Vector = {
   input: string | null;
@@ -60,6 +61,7 @@ try {
 const vectors = JSON.parse(raw) as {
   linkedinSlug: Vector[];
   xHandle: Vector[];
+  githubLogin: Vector[];
 };
 
 function run(
@@ -83,13 +85,16 @@ function run(
 
 run("linkedinSlug", linkedinSlug, vectors.linkedinSlug);
 run("normalizeXHandle", normalizeXHandle, vectors.xHandle);
+run("githubLogin", githubLogin, vectors.githubLogin);
 
 // A vectors file that has quietly emptied out would pass every check above
 // while guarding nothing.
 check(
-  "the vectors file still carries both sets",
-  vectors.linkedinSlug.length >= 10 && vectors.xHandle.length >= 10,
-  `linkedinSlug=${vectors.linkedinSlug.length}, xHandle=${vectors.xHandle.length}`
+  "the vectors file still carries every set",
+  vectors.linkedinSlug.length >= 10 &&
+    vectors.xHandle.length >= 10 &&
+    vectors.githubLogin.length >= 10,
+  `linkedinSlug=${vectors.linkedinSlug.length}, xHandle=${vectors.xHandle.length}, githubLogin=${vectors.githubLogin.length}`
 );
 
 if (failures) {
