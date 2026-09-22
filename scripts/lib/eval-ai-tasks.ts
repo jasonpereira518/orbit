@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../src/db";
-import { contactTags, contacts, tags } from "../../src/db/schema";
+import { chatMessages, chatThreads, contactTags, contacts, interactions, memoryChunks, tags } from "../../src/db/schema";
 import { runCaptureParse } from "../../src/lib/capture-parse";
 import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR } from "../../src/lib/recruiter-scan";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
@@ -27,6 +27,9 @@ import {
   transcribeImagePages,
 } from "../../src/lib/ai";
 import { prepareChatContext } from "../../src/lib/chat-context";
+import { maybeGather } from "../../src/lib/chat-gather";
+import { runEmbeddingBackfill } from "../../src/lib/embedding-backfill";
+import { loadPassageFixture, seedPassageNotes } from "./eval-passage-notes";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
 import { analyzeMeetingTranscript } from "../../src/lib/meeting-digest";
 import type {
@@ -36,6 +39,7 @@ import type {
   ExtensionEvalFixture,
   OcrEvalFixture,
   RecruiterEvalFixture,
+  ResearchEvalFixture,
   TranscribeEvalFixture,
 } from "./eval-ai-fixtures";
 import {
@@ -45,6 +49,7 @@ import {
   mentions,
   rate,
   sameField,
+  scoreResearchAnswer,
   sameName,
   tally,
   wordErrorRate,
@@ -59,9 +64,9 @@ export type TaskResult = {
   latenciesMs: number[];
 };
 
-export type TaskName = "capture" | "recruiter" | "extension" | "ocr" | "transcribe" | "chat" | "digest";
+export type TaskName = "capture" | "recruiter" | "extension" | "ocr" | "transcribe" | "chat" | "research" | "digest";
 
-export const TASK_NAMES: TaskName[] = ["capture", "recruiter", "extension", "ocr", "transcribe", "chat", "digest"];
+export const TASK_NAMES: TaskName[] = ["capture", "recruiter", "extension", "ocr", "transcribe", "chat", "research", "digest"];
 
 /** Overridable so the harness itself can be exercised on throwaway fixtures. */
 export const FIXTURE_DIR = process.env.ORBIT_EVAL_FIXTURE_DIR || join(process.cwd(), "scripts", "eval-fixtures");
@@ -551,6 +556,173 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
   };
 }
 
+/* ----------------------------------------------------------------------- research ----- */
+
+/** Everything the research task seeds, removed — before it runs and after. */
+async function clearResearchUser(userId: string) {
+  const db = await getDb();
+  await db.delete(memoryChunks).where(eq(memoryChunks.userId, userId));
+  await db.delete(interactions).where(eq(interactions.userId, userId));
+  await db.delete(chatMessages).where(eq(chatMessages.userId, userId));
+  await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
+  await db.delete(contacts).where(eq(contacts.userId, userId));
+  await db.delete(tags).where(eq(tags.userId, userId));
+}
+
+/**
+ * Whole answers to questions one retrieval cannot answer — the research step's job.
+ *
+ * Runs the production path end to end, in order: retrieval, the depth decision, the research
+ * loop, the answer, the recommendation filter. Routing is scored the moment it is decided,
+ * so a case whose answer then fails still says whether it went to the right path.
+ *
+ * Clears its user before AND after: the chat task seeds the same network into the same user,
+ * and neither may see the other's rows when both run in one invocation.
+ */
+export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<ResearchEvalFixture>("ai-research-eval.json").cases.slice(0, limit);
+  await clearResearchUser(userId);
+  const network = await seedNetwork(userId);
+  await seedPassageNotes(
+    userId,
+    loadPassageFixture(FIXTURE_DIR),
+    new Map([...network].map(([email, c]) => [email, c.id]))
+  );
+  // Passages embedded through the real drain, so the research step's search_notes has its
+  // meaning arm. Without an embedding key it runs on words, and says so.
+  await runEmbeddingBackfill(userId).catch((err) =>
+    log(`  (passage embeddings unavailable: ${err instanceof Error ? err.message : String(err)})`)
+  );
+  const known = new Set([...network.values()].map((c) => c.id));
+
+  const mentioned = tally();
+  const said = tally();
+  const routed = tally();
+  let forbiddenHits = 0;
+  let inventedContactIds = 0;
+  let filteredRecommendations = 0;
+  const lookups: number[] = [];
+  const rounds: number[] = [];
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+  const db = await getDb();
+
+  for (const c of cases) {
+    let routedOk: boolean | null = null;
+    try {
+      let threadId: string | null = null;
+      if (c.priorTurns?.length) {
+        const [thread] = await db.insert(chatThreads).values({ userId }).returning();
+        threadId = thread.id;
+        for (const turn of c.priorTurns) {
+          await db.insert(chatMessages).values({ threadId, userId, role: turn.role, content: turn.content });
+        }
+      }
+
+      const { ctx, gathered, result } = await timed(latenciesMs, async () => {
+        const ctx = await prepareChatContext(userId, c.question, { threadId });
+        const gathered = await maybeGather(userId, ctx, { requestStartedAt: Date.now() });
+        routedOk = gathered.depth.depth === c.expectDepth;
+        const result = await chatWithNetwork(
+          userId,
+          ctx.scopedQuestion,
+          ctx.modelContacts,
+          ctx.priorTurns,
+          ctx.orgRosters,
+          ctx.attention,
+          ctx.modelRecruiters,
+          ctx.focusProfile,
+          ctx.attachedContext,
+          ctx.goals,
+          ctx.attentionLite,
+          gathered.evidence
+        );
+        return { ctx, gathered, result };
+      });
+
+      const raw = (result.recommendations ?? []) as Array<{ contact_id?: string | null } & Record<string, unknown>>;
+      const kept = ctx.filterRecommendations(raw as never);
+      const people = c.mustMention.map((email) => {
+        const person = network.get(email);
+        if (!person) throw new Error(`fixture names ${email}, which contact-search-eval.json does not have`);
+        return person;
+      });
+      const score = scoreResearchAnswer({
+        answer: result.answer ?? "",
+        rawRecommendationIds: raw.map((r) => r.contact_id),
+        keptRecommendationIds: kept.map((r) => r.contact_id),
+        mustMention: people,
+        mustSay: c.mustSay,
+        forbidden: c.forbidden ?? [],
+        knownContactIds: known,
+      });
+
+      score.mentioned.forEach((ok) => count(mentioned, ok));
+      score.said.forEach((ok) => count(said, ok));
+      forbiddenHits += score.forbiddenHits;
+      inventedContactIds += score.inventedIds;
+      filteredRecommendations += score.filteredOut;
+      if (gathered.research) {
+        lookups.push(gathered.research.lookups);
+        rounds.push(gathered.research.rounds);
+      }
+
+      const missed =
+        !routedOk ||
+        score.mentioned.includes(false) ||
+        score.said.includes(false) ||
+        score.forbiddenHits > 0 ||
+        score.inventedIds > 0;
+      if (missed) misses.push(c.id);
+      const research = gathered.research
+        ? ` — ${gathered.research.lookups} lookup(s), ${gathered.research.rounds} round(s), stopped: ${gathered.research.stoppedBy}`
+        : "";
+      // Say WHAT missed. A bare MISS on a one-off run leaves nothing to go on: the first
+      // baseline had one, and whether it was the person, the fact or the routing could only
+      // be guessed at afterwards.
+      const why = missed
+        ? [
+            !routedOk ? `routed ${gathered.depth.depth}, expected ${c.expectDepth}` : null,
+            ...people.flatMap((p, i) => (score.mentioned[i] ? [] : [`did not name ${p.fullName}`])),
+            ...c.mustSay.flatMap((f, i) => (score.said[i] ? [] : [`did not say "${f}"`])),
+            score.forbiddenHits ? `${score.forbiddenHits} unsupported claim(s)` : null,
+            score.inventedIds ? `${score.inventedIds} invented id(s)` : null,
+          ]
+            .filter(Boolean)
+            .join("; ")
+        : "";
+      log(`  ${missed ? "MISS" : "ok  "} research/${c.id} [${gathered.depth.depth}]${research}${why ? ` — ${why}` : ""}`);
+      if (missed) log(`       answer: ${(result.answer ?? "").replace(/\s+/g, " ").slice(0, 300)}`);
+    } catch (err) {
+      misses.push(c.id);
+      c.mustMention.forEach(() => count(mentioned, false));
+      c.mustSay.forEach(() => count(said, false));
+      log(`  FAIL research/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      // Scored even when the answer failed: routing is decided before any answer is written.
+      if (routedOk !== null) count(routed, routedOk);
+    }
+  }
+
+  await clearResearchUser(userId);
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      mentionRecall: rate(mentioned),
+      factRecall: rate(said),
+      routingAccuracy: rate(routed),
+      forbiddenHits,
+      inventedContactIds,
+      // Informational, not gated: what the filter caught, and what research cost in lookups.
+      filteredRecommendations,
+      meanLookups: mean(lookups),
+      meanRounds: mean(rounds),
+    },
+  };
+}
+
 /* ------------------------------------------------------------------------- digest ----- */
 
 export async function runDigestTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
@@ -618,5 +790,6 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   ocr: runOcrTask,
   transcribe: runTranscribeTask,
   chat: runChatTask,
+  research: runResearchTask,
   digest: runDigestTask,
 };

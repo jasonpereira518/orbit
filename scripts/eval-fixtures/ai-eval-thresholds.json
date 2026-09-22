@@ -1,5 +1,5 @@
 {
-  "$comment": "Gate for scripts/eval-ai.ts --compare. maxDrop: a higher-is-better metric may fall by at most this much (absolute, rates are 0-1). maxRise: an error rate or a hallucination count may rise by at most this much. Referral recall and invented facts never get worse; the rest allow a little run-to-run noise. Tune here, not in code.",
+  "$comment": "Gate for scripts/eval-ai.ts --compare. maxDrop: a higher-is-better metric may fall by at most this much (absolute, rates are 0-1). maxRise: an error rate or a hallucination count may rise by at most this much. Referral recall and invented facts never get worse; the rest allow a little run-to-run noise. Tune here, not in code. research: routing is rule-based and deterministic, so it may not drop at all; a forbidden claim or an invented contact id is never acceptable; meanLookups, meanRounds and filteredRecommendations are reported for cost, not gated.",
   "capture": {
     "personRecall": { "maxDrop": 0.02 },
     "personPrecision": { "maxDrop": 0.03 },
@@ -31,6 +31,13 @@
   "chat": {
     "mentionRecall": { "maxDrop": 0.03 },
     "retrievalRecall": { "maxDrop": 0.03 }
+  },
+  "research": {
+    "mentionRecall": { "maxDrop": 0.05 },
+    "factRecall": { "maxDrop": 0.05 },
+    "routingAccuracy": { "maxDrop": 0 },
+    "forbiddenHits": { "maxRise": 0 },
+    "inventedContactIds": { "maxRise": 0 }
   },
   "digest": {
     "attendeeRecall": { "maxDrop": 0.05 },

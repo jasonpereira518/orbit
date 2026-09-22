@@ -136,3 +136,20 @@ export type DigestEvalFixture = {
     };
   }>;
 };
+
+export type ResearchEvalFixture = {
+  cases: Array<{
+    id: string;
+    question: string;
+    /** Earlier turns of the conversation, for follow-up cases. */
+    priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
+    /** What `chooseDepth` must route this to. */
+    expectDepth: "single" | "research";
+    /** Emails (from contact-search-eval.json) the answer must name or recommend. */
+    mustMention: string[];
+    /** Facts that live only in a note (passage-search-eval.json), which the answer must state. */
+    mustSay: string[];
+    /** Claims the notes do not support. */
+    forbidden?: string[];
+  }>;
+};

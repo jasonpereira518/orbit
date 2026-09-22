@@ -44,9 +44,25 @@ import {
   MAX_BODY_CHARS,
 } from "@/lib/agent-sends";
 import { toolError, type OrbitTool } from "@/lib/tools/registry";
+import { searchMemories } from "@/lib/memory-search";
+import { getQueryEmbedding } from "@/lib/embedding-cache";
 
 const BOTH = ["mcp", "chat"] as const;
 const MCP_ONLY = ["mcp"] as const;
+/**
+ * Orbit's own chat only. For a tool whose whole purpose is to return free text the user —
+ * or anything that could write to their notes — wrote, which is exactly the fan-out the
+ * security comment in `mcp/server.ts` keeps off the MCP surface.
+ */
+const CHAT_ONLY = ["chat"] as const;
+
+/** A `YYYY-MM-DD` day, read as the start (or end) of that day in UTC. */
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
+function dayBound(day: string | undefined, end: boolean): Date | null {
+  if (!day) return null;
+  const d = new Date(`${day}T${end ? "23:59:59" : "00:00:00"}Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 /** One contact the user owns, or nothing. The tenant check every contact-scoped tool starts with. */
 async function ownedContact(userId: string, contactId: string) {
@@ -299,6 +315,55 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
           company: c.company,
         })),
       };
+    },
+  },
+
+  {
+    name: "search_notes",
+    title: "Search your notes",
+    description:
+      "Search what the user has written — notes, meeting and call logs — by meaning and by " +
+      "words. Use it for what was discussed, said or promised, and when; for details that are " +
+      "not in a contact's summary; and for questions that name a topic rather than a person. " +
+      "Narrow by person with contactId and by date with after/before (YYYY-MM-DD). Returns " +
+      "dated passages with the people they mention.",
+    inputSchema: {
+      query: z.string().min(1).max(200).describe("What to look for, in plain words."),
+      contactId: z.string().uuid().optional().describe("Only passages about this person."),
+      after: isoDay.optional().describe("Only passages on or after this day."),
+      before: isoDay.optional().describe("Only passages on or before this day."),
+      limit: z.number().int().min(1).max(8).default(6),
+    },
+    annotations: { readOnlyHint: true },
+    surfaces: CHAT_ONLY,
+    scope: "read",
+    resultLabel: "passages",
+    fields: {
+      chat: ["sourceId", "date", "kind", "contactIds", "snippet"],
+    },
+    async run(
+      userId,
+      args: { query: string; contactId?: string; after?: string; before?: string; limit: number }
+    ) {
+      // The meaning arm when the account can embed, the words arm always. A failed embedding
+      // — no key, an Anthropic-only account, a provider hiccup — degrades to words, which is
+      // exactly what every one of those accounts gets from passage search anyway.
+      const embedding = await getQueryEmbedding(userId, args.query).catch(() => null);
+      const passages = await searchMemories(userId, {
+        query: args.query,
+        embedding,
+        contactIds: args.contactId ? [args.contactId] : null,
+        after: dayBound(args.after, false),
+        before: dayBound(args.before, true),
+        limit: args.limit,
+      });
+      return passages.map((p) => ({
+        sourceId: p.sourceId,
+        date: p.occurredAt ? new Date(p.occurredAt).toISOString().slice(0, 10) : null,
+        kind: p.sourceKind,
+        contactIds: p.contactIds,
+        snippet: p.snippet,
+      }));
     },
   },
 

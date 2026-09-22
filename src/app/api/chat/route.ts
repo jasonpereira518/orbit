@@ -3,6 +3,7 @@ import { chatMessages, type ChatRecommendation } from "@/db/schema";
 import { getDb } from "@/db";
 import { chatWithNetworkStream } from "@/lib/ai";
 import { prepareChatContext } from "@/lib/chat-context";
+import { maybeGather } from "@/lib/chat-gather";
 import { persistAssistantTurn } from "@/lib/chat-persist";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
@@ -33,6 +34,9 @@ export const maxDuration = 60;
  * retrieval onwards arrives as an `error` event, because the status line is long gone.
  */
 export async function POST(request: Request) {
+  // The research step budgets against this, not against its own start: retrieval has
+  // already spent part of `maxDuration` by the time it runs.
+  const requestStartedAt = Date.now();
   let userId: string;
   try {
     userId = await requireUserForSurface("page.chat");
@@ -111,6 +115,15 @@ export async function POST(request: Request) {
         const titlePromise =
           threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q) : null;
 
+        // One retrieval answers most questions; the ones whose shape says it cannot — what
+        // was discussed and when, a path to someone, a follow-up that refers back — get a
+        // bounded research loop first. See `chooseDepth` and `gatherEvidence`.
+        const { evidence } = await maybeGather(userId, ctx, {
+          requestStartedAt,
+          signal: request.signal,
+          steps,
+        });
+
         steps.start("answer", "Writing the answer");
         const result = await traced(
           "chat.stream",
@@ -126,7 +139,7 @@ export async function POST(request: Request) {
               (delta) => send({ type: "answer", delta }),
               ctx.focusProfile,
               ctx.attachedContext,
-              { signal: request.signal, goals: ctx.goals, attentionLite: ctx.attentionLite }
+              { signal: request.signal, goals: ctx.goals, attentionLite: ctx.attentionLite, evidence }
             ),
           { userId }
         );

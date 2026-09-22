@@ -13,6 +13,7 @@ import { chatWithNetwork } from "@/lib/ai";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
+import { maybeGather } from "@/lib/chat-gather";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -154,6 +155,7 @@ async function askNetworkInner(
   question: string,
   options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
 ) {
+  const requestStartedAt = Date.now();
   try {
     const userId = await requireUserForSurface("page.chat");
     await consumeBucket("chat", userId, RATE_LIMITS.chat);
@@ -178,6 +180,9 @@ async function askNetworkInner(
       });
     }
 
+    // The same routing as the streaming route, so the two paths cannot answer differently.
+    const { evidence } = await maybeGather(userId, ctx, { requestStartedAt });
+
     const result = await chatWithNetwork(
       userId,
       ctx.scopedQuestion,
@@ -189,7 +194,8 @@ async function askNetworkInner(
       ctx.focusProfile,
       ctx.attachedContext,
       ctx.goals,
-      ctx.attentionLite
+      ctx.attentionLite,
+      evidence
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]

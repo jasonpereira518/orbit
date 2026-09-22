@@ -10,7 +10,7 @@ Tasks are run as separate processes — one per task, in parallel, each with its
 database — so a run is a *directory* of reports:
 
 ```bash
-for t in capture recruiter extension ocr transcribe chat digest; do
+for t in capture recruiter extension ocr transcribe chat research digest; do
   npx tsx scripts/eval-ai.ts --keys-from .env.local --provider gemini \
     --task "$t" --runs 2 --out "runs/mine/$t.json" &
 done; wait
@@ -24,6 +24,44 @@ The report prints accuracy and cost per case side by side and applies
 Candidates are JSON files under `scripts/eval-fixtures/candidates/`, applied to the operation
 registry and tier maps before the run — the same values production reads, so a candidate that
 passes ships by editing those values.
+
+## The research task
+
+`research` scores whole answers to questions one retrieval cannot answer — the job of chat's
+research step (`src/lib/chat-gather.ts`). It runs the production path in order: retrieval,
+the depth decision, the research loop, the answer, the recommendation filter.
+
+Every fact a case requires lives **only in a note**, never on a contact card, so a case passes
+only if the research step found the note and the answer used it. It gates on `mentionRecall`,
+`factRecall`, `routingAccuracy` (the rule-based router may not drop at all),
+`forbiddenHits` and `inventedContactIds` (never). `meanLookups`, `meanRounds` and
+`filteredRecommendations` are reported for cost and are not gated.
+
+Its baseline is `2026-09-21-gemini-research-baseline/` — Gemini 3.8 Flash, 10 cases, 2 runs:
+
+| metric | value |
+|---|---|
+| mentionRecall | 100% |
+| factRecall | 92.9% (13/14 — one miss, `research-date-scoped`, run 2 only) |
+| routingAccuracy | 100% |
+| forbiddenHits / inventedContactIds | 0 / 0 |
+| meanLookups / meanRounds | 2.75 / 2.5 |
+| cost | $0.0122 per case, p50 9.8s |
+
+What it says about the research step's cost: the gather rounds cost about as much as writing
+the answer ($0.104 vs $0.106 across the run), because every round re-sends the conversation —
+so a question routed to research costs roughly twice a single-pass one. `research-intro-path`
+hits the six-lookup cap on every run; it is the most expensive case and the first place to
+look when tuning. The one miss predates the per-case miss detail (the log now says which
+person or fact was missing and prints the answer), so the next run will say why.
+
+Compare against it with the directory form:
+
+```bash
+npx tsx scripts/eval-ai-report.ts docs/ai-evals/2026-09-21-gemini-research-baseline runs/mine
+```
+
+Its plumbing is also checked without a key by `scripts/smoke-eval-research-task.ts`.
 
 ## What is recorded here
 
