@@ -2,7 +2,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
-import { classifyCalendarEvent, counterpartsOf } from "@/lib/calendar-classify";
+import { counterpartsOf } from "@/lib/calendar-classify";
+import { decideCalendarEvents } from "@/lib/decisions/calendar";
 import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
 import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
 import { calendarExternalIdBase } from "@/lib/ingest/external-id";
@@ -134,10 +135,24 @@ export async function applyNetworkingEvents(
     reportError(err, { where: "job.calendar.discovery", userId, level: "warning" });
   }
 
+  const ctx = await openIngestContext(userId, {
+    source,
+    createsContacts: true,
+    // No `matchConfidence` override: this source CREATES contacts, so it takes the default
+    // DUPLICATE_MERGE_CONFIDENCE (0.85). It used to pass 0.6 — the bare-full-name tier —
+    // which meant two different people who happened to share a full name were merged into
+    // one contact by the next sync, silently and permanently. Name+company and name+title
+    // still fold; a name on its own now becomes a review suggestion instead.
+    // `calendarAdapter` keeps 0.6 because it only annotates and never creates or merges.
+    reminders: createFollowUps ? postMeetingReminder : undefined,
+  });
+  // The decision model reads every event the rules would keep before any becomes a contact
+  // (decisions/calendar.ts), so the context — which carries the account's engines — opens
+  // first. Without Jev the rules decide exactly as before.
+  const { decided } = await decideCalendarEvents(ctx.engines, windowed, selfEmails);
   const networkEvents: NetworkEvent[] = [];
-  for (const event of windowed) {
+  for (const { event, classification } of decided) {
     if (!event.start) continue;
-    const classification = classifyCalendarEvent(event, selfEmails);
     if (!classification.keep) continue;
     const people = counterpartsOf(event, selfEmails);
     if (people.length === 0) continue;
@@ -151,17 +166,6 @@ export async function applyNetworkingEvents(
     });
   }
 
-  const ctx = await openIngestContext(userId, {
-    source,
-    createsContacts: true,
-    // No `matchConfidence` override: this source CREATES contacts, so it takes the default
-    // DUPLICATE_MERGE_CONFIDENCE (0.85). It used to pass 0.6 — the bare-full-name tier —
-    // which meant two different people who happened to share a full name were merged into
-    // one contact by the next sync, silently and permanently. Name+company and name+title
-    // still fold; a name on its own now becomes a review suggestion instead.
-    // `calendarAdapter` keeps 0.6 because it only annotates and never creates or merges.
-    reminders: createFollowUps ? postMeetingReminder : undefined,
-  });
   const ingested = await ingestEvents(ctx, networkEvents);
   await finalizeIngest(ctx);
 

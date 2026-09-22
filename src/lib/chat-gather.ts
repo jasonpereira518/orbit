@@ -351,7 +351,9 @@ export async function maybeGather(
   depth: DepthDecision;
   research: ResearchSummary | null;
 }> {
-  const depth = chooseDepth(ctx.q, { hasPriorTurns: ctx.priorTurns.length > 0 });
+  // Decided with the rest of the routing (decisions/chat-route.ts) while retrieval ran; the
+  // rules answer here only for a context built without it.
+  const depth = ctx.route?.depth ?? chooseDepth(ctx.q, { hasPriorTurns: ctx.priorTurns.length > 0 });
   if (depth.depth !== "research") return { evidence: null, notePassages: [], depth, research: null };
 
   const now = Date.now();

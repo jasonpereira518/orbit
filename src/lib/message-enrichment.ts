@@ -5,6 +5,10 @@ import { aiSuggestions, contacts, interactions } from "@/db/schema";
 import { completeJson, parseAiJson } from "@/lib/ai";
 import { upsertContactEmbedding } from "@/lib/search";
 import { MAX_BATCH_REQUESTS, submitAiBatch, type BatchRequest } from "@/lib/ai-batch";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import { SKIP_GATE_TUNING } from "@/lib/decisions/catalog";
+import { mapPool } from "@/lib/decisions/jev";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { reportUnlessQuiet } from "@/lib/report-error";
 
 const threadEnrichSchema = z.object({
@@ -189,7 +193,7 @@ async function applyThreadEnrichment(
 export async function enrichContactsFromMessages(
   userId: string,
   contactIds: string[],
-  options?: { maxContacts?: number }
+  options?: { maxContacts?: number; engines?: Engines }
 ): Promise<MessageEnrichmentResult> {
   const uniqueIds = [...new Set(contactIds)];
   const maxContacts = options?.maxContacts ?? 40;
@@ -214,9 +218,19 @@ export async function enrichContactsFromMessages(
     where: and(eq(contacts.userId, userId), inArray(contacts.id, targetIds)),
   });
 
+  const engines = options?.engines ?? (await openEngines(userId));
+
   for (const contact of contactRows) {
     const thread = await loadThreadContext(userId, contact);
     if (!thread) {
+      skipped++;
+      continue;
+    }
+    // Most LinkedIn threads are a connection note and a thank-you. Summarising those costs
+    // a model call to learn that two people are connected, which the connection already
+    // says. A decision model that is sure there is nothing here skips the call; without
+    // one, every thread is summarised exactly as before.
+    if (await gateSkips(engines, "enrich", { contact: contact.fullName, messages: gateText(thread.transcript) })) {
       skipped++;
       continue;
     }
@@ -259,7 +273,7 @@ export type EnrichBatchPayload = { items: Array<{ customId: string; contactId: s
 export async function enrichContactsFromMessagesBatched(
   userId: string,
   contactIds: string[],
-  options?: { maxContacts?: number }
+  options?: { maxContacts?: number; engines?: Engines }
 ): Promise<{ submitted: number; inline: MessageEnrichmentResult | null }> {
   const uniqueIds = [...new Set(contactIds)].slice(0, options?.maxContacts ?? 40);
   if (!uniqueIds.length) return { submitted: 0, inline: null };
@@ -269,17 +283,28 @@ export async function enrichContactsFromMessagesBatched(
     where: and(eq(contacts.userId, userId), inArray(contacts.id, uniqueIds)),
   });
 
-  const requests: BatchRequest[] = [];
-  const items: EnrichBatchPayload["items"] = [];
+  const engines = options?.engines ?? (await openEngines(userId));
+  const threads: Array<{ contact: (typeof contactRows)[number]; transcript: string }> = [];
   for (const contact of contactRows) {
     const thread = await loadThreadContext(userId, contact);
-    if (!thread) continue;
+    if (thread) threads.push({ contact, transcript: thread.transcript });
+  }
+  // Gated together rather than one at a time: nobody is waiting on this, but a batch of 40
+  // threads asked in series would spend eight seconds deciding what not to ask about.
+  const worthAsking = await mapPool(threads, SKIP_GATE_TUNING.concurrency, async (t) =>
+    !(await gateSkips(engines, "enrich", { contact: t.contact.fullName, messages: gateText(t.transcript) }))
+  );
+
+  const requests: BatchRequest[] = [];
+  const items: EnrichBatchPayload["items"] = [];
+  for (const [i, { contact, transcript }] of threads.entries()) {
+    if (!worthAsking[i]) continue;
     const customId = `c${items.length}`;
     items.push({ customId, contactId: contact.id });
     requests.push({
       customId,
       system: ENRICH_SYSTEM,
-      user: enrichUserPrompt(contact.fullName, thread.transcript),
+      user: enrichUserPrompt(contact.fullName, transcript),
       temperature: 0.2,
     });
   }

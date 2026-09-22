@@ -8,6 +8,12 @@ export type ParsedQuery = {
   semanticQuery: string;
   filters: SearchFilters;
   expansionTerms: string[];
+  /**
+   * How the question should be routed, from the same call — the fallback router when the
+   * account has no decision model (decisions/chat-route.ts). Absent when the parser did not
+   * answer, or answered without it; the keyword rules route then.
+   */
+  intent?: { needsResearch: boolean; attention: boolean; recruiters: boolean };
 };
 
 const UNDERSTAND_TIMEOUT_MS = 2500;
@@ -67,10 +73,20 @@ export function sanitizeParsedQuery(raw: unknown, question: string): ParsedQuery
   ) as Array<"inner" | "mid" | "outer">;
   if (tiers.length) filters.closenessTiers = tiers;
 
+  const rawIntent = (obj.intent ?? null) as Record<string, unknown> | null;
+  const intent =
+    rawIntent &&
+    typeof rawIntent.needs_research === "boolean" &&
+    typeof rawIntent.attention === "boolean" &&
+    typeof rawIntent.recruiters === "boolean"
+      ? { needsResearch: rawIntent.needs_research, attention: rawIntent.attention, recruiters: rawIntent.recruiters }
+      : undefined;
+
   return {
     semanticQuery,
     filters,
     expansionTerms: cleanStringArray(obj.expansionTerms),
+    ...(intent ? { intent } : {}),
   };
 }
 
@@ -83,7 +99,11 @@ Filters narrow a database query over the user's contacts:
 Self-references ("my school", "my company") can only be resolved from the user context provided; if it does not name one, OMIT that filter — never invent a value.
 expansionTerms: up to 4 synonyms/adjacent terms that widen a keyword search (e.g. question about "AI" -> ["machine learning", "ML"]).
 semanticQuery: the question rewritten as a dense retrieval query describing the ideal matching contact.
-Return JSON: {"semanticQuery": string, "filters": {"companies"?: string[], "industries"?: string[], "schools"?: string[], "locations"?: string[], "tags"?: string[], "closenessTiers"?: string[]}, "expansionTerms": string[]}`;
+intent — how to answer it:
+- needs_research: true ONLY when answering needs what was said or written in notes or conversations, an introduction or path to someone, events in a specific past period, or refers back to people from earlier turns. False for "who do I know at/in/with X", "who fits this description", and profile questions.
+- attention: true ONLY when asking which people across the network to reconnect or follow up with, or who has gone quiet or is overdue. False for one named person, drafting a message, or "who should I ask about X".
+- recruiters: true ONLY when asking for recruiters, headhunters or talent-acquisition people themselves.
+Return JSON: {"semanticQuery": string, "filters": {"companies"?: string[], "industries"?: string[], "schools"?: string[], "locations"?: string[], "tags"?: string[], "closenessTiers"?: string[]}, "expansionTerms": string[], "intent": {"needs_research": boolean, "attention": boolean, "recruiters": boolean}}`;
 
 /**
  * Accuracy-only stage: on any failure or timeout it returns the pass-through
@@ -127,9 +147,12 @@ export async function understandQuery(
 
 export const CANDIDATE_POOL = 60;
 export const FINAL_CONTACT_COUNT = 12;
-// Keeps worst-case pipeline inside the ~10s budget; on timeout the RRF-order
-// fallback answers.
-const RERANK_TIMEOUT_MS = 4000;
+// The WHOLE rank step, whichever engines it tries — keeps the worst-case pipeline inside the
+// ~10s budget. Jev takes its share first (RERANK_TUNING.timeoutMs); the LLM rerank gets what
+// remains, not a fresh 4s of its own (the two used to stack to 5.5s); search order after that.
+const RANK_BUDGET_MS = 4000;
+/** An LLM rerank with less time than this cannot finish; go straight to search order. */
+const MIN_LLM_RERANK_MS = 500;
 const RERANK_MIN_RELEVANCE = 3;
 const RERANK_MIN_SURVIVORS = 3;
 
@@ -177,7 +200,8 @@ export async function rerankWithDecider(
   decider: Decider,
   question: string,
   candidates: RankedContact[],
-  semanticQuery?: string | null
+  semanticQuery?: string | null,
+  timeoutMs: number = RERANK_TUNING.timeoutMs
 ): Promise<RankedContact[] | null> {
   const lookingFor =
     semanticQuery?.trim() && semanticQuery.trim() !== question.trim() ? semanticQuery.trim() : null;
@@ -196,7 +220,7 @@ export async function rerankWithDecider(
       }),
       question: rerankQuestion,
     },
-    { timeoutMs: RERANK_TUNING.timeoutMs }
+    { timeoutMs }
   );
   if (answers.some((a) => a === null)) return null;
 
@@ -217,12 +241,17 @@ export async function rerankWithDecider(
   return scored.slice(0, 5).map((s) => s.c);
 }
 
+/** Which engine ranked: Jev, the flash-model rerank, or plain search order (no rerank ran). */
+export type RankEngine = "jev" | "llm" | "search";
+
 /**
  * Accuracy-only stage: scores candidates and keeps the best FINAL_CONTACT_COUNT — on the
  * decision model when the account has one, else (or when it gives no answer) on a
  * flash-tier model. On any failure it falls back to RRF order. Never throws.
+ *
+ * `engine` is null when there was nothing to rank (the pool already fits).
  */
-export async function rerankCandidates(
+export async function rerankCandidatesWithEngine(
   userId: string,
   question: string,
   candidates: RankedContact[],
@@ -241,17 +270,29 @@ export async function rerankCandidates(
   semanticQuery?: string | null,
   /** The account's decision model (`openDecider`), or null for the LLM rerank. */
   decider: Decider | null = null
-): Promise<RankedContact[]> {
-  if (candidates.length <= FINAL_CONTACT_COUNT) return candidates;
+): Promise<{ contacts: RankedContact[]; engine: RankEngine | null }> {
+  if (candidates.length <= FINAL_CONTACT_COUNT) return { contacts: candidates, engine: null };
+  const searchOrder = () => ({ contacts: candidates.slice(0, FINAL_CONTACT_COUNT), engine: "search" as const });
+  const deadline = Date.now() + RANK_BUDGET_MS;
   if (decider) {
-    const decided = await rerankWithDecider(decider, question, candidates, semanticQuery).catch(() => null);
-    if (decided) return decided;
+    const decided = await rerankWithDecider(
+      decider,
+      question,
+      candidates,
+      semanticQuery,
+      Math.min(RERANK_TUNING.timeoutMs, RANK_BUDGET_MS)
+    ).catch(() => null);
+    if (decided) return { contacts: decided, engine: "jev" };
   }
+  const remaining = deadline - Date.now();
+  if (remaining < MIN_LLM_RERANK_MS) return searchOrder();
   try {
     const content = await withTimeout(
       completeFn(userId, {
         operation: "chat.rerank",
-            temperature: 0,
+        temperature: 0,
+        // Cancels the request itself at the deadline, instead of leaving it to bill on.
+        signal: AbortSignal.timeout(remaining),
         maxOutputTokens: 2048,
         system: RERANK_SYSTEM,
         user: [
@@ -266,7 +307,7 @@ export async function rerankCandidates(
           .filter(Boolean)
           .join("\n"),
       }),
-      RERANK_TIMEOUT_MS
+      remaining
     );
     const parsed = parseAiJson<{ scores?: Array<{ id?: unknown; relevance?: unknown }> }>(content);
     const byId = new Map(candidates.map((c) => [c.id, c]));
@@ -281,13 +322,13 @@ export async function rerankCandidates(
       .filter((s) => s.relevance >= RERANK_MIN_RELEVANCE)
       .slice(0, FINAL_CONTACT_COUNT)
       .map((s) => byId.get(s.id)!);
-    if (kept.length >= RERANK_MIN_SURVIVORS) return kept;
+    if (kept.length >= RERANK_MIN_SURVIVORS) return { contacts: kept, engine: "llm" };
 
     // Threshold starved the set — trust the model's ordering for a smaller page.
     const ordered = scored.slice(0, 5).map((s) => byId.get(s.id)!);
-    return ordered.length > 0 ? ordered : candidates.slice(0, FINAL_CONTACT_COUNT);
+    return ordered.length > 0 ? { contacts: ordered, engine: "llm" } : searchOrder();
   } catch {
-    return candidates.slice(0, FINAL_CONTACT_COUNT);
+    return searchOrder();
   }
 }
 
@@ -297,6 +338,13 @@ export async function rerankCandidates(
  * can cite it after budgeting rather than before — see `@/lib/chat-evidence`.
  */
 export type ChatTimelineEntry = { id: string; date: string; line: string };
+
+/** `rerankCandidatesWithEngine`, for callers that only want the contacts. */
+export async function rerankCandidates(
+  ...args: Parameters<typeof rerankCandidatesWithEngine>
+): Promise<RankedContact[]> {
+  return (await rerankCandidatesWithEngine(...args)).contacts;
+}
 
 export type BudgetedContact = {
   id: string;

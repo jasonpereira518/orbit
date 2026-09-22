@@ -64,7 +64,7 @@ const PROCESSORS = [
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro and Orbit Lifetime payments. Card details go to Stripe directly; Orbit stores a customer reference." },
   { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider and key you choose in Settings." },
-  { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, and choosing which contacts a chat answer draws on. Only if you add your own TypeSafe key in Settings." },
+  { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Microsoft", badge: "Optional", body: "Outlook, read-only, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, and your mail only for the recruiter scan you start. See The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
@@ -328,11 +328,19 @@ export default function PrivacyPage() {
             never runs AI on its own provider accounts.
           </p>
           <p>
-            If you also add a TypeSafe key, two steps run on Jev, TypeSafe&rsquo;s decision model,
-            on your own TypeSafe account: deciding which senders in a recruiter scan are recruiters,
-            from the same emails described above, and ranking which contacts a chat answer draws on,
-            from a short card per contact (name, title, company, school, tags and summary). Jev only
-            returns yes-or-no answers and scores; it writes nothing.
+            If you also add a TypeSafe key, the yes-or-no and ranking steps run on Jev,
+            TypeSafe&rsquo;s decision model, on your own TypeSafe account. Each one sees only what
+            that step already works from: the emails described above, for deciding which senders in
+            a recruiter scan are recruiters; your question and a short card per contact (name,
+            title, company, school, tags and summary), for ranking which contacts a chat answer
+            draws on, and those same cards for deciding whether two records are one person; a
+            calendar event&rsquo;s title, description and the domains &mdash; not the addresses
+            &mdash; of its organiser and guests; and a note you captured, for matching the tags it
+            proposes against the ones you already have and reading who was actually there. Jev is
+            also asked, in front of the slower steps, whether there is anything in a note or a
+            message thread worth sending to your chat model at all; when the answer is a confident
+            no, that call is not made. Jev only returns yes-or-no answers and scores; it writes
+            nothing.
           </p>
           <p>
             Some AI work runs in the background. Search indexing runs when contacts change, so search

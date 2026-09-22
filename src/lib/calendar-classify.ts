@@ -148,6 +148,17 @@ export function classifyCalendarEvent(
     };
   }
 
+  // The user's own answer. A meeting they declined did not happen for them, and a cancelled
+  // one did not happen at all — both used to be kept on title and attendee count alone,
+  // creating the contact, logging the meeting and scheduling a follow-up.
+  const response = (event.selfResponse || "").toLowerCase();
+  if (response === "declined") {
+    return { keep: false, reason: "You declined it", kind: "skip", counterpartCount: count };
+  }
+  if ((event.status || "").toLowerCase() === "cancelled") {
+    return { keep: false, reason: "The event was cancelled", kind: "skip", counterpartCount: count };
+  }
+
   if (EXCLUDE_TITLE.test(title)) {
     return {
       keep: false,

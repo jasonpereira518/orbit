@@ -49,7 +49,7 @@ import { parse as parseEnv } from "dotenv";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -64,7 +64,16 @@ import { formatMetric, gate, median, type GateRules, type TaskMetrics } from "./
 
 const USER = "eval-ai-user";
 /** Tasks that never call a chat model. */
-const LLM_FREE_TASKS: ReadonlySet<TaskName> = new Set(["recruiter-prefilter", "recruiter-gate"]);
+const LLM_FREE_TASKS: ReadonlySet<TaskName> = new Set([
+  "recruiter-prefilter",
+  "recruiter-gate",
+  "chat-routing",
+  "duplicates",
+  "mentions",
+  "calendar",
+  "capture-checks",
+  "skip-gates",
+]);
 
 if (process.env.DATABASE_URL) {
   throw new Error("eval-ai runs on a throwaway local PGlite only — unset DATABASE_URL (and SMOKE_ALLOW_REMOTE).");
@@ -87,6 +96,8 @@ type Args = {
   config?: string;
   /** "jev": give the synthetic user a TypeSafe key, so decision-model paths run. */
   decisions: "jev" | null;
+  /** A folder of PRIVATE labels exported from a real account (never committed). */
+  labelsDir?: string;
 };
 
 type CandidateConfig = {
@@ -126,6 +137,7 @@ function parseArgs(argv: string[]): Args {
     keysFrom: get("--keys-from"),
     config: get("--config"),
     decisions,
+    labelsDir: get("--labels-dir"),
   };
 }
 
@@ -202,6 +214,8 @@ type CostRow = {
   cachedInputTokens: number;
   costMicros: number;
   unpriced: number;
+  /** Median wall clock of one call, from `usage_events.duration_ms` — per operation, per engine. */
+  p50Ms: number | null;
 };
 
 async function usageSince(since: Date): Promise<CostRow[]> {
@@ -219,6 +233,7 @@ async function usageSince(since: Date): Promise<CostRow[]> {
       cachedInputTokens: sql<number>`coalesce(sum(${usageEvents.cachedInputTokens}), 0)::float8`,
       costMicros: sql<number>`coalesce(sum(${usageEvents.estimatedCostMicros}), 0)::float8`,
       unpriced: sql<number>`(count(*) filter (where ${usageEvents.estimatedCostMicros} is null and ${usageEvents.success} = 1))::int`,
+      p50Ms: sql<number | null>`percentile_cont(0.5) within group (order by ${usageEvents.durationMs})`,
     })
     .from(usageEvents)
     .where(and(eq(usageEvents.userId, USER), gte(usageEvents.createdAt, since)))
@@ -233,6 +248,7 @@ async function usageSince(since: Date): Promise<CostRow[]> {
     cachedInputTokens: Number(r.cachedInputTokens),
     costMicros: Number(r.costMicros),
     unpriced: Number(r.unpriced),
+    p50Ms: r.p50Ms == null ? null : Math.round(Number(r.p50Ms)),
   }));
 }
 
@@ -252,6 +268,9 @@ function fixtureDigest(): string {
     "ai-transcribe-eval.json", "ai-chat-eval.json", "ai-digest-eval.json", "contact-search-eval.json",
     // The research task's cases, and the notes both it and eval-retrieval seed.
     "ai-research-eval.json", "passage-search-eval.json",
+    // The decision-model tasks' own fixtures.
+    "ai-chat-routing-eval.json", "ai-duplicates-eval.json", "ai-mentions-eval.json",
+    "ai-calendar-eval.json", "ai-capture-checks-eval.json", "ai-skip-gates-eval.json",
   ]) {
     try {
       hash.update(readFileSync(join(FIXTURE_DIR, file)));
@@ -305,6 +324,8 @@ export type EvalReport = {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // Read by the tasks (`privateLabels`); a run without it uses the committed fixtures only.
+  if (args.labelsDir) process.env.ORBIT_EVAL_LABELS_DIR = args.labelsDir.replace(/^~(?=\/)/, homedir());
   const candidate: CandidateConfig = args.config
     ? (JSON.parse(readFileSync(args.config, "utf8")) as CandidateConfig)
     : {};
@@ -384,6 +405,11 @@ async function main() {
     console.log(
       `  ${"".padEnd(11)} ${t.cases} case(s) · ${usd(t.costMicros)} total · ${t.costPerCaseMicros == null ? "—" : usd(t.costPerCaseMicros)}/case · p50 ${t.p50LatencyMs == null ? "—" : `${Math.round(t.p50LatencyMs)}ms`}${t.usage.some((u) => u.unpriced) ? " · some calls unpriced" : ""}${t.decisionCostMicros ? ` · Jev ${usd(t.decisionCostMicros)}` : ""}`
     );
+    const perCall = t.usage
+      .filter((u) => u.p50Ms != null)
+      .map((u) => `${u.operation} ${u.p50Ms}ms`)
+      .join(" · ");
+    if (perCall) console.log(`  ${"".padEnd(11)} per call p50 — ${perCall}`);
     for (const [operation, bins] of Object.entries(t.calibration ?? {})) {
       const bands = bins
         .filter((b) => b.n > 0)

@@ -19,6 +19,8 @@ import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, duplicateSuggestions, interactions } from "@/db/schema";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
+import { NO_ENGINES, type Engines } from "@/lib/decisions/engine";
+import { rankDuplicatePairs } from "@/lib/decisions/duplicates";
 
 export type DuplicateCandidate = {
   id: string;
@@ -42,6 +44,11 @@ export type DuplicatePair = {
   /** The contact that should survive by default: the older of the two. */
   keep: DuplicateCandidate;
   merge: DuplicateCandidate;
+  /**
+   * The decision model's (or the person's own model's) read on the pair: P(same person).
+   * A hint and an order only — nothing on this list merges without the person's click.
+   */
+  decision?: { engine: "jev" | "llm"; sameProbability: number };
 };
 
 const CANDIDATE_COLUMNS = {
@@ -237,14 +244,35 @@ function dedupePairs(proposed: DuplicatePair[]): DuplicatePair[] {
   return out.sort((a, b) => b.confidence - a.confidence);
 }
 
-export async function getDuplicateReview(userId: string): Promise<DuplicateReview> {
+export async function getDuplicateReview(
+  userId: string,
+  opts: { engines?: Engines } = {}
+): Promise<DuplicateReview> {
   const [recorded, scanned] = await Promise.all([
     findPendingSuggestions(userId),
     findNameCollisions(userId),
   ]);
   // Recorded suggestions first: they carry a `suggestionId`. Ordering only matters for that
   // — either way the pair is dismissible, because dismissal is keyed on the two contact ids.
-  return { proposed: dedupePairs([...recorded, ...scanned]) };
+  const proposed = dedupePairs([...recorded, ...scanned]);
+
+  // Every name-only pair scores 0.6, so without a model the queue has no real order. With
+  // one, the pairs it thinks are the same person come first, and each carries its read.
+  const decisions = await rankDuplicatePairs(
+    userId,
+    opts.engines ?? NO_ENGINES,
+    proposed.map((p) => ({ a: p.keep.id, b: p.merge.id }))
+  ).catch(() => proposed.map(() => null));
+  proposed.forEach((pair, i) => {
+    const d = decisions[i];
+    if (d) pair.decision = d;
+  });
+  return {
+    proposed: proposed
+      .map((pair, i) => ({ pair, i }))
+      .sort((x, y) => (y.pair.decision?.sameProbability ?? -1) - (x.pair.decision?.sameProbability ?? -1) || x.i - y.i)
+      .map((x) => x.pair),
+  };
 }
 
 /**

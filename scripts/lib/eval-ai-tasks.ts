@@ -18,8 +18,25 @@ import { chatMessages, chatThreads, contactTags, contacts, interactions, memoryC
 import { runCaptureParse } from "../../src/lib/capture-parse";
 import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT } from "../../src/lib/recruiter-scan";
 import { looksLikeRecruiter } from "../../src/lib/recruiter-detect";
-import { openDecider, type Decider } from "../../src/lib/decisions/jev";
+import { openDecider, type AnswerFor, type Decider, type Question } from "../../src/lib/decisions/jev";
 import { admitRecruiterCandidates, rulesOutRecruiter } from "../../src/lib/decisions/recruiter";
+import { gateRosters, routeChatQuestion } from "../../src/lib/decisions/chat-route";
+import { understandQuery } from "../../src/lib/chat-retrieval";
+import { findOrgRosters } from "../../src/lib/chat-roster";
+import { openEngines } from "../../src/lib/decisions/engine";
+import { personCard, samePersonProbabilities } from "../../src/lib/decisions/duplicates";
+import { decideCaptureChecks, decideMentions, whichContact } from "../../src/lib/decisions/capture";
+import { calendarEventState, decideCalendarEvents } from "../../src/lib/decisions/calendar";
+import { classifyCalendarEvent } from "../../src/lib/calendar-classify";
+import type { ParsedCalendarEvent } from "../../src/lib/calendar-import";
+import { decide, decideEach } from "../../src/lib/decisions/engine";
+import { CAPTURE_CHECK_TUNING, SKIP_GATE_TUNING, calendarKindQuestion, presenceQuestion } from "../../src/lib/decisions/catalog";
+import { gateProbability, type GateName } from "../../src/lib/decisions/gates";
+import { looksLikeReferral } from "../../src/lib/opportunity-kinds";
+import type { BulkNotePersonPreview } from "../../src/lib/capture/types";
+import { DUPLICATE_TUNING } from "../../src/lib/decisions/catalog";
+import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "../../src/lib/duplicates";
+import { resolveMentions } from "../../src/lib/mention-resolution";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
 import {
@@ -36,6 +53,13 @@ import { loadPassageFixture, seedPassageNotes } from "./eval-passage-notes";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
 import { analyzeMeetingTranscript } from "../../src/lib/meeting-digest";
 import type {
+  CalendarEvalFixture,
+  CaptureChecksEvalFixture,
+  SkipGatesEvalFixture,
+  DuplicatesEvalFixture,
+  EvalCard,
+  MentionsEvalFixture,
+  ChatRoutingEvalFixture,
   CaptureEvalFixture,
   ChatEvalFixture,
   DigestEvalFixture,
@@ -80,6 +104,12 @@ export type TaskName =
   | "recruiter"
   | "recruiter-prefilter"
   | "recruiter-gate"
+  | "chat-routing"
+  | "duplicates"
+  | "mentions"
+  | "calendar"
+  | "capture-checks"
+  | "skip-gates"
   | "extension"
   | "ocr"
   | "transcribe"
@@ -92,6 +122,12 @@ export const TASK_NAMES: TaskName[] = [
   "recruiter",
   "recruiter-prefilter",
   "recruiter-gate",
+  "chat-routing",
+  "duplicates",
+  "mentions",
+  "calendar",
+  "capture-checks",
+  "skip-gates",
   "extension",
   "ocr",
   "transcribe",
@@ -107,6 +143,21 @@ function fixture<T>(file: string): T {
   return JSON.parse(readFileSync(join(FIXTURE_DIR, file), "utf8")) as T;
 }
 
+/**
+ * Private labels exported from a real account (`scripts/export-decision-labels.ts`), when the
+ * run names a folder with `--labels-dir`. Never committed: the folder lives outside the repo
+ * and holds real contacts. Same shape as the committed fixture; ids prefixed `own-`.
+ */
+function privateLabels<T>(file: string): T | null {
+  const dir = process.env.ORBIT_EVAL_LABELS_DIR;
+  if (!dir) return null;
+  try {
+    return JSON.parse(readFileSync(join(dir, file), "utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
 async function timed<T>(latencies: number[], run: () => Promise<T>): Promise<T> {
   const started = Date.now();
   try {
@@ -119,28 +170,33 @@ async function timed<T>(latencies: number[], run: () => Promise<T>): Promise<T> 
 type RunOpts = { userId: string; limit?: number; log: (line: string) => void };
 
 /**
- * The account's decider, wrapped to remember every yes/no probability it hands back, by
- * operation, in call order — so a task can line the model's claims up against its labels
- * without asking anything twice. Null when the run has no TypeSafe key (no `--decisions`).
+ * The account's decider, wrapped to remember every answer it hands back — yes/no, choice and
+ * score alike — by operation, in call order, so a task can line the model's claims up against
+ * its labels without asking anything twice. Null when the run has no TypeSafe key.
  */
-async function recordingDecider(userId: string): Promise<{ decider: Decider; seen: Map<string, number[]> } | null> {
+export type RecordedAnswer = AnswerFor<Question>;
+
+async function recordingDecider(userId: string): Promise<{ decider: Decider; seen: Map<string, RecordedAnswer[]> } | null> {
   const inner = await openDecider(userId);
   if (!inner) return null;
-  const seen = new Map<string, number[]>();
+  const seen = new Map<string, RecordedAnswer[]>();
   const decider: Decider = {
     async ask(request, opts) {
       const result = await inner.ask(request, opts);
       if (result) {
         const list = seen.get(request.operation) ?? [];
-        for (const answer of Object.values(result.answers) as Array<{ type: string; probability?: number }>) {
-          if (answer.type === "noul" && typeof answer.probability === "number") list.push(answer.probability);
-        }
+        for (const key of Object.keys(request.questions)) list.push(result.answers[key] as RecordedAnswer);
         seen.set(request.operation, list);
       }
       return result;
     },
   };
   return { decider, seen };
+}
+
+/** The probability of "yes" in a recorded answer, when it was a yes/no. */
+function yesProbability(answer: RecordedAnswer | undefined): number | undefined {
+  return answer?.type === "noul" ? answer.probability : undefined;
 }
 
 /* ------------------------------------------------------------------------ capture ----- */
@@ -280,7 +336,7 @@ export async function runRecruiterTask({ userId, limit, log }: RunOpts): Promise
           })),
         }, { decider: jev?.decider ?? null })
       );
-      const p = jev?.seen.get("recruiter.gate")?.[gateSeen];
+      const p = yesProbability(jev?.seen.get("recruiter.gate")?.[gateSeen]);
       if (p !== undefined) gatePairs.push({ p, label: c.expect.isRecruiter });
       if (result === RULED_OUT_VERDICT) {
         ruledOut += 1;
@@ -334,6 +390,490 @@ export async function runRecruiterTask({ userId, limit, log }: RunOpts): Promise
   };
 }
 
+/* ---------------------------------------------------------------------- duplicates --- */
+
+const subjectOf = (id: string, c: EvalCard) => ({
+  id,
+  fullName: c.fullName,
+  email: c.email ?? null,
+  linkedinUrl: null,
+  xHandle: null,
+  company: c.company ?? null,
+  title: c.title ?? null,
+});
+
+/**
+ * "Same person?" over card pairs (decisions/duplicates.ts), scored where it matters:
+ *  - wrongMerges: different people that would merge automatically — today, every pair the
+ *    rules score at or above 0.85; with Jev, those it does not veto;
+ *  - lostMerges: the same person, which the rules would merge, vetoed (a veto's cost);
+ *  - pairAccuracy: the engine's P(same) ≥ 0.5 against the label, for the review ranking.
+ * Engines: Jev with `--decisions jev`, else the person's own model with an LLM key, else the
+ * rules alone (the baseline: pairAccuracy is then null).
+ */
+export async function runDuplicatesTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const own = privateLabels<DuplicatesEvalFixture>("duplicates.json")?.pairs ?? [];
+  const pairs = [
+    ...fixture<DuplicatesEvalFixture>("ai-duplicates-eval.json").pairs,
+    ...own.map((p) => ({ ...p, id: `own-${p.id}` })),
+  ].slice(0, limit);
+  const engines = await openEngines(userId, { llm: true });
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  let wrongMergesRules = 0;
+  let wrongMerges = 0;
+  let lostMerges = 0;
+  let answered = 0;
+  let right = 0;
+  const bins: Array<{ p: number; label: boolean }> = [];
+
+  for (const pair of pairs) {
+    const index = buildDuplicateIndex([subjectOf("b", pair.b)]);
+    const tier = findDuplicateCandidatesIndexed(index, { fullName: pair.a.fullName, email: pair.a.email, company: pair.a.company, title: pair.a.title })[0];
+    const rulesMerge = Boolean(tier && tier.confidence >= DUPLICATE_MERGE_CONFIDENCE);
+    const [answer] = await timed(latenciesMs, () =>
+      samePersonProbabilities(engines, [[personCard(pair.a), personCard(pair.b)]], { engines: ["jev", "llm"], budgetMs: 20_000 })
+    );
+    const p = answer && answer.engine !== "rules" ? answer.answer.probability : null;
+    const vetoed = answer?.engine === "jev" && p !== null && p <= DUPLICATE_TUNING.jev.rejectAtOrBelow;
+    const merges = rulesMerge && !vetoed;
+    if (rulesMerge && !pair.same) wrongMergesRules += 1;
+    if (merges && !pair.same) wrongMerges += 1;
+    if (rulesMerge && pair.same && vetoed) lostMerges += 1;
+    if (p !== null) {
+      answered += 1;
+      if (p >= 0.5 === pair.same) right += 1;
+      bins.push({ p, label: pair.same });
+    }
+    const bad = (merges && !pair.same) || (rulesMerge && pair.same && vetoed) || (p !== null && p >= 0.5 !== pair.same);
+    if (bad) misses.push(pair.id);
+    log(`  ${bad ? "MISS" : "ok  "} duplicates/${pair.id} [${answer?.engine ?? "rules"}] same=${pair.same} rules=${tier ? tier.confidence.toFixed(2) : "—"}${p === null ? "" : ` P=${p.toFixed(2)}`}${vetoed ? " VETO" : ""}`);
+  }
+
+  return {
+    cases: pairs.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      wrongMergesRules,
+      wrongMerges,
+      lostMerges,
+      pairAccuracy: answered ? right / answered : null,
+    },
+    ...(bins.length ? { calibration: { "duplicates.same_person": calibrationBins(bins) } } : {}),
+  };
+}
+
+/* ------------------------------------------------------------------------ mentions --- */
+
+/**
+ * Which contact a name in a note means (decisions/capture.ts), through the production path:
+ * the rules (`resolveMentions`) and then `decideMentions` over the candidates as contacts.
+ *  - outcomeAccuracy: what would be saved (a link, or none) against the label;
+ *  - wrongLinks: links to the wrong contact, or where the label says none;
+ *  - pickAccuracy: the engine's raw pick on the AMBIGUOUS cases — what an `act` threshold
+ *    would let it link; reported so that threshold can be judged, not used today.
+ */
+export async function runMentionsTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const own = privateLabels<MentionsEvalFixture>("mentions.json")?.cases ?? [];
+  const cases = [
+    ...fixture<MentionsEvalFixture>("ai-mentions-eval.json").cases,
+    ...own.map((c) => ({ ...c, id: `own-${c.id}` })),
+  ].slice(0, limit);
+  const engines = await openEngines(userId, { llm: true });
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  let outcomeRight = 0;
+  let wrongLinks = 0;
+  let picks = 0;
+  let picksRight = 0;
+  // Jev's confidence in its pick against whether the pick was right — the bins an `act`
+  // threshold for linking ambiguous mentions would be read off.
+  const pickBins: Array<{ p: number; label: boolean }> = [];
+
+  for (const c of cases) {
+    const subjects = c.candidates.map((card, i) => subjectOf(`c${i}`, card));
+    const ruled = resolveMentions(subjects, [{ name: c.mention, context: c.sentence, nearPerson: c.nearPerson ?? null }]);
+    const decided = await timed(latenciesMs, () =>
+      decideMentions(engines, { ...ruled, subjects, corpus: c.sentence })
+    );
+    const linked = decided.resolved[0]?.contactId ?? null;
+    const outcome = linked === null ? "none" : Number(linked.slice(1));
+    if (outcome === c.expect) outcomeRight += 1;
+    else if (outcome !== "none") wrongLinks += 1;
+
+    // The engine's raw pick on the ambiguous ones, for judging an `act` threshold later.
+    let pick: number | "none" | null = null;
+    if (c.candidates.length > 1) {
+      const r = await whichContact(engines, { text: c.mention, context: c.sentence, nearPerson: c.nearPerson ?? null }, c.candidates, c.sentence);
+      if (r) {
+        pick = r.choice;
+        picks += 1;
+        if (r.choice === c.expect) picksRight += 1;
+        if (r.engine === "jev") pickBins.push({ p: r.p, label: r.choice === c.expect });
+      }
+    }
+    const wrong = outcome !== c.expect;
+    if (wrong) misses.push(c.id);
+    log(`  ${wrong ? "MISS" : "ok  "} mentions/${c.id} → ${outcome} (want ${c.expect})${pick === null ? "" : ` pick ${pick}`}`);
+  }
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      outcomeAccuracy: cases.length ? outcomeRight / cases.length : null,
+      wrongLinks,
+      pickAccuracy: picks ? picksRight / picks : null,
+    },
+    ...(pickBins.length ? { calibration: { "mentions.resolve": calibrationBins(pickBins) } } : {}),
+  };
+}
+
+/* ------------------------------------------------------------------------ calendar --- */
+
+/**
+ * Which calendar events become contacts and logged meetings (decisions/calendar.ts), through
+ * `decideCalendarEvents` — the rules, then Jev's veto. Also Jev's raw read on EVERY event
+ * (touch = P(one_on_one) + P(networking)), for the bins a future `act` would be read off.
+ */
+export async function runCalendarTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const fx = fixture<CalendarEvalFixture>("ai-calendar-eval.json");
+  const cases = fx.events.slice(0, limit);
+  const engines = await openEngines(userId);
+  const start = new Date("2026-08-04T15:00:00Z");
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  let right = 0;
+  let falseKeeps = 0;
+  let lostKeeps = 0;
+  let rulesRight = 0;
+  const bins: Array<{ p: number; label: boolean }> = [];
+
+  const events: ParsedCalendarEvent[] = cases.map((e) => ({
+    uid: e.id,
+    summary: e.summary,
+    description: e.description,
+    location: e.location,
+    start,
+    end: new Date(start.getTime() + e.minutes * 60_000),
+    attendees: e.attendees,
+    organizer: e.organizer ?? null,
+    selfResponse: e.selfResponse ?? null,
+  }));
+  const { decided } = await timed(latenciesMs, () => decideCalendarEvents(engines, events, [fx.self]));
+  const raw = engines.jev
+    ? await decideEach({ jev: engines.jev, llm: null }, { engines: ["jev"], budgetMs: 30_000 }, {
+        operation: "calendar.kind",
+        items: events.map((e) => calendarEventState(e, [fx.self])),
+        chunkSize: 6,
+        concurrency: 3,
+        state: (chunk) => ({ events: Object.fromEntries(chunk.map(({ key, item }) => [key, item])) }),
+        question: (key) => ({ ...calendarKindQuestion, instructions: `What kind of calendar entry is \`events.${key}\`?` }),
+      })
+    : [];
+
+  cases.forEach((c, i) => {
+    const keep = decided[i].classification.keep;
+    const rulesKeep = classifyCalendarEvent(events[i], [fx.self]).keep;
+    if (rulesKeep === c.keep) rulesRight += 1;
+    if (keep === c.keep) right += 1;
+    else if (keep) falseKeeps += 1;
+    else lostKeeps += 1;
+    const r = raw[i];
+    const touch = r && r.engine === "jev" ? (r.answer.probabilities.one_on_one ?? 0) + (r.answer.probabilities.networking ?? 0) : null;
+    if (touch !== null) bins.push({ p: Math.min(1, touch), label: c.keep });
+    if (keep !== c.keep) misses.push(c.id);
+    log(`  ${keep === c.keep ? "ok  " : "MISS"} calendar/${c.id} keep=${keep} (rules ${rulesKeep}, want ${c.keep})${touch === null ? "" : ` touch=${touch.toFixed(2)}`} [${decided[i].by}]`);
+  });
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      keepAccuracy: cases.length ? right / cases.length : null,
+      rulesKeepAccuracy: cases.length ? rulesRight / cases.length : null,
+      falseKeeps,
+      lostKeeps,
+    },
+    ...(bins.length ? { calibration: { "calendar.kind": calibrationBins(bins) } } : {}),
+  };
+}
+
+/* ------------------------------------------------------------------ capture checks --- */
+
+/**
+ * The capture checks (decisions/capture.ts `decideCaptureChecks`) on their own fixture:
+ * referral overrides, tag mapping, and — measured raw, because it ships disabled — presence.
+ */
+export async function runCaptureChecksTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const fx = fixture<CaptureChecksEvalFixture>("ai-capture-checks-eval.json");
+  const engines = await openEngines(userId);
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  const person = (tags: string[], opportunities: BulkNotePersonPreview["opportunities"]) =>
+    ({ parsed: { name: "x", tags }, opportunities }) as unknown as BulkNotePersonPreview;
+
+  // Referral: the language test decides; with Jev, a confident "no" reverts it.
+  let refRight = 0;
+  let wrongReferrals = 0;
+  for (const c of fx.referrals.slice(0, limit)) {
+    const rules = looksLikeReferral(c.label, c.sentence);
+    const item = person([], [
+      { kind: rules ? "referral" : "other", label: c.label, direction: null, sourceExcerpt: c.sentence, rawDatePhrase: null, confidenceScore: 50, dueDateIso: null, ...(rules ? { overriddenKind: "other" as const } : {}) },
+    ]);
+    await timed(latenciesMs, () => decideCaptureChecks(engines, { items: [item], corpus: c.sentence, existingTags: [] }));
+    const said = item.opportunities[0].kind === "referral";
+    if (said === c.referral) refRight += 1;
+    else if (said) wrongReferrals += 1;
+    if (said !== c.referral) misses.push(c.id);
+    log(`  ${said === c.referral ? "ok  " : "MISS"} capture-checks/${c.id} referral=${said} (rules ${rules}, want ${c.referral})`);
+  }
+
+  // Tags: exact (case-insensitive) match is the rule; Jev maps near-synonyms.
+  let tagRight = 0;
+  for (const c of fx.tags.slice(0, limit)) {
+    const item = person([c.proposed], []);
+    await decideCaptureChecks(engines, { items: [item], corpus: "", existingTags: c.existing });
+    const written = item.parsed.tags?.[0] ?? c.proposed;
+    const got = c.existing.includes(written) ? written : "keep_new";
+    const exact = c.existing.find((t) => t.toLowerCase() === c.proposed.toLowerCase());
+    const final = exact ?? got;
+    if (final === c.expect) tagRight += 1;
+    else misses.push(c.id);
+    log(`  ${final === c.expect ? "ok  " : "MISS"} capture-checks/${c.id} "${c.proposed}" → ${final} (want ${c.expect})`);
+  }
+
+  // Presence, raw (it acts only when `presenceAct` is set): Jev's 3-way read per name.
+  let presRight = 0;
+  let presAsked = 0;
+  let inventedCaught = 0;
+  let invented = 0;
+  for (const c of fx.presence.slice(0, limit)) {
+    const names = Object.keys(c.people);
+    const keys = names.map((_, i) => `c${String(i + 1).padStart(2, "0")}`);
+    const r = engines.jev
+      ? await decide({ jev: engines.jev, llm: null }, { engines: ["jev"], budgetMs: 10_000 }, {
+          operation: "capture.checks",
+          state: { note: c.note, people: Object.fromEntries(names.map((n, i) => [keys[i], n])) },
+          questions: Object.fromEntries(keys.map((k) => [k, presenceQuestion(k)])),
+        })
+      : null;
+    names.forEach((name, i) => {
+      const want = c.people[name];
+      // The rule fallback: a name none of whose words appear in the note is invented.
+      const ruleInvented = !name.toLowerCase().split(/\s+/).some((w) => c.note.toLowerCase().includes(w));
+      if (want === "not_in_note") {
+        invented += 1;
+        if (r?.engine === "jev" ? r.answers[keys[i]].choice === "not_in_note" : ruleInvented) inventedCaught += 1;
+      }
+      if (r?.engine === "jev") {
+        presAsked += 1;
+        if (r.answers[keys[i]].choice === want) presRight += 1;
+      }
+    });
+    log(`  ok   capture-checks/${c.id} presence ${r?.engine === "jev" ? names.map((n, i) => `${n}=${r.answers[keys[i]].choice}`).join(", ") : "(rules)"}`);
+  }
+
+  return {
+    cases: fx.referrals.length + fx.tags.length + fx.presence.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      referralAccuracy: fx.referrals.length ? refRight / Math.min(fx.referrals.length, limit ?? Infinity) : null,
+      wrongReferrals,
+      tagAccuracy: fx.tags.length ? tagRight / Math.min(fx.tags.length, limit ?? Infinity) : null,
+      presenceAccuracy: presAsked ? presRight / presAsked : null,
+      inventedRecall: invented ? inventedCaught / invented : null,
+      presenceAct: CAPTURE_CHECK_TUNING.presenceAct,
+    },
+  };
+}
+
+/* ----------------------------------------------------------------------- skip-gates --- */
+
+/**
+ * The five skip-gates (decisions/gates.ts): a Jev yes/no in front of a chat-model call that
+ * usually finds nothing. Every case carries what the gate SHOULD say, and the two numbers
+ * that matter pull against each other:
+ *
+ *  - `wrongSkips` — a call skipped that had something to find. Gated at zero: the output is
+ *    simply missing afterwards, and nothing downstream notices.
+ *  - `savedShare` — of the cases with nothing to find, how many were skipped. This is the
+ *    whole point of the gate; at zero it costs a decision call and saves nothing.
+ *
+ * Also prints, per gate, the highest threshold that still makes no wrong skip on this
+ * fixture — the number `SKIP_GATE_TUNING.skipAtOrBelow` should be tuned toward, with room
+ * left for Jev's run-to-run drift. Without `--decisions jev` nothing is skipped, which is
+ * exactly what the app does without a key, so the run is a (trivially perfect) baseline.
+ */
+export async function runSkipGatesTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const fx = fixture<SkipGatesEvalFixture>("ai-skip-gates-eval.json");
+  const engines = await openEngines(userId);
+  const cases = fx.cases.slice(0, limit);
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  const bins: Array<{ p: number; label: boolean }> = [];
+
+  let wrongSkips = 0;
+  let right = 0;
+  let saveable = 0;
+  let saved = 0;
+  /** Per gate: the lowest probability seen on a case that must NOT be skipped. */
+  const ceiling: Record<string, number> = {};
+  const perGate: Record<string, { right: number; n: number }> = {};
+
+  for (const c of cases) {
+    const p = await timed(latenciesMs, () => gateProbability(engines, c.gate, c.state));
+    const at = SKIP_GATE_TUNING.skipAtOrBelow[c.gate];
+    // What the app would do: an off gate never skips, however sure the answer is.
+    const skipped = p !== null && at !== null && p <= at;
+    if (p !== null) bins.push({ p, label: !c.skip });
+    if (!c.skip && p !== null) ceiling[c.gate] = Math.min(ceiling[c.gate] ?? 1, p);
+    if (c.skip) {
+      saveable += 1;
+      if (skipped) saved += 1;
+    } else if (skipped) {
+      wrongSkips += 1;
+    }
+    const ok = skipped === c.skip;
+    if (ok) right += 1;
+    else misses.push(c.id);
+    const g = (perGate[c.gate] ??= { right: 0, n: 0 });
+    g.n += 1;
+    if (ok) g.right += 1;
+    log(
+      `  ${ok ? "ok  " : "MISS"} skip-gates/${c.id} skip=${skipped} (want ${c.skip})` +
+        `${p === null ? " [rules: nothing skipped]" : ` p(something)=${p.toFixed(2)}`}`
+    );
+  }
+
+  for (const [g, v] of Object.entries(perGate)) {
+    // The headroom on this fixture. A threshold at or just under it skips everything it
+    // safely can; the shipped value sits below, for drift.
+    const safe = ceiling[g];
+    log(
+      `  --   ${g}: ${v.right}/${v.n} correct, shipped threshold ${SKIP_GATE_TUNING.skipAtOrBelow[g as GateName] ?? "off"}` +
+        `${safe === undefined ? "" : `, no wrong skip below ${safe.toFixed(2)}`}`
+    );
+  }
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      gateAccuracy: cases.length ? right / cases.length : null,
+      wrongSkips,
+      savedShare: saveable ? saved / saveable : null,
+    },
+    ...(bins.length ? { calibration: { "skip-gates": calibrationBins(bins) } } : {}),
+  };
+}
+
+/* -------------------------------------------------------------------- chat routing --- */
+
+/** Companies whose names are also ordinary words — the roster traps — plus two plain ones. */
+const ROUTING_COMPANIES = ["Stripe", "Ramp", "Notion", "Square", "Block", "Figma"];
+
+/**
+ * How chat questions are routed (decisions/chat-route.ts), end to end through the same
+ * function the chat path calls. What answers depends on the run:
+ *  - `--decisions jev` → Jev;
+ *  - an LLM key and no `--decisions` → the question parser's intent flags;
+ *  - neither → the keyword rules (the baseline).
+ * Rosters go through `findOrgRosters` over a few seeded contacts, then the roster gate.
+ * No chat answer is generated, so a Jev or rules run needs no LLM key.
+ */
+export async function runChatRoutingTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<ChatRoutingEvalFixture>("ai-chat-routing-eval.json").cases.slice(0, limit);
+  const db = await getDb();
+  await db.delete(contacts).where(eq(contacts.userId, userId));
+  for (const [i, company] of ROUTING_COMPANIES.entries()) {
+    await db.insert(contacts).values([
+      { userId, fullName: `Routing Person ${i}a`, company, title: "Engineer" },
+      { userId, fullName: `Routing Person ${i}b`, company, title: "Product Manager" },
+    ]);
+  }
+  const decider = await openDecider(userId);
+  const latenciesMs: number[] = [];
+  const misses: string[] = [];
+  let depthOk = 0;
+  let tpR = 0;
+  let fpR = 0;
+  let fnR = 0;
+  let attOk = 0;
+  let tpA = 0;
+  let fpA = 0;
+  let recOk = 0;
+  let rosterCases = 0;
+  let rosterOk = 0;
+  const engines = new Map<string, number>();
+
+  for (const c of cases) {
+    const priorTurns = c.priorTurns ?? [];
+    const route = await timed(latenciesMs, () =>
+      routeChatQuestion({
+        decider,
+        question: c.question,
+        priorTurns,
+        intent: async () => (await understandQuery(userId, c.question, [])).intent ?? null,
+      })
+    );
+    engines.set(route.engine, (engines.get(route.engine) ?? 0) + 1);
+    const matched = await findOrgRosters(userId, c.question).catch(() => []);
+    const { rosters } = await gateRosters(decider, c.question, matched);
+
+    const research = route.depth.depth === "research";
+    const wantResearch = c.expect.depth === "research";
+    if (research === wantResearch) depthOk += 1;
+    if (research && wantResearch) tpR += 1;
+    else if (research && !wantResearch) fpR += 1;
+    else if (!research && wantResearch) fnR += 1;
+    if (route.attention === c.expect.attention) attOk += 1;
+    if (route.attention && c.expect.attention) tpA += 1;
+    if (route.attention && !c.expect.attention) fpA += 1;
+    if (route.recruiters === c.expect.recruiters) recOk += 1;
+
+    const got = rosters.map((r) => r.name).sort().join(",");
+    const want = [...c.expect.roster].sort().join(",");
+    const rosterCase = matched.length > 0 || c.expect.roster.length > 0;
+    if (rosterCase) {
+      rosterCases += 1;
+      if (got === want) rosterOk += 1;
+    }
+
+    const wrong: string[] = [];
+    if (research !== wantResearch) wrong.push(`depth ${route.depth.depth} (${route.depth.reason})`);
+    if (route.attention !== c.expect.attention) wrong.push(`attention ${route.attention}`);
+    if (route.recruiters !== c.expect.recruiters) wrong.push(`recruiters ${route.recruiters}`);
+    if (rosterCase && got !== want) wrong.push(`roster [${got}]`);
+    if (wrong.length) misses.push(c.id);
+    log(`  ${wrong.length ? "MISS" : "ok  "} routing/${c.id} [${route.engine}]${wrong.length ? ` — ${wrong.join("; ")}` : ""}`);
+  }
+  await db.delete(contacts).where(eq(contacts.userId, userId));
+  log(`  engines: ${[...engines].map(([k, v]) => `${k} ${v}`).join(", ")}`);
+
+  const attPositives = cases.filter((c) => c.expect.attention).length;
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      depthAccuracy: cases.length ? depthOk / cases.length : null,
+      researchPrecision: tpR + fpR === 0 ? null : tpR / (tpR + fpR),
+      researchRecall: tpR + fnR === 0 ? null : tpR / (tpR + fnR),
+      attentionAccuracy: cases.length ? attOk / cases.length : null,
+      attentionPrecision: tpA + fpA === 0 ? null : tpA / (tpA + fpA),
+      attentionRecall: attPositives ? tpA / attPositives : null,
+      recruiterAccuracy: cases.length ? recOk / cases.length : null,
+      rosterAccuracy: rosterCases ? rosterOk / rosterCases : null,
+    },
+  };
+}
+
 /* ------------------------------------------------------------------ recruiter gate --- */
 
 /**
@@ -365,7 +905,7 @@ export async function runRecruiterGateTask({ userId, limit, log }: RunOpts): Pro
         messages: c.messages.map((m) => ({ subject: m.subject, snippet: m.body.slice(0, 120), body: m.body, internalDate: Date.parse(m.date) })),
       })
     );
-    const p = jev.seen.get("recruiter.gate")?.[seen];
+    const p = yesProbability(jev.seen.get("recruiter.gate")?.[seen]);
     if (p !== undefined) pairs.push({ p, label: c.expect.isRecruiter });
     if (out) {
       ruledOut += 1;
@@ -428,7 +968,7 @@ export async function runRecruiterPrefilterTask({ userId, limit, log }: RunOpts)
     const admitted = await timed(latenciesMs, () =>
       admitRecruiterCandidates([line], jev?.decider ?? null, { alreadyCandidate: () => false })
     );
-    const p = jev?.seen.get("recruiter.prefilter")?.[seen];
+    const p = yesProbability(jev?.seen.get("recruiter.prefilter")?.[seen]);
     if (p !== undefined) pairs.push({ p, label: c.expect.isRecruiter });
 
     const said = admitted.has(c.id);
@@ -707,7 +1247,11 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
   for (const c of cases) {
     try {
       const { ctx, result } = await timed(latenciesMs, async () => {
+        const requestStartedAt = Date.now();
         const ctx = await prepareChatContext(userId, c.question, {});
+        // The research round runs here as it does in production (`askNetwork`, the route), so
+        // this task's cost and latency include it — and a routing change shows up in both.
+        const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
         const result = await chatWithNetwork(
           userId,
           ctx.scopedQuestion,
@@ -720,8 +1264,8 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
           ctx.attachedContext,
           ctx.goals,
           ctx.attentionLite,
-          undefined,
-          undefined,
+          evidence,
+          notePassages,
           ctx.writingInstructions
         );
         return { ctx, result };
@@ -988,6 +1532,12 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   recruiter: runRecruiterTask,
   "recruiter-prefilter": runRecruiterPrefilterTask,
   "recruiter-gate": runRecruiterGateTask,
+  "chat-routing": runChatRoutingTask,
+  duplicates: runDuplicatesTask,
+  mentions: runMentionsTask,
+  calendar: runCalendarTask,
+  "capture-checks": runCaptureChecksTask,
+  "skip-gates": runSkipGatesTask,
   extension: runExtensionTask,
   ocr: runOcrTask,
   transcribe: runTranscribeTask,

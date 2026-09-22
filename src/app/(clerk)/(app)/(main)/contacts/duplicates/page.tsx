@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { listDuplicates, listRecentMerges } from "@/actions/duplicates";
 import { requireUserId } from "@/lib/auth";
 import { mergeConfidentDuplicates } from "@/lib/duplicate-sweep";
+import { openEngines } from "@/lib/decisions/engine";
 import { DuplicateReviewList } from "@/components/contacts/duplicate-review-list";
 
 export const metadata: Metadata = {
@@ -27,7 +28,10 @@ export default async function DuplicatesPage() {
   // The library function, NOT the server action that wraps it: the action calls
   // `revalidatePath`, and Next refuses that during a render. Nothing needs revalidating
   // here anyway — every contact surface is dynamic, so the next request re-reads.
-  await mergeConfidentDuplicates(await requireUserId());
+  const userId = await requireUserId();
+  // With a decision model, a merge that rests only on a name is checked first (Jev only —
+  // the sweep never waits on a chat model; see duplicate-sweep.ts).
+  await mergeConfidentDuplicates(userId, { engines: await openEngines(userId) });
 
   const [{ proposed }, recentMerges] = await Promise.all([
     listDuplicates(),

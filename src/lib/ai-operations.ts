@@ -101,6 +101,26 @@ export const AI_OPERATIONS = {
   "recruiter.prefilter": { label: "Recruiter scan: spotting recruiters", tier: "decision", background: true },
   "recruiter.gate": { label: "Recruiter scan: ruling out non-recruiters", tier: "decision", background: true },
   "chat.rerank.decide": { label: "Chat: ranking results (decision model)", tier: "decision" },
+  "chat.route": { label: "Chat: routing the question (decision model)", tier: "decision" },
+  "chat.roster": { label: "Chat: company rosters (decision model)", tier: "decision" },
+  "duplicates.same_person": { label: "Duplicates: same person? (decision model)", tier: "decision", background: true },
+  "mentions.resolve": { label: "Capture: linking mentions (decision model)", tier: "decision" },
+  "capture.merge_target": { label: "Capture: matching existing contacts (decision model)", tier: "decision" },
+  "capture.checks": { label: "Capture: checking people, tags and referrals (decision model)", tier: "decision" },
+  "calendar.kind": { label: "Calendar: which events are meetings (decision model)", tier: "decision", background: true },
+  "capture.dates.gate": { label: "Capture: any dates to extract? (decision model)", tier: "decision" },
+  "contact.brief.gate": { label: "Contact briefs: anything new? (decision model)", tier: "decision" },
+  "extension.starters.gate": { label: "Extension: enough for openers? (decision model)", tier: "decision" },
+  "import.enrich.gate": { label: "LinkedIn import: worth summarizing? (decision model)", tier: "decision", background: true },
+  "import.linkedin.timeline.decide": {
+    label: "LinkedIn timeline events (decision model)",
+    tier: "decision",
+    background: true,
+  },
+  // The same decisions answered by the person's own model when there is no TypeSafe key
+  // (decisions/llm.ts). Own ids: the answer cache keys on the operation, not the model.
+  "duplicates.same_person.llm": { label: "Duplicates: same person?", tier: "fast", thinking: "minimal", background: true },
+  "mentions.resolve.llm": { label: "Capture: linking mentions", tier: "fast", thinking: "minimal" },
   "import.linkedin.timeline": {
     label: "LinkedIn timeline events",
     tier: "fast",
