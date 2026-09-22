@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Lock } from "lucide-react";
 import {
   getGmailConnectionStatus,
@@ -38,21 +39,47 @@ export function GmailTab({
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
+  // Google's consent screen comes back with `google` and `gmail` set to connected or error,
+  // and the Google Contacts card on this page strips both as it mounts. Next patches
+  // `history.replaceState` into a router "restore", and a restore that lands while a server
+  // action is queued drops that action without ever settling it — so this waits for the
+  // strip before loading (the restore updates `useSearchParams`, which re-runs the load),
+  // and asks once more if a load still hasn't answered after 6s. The panel below then mounts
+  // with the params already gone, so it never strips them itself.
+  const google = useSearchParams().get("google");
+  const awaitingStrip = google === "connected" || google === "error";
+
   useEffect(() => {
-    if (!canUseRecruiters) return;
+    if (!canUseRecruiters || awaitingStrip) return;
     let cancelled = false;
-    Promise.all([getGmailConnectionStatus(), getGmailScanStatus()]).then(
-      ([connection, scan]) => {
-        if (!cancelled) setLoaded({ connection, scan });
-      },
-      () => {
-        if (!cancelled) setFailed(true);
-      }
-    );
+    let settled = false;
+    const load = () =>
+      Promise.all([getGmailConnectionStatus(), getGmailScanStatus()]).then(
+        ([connection, scan]) => {
+          if (cancelled || settled) return;
+          settled = true;
+          setLoaded({ connection, scan });
+        },
+        () => {
+          if (cancelled || settled) return;
+          settled = true;
+          setFailed(true);
+        }
+      );
+    void load();
+    const retry = window.setTimeout(() => {
+      if (!settled) void load();
+    }, 6_000);
+    // Neither answered: offer Try again rather than a skeleton. A late answer still lands.
+    const giveUp = window.setTimeout(() => {
+      if (!cancelled && !settled) setFailed(true);
+    }, 12_000);
     return () => {
       cancelled = true;
+      window.clearTimeout(retry);
+      window.clearTimeout(giveUp);
     };
-  }, [canUseRecruiters, attempt]);
+  }, [canUseRecruiters, awaitingStrip, attempt]);
 
   if (!canUseRecruiters) {
     return (
