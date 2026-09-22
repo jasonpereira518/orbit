@@ -581,6 +581,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   recommendations jsonb,
   attached_contacts jsonb DEFAULT '[]',
   activity jsonb DEFAULT '[]',
+  evidence jsonb DEFAULT '{}',
   feedback text,
   feedback_note text,
   created_at timestamptz NOT NULL DEFAULT now()
@@ -1729,7 +1730,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // third time a number has been contested, so: the scan has to cover `git worktree list`, not
 // just the remote. Checked against every remote branch AND all 69 local worktrees on
 // Sep 20 2026; 78 was the highest found anywhere.
-export const SCHEMA_VERSION = 79;
+// 82 = chat_messages.evidence — citations for a chat answer, keyed by the `[eN]` id each
+// interaction or contact's summary/notes was cited under. Branch B, item 1 of the chat plan.
+// #252 (chat UX branch) holds 80/81 unmerged; rescanned against every local and remote ref on
+// Sep 22 2026 — nothing else claims 82.
+export const SCHEMA_VERSION = 82;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3079,6 +3084,7 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS activity jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS evidence jsonb DEFAULT '{}'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,

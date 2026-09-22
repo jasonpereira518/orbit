@@ -23,6 +23,7 @@ import {
   CANDIDATE_POOL,
   rerankCandidates,
   understandQuery,
+  type ChatTimelineEntry,
 } from "@/lib/chat-retrieval";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
@@ -61,6 +62,8 @@ const PRIOR_TURN_LIMIT = 8;
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
+export type { ChatTimelineEntry };
+
 type Recruiters = Awaited<ReturnType<typeof loadRecruitersForChat>>;
 type BudgetedContact = ReturnType<typeof budgetContactsContext>[number];
 
@@ -70,7 +73,7 @@ export type ChatContext = {
   priorTurns: ChatTurn[];
   retrieved: RankedContact[];
   /** Recent interactions per retrieved contact, as dated lines. */
-  snippets: Map<string, { timeline: string[] }>;
+  snippets: Map<string, { timeline: ChatTimelineEntry[] }>;
   scopedQuestion: string;
   /** Freeform context the user typed for this conversation, if any — never extracted into contacts. */
   userContext: string | null;
@@ -159,13 +162,14 @@ const TIMELINE_FETCH_PER_CONTACT = 8;
 async function loadRecentInteractions(
   userId: string,
   contactIds: string[]
-): Promise<Map<string, { timeline: string[] }>> {
-  const result = new Map<string, { timeline: string[] }>();
+): Promise<Map<string, { timeline: ChatTimelineEntry[] }>> {
+  const result = new Map<string, { timeline: ChatTimelineEntry[] }>();
   if (!contactIds.length) return result;
 
   const db = await getDb();
   const ranked = db
     .select({
+      id: interactions.id,
       contactId: interactions.contactId,
       interactionDate: interactions.interactionDate,
       interactionType: interactions.interactionType,
@@ -184,6 +188,7 @@ async function loadRecentInteractions(
 
   const rows = await db
     .select({
+      id: ranked.id,
       contactId: ranked.contactId,
       interactionDate: ranked.interactionDate,
       interactionType: ranked.interactionType,
@@ -194,17 +199,18 @@ async function loadRecentInteractions(
     .where(sql`${ranked.rn} <= ${TIMELINE_FETCH_PER_CONTACT}`)
     .orderBy(desc(ranked.interactionDate));
 
-  const byContact = new Map<string, string[]>();
+  const byContact = new Map<string, ChatTimelineEntry[]>();
   for (const row of rows) {
     const text = (row.aiSummary || row.rawNotes || "").trim();
     if (!text) continue;
     const list = byContact.get(row.contactId) || [];
     // Sanitized for the same reason the attached block sanitizes: a newline inside a note
     // would otherwise forge a row of its own inside the fenced contacts list.
-    const line = `${isoDay(new Date(row.interactionDate))} · ${interactionTypeLabel(
+    const date = isoDay(new Date(row.interactionDate));
+    const line = `${date} · ${interactionTypeLabel(
       row.interactionType
     )}: ${sanitizeProfileLine(text)}`;
-    list.push(line);
+    list.push({ id: row.id, date, line });
     byContact.set(row.contactId, list);
   }
 
@@ -638,14 +644,16 @@ export async function prepareChatContext(
     // the same dated shape as everyone else.
     snippets.set(focusContactId, {
       timeline: focusMsgs
-        .map((m) => {
+        .map((m): ChatTimelineEntry | null => {
           const text = (m.aiSummary || m.rawNotes || "").trim();
-          if (!text) return "";
-          return `${isoDay(new Date(m.interactionDate))} · ${interactionTypeLabel(
+          if (!text) return null;
+          const date = isoDay(new Date(m.interactionDate));
+          const line = `${date} · ${interactionTypeLabel(
             m.interactionType
           )}: ${sanitizeProfileLine(text).slice(0, 320)}`;
+          return { id: m.id, date, line };
         })
-        .filter(Boolean)
+        .filter((entry): entry is ChatTimelineEntry => entry !== null)
         .slice(0, 12),
     });
   }

@@ -14,6 +14,7 @@ import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import { maybeGather } from "@/lib/chat-gather";
+import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import {
   buildChatSuggestions,
   GENERIC_SUGGESTIONS,
@@ -128,6 +129,59 @@ export async function setChatMessageFeedback(
   return { feedback: next };
 }
 
+/**
+ * The snippet behind one citation, fetched at click time rather than stored: `chat_messages`
+ * carries only the id, not a copy of the note or interaction it points at (see the `evidence`
+ * column). Re-reads the LIVE record, user-scoped, so a deleted or edited source reads as
+ * "removed" or shows what it says today rather than a stale echo of what it said when the
+ * answer was written.
+ */
+export async function getEvidenceSnippet(messageId: string, id: string) {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+  const message = await db.query.chatMessages.findFirst({
+    where: and(eq(chatMessages.id, messageId), eq(chatMessages.userId, userId), eq(chatMessages.role, "assistant")),
+    columns: { evidence: true },
+  });
+  const source = message?.evidence?.[id];
+  if (!source) return { found: false as const };
+
+  if (source.kind === "contact") {
+    const contact = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, source.contactId), eq(contacts.userId, userId)),
+      columns: { id: true, fullName: true, preferredName: true, aiSummary: true, notes: true },
+    });
+    if (!contact) return { found: false as const };
+    return {
+      found: true as const,
+      kind: "contact" as const,
+      contactId: contact.id,
+      contactName: contact.preferredName || contact.fullName,
+      snippet: (contact.aiSummary || contact.notes || "").trim().slice(0, 600),
+    };
+  }
+
+  const row = await db.query.interactions.findFirst({
+    where: and(eq(interactions.id, source.sourceId), eq(interactions.userId, userId)),
+    columns: { contactId: true, interactionType: true, interactionDate: true, aiSummary: true, rawNotes: true },
+  });
+  if (!row) return { found: false as const };
+  const contact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, row.contactId), eq(contacts.userId, userId)),
+    columns: { id: true, fullName: true, preferredName: true },
+  });
+  return {
+    found: true as const,
+    kind: "interaction" as const,
+    interactionId: source.sourceId,
+    contactId: contact?.id ?? row.contactId,
+    contactName: contact ? contact.preferredName || contact.fullName : null,
+    interactionType: row.interactionType,
+    date: row.interactionDate.toISOString().slice(0, 10),
+    snippet: (row.aiSummary || row.rawNotes || "").trim().slice(0, 600),
+  };
+}
+
 export async function deleteChatThread(threadId: string) {
   const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
@@ -181,7 +235,7 @@ async function askNetworkInner(
     }
 
     // The same routing as the streaming route, so the two paths cannot answer differently.
-    const { evidence } = await maybeGather(userId, ctx, { requestStartedAt });
+    const { evidence, notePassages } = await maybeGather(userId, ctx, { requestStartedAt });
 
     const result = await chatWithNetwork(
       userId,
@@ -195,15 +249,22 @@ async function askNetworkInner(
       ctx.attachedContext,
       ctx.goals,
       ctx.attentionLite,
-      evidence
+      evidence,
+      notePassages
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]
     );
+    // No stream to clean up after here — the non-streaming path never shows an invented
+    // citation before it can be stripped, so this simply never persists one.
+    const validIds = new Set(Object.keys(result.evidence));
+    const { text: cleanAnswer } = stripUnresolvedMarkers(result.answer, validIds);
+    const citedEvidence = Object.fromEntries(citedIds(cleanAnswer).map((id) => [id, result.evidence[id]]));
 
     const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
-      answer: result.answer,
+      answer: cleanAnswer,
       recommendations,
+      evidence: citedEvidence,
     });
 
     return {
@@ -211,7 +272,7 @@ async function askNetworkInner(
       threadId,
       title: saved.title,
       messageId: saved.messageId,
-      answer: result.answer,
+      answer: cleanAnswer,
       recommendations,
       retrieved: ctx.retrieved.map((c) => ({
         id: c.id,

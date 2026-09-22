@@ -60,6 +60,7 @@ import { AnswerActions } from "@/components/chat/answer-actions";
 import { ReminderButton } from "@/components/chat/reminder-button";
 import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
+import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
@@ -147,6 +148,8 @@ type AssistantMessage = {
    * thread falls back to what the recommendation itself carries.
    */
   retrieved?: DoneInfo["retrieved"];
+  /** Every source this answer cited, keyed by its `[eN]` id — see `@/lib/chat-evidence`. */
+  evidence?: Record<string, EvidenceSource>;
   /** Thumbs already on this answer, when it came back from a saved thread. */
   feedback?: "up" | "down" | null;
   /**
@@ -551,6 +554,7 @@ export function ChatPanel() {
                 // Answers written before this column existed have none, and simply show no
                 // summary rather than a fabricated one.
                 steps: row.activity ?? undefined,
+                evidence: row.evidence ?? undefined,
                 feedback: row.feedback ?? null,
                 // It came out of the database, so by definition there is a row to rate.
                 persisted: true,
@@ -703,6 +707,10 @@ export function ChatPanel() {
             onRecommendations: (items) => {
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
+            },
+            onEvidence: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, evidence: items }));
             },
             onStep: (step) => {
               // The first step arrives before any prose, which is the point: it replaces the
@@ -1385,7 +1393,11 @@ const AssistantBubble = memo(function AssistantBubble({
         )}
         {msg.answer && (
           <div className="text-sm leading-relaxed text-foreground">
-            <ChatMarkdown people={people}>{msg.answer}</ChatMarkdown>
+            {/* Only once persisted: `msg.id` is a client-minted placeholder until `done`
+                swaps in the real row id, and a chip needs the real id to fetch its snippet. */}
+            <ChatMarkdown people={people} messageId={msg.persisted ? msg.id : undefined} evidence={msg.evidence}>
+              {msg.answer}
+            </ChatMarkdown>
           </div>
         )}
         {msg.stopped && (

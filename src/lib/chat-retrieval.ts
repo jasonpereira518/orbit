@@ -209,6 +209,13 @@ export async function rerankCandidates(
   }
 }
 
+/**
+ * One line of a contact's timeline, carrying the interaction id it came from. The id survives
+ * every later trim (this file's per-tier slice, its per-line character cap) so `buildChatPrompt`
+ * can cite it after budgeting rather than before — see `@/lib/chat-evidence`.
+ */
+export type ChatTimelineEntry = { id: string; date: string; line: string };
+
 export type BudgetedContact = {
   id: string;
   fullName: string;
@@ -218,7 +225,7 @@ export type BudgetedContact = {
   aiSummary: string | null;
   notes: string | null;
   keyFacts: string[];
-  timeline: string[];
+  timeline: ChatTimelineEntry[];
   tags: string[];
   relevance: number;
   /** Compact career summary — "Ramp, ex-Stripe · MIT". Null when no profile is stored. */
@@ -249,7 +256,7 @@ const TOTAL_CONTEXT_CHAR_BUDGET = 48000;
 
 export function budgetContactsContext(
   contacts: RankedContact[],
-  snippets: Map<string, { timeline: string[] }>,
+  snippets: Map<string, { timeline: ChatTimelineEntry[] }>,
   careerLines: Map<string, string> = new Map(),
   /**
    * The question, so a trimmed note keeps the part that answers it.
@@ -270,13 +277,13 @@ export function budgetContactsContext(
     const keyFacts = c.keyFacts.slice(0, tier.facts);
     const timeline = (snippets.get(c.id)?.timeline ?? [])
       .slice(0, tier.entries)
-      .map((m) => m.slice(0, tier.entryChars));
+      .map((entry) => ({ ...entry, line: entry.line.slice(0, tier.entryChars) }));
     const career = careerLines.get(c.id) ?? null;
 
     const cost =
       c.fullName.length + (c.company?.length ?? 0) + (c.title?.length ?? 0) +
       (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) +
-      keyFacts.join("").length + timeline.join("").length +
+      keyFacts.join("").length + timeline.map((t) => t.line).join("").length +
       c.tags.join("").length + 80; // formatting overhead
     // Budget exhaustion stops serialization entirely — a later, cheaper
     // contact must not be appended out of rank order once we've run dry.

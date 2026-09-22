@@ -13,6 +13,8 @@
  *     in the browser across arbitrary chunk boundaries.
  */
 
+import type { EvidenceSource } from "@/lib/chat-evidence";
+
 export const RECOMMENDATIONS_MARKER = "---RECOMMENDATIONS---";
 
 export type RawRecommendation = {
@@ -160,6 +162,14 @@ export type ChatStreamEvent =
   | { type: "answer"; delta: string }
   | { type: "recommendations"; items: unknown[] }
   | { type: "step"; step: ChatStep }
+  /**
+   * The sources actually cited in the answer — see `@/lib/chat-evidence`. Sent once, after
+   * `recommendations` and before `done`, only when at least one citation survived. `items`
+   * is keyed by the `[eN]` id, ids only, no snippet text: the popover that shows one fetches
+   * it live and user-scoped (`getEvidenceSnippet`), so nothing extra sits in the wire payload
+   * or the row this later persists into.
+   */
+  | { type: "evidence"; items: Record<string, EvidenceSource> }
   | {
       type: "done";
       messageId: string | null;
