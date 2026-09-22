@@ -63,7 +63,7 @@ function PersonRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] leading-[18px]">{person.fullName}</span>
         <span className="block truncate text-[11px] text-[var(--muted-foreground)]">
-          {[person.title, person.company].filter(Boolean).join(" · ") || " "}
+          {[person.title, person.company].filter(Boolean).join(" · ") || "\u00a0"}
         </span>
       </span>
     </button>

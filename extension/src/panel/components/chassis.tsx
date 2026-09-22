@@ -103,9 +103,17 @@ export function IdentityZone({
     );
   }
 
-  const name = pageDisplayName(page);
+  // A page about an organization, or a list of people, has no person's name.
+  // Name what it IS rather than showing "This page" beside a "?".
+  const listed = page.candidates?.length ?? 0;
+  const name =
+    pageDisplayName(page) ??
+    page.org?.name ??
+    (listed >= 2 ? `${listed} people` : null);
   const subtitle = pageSubtitle(page);
-  const company = page.identity.company?.value ?? null;
+  const rawCompany = page.identity.company?.value ?? null;
+  // An org page's company IS its name; don't say it twice.
+  const company = rawCompany && rawCompany === name ? null : rawCompany;
   const title = page.identity.title?.value ?? null;
 
   return (

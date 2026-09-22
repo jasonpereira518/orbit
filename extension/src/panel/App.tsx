@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CircleAlert, WifiOff } from "lucide-react";
-import type { MatchCandidate } from "@contract";
+import type { MatchCandidate, PageContext } from "@contract";
 import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
 import { relativeTime } from "@/lib/format";
@@ -17,6 +17,10 @@ import { Button, Meta, Skeleton } from "./components/ui";
 import { AmbiguousView } from "./views/AmbiguousView";
 import { CaptureView } from "./views/CaptureView";
 import { HomeView } from "./views/HomeView";
+import { CompanyView } from "./views/CompanyView";
+import { PeopleView } from "./views/PeopleView";
+import { PickedPersonView } from "./views/PickedPersonView";
+import { identityOnlyPage } from "@/lib/identity-page";
 import { KnownContactView } from "./views/KnownContactView";
 import { usePanel } from "./state/usePanel";
 import { deriveRoute } from "./state/route";
@@ -40,16 +44,18 @@ function usePageScopedState(url: string | null) {
   return {
     forceCreate: current.forceCreate,
     sealed: current.sealed,
+    picked: current.picked,
     setForceCreate: (value: boolean) =>
       setHeld({ ...current, url, forceCreate: value }),
     setSealed: (value: boolean) => setHeld({ ...current, url, sealed: value }),
+    setPicked: (value: PageContext | null) => setHeld({ ...current, url, picked: value }),
   };
 }
 
 export function App() {
   const { state, api, signedIn, reload, refresh, setDirty, followPending } = usePanel();
   const pageUrl = state.page?.url ?? null;
-  const { forceCreate, sealed, setForceCreate, setSealed } =
+  const { forceCreate, sealed, picked, setForceCreate, setSealed, setPicked } =
     usePageScopedState(pageUrl);
   const [signInClicked, setSignInClicked] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -79,6 +85,8 @@ export function App() {
     candidateCount: state.resolved?.candidates.length ?? 0,
     forceCreate,
     staleOffline,
+    listedPeople: state.page?.candidates?.length ?? 0,
+    hasOrg: Boolean(state.page?.org),
   });
 
   const verdict = () => {
@@ -129,6 +137,12 @@ export function App() {
           ) : null}
         </VerdictZone>
       );
+    }
+    if (route.name === "people") {
+      return <VerdictZone>{state.page?.candidates?.length ?? 0} people on this page</VerdictZone>;
+    }
+    if (route.name === "company") {
+      return <VerdictZone>Who you know at {state.page?.org?.name}</VerdictZone>;
     }
     if (route.name === "home" && route.reason === "no-person") {
       return <VerdictZone>Not about a person</VerdictZone>;
@@ -185,6 +199,23 @@ export function App() {
           }
         />
       );
+    }
+
+    if (route.name === "people" && state.page) {
+      return (
+        <PeopleView
+          page={state.page}
+          api={api}
+          onPick={(candidate) => {
+            const page = identityOnlyPage(candidate);
+            if (page) setPicked(page);
+          }}
+        />
+      );
+    }
+
+    if (route.name === "company" && state.page) {
+      return <CompanyView page={state.page} api={api} />;
     }
 
     if (route.name === "home") {
@@ -300,15 +331,33 @@ export function App() {
       {/* Hidden, not unmounted: a capture draft or a half-typed note lives in
           this subtree, and opening Settings must not throw it away. */}
       <div hidden={settingsOpen} className="flex min-h-0 flex-1 flex-col">
-        <IdentityZone
-          page={state.page}
-          sealed={sealed}
-          stale={staleOffline}
-          unread={state.phase === "needs-permission" || state.phase === "unsupported"}
-        />
-        {verdict()}
-        {outdated ? <UpdateBand /> : null}
-        {body()}
+        {picked ? (
+          <PickedPersonView
+            key={picked.url}
+            page={picked}
+            backLabel={
+              state.page?.candidates?.length
+                ? `${state.page.candidates.length} on this page`
+                : "Back"
+            }
+            onBack={() => setPicked(null)}
+            baseState={state}
+            api={api}
+            onDirtyChange={setDirty}
+          />
+        ) : (
+          <>
+            <IdentityZone
+              page={state.page}
+              sealed={sealed}
+              stale={staleOffline}
+              unread={state.phase === "needs-permission" || state.phase === "unsupported"}
+            />
+            {verdict()}
+            {outdated ? <UpdateBand /> : null}
+            {body()}
+          </>
+        )}
       </div>
     </>
   );

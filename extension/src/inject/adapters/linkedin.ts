@@ -36,7 +36,7 @@ import {
   type SiteAdapter,
 } from "./types";
 
-const ADAPTER_VERSION = "linkedin-1";
+const ADAPTER_VERSION = "linkedin-2";
 const PROFILE_BLOB_CHARS = 10_000;
 const THREAD_BLOB_CHARS = 6_000;
 const POST_BLOB_CHARS = 4_000;
@@ -261,6 +261,7 @@ export const linkedinAdapter: SiteAdapter = {
 
     let identity = emptyIdentity();
     let candidates: PageContext["candidates"];
+    let org: PageContext["org"];
     let blobRoot: Element | null = document.querySelector("main");
     let blobLimit = PROFILE_BLOB_CHARS;
 
@@ -284,9 +285,21 @@ export const linkedinAdapter: SiteAdapter = {
       blobRoot = null;
     } else if (kind === "company") {
       identity.company = preferField(
-        field(metaContent("og:title"), "og:title", "medium"),
-        field(document.title.split("|")[0], "document.title", "low")
+        field(metaContent("og:title")?.replace(/\s*\|\s*LinkedIn\s*$/i, ""), "og:title", "medium"),
+        field(document.title.split(/[|:]/)[0], "document.title", "low")
       );
+      const orgSlug = url.pathname.match(/^\/(?:company|school)\/([^/?#]+)/i)?.[1];
+      if (identity.company?.value) {
+        org = {
+          name: identity.company.value,
+          linkedinSlug: orgSlug ? orgSlug.toLowerCase() : undefined,
+        };
+      }
+      // The company's People tab is a list of employees: offer them to pick,
+      // exactly as a search-results page does. Only what's rendered.
+      if (/^\/(?:company|school)\/[^/]+\/people/i.test(url.pathname)) {
+        candidates = listCandidates(warnings);
+      }
       blobRoot = null;
     } else {
       // /feed/ and everything else: deliberately no extraction. Never scrape
@@ -314,6 +327,7 @@ export const linkedinAdapter: SiteAdapter = {
       capturedAt: new Date().toISOString(),
       identity,
       candidates,
+      org,
       text: { ...text, fromSelection: Boolean(selection) },
       warnings,
     };

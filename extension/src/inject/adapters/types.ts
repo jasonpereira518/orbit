@@ -1,12 +1,13 @@
 import type {
   ExtractedField,
   FieldConfidence,
+  PageCandidate,
   PageContext,
   PageIdentity,
   PageKind,
 } from "@contract";
 
-export type { PageContext, PageIdentity, PageKind };
+export type { PageCandidate, PageContext, PageIdentity, PageKind };
 
 export interface SiteAdapter {
   id: string;

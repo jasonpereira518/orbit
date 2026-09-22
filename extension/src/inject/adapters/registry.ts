@@ -1,5 +1,6 @@
 import { gmailAdapter } from "./gmail";
 import { genericAdapter } from "./generic";
+import { githubAdapter } from "./github";
 import { linkedinAdapter } from "./linkedin";
 import { xAdapter } from "./x";
 import type { SiteAdapter } from "./types";
@@ -9,6 +10,7 @@ export const ADAPTERS: SiteAdapter[] = [
   linkedinAdapter,
   xAdapter,
   gmailAdapter,
+  githubAdapter,
   genericAdapter,
 ];
 

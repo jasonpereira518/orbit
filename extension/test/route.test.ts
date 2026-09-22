@@ -17,6 +17,8 @@ const ready: RouteInput = {
   candidateCount: 0,
   forceCreate: false,
   staleOffline: false,
+  listedPeople: 0,
+  hasOrg: false,
 };
 const route = (over: Partial<RouteInput>) => deriveRoute({ ...ready, ...over });
 
@@ -81,6 +83,36 @@ describe("deriveRoute", () => {
   it("a non-person page that DOES match someone is still that person", () => {
     // A company page can resolve (e.g. via a link); only a miss becomes Home.
     expect(route({ pageIsPerson: false, status: "confident", hasContact: true }).name).toBe("known");
+  });
+
+  describe("pages about several people, or an organization", () => {
+    it("a list of people is a pick list", () => {
+      expect(route({ pageIsPerson: false, listedPeople: 8 }).name).toBe("people");
+    });
+
+    it("a group thread is a pick list, not a capture with no name", () => {
+      // Threads count as person pages; with several participants there is no
+      // single person, and the panel used to open a capture for nobody.
+      expect(route({ pageIsPerson: true, listedPeople: 3 }).name).toBe("people");
+    });
+
+    it("one listed person is not a list", () => {
+      expect(route({ pageIsPerson: false, listedPeople: 1 }).name).toBe("home");
+    });
+
+    it("an organization page is the company view", () => {
+      expect(route({ pageIsPerson: false, hasOrg: true }).name).toBe("company");
+    });
+
+    it("…but a page that resolved to someone is that person", () => {
+      expect(
+        route({ pageIsPerson: false, hasOrg: true, listedPeople: 5, status: "confident", hasContact: true }).name
+      ).toBe("known");
+    });
+
+    it("the three Home reasons still win over lists while unreadable", () => {
+      expect(route({ phase: "needs-permission", listedPeople: 5, hasPage: false }).name).toBe("home");
+    });
   });
 
   it("signed-out outranks everything", () => {

@@ -25,6 +25,7 @@ import type {
 /* Every browser call the panel makes goes through `@/lib/browser`, so the
  * harness installs a typed fake there instead of stubbing `globalThis.chrome`. */
 import { installBrowser } from "@/lib/browser";
+import type { OrbitApi } from "@/lib/api";
 import { createFakeBrowser } from "./fake-browser";
 const fakeBrowser = createFakeBrowser();
 installBrowser(fakeBrowser);
@@ -44,6 +45,10 @@ const { CaptureView } = await import("@/panel/views/CaptureView");
 const { KnownContactView } = await import("@/panel/views/KnownContactView");
 const { AmbiguousView } = await import("@/panel/views/AmbiguousView");
 const { HomeView } = await import("@/panel/views/HomeView");
+const { PeopleView } = await import("@/panel/views/PeopleView");
+const { CompanyView } = await import("@/panel/views/CompanyView");
+const { PickedPersonView } = await import("@/panel/views/PickedPersonView");
+const { identityOnlyPage } = await import("@/lib/identity-page");
 const { SettingsView } = await import("@/panel/views/SettingsView");
 const { UpdateBand } = await import("@/panel/components/UpdateBand");
 import "@/styles/panel.css";
@@ -192,6 +197,24 @@ const freeEntitlements = {
   features: { starters: false, workHistory: false, company: false, search: false },
 };
 
+const listPage: PageContext = {
+  ...page({ name: null, title: null, company: null, headline: null }),
+  kind: "list",
+  url: "https://www.linkedin.com/search/results/people/?keywords=stripe",
+  candidates: [
+    { name: "Amara Osei", profileUrl: "https://www.linkedin.com/in/amara-osei", subtitle: "VP Engineering at Stripe" },
+    { name: "Ben Tate", profileUrl: "https://www.linkedin.com/in/ben-tate", subtitle: "Founder, Tidepool" },
+    { name: "Priya Nair", profileUrl: "https://www.linkedin.com/in/priya-nair", subtitle: "Designer at Linear" },
+  ],
+};
+
+const companyPage: PageContext = {
+  ...page({ name: null, title: null, company: "Stripe", headline: "Payments infrastructure" }),
+  kind: "company",
+  url: "https://www.linkedin.com/company/stripe/",
+  org: { name: "Stripe", linkedinSlug: "stripe" },
+};
+
 function me(over: { hasAiKey?: boolean } = {}): MeResponse {
   return {
     contractVersion: 1,
@@ -247,19 +270,58 @@ const API_FIXTURES: Record<string, unknown> = {
   },
   reminder: { reminderId: "h1", completion: null, restored: false },
   logInteraction: { interactionId: "i9" },
-  gate: { recorded: true, upgradeUrl: "http://localhost:3000/pricing?from=extension&feature=search" },
+  gate: (body: { feature: string }) => ({
+    recorded: true,
+    upgradeUrl: `http://localhost:3000/pricing?from=extension&feature=${body.feature}`,
+  }),
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const api: any = new Proxy(
-  {},
-  {
-    get: (_target, method: string) => async () =>
-      method in API_FIXTURES
-        ? API_FIXTURES[method]
-        : { contact: contact(), created: true, warnings: [] },
-  }
-);
+Object.assign(API_FIXTURES, {
+  resolveBatch: {
+    items: [
+      { index: 0, status: "known", contact: person("c1", "Amara Osei", "VP Engineering", "Stripe") },
+      { index: 1, status: "possible", contact: person("c2", "Ben Tate", "Founder", "Tidepool") },
+      { index: 2, status: "new", contact: null },
+    ],
+  },
+  company: { currentTotal: 3, formerTotal: 2, people: [], locked: true },
+  resolve: {
+    status: "confident",
+    contact: contact(),
+    candidates: [],
+    suggested: null,
+    changes: [],
+    startersSeed: [starters[0]],
+  },
+});
+
+/** A fake API; `over` replaces individual methods' answers (e.g. a Pro plan). */
+function makeApi(over: Record<string, unknown> = {}): OrbitApi {
+  const answers: Record<string, unknown> = { ...API_FIXTURES, ...over };
+  return new Proxy({}, {
+    // A fixture may be a function of the request, so an answer can depend on
+    // what the panel actually asked for.
+    get: (_target, method: string) => async (body: unknown) => {
+      const answer = answers[method];
+      if (typeof answer === "function") return answer(body);
+      return method in answers ? answer : { contact: contact(), created: true, warnings: [] };
+    },
+  }) as unknown as OrbitApi;
+}
+
+const api = makeApi();
+const proApi = makeApi({
+  company: {
+    currentTotal: 3,
+    formerTotal: 2,
+    locked: false,
+    people: [
+      { ...person("c1", "Amara Osei", "VP Engineering", "Stripe"), relation: "current" },
+      { ...person("c4", "Dana Wells", "Staff Engineer", "Stripe"), relation: "current" },
+      { ...person("c3", "Chioma Eze", "Research", "Anthropic"), relation: "former" },
+    ],
+  },
+});
 
 function panelState(over: Record<string, unknown> = {}) {
   return {
@@ -482,6 +544,38 @@ function States() {
         <IdentityZone page={page()} />
         <VerdictZone tone="accent">Might be someone you know</VerdictZone>
         <AmbiguousView candidates={candidates} onPick={() => {}} onCreateNew={() => {}} />
+      </Frame>
+
+      <Frame label="People — search results" note="who you know, then one at a time">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={listPage} />
+        <VerdictZone>3 people on this page</VerdictZone>
+        <PeopleView page={listPage} api={api} onPick={() => {}} />
+      </Frame>
+
+      <Frame label="Company — free" note="counts free, names are Pro">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={companyPage} />
+        <VerdictZone>Who you know at Stripe</VerdictZone>
+        <CompanyView page={companyPage} api={api} />
+      </Frame>
+
+      <Frame label="Company — Pro">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={companyPage} />
+        <VerdictZone>Who you know at Stripe</VerdictZone>
+        <CompanyView page={companyPage} api={proApi} />
+      </Frame>
+
+      <Frame label="Picked from a list" note="a person, with the way back">
+        <PanelHeader onSettings={() => {}} />
+        <PickedPersonView
+          page={identityOnlyPage({ name: "Amara Osei", profileUrl: "https://www.linkedin.com/in/amara-osei" })!}
+          backLabel="3 on this page"
+          onBack={() => {}}
+          baseState={panelState() as never}
+          api={api}
+        />
       </Frame>
 
       <Frame label="Home — unclicked tab" note="a hint, then useful anyway">

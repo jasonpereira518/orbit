@@ -28,6 +28,8 @@ export type Route =
   | { name: "error" }
   | { name: "loading" }
   | { name: "home"; reason: HomeReason; detail: string | null; lostAccess: boolean }
+  | { name: "people" }
+  | { name: "company" }
   | { name: "known" }
   | { name: "ambiguous" }
   | { name: "new" };
@@ -47,6 +49,10 @@ export type RouteInput = {
   forceCreate: boolean;
   /** Offline, but holding this same page's last resolve: show it, dimmed. */
   staleOffline: boolean;
+  /** People the page lists (search results, a team, a group thread). */
+  listedPeople: number;
+  /** The page is about an organization (`page.org`). */
+  hasOrg: boolean;
 };
 
 export function deriveRoute(input: RouteInput): Route {
@@ -69,6 +75,12 @@ export function deriveRoute(input: RouteInput): Route {
   if (input.phase === "error" && !input.staleOffline) return { name: "error" };
 
   if (input.resolving || input.status === null || !input.hasPage) return { name: "loading" };
+
+  // A page listing several people is a pick list — even a group thread, which
+  // counts as a "person" page but has no single person to capture. Unless the
+  // page itself resolved to someone, which outranks the list.
+  if (input.listedPeople >= 2 && !input.hasContact) return { name: "people" };
+  if (input.hasOrg && !input.hasContact) return { name: "company" };
 
   if (!input.pageIsPerson && input.status === "none") {
     return { name: "home", reason: "no-person", detail: null, lostAccess: false };
