@@ -66,7 +66,25 @@ export async function getChatThread(threadId: string) {
     orderBy: [asc(chatMessages.createdAt)],
   });
 
-  return { thread, messages };
+  // Which drafts in this thread have already been emailed. Derived, not stored: the send
+  // claims an interaction row keyed `chat-send:<messageId>:<contactId>`, so that row IS the
+  // record, and a reloaded card cannot offer to send again what the timeline says was sent.
+  const messageIds = new Set(messages.filter((m) => m.role === "assistant").map((m) => m.id));
+  const sent: Record<string, Record<string, string>> = {};
+  if (messageIds.size > 0) {
+    const claims = await db
+      .select({ externalId: interactions.externalId, at: interactions.interactionDate })
+      .from(interactions)
+      .where(and(eq(interactions.userId, userId), eq(interactions.source, "chat_send")))
+      .limit(500);
+    for (const claim of claims) {
+      const match = /^chat-send:([^:]+):([^:]+)$/.exec(claim.externalId ?? "");
+      if (!match || !messageIds.has(match[1]!)) continue;
+      (sent[match[1]!] ??= {})[match[2]!] = claim.at.toISOString();
+    }
+  }
+
+  return { thread, messages, sent };
 }
 
 export async function createChatThread() {

@@ -2,7 +2,7 @@
 
 import { Check, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 import { getWritingInstructions, saveWritingInstructions } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
