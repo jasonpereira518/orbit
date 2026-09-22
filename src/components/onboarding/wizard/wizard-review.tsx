@@ -2,6 +2,7 @@
 
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ExtensionNudge } from "@/components/extension/extension-nudge";
 
 export type WizardResult =
   | { kind: "manual" }
@@ -47,6 +48,8 @@ export function WizardReview({
           </ul>
         </div>
       </div>
+
+      <ExtensionNudge />
 
       <div className="flex flex-wrap gap-2">
         <Button

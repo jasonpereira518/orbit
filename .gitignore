@@ -54,6 +54,7 @@ next-env.d.ts
 extension/node_modules/
 extension/dist/
 extension/dist-e2e/
+extension/dist-e2e-handshake/
 extension/release/
 extension/*.zip
 # Intermediate build output: the injected IIFE is emitted into public/ so the

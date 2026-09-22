@@ -1,4 +1,4 @@
-import { BookOpen, NotebookPen } from "lucide-react";
+import { BookOpen, NotebookPen, Puzzle } from "lucide-react";
 import {
   AskVisual,
   ConstellationVisual,
@@ -87,6 +87,7 @@ const CODA: Feature[] = [
 const ALSO_IN_ORBIT = [
   { label: "Knowledge", Icon: BookOpen },
   { label: "Notes", Icon: NotebookPen },
+  { label: "Chrome extension", Icon: Puzzle },
 ];
 
 export function SceneFeatures() {

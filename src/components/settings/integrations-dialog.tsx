@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   KeyRound,
   MailSearch,
+  Puzzle,
   Send,
   Sparkles,
   Users,
@@ -29,6 +30,7 @@ import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { ApiSettings } from "@/components/settings/api-settings";
 import { WebhookSettings } from "@/components/settings/webhook-settings";
+import { ExtensionSettings } from "@/components/settings/integrations-extension-tab";
 import { SettingsSurfaceProvider } from "@/components/settings/settings-section";
 import {
   INTEGRATION_TAB_GROUPS,
@@ -52,6 +54,7 @@ export const INTEGRATION_ICONS: Record<IntegrationTabId, LucideIcon> = {
   calendar: CalendarDays,
   api: KeyRound,
   webhooks: Webhook,
+  extension: Puzzle,
   google: Users,
   linkedin: FileSpreadsheet,
   outlook: BookUser,
@@ -437,6 +440,8 @@ function Panel({
       return <ApiSettings />;
     case "webhooks":
       return <WebhookSettings />;
+    case "extension":
+      return <ExtensionSettings active={active} />;
     case "google":
       return <GoogleContactsImport returnTo={integrationHref("google")} />;
     case "outlook":

@@ -18,6 +18,8 @@ export const PUBLIC_ROUTES = [
   // How to connect an assistant. A setup guide whose whole audience is people deciding
   // whether to sign up, so it must be readable signed out.
   "/connect",
+  // Opened by the extension on install — usually before the person has signed in.
+  "/extension/welcome",
   "/terms",
   "/contact",
   "/sign-in(.*)",
