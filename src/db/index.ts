@@ -584,10 +584,15 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   activity jsonb DEFAULT '[]',
   feedback text,
   feedback_note text,
+  slot uuid,
+  version integer NOT NULL DEFAULT 1,
+  is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
 CREATE INDEX IF NOT EXISTS chat_messages_user_idx ON chat_messages(user_id);
+CREATE INDEX IF NOT EXISTS chat_messages_slot_idx ON chat_messages(slot);
+CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_slot_version_role_uidx ON chat_messages(slot, version, role) WHERE slot is not null;
 CREATE TABLE IF NOT EXISTS recruiters (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   full_name text NOT NULL,
@@ -1734,7 +1739,10 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // 80 = user_settings.writing_instructions, the user's own notes on how answers and drafts are
 // written (the second box in the chat Context sheet). Checked against every local and remote
 // ref on Sep 21 2026, after 79 (memory_chunks) landed in main — nothing claims 80.
-export const SCHEMA_VERSION = 80;
+//
+// 81 = chat_messages.slot/version/is_active, for edit-and-regenerate on the last turn of a
+// chat. Rescanned against every local and remote ref on Sep 21 2026 — nothing claims 81.
+export const SCHEMA_VERSION = 81;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3087,6 +3095,11 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_slot_idx ON chat_messages(slot)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_slot_version_role_uidx ON chat_messages(slot, version, role) WHERE slot is not null`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

@@ -15,12 +15,16 @@ import Link from "next/link";
 import {
   ArrowDown,
   Check,
+  ChevronLeft,
+  ChevronRight,
   History,
   Loader2,
   Mail,
   NotebookPen,
+  Pencil,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { ChatThreadProvider } from "@/components/chat/chat-thread-context";
@@ -35,6 +39,7 @@ import {
   deleteChatThread,
   getChatThread,
   listChatThreads,
+  switchChatVersion,
   updateChatThreadContext,
 } from "@/actions/chat";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
@@ -179,6 +184,9 @@ type AssistantMessage = {
 
 type ThreadMessage = UserMessage | AssistantMessage;
 
+/** One version of the last turn — see `getChatThread`'s `versions` and `@/lib/chat-versions`. */
+type VersionRow = { version: number; userMessageId: string; assistantMessageId: string };
+
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -222,6 +230,12 @@ export function ChatPanel() {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
+  /** Every version of the current thread's LAST turn, oldest first. One entry is the normal case. */
+  const [versions, setVersions] = useState<VersionRow[]>([]);
+  /** The slot `versions` belongs to — needed to call `switchChatVersion`. */
+  const [versionSlot, setVersionSlot] = useState<string | null>(null);
+  /** Which user bubble is mid-edit, if any. Only the LAST one is ever editable. */
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [question, setQuestion] = useState(initialQuestionFromUrl);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [contextOpen, setContextOpen] = useState(false);
@@ -561,10 +575,13 @@ export function ChatPanel() {
   const loadThread = useCallback(async (id: string) => {
     setLoadingThread(true);
     try {
-      const { thread, messages: rows, sent } = await getChatThread(id);
+      const { thread, messages: rows, sent, versions: loadedVersions, versionSlot: loadedSlot } = await getChatThread(id);
       setThreadId(thread.id);
       setThreadTitle(thread.title);
       setContextNotes(thread.contextNote ?? "");
+      setVersions(loadedVersions);
+      setVersionSlot(loadedSlot);
+      setEditingUserId(null);
       stickToBottomRef.current = true;
       setMessages(
         rows.map((row) =>
@@ -703,6 +720,10 @@ export function ChatPanel() {
       if (!q || busy || loadingThread) return;
 
       setLastUserQuery(q);
+      // A fresh turn starts a fresh slot; the switcher belongs to whichever turn is last.
+      setVersions([]);
+      setVersionSlot(null);
+      setEditingUserId(null);
       // Resolved from the text, not from `attached` directly: a token the user deleted
       // must not still ship that person's history to the model.
       const sending = activeMentions(q, attached);
@@ -852,6 +873,118 @@ export function ChatPanel() {
       })();
     },
     [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
+  );
+
+  /**
+   * Another version of the LAST turn: a plain regenerate (no `newQuestion`) re-asks the same
+   * question; an edit sends different text. Either way the current last user+assistant bubbles
+   * are replaced in place — not appended, the way a fresh question is — and the version list
+   * is re-read from the server once the answer lands, which is also what a stopped or failed
+   * regenerate needs: nothing here assumes success, so on any failure the thread simply keeps
+   * showing what it already had.
+   */
+  const sendVersioned = useCallback(
+    (assistantMessageId: string, newQuestion?: string) => {
+      if (!threadId || busy || loadingThread) return;
+      const target = messages.find(
+        (m): m is AssistantMessage => m.role === "assistant" && m.id === assistantMessageId
+      );
+      const targetIndex = messages.findIndex((m) => m.id === assistantMessageId);
+      const priorUser = targetIndex > 0 ? messages[targetIndex - 1] : undefined;
+      if (!target || !priorUser || priorUser.role !== "user") return;
+
+      const displayQuestion = newQuestion?.trim() || priorUser.content;
+      setEditingUserId(null);
+      setLastUserQuery(displayQuestion);
+
+      const userMsg: UserMessage = {
+        id: newId(),
+        role: "user",
+        content: displayQuestion,
+        mentionNames: newQuestion ? undefined : priorUser.mentionNames,
+      };
+      const assistantId = newId();
+      stickToBottomRef.current = true;
+      // Replace, not append: this turn is being redone, not repeated.
+      setMessages((prev) => [...prev.slice(0, targetIndex - 1), userMsg]);
+      requestAnimationFrame(() => scrollToBottom(true));
+
+      setStreaming(true);
+      void (async () => {
+        let placed = false;
+        const patch = (fn: (m: AssistantMessage) => AssistantMessage) =>
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId && m.role === "assistant" ? fn(m) : m))
+          );
+        const ensurePlaceholder = () => {
+          if (placed) return;
+          placed = true;
+          setMessages((prev) => [
+            ...prev,
+            { id: assistantId, role: "assistant", answer: "", recommendations: [], streaming: true },
+          ]);
+        };
+
+        const smoother = createStreamSmoother(
+          (chunk) => {
+            ensurePlaceholder();
+            patch((m) => ({ ...m, answer: m.answer + chunk }));
+          },
+          { reduced: prefersReducedMotionNow() }
+        );
+        smootherRef.current = smoother;
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+        let landed = false;
+        await streamChat(
+          {
+            question: displayQuestion,
+            threadId,
+            versionOf: { assistantMessageId, question: newQuestion },
+          },
+          {
+            onAnswer: (delta) => smoother.push(delta),
+            onRecommendations: (items) => {
+              smoother.flush();
+              ensurePlaceholder();
+              patch((m) => ({ ...m, recommendations: items }));
+            },
+            onStep: (step) => {
+              ensurePlaceholder();
+              patch((m) => {
+                const steps = m.steps ?? [];
+                const at = steps.findIndex((s) => s.id === step.id);
+                if (at === -1) return { ...m, steps: [...steps, step] };
+                const next = steps.slice();
+                next[at] = step;
+                return { ...m, steps: next };
+              });
+            },
+            onDone: () => {
+              landed = true;
+            },
+            onError: (message) => {
+              if (controller.signal.aborted) return;
+              smoother.cancel();
+              toast.error(message);
+            },
+          },
+          controller.signal
+        );
+        smoother.flush();
+        smootherRef.current = null;
+        abortRef.current = null;
+        setStreaming(false);
+        // Authoritative either way: on success this shows the new version active and its
+        // place in the switcher; on a stop or failure it shows the version that was never
+        // replaced, because the server never flipped anything — reloading just proves it.
+        if (landed || controller.signal.aborted) {
+          await loadThread(threadId);
+        }
+      })();
+    },
+    [threadId, busy, loadingThread, messages, scrollToBottom, loadThread]
   );
 
   /**
@@ -1150,18 +1283,54 @@ export function ChatPanel() {
                     </div>
                   )}
 
-                  {messages.map((msg) =>
-                    msg.role === "user" ? (
-                      <UserBubble key={msg.id} msg={msg} />
+                  {messages.map((msg, i) => {
+                    // Only the pair that ends the thread can be edited or regenerated —
+                    // versions exist for the last turn only.
+                    const isLastAssistant =
+                      msg.role === "assistant" && i === messages.length - 1 && msg.persisted;
+                    const isLastUser =
+                      msg.role === "user" &&
+                      i === messages.length - 1 - (messages[messages.length - 1]?.role === "assistant" ? 1 : 0) &&
+                      Boolean(messages[messages.length - 1]?.role === "assistant" && (messages[messages.length - 1] as AssistantMessage).persisted);
+                    return msg.role === "user" ? (
+                      <UserBubble
+                        key={msg.id}
+                        msg={msg}
+                        editable={isLastUser && !busy}
+                        editing={editingUserId === msg.id}
+                        onStartEdit={() => setEditingUserId(msg.id)}
+                        onCancelEdit={() => setEditingUserId(null)}
+                        onSubmitEdit={(text) => {
+                          const nextAssistant = messages[i + 1];
+                          if (nextAssistant?.role === "assistant") sendVersioned(nextAssistant.id, text);
+                        }}
+                      />
                     ) : (
                       <AssistantBubble
                         key={msg.id}
                         msg={msg}
-                        onRetry={() => sendQuestion(lastUserQuery)}
+                        onRetry={
+                          isLastAssistant ? () => sendVersioned(msg.id) : () => sendQuestion(lastUserQuery)
+                        }
+                        retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
                         onFollowUp={(q) => sendQuestion(q)}
+                        versions={isLastAssistant ? versions : []}
+                        onSwitchVersion={
+                          isLastAssistant
+                            ? async (version) => {
+                                if (!threadId || !versionSlot) return;
+                                try {
+                                  await switchChatVersion(threadId, versionSlot, version);
+                                  await loadThread(threadId);
+                                } catch (err) {
+                                  toast.error(friendlyError(err, "Couldn’t switch versions — try again?"));
+                                }
+                              }
+                            : undefined
+                        }
                       />
-                    )
-                  )}
+                    );
+                  })}
 
                   {/*
                     Only reachable before the first `step` event lands — which is now within
@@ -1437,9 +1606,98 @@ export function ChatPanel() {
   );
 }
 
-const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
+const UserBubble = memo(function UserBubble({
+  msg,
+  editable = false,
+  editing = false,
+  onStartEdit,
+  onCancelEdit,
+  onSubmitEdit,
+}: {
+  msg: UserMessage;
+  /** Only the very last user turn can be edited — versions exist for the last turn only. */
+  editable?: boolean;
+  editing?: boolean;
+  onStartEdit?: () => void;
+  onCancelEdit?: () => void;
+  onSubmitEdit?: (text: string) => void;
+}) {
+  const [text, setText] = useState(msg.content);
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    setText(msg.content);
+    const el = fieldRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing, msg.content]);
+
+  function submit() {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    onSubmitEdit?.(trimmed);
+  }
+
+  if (editing) {
+    return (
+      <div className="flex justify-end">
+        <div className="w-full max-w-[85%] rounded-2xl rounded-br-md border border-primary/40 bg-background p-2">
+          <Textarea
+            ref={fieldRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                onCancelEdit?.();
+              }
+            }}
+            rows={2}
+            aria-label="Edit your question"
+            className="min-h-16 resize-none border-none bg-transparent p-1 text-sm shadow-none focus-visible:ring-0"
+          />
+          <div className="mt-1 flex justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={onCancelEdit}
+              className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Cancel edit"
+              title="Cancel"
+            >
+              <X className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!text.trim()}
+              className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Save & ask
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex justify-end">
+    <div className="group flex items-center justify-end gap-1.5">
+      {editable && (
+        <button
+          type="button"
+          onClick={onStartEdit}
+          aria-label="Edit this question"
+          title="Edit"
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Pencil className="size-3.5" />
+        </button>
+      )}
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
         <MentionText text={msg.content} names={msg.mentionNames} />
       </div>
@@ -1450,11 +1708,18 @@ const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
 const AssistantBubble = memo(function AssistantBubble({
   msg,
   onRetry,
+  retryLabel,
   onFollowUp,
+  versions = [],
+  onSwitchVersion,
 }: {
   msg: AssistantMessage;
   onRetry?: () => void;
+  retryLabel?: string;
   onFollowUp?: (question: string) => void;
+  /** Every version of this turn, when it is the last one. Otherwise empty — no switcher. */
+  versions?: VersionRow[];
+  onSwitchVersion?: (version: number) => void;
 }) {
   const steps = msg.steps ?? [];
 
@@ -1529,13 +1794,17 @@ const AssistantBubble = memo(function AssistantBubble({
           </div>
         )}
         {!msg.streaming && msg.answer && (
-          <AnswerActions
-            messageId={msg.id}
-            answer={msg.answer}
-            persisted={Boolean(msg.persisted)}
-            initialFeedback={msg.feedback ?? null}
-            onRetry={onRetry}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <AnswerActions
+              messageId={msg.id}
+              answer={msg.answer}
+              persisted={Boolean(msg.persisted)}
+              initialFeedback={msg.feedback ?? null}
+              onRetry={onRetry}
+              retryLabel={retryLabel}
+            />
+            {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}
+          </div>
         )}
         {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
           <div className="flex flex-wrap gap-1.5">
@@ -1555,6 +1824,47 @@ const AssistantBubble = memo(function AssistantBubble({
     </div>
   );
 });
+
+function VersionSwitcher({
+  versions,
+  currentId,
+  onSwitch,
+}: {
+  versions: VersionRow[];
+  /** The assistant message id currently shown, to find its place among `versions`. */
+  currentId: string;
+  onSwitch?: (version: number) => void;
+}) {
+  const index = versions.findIndex((v) => v.assistantMessageId === currentId);
+  if (index === -1) return null;
+  const current = versions[index]!;
+  return (
+    <div className="flex items-center gap-0.5 text-xs text-muted-foreground" role="group" aria-label="Answer version">
+      <button
+        type="button"
+        onClick={() => onSwitch?.(versions[index - 1]!.version)}
+        disabled={index === 0}
+        aria-label="Previous version"
+        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <ChevronLeft className="size-3.5" />
+      </button>
+      <span className="tabular-nums" aria-live="polite">
+        {index + 1}/{versions.length}
+      </span>
+      <button
+        type="button"
+        onClick={() => onSwitch?.(versions[index + 1]!.version)}
+        disabled={index === versions.length - 1}
+        aria-label="Next version"
+        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <ChevronRight className="size-3.5" />
+      </button>
+      <span className="sr-only">version {current.version}</span>
+    </div>
+  );
+}
 
 const RecommendationCard = memo(function RecommendationCard({
   rec,

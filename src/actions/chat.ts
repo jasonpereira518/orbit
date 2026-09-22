@@ -22,6 +22,7 @@ import {
 } from "@/lib/chat-suggestions";
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
 import { persistAssistantTurn } from "@/lib/chat-persist";
+import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import { requireUserForSurface } from "@/lib/plan-guards";
@@ -61,10 +62,19 @@ export async function getChatThread(threadId: string) {
   const messages = await db.query.chatMessages.findMany({
     where: and(
       eq(chatMessages.threadId, threadId),
-      eq(chatMessages.userId, userId)
+      eq(chatMessages.userId, userId),
+      eq(chatMessages.isActive, true)
     ),
     orderBy: [asc(chatMessages.createdAt)],
   });
+
+  // Every version of the LAST turn, for the switcher — only the last turn ever has more than
+  // one. `versions` is empty for a thread with no messages or whose last turn was never
+  // versioned, which is the common case and costs nothing extra to detect.
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  const versions = lastAssistant?.slot
+    ? await loadVersions(db, userId, threadId, lastAssistant.slot)
+    : [];
 
   // Which drafts in this thread have already been emailed. Derived, not stored: the send
   // claims an interaction row keyed `chat-send:<messageId>:<contactId>`, so that row IS the
@@ -84,7 +94,7 @@ export async function getChatThread(threadId: string) {
     }
   }
 
-  return { thread, messages, sent };
+  return { thread, messages, sent, versions, versionSlot: lastAssistant?.slot ?? null };
 }
 
 export async function createChatThread() {
@@ -146,6 +156,28 @@ export async function setChatMessageFeedback(
     })
     .where(and(eq(chatMessages.id, messageId), eq(chatMessages.userId, userId)));
   return { feedback: next };
+}
+
+/** How many messages editing `assistantMessageId` would discard — for the confirm dialog. */
+export async function previewEditDiscard(assistantMessageId: string) {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+  const message = await db.query.chatMessages.findFirst({
+    where: and(eq(chatMessages.id, assistantMessageId), eq(chatMessages.userId, userId), eq(chatMessages.role, "assistant")),
+    columns: { threadId: true },
+  });
+  if (!message) throw new Error("Answer not found");
+  const discardCount = await discardCountAfter(db, userId, message.threadId, assistantMessageId);
+  return { discardCount };
+}
+
+/** Show a different version of the last turn — the `‹ 2/3 ›` switcher. */
+export async function switchChatVersion(threadId: string, slot: string, version: number) {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+  const target = await switchVersion(db, userId, threadId, slot, version);
+  if (!target) throw new Error("That version was not found");
+  return target;
 }
 
 export async function deleteChatThread(threadId: string) {

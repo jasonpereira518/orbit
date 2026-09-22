@@ -437,6 +437,12 @@ export async function prepareChatContext(
      * `askNetwork`, which has no channel to report on. See `@/lib/chat-steps`.
      */
     steps?: StepEmitter;
+    /**
+     * Prior-turn history omits every row in this slot — both the version being replaced and
+     * the not-yet-committed one being written. Set only on a version request; otherwise the
+     * turn being asked about is not in history anyway (it has not been sent yet).
+     */
+    excludeSlot?: string | null;
   }
 ): Promise<ChatContext> {
   const db = await getDb();
@@ -471,11 +477,20 @@ export async function prepareChatContext(
         : Promise.resolve(null),
       threadId
         ? db.query.chatMessages.findMany({
-            where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
+            where: and(
+              eq(chatMessages.threadId, threadId),
+              eq(chatMessages.userId, userId),
+              eq(chatMessages.isActive, true),
+              options.excludeSlot ? sql`${chatMessages.slot} is distinct from ${options.excludeSlot}` : undefined
+            ),
             orderBy: [desc(chatMessages.createdAt)],
             limit: PRIOR_TURN_LIMIT,
             columns: { role: true, content: true },
-          })
+          }).then((rows) =>
+            // A stopped turn persists its question with no reply. Newest-first, so that is
+            // only ever the first row — never orphan it into history as an unanswered ask.
+            rows.length && rows[0]!.role === "user" ? rows.slice(1) : rows
+          )
         : Promise.resolve([]),
       retrieveRankedContacts(userId, q, steps, photos),
       // Exhaustive membership for any organisation the question names — the one thing a
