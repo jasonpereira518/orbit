@@ -227,7 +227,7 @@ export function scoreResearchAnswer(input: {
  * counts. Printing `meanLookups 1.5` as "150.0%" would read as a broken metric.
  */
 export function formatMetric(key: string, value: number): string {
-  if (/Hits$|^phantom|Ids$|^filtered|WrongSkips$/.test(key)) return String(value);
+  if (/Hits$|^phantom|Ids$|^filtered|WrongSkips$|^wrong|^lost|Keeps$/.test(key)) return String(value);
   if (/^mean/.test(key)) return value.toFixed(2);
   return `${(value * 100).toFixed(1)}%`;
 }

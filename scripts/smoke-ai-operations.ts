@@ -132,8 +132,13 @@ console.log("\nDerived lists");
     "background set is the bulk operations (the scan's two decision steps included)",
     [...BACKGROUND_AI_OPERATIONS].sort().join(",") ===
       [
+        "calendar.kind",
+        "duplicates.same_person",
+        "duplicates.same_person.llm",
         "import.enrich",
+        "import.enrich.gate",
         "import.linkedin.timeline",
+        "import.linkedin.timeline.decide",
         "recruiter.gate",
         "recruiter.prefilter",
         "recruiter.scan",

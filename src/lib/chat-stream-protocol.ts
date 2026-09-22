@@ -13,6 +13,9 @@
  *     in the browser across arbitrary chunk boundaries.
  */
 
+import type { EvidenceSource } from "@/lib/chat-evidence";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
+
 export const RECOMMENDATIONS_MARKER = "---RECOMMENDATIONS---";
 
 export type RawRecommendation = {
@@ -24,9 +27,14 @@ export type RawRecommendation = {
   draft_message: string | null;
 };
 
+/** The model's own shape for a proposal — validated and re-typed by `validateProposedActions`. */
+export type RawProposedAction = unknown;
+
 export type SplitResult = {
   answer: string;
   recommendations: RawRecommendation[];
+  /** Present when the model proposed an action. Unvalidated — see `@/lib/chat-proposed-actions`. */
+  proposedActions: RawProposedAction[];
   parseError?: string;
 };
 
@@ -71,7 +79,7 @@ export function createAnswerSplitter() {
       if (afterMarker === null) {
         prose += pending;
         pending = "";
-        return { answer: prose.trim(), recommendations: [] };
+        return { answer: prose.trim(), recommendations: [], proposedActions: [] };
       }
       const parsed = parseRecommendations(afterMarker);
       return { answer: prose.trim(), ...parsed };
@@ -79,26 +87,34 @@ export function createAnswerSplitter() {
   };
 }
 
-function parseRecommendations(raw: string): Pick<SplitResult, "recommendations" | "parseError"> {
+function parseRecommendations(raw: string): Pick<SplitResult, "recommendations" | "proposedActions" | "parseError"> {
   let text = raw.trim();
   // Tolerate a fenced block, and an object wrapping the array.
   text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  if (!text) return { recommendations: [] };
+  if (!text) return { recommendations: [], proposedActions: [] };
   try {
     const value: unknown = JSON.parse(text);
+    // Both the bare array (recommendations only, the original shape) and the wrapper object
+    // (recommendations plus proposed_actions) are tolerated — a model that has not been asked
+    // for proposals, or answers a question with none, still parses the same way it always did.
     const list = Array.isArray(value)
       ? value
       : value && typeof value === "object" && Array.isArray((value as { recommendations?: unknown }).recommendations)
         ? (value as { recommendations: unknown[] }).recommendations
         : null;
-    if (!list) return { recommendations: [], parseError: "recommendations is not an array" };
+    if (!list) return { recommendations: [], proposedActions: [], parseError: "recommendations is not an array" };
+    const proposedActions =
+      value && typeof value === "object" && Array.isArray((value as { proposed_actions?: unknown }).proposed_actions)
+        ? (value as { proposed_actions: unknown[] }).proposed_actions
+        : [];
     return {
       recommendations: list.filter(
         (r): r is RawRecommendation => Boolean(r) && typeof r === "object" && typeof (r as RawRecommendation).name === "string"
       ),
+      proposedActions,
     };
   } catch (err) {
-    return { recommendations: [], parseError: err instanceof Error ? err.message : String(err) };
+    return { recommendations: [], proposedActions: [], parseError: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -160,11 +176,25 @@ export type ChatStreamEvent =
   | { type: "answer"; delta: string }
   | { type: "recommendations"; items: unknown[] }
   | { type: "step"; step: ChatStep }
+  /**
+   * The sources actually cited in the answer — see `@/lib/chat-evidence`. Sent once, after
+   * `recommendations` and before `done`, only when at least one citation survived. `items`
+   * is keyed by the `[eN]` id, ids only, no snippet text: the popover that shows one fetches
+   * it live and user-scoped (`getEvidenceSnippet`), so nothing extra sits in the wire payload
+   * or the row this later persists into.
+   */
+  | { type: "evidence"; items: Record<string, EvidenceSource> }
+  /** Actions this answer proposed, already validated — see `@/lib/chat-proposed-actions`. */
+  | { type: "actions"; items: StoredProposedAction[] }
   | {
       type: "done";
       messageId: string | null;
+      /** The user row this turn persisted, so the client can address it — pencil-edit, versions. */
+      userMessageId: string | null;
       threadId: string | null;
       title: string | null;
+      /** Present when this turn was a version of an earlier one. See `@/lib/chat-versions`. */
+      version?: { slot: string; version: number } | null;
       /** The relevance-ranked contacts the answer was grounded in (the ask bar shows them). */
       retrieved: Array<{
         id: string;

@@ -13,6 +13,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getCurrentUserProfile } from "@/lib/auth";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import { sendGmailMessage } from "@/lib/gmail-send";
 import { gmailConnections } from "@/db/schema";
 import {
@@ -122,6 +123,8 @@ export async function generateRecruiterDrafts(
 
     const profile = await getCurrentUserProfile().catch(() => null);
     const senderName = profile?.name?.trim() || null;
+    // Once per batch: the drafts share one sender.
+    const writingInstructions = await loadWritingInstructions(userId);
 
     const drafts = await generateRecruiterDraftsBatch(
       userId,
@@ -138,6 +141,7 @@ export async function generateRecruiterDrafts(
         lastEmailAt: link.lastEmailAt,
         userGoals: goalTexts,
         senderName,
+        writingInstructions,
       }))
     );
 

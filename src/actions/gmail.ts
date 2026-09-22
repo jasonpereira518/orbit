@@ -1,6 +1,7 @@
 "use server";
 
 import { and, desc, eq } from "drizzle-orm";
+import { safeReturnPath } from "@/lib/safe-return-path";
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
@@ -148,8 +149,7 @@ export async function startGmailOAuth(input: {
   });
 
   // returnTo is a same-origin path only — never an absolute/external URL.
-  const safeReturnTo =
-    input.returnTo && input.returnTo.startsWith("/") ? input.returnTo : "";
+  const safeReturnTo = safeReturnPath(input.returnTo) ?? "";
   // The purposes ride in the state so the callback can check that Google granted the scopes
   // this entry point asked for. encodeURIComponent keeps ':' out of returnTo.
   const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}:${serializeGooglePurposes(purposes)}`;
@@ -228,7 +228,7 @@ export async function consumeGmailOAuthState(
   const returnTo = encodedReturnTo ? decodeURIComponent(encodedReturnTo) : "";
   return {
     userId,
-    returnTo: returnTo.startsWith("/") ? returnTo : null,
+    returnTo: safeReturnPath(returnTo),
     purposes: parseGooglePurposes(rawPurpose),
   };
 }

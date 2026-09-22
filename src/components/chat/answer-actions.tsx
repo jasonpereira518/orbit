@@ -22,6 +22,8 @@ export type AnswerActionsProps = {
   persisted: boolean;
   initialFeedback?: "up" | "down" | null;
   onRetry?: () => void;
+  /** "Ask again" by default; the last answer in a thread says "Regenerate" instead. */
+  retryLabel?: string;
   className?: string;
 };
 
@@ -31,6 +33,7 @@ export function AnswerActions({
   persisted,
   initialFeedback = null,
   onRetry,
+  retryLabel = "Ask again",
   className,
 }: AnswerActionsProps) {
   const [copied, setCopied] = useState(false);
@@ -60,6 +63,9 @@ export function AnswerActions({
     try {
       const res = await setChatMessageFeedback(messageId, value);
       setFeedback(res.feedback);
+      // Silent on un-set — clicking the same thumbs again to take it back isn't an event
+      // worth a toast, only actually sending a rating is.
+      if (res.feedback) toast.success("Thanks — sent as feedback");
     } catch (err) {
       setFeedback(previous);
       toast.error(friendlyError(err, "Couldn’t save that — try again?"));
@@ -75,7 +81,7 @@ export function AnswerActions({
       </ActionButton>
 
       {onRetry && (
-        <ActionButton label="Ask again" onClick={onRetry}>
+        <ActionButton label={retryLabel} onClick={onRetry}>
           <RefreshCw className="size-3.5" />
         </ActionButton>
       )}
@@ -87,14 +93,14 @@ export function AnswerActions({
             pressed={feedback === "up"}
             onClick={() => void rate("up")}
           >
-            <ThumbsUp className="size-3.5" />
+            <ThumbsUp className={cn("size-3.5", feedback === "up" && "fill-current")} />
           </ActionButton>
           <ActionButton
             label="Bad answer"
             pressed={feedback === "down"}
             onClick={() => void rate("down")}
           >
-            <ThumbsDown className="size-3.5" />
+            <ThumbsDown className={cn("size-3.5", feedback === "down" && "fill-current")} />
           </ActionButton>
         </>
       )}

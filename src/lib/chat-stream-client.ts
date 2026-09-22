@@ -1,4 +1,6 @@
 import type { ChatRecommendation } from "@/db/schema";
+import type { EvidenceSource } from "@/lib/chat-evidence";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { parseSseChunk, type ChatStep, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 
 /**
@@ -20,6 +22,10 @@ export type ChatStreamHandlers = {
    * step with the same id replaces the earlier one rather than being appended.
    */
   onStep?: (step: ChatStep) => void;
+  /** The sources actually cited in the answer — see `@/lib/chat-evidence`. Sent once, if any. */
+  onEvidence?: (items: Record<string, EvidenceSource>) => void;
+  /** Actions this answer proposed, already validated. Sent once, if any. */
+  onActions?: (items: StoredProposedAction[]) => void;
   onDone: (info: DoneInfo) => void;
   onError: (message: string) => void;
 };
@@ -52,6 +58,11 @@ export async function streamChat(
     contactId?: string | null;
     /** Contact ids the composer's `@Name` chips resolved to. */
     contextContactIds?: string[];
+    /**
+     * Ask for another version of the last turn instead of a new one — omitting `question`
+     * regenerates the same ask, a `question` edits it. See `@/lib/chat-versions`.
+     */
+    versionOf?: { assistantMessageId: string; question?: string };
   },
   handlers: ChatStreamHandlers,
   signal?: AbortSignal
@@ -123,6 +134,12 @@ function dispatch(event: ChatStreamEvent, handlers: ChatStreamHandlers) {
       return;
     case "step":
       handlers.onStep?.(event.step);
+      return;
+    case "evidence":
+      handlers.onEvidence?.(event.items);
+      return;
+    case "actions":
+      handlers.onActions?.(event.items);
       return;
     case "done":
       handlers.onDone(event);

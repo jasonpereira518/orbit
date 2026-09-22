@@ -66,15 +66,19 @@ async function main() {
   check("snippets exist for every retrieved contact", ctx.retrieved.every((c) => ctx.snippets.has(c.id)));
   check(
     "Ada's message reaches the timeline",
-    (ctx.snippets.get(ada)?.timeline ?? []).some((m: string) => /Tuesday/.test(m)),
+    (ctx.snippets.get(ada)?.timeline ?? []).some((m: { line: string }) => /Tuesday/.test(m.line)),
     JSON.stringify(ctx.snippets.get(ada)?.timeline)
   );
   check(
     "and it is dated and labelled, not bare text",
-    (ctx.snippets.get(ada)?.timeline ?? []).some((m: string) =>
-      /^\d{4}-\d{2}-\d{2} · LinkedIn: /.test(m)
+    (ctx.snippets.get(ada)?.timeline ?? []).some((m: { line: string }) =>
+      /^\d{4}-\d{2}-\d{2} · LinkedIn: /.test(m.line)
     ),
     JSON.stringify(ctx.snippets.get(ada)?.timeline)
+  );
+  check(
+    "every timeline entry carries the interaction id it came from",
+    (ctx.snippets.get(ada)?.timeline ?? []).every((m: { id: string }) => typeof m.id === "string" && m.id.length > 0)
   );
   check("no focus: the question is passed through unscoped", ctx.scopedQuestion === ctx.q);
   check("no thread: no prior turns", ctx.priorTurns.length === 0 && ctx.thread === null);
@@ -205,12 +209,12 @@ async function main() {
   const fair = await prepareChatContext(USER, "Who do I know at Acme?", {});
   check(
     "a coffee reaches the model, not just LinkedIn messages",
-    (fair.snippets.get(chatty)?.timeline ?? []).some((l: string) => /In person: Chatty meeting/.test(l)),
+    (fair.snippets.get(chatty)?.timeline ?? []).some((l: { line: string }) => /In person: Chatty meeting/.test(l.line)),
     JSON.stringify(fair.snippets.get(chatty)?.timeline?.slice(0, 2))
   );
   check(
     "a quiet contact is not starved by a chatty one",
-    (fair.snippets.get(quiet)?.timeline ?? []).some((l: string) => /The one call we ever had/.test(l)),
+    (fair.snippets.get(quiet)?.timeline ?? []).some((l: { line: string }) => /The one call we ever had/.test(l.line)),
     JSON.stringify(fair.snippets.get(quiet)?.timeline)
   );
   check(

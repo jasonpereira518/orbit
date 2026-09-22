@@ -14,6 +14,8 @@ import { relations, sql } from "drizzle-orm";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
+import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
+import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -108,6 +110,15 @@ export const userSettings = pgTable("user_settings", {
    * say so once and offer the old one back. Null for everyone who chose their own.
    */
   aiModelMigratedFrom: text("ai_model_migrated_from"),
+  /**
+   * The user's own standing notes on how answers and drafts should read — tone, length,
+   * sign-off. Free text they wrote, capped and cleaned by `src/lib/writing-instructions.ts`.
+   * Null means none, and every prompt is then byte-identical to what it was before this
+   * column existed. It is content, not a setting: a preferences purge clears it, and it is
+   * never a credential, so it must not take a `_hash`/`_token`/`_secret` suffix (export
+   * redacts those by name).
+   */
+  writingInstructions: text("writing_instructions"),
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),
@@ -1088,7 +1099,7 @@ export const interactionMentions = pgTable(
     contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
     mentionText: text("mention_text").notNull(),
     confidence: real("confidence").notNull(),
-    matchedBy: text("matched_by").$type<"exact_name" | "name_company" | "first_name_unique" | "user_pick">().notNull(),
+    matchedBy: text("matched_by").$type<"exact_name" | "name_company" | "first_name_unique" | "user_pick" | "decision">().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -2383,15 +2394,53 @@ export const chatMessages = pgTable(
      * question was asked. Re-deriving it later would quietly answer a different question.
      */
     activity: jsonb("activity").$type<ChatStepRecord[]>().default([]),
+    /**
+     * Every source this answer actually cited, keyed by its `[eN]` id — see
+     * `@/lib/chat-evidence`. Ids only, never a copy of the note or interaction text: the
+     * popover that shows a citation re-reads the live record, user-scoped, so nothing here
+     * duplicates the most private table in the schema.
+     */
+    evidence: jsonb("evidence").$type<Record<string, EvidenceSourceRecord>>().default({}),
+    /**
+     * Actions this answer PROPOSED — log a note, set a reminder, schedule a follow-up —
+     * never ones it took. See `@/lib/chat-proposed-actions` for the shape and validation, and
+     * `commitProposedAction` (@/actions/chat-actions) for the only path that turns one into a
+     * real write, which always starts with a person's own click.
+     */
+    proposedActions: jsonb("proposed_actions").$type<StoredProposedActionRecord[]>().default([]),
     /** Thumbs on the answer. Null until the user says something. */
     feedback: text("feedback").$type<"up" | "down">(),
     /** The optional note a thumbs-down can carry. */
     feedbackNote: text("feedback_note"),
+    /**
+     * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
+     * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
+     * that has `slot` null and is its own slot, backfilled the first time it is edited or
+     * regenerated (see `resolveVersionTarget` in `@/lib/chat-versions`). Only the LAST turn
+     * in a thread ever grows more than one version — editing an older turn discards what
+     * came after it instead (see `chat-versions.ts`).
+     */
+    slot: uuid("slot"),
+    version: integer("version").default(1).notNull(),
+    /**
+     * Which version of its slot is the one shown and the one prior-turn context reads. A
+     * new version is inserted INACTIVE and flipped in one statement once its answer is
+     * ready, so a stopped or failed regenerate leaves the version it was replacing active.
+     */
+    isActive: boolean("is_active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     index("chat_messages_thread_idx").on(t.threadId),
     index("chat_messages_user_idx").on(t.userId),
+    index("chat_messages_slot_idx").on(t.slot),
+    // Guards the version-flip statement rather than application logic: two regenerate
+    // clicks racing to claim "version 2" of the same slot can only ever produce one row —
+    // one PER ROLE, since a version is a pair, a user row and an assistant row, both
+    // legitimately sharing the same (slot, version).
+    uniqueIndex("chat_messages_slot_version_role_uidx")
+      .on(t.slot, t.version, t.role)
+      .where(sql`slot is not null`),
   ]
 );
 

@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
+  writing_instructions text,
   onboarding_completed_at timestamptz,
   first_name text,
   last_name text,
@@ -582,12 +583,19 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   recommendations jsonb,
   attached_contacts jsonb DEFAULT '[]',
   activity jsonb DEFAULT '[]',
+  evidence jsonb DEFAULT '{}',
+  proposed_actions jsonb DEFAULT '[]',
   feedback text,
   feedback_note text,
+  slot uuid,
+  version integer NOT NULL DEFAULT 1,
+  is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
 CREATE INDEX IF NOT EXISTS chat_messages_user_idx ON chat_messages(user_id);
+CREATE INDEX IF NOT EXISTS chat_messages_slot_idx ON chat_messages(slot);
+CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_slot_version_role_uidx ON chat_messages(slot, version, role) WHERE slot is not null;
 CREATE TABLE IF NOT EXISTS recruiters (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   full_name text NOT NULL,
@@ -1730,15 +1738,28 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // third time a number has been contested, so: the scan has to cover `git worktree list`, not
 // just the remote. Checked against every remote branch AND all 69 local worktrees on
 // Sep 20 2026; 78 was the highest found anywhere.
+// 82 = chat_messages.evidence — citations for a chat answer, keyed by the `[eN]` id each
+// interaction or contact's summary/notes was cited under. Branch B, item 1 of the chat plan.
+// #252 (chat UX branch) holds 80/81 unmerged; rescanned against every local and remote ref on
+// Sep 22 2026 — nothing else claims 82.
 //
-// 84 = user_settings.typesafe_api_key_encrypted — a person's own TypeSafe key, for Jev, the
-// decision model behind the recruiter gate and the chat rerank (src/lib/decisions/). NOT 80–83:
-// 80 and 81 are held by `claude/chat-ux-features-v2` (writing_instructions, chat_messages
-// slots) and 82 and 83 by `claude/chat-source-chips` (chat_messages evidence and
-// proposed_actions), all unmerged. This branch first took 82 and had to move when
-// chat-source-chips was pushed mid-review — the rescan before a PR is not optional. Scanned
-// every remote branch and all local worktrees on Sep 22 2026; 83 was the highest anywhere.
-export const SCHEMA_VERSION = 84;
+// 83 = chat_messages.proposed_actions — log/remind/follow-up actions a chat answer PROPOSED,
+// never one it took; a person's own click is the only path to the real write. Branch B, item
+// 2. Rescanned against every local and remote ref on Sep 22 2026 — nothing claims 83.
+//
+// 84 (landed in main via PR #256) = user_settings.typesafe_api_key_encrypted — a person's own
+// TypeSafe key, for Jev, the decision model behind the recruiter gate and the chat rerank
+// (src/lib/decisions/).
+//
+// 85 (landed in main via PR #252, chat-ux-features-v2) = user_settings.writing_instructions
+// and chat_messages.slot/version/is_active, for the chat Context sheet's writing preferences
+// and edit-and-regenerate on the last turn of a chat.
+//
+// NOT 83 anymore. Both 84 and 85 above landed in main while this branch (chat-source-chips)
+// was still in review. Rescanned against every remote branch and every local worktree on
+// Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
+// the highest found anywhere and is still free.
+export const SCHEMA_VERSION = 86;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3089,8 +3110,16 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS activity jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS evidence jsonb DEFAULT '{}'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS proposed_actions jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_slot_idx ON chat_messages(slot)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_slot_version_role_uidx ON chat_messages(slot, version, role) WHERE slot is not null`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

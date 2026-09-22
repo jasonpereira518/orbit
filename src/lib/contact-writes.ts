@@ -185,6 +185,41 @@ export function safeTimestamp(value?: string | Date | null): Date | null {
   return date;
 }
 
+/** Trimmed, blank-free, and de-duplicated case-insensitively (the first spelling wins). */
+function cleanTagNames(tagNames: readonly string[] = []): string[] {
+  const seen = new Map<string, string>();
+  for (const raw of tagNames) {
+    const name = raw.trim();
+    if (name && !seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * The account's tags for these names, creating the missing ones — matched CASE-
+ * INSENSITIVELY. An exact match made "Fintech", "fintech" and "FinTech" three tags, because
+ * every capture writes whatever casing the model happened to produce. Keyed by lowercase.
+ */
+async function tagsFor(userId: string, names: readonly string[]) {
+  const db = await getDb();
+  const byLower = new Map<string, typeof tags.$inferSelect>();
+  if (names.length === 0) return byLower;
+  const existing = await db.query.tags.findMany({
+    where: and(eq(tags.userId, userId), inArray(sql`lower(${tags.name})`, names.map((n) => n.toLowerCase()))),
+  });
+  for (const tag of existing) if (!byLower.has(tag.name.toLowerCase())) byLower.set(tag.name.toLowerCase(), tag);
+
+  const missing = names.filter((name) => !byLower.has(name.toLowerCase()));
+  if (missing.length > 0) {
+    const created = await db
+      .insert(tags)
+      .values(missing.map((name) => ({ userId, name })))
+      .returning();
+    for (const tag of created) byLower.set(tag.name.toLowerCase(), tag);
+  }
+  return byLower;
+}
+
 async function syncTags(
   userId: string,
   contactId: string,
@@ -193,33 +228,36 @@ async function syncTags(
   const db = await getDb();
   await db.delete(contactTags).where(eq(contactTags.contactId, contactId));
 
-  const names = [
-    ...new Set(tagNames.map((raw) => raw.trim()).filter(Boolean)),
-  ];
+  const names = cleanTagNames(tagNames);
   if (names.length === 0) return;
 
-  const existing = await db.query.tags.findMany({
-    where: and(eq(tags.userId, userId), inArray(tags.name, names)),
-  });
-  const byName = new Map(existing.map((tag) => [tag.name, tag]));
-
-  const missing = names.filter((name) => !byName.has(name));
-  if (missing.length > 0) {
-    const created = await db
-      .insert(tags)
-      .values(missing.map((name) => ({ userId, name })))
-      .returning();
-    for (const tag of created) {
-      byName.set(tag.name, tag);
-    }
-  }
-
+  const byLower = await tagsFor(userId, names);
   await db.insert(contactTags).values(
     names.map((name) => ({
       contactId,
-      tagId: byName.get(name)!.id,
+      tagId: byLower.get(name.toLowerCase())!.id,
     }))
   );
+}
+
+/**
+ * A contact's current tag names plus `adding` — for writes that ADD tags rather than set
+ * the full list. Saving a capture onto an existing contact used to pass only the note's tags
+ * into a write that replaces the list, so the contact's other tags were deleted, and a note
+ * with no tags wiped them all.
+ */
+export async function withExistingTagNames(
+  userId: string,
+  contactId: string,
+  adding: readonly string[]
+): Promise<string[]> {
+  const db = await getDb();
+  const current = await db
+    .select({ name: tags.name })
+    .from(contactTags)
+    .innerJoin(tags, eq(tags.id, contactTags.tagId))
+    .where(and(eq(contactTags.contactId, contactId), eq(tags.userId, userId)));
+  return cleanTagNames([...current.map((t) => t.name), ...adding]);
 }
 
 /** Bulk variant of `syncTags` for freshly-created contacts (no existing tags to delete). */
@@ -227,33 +265,16 @@ async function syncTagsBulk(
   userId: string,
   items: { contactId: string; tagNames?: string[] }[]
 ) {
-  const perContactNames = items.map((item) => [
-    ...new Set((item.tagNames || []).map((raw) => raw.trim()).filter(Boolean)),
-  ]);
-  const allNames = [...new Set(perContactNames.flat())];
+  const perContactNames = items.map((item) => cleanTagNames(item.tagNames));
+  const allNames = cleanTagNames(perContactNames.flat());
   if (allNames.length === 0) return;
 
   const db = await getDb();
-  const existing = await db.query.tags.findMany({
-    where: and(eq(tags.userId, userId), inArray(tags.name, allNames)),
-  });
-  const byName = new Map(existing.map((tag) => [tag.name, tag]));
-
-  const missing = allNames.filter((name) => !byName.has(name));
-  if (missing.length > 0) {
-    const created = await db
-      .insert(tags)
-      .values(missing.map((name) => ({ userId, name })))
-      .returning();
-    for (const tag of created) {
-      byName.set(tag.name, tag);
-    }
-  }
-
+  const byLower = await tagsFor(userId, allNames);
   const rows = items.flatMap((item, i) =>
     perContactNames[i].map((name) => ({
       contactId: item.contactId,
-      tagId: byName.get(name)!.id,
+      tagId: byLower.get(name.toLowerCase())!.id,
     }))
   );
   if (rows.length > 0) {
@@ -1005,6 +1026,38 @@ export async function logInteractionForUser(
   }
 
   return row;
+}
+
+/**
+ * The consequences of an interaction row that was written some other way.
+ *
+ * `logInteractionForUser` inserts the row and THEN does everything a new touch implies. A send
+ * cannot work in that order: the row has to exist first, as the claim that stops a second click
+ * emailing the same person, and the touch only really happened once the mail went. So the claim
+ * inserts the row itself and calls this after a confirmed send — the same last-touch stamp,
+ * embedding and brief refresh, closeness re-score and revalidation, in the same order, so a
+ * sent email moves a contact's ring exactly as a logged one does.
+ */
+export async function settleWrittenInteraction(
+  userId: string,
+  contactId: string,
+  when: Date,
+  options?: ContactWriteOptions
+) {
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ lastInteractionAt: when, updatedAt: new Date() })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+  if (!options?.skipEmbedding) await scheduleEmbeddingRebuild(userId, contactId);
+  if (!options?.skipSummary) deferBriefRefresh(userId, contactId);
+  await scoreAfterWrite(userId, contactId, options);
+  if (!options?.skipRevalidate) {
+    revalidatePath(`/contacts/${contactId}`);
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/graph");
+  }
 }
 
 /**

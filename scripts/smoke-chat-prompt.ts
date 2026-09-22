@@ -54,6 +54,7 @@ function baseChatPromptArgs() {
     goals: [] as string[],
     attentionLite: null as string | null,
     evidence: null as string | null,
+    notePassages: [] as never[],
   };
 }
 
@@ -494,6 +495,147 @@ check(
   "a single-pass answer carries no evidence block and no rule about one",
   !withoutEvidence.user.includes("EVIDENCE_") && !withoutEvidence.systemCore.includes("Looked up for this question"),
   withoutEvidence.systemCore
+);
+
+// --- citations are minted from what survives budgeting, not before it -----------------
+
+const promptWithCitations = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "who do I know at Ramp?",
+  focusProfile: null,
+  contactsContext: [
+    {
+      id: "c1",
+      fullName: "Dana Whitfield",
+      company: "Ramp",
+      title: "Staff engineer",
+      relationshipScore: 50,
+      aiSummary: "Met at a fintech dinner.",
+      notes: null,
+      keyFacts: [],
+      timeline: [
+        { id: "int-1", date: "2026-08-15", line: "2026-08-15 · Coffee: Talked about the Series A." },
+        { id: "int-2", date: "2026-07-01", line: "2026-07-01 · Call: Caught up on the new role." },
+      ],
+      tags: [],
+      relevance: 0.9,
+      career: null,
+    },
+    {
+      id: "c2",
+      fullName: "No Notes Yet",
+      company: null,
+      title: null,
+      relationshipScore: 10,
+      aiSummary: null,
+      notes: null,
+      keyFacts: [],
+      timeline: [],
+      tags: [],
+      relevance: 0.2,
+      career: null,
+    },
+  ],
+});
+check(
+  "every timeline line carries its own marker",
+  /\[e\d+\] 2026-08-15 · Coffee: Talked about the Series A\./.test(promptWithCitations.user) &&
+    /\[e\d+\] 2026-07-01 · Call: Caught up on the new role\./.test(promptWithCitations.user),
+  promptWithCitations.user
+);
+check(
+  "the two interaction markers are distinct ids",
+  (() => {
+    const ids = [...promptWithCitations.user.matchAll(/\[e(\d+)\]/g)].map((m) => m[0]);
+    return new Set(ids).size === ids.length;
+  })(),
+  promptWithCitations.user
+);
+check(
+  "a contact with a summary gets one contact-level marker",
+  /Summary: Met at a fintech dinner\. \[e\d+\]/.test(promptWithCitations.user),
+  promptWithCitations.user
+);
+check(
+  "a contact with nothing to cite gets no marker at all",
+  !new RegExp(`No Notes Yet[\\s\\S]{0,200}\\[e\\d+\\]`).test(promptWithCitations.user)
+);
+check(
+  "the ledger returned matches exactly what the prompt cites",
+  (() => {
+    const cited = new Set([...promptWithCitations.user.matchAll(/\[e(\d+)\]/g)].map((m) => `e${m[1]}`));
+    const minted = new Set(Object.keys(promptWithCitations.evidence));
+    return cited.size === minted.size && [...cited].every((id) => minted.has(id));
+  })(),
+  JSON.stringify(promptWithCitations.evidence)
+);
+check(
+  "an interaction source records its id, contact and date",
+  Object.values(promptWithCitations.evidence).some(
+    (s) => s.kind === "interaction" && s.sourceId === "int-1" && s.contactId === "c1" && s.date === "2026-08-15"
+  ),
+  JSON.stringify(promptWithCitations.evidence)
+);
+check(
+  "a contact-level source records only the contact",
+  Object.values(promptWithCitations.evidence).some((s) => s.kind === "contact" && s.contactId === "c1")
+);
+check(
+  "the system prompt tells the model how to use markers, only when any were minted",
+  promptWithCitations.systemCore.includes("bracketed id like [e3]")
+);
+
+const noCitations = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "who do I know at Ramp?",
+  contactsContext: [],
+  focusProfile: null,
+});
+check("no contacts, no markers, no rule about them", Object.keys(noCitations.evidence).length === 0 && !noCitations.systemCore.includes("bracketed id"));
+
+const withPassages = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "what did we discuss?",
+  contactsContext: [],
+  focusProfile: null,
+  notePassages: [{ sourceId: "int-9", contactId: "c9", date: "2026-06-01", snippet: "Discussed the pilot program." }],
+});
+check(
+  "a gathered passage is cited too, with its own marker",
+  /\[e\d+\] 2026-06-01: Discussed the pilot program\./.test(withPassages.user),
+  withPassages.user
+);
+check("its source is recorded as an interaction", Object.values(withPassages.evidence).some((s) => s.kind === "interaction" && s.sourceId === "int-9"));
+
+const sameInteractionTwice = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  question: "who do I know at Ramp, and what did we discuss?",
+  focusProfile: null,
+  contactsContext: [
+    {
+      id: "c1",
+      fullName: "Dana Whitfield",
+      company: null,
+      title: null,
+      relationshipScore: 50,
+      aiSummary: null,
+      notes: null,
+      keyFacts: [],
+      timeline: [{ id: "int-1", date: "2026-08-15", line: "2026-08-15 · Coffee: Talked about the Series A." }],
+      tags: [],
+      relevance: 0.9,
+      career: null,
+    },
+  ],
+  notePassages: [{ sourceId: "int-1", contactId: "c1", date: "2026-08-15", snippet: "Talked about the Series A." }],
+});
+check(
+  "the same interaction cited from the timeline and from a passage gets ONE id, not two",
+  (() => {
+    const ids = [...sameInteractionTwice.user.matchAll(/\[e(\d+)\]/g)].map((m) => m[0]);
+    return new Set(ids).size === 1 && ids.length === 2;
+  })(),
+  sameInteractionTwice.user
 );
 
 if (failures > 0) {

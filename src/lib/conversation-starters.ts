@@ -27,7 +27,10 @@ import type {
 } from "@/lib/extension/contract";
 import { parseAiJson, userCanUseAi } from "@/lib/ai";
 import { cachedCompleteJson } from "@/lib/ai-result-cache";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { daysAgo } from "@/lib/duplicates";
+import { renderWritingPreferences } from "@/lib/writing-instructions";
 import {
   buildConversationTranscript,
   buildProfileBlock,
@@ -72,6 +75,11 @@ export type StarterContext = {
   networkOverlap: { companies: string[]; schools: string[] };
   /** Field-level disagreements between the page and the stored record. */
   changes: FieldChange[];
+  /**
+   * The user's own style notes. Set by the extension route from the signed-in user's row and
+   * nowhere else — the extension client never sends it, so it cannot be forged from a page.
+   */
+  writingInstructions?: string | null;
 };
 
 const DEFAULT_LIMIT = 3;
@@ -594,6 +602,10 @@ function userPrompt(ctx: StarterContext, limit: number): string {
       : "Your active goals: (none specified)"
   );
 
+  // Before the scraped page text, so the untrusted block stays the last thing in the prompt.
+  const writing = renderWritingPreferences(ctx.writingInstructions);
+  if (writing) blocks.push(writing);
+
   const untrusted = untrustedPageBlock(ctx.page);
   if (untrusted) blocks.push(untrusted);
 
@@ -635,7 +647,8 @@ function salvageStarters(content: string): ConversationStarter[] {
 export async function generateConversationStarters(
   userId: string,
   ctx: StarterContext,
-  limit: number = DEFAULT_LIMIT
+  limit: number = DEFAULT_LIMIT,
+  options?: { engines?: Engines }
 ): Promise<StartersResult> {
   const fallback = heuristicStarters(ctx, limit);
   const lowSignal = startersAreLowSignal(fallback);
@@ -647,6 +660,15 @@ export async function generateConversationStarters(
       degraded: true,
       degradedReason: lowSignal ? "no_signal" : "no_api_key",
     };
+  }
+
+  // With nothing person-specific to work from, the model writes the same three polite
+  // openers about any stranger, and it writes them slowly — the panel waits on this call.
+  // A decision model that is sure there is no material here returns the heuristics now,
+  // labelled as the thin result it is. Without one, the call runs exactly as before.
+  const engines = options?.engines ?? (await openEngines(userId));
+  if (await gateSkips(engines, "starters", { material: gateText(userPrompt(ctx, limit)) })) {
+    return { mode: ctx.mode, starters: fallback, degraded: true, degradedReason: "no_signal" };
   }
 
   let content: string;
