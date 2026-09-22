@@ -12,6 +12,7 @@ import {
 import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
 import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
 import { estimateCostMicros } from "@/lib/ai-pricing";
+import { modelForOperation } from "@/lib/ai-models";
 import { recordUsage, type TokenCounts } from "@/lib/usage-events";
 import { reportError } from "@/lib/report-error";
 
@@ -307,7 +308,10 @@ export async function submitAiBatch(
     return null;
   }
 
-  const model = grant.model;
+  // The operation's tier, exactly as the inline path picks it (`completeJson`): a batched
+  // recruiter scan ran on the person's full model while the eval measured — and the inline
+  // path used — the fast one, so batching at half price still cost more than not batching.
+  const model = modelForOperation(operation, grant);
   const estCostMicros = estimateBatchMicros(model, requests);
   try {
     const { providerBatchId, meta } = await ADAPTERS[grant.provider].submit(grant, model, operation, requests);

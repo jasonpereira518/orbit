@@ -202,6 +202,8 @@ type CostRow = {
   cachedInputTokens: number;
   costMicros: number;
   unpriced: number;
+  /** Median wall clock of one call, from `usage_events.duration_ms` — per operation, per engine. */
+  p50Ms: number | null;
 };
 
 async function usageSince(since: Date): Promise<CostRow[]> {
@@ -219,6 +221,7 @@ async function usageSince(since: Date): Promise<CostRow[]> {
       cachedInputTokens: sql<number>`coalesce(sum(${usageEvents.cachedInputTokens}), 0)::float8`,
       costMicros: sql<number>`coalesce(sum(${usageEvents.estimatedCostMicros}), 0)::float8`,
       unpriced: sql<number>`(count(*) filter (where ${usageEvents.estimatedCostMicros} is null and ${usageEvents.success} = 1))::int`,
+      p50Ms: sql<number | null>`percentile_cont(0.5) within group (order by ${usageEvents.durationMs})`,
     })
     .from(usageEvents)
     .where(and(eq(usageEvents.userId, USER), gte(usageEvents.createdAt, since)))
@@ -233,6 +236,7 @@ async function usageSince(since: Date): Promise<CostRow[]> {
     cachedInputTokens: Number(r.cachedInputTokens),
     costMicros: Number(r.costMicros),
     unpriced: Number(r.unpriced),
+    p50Ms: r.p50Ms == null ? null : Math.round(Number(r.p50Ms)),
   }));
 }
 
@@ -384,6 +388,11 @@ async function main() {
     console.log(
       `  ${"".padEnd(11)} ${t.cases} case(s) · ${usd(t.costMicros)} total · ${t.costPerCaseMicros == null ? "—" : usd(t.costPerCaseMicros)}/case · p50 ${t.p50LatencyMs == null ? "—" : `${Math.round(t.p50LatencyMs)}ms`}${t.usage.some((u) => u.unpriced) ? " · some calls unpriced" : ""}${t.decisionCostMicros ? ` · Jev ${usd(t.decisionCostMicros)}` : ""}`
     );
+    const perCall = t.usage
+      .filter((u) => u.p50Ms != null)
+      .map((u) => `${u.operation} ${u.p50Ms}ms`)
+      .join(" · ");
+    if (perCall) console.log(`  ${"".padEnd(11)} per call p50 — ${perCall}`);
     for (const [operation, bins] of Object.entries(t.calibration ?? {})) {
       const bands = bins
         .filter((b) => b.n > 0)

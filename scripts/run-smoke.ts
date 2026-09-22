@@ -182,6 +182,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ai-access": "pglite",
   "smoke-jev-client": "pglite",
   "smoke-jev-recruiter-scan": "pglite",
+  "smoke-decision-engine": "pglite",
   "smoke-ai-result-cache": "pglite",
   "smoke-ai-shared-prefix": "pglite",
   "smoke-ai-batch": "pglite",

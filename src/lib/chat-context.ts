@@ -21,7 +21,8 @@ import {
 import {
   budgetContactsContext,
   CANDIDATE_POOL,
-  rerankCandidates,
+  rerankCandidatesWithEngine,
+  type RankEngine,
   understandQuery,
 } from "@/lib/chat-retrieval";
 import { openDecider } from "@/lib/decisions/jev";
@@ -223,6 +224,13 @@ async function loadActiveGoalTexts(userId: string): Promise<string[]> {
 }
 
 /** Stage 0-3: query embedding + parse (parallel), wide hybrid retrieval, flash rerank. */
+/** The rank step's detail line: which engine put these contacts in this order. */
+const RANK_ENGINE_DETAIL: Record<RankEngine, string> = {
+  jev: "Ranked by the decision model",
+  llm: "Ranked by your AI model",
+  search: "In search order",
+};
+
 async function retrieveRankedContacts(
   userId: string,
   q: string,
@@ -274,13 +282,22 @@ async function retrieveRankedContacts(
   attachPhotos(steps, "search", candidateRefs, userId, photos);
 
   steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
-  const ranked = await rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery, decider);
+  const { contacts: ranked, engine: rankEngine } = await rerankCandidatesWithEngine(
+    userId,
+    q,
+    candidates,
+    undefined,
+    parsedQuery.semanticQuery,
+    decider
+  );
   const keptRefs = toRefs(
     ranked.map((c) => ({ id: c.id, name: c.fullName })),
     "contact"
   );
   steps.done("rank", {
     label: `Kept the ${plural(ranked.length, "closest match", "closest matches")}`,
+    // Which engine ranked, so a surprising order can be traced to it.
+    ...(rankEngine ? { detail: RANK_ENGINE_DETAIL[rankEngine] } : {}),
     refs: keptRefs,
   });
   attachPhotos(steps, "rank", keptRefs, userId, photos);

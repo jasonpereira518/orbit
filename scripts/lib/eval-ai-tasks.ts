@@ -18,7 +18,7 @@ import { chatMessages, chatThreads, contactTags, contacts, interactions, memoryC
 import { runCaptureParse } from "../../src/lib/capture-parse";
 import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT } from "../../src/lib/recruiter-scan";
 import { looksLikeRecruiter } from "../../src/lib/recruiter-detect";
-import { openDecider, type Decider } from "../../src/lib/decisions/jev";
+import { openDecider, type AnswerFor, type Decider, type Question } from "../../src/lib/decisions/jev";
 import { admitRecruiterCandidates, rulesOutRecruiter } from "../../src/lib/decisions/recruiter";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
@@ -119,28 +119,33 @@ async function timed<T>(latencies: number[], run: () => Promise<T>): Promise<T> 
 type RunOpts = { userId: string; limit?: number; log: (line: string) => void };
 
 /**
- * The account's decider, wrapped to remember every yes/no probability it hands back, by
- * operation, in call order — so a task can line the model's claims up against its labels
- * without asking anything twice. Null when the run has no TypeSafe key (no `--decisions`).
+ * The account's decider, wrapped to remember every answer it hands back — yes/no, choice and
+ * score alike — by operation, in call order, so a task can line the model's claims up against
+ * its labels without asking anything twice. Null when the run has no TypeSafe key.
  */
-async function recordingDecider(userId: string): Promise<{ decider: Decider; seen: Map<string, number[]> } | null> {
+export type RecordedAnswer = AnswerFor<Question>;
+
+async function recordingDecider(userId: string): Promise<{ decider: Decider; seen: Map<string, RecordedAnswer[]> } | null> {
   const inner = await openDecider(userId);
   if (!inner) return null;
-  const seen = new Map<string, number[]>();
+  const seen = new Map<string, RecordedAnswer[]>();
   const decider: Decider = {
     async ask(request, opts) {
       const result = await inner.ask(request, opts);
       if (result) {
         const list = seen.get(request.operation) ?? [];
-        for (const answer of Object.values(result.answers) as Array<{ type: string; probability?: number }>) {
-          if (answer.type === "noul" && typeof answer.probability === "number") list.push(answer.probability);
-        }
+        for (const key of Object.keys(request.questions)) list.push(result.answers[key] as RecordedAnswer);
         seen.set(request.operation, list);
       }
       return result;
     },
   };
   return { decider, seen };
+}
+
+/** The probability of "yes" in a recorded answer, when it was a yes/no. */
+function yesProbability(answer: RecordedAnswer | undefined): number | undefined {
+  return answer?.type === "noul" ? answer.probability : undefined;
 }
 
 /* ------------------------------------------------------------------------ capture ----- */
@@ -280,7 +285,7 @@ export async function runRecruiterTask({ userId, limit, log }: RunOpts): Promise
           })),
         }, { decider: jev?.decider ?? null })
       );
-      const p = jev?.seen.get("recruiter.gate")?.[gateSeen];
+      const p = yesProbability(jev?.seen.get("recruiter.gate")?.[gateSeen]);
       if (p !== undefined) gatePairs.push({ p, label: c.expect.isRecruiter });
       if (result === RULED_OUT_VERDICT) {
         ruledOut += 1;
@@ -365,7 +370,7 @@ export async function runRecruiterGateTask({ userId, limit, log }: RunOpts): Pro
         messages: c.messages.map((m) => ({ subject: m.subject, snippet: m.body.slice(0, 120), body: m.body, internalDate: Date.parse(m.date) })),
       })
     );
-    const p = jev.seen.get("recruiter.gate")?.[seen];
+    const p = yesProbability(jev.seen.get("recruiter.gate")?.[seen]);
     if (p !== undefined) pairs.push({ p, label: c.expect.isRecruiter });
     if (out) {
       ruledOut += 1;
@@ -428,7 +433,7 @@ export async function runRecruiterPrefilterTask({ userId, limit, log }: RunOpts)
     const admitted = await timed(latenciesMs, () =>
       admitRecruiterCandidates([line], jev?.decider ?? null, { alreadyCandidate: () => false })
     );
-    const p = jev?.seen.get("recruiter.prefilter")?.[seen];
+    const p = yesProbability(jev?.seen.get("recruiter.prefilter")?.[seen]);
     if (p !== undefined) pairs.push({ p, label: c.expect.isRecruiter });
 
     const said = admitted.has(c.id);

@@ -29,11 +29,14 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
   const [keyError, setKeyError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
+  // Without Jev each step runs exactly as it did before: some on your chat model, some on
+  // Orbit's own rules (keyword filters, name matching). So the copy says "as before", not
+  // "on your chat model", which was only true of some of them.
   const status = state.switchedOff
-    ? "Switched off on this server — Orbit is using your chat model for these steps"
+    ? "Switched off on this server — these steps run as they did before Jev"
     : state.keySaved
       ? "Your TypeSafe key is saved — Jev is handling these steps"
-      : "No key — these steps run on your chat model, as they always have";
+      : "No key — these steps run as they always have";
 
   return (
     <SettingsSection
