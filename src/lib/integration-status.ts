@@ -209,7 +209,7 @@ export function attentionItems(input: {
     items.push({
       id: "ai-off",
       tab: "ai",
-      message: "AI isn't on yet, so notes and recruiter search can't use it.",
+      message: "AI isn’t on yet, so notes and recruiter search can’t use it.",
       action: "Turn on AI",
     });
   }
