@@ -68,12 +68,24 @@ async function main() {
     actionCall.includes("ctx.focusProfile"),
     actionCall
   );
+  // Same trailing-optional hole, and a costlier one: an omitted writing-preferences argument
+  // silently makes one of the two chat paths ignore the user's notes.
+  check(
+    "askNetwork passes ctx.writingInstructions to chatWithNetwork",
+    actionCall.includes("ctx.writingInstructions"),
+    actionCall
+  );
 
   const routeCall = extractCall(routeSrc, "chatWithNetworkStream");
   check("the chatWithNetworkStream call site exists in the streaming route", routeCall.length > 0, routeSrc);
   check(
     "the streaming route passes ctx.focusProfile to chatWithNetworkStream",
     routeCall.includes("ctx.focusProfile"),
+    routeCall
+  );
+  check(
+    "the streaming route passes ctx.writingInstructions to chatWithNetworkStream",
+    routeCall.includes("ctx.writingInstructions"),
     routeCall
   );
 

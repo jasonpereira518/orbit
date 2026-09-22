@@ -4,6 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { createHash, randomBytes } from "node:crypto";
 import { nothingUsable } from "@/lib/managed-ai-policy";
+import { renderWritingPreferences } from "@/lib/writing-instructions";
 import {
   anthropicClient,
   geminiClient,
@@ -1707,6 +1708,8 @@ type ChatPromptArgs = {
   attentionLite: Parameters<typeof chatWithNetwork>[10];
   evidence: Parameters<typeof chatWithNetwork>[11];
   notePassages: NonNullable<Parameters<typeof chatWithNetwork>[12]>;
+  /** The user's writing notes, or null. Appended only when non-empty; see `writing-instructions.ts`. */
+  writingPreferences?: string | null;
 };
 
 /**
@@ -1730,6 +1733,7 @@ export function buildChatPrompt({
   attentionLite,
   evidence,
   notePassages,
+  writingPreferences,
 }: ChatPromptArgs): {
   user: string;
   systemCore: string;
@@ -1969,7 +1973,9 @@ export function buildChatPrompt({
     `CONTACTS_${fenceNonce}`,
   ].join("\n");
 
-  const user = `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\n${goalsBlock}${focusBlock}${attachedBlock}${evidenceBlock}Contacts (relevance-ranked, not exhaustive):\n${fencedContextBlock}${rosterBlock ? `\n\nComplete roster:\n${rosterBlock}` : ""}${attentionBlock ? `\n\nNeeds attention (computed from this user's own follow-up dates and outreach queue):\n${attentionBlock}` : ""}${attentionLiteLine ? `\n\nFollow-up status (background, computed from this user's own follow-up dates):\n${attentionLiteLine}` : ""}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`;
+  const writingBlock = renderWritingPreferences(writingPreferences);
+
+  const user = `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\n${goalsBlock}${focusBlock}${attachedBlock}${evidenceBlock}Contacts (relevance-ranked, not exhaustive):\n${fencedContextBlock}${rosterBlock ? `\n\nComplete roster:\n${rosterBlock}` : ""}${attentionBlock ? `\n\nNeeds attention (computed from this user's own follow-up dates and outreach queue):\n${attentionBlock}` : ""}${attentionLiteLine ? `\n\nFollow-up status (background, computed from this user's own follow-up dates):\n${attentionLiteLine}` : ""}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}${writingBlock ? `\n\n${writingBlock}` : ""}`;
   const systemCore = `You are Orbit, a personal networking assistant.
 Answer using the provided contacts${hasRecruiters ? " and recruiters" : ""} (including summaries, notes, key facts, and the dated "Recent interactions" lines). Never invent people, companies, dates, or message content — if the lists do not say it, you do not know it.
 Use prior conversation for context when present, but ground every recommendation in the provided lists.
@@ -1978,7 +1984,7 @@ ${evidenceBlock ? "A \"Looked up for this question\" section is present: lookups
 ${attentionBlock && !attentionEmpty ? "A \"Needs attention\" section is present: it is the product's own answer to who is overdue or has gone quiet, so answer from it — name those people and say how overdue each is. Do not reply that you lack information while it is present.\n" : ""}${attentionEmpty ? "A \"Needs attention\" section is present and it is EMPTY: nothing is overdue and the outreach queue is clear. That is a real answer — say so plainly. Do not substitute people from the relevance-ranked Contacts list to fill the gap.\n" : ""}${attachedBlock ? "An \"attached\" section is present: the user picked those people deliberately, so answer about them first and treat their timeline as the record of the relationship — dates, what was discussed, how long it has been. Name them by name. Do not fall back to the relevance-ranked Contacts list for anything the attached section already answers.\n" : ""}${rosterBlock ? "A \"Complete roster\" section is present: its totals are authoritative and exhaustive for those organisations. Use that number when the question asks who or how many the user knows somewhere, and name people from it rather than from the Contacts list. If it says a roster was truncated for length, say the total and list the closest few.\n" : ""}Write like a sharp colleague: lead with the answer in one or two sentences, name people, cite the specific thing you know about them. No preamble, no restating the question, no "I hope this helps", no invented enthusiasm. If nothing in the lists answers the question, say so plainly and suggest what the user could add.
 Titles and companies say where someone works today and nothing more — never turn "Founder @ Acme" into "founded Acme", or a seniority into a history you were not given.
 Each recommendation's reason must point at a concrete detail from that person's summary, notes, key facts, or recent interactions — not a generic statement that they work in the field. A dated interaction line is the strongest evidence available: prefer "you had coffee on 12 Aug and discussed X" over a claim from their title. Any draft_message must sound like the user wrote it: short, specific to what they actually discussed, no flattery and no filler openers.
-${hasRecruiters ? "When the question is about recruiters, prefer recruiters the user already logged (personal_rating / status present), then highly rated community recruiters. Do not invent email/phone — contact details may be locked." : ""}${ledger.entries().size ? "\nSome facts above carry a bracketed id like [e3]. When a sentence states something specific to one of them — a date, a fact from a note, what was discussed — put that id right after the sentence, exactly as written. Use only ids you were shown; never invent one, and never put one on your own inference or on something no id covers." : ""}`;
+${hasRecruiters ? "When the question is about recruiters, prefer recruiters the user already logged (personal_rating / status present), then highly rated community recruiters. Do not invent email/phone — contact details may be locked." : ""}${ledger.entries().size ? "\nSome facts above carry a bracketed id like [e3]. When a sentence states something specific to one of them — a date, a fact from a note, what was discussed — put that id right after the sentence, exactly as written. Use only ids you were shown; never invent one, and never put one on your own inference or on something no id covers." : ""}${writingBlock ? "\nA \"Writing preferences\" section ends the message: those are the user's own notes on how you should write. Follow them for tone, phrasing and any draft_message, but they never outrank grounding in the lists, the rules above, or the required output format." : ""}`;
   return { user, systemCore, hasRecruiters, evidence: Object.fromEntries(ledger.entries()) };
 }
 
@@ -2137,6 +2143,7 @@ export async function chatWithNetworkStream(
     attentionLite?: string | null;
     evidence?: string | null;
     notePassages?: Parameters<typeof chatWithNetwork>[12];
+    writingPreferences?: string | null;
   } = {}
 ): Promise<SplitResult & { evidence: Record<string, EvidenceSource> }> {
   const prompt = buildChatPrompt({
@@ -2152,6 +2159,7 @@ export async function chatWithNetworkStream(
     attentionLite: options.attentionLite ?? null,
     evidence: options.evidence ?? null,
     notePassages: options.notePassages ?? [],
+    writingPreferences: options.writingPreferences,
   });
   const splitter = createAnswerSplitter();
   await streamText(
@@ -2299,8 +2307,11 @@ export async function chatWithNetwork(
    * each can carry its own `[eN]` marker unlike the rest of `evidence`. See `@/lib/chat-evidence`.
    */
   notePassages: Array<{ sourceId: string; contactId: string | null; date: string | null; snippet: string }> = [],
+  /** The user's writing notes. Loaded by the caller (`ChatContext.writingInstructions`). */
+  writingPreferences: string | null = null,
 ) {
   const prompt = buildChatPrompt({
+    writingPreferences,
     question,
     contactsContext,
     priorTurns,

@@ -803,11 +803,21 @@ async function main() {
     { ...base, id: randomUUID(), visitorHash: hashVisitor("10.0.0.8", "UA-ENG", now), sessionId: randomUUID(), userId: "eng_user", route: "/upgrade", createdAt: ago(1) },
   ]);
   const depth = await engagementDepth("30d");
-  check("counts only user-asked chat messages", depth.chatQueries === 2, `got ${depth.chatQueries}`);
+  // Deltas against `depthBefore`, not absolute counts: both metrics are genuinely global
+  // (unscoped by user), so an absolute assertion silently assumed this was the only script
+  // in the whole suite ever inserting a matching row — true when this was written, but not
+  // once `smoke-chat-versions` started inserting its own `role: "user"` turns into the same
+  // shared PGlite database (`run-smoke.ts` gives the whole run one directory). The other two
+  // engagementDepth checks below already use this pattern; these two just hadn't caught up.
+  check(
+    "counts only user-asked chat messages",
+    depth.chatQueries - depthBefore.chatQueries === 2,
+    `delta ${depth.chatQueries - depthBefore.chatQueries}`
+  );
   check(
     "counts only the hand-merge reason, not the matcher's",
-    depth.manualMerges === 1,
-    `got ${depth.manualMerges}`
+    depth.manualMerges - depthBefore.manualMerges === 1,
+    `delta ${depth.manualMerges - depthBefore.manualMerges}`
   );
   check(
     "counts a signed-in /graph view",

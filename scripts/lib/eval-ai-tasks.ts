@@ -719,7 +719,10 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
           ctx.focusProfile,
           ctx.attachedContext,
           ctx.goals,
-          ctx.attentionLite
+          ctx.attentionLite,
+          undefined,
+          undefined,
+          ctx.writingInstructions
         );
         return { ctx, result };
       });

@@ -44,6 +44,8 @@ import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import { isRecruiterIntent } from "@/lib/recruiters";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadRecruitersForChat } from "@/actions/recruiters";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
+import { sanitizeDraft } from "@/lib/chat-draft";
 
 /**
  * Everything the model is shown for one question, assembled with the independent lookups
@@ -142,6 +144,12 @@ export type ChatContext = {
    * retrieved people. Rationing the subject of the question is the wrong trade.
    */
   focusProfile: string | null;
+  /**
+   * The user's own notes on how answers should read (`user_settings.writing_instructions`),
+   * or null. Read here, beside the rest of the request's context, so the streaming route and
+   * `askNetwork` cannot disagree about whether it applies. The client never sends it.
+   */
+  writingInstructions: string | null;
 };
 
 /** Per contact, before the rank tiers trim it further. */
@@ -441,6 +449,12 @@ export async function prepareChatContext(
      * `askNetwork`, which has no channel to report on. See `@/lib/chat-steps`.
      */
     steps?: StepEmitter;
+    /**
+     * Prior-turn history omits every row in this slot — both the version being replaced and
+     * the not-yet-committed one being written. Set only on a version request; otherwise the
+     * turn being asked about is not in history anyway (it has not been sent yet).
+     */
+    excludeSlot?: string | null;
   }
 ): Promise<ChatContext> {
   const db = await getDb();
@@ -465,6 +479,7 @@ export async function prepareChatContext(
     attentionLite,
     recruitersForChat,
     attachedPeople,
+    writingInstructions,
   ] = await Promise.all([
       threadId
         ? db.query.chatThreads.findFirst({
@@ -474,11 +489,20 @@ export async function prepareChatContext(
         : Promise.resolve(null),
       threadId
         ? db.query.chatMessages.findMany({
-            where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
+            where: and(
+              eq(chatMessages.threadId, threadId),
+              eq(chatMessages.userId, userId),
+              eq(chatMessages.isActive, true),
+              options.excludeSlot ? sql`${chatMessages.slot} is distinct from ${options.excludeSlot}` : undefined
+            ),
             orderBy: [desc(chatMessages.createdAt)],
             limit: PRIOR_TURN_LIMIT,
             columns: { role: true, content: true },
-          })
+          }).then((rows) =>
+            // A stopped turn persists its question with no reply. Newest-first, so that is
+            // only ever the first row — never orphan it into history as an unanswered ask.
+            rows.length && rows[0]!.role === "user" ? rows.slice(1) : rows
+          )
         : Promise.resolve([]),
       retrieveRankedContacts(userId, q, steps, photos),
       // Exhaustive membership for any organisation the question names — the one thing a
@@ -561,6 +585,8 @@ export async function prepareChatContext(
               });
           })()
         : Promise.resolve([] as AttachedPerson[]),
+      // Style notes never block an answer: a failed read is "no preferences".
+      loadWritingInstructions(userId).catch(() => null),
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
@@ -728,6 +754,7 @@ export async function prepareChatContext(
     allowedRecruiters,
     modelContacts,
     focusProfile,
+    writingInstructions,
     modelRecruiters: recruitersForChat.map((r) => ({
       id: r.id,
       fullName: r.fullName,
@@ -742,10 +769,18 @@ export async function prepareChatContext(
       relevance: r.score / maxScore,
     })),
     filterRecommendations: (raw) =>
-      (raw || []).filter((r) => {
-        if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);
-        if (r.contact_id) return allowedContacts.has(r.contact_id);
-        return false;
-      }),
+      (raw || [])
+        .filter((r) => {
+          if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);
+          if (r.contact_id) return allowedContacts.has(r.contact_id);
+          return false;
+        })
+        // The draft is text a model wrote from records that can carry text someone else typed,
+        // and it becomes an editable, sendable message. Strip what a reader cannot see.
+        .map((r) =>
+          typeof r.draft_message === "string"
+            ? { ...r, draft_message: sanitizeDraft(r.draft_message) }
+            : r
+        ),
   };
 }

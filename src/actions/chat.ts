@@ -24,6 +24,9 @@ import {
 } from "@/lib/chat-suggestions";
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
 import { persistAssistantTurn } from "@/lib/chat-persist";
+import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
+import { isRefineKind, refineDraft } from "@/lib/chat-refine";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { traced } from "@/lib/perf-trace";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
@@ -61,12 +64,39 @@ export async function getChatThread(threadId: string) {
   const messages = await db.query.chatMessages.findMany({
     where: and(
       eq(chatMessages.threadId, threadId),
-      eq(chatMessages.userId, userId)
+      eq(chatMessages.userId, userId),
+      eq(chatMessages.isActive, true)
     ),
     orderBy: [asc(chatMessages.createdAt)],
   });
 
-  return { thread, messages };
+  // Every version of the LAST turn, for the switcher — only the last turn ever has more than
+  // one. `versions` is empty for a thread with no messages or whose last turn was never
+  // versioned, which is the common case and costs nothing extra to detect.
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  const versions = lastAssistant?.slot
+    ? await loadVersions(db, userId, threadId, lastAssistant.slot)
+    : [];
+
+  // Which drafts in this thread have already been emailed. Derived, not stored: the send
+  // claims an interaction row keyed `chat-send:<messageId>:<contactId>`, so that row IS the
+  // record, and a reloaded card cannot offer to send again what the timeline says was sent.
+  const messageIds = new Set(messages.filter((m) => m.role === "assistant").map((m) => m.id));
+  const sent: Record<string, Record<string, string>> = {};
+  if (messageIds.size > 0) {
+    const claims = await db
+      .select({ externalId: interactions.externalId, at: interactions.interactionDate })
+      .from(interactions)
+      .where(and(eq(interactions.userId, userId), eq(interactions.source, "chat_send")))
+      .limit(500);
+    for (const claim of claims) {
+      const match = /^chat-send:([^:]+):([^:]+)$/.exec(claim.externalId ?? "");
+      if (!match || !messageIds.has(match[1]!)) continue;
+      (sent[match[1]!] ??= {})[match[2]!] = claim.at.toISOString();
+    }
+  }
+
+  return { thread, messages, sent, versions, versionSlot: lastAssistant?.slot ?? null };
 }
 
 export async function createChatThread() {
@@ -183,6 +213,28 @@ export async function getEvidenceSnippet(messageId: string, id: string) {
   };
 }
 
+/** How many messages editing `assistantMessageId` would discard — for the confirm dialog. */
+export async function previewEditDiscard(assistantMessageId: string) {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+  const message = await db.query.chatMessages.findFirst({
+    where: and(eq(chatMessages.id, assistantMessageId), eq(chatMessages.userId, userId), eq(chatMessages.role, "assistant")),
+    columns: { threadId: true },
+  });
+  if (!message) throw new Error("Answer not found");
+  const discardCount = await discardCountAfter(db, userId, message.threadId, assistantMessageId);
+  return { discardCount };
+}
+
+/** Show a different version of the last turn — the `‹ 2/3 ›` switcher. */
+export async function switchChatVersion(threadId: string, slot: string, version: number) {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+  const target = await switchVersion(db, userId, threadId, slot, version);
+  if (!target) throw new Error("That version was not found");
+  return target;
+}
+
 export async function deleteChatThread(threadId: string) {
   const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
@@ -251,7 +303,8 @@ async function askNetworkInner(
       ctx.goals,
       ctx.attentionLite,
       evidence,
-      notePassages
+      notePassages,
+      ctx.writingInstructions
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]
@@ -408,4 +461,29 @@ export async function searchEventsForPicker(
       r.rawNotes?.trim().split("\n")[0]?.slice(0, 120) ||
       null,
   }));
+}
+
+/**
+ * Rewrite a draft from a recommendation card: one of a fixed set of chips (Shorter, Warmer,
+ * More direct, More formal), never free text — see `chat-refine.ts` for why.
+ *
+ * Returns the new draft, or a friendly failure that leaves the person's current text alone.
+ * The rate bucket is the chat one: this is a fast-tier call, but it is still the user's own
+ * key and a button that can be pressed in a loop.
+ */
+export async function refineChatDraft(draft: string, kind: string) {
+  try {
+    const userId = await requireUserForSurface("page.chat");
+    await consumeBucket("chat", userId, RATE_LIMITS.chat);
+    if (!isRefineKind(kind)) return { ok: false as const, error: TOAST_COPY.draftRefineFailed };
+    const writingInstructions = await loadWritingInstructions(userId).catch(() => null);
+    const next = await refineDraft(userId, { draft, kind, writingInstructions });
+    if (!next) return { ok: false as const, error: TOAST_COPY.draftRefineFailed };
+    return { ok: true as const, draft: next };
+  } catch (err) {
+    return {
+      ok: false as const,
+      error: await actionFailure(err, TOAST_COPY.draftRefineFailed, "chat.refine-draft"),
+    };
+  }
 }

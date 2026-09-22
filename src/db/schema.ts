@@ -110,6 +110,15 @@ export const userSettings = pgTable("user_settings", {
    * say so once and offer the old one back. Null for everyone who chose their own.
    */
   aiModelMigratedFrom: text("ai_model_migrated_from"),
+  /**
+   * The user's own standing notes on how answers and drafts should read — tone, length,
+   * sign-off. Free text they wrote, capped and cleaned by `src/lib/writing-instructions.ts`.
+   * Null means none, and every prompt is then byte-identical to what it was before this
+   * column existed. It is content, not a setting: a preferences purge clears it, and it is
+   * never a credential, so it must not take a `_hash`/`_token`/`_secret` suffix (export
+   * redacts those by name).
+   */
+  writingInstructions: text("writing_instructions"),
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),
@@ -2397,11 +2406,35 @@ export const chatMessages = pgTable(
     feedback: text("feedback").$type<"up" | "down">(),
     /** The optional note a thumbs-down can carry. */
     feedbackNote: text("feedback_note"),
+    /**
+     * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
+     * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
+     * that has `slot` null and is its own slot, backfilled the first time it is edited or
+     * regenerated (see `resolveVersionTarget` in `@/lib/chat-versions`). Only the LAST turn
+     * in a thread ever grows more than one version — editing an older turn discards what
+     * came after it instead (see `chat-versions.ts`).
+     */
+    slot: uuid("slot"),
+    version: integer("version").default(1).notNull(),
+    /**
+     * Which version of its slot is the one shown and the one prior-turn context reads. A
+     * new version is inserted INACTIVE and flipped in one statement once its answer is
+     * ready, so a stopped or failed regenerate leaves the version it was replacing active.
+     */
+    isActive: boolean("is_active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     index("chat_messages_thread_idx").on(t.threadId),
     index("chat_messages_user_idx").on(t.userId),
+    index("chat_messages_slot_idx").on(t.slot),
+    // Guards the version-flip statement rather than application logic: two regenerate
+    // clicks racing to claim "version 2" of the same slot can only ever produce one row —
+    // one PER ROLE, since a version is a pair, a user row and an assistant row, both
+    // legitimately sharing the same (slot, version).
+    uniqueIndex("chat_messages_slot_version_role_uidx")
+      .on(t.slot, t.version, t.role)
+      .where(sql`slot is not null`),
   ]
 );
 

@@ -13,20 +13,33 @@ import {
 } from "react";
 import Link from "next/link";
 import {
+  ArrowDown,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   History,
   Loader2,
+  Mail,
   NotebookPen,
+  Pencil,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { friendlyError } from "@/lib/errors";
+import { ChatThreadProvider } from "@/components/chat/chat-thread-context";
+import { DraftEditor } from "@/components/chat/draft-editor";
+import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
+import { WritingInstructionsField } from "@/components/chat/writing-instructions-field";
+import { clearSendResume, peekSendResumeFor } from "@/lib/chat-send-resume";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import {
   askNetwork,
   createChatThread,
   deleteChatThread,
   getChatThread,
   listChatThreads,
+  switchChatVersion,
   updateChatThreadContext,
 } from "@/actions/chat";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
@@ -67,7 +80,6 @@ import { ProposedActionsCard } from "@/components/chat/proposed-actions";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
@@ -88,6 +100,11 @@ import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import type { ChatRecommendation } from "@/db/schema";
 import { streamChat, type DoneInfo } from "@/lib/chat-stream-client";
+import {
+  createStreamSmoother,
+  prefersReducedMotionNow,
+  type StreamSmoother,
+} from "@/lib/stream-smoother";
 import { activeMentions } from "@/lib/chat-mentions";
 import { addMentionPick } from "@/lib/mentions/mention-picks";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
@@ -167,9 +184,17 @@ type AssistantMessage = {
   persisted?: boolean;
   /** The user cut this answer short. */
   stopped?: boolean;
+  /**
+   * Drafts on this answer that have already been emailed, by contact id → send time. Read
+   * from the timeline when a thread loads, so a card cannot offer to send again what has gone.
+   */
+  sentTo?: Record<string, string>;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
+
+/** One version of the last turn — see `getChatThread`'s `versions` and `@/lib/chat-versions`. */
+type VersionRow = { version: number; userMessageId: string; assistantMessageId: string };
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -187,6 +212,12 @@ function readRailOpen(): boolean {
   } catch {
     return true;
   }
+}
+
+function formatSentAt(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
 }
 
 function formatThreadLabel(thread: ThreadSummary) {
@@ -208,6 +239,12 @@ export function ChatPanel() {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
+  /** Every version of the current thread's LAST turn, oldest first. One entry is the normal case. */
+  const [versions, setVersions] = useState<VersionRow[]>([]);
+  /** The slot `versions` belongs to — needed to call `switchChatVersion`. */
+  const [versionSlot, setVersionSlot] = useState<string | null>(null);
+  /** Which user bubble is mid-edit, if any. Only the LAST one is ever editable. */
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [question, setQuestion] = useState(initialQuestionFromUrl);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [contextOpen, setContextOpen] = useState(false);
@@ -257,6 +294,12 @@ export function ChatPanel() {
   // Lets the user cut a long answer short. `streamChat` has always accepted a signal and
   // the route already honours `request.signal`; nothing was passing one.
   const abortRef = useRef<AbortController | null>(null);
+  // The reveal buffer for the answer being streamed, so an unmount can stop it drawing.
+  const smootherRef = useRef<StreamSmoother | null>(null);
+  useEffect(() => () => smootherRef.current?.cancel(), []);
+  // Whether the reader is at the bottom of the thread. Drives the jump-to-latest button; kept as
+  // state (not just the ref) because it changes what is rendered.
+  const [atBottom, setAtBottom] = useState(true);
   const busy = pending || streaming;
   // The "searching" bubble makes sense until the first token; after that the answer
   // itself is the progress indicator.
@@ -509,12 +552,17 @@ export function ChatPanel() {
     // heading out of view and cut its first line in half under the chat header.
     if (messages.length === 0 && !busy) return;
     if (!stickToBottomRef.current && !isNearBottom()) return;
-    // Defer so DOM has laid out new messages
-    requestAnimationFrame(() => scrollToBottom(true));
-  }, [messages, busy, isNearBottom, scrollToBottom]);
+    // Defer so DOM has laid out new messages. While an answer streams this runs on every frame,
+    // and a *smooth* scroll re-issued every frame keeps interrupting the last one — the view
+    // judders instead of tracking. Instant while streaming, smooth only when a whole message lands.
+    requestAnimationFrame(() => scrollToBottom(!streaming));
+  }, [messages, busy, streaming, isNearBottom, scrollToBottom]);
 
   function onListScroll() {
-    stickToBottomRef.current = isNearBottom();
+    const near = isNearBottom();
+    stickToBottomRef.current = near;
+    // Scroll fires at high frequency; only re-render when the answer actually changes.
+    setAtBottom((prev) => (prev === near ? prev : near));
   }
 
   const ensureThread = useCallback(async () => {
@@ -537,10 +585,13 @@ export function ChatPanel() {
   const loadThread = useCallback(async (id: string) => {
     setLoadingThread(true);
     try {
-      const { thread, messages: rows } = await getChatThread(id);
+      const { thread, messages: rows, sent, versions: loadedVersions, versionSlot: loadedSlot } = await getChatThread(id);
       setThreadId(thread.id);
       setThreadTitle(thread.title);
       setContextNotes(thread.contextNote ?? "");
+      setVersions(loadedVersions);
+      setVersionSlot(loadedSlot);
+      setEditingUserId(null);
       stickToBottomRef.current = true;
       setMessages(
         rows.map((row) =>
@@ -566,6 +617,7 @@ export function ChatPanel() {
                 feedback: row.feedback ?? null,
                 // It came out of the database, so by definition there is a row to rate.
                 persisted: true,
+                sentTo: sent[row.id],
               }
         )
       );
@@ -593,6 +645,38 @@ export function ChatPanel() {
       setContextSaving(false);
     }
   }, [ensureThread, contextIngest.notes]);
+
+  // Coming back from the Gmail connect redirect lands on `/chat?thread=<id>&gmail=connected`:
+  // reopen that conversation (the draft's own edits are restored by its card) and say what
+  // happened. The params come out only once the thread has loaded — a server action that is
+  // still in flight when the URL is rewritten can be dropped, so nothing here does both at once.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const thread = params.get("thread");
+    const gmail = params.get("gmail");
+    if (!thread && !gmail) return;
+    if (gmail === "connected") {
+      toast.success("Gmail connected — you can send now");
+    } else if (gmail === "error") {
+      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
+      if (oauth.cancelled) toast.message(oauth.message);
+      else toast.error(oauth.message);
+    }
+    const strip = () => {
+      const next = new URLSearchParams(window.location.search);
+      for (const key of ["thread", "gmail", "google", "purpose", "reason"]) next.delete(key);
+      const rest = next.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+    };
+    // A thread id from the address bar is only ever passed to `getChatThread`, which scopes it
+    // to the signed-in user; anything that is not an id is dropped without a request.
+    const isId = thread ? /^[0-9a-f-]{36}$/i.test(thread) : false;
+    // A microtask, so the load's first state update is not made inside the effect body itself.
+    if (isId) queueMicrotask(() => void loadThread(thread!).finally(strip));
+    else strip();
+    // Once, on arrival. `loadThread` is stable enough for that: it closes over refs and setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startNewChat = useCallback(() => {
     start(async () => {
@@ -648,6 +732,10 @@ export function ChatPanel() {
       if (!q || busy || loadingThread) return;
 
       setLastUserQuery(q);
+      // A fresh turn starts a fresh slot; the switcher belongs to whichever turn is last.
+      setVersions([]);
+      setVersionSlot(null);
+      setEditingUserId(null);
       // Resolved from the text, not from `attached` directly: a token the user deleted
       // must not still ship that person's history to the model.
       const sending = activeMentions(q, attached);
@@ -699,6 +787,18 @@ export function ChatPanel() {
           ]);
         };
 
+        // The answer is revealed a frame at a time rather than a network chunk at a time. Every
+        // path that ends the answer (recommendations, done, stop) flushes it first, so what is on
+        // screen is complete whenever the stream is.
+        const smoother = createStreamSmoother(
+          (chunk) => {
+            ensurePlaceholder();
+            patch((m) => ({ ...m, answer: m.answer + chunk }));
+          },
+          { reduced: prefersReducedMotionNow() }
+        );
+        smootherRef.current = smoother;
+
         const controller = new AbortController();
         abortRef.current = controller;
         await streamChat(
@@ -708,11 +808,10 @@ export function ChatPanel() {
             contextContactIds,
           },
           {
-            onAnswer: (delta) => {
-              ensurePlaceholder();
-              patch((m) => ({ ...m, answer: m.answer + delta }));
-            },
+            onAnswer: (delta) => smoother.push(delta),
             onRecommendations: (items) => {
+              // Recommendations follow the last word of the prose; show that word first.
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
             },
@@ -739,6 +838,7 @@ export function ChatPanel() {
               });
             },
             onDone: (info) => {
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({
                 ...m,
@@ -768,6 +868,8 @@ export function ChatPanel() {
               // A stop is the user's own doing, not a failure: keep whatever arrived and
               // say plainly that it was cut short rather than deleting it and apologising.
               if (controller.signal.aborted) return;
+              // The bubble is about to be removed; there is nothing to reveal into.
+              smoother.cancel();
               toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               resetQuestion(q);
@@ -775,6 +877,9 @@ export function ChatPanel() {
           },
           controller.signal
         );
+        // However the stream ended, show everything that arrived. A no-op after done or an error.
+        smoother.flush();
+        smootherRef.current = null;
         if (controller.signal.aborted) {
           // Stopping during retrieval means no answer bubble was ever placed, which used to
           // leave the question sitting alone with nothing to say what happened. The user
@@ -788,6 +893,118 @@ export function ChatPanel() {
       })();
     },
     [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
+  );
+
+  /**
+   * Another version of the LAST turn: a plain regenerate (no `newQuestion`) re-asks the same
+   * question; an edit sends different text. Either way the current last user+assistant bubbles
+   * are replaced in place — not appended, the way a fresh question is — and the version list
+   * is re-read from the server once the answer lands, which is also what a stopped or failed
+   * regenerate needs: nothing here assumes success, so on any failure the thread simply keeps
+   * showing what it already had.
+   */
+  const sendVersioned = useCallback(
+    (assistantMessageId: string, newQuestion?: string) => {
+      if (!threadId || busy || loadingThread) return;
+      const target = messages.find(
+        (m): m is AssistantMessage => m.role === "assistant" && m.id === assistantMessageId
+      );
+      const targetIndex = messages.findIndex((m) => m.id === assistantMessageId);
+      const priorUser = targetIndex > 0 ? messages[targetIndex - 1] : undefined;
+      if (!target || !priorUser || priorUser.role !== "user") return;
+
+      const displayQuestion = newQuestion?.trim() || priorUser.content;
+      setEditingUserId(null);
+      setLastUserQuery(displayQuestion);
+
+      const userMsg: UserMessage = {
+        id: newId(),
+        role: "user",
+        content: displayQuestion,
+        mentionNames: newQuestion ? undefined : priorUser.mentionNames,
+      };
+      const assistantId = newId();
+      stickToBottomRef.current = true;
+      // Replace, not append: this turn is being redone, not repeated.
+      setMessages((prev) => [...prev.slice(0, targetIndex - 1), userMsg]);
+      requestAnimationFrame(() => scrollToBottom(true));
+
+      setStreaming(true);
+      void (async () => {
+        let placed = false;
+        const patch = (fn: (m: AssistantMessage) => AssistantMessage) =>
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId && m.role === "assistant" ? fn(m) : m))
+          );
+        const ensurePlaceholder = () => {
+          if (placed) return;
+          placed = true;
+          setMessages((prev) => [
+            ...prev,
+            { id: assistantId, role: "assistant", answer: "", recommendations: [], streaming: true },
+          ]);
+        };
+
+        const smoother = createStreamSmoother(
+          (chunk) => {
+            ensurePlaceholder();
+            patch((m) => ({ ...m, answer: m.answer + chunk }));
+          },
+          { reduced: prefersReducedMotionNow() }
+        );
+        smootherRef.current = smoother;
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+        let landed = false;
+        await streamChat(
+          {
+            question: displayQuestion,
+            threadId,
+            versionOf: { assistantMessageId, question: newQuestion },
+          },
+          {
+            onAnswer: (delta) => smoother.push(delta),
+            onRecommendations: (items) => {
+              smoother.flush();
+              ensurePlaceholder();
+              patch((m) => ({ ...m, recommendations: items }));
+            },
+            onStep: (step) => {
+              ensurePlaceholder();
+              patch((m) => {
+                const steps = m.steps ?? [];
+                const at = steps.findIndex((s) => s.id === step.id);
+                if (at === -1) return { ...m, steps: [...steps, step] };
+                const next = steps.slice();
+                next[at] = step;
+                return { ...m, steps: next };
+              });
+            },
+            onDone: () => {
+              landed = true;
+            },
+            onError: (message) => {
+              if (controller.signal.aborted) return;
+              smoother.cancel();
+              toast.error(message);
+            },
+          },
+          controller.signal
+        );
+        smoother.flush();
+        smootherRef.current = null;
+        abortRef.current = null;
+        setStreaming(false);
+        // Authoritative either way: on success this shows the new version active and its
+        // place in the switcher; on a stop or failure it shows the version that was never
+        // replaced, because the server never flipped anything — reloading just proves it.
+        if (landed || controller.signal.aborted) {
+          await loadThread(threadId);
+        }
+      })();
+    },
+    [threadId, busy, loadingThread, messages, scrollToBottom, loadThread]
   );
 
   /**
@@ -925,7 +1142,7 @@ export function ChatPanel() {
   const headerTitle = threadTitle?.trim() || "New chat";
 
   return (
-    <>
+    <ChatThreadProvider value={threadId}>
       {/*
         Always bounded; the internal message list is the only scroller (flex 1 1 0 +
         overflow-y-auto). On phones the chat page bounds itself and this card fills
@@ -1050,6 +1267,9 @@ export function ChatPanel() {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* `relative` so the jump button can sit on the scroller's bottom edge — above the
+              composer, but not inside the scrolling content, where it would scroll away. */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
           <div
             ref={listRef}
             onScroll={onListScroll}
@@ -1083,14 +1303,36 @@ export function ChatPanel() {
                     </div>
                   )}
 
-                  {messages.map((msg) =>
-                    msg.role === "user" ? (
-                      <UserBubble key={msg.id} msg={msg} />
+                  {messages.map((msg, i) => {
+                    // Only the pair that ends the thread can be edited or regenerated —
+                    // versions exist for the last turn only.
+                    const isLastAssistant =
+                      msg.role === "assistant" && i === messages.length - 1 && msg.persisted;
+                    const isLastUser =
+                      msg.role === "user" &&
+                      i === messages.length - 1 - (messages[messages.length - 1]?.role === "assistant" ? 1 : 0) &&
+                      Boolean(messages[messages.length - 1]?.role === "assistant" && (messages[messages.length - 1] as AssistantMessage).persisted);
+                    return msg.role === "user" ? (
+                      <UserBubble
+                        key={msg.id}
+                        msg={msg}
+                        editable={isLastUser && !busy}
+                        editing={editingUserId === msg.id}
+                        onStartEdit={() => setEditingUserId(msg.id)}
+                        onCancelEdit={() => setEditingUserId(null)}
+                        onSubmitEdit={(text) => {
+                          const nextAssistant = messages[i + 1];
+                          if (nextAssistant?.role === "assistant") sendVersioned(nextAssistant.id, text);
+                        }}
+                      />
                     ) : (
                       <AssistantBubble
                         key={msg.id}
                         msg={msg}
-                        onRetry={() => sendQuestion(lastUserQuery)}
+                        onRetry={
+                          isLastAssistant ? () => sendVersioned(msg.id) : () => sendQuestion(lastUserQuery)
+                        }
+                        retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
                         onFollowUp={(q) => sendQuestion(q)}
                         onActionSettled={(actionId, next) =>
                           setMessages((prev) =>
@@ -1101,9 +1343,23 @@ export function ChatPanel() {
                             )
                           )
                         }
+                        versions={isLastAssistant ? versions : []}
+                        onSwitchVersion={
+                          isLastAssistant
+                            ? async (version) => {
+                                if (!threadId || !versionSlot) return;
+                                try {
+                                  await switchChatVersion(threadId, versionSlot, version);
+                                  await loadThread(threadId);
+                                } catch (err) {
+                                  toast.error(friendlyError(err, "Couldn’t switch versions — try again?"));
+                                }
+                              }
+                            : undefined
+                        }
                       />
-                    )
-                  )}
+                    );
+                  })}
 
                   {/*
                     Only reachable before the first `step` event lands — which is now within
@@ -1123,6 +1379,34 @@ export function ChatPanel() {
                 </>
               )}
             </div>
+          </div>
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-x-0 bottom-3 flex justify-center transition-opacity duration-150",
+              !atBottom && messages.length > 0 ? "opacity-100" : "opacity-0"
+            )}
+          >
+            <button
+              type="button"
+              // Only a tab stop while it is visible: an invisible button in the tab order is a
+              // control you can land on and cannot see.
+              tabIndex={!atBottom && messages.length > 0 ? 0 : -1}
+              aria-hidden={atBottom || messages.length === 0}
+              aria-label="Jump to latest"
+              title="Jump to latest"
+              onClick={() => {
+                stickToBottomRef.current = true;
+                setAtBottom(true);
+                scrollToBottom(true);
+              }}
+              className={cn(
+                "flex size-8 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground shadow-md transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                !atBottom && messages.length > 0 && "pointer-events-auto"
+              )}
+            >
+              <ArrowDown className="size-4" />
+            </button>
+          </div>
           </div>
 
           <div className="shrink-0 border-t border-border/60 bg-card p-3 sm:p-4">
@@ -1165,6 +1449,8 @@ export function ChatPanel() {
                   onPicksChange={setAttached}
                   // Chat is the surface where a past conversation is worth naming.
                   events
+                  // `/` at the start of a line opens the command menu (prefills and page jumps).
+                  commands
                   // Off while the recogniser owns the box — an accepted row splices text
                   // the dictated span is anchored against. (Mid-IME is the composer's own
                   // business and it shuts itself.)
@@ -1282,6 +1568,7 @@ export function ChatPanel() {
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-col gap-3 p-4">
+            <h3 className="text-sm font-medium text-foreground">This chat</h3>
             <Textarea
               ref={contextTextareaRef}
               rows={8}
@@ -1341,15 +1628,105 @@ export function ChatPanel() {
               </Button>
             </div>
           </div>
+          <WritingInstructionsField active={contextOpen} />
         </SheetContent>
       </Sheet>
-    </>
+    </ChatThreadProvider>
   );
 }
 
-const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
+const UserBubble = memo(function UserBubble({
+  msg,
+  editable = false,
+  editing = false,
+  onStartEdit,
+  onCancelEdit,
+  onSubmitEdit,
+}: {
+  msg: UserMessage;
+  /** Only the very last user turn can be edited — versions exist for the last turn only. */
+  editable?: boolean;
+  editing?: boolean;
+  onStartEdit?: () => void;
+  onCancelEdit?: () => void;
+  onSubmitEdit?: (text: string) => void;
+}) {
+  const [text, setText] = useState(msg.content);
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    setText(msg.content);
+    const el = fieldRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing, msg.content]);
+
+  function submit() {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    onSubmitEdit?.(trimmed);
+  }
+
+  if (editing) {
+    return (
+      <div className="flex justify-end">
+        <div className="w-full max-w-[85%] rounded-2xl rounded-br-md border border-primary/40 bg-background p-2">
+          <Textarea
+            ref={fieldRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                onCancelEdit?.();
+              }
+            }}
+            rows={2}
+            aria-label="Edit your question"
+            className="min-h-16 resize-none border-none bg-transparent p-1 text-sm shadow-none focus-visible:ring-0"
+          />
+          <div className="mt-1 flex justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={onCancelEdit}
+              className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Cancel edit"
+              title="Cancel"
+            >
+              <X className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!text.trim()}
+              className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Save & ask
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex justify-end">
+    <div className="group flex items-center justify-end gap-1.5">
+      {editable && (
+        <button
+          type="button"
+          onClick={onStartEdit}
+          aria-label="Edit this question"
+          title="Edit"
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Pencil className="size-3.5" />
+        </button>
+      )}
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
         <MentionText text={msg.content} names={msg.mentionNames} />
       </div>
@@ -1360,13 +1737,20 @@ const UserBubble = memo(function UserBubble({ msg }: { msg: UserMessage }) {
 const AssistantBubble = memo(function AssistantBubble({
   msg,
   onRetry,
+  retryLabel,
   onFollowUp,
   onActionSettled,
+  versions = [],
+  onSwitchVersion,
 }: {
   msg: AssistantMessage;
   onRetry?: () => void;
+  retryLabel?: string;
   onFollowUp?: (question: string) => void;
   onActionSettled?: (actionId: string, next: StoredProposedAction) => void;
+  /** Every version of this turn, when it is the last one. Otherwise empty — no switcher. */
+  versions?: VersionRow[];
+  onSwitchVersion?: (version: number) => void;
 }) {
   const steps = msg.steps ?? [];
 
@@ -1419,7 +1803,7 @@ const AssistantBubble = memo(function AssistantBubble({
     // from a stranger. The user's own words keep a bubble, so the two are still easy to
     // tell apart while scanning.
     <div className="flex justify-start">
-      <div className="w-full max-w-[92%] space-y-3">
+      <div className="w-full min-w-0 max-w-[92%] space-y-3">
         {steps.length > 0 && (
           <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} />
         )}
@@ -1445,6 +1829,10 @@ const AssistantBubble = memo(function AssistantBubble({
                 rec={r}
                 subtitle={r.contact_id ? subtitleById.get(r.contact_id) : undefined}
                 photoUrl={r.contact_id ? photoById.get(r.contact_id) : undefined}
+                // Only a saved answer can send: the server checks the message recommended this
+                // person, and a streamed-but-unsaved one has no row to check against.
+                messageId={msg.persisted ? msg.id : undefined}
+                sentAt={r.contact_id ? msg.sentTo?.[r.contact_id] : undefined}
               />
             ))}
           </div>
@@ -1464,13 +1852,17 @@ const AssistantBubble = memo(function AssistantBubble({
           </div>
         )}
         {!msg.streaming && msg.answer && (
-          <AnswerActions
-            messageId={msg.id}
-            answer={msg.answer}
-            persisted={Boolean(msg.persisted)}
-            initialFeedback={msg.feedback ?? null}
-            onRetry={onRetry}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <AnswerActions
+              messageId={msg.id}
+              answer={msg.answer}
+              persisted={Boolean(msg.persisted)}
+              initialFeedback={msg.feedback ?? null}
+              onRetry={onRetry}
+              retryLabel={retryLabel}
+            />
+            {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}
+          </div>
         )}
         {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
           <div className="flex flex-wrap gap-1.5">
@@ -1491,17 +1883,77 @@ const AssistantBubble = memo(function AssistantBubble({
   );
 });
 
+function VersionSwitcher({
+  versions,
+  currentId,
+  onSwitch,
+}: {
+  versions: VersionRow[];
+  /** The assistant message id currently shown, to find its place among `versions`. */
+  currentId: string;
+  onSwitch?: (version: number) => void;
+}) {
+  const index = versions.findIndex((v) => v.assistantMessageId === currentId);
+  if (index === -1) return null;
+  const current = versions[index]!;
+  return (
+    <div className="flex items-center gap-0.5 text-xs text-muted-foreground" role="group" aria-label="Answer version">
+      <button
+        type="button"
+        onClick={() => onSwitch?.(versions[index - 1]!.version)}
+        disabled={index === 0}
+        aria-label="Previous version"
+        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <ChevronLeft className="size-3.5" />
+      </button>
+      <span className="tabular-nums" aria-live="polite">
+        {index + 1}/{versions.length}
+      </span>
+      <button
+        type="button"
+        onClick={() => onSwitch?.(versions[index + 1]!.version)}
+        disabled={index === versions.length - 1}
+        aria-label="Next version"
+        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <ChevronRight className="size-3.5" />
+      </button>
+      <span className="sr-only">version {current.version}</span>
+    </div>
+  );
+}
+
 const RecommendationCard = memo(function RecommendationCard({
   rec,
   subtitle,
   photoUrl,
+  messageId,
+  sentAt,
 }: {
   rec: ChatResult["recommendations"][number];
   /** Role and company from retrieval — absent on a reloaded thread, which is fine. */
   subtitle?: string | null;
   /** The contact's stored photo, when the activity steps learned it. */
   photoUrl?: string | null;
+  /** The saved answer this card belongs to. Absent until it is saved, which hides Send. */
+  messageId?: string;
+  /** When this draft was already emailed to this person, from the timeline. */
+  sentAt?: string;
 }) {
+  // A draft edited before the Gmail connect redirect comes back with the person. Read-only
+  // here and cleared in an effect, so a StrictMode double render cannot lose it.
+  const [resume] = useState(() =>
+    messageId && rec.contact_id ? peekSendResumeFor(messageId, rec.contact_id) : null
+  );
+  useEffect(() => {
+    if (resume) clearSendResume();
+  }, [resume]);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendBody, setSendBody] = useState("");
+  const [sent, setSent] = useState<{ at: string; maybe: boolean } | null>(
+    sentAt ? { at: sentAt, maybe: false } : null
+  );
   const href = rec.recruiter_id
     ? `/recruiters/${rec.recruiter_id}`
     : rec.contact_id
@@ -1556,12 +2008,44 @@ const RecommendationCard = memo(function RecommendationCard({
         {rec.suggested_action}
       </p>
       {rec.draft_message && (
-        <div className="mt-2 rounded-lg bg-muted/50 p-2 text-xs">
-          <Badge variant="secondary" className="mb-1 text-[10px]">
-            Draft
-          </Badge>
-          <p className="whitespace-pre-wrap text-muted-foreground">{rec.draft_message}</p>
-        </div>
+        <DraftEditor
+          initial={resume?.body ?? rec.draft_message}
+          name={rec.name}
+          actions={
+            messageId && rec.contact_id
+              ? (text) =>
+                  sent ? (
+                    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <Check className="size-3.5" aria-hidden />
+                      {sent.maybe ? "May have been sent — check your Sent folder" : `Sent to ${rec.name}`}
+                      {!sent.maybe && ` · ${formatSentAt(sent.at)}`}
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSendBody(text);
+                        setSendOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    >
+                      <Mail className="size-3.5" aria-hidden /> Send email…
+                    </button>
+                  )
+              : undefined
+          }
+        />
+      )}
+      {messageId && rec.contact_id && (
+        <GmailSendDialog
+          open={sendOpen}
+          onOpenChange={setSendOpen}
+          messageId={messageId}
+          contactId={rec.contact_id}
+          name={rec.name}
+          body={sendBody}
+          onSent={(at, maybe) => setSent({ at, maybe })}
+        />
       )}
       {canRemind && (
         <div className="mt-auto pt-2.5">

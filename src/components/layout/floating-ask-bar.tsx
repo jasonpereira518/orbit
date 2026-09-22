@@ -22,6 +22,11 @@ import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events"
 import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
+import {
+  createStreamSmoother,
+  prefersReducedMotionNow,
+  type StreamSmoother,
+} from "@/lib/stream-smoother";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
@@ -218,6 +223,9 @@ export function FloatingAskBar() {
   // Read through a ref so the listener below is registered once, not re-bound every time
   // `sendQuestion`'s identity changes with a pending reply.
   const sendQuestionRef = useRef<(q: string) => void>(() => {});
+  // The reveal buffer for the answer in flight, so unmounting stops it drawing.
+  const smootherRef = useRef<StreamSmoother | null>(null);
+  useEffect(() => () => smootherRef.current?.cancel(), []);
 
   useEffect(() => {
     function onOpenRequest(e: Event) {
@@ -397,6 +405,16 @@ export function FloatingAskBar() {
           ]);
         };
 
+        // Same frame-at-a-time reveal as the chat page; every path that ends the answer flushes it.
+        const smoother = createStreamSmoother(
+          (chunk) => {
+            ensurePlaceholder();
+            patch((m) => ({ ...m, answer: m.answer + chunk }));
+          },
+          { reduced: prefersReducedMotionNow() }
+        );
+        smootherRef.current = smoother;
+
         await streamChat(
           {
             question: q,
@@ -410,11 +428,9 @@ export function FloatingAskBar() {
               : undefined,
           },
           {
-            onAnswer: (delta) => {
-              ensurePlaceholder();
-              patch((m) => ({ ...m, answer: m.answer + delta }));
-            },
+            onAnswer: (delta) => smoother.push(delta),
             onRecommendations: (items) => {
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
             },
@@ -430,17 +446,21 @@ export function FloatingAskBar() {
               });
             },
             onDone: (info) => {
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, retrieved: info.retrieved, streaming: false }));
               if (info.notice) toast.message(info.notice);
             },
             onError: (message) => {
+              smoother.cancel();
               toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               setQuery(q);
             },
           }
         );
+        smoother.flush();
+        smootherRef.current = null;
         setChatPending(false);
       })();
     },
