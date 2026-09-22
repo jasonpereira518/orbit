@@ -48,6 +48,9 @@ function main() {
   // this script's own checks both find the right files whichever directory `tsx` is run from.
   const GMAIL = fileURLToPath(new URL("../src/actions/gmail.ts", import.meta.url));
   const OUTLOOK = fileURLToPath(new URL("../src/actions/outlook.ts", import.meta.url));
+  const RECRUITER_MESSAGES = fileURLToPath(
+    new URL("../src/actions/recruiter-messages.ts", import.meta.url)
+  );
 
   console.log("connecting is free");
   for (const [file, fn] of [[GMAIL, "startGmailOAuth"], [OUTLOOK, "startOutlookOAuth"]] as const) {
@@ -67,6 +70,15 @@ function main() {
     check(`${fn} requires the recruiters plan`, calls.has("requireRecruitersUser"));
     check(`${fn} no longer uses the sync gate`, !calls.has("requireSyncUser"));
   }
+
+  console.log("\nsending a recruiter email is gated on recruiters, not on sync");
+  // The sync denial now reads "Calendar subscriptions and event sources are available on…",
+  // and `asActionResult` hands a denial to the person verbatim — so a sync gate in front of
+  // Send would answer a recruiter email with a sentence about calendars. Sending from your
+  // own address is on every plan; recruiter tracking is what is paid for.
+  const sendCalls = callsIn(RECRUITER_MESSAGES, "sendRecruiterDrafts");
+  check("sendRecruiterDrafts requires the recruiters plan", sendCalls.has("requireRecruitersUser"));
+  check("sendRecruiterDrafts does not use the sync gate", !sendCalls.has("requireSyncUser"));
 
   console.log("\nthe paywall message reaches the person");
   // Built inline rather than imported from `src/lib/entitlements` — this smoke is `pure` tier,

@@ -11,7 +11,7 @@ import {
   type RecruiterMessage,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { requireRecruitersUser, requireSyncUser } from "@/lib/plan-guards";
+import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { sendGmailMessage } from "@/lib/gmail-send";
 import { gmailConnections } from "@/db/schema";
@@ -253,8 +253,12 @@ export async function sendRecruiterDrafts(
   ids: string[]
 ): Promise<ActionResult<SendDraftsResult>> {
   return asActionResult(async () => {
-    const userId = await requireSyncUser();
-    await requireRecruitersUser();
+    // Recruiter tracking is the gate here and the only one. `requireSyncUser` ran first and
+    // refused a free user with the sync denial — which Task 6 reworded to talk about calendar
+    // subscriptions and event sources, and `asActionResult` now hands that text straight to
+    // someone who pressed Send on a recruiter email. Sending from your own address is on every
+    // plan per the spec, so the sync gate never belonged here.
+    const userId = await requireRecruitersUser();
     const db = await getDb();
 
     const unique = Array.from(new Set(ids.filter(Boolean)));
