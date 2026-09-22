@@ -134,9 +134,11 @@ export default function ExtensionWelcomePage() {
             either — it reads what&apos;s already on your screen.
           </p>
           <p>
-            What it reads is used to work out who the page is about. Orbit keeps what you choose
-            to save — a name, a title, their roles — never the page itself. A right-clicked link
-            sends only the link; the page behind it is never opened.
+            What it reads is used to work out who the page is about. Orbit never keeps the page
+            itself: it keeps what you choose to save — a name, a title, their roles — and, for a
+            week, what it read from a page, so opening it again doesn&apos;t cost another AI call.
+            A right-clicked link sends only the link; the page behind it is never opened. The{" "}
+            <a href="/privacy#extension">privacy policy</a> has the full detail.
           </p>
           <DocCallout title="Following you, if you want it">
             In the extension&apos;s settings you can let it follow you on LinkedIn, X, Gmail or

@@ -49,8 +49,16 @@ any of those is missing or still pointing at localhost, and `npm run zip`
 re-checks the emitted manifest before packaging.
 
 ```bash
-npm run zip    # build + verify + release/orbit-<version>.zip
+npm run zip                    # build + verify + release/orbit-<version>.zip
+npm run zip -- --first-upload  # once, ever: also carries key.pem so the store keeps the ID
 ```
+
+The zip drops the manifest's `key` — the store rejects an upload that has one —
+while `dist/` keeps it, so an unpacked load still gets the pinned ID. The whole
+procedure, including the checks only a person can run, is
+[docs/release-checklist.md](docs/release-checklist.md); listing copy and the
+store's data-use answers are in
+[../docs/extension/store-listing.md](../docs/extension/store-listing.md).
 
 Bump `version` in `package.json` (plain x.y.z) before each store upload; the
 manifest and the zip name both derive from it.
@@ -232,4 +240,6 @@ nothing from the Next app reaches the bundle.
 | `npm run build` | Token drift check, then the injected IIFE, then the popup |
 | `npm run typecheck` / `npm run lint` | The usual |
 | `npm run tokens:sync` | Regenerate `tokens.css` from the app |
-| `npm run zip` | Build and package `release/orbit-<version>.zip` |
+| `npm run zip` | Build and package `release/orbit-<version>.zip` (see Production build & release) |
+| `npm run e2e` | Permission model + web-app handshake in real Chrome |
+| `node ../scripts/dev/cdp.mjs http://localhost:5174/dev/preview.html extension/scripts/store-screenshots.mjs` | Store screenshots + promo tile from the harness (run from the repo root, with `preview:design` up) |

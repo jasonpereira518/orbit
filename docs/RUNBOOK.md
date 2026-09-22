@@ -131,6 +131,29 @@ the delivery detail when it happened.
 | `CLERK_WEBHOOK_SIGNING_SECRET`, `STRIPE_WEBHOOK_SECRET` | Roll in the dashboard, paste into Vercel, redeploy. |
 | `ENCRYPTION_SECRET` | Do not rotate casually: it decrypts every user's BYOK key and OAuth token. Rotation means re-encrypting them all. |
 
+## Extension releases
+
+The Chrome extension ships through the Web Store, not Vercel: review takes hours to days,
+and users update on Chrome's schedule. So **the server deploys first** and never drops
+support for a contract version a user may still run. The full procedure — build gates,
+the checks only a person can do, the one-time first upload that keeps the pinned ID — is
+[`extension/docs/release-checklist.md`](../extension/docs/release-checklist.md); the
+listing and data-use answers are [`docs/extension/store-listing.md`](./extension/store-listing.md).
+
+| Symptom | Likely cause | Do |
+|---|---|---|
+| Every extension request 401s after a release | The published item's ID isn't the one in `EXTENSION_ORIGIN` / Clerk's allowed origins | Compare the store item ID with `EXTENSION_ORIGIN`; fix the env and Clerk, redeploy the app. |
+| Users see an "update available" band in the panel | The server's `EXTENSION_CONTRACT_VERSION` is newer than their build | Expected after a contract bump; it clears when Chrome updates them. If the new build isn't live in the store yet, that's the gap — the old build still works. |
+| "Add to Chrome" goes to a store search | `NEXT_PUBLIC_EXTENSION_URL` unset | Set it to the listing URL, redeploy. |
+| Settings never says "Installed" | `NEXT_PUBLIC_EXTENSION_ID` unset or wrong | Set it to the store item ID, redeploy. |
+| A bad build is live | — | No rollback in the store: republish the previous code with a higher version. |
+
+Release log (newest first):
+
+| Date | Version | Notes |
+|---|---|---|
+| — | 1.0.0 | First store submission (not yet made). |
+
 ## Restore the database
 
 Daily encrypted dumps: GitHub → Actions → `backup` → artifacts (90 days). Take a fresh one
