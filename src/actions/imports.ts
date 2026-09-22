@@ -61,6 +61,7 @@ import {
   getValidAccessToken as getValidOutlookAccessToken,
 } from "@/lib/outlook";
 import { actionFailure } from "@/lib/action-failure";
+import { lastCompletedImportAt } from "@/lib/import-history";
 
 function simpleHash(input: string) {
   let h = 0;
@@ -556,6 +557,12 @@ export async function listImports() {
     where: eq(imports.userId, userId),
     orderBy: (i, { desc }) => [desc(i.createdAt)],
   });
+}
+
+/** When the last LinkedIn import finished — the LinkedIn line on the Integrations overview. */
+export async function getLastLinkedInImportAt(): Promise<Date | null> {
+  const userId = await requireUserId();
+  return lastCompletedImportAt(userId, ["linkedin_connections", LINKEDIN_MESSAGES_IMPORT_TYPE]);
 }
 
 export async function previewCalendarImport(payload: {

@@ -51,6 +51,8 @@ export type GmailConnectionStatus = {
   canRead: boolean;
   /** The grant covers contacts.readonly. */
   canImportContacts: boolean;
+  /** The grant covers calendar.readonly: meetings can come in. */
+  hasCalendarScope: boolean;
   /** Safe: configured redirect URI only (no secrets). */
   redirectUri: string | null;
 };
@@ -70,6 +72,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       nextSyncAt: null,
       canRead: false,
       canImportContacts: false,
+      hasCalendarScope: false,
       redirectUri: summary.redirectUri,
     };
   }
@@ -97,6 +100,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     nextSyncAt: conn?.nextSyncAt?.toISOString() ?? null,
     canRead: Boolean(conn && conn.status === "active" && hasGmailReadScope(conn.scopes)),
     canImportContacts: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
+    hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
     redirectUri: summary.redirectUri,
   };
 }
