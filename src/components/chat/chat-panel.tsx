@@ -56,6 +56,7 @@ import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
+import { OrbitMark } from "@/components/chat/orbit-mark";
 import { AnswerActions } from "@/components/chat/answer-actions";
 import { ReminderButton } from "@/components/chat/reminder-button";
 import { ChatHistoryRail } from "@/components/chat/chat-history-rail";
@@ -84,6 +85,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import type { ChatRecommendation } from "@/db/schema";
 import { streamChat, type DoneInfo } from "@/lib/chat-stream-client";
 import { activeMentions } from "@/lib/chat-mentions";
@@ -260,6 +262,7 @@ export function ChatPanel() {
   // itself is the progress indicator.
   const awaitingFirstToken =
     busy && !messages.some((m) => m.role === "assistant" && m.streaming);
+  const reduceMotion = usePrefersReducedMotion();
   const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1111,7 +1114,7 @@ export function ChatPanel() {
                   {awaitingFirstToken && (
                     <div className="flex justify-start">
                       <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" />
+                        <OrbitMark reduceMotion={reduceMotion} />
                         Starting…
                       </div>
                     </div>
