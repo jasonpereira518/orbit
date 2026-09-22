@@ -625,6 +625,7 @@ const PRESERVED_SETTINGS_COLUMNS = {
   geminiApiKeyEncrypted: true,
   openaiApiKeyEncrypted: true,
   anthropicApiKeyEncrypted: true,
+  typesafeApiKeyEncrypted: true,
   apolloApiKeyEncrypted: true,
   resendApiKeyEncrypted: true,
   twilioAccountSidEncrypted: true,

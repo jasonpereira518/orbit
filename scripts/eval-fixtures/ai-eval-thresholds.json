@@ -1,5 +1,5 @@
 {
-  "$comment": "Gate for scripts/eval-ai.ts --compare. maxDrop: a higher-is-better metric may fall by at most this much (absolute, rates are 0-1). maxRise: an error rate or a hallucination count may rise by at most this much. Referral recall and invented facts never get worse; the rest allow a little run-to-run noise. Tune here, not in code. research: routing is rule-based and deterministic, so it may not drop at all; a forbidden claim or an invented contact id is never acceptable; meanLookups, meanRounds and filteredRecommendations are reported for cost, not gated.",
+  "$comment": "Gate for scripts/eval-ai.ts --compare. maxDrop: a higher-is-better metric may fall by at most this much (absolute, rates are 0-1). maxRise: an error rate or a hallucination count may rise by at most this much. Referral recall and invented facts never get worse; the rest allow a little run-to-run noise. Tune here, not in code. research: routing is rule-based and deterministic, so it may not drop at all; a forbidden claim or an invented contact id is never acceptable; meanLookups, meanRounds and filteredRecommendations are reported for cost, not gated. recruiter.gateWrongSkips (Jev runs): a real recruiter the decision model ruled out before the LLM is a recruiter lost, so never more than the baseline. recruiter-prefilter: recall may not drop at all (a sender discovery drops is never looked at again); precision may give a little, because a false admission costs one gate question and at worst one LLM call.",
   "capture": {
     "personRecall": { "maxDrop": 0.02 },
     "personPrecision": { "maxDrop": 0.03 },
@@ -13,7 +13,15 @@
   "recruiter": {
     "precision": { "maxDrop": 0 },
     "recall": { "maxDrop": 0.03 },
-    "detailRecall": { "maxDrop": 0.05 }
+    "detailRecall": { "maxDrop": 0.05 },
+    "gateWrongSkips": { "maxRise": 0 }
+  },
+  "recruiter-gate": {
+    "gateWrongSkips": { "maxRise": 0 }
+  },
+  "recruiter-prefilter": {
+    "recall": { "maxDrop": 0 },
+    "precision": { "maxDrop": 0.15 }
   },
   "extension": {
     "fieldAccuracy": { "maxDrop": 0.02 },

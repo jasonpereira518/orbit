@@ -19,6 +19,12 @@ import {
   type EmbeddingBackend,
 } from "@/lib/ai-providers";
 import { AI_ACCESS_COPY, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
+import { JEV_MODEL } from "@/lib/ai-models";
+import {
+  systemOneRequest,
+  type SystemOneRequest,
+  type SystemOneResponse,
+} from "@/lib/typesafe-api";
 import {
   chooseCompletionKey,
   chooseEmbeddingKey,
@@ -106,6 +112,21 @@ const LOCAL_ENV: Record<AiProvider, string> = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
 };
+
+/**
+ * TypeSafe (Jev, the decision model) is BYOK only — Jason's call, Sep 21 2026 — so it has no
+ * managed name at all. This one is read on a dev server alone, like `LOCAL_ENV`.
+ */
+const LOCAL_TYPESAFE_ENV = "TYPESAFE_API_KEY";
+
+/**
+ * `ORBIT_JEV=off` — the decision model's emergency stop. Every decision call site falls
+ * back to the path it had before Jev, so switching it off loses speed and savings, never a
+ * feature.
+ */
+export function jevSwitchedOff(): boolean {
+  return process.env.ORBIT_JEV?.trim().toLowerCase() === "off";
+}
 
 /**
  * `ORBIT_MANAGED_AI=off` — the emergency stop. Every Lifetime account falls back to BYOK.
@@ -227,6 +248,43 @@ export function openaiClient(grant: AiGrant<AiProvider>): OpenAI {
 
 export function anthropicClient(grant: AiGrant<AiProvider>): Anthropic {
   return new Anthropic({ apiKey: keyFor(grant, "anthropic") });
+}
+
+/**
+ * Permission to ask TypeSafe's decision model one set of questions. Deliberately NOT an
+ * `AiGrant`: TypeSafe is not an `AiProvider`, because an `AiProvider` is something a person
+ * can pick for chat, and every completion path in `ai.ts` would fall through to its
+ * Anthropic branch for a fourth value. Same WeakMap, so it cannot be forged either.
+ */
+export type DecisionGrant = Readonly<{
+  provider: "typesafe";
+  model: string;
+  source: AiKeySource;
+  keyOwner: "user" | "orbit";
+  operation: string;
+}>;
+
+function mintDecision(model: string, source: AiKeySource, key: string, operation: string): DecisionGrant {
+  const grant = Object.freeze({
+    provider: "typesafe" as const,
+    model,
+    source,
+    keyOwner: source === "managed" ? ("orbit" as const) : ("user" as const),
+    operation,
+  });
+  GRANT_KEYS.set(grant, key);
+  return grant;
+}
+
+/** The decision model's client. `ai-access.ts` is the only file allowed to hand it a key. */
+export function typesafeClient(grant: DecisionGrant): {
+  systemOne(body: SystemOneRequest, opts?: { signal?: AbortSignal }): Promise<SystemOneResponse>;
+} {
+  const key = GRANT_KEYS.get(grant);
+  if (!key || grant.provider !== "typesafe") {
+    throw new Error("No typesafe grant — AI clients are only issued by src/lib/ai-access.ts");
+  }
+  return { systemOne: (body, opts) => systemOneRequest(key, body, { signal: opts?.signal }) };
 }
 
 /**
@@ -362,6 +420,8 @@ export class AiAccess {
     readonly upgradePending: boolean,
     private readonly personal: Partial<Record<AiProvider, string>>,
     private readonly managed: Partial<Record<AiProvider, string>>,
+    /** The decision model's key: the account's own, or on `next dev` the developer's. */
+    private readonly decisionKey: { key: string; source: AiKeySource } | null,
   ) {}
 
   static async open(userId: string, opts: AiAccessOptions = {}): Promise<AiAccess> {
@@ -409,7 +469,21 @@ export class AiAccess {
       }
     }
 
-    return new AiAccess(userId, row, plan, eligibility, upgradePending, personal, managed);
+    // BYOK only. The one exception is the dev server's own `.env.local`, on the same terms
+    // as every other provider there (a localhost demo account, managed AI off) — so it can
+    // never become an Orbit-paid key, even the day managed AI ships.
+    const ownDecisionKey = decryptOrNull(row?.typesafeApiKeyEncrypted);
+    const devDecisionKey =
+      eligibility === "demo" && localDevAiEnabled()
+        ? process.env[LOCAL_TYPESAFE_ENV]?.trim() || null
+        : null;
+    const decisionKey = ownDecisionKey
+      ? { key: ownDecisionKey, source: "personal" as const }
+      : devDecisionKey
+        ? { key: devDecisionKey, source: "managed" as const }
+        : null;
+
+    return new AiAccess(userId, row, plan, eligibility, upgradePending, personal, managed, decisionKey);
   }
 
   get selectedProvider(): AiProvider {
@@ -502,6 +576,16 @@ export class AiAccess {
         ? "Anthropic has no embeddings API. Add an OpenAI or Gemini API key in Settings for search embeddings."
         : undefined,
     );
+  }
+
+  /**
+   * A grant for the decision model (TypeSafe's Jev), or null — no key, or `ORBIT_JEV=off`.
+   * Null is the normal answer for most accounts, and every caller has the path it used
+   * before Jev to fall back on; that is why this returns rather than refuses.
+   */
+  decision(operation: string): DecisionGrant | null {
+    if (!this.decisionKey || jevSwitchedOff()) return null;
+    return mintDecision(JEV_MODEL, this.decisionKey.source, this.decisionKey.key, operation);
   }
 
   /**
