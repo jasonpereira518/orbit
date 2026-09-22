@@ -71,6 +71,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-title": "pure",
   "smoke-stream-drain": "pure",
   "smoke-chat-commands": "pure",
+  "smoke-chat-refine": "pure",
   "smoke-draft-prompts": "pglite",
   "smoke-writing-instructions": "pglite",
   "smoke-chat-stream": "pure",

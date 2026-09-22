@@ -74,6 +74,7 @@ export const AI_OPERATIONS = {
   "chat.understand": { label: "Chat: understanding the question", tier: "fast", thinking: "minimal" },
   "chat.rerank": { label: "Chat: ranking results", tier: "fast", thinking: "minimal" },
   "chat.title": { label: "Chat: naming the conversation", tier: "fast", thinking: "minimal" },
+  "chat.refine": { label: "Chat: rewriting a draft", tier: "fast", thinking: "minimal" },
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },

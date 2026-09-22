@@ -21,6 +21,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { DraftEditor } from "@/components/chat/draft-editor";
 import { WritingInstructionsField } from "@/components/chat/writing-instructions-field";
 import { friendlyError } from "@/lib/errors";
 import {
@@ -65,7 +66,6 @@ import type { ChatStep } from "@/lib/chat-stream-protocol";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
@@ -1567,14 +1567,7 @@ const RecommendationCard = memo(function RecommendationCard({
         <span className="font-medium">Next: </span>
         {rec.suggested_action}
       </p>
-      {rec.draft_message && (
-        <div className="mt-2 rounded-lg bg-muted/50 p-2 text-xs">
-          <Badge variant="secondary" className="mb-1 text-[10px]">
-            Draft
-          </Badge>
-          <p className="whitespace-pre-wrap text-muted-foreground">{rec.draft_message}</p>
-        </div>
-      )}
+      {rec.draft_message && <DraftEditor initial={rec.draft_message} name={rec.name} />}
       {canRemind && (
         <div className="mt-auto pt-2.5">
           <ReminderButton
