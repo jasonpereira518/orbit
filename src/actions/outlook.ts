@@ -181,6 +181,7 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   }
   revalidatePath("/settings");
   revalidatePath("/recruiters");
+  revalidatePath("/imports");
 }
 
 export async function consumeOutlookOAuthState(

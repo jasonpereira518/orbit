@@ -245,6 +245,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-gmail-scan-abort": "pglite",
   "smoke-outlook-scan": "pglite",
   "smoke-outlook-disconnect-purge": "pglite",
+  "smoke-disconnect-cleanup": "pglite",
   "smoke-gmail-scope-storage": "pglite",
   "smoke-outlook-scope-storage": "pglite",
   "smoke-health-token": "pglite",

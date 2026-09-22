@@ -59,9 +59,11 @@ import { fetchGooglePeopleContacts, getValidAccessToken, hasContactsScope } from
 import {
   fetchOutlookContacts,
   getValidAccessToken as getValidOutlookAccessToken,
+  hasContactsScope as hasOutlookContactsScope,
 } from "@/lib/outlook";
 import { actionFailure } from "@/lib/action-failure";
 import { lastCompletedImportAt } from "@/lib/import-history";
+import { UserFacingError } from "@/lib/errors";
 
 function simpleHash(input: string) {
   let h = 0;
@@ -934,6 +936,7 @@ export type OutlookContactPerson = {
 
 export async function previewOutlookContacts(): Promise<{
   connected: boolean;
+  contactsScopeGranted: boolean;
   people: OutlookContactPerson[];
 }> {
   const userId = await requireUserId();
@@ -941,8 +944,9 @@ export async function previewOutlookContacts(): Promise<{
   const conn = await db.query.outlookConnections.findFirst({
     where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
   });
-  if (!conn) {
-    return { connected: false, people: [] };
+  if (!conn) return { connected: false, contactsScopeGranted: false, people: [] };
+  if (!hasOutlookContactsScope(conn.scopes)) {
+    return { connected: true, contactsScopeGranted: false, people: [] };
   }
 
   const accessToken = await getValidOutlookAccessToken(userId);
@@ -990,7 +994,7 @@ export async function previewOutlookContacts(): Promise<{
     };
   });
 
-  return { connected: true, people };
+  return { connected: true, contactsScopeGranted: true, people };
 }
 
 /**
@@ -1004,6 +1008,13 @@ export async function confirmOutlookContactsImport(
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
+
+  const conn = await db.query.outlookConnections.findFirst({
+    where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
+  });
+  if (!hasOutlookContactsScope(conn?.scopes)) {
+    throw new UserFacingError("Allow Orbit to read your contacts first — reconnect Outlook and tick contacts access");
+  }
 
   const accessToken = await getValidOutlookAccessToken(userId);
   const outlookContacts = await fetchOutlookContacts(accessToken);

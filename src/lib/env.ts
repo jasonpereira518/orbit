@@ -57,6 +57,10 @@ export const EXPECTED_IN_PRODUCTION = [
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REDIRECT_URI",
+  // Outlook contacts, calendar and mail all ride this one OAuth client.
+  "MICROSOFT_CLIENT_ID",
+  "MICROSOFT_CLIENT_SECRET",
+  "MICROSOFT_REDIRECT_URI",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [

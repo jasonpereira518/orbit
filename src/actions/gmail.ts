@@ -31,6 +31,7 @@ import {
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
 import { pauseSync, resumeSync } from "@/lib/provider-connections";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { deleteEventConnection } from "@/lib/events/connections";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
@@ -185,7 +186,14 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   if (opts.alsoDelete === true) {
     await purgeUserData(userId, { only: DISCONNECT_DELETE_CATEGORIES.gmail });
   }
+  // The confirmation-email scan is an opt-in row that carries no token of its own — it borrows
+  // this connection's. Left behind, the scheduler claims it every pass and fails on a mailbox
+  // that is no longer connected.
+  await deleteEventConnection(userId, "gmail");
   revalidatePath("/recruiters");
+  revalidatePath("/settings");
+  revalidatePath("/imports");
+  revalidatePath("/events");
 }
 
 export async function consumeGmailOAuthState(

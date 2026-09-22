@@ -12,6 +12,15 @@ import { run } from "./smoke/_env";
 process.env.MICROSOFT_CLIENT_ID ||= "smoke-microsoft-client-id";
 process.env.MICROSOFT_REDIRECT_URI ||= "http://localhost:3001/api/outlook/callback";
 
+// Task 6's previewOutlookContacts/confirmOutlookContactsImport checks below call the real
+// actions, which call requireUserId(). Demo mode is what lets that resolve to "demo-user"
+// without a real Clerk session — the same route smoke-clear-api-key.ts already uses — so
+// Clerk must be unconfigured before those "use server" modules (below) are imported.
+delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+delete process.env.CLERK_SECRET_KEY;
+(process.env as Record<string, string>).NODE_ENV = "development";
+process.env.ORBIT_DEMO_DATA = "off";
+
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { outlookConnections, userSettings } from "../src/db/schema";
@@ -29,6 +38,8 @@ import { describeOAuthReason } from "../src/lib/errors";
 import { decrypt, encrypt } from "../src/lib/crypto";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { pauseSync } from "../src/lib/provider-connections";
+import { buildOutlookContactIndex } from "../src/lib/contact-avatar-connectors";
+import { previewOutlookContacts, confirmOutlookContactsImport } from "../src/actions/imports";
 
 const USER = "smoke-outlook-scope-user";
 let failures = 0;
@@ -216,6 +227,58 @@ run(async () => {
     "the same account with no new refresh token keeps the existing one",
     Boolean(keptRow?.refreshTokenEncrypted) && decrypt(keptRow!.refreshTokenEncrypted!) === "still-good-refresh-token"
   );
+
+  console.log("\nTask 6: the avatar index checks the contacts scope before calling Graph");
+  await cleanup();
+  await ensureUserSettings(USER);
+  await upsertOutlookConnection(USER, { access_token: "atAvatar1", refresh_token: "rtAvatar1", scope: MICROSOFT_SCOPES.calendar, expires_in: 3600 }, "jo@outlook.test");
+  {
+    const realFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response(JSON.stringify({ value: [] }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const index = await buildOutlookContactIndex(USER);
+      check("a calendar-only grant returns no contacts from the avatar index", index.size === 0);
+      check("…without ever calling Graph for them", called === false);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+  await cleanup();
+
+  console.log("\nTask 6: previewOutlookContacts and confirmOutlookContactsImport check the contacts scope (demo mode)");
+  {
+    const DEMO_USER = "demo-user";
+    const db = await getDb();
+    await db.delete(outlookConnections).where(eq(outlookConnections.userId, DEMO_USER));
+    await ensureUserSettings(DEMO_USER);
+    await upsertOutlookConnection(DEMO_USER, { access_token: "atDemo1", refresh_token: "rtDemo1", scope: MICROSOFT_SCOPES.calendar, expires_in: 3600 }, "jo@outlook.test");
+
+    const preview = await previewOutlookContacts();
+    check(
+      "a calendar-only Outlook grant reports contacts as not allowed, rather than failing",
+      preview.connected === true && preview.contactsScopeGranted === false && preview.people.length === 0,
+      JSON.stringify(preview)
+    );
+
+    let confirmThrew: unknown = null;
+    try {
+      await confirmOutlookContactsImport(["someone"]);
+    } catch (err) {
+      confirmThrew = err;
+    }
+    check(
+      "confirming without the contacts scope throws the friendly message, not a raw Graph failure",
+      confirmThrew instanceof Error &&
+        confirmThrew.message === "Allow Orbit to read your contacts first — reconnect Outlook and tick contacts access",
+      String(confirmThrew)
+    );
+
+    await db.delete(outlookConnections).where(eq(outlookConnections.userId, DEMO_USER));
+  }
 
   await cleanup();
   if (failures > 0) throw new Error(`${failures} check(s) failed`);
