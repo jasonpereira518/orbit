@@ -58,6 +58,13 @@ check(
   ok.includes("12 added") && ok.includes("3 updated"),
 );
 
+console.log("Merged people are counted once");
+// The engine bumps contactsUpdated and duplicatesFound together for every merge, so the same
+// two people must not read as "2 updated · 2 already here".
+const merged = render([item({ contactsCreated: 1, contactsUpdated: 2, duplicatesFound: 2 })]);
+check("one chip for the merged people", merged.includes("2 already in Orbit"));
+check("no second count of them", !merged.includes("2 updated") && !merged.includes("2 already here"));
+
 console.log("Raw errors never reach the page");
 /** Verbatim text real failures put in `imports.error_message`. */
 const RAW = [

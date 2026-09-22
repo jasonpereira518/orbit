@@ -101,12 +101,17 @@ export function ImportDropzone({
         </div>
       </div>
 
-      {/* Both reset their value on change, so picking the same file twice still fires. */}
+      {/* Both reset their value on change, so picking the same file twice still fires.
+          Out of the tab order and the accessibility tree: `sr-only` hides them visually but
+          leaves them focusable, which put two nameless tab stops right after the buttons that
+          already open them. The buttons are the way in. */}
       <input
         ref={filesInput}
         type="file"
         multiple
         className="sr-only"
+        tabIndex={-1}
+        aria-hidden
         accept=".csv,.zip,.ics,.ical,.vcf,.vcard,text/csv,text/calendar,application/zip"
         onChange={(e) => {
           handle(e.target.files);
@@ -118,6 +123,8 @@ export function ImportDropzone({
         type="file"
         multiple
         className="sr-only"
+        tabIndex={-1}
+        aria-hidden
         // Not in React's HTMLInputElement types; both spellings are needed for coverage.
         {...{ webkitdirectory: "", directory: "" }}
         onChange={(e) => {
