@@ -67,15 +67,27 @@ export type Entitlements = {
   canUseMcp: boolean;
 };
 
-/** Feature keys that `requireEntitlement` can gate on. */
-export type FeatureKey =
-  | "outreach"
-  | "hostedSending"
-  | "hostedEnrichment"
-  | "recruiters"
-  | "sync"
-  | "extension"
-  | "api";
+/**
+ * Feature keys that `requireEntitlement` can gate on.
+ *
+ * A runtime array with the type derived from it, rather than a bare type: a cross-module
+ * guard ("every connector manifest names an entitlement this layer knows",
+ * `scripts/smoke-connector-registry.ts`) needs a list it can actually read at runtime, and a
+ * hand-copied second copy of these strings is exactly the drift such a guard is supposed to
+ * catch. `FEATURE_DENIAL` and `FEATURE_FLAG` below are `Record<FeatureKey, …>`, so adding a
+ * key here without wiring it up is a type error.
+ */
+export const FEATURE_KEYS = [
+  "outreach",
+  "hostedSending",
+  "hostedEnrichment",
+  "recruiters",
+  "sync",
+  "extension",
+  "api",
+] as const;
+
+export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
 /**
  * Thrown when a user's plan does not cover an action. Carries enough structure for the
