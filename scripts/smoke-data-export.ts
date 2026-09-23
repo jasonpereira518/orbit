@@ -32,6 +32,7 @@ async function seed() {
   await db.insert(schema.aiSuggestions).values({ userId: USER, suggestionType: "reconnect", title: "Reach out" });
   await db.insert(schema.imports).values({ userId: USER, importType: "linkedin_connections" });
   await db.insert(schema.gmailConnections).values({ userId: USER, emailAddress: "e@x.test", accessTokenEncrypted: encrypt("a"), refreshTokenEncrypted: encrypt("r") });
+  await db.insert(schema.crmRecords).values({ userId: USER, connectorId: "hubspot", remoteType: "contact", remoteId: "hs-export", lifecycle: "customer", displayName: "Katherine Johnson" });
   await db.insert(schema.events).values({ userId: USER, title: "Summit" });
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet people" });
   await db.insert(schema.chatThreads).values({ userId: USER, title: "thread" });

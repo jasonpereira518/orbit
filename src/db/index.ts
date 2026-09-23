@@ -1395,11 +1395,46 @@ CREATE TABLE IF NOT EXISTS team_members (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS team_members_user_uidx ON team_members(user_id);
 CREATE INDEX IF NOT EXISTS team_members_team_sharing_idx ON team_members(team_id, share_network);
+CREATE TABLE IF NOT EXISTS crm_records (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  remote_type text NOT NULL,
+  remote_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  lifecycle text NOT NULL,
+  stage text,
+  display_name text NOT NULL,
+  email text,
+  email_normalized text,
+  phone text,
+  linkedin_url text,
+  company_name text,
+  company_normalized text,
+  company_domain text,
+  title text,
+  remote_owner_ref text,
+  remote_url text,
+  last_activity_at timestamptz,
+  remote_created_at timestamptz,
+  remote_updated_at timestamptz,
+  properties jsonb NOT NULL DEFAULT '{}'::jsonb,
+  link_blocked_at timestamptz,
+  synced_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS crm_records_remote_uidx ON crm_records(user_id, connector_id, remote_type, remote_id);
+CREATE INDEX IF NOT EXISTS crm_records_user_contact_idx ON crm_records(user_id, contact_id);
+CREATE INDEX IF NOT EXISTS crm_records_contact_idx ON crm_records(contact_id);
+CREATE INDEX IF NOT EXISTS crm_records_user_lifecycle_idx ON crm_records(user_id, connector_id, lifecycle);
+CREATE INDEX IF NOT EXISTS crm_records_link_blocked_idx ON crm_records(user_id, connector_id) WHERE link_blocked_at IS NOT NULL;
 CREATE TABLE IF NOT EXISTS leads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   source text NOT NULL,
   contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  crm_record_id uuid REFERENCES crm_records(id) ON DELETE SET NULL,
   display_name text NOT NULL,
   email text,
   email_normalized text,
@@ -2906,6 +2941,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v76: the outbox claim is an identity with its own lease, not an overloaded schedule.
   await ensureColumn(client, "connector_outbox", "claimed_by", "uuid");
   await ensureColumn(client, "connector_outbox", "claimed_until", "timestamptz");
+  // v94: a CRM lead's record (P4).
+  await ensureColumn(client, "leads", "crm_record_id", "uuid REFERENCES crm_records(id) ON DELETE SET NULL");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -3490,6 +3527,10 @@ const alters = [
   `ALTER TABLE connector_outbox ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
   // v90: the Leads team model (docs/superpowers/specs/2026-09-22-leads-design.md, P2).
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS team_shared integer NOT NULL DEFAULT 1`,
+  // v94: a CRM lead's record (P4). The partial unique lives here only, after its column: the
+  // template runs first, and on a database that already has `leads` the column is not there yet.
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_record_id uuid REFERENCES crm_records(id) ON DELETE SET NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS leads_user_crm_record_uidx ON leads(user_id, crm_record_id) WHERE crm_record_id IS NOT NULL`,
 ];
 
 /**

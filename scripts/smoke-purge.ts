@@ -533,6 +533,19 @@ async function seed() {
     accessTokenEncrypted: "ciphertext-hubspot-access",
     refreshTokenEncrypted: "ciphertext-hubspot-refresh",
   });
+  // A synced CRM person: connection-derived, so it goes with `connections`.
+  const [crmRecord] = await db
+    .insert(schema.crmRecords)
+    .values({
+      userId: USER,
+      connectorId: "hubspot",
+      remoteType: "contact",
+      remoteId: "hs-1",
+      lifecycle: "customer",
+      displayName: "Katherine Johnson",
+      emailNormalized: "katherine@nasa.test",
+    })
+    .returning();
   // Maps this user's rows into someone else's system; must not outlive the connection.
   await db.insert(schema.externalLinks).values({
     userId: USER,
@@ -678,6 +691,7 @@ async function seed() {
     source: "manual",
     displayName: "Grace Hopper",
     emailNormalized: "grace@navy.test",
+    crmRecordId: crmRecord.id,
   });
 
   return { recruiterId: recruiter.id, soleRecruiterId: soleRecruiter.id };

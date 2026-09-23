@@ -4783,6 +4783,69 @@ export type TeamMember = typeof teamMembers.$inferSelect;
 export type LeadSource = "manual" | "apollo" | "crm";
 export type LeadStatus = "open" | "intro_requested" | "converted" | "dismissed";
 
+export type CrmRemoteType = "contact" | "lead";
+/** What the CRM says the person is to the business. Anything else a provider sends is `other`. */
+export type CrmLifecycle = "lead" | "customer" | "other";
+export type CrmScalar = string | number | boolean | null;
+
+/**
+ * One person as a connected CRM describes them: the sync ledger, and the map between an Orbit
+ * contact and its CRM record in both directions. Connection-derived — deleted on disconnect,
+ * purged with `connections`, rebuilt by the next sync — unlike `leads`, which is the user's own.
+ *
+ * A HubSpot contact moving lead → customer keeps its row and flips `lifecycle`; the unique
+ * `(user_id, connector_id, remote_type, remote_id)` is what the sync upserts on. `contact_id` is
+ * set once a customer becomes (or matches) an Orbit contact: "work contacts" are exactly the
+ * contacts with a row here. `link_blocked_at` marks a customer the plan's contact cap refused.
+ */
+export const crmRecords = pgTable(
+  "crm_records",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    remoteType: text("remote_type").$type<CrmRemoteType>().notNull(),
+    remoteId: text("remote_id").notNull(),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    lifecycle: text("lifecycle").$type<CrmLifecycle>().notNull(),
+    /** The provider's raw stage value, never interpreted beyond `lifecycle`. */
+    stage: text("stage"),
+    displayName: text("display_name").notNull(),
+    email: text("email"),
+    /** `identityKeysFor`'s email value. */
+    emailNormalized: text("email_normalized"),
+    phone: text("phone"),
+    linkedinUrl: text("linkedin_url"),
+    companyName: text("company_name"),
+    companyNormalized: text("company_normalized"),
+    companyDomain: text("company_domain"),
+    title: text("title"),
+    remoteOwnerRef: text("remote_owner_ref"),
+    remoteUrl: text("remote_url"),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    remoteCreatedAt: timestamp("remote_created_at", { withTimezone: true }),
+    remoteUpdatedAt: timestamp("remote_updated_at", { withTimezone: true }),
+    /** Whitelisted scalar properties only (see the provider's mapping module). */
+    properties: jsonb("properties").$type<Record<string, CrmScalar>>().default({}).notNull(),
+    linkBlockedAt: timestamp("link_blocked_at", { withTimezone: true }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("crm_records_remote_uidx").on(t.userId, t.connectorId, t.remoteType, t.remoteId),
+    index("crm_records_user_contact_idx").on(t.userId, t.contactId),
+    /** Without this, deleting a contact scans the table (see `leads_contact_idx`). */
+    index("crm_records_contact_idx").on(t.contactId),
+    index("crm_records_user_lifecycle_idx").on(t.userId, t.connectorId, t.lifecycle),
+    index("crm_records_link_blocked_idx")
+      .on(t.userId, t.connectorId)
+      .where(sql`link_blocked_at is not null`),
+  ]
+);
+
+export type CrmRecord = typeof crmRecords.$inferSelect;
+
 /**
  * A person the user wants to reach, before (or instead of) they become a contact. Kept apart
  * from `contacts` on purpose: a pipeline of cold targets must not flood the network, the
@@ -4791,8 +4854,8 @@ export type LeadStatus = "open" | "intro_requested" | "converted" | "dismissed";
  *
  * The identity columns are written only by `normalizeLeadInput` (src/lib/leads/lead-identity.ts),
  * which uses the same `identityKeysFor` that writes `contact_identities` — so the warm-path SQL
- * matches a lead to a teammate's contact by plain equality. `source = 'crm'` and a
- * `crm_record_id` column arrive with the CRM sync (P4).
+ * matches a lead to a teammate's contact by plain equality. `source = 'crm'` rows and
+ * `crm_record_id` arrive with the CRM sync (P4).
  */
 export const leads = pgTable(
   "leads",
@@ -4802,6 +4865,8 @@ export const leads = pgTable(
     source: text("source").$type<LeadSource>().notNull(),
     /** Set by "Add to contacts". The lead stays, as history. */
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    /** The CRM record a `source = 'crm'` lead came from; kept when a manual lead merges into one. */
+    crmRecordId: uuid("crm_record_id").references(() => crmRecords.id, { onDelete: "set null" }),
     displayName: text("display_name").notNull(),
     email: text("email"),
     /** `identityKeysFor`'s email value; null for a role mailbox or no address. */
@@ -4831,6 +4896,9 @@ export const leads = pgTable(
     uniqueIndex("leads_user_apollo_uidx")
       .on(t.userId, t.apolloId)
       .where(sql`apollo_id is not null`),
+    uniqueIndex("leads_user_crm_record_uidx")
+      .on(t.userId, t.crmRecordId)
+      .where(sql`crm_record_id is not null`),
   ]
 );
 

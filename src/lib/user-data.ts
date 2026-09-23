@@ -27,6 +27,7 @@ import {
   connectorConnections,
   connectorOutbox,
   contactBriefs,
+  crmRecords,
   contactEmbeddings,
   memoryChunks,
   contactExperiences,
@@ -315,6 +316,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(connectorConnections),
       own(externalLinks),
       own(connectorOutbox),
+      own(crmRecords),
     ],
     counts: [
       gmailConnections,
@@ -324,6 +326,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       connectorConnections,
       externalLinks,
       connectorOutbox,
+      crmRecords,
     ],
     run: async (db, userId) => {
       // Read before the delete: once the row is gone there is nothing to revoke with.
@@ -350,6 +353,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // that is not Gmail or Outlook. Same class of secret as the rows above, and it must
       // not outlive the account.
       await db.delete(connectorConnections).where(eq(connectorConnections.userId, userId));
+      // What a CRM connection synced. The contacts it created are the user's and stay with
+      // `contacts`; this is only the ledger that mapped them, and it must not outlive the grant.
+      await db.delete(crmRecords).where(eq(crmRecords.userId, userId));
       // The outbox may hold an unsent payload and external_links maps this user's rows into
       // other systems. Both go with the connection that produced them.
       await db.delete(connectorOutbox).where(eq(connectorOutbox.userId, userId));
