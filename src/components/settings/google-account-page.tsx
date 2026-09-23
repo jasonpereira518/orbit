@@ -373,7 +373,7 @@ function InboxRow({
 
       {!running && scan?.status === "completed" ? (
         <p className="rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground">
-          Last look read {scan.messagesScanned.toLocaleString()} messages and found{" "}
+          Last scan read {scan.messagesScanned.toLocaleString()} messages and found{" "}
           <span className="font-medium text-foreground">
             {scan.recruitersFound} recruiter{scan.recruitersFound === 1 ? "" : "s"}
           </span>

@@ -13,8 +13,13 @@
  * 1. `loading` — a skeleton. The cards this replaces rendered NOTHING at all until the status
  *    landed (`if (!status) return null`), so opening the page showed an empty panel that
  *    suddenly filled.
- * 2. `failed` — "Couldn't check your {Provider} connection." and **Try again**. Also nothing,
- *    before: a status fetch that rejected left the same empty panel forever.
+ * 2. `failed` AND no status yet — "Couldn't check your {Provider} connection." and **Try
+ *    again**. Also nothing, before: a status fetch that rejected left the same empty panel
+ *    forever. The order of those two conditions is load-bearing: `useConnection` raises
+ *    `failed` on ANY rejected read, including the re-read after the Meetings switch or after
+ *    the sign-in return, and leaves the `status` it already has alone. Testing `failed` on its
+ *    own would replace the header, the address and every row with an error page the moment a
+ *    refresh blipped — right after a success toast. A status in hand outranks a failed refresh.
  * 3. `not_configured` — this deployment has no credentials for the provider. Nothing to
  *    connect, so no button.
  * 4. `not_connected` — the connect prompt: what Orbit will ask for, and what it will never do.
@@ -84,7 +89,9 @@ export function AccountPageShell({
 
   if (loading) return <AccountSkeleton name={name} />;
 
-  if (failed) {
+  // `&& !account`: a refresh that failed leaves the last good status in place, and keeping the
+  // page is better than an error where a working account just was. See the doc comment above.
+  if (failed && !account) {
     return (
       <div className="space-y-3">
         <p className="text-sm text-muted-foreground">Couldn’t check your {name} connection.</p>
