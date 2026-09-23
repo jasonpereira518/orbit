@@ -239,6 +239,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-crm-records": "pglite",
   "smoke-crm-leads": "pglite",
   "smoke-crm-sync": "pglite",
+  "smoke-crm-connect": "pglite",
   "smoke-scan-handoff": "pglite",
   "smoke-capture-jobs": "pglite",
   "smoke-capture-merge-target": "pure",

@@ -44,6 +44,8 @@ export const ERROR_SOURCES = {
    */
   eventPageFetch: "event.page_fetch",
   oauthEventbriteCallback: "oauth.eventbrite.callback",
+  /** The generic connector OAuth callback (`/api/connectors/[id]/callback`) — HubSpot first. */
+  oauthConnectorCallback: "oauth.connector.callback",
   /** A Luma or Eventbrite sync that exhausted its retries. Auth failures are NOT logged here
    *  — those flag the connection `needs_reauth`, which the user can see and act on. */
   eventProviderSync: "event.provider_sync",
