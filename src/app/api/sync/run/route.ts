@@ -48,6 +48,8 @@ export async function POST(request: Request) {
         skippedNoScope: stats.skippedNoScope,
         eventsIngested: stats.eventsIngested,
         contactsCreated: stats.contactsCreated,
+        addressBookSeen: stats.addressBookSeen,
+        addressBookMatched: stats.addressBookMatched,
         interactionsLogged: stats.interactionsLogged,
         connectorClaimed: stats.connectorClaimed,
         connectorSynced: stats.connectorSynced,

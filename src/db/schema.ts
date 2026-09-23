@@ -2198,6 +2198,13 @@ export type ProviderSyncCursor = {
   /** Explicitly nullable, not merely optional: "no cursor yet" and "cursor deliberately
    *  cleared after a 410" are the same state, and callers pass it around as `| null`. */
   calendar?: CalendarSyncCursor | null;
+  /**
+   * Google Contacts' delta position. Safe to keep beside `calendar` ONLY because the Google
+   * lane now writes this whole object once per run (see `syncGoogleConnection`) instead of
+   * each capability overwriting the jsonb with its own single key — which is the erasure the
+   * Gmail-scan comment above describes, and the reason that cursor had to live elsewhere.
+   */
+  contacts?: { syncToken?: string | null; pageToken?: string | null } | null;
   /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
   luma?: EventProviderSyncCursor | null;
   eventbrite?: EventProviderSyncCursor | null;
