@@ -19,6 +19,7 @@ import { identityPairs, rankWarmth } from "../src/lib/leads/warm-path";
 import { parseTargetInput } from "../src/lib/leads/target-input";
 import { linkedinSlug, normalizePhone } from "../src/lib/duplicates";
 import { displayCompanyName, normalizeCompanyName } from "../src/lib/company-name";
+import { accountPathsStatement, directPathsStatement } from "../src/lib/leads/warm-path-sql";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -91,15 +92,39 @@ function main() {
     check("blank is empty", parseTargetInput("   ").kind === "empty");
   }
 
+  console.log("\nthe SQL is the privacy boundary");
+  {
+    const direct = dialect.sqlToQuery(
+      directPathsStatement("team-1", "viewer-1", [
+        { key: "k1", kind: "email", value: "ada@x.io" },
+        { key: "k1", kind: "linkedin_slug", value: "ada" },
+      ])
+    );
+    const account = dialect.sqlToQuery(
+      accountPathsStatement("team-1", "viewer-1", [{ key: "k1", company: "acme" }])
+    );
+    for (const [label, q] of [["direct", direct], ["account", account]] as const) {
+      const text = q.sql;
+      check(`${label}: only sharing teammates`, /share_network\s*=\s*1/.test(text));
+      check(`${label}: only shared contacts`, /team_shared\s*=\s*1/.test(text));
+      check(`${label}: never the viewer`, /tm\.user_id\s*<>\s*\$\d+/.test(text));
+      check(`${label}: every contact join is tenant-scoped`, /c\.user_id\s*=\s*(ci|co)\.user_id/.test(text));
+      check(`${label}: no correlated exists`, !/exists\s*\(/i.test(text));
+      const forbidden = /\bnotes\b|ai_summary|key_facts|\bc\.email\b|\bc\.phone\b|linkedin_url|\bc\.full_name\b/;
+      check(`${label}: names no private column`, !forbidden.test(text), text.match(forbidden)?.[0]);
+      check(`${label}: binds its inputs`, q.params.length >= 3);
+    }
+    check("direct paths collapse to one row per teammate", /distinct on \(t\.target_key, m\.user_id\)/.test(direct.sql));
+    check("account paths group per teammate", /group by t\.target_key, m\.user_id/.test(account.sql));
+  }
+
   console.log("\nclient-bundle safety");
   {
-    for (const file of ["src/lib/deleted-account.ts", "src/lib/team-domain.ts", "src/lib/leads/warm-path.ts", "src/lib/leads/target-input.ts"]) {
+    for (const file of ["src/lib/deleted-account.ts", "src/lib/team-domain.ts", "src/lib/leads/warm-path.ts", "src/lib/leads/target-input.ts", "src/lib/leads/warm-path-sql.ts"]) {
       const valueDbImport = /import\s+(?!type\b)[^;]*from\s+["']@\/db/.test(code(file));
       check(`${file} never value-imports @/db`, !valueDbImport);
     }
   }
-
-  void dialect;
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
