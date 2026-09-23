@@ -25,7 +25,7 @@ export default async function ContactsPage({
     followUp?: string;
     sort?: string;
     letter?: string;
-    /** Narrows the list to one import's people — see the banner below. */
+    /** Marks one import's new people in the list — see the banner below. */
     importId?: string;
   }>;
 }) {
@@ -105,18 +105,23 @@ export default async function ContactsPage({
         />
         {params.importId ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/40 p-3 text-sm">
-            <p className="text-muted-foreground">
+            <p className="flex items-center gap-2 text-muted-foreground">
+              {/* The same yellow as the rows it describes. */}
+              <span
+                aria-hidden
+                className="size-3 shrink-0 rounded-sm bg-amber-100 ring-1 ring-amber-300/70 dark:bg-amber-300/15"
+              />
               {/* A dropped LinkedIn archive is two imports and one done card, and its button
                   sends both ids — so this line has to be able to say "that drop" too. */}
               {params.importId.includes(",")
-                ? "Showing the people that drop brought in"
-                : "Showing people from one import"}
+                ? "The people that drop added are highlighted until you look at them"
+                : "The people that import added are highlighted until you look at them"}
             </p>
             <Link
               href="/contacts"
               className="shrink-0 font-medium text-primary underline underline-offset-4 hover:opacity-80"
             >
-              From one import — show everyone
+              Clear highlights
             </Link>
           </div>
         ) : null}

@@ -58,6 +58,12 @@ export type ContactListRow = {
    *  itself (e.g. a past role, not their current company field). Null outside a search, and
    *  for the common case where the match is already visible in the row's own text. */
   matchReason: string | null;
+  /**
+   * One of the people the import in `?importId=` added, so the list can mark them. False
+   * without an import in the URL. The done card's "Meet your N new people" opens everyone,
+   * with these N marked, rather than a list of only them.
+   */
+  fromImport: boolean;
 };
 
 export type ContactsPage = {

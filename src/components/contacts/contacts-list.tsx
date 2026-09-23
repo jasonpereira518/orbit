@@ -50,6 +50,10 @@ import {
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
+import {
+  markImportPersonSeen,
+  useImportPeopleSeen,
+} from "@/lib/import-highlight-seen";
 import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 import {
   AVATARS_UPDATED_EVENT,
@@ -78,6 +82,8 @@ export type ContactListItem = {
   lastInteractionAt?: string | Date | null;
   tags: string[];
   matchReason?: string | null;
+  /** One of the people the import in `?importId=` added — marked until it has been seen. */
+  fromImport?: boolean;
 };
 
 const ALPHABET = [
@@ -186,6 +192,10 @@ export function ContactsList({
   const router = useRouter();
   const exitTimer = useRef<number | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  // The import this list was opened from ("Meet your N new people"), whose new people are
+  // marked until each one is hovered, focused or opened.
+  const importKey = filters.importId?.trim() ?? "";
+  const importSeen = useImportPeopleSeen(importKey);
 
   // Resync when the server sends a different first page — a filter change, or a refresh
   // after a mutation. Adjusted during render rather than in an effect: React re-runs the
@@ -450,8 +460,14 @@ export function ContactsList({
                   const { overdue, scheduledLabel, overdueText, lastTouch, details } =
                     rowMeta.get(c.id)!;
 
+                  const marked = c.fromImport && !importSeen.has(c.id);
+                  function seeMarked() {
+                    if (marked) markImportPersonSeen(importKey, c.id);
+                  }
+
                   function openContact() {
                     if (exiting) return;
+                    seeMarked();
                     router.push(`/contacts/${c.id}`);
                   }
 
@@ -469,6 +485,10 @@ export function ContactsList({
                       tabIndex={0}
                       onClick={openContact}
                       onKeyDown={onRowKeyDown}
+                      // Hover or keyboard focus counts as having seen them: the mark fades.
+                      onMouseEnter={seeMarked}
+                      onFocus={seeMarked}
+                      data-new-from-import={marked ? "" : undefined}
                       className={cn(
                         // content-visibility skips layout/paint for offscreen
                         // rows — the browser remembers real heights after
@@ -485,6 +505,9 @@ export function ContactsList({
                         <div
                           className={cn(
                             "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
+                            // New from the import the list was opened from: a light yellow
+                            // that fades out once the row is hovered, focused or opened.
+                            marked && "bg-amber-100/80 dark:bg-amber-300/15",
                             exiting && "-translate-x-8"
                           )}
                         >
