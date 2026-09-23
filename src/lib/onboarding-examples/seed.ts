@@ -87,6 +87,9 @@ export async function seedTourExamples(userId: string): Promise<{ seeded: number
       // Deliberately NOT flagged for the embedding backfill: these rows are gone in minutes,
       // and chat's keyword arm already finds them by name, company, notes and summary.
       embeddingStaleAt: null,
+      // Nor for the photo backfill: fictional people have no photo to find, and a lookup
+      // would spend third-party quota (the avatar route refuses them too).
+      profileImageCheckedAt: new Date(),
     });
   }
   await db.insert(contacts).values(rows);
