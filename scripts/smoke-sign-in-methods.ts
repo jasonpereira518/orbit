@@ -1,7 +1,7 @@
 /**
  * The rules that stop someone removing their last way to sign in.
  *
- * Every branch is exercised here because the UI cannot be: mounting Clerk's user resource
+ * Every branch is exercised here because the UI cannot be: mounting Clerk’s user resource
  * needs a browser and real keys, so these rules live in a pure module precisely so a plain
  * tsx script can prove them.
  *
@@ -52,7 +52,31 @@ const onlyEmail: SignInMethods = {
   hasPassword: true,
   primaryEmailId: "e1",
 };
-check("the last verified email cannot be removed", !canRemoveEmail(onlyEmail, "e1").allowed);
+const onlyEmailBlocked = canRemoveEmail(onlyEmail, "e1");
+check("the last verified email cannot be removed", !onlyEmailBlocked.allowed);
+check(
+  "the reason mentions it is the only verified address",
+  !onlyEmailBlocked.allowed && onlyEmailBlocked.reason.toLowerCase().includes("only verified"),
+  !onlyEmailBlocked.allowed ? onlyEmailBlocked.reason : ""
+);
+
+// A verified email that is the last verified one, but not primary (primary is null).
+const lastVerifiedNotPrimary: SignInMethods = {
+  emails: [
+    { id: "e1", verified: true },
+    { id: "e2", verified: false },
+  ],
+  externalAccountIds: [],
+  hasPassword: true,
+  primaryEmailId: null,
+};
+const lastVerifiedBlocked = canRemoveEmail(lastVerifiedNotPrimary, "e1");
+check("the last verified email is blocked even if not primary", !lastVerifiedBlocked.allowed);
+check(
+  "and the reason is about being the only verified address",
+  !lastVerifiedBlocked.allowed && lastVerifiedBlocked.reason.toLowerCase().includes("only verified"),
+  !lastVerifiedBlocked.allowed ? lastVerifiedBlocked.reason : ""
+);
 
 const unverifiedExtra: SignInMethods = {
   emails: [
@@ -71,7 +95,14 @@ check(
   "an unverified email does not count as the spare that frees the primary",
   !canRemoveEmail(unverifiedExtra, "e1").allowed
 );
-check("an unknown email id is refused", !canRemoveEmail(roomy, "nope").allowed);
+
+const unknownEmailBlocked = canRemoveEmail(roomy, "nope");
+check("an unknown email id is refused", !unknownEmailBlocked.allowed);
+check(
+  "and the reason mentions it is not on the account",
+  !unknownEmailBlocked.allowed && unknownEmailBlocked.reason.toLowerCase().includes("isn’t on your account"),
+  !unknownEmailBlocked.allowed ? unknownEmailBlocked.reason : ""
+);
 
 console.log("\ndisconnecting an account");
 check("a provider can go while a password remains", canDisconnectAccount(roomy, "x1").allowed);
@@ -97,17 +128,44 @@ const twoProviders: SignInMethods = {
   primaryEmailId: "e1",
 };
 check("one of two providers can go with no password", canDisconnectAccount(twoProviders, "x1").allowed);
-check("an unknown account id is refused", !canDisconnectAccount(roomy, "nope").allowed);
+
+const unknownAccountBlocked = canDisconnectAccount(roomy, "nope");
+check("an unknown account id is refused", !unknownAccountBlocked.allowed);
+check(
+  "and the reason mentions it is not connected",
+  !unknownAccountBlocked.allowed && unknownAccountBlocked.reason.toLowerCase().includes("isn’t connected"),
+  !unknownAccountBlocked.allowed ? unknownAccountBlocked.reason : ""
+);
 
 console.log("\nvoice");
-for (const verdict of [primaryBlocked, canRemoveEmail(onlyEmail, "e1"), lastWayIn]) {
+const allReasons = [
+  primaryBlocked,
+  onlyEmailBlocked,
+  lastVerifiedBlocked,
+  unknownEmailBlocked,
+  lastWayIn,
+  unknownAccountBlocked,
+];
+for (const verdict of allReasons) {
   if (verdict.allowed) continue;
-  check(`"${verdict.reason}" has no trailing period`, !verdict.reason.endsWith("."), verdict.reason);
-  check(`"${verdict.reason}" does not shout`, !verdict.reason.includes("!"), verdict.reason);
+  const reason = verdict.reason;
+  check(`"${reason}" has no trailing period`, !reason.endsWith("."), reason);
+  check(`"${reason}" does not shout`, !reason.includes("!"), reason);
   check(
-    `"${verdict.reason}" uses a typographic apostrophe if any`,
-    !verdict.reason.includes("'"),
-    verdict.reason
+    `"${reason}" uses a typographic apostrophe if any`,
+    !reason.includes("'"),
+    reason
+  );
+  // Check for mojibake: Â/â or C1 control characters in the UTF-8 range
+  check(
+    `"${reason}" contains no mojibake (Â or â)`,
+    !reason.includes("Â") && !reason.includes("â"),
+    reason
+  );
+  check(
+    `"${reason}" contains no C1 control characters`,
+    !/[\u0080-\u009f]/.test(reason),
+    reason
   );
 }
 

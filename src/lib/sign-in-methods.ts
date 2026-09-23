@@ -36,13 +36,13 @@ export function canRemoveEmail(methods: SignInMethods, emailId: string): Removal
   // An unverified address cannot be signed in with, so losing it costs nothing.
   if (!email.verified) return ALLOWED;
 
-  if (methods.primaryEmailId === emailId) {
-    return refuse("That’s your primary address â make another one primary first");
-  }
-
   const otherVerified = methods.emails.filter((e) => e.verified && e.id !== emailId);
   if (otherVerified.length === 0) {
-    return refuse("That’s your only verified address â you’d have no way to sign in");
+    return refuse("That’s your only verified address — you’d have no way to sign in");
+  }
+
+  if (methods.primaryEmailId === emailId) {
+    return refuse("That’s your primary address — make another one primary first");
   }
 
   return ALLOWED;
@@ -60,5 +60,5 @@ export function canDisconnectAccount(
   if (methods.hasPassword) return ALLOWED;
   if (methods.externalAccountIds.length > 1) return ALLOWED;
 
-  return refuse("That’s your only way to sign in â set a password first");
+  return refuse("That’s your only way to sign in — set a password first");
 }
