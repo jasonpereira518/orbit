@@ -3,6 +3,7 @@
  * Run: npx tsx scripts/smoke-meeting-gate.ts
  */
 import "./smoke/_env";
+import { setDeepgramEnabledForSmoke } from "./smoke/_env";
 
 import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
@@ -103,6 +104,15 @@ function sourceGuard() {
     "…and names the reset date when it refuses",
     /resetLabel\s*\(\s*allowance\.resetsAt\s*\)/.test(createBody)
   );
+  // The cap meters ORBIT's Deepgram key. `ORBIT_DEEPGRAM=off` is an incident lever that sends
+  // transcription back to the user's own OpenAI/Gemini key, where a meeting costs Orbit
+  // nothing — so enforcing a spent cap there locks a paying account out of a meeting nobody
+  // is paying for, and tells them their hours are gone when their hours are not the problem.
+  check(
+    "…and only enforces the cap while Deepgram is the engine",
+    /\bdeepgramEnabled\s*\(\s*\)/.test(createBody),
+    createBody.slice(0, 400)
+  );
 
   for (const name of UNGATED_ACTIONS) {
     const body = extractFunction(code, name);
@@ -200,6 +210,9 @@ async function main() {
     // mode resolves for the synthetic user.
     await db.insert(speechUsage).values({ userId: USER, kind: "meeting", seconds: 40_000, source: "stream" });
 
+    // The cap only exists while Orbit is the one paying, so the switch has to be ON for it
+    // to bite at all. `_env` strips the key from every smoke, which is the off state.
+    setDeepgramEnabledForSmoke(true);
     const refused = await createMeetingSession({ includesMic: true, recorderId: "r3" });
     check("a spent month is refused", refused.ok === false, JSON.stringify(refused));
     const resetDay = monthWindow(new Date()).resetsAt.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
@@ -210,6 +223,20 @@ async function main() {
     );
     const rows = await db.select().from(meetingSessions).where(eq(meetingSessions.userId, USER));
     check("…and no session row is left behind", rows.length === 0, `${rows.length} rows`);
+
+    // The kill switch, with the very same spent month: transcription now runs on the user's
+    // OWN OpenAI/Gemini key at no cost to Orbit, so the meeting must start. Before this, an
+    // incident that switched Deepgram off also locked every paying account whose cap was
+    // spent out of recording anything at all.
+    console.log("\n…but with ORBIT_DEEPGRAM off, a spent cap blocks nothing");
+    setDeepgramEnabledForSmoke(false);
+    const allowedAnyway = await createMeetingSession({ includesMic: true, recorderId: "r4" });
+    check("the meeting starts on the user's own key", allowedAnyway.ok === true, JSON.stringify(allowedAnyway));
+    check(
+      "…and no stale “you’ve used this month’s hours” copy is produced",
+      allowedAnyway.ok === true || !/this month’s meeting hours/.test(allowedAnyway.error),
+      allowedAnyway.ok === false ? allowedAnyway.error : ""
+    );
 
     await db.delete(speechUsage).where(eq(speechUsage.userId, USER));
     await db.delete(meetingSessions).where(eq(meetingSessions.userId, USER));

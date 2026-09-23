@@ -24,6 +24,7 @@ import { deepgramEnabled, transcribeFile } from "@/lib/deepgram";
 import { DEEPGRAM_MODEL, meetingTag, shortformTag } from "@/lib/deepgram-params";
 import { speechAllowance, recordSpeechSeconds } from "@/lib/speech-quota";
 import { speechKindForOperation } from "@/lib/speech-limits";
+import { speechTagIdFor } from "@/lib/speech-tag-id";
 import { z } from "zod";
 import {
   impliedStepListSchema,
@@ -892,15 +893,17 @@ export async function transcribeAudioWithAI(
       throw new UserFacingError("You’ve used this month’s meeting transcription minutes");
     }
     if (!allowance.exhausted) {
+      // A meeting is tagged by its session, which belongs to one recording. Everything else
+      // is tagged with the account's OPAQUE id — never the user id, which would sit in
+      // Deepgram's usage records linking every voice note an account ever made. See
+      // `src/lib/speech-tag-id.ts`.
+      const tag = kind === "meeting"
+        ? (opts.sessionId ? meetingTag(opts.sessionId) : null)
+        : shortformTag(await speechTagIdFor(userId));
       try {
         const result = await transcribeFile(
           { bytes: Buffer.from(input.base64, "base64"), mimeType: input.mimeType || "audio/wav" },
-          {
-            keyterms: vocabulary,
-            tag: kind === "meeting"
-              ? (opts.sessionId ? meetingTag(opts.sessionId) : null)
-              : shortformTag(userId),
-          },
+          { keyterms: vocabulary, tag },
         );
         // No token counts: Deepgram bills per audio-second, not per token, and a fabricated
         // token count would get summed into admin-facing "input tokens" totals alongside

@@ -28,6 +28,7 @@ import {
   type NoteBatchMeeting,
 } from "@/db/schema";
 import type { TranscribeOptions, TranscriptionResult } from "@/lib/ai";
+import { deepgramEnabled } from "@/lib/deepgram";
 import { recordSpeechSeconds, speechAllowance } from "@/lib/speech-quota";
 
 export type MeetingAttendee = { name: string; email?: string | null };
@@ -417,9 +418,18 @@ export async function ingestMeetingChunk(
     // a meeting whose live socket never opened cannot run past the cap chunk by chunk.
     // A quota that cannot be READ throws out of here, which is a 502 the recorder retries:
     // meetings fail closed.
-    const allowance = await speechAllowance(userId, "meeting");
-    if (allowance.exhausted) {
-      return { ok: false, status: 402, error: "You’ve used this month’s meeting transcription minutes" };
+    //
+    // ONLY WHEN DEEPGRAM IS THE ENGINE. The cap exists to bound what Orbit spends on its own
+    // key, and `ORBIT_DEEPGRAM=off` is an incident lever that sends every surface back to the
+    // user's own OpenAI or Gemini key. With the switch off, this chunk costs Orbit nothing,
+    // so a spent cap has nothing to protect and refusing would lock a paying account out of
+    // its own meeting during exactly the incident the lever was pulled for. The allowance is
+    // not even read in that case: it could only produce a refusal we would have to ignore.
+    if (deepgramEnabled()) {
+      const allowance = await speechAllowance(userId, "meeting");
+      if (allowance.exhausted) {
+        return { ok: false, status: 402, error: "You’ve used this month’s meeting transcription minutes" };
+      }
     }
     const previous = await findSegment(session.id, meta.seq - 1);
     const result = await transcribe(
@@ -464,11 +474,22 @@ export async function ingestMeetingChunk(
     }
   }
 
+  // A chunk Orbit did not pay Deepgram for raises the session's off-Deepgram total by
+  // exactly its own span, in the same statement that advances the clock. That covers the
+  // fallback engines (Deepgram errored and `transcribeAudioWithAI` used the user's own
+  // Whisper or Gemini key) and a silent chunk, which is never sent to anyone at all.
+  //
+  // Safe to add here because a seq already stored returns far above this, before any write:
+  // the only way to reach this statement is to have just inserted this segment, so no chunk
+  // can be counted twice however often the recorder retries it.
+  const offDeepgramDelta = engine === "deepgram" ? 0 : Math.max(0, Math.round(meta.endMs) - Math.round(meta.startMs));
+
   const [updated] = await db
     .update(meetingSessions)
     .set({
       lastSeq: sql`greatest(${meetingSessions.lastSeq}, ${meta.seq})`,
       durationMs: sql`greatest(${meetingSessions.durationMs}, ${Math.round(meta.endMs)})`,
+      offDeepgramMs: sql`${meetingSessions.offDeepgramMs} + ${offDeepgramDelta}`,
       updatedAt: new Date(),
     })
     .where(eq(meetingSessions.id, session.id))
@@ -480,17 +501,26 @@ export async function ingestMeetingChunk(
   // stops a recovery chunk during a healthy live stretch from being charged twice: it books
   // a total the live path has already booked, and `greatest(...)` keeps the larger.
   //
-  // Only when DEEPGRAM ran: if this chunk fell through to the user's own Whisper or Gemini
-  // key, Orbit paid nothing and this meter — which exists to count Orbit's Deepgram spend —
-  // must not move. A silent chunk costs nothing either, and is skipped for the same reason;
-  // the next chunk that does transcribe carries the timeline past it anyway.
+  // MINUS THE AUDIO ORBIT NEVER PAID FOR. The clock alone is not Orbit's spend: when
+  // Deepgram errors mid-meeting a chunk falls through to the user's own key and books
+  // nothing, and booking the raw elapsed clock on the next Deepgram chunk would then charge
+  // the user's meeting cap for that whole stretch too. `offDeepgramMs` is what the meeting
+  // spent elsewhere, and the difference is what Deepgram actually carried. The difference
+  // only grows — a fallback chunk raises both terms by the same span — so subtracting it
+  // does not break the high-water rule the two paths depend on.
+  //
+  // Only booked when DEEPGRAM ran: a chunk on the user's own key, and a silent chunk, cost
+  // Orbit nothing, and this meter exists to count Orbit's Deepgram spend.
   if (engine === "deepgram") {
     await recordSpeechSeconds({
       userId,
       kind: "meeting",
       source: "file",
       sessionId: session.id,
-      seconds: Math.ceil((updated?.durationMs ?? Math.round(meta.endMs)) / 1000),
+      seconds: deepgramSecondsFor(updated ?? {
+        durationMs: Math.round(meta.endMs),
+        offDeepgramMs: offDeepgramDelta,
+      }),
     });
   }
 
@@ -607,15 +637,32 @@ export async function recordLiveSegments(
     .where(eq(meetingSessions.id, session.id))
     .returning(); // bare: a field selector breaks over the Db union (see ingestMeetingChunk's sibling calls)
 
+  // The same expression `ingestMeetingChunk` books, off the same two columns, which is what
+  // keeps the two paths converging on one high-water mark rather than each charging its own
+  // total. This path never moves `offDeepgramMs` itself: a live segment arrived over a
+  // Deepgram socket that is billed for as long as it is open, silences included, and the
+  // recorder's coverage gate does not upload a chunk for a stretch the live path carried.
   await recordSpeechSeconds({
     userId,
     kind: "meeting",
     source: "stream",
     sessionId: session.id,
-    seconds: Math.ceil((row?.durationMs ?? maxEndMs) / 1000),
+    seconds: deepgramSecondsFor(row ?? { durationMs: maxEndMs, offDeepgramMs: session.offDeepgramMs }),
   });
 
   return { ok: true, written: inserted.length, durationMs: row?.durationMs ?? maxEndMs };
+}
+
+/**
+ * What the meeting meter books for a session: the seconds of its clock that Orbit actually
+ * paid Deepgram for.
+ *
+ * Both metering paths go through here so they cannot compute it two ways. Clamped at zero
+ * because nothing good comes of a negative meter reading if the two columns ever disagree —
+ * a chunk whose span lands outside the clock, say.
+ */
+function deepgramSecondsFor(session: { durationMs: number; offDeepgramMs: number }): number {
+  return Math.ceil(Math.max(0, session.durationMs - session.offDeepgramMs) / 1000);
 }
 
 async function findSegment(sessionId: string, seq: number): Promise<MeetingSegmentRow | null> {

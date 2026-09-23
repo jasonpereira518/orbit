@@ -51,12 +51,32 @@ export const SHORTFORM_TAG_PREFIX = "shortform:";
  */
 const TAG_ID = /^[A-Za-z0-9_-]{1,96}$/;
 
+/**
+ * The shape of a short-form tag's id: exactly 22 base64url characters, which is what 16
+ * random bytes encode to (`mintSpeechTagId` in `src/lib/speech-tag-id.ts`).
+ *
+ * The FIXED LENGTH is the guard, not a formality. A tag ends up in Deepgram's usage records,
+ * which their zero-retention flag does not cover, so the one thing that must never be in one
+ * is an account identifier Orbit uses elsewhere. A Clerk user id is `user_` plus about 27
+ * characters and cannot match this, so passing one here returns null — an untagged request,
+ * which the nightly job merely cannot see — rather than quietly shipping the id.
+ */
+const SPEECH_TAG_ID = /^[A-Za-z0-9_-]{22}$/;
+
+export function isSpeechTagId(value: string): boolean {
+  return SPEECH_TAG_ID.test(value);
+}
+
 export function meetingTag(sessionId: string): string | null {
   return TAG_ID.test(sessionId) ? `${MEETING_TAG_PREFIX}${sessionId}` : null;
 }
 
-export function shortformTag(userId: string): string | null {
-  return TAG_ID.test(userId) ? `${SHORTFORM_TAG_PREFIX}${userId}` : null;
+/**
+ * `speechTagId` is the account's opaque per-user value, NOT its user id — see the column's
+ * comment in `src/db/schema.ts` for why the raw id must not travel.
+ */
+export function shortformTag(speechTagId: string | null): string | null {
+  return speechTagId && isSpeechTagId(speechTagId) ? `${SHORTFORM_TAG_PREFIX}${speechTagId}` : null;
 }
 
 export type ListenOptions = {

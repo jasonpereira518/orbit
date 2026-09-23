@@ -135,9 +135,9 @@ enrichment.
   reconnect, not abuse — so treat an alert as "go look," not "go block." A run with
   `requestsSeen: 0` means the page-index assumption in `fetchDeepgramUsage` is wrong, not that
   nobody met; see the comment there before trusting a clean run again. The same run also
-  reconciles the **chat mic**, in aggregate per user rather than per session (tag
-  `shortform:<userId>`): those seconds arrive only as a best-effort `sendBeacon` from a closing
-  tab, so a crashed tab or a blocking extension is spend the meter never saw. It alerts only on
+  reconciles the **chat mic**, in aggregate per account rather than per session (tag
+  `shortform:<speechTagId>`): those seconds arrive only as a best-effort `sendBeacon` from a
+  closing tab, so a crashed tab or a blocking extension is spend the meter never saw. It alerts only on
   a gap over both 110% and two minutes a day (`MIN_SHORTFORM_GAP_SECONDS`), because dictation is
   many tiny rounded sessions; a gap is usually a lost beacon, not abuse.
 - **The two caps**, both in `src/lib/speech-limits.ts` (`SPEECH_LIMITS`), metered in audio
@@ -149,6 +149,17 @@ enrichment.
     (18,000 s) each. Generous on purpose: an abuse ceiling, not a meter anyone should watch.
   - Raising either is a one-line change to `SPEECH_LIMITS`; there is no `ORBIT_MANAGED_*`-style
     env var for it.
+  - A cap is only enforced while Deepgram is the engine. With the kill switch on, transcription
+    runs on the user’s own OpenAI/Gemini key and costs Orbit nothing, so a spent cap blocks
+    nothing — pulling the lever during an incident does not also lock paying accounts out of
+    recording.
+- **What a tag contains:** a meeting is tagged with its own session uuid; everything short-form
+  is tagged with `user_settings.speech_tag_id`, a random opaque per-account value minted on first
+  use (`src/lib/speech-tag-id.ts`). Never the Clerk user id — tags persist in Deepgram’s usage
+  records, which the zero-retention flag does not cover. The nightly job resolves a tag back to an
+  account through `user_settings_speech_tag_uidx`; a tag nobody claims (the account deleted its
+  data and minted a new value) is counted in `invalidTags` and warned under
+  `job.speech-usage.unknown-tag`.
 
 ## Refund or chargeback
 

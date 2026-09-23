@@ -3,6 +3,7 @@
 import type { MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
+import { deepgramEnabled } from "@/lib/deepgram";
 import {
   analyzeMeetingTranscript,
   buildMeetingCorpus,
@@ -66,9 +67,19 @@ export async function createMeetingSession(input: {
     //
     // A quota that cannot be READ throws, and the catch below turns that into `ok: false`:
     // meetings fail closed here too.
-    const allowance = await speechAllowance(userId, "meeting");
-    if (allowance.exhausted) {
-      return { ok: false, error: `You’ve used this month’s meeting hours — they reset on ${resetLabel(allowance.resetsAt)}` };
+    //
+    // Only while DEEPGRAM is the engine. The allowance meters Orbit's own key, and
+    // `ORBIT_DEEPGRAM=off` — the incident lever — sends transcription back to the user's own
+    // OpenAI or Gemini key, where a recorded hour costs Orbit nothing. Refusing a spent cap
+    // in that state would lock a paying account out of a meeting Orbit is not paying for,
+    // and tell them their hours are gone when their hours are not what is stopping them. The
+    // read is skipped entirely rather than taken and ignored, so no stale number can leak
+    // into copy from here.
+    if (deepgramEnabled()) {
+      const allowance = await speechAllowance(userId, "meeting");
+      if (allowance.exhausted) {
+        return { ok: false, error: `You’ve used this month’s meeting hours — they reset on ${resetLabel(allowance.resetsAt)}` };
+      }
     }
     const row = await createMeetingSessionRow(userId, input);
     return { ok: true, id: row.id, startedAtIso: row.startedAt.toISOString() };

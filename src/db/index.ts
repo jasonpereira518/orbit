@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
+  speech_tag_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -995,6 +996,7 @@ CREATE TABLE IF NOT EXISTS data_purge_runs (
 CREATE INDEX IF NOT EXISTS data_purge_runs_status_attempt_idx ON data_purge_runs(status, last_attempt_at);
 CREATE INDEX IF NOT EXISTS data_purge_runs_target_idx ON data_purge_runs(target_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_stripe_customer_uidx ON user_settings(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS user_settings_speech_tag_uidx ON user_settings(speech_tag_id) WHERE speech_tag_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS error_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -1351,6 +1353,7 @@ CREATE TABLE IF NOT EXISTS meeting_sessions (
   started_at timestamptz NOT NULL DEFAULT now(),
   ended_at timestamptz,
   duration_ms integer NOT NULL DEFAULT 0,
+  off_deepgram_ms integer NOT NULL DEFAULT 0,
   last_seq integer NOT NULL DEFAULT -1,
   digest jsonb,
   digest_error text,
@@ -1774,7 +1777,16 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // until now so the removal and its migration were one version, not two. 87 and 88 were
 // already claimed (integrations-strategy, and the re-chunk fix in #263). Rescanned against
 // every remote branch and every local worktree on Sep 22 2026.
-export const SCHEMA_VERSION = 89;
+//
+// 94 = the review fixes on the same Deepgram branch: meeting_sessions.off_deepgram_ms (the
+// audio a meeting did not spend on Orbit's key, so a fallback stretch is not charged to the
+// user's meeting cap) and user_settings.speech_tag_id plus its partial unique index (the
+// opaque per-account identifier that replaced the raw Clerk user id in the `shortform:` tag
+// Deepgram keeps in its usage records). 90 through 93 were already claimed while this branch
+// was in review — leads-p2-teams, calendar-connections-apple, leads-p3-pipeline and
+// onboarding-flow-revision-b7be62 — so this jumps past them rather than colliding. Rescanned
+// against every remote branch and every local worktree on Sep 23 2026; 94 is free.
+export const SCHEMA_VERSION = 94;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2764,6 +2776,12 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v89: Deepgram diarization label on a local database built before it existed.
   await ensureColumn(client, "meeting_transcript_segments", "speaker", "text");
 
+  // v94: the audio a meeting did NOT spend on Deepgram, and the opaque identifier that
+  // replaced the raw user id in a dictation's Deepgram usage tag. Same reasoning as every
+  // block above — the DDL template only helps a database that does not have these tables yet.
+  await ensureColumn(client, "meeting_sessions", "off_deepgram_ms", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "speech_tag_id", "text");
+
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
   // list above via `applySchema` — not here. `ADMIN_V2_STATEMENTS` is spread into that
@@ -3333,6 +3351,18 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS speech_usage_session_uidx ON speech_usage(session_id)`,
   `ALTER TABLE meeting_transcript_segments ADD COLUMN IF NOT EXISTS speaker text`,
   `ALTER TABLE user_settings DROP COLUMN IF EXISTS wispr_api_key_encrypted`,
+  // Schema v94: the two corrections to how Deepgram spend is attributed.
+  // `meeting_sessions.off_deepgram_ms` records the milliseconds of a meeting that Orbit did
+  // not pay Deepgram for, so a chunk that fell through to the user's own key is subtracted
+  // from what the meeting meter books instead of being charged to their cap. Zero is the
+  // right value for every meeting recorded before this column existed: nothing metered so
+  // far claimed a fallback stretch, so there is nothing to backfill.
+  // `user_settings.speech_tag_id` is the opaque per-account identifier that replaces the raw
+  // Clerk user id in the `shortform:` tag Deepgram keeps in its usage records. Minted lazily
+  // on first use (src/lib/speech-tag-id.ts), hence nullable and no backfill.
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS off_deepgram_ms integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS speech_tag_id text`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_speech_tag_uidx ON user_settings(speech_tag_id) WHERE speech_tag_id IS NOT NULL`,
 ];
 
 /**

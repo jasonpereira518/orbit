@@ -8,8 +8,10 @@ import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { speechUsage, userSettings } from "../src/db/schema";
+import { isSpeechTagId } from "../src/lib/deepgram-params";
 import { speechKindForOperation } from "../src/lib/speech-limits";
 import { recordSpeechSeconds, speechAllowance } from "../src/lib/speech-quota";
+import { mintSpeechTagId, speechTagIdFor, userIdForSpeechTagId } from "../src/lib/speech-tag-id";
 
 const USER = "demo-user";
 let failures = 0;
@@ -74,6 +76,37 @@ async function main() {
   await recordSpeechSeconds({ userId: USER, kind: "meeting", seconds: 400, source: "stream", sessionId });
   const after = await db.select().from(speechUsage).where(eq(speechUsage.sessionId, sessionId));
   check("a late, smaller report never lowers it", after[0]?.seconds === 900);
+
+  // A tag outlives the request inside Deepgram's usage records, which their zero-retention
+  // flag does not cover — so the id in one must not be the account's own id. This is the
+  // round trip the nightly job depends on: mint once, resolve back, and resolve nothing for
+  // a value no account claims.
+  console.log("\nthe short-form tag id is opaque, stable and resolvable");
+  {
+    const first = await speechTagIdFor(USER);
+    check("an account gets a tag id on first use", Boolean(first && isSpeechTagId(first)), String(first));
+    check("…which is not the user id, or anything derived from it visibly", first !== USER && !String(first).includes(USER));
+
+    const second = await speechTagIdFor(USER);
+    check("…and the same one on every later call", second === first, `${first} vs ${second}`);
+
+    const stored = await db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, USER),
+      columns: { speechTagId: true },
+    });
+    check("…stored on the settings row, where the job can index into it", stored?.speechTagId === first);
+
+    check("the job resolves a tag id back to its account", (await userIdForSpeechTagId(first!)) === USER);
+    check(
+      "…and resolves nothing for a value no account claims",
+      (await userIdForSpeechTagId(mintSpeechTagId())) === null
+    );
+    // Resolution does not go through `speech_usage`, which is the point: the job has to be
+    // able to attribute Deepgram spend for an account whose beacons never arrived, and those
+    // are exactly the accounts with no rows.
+    const rows = await db.select().from(speechUsage).where(eq(speechUsage.userId, USER));
+    check("…for an account whose recorded rows say nothing about the tag", rows.every((r) => r.requestId !== first));
+  }
 
   console.log("\nanother user's usage is invisible");
   await recordSpeechSeconds({ userId: "someone-else", kind: "shortform", seconds: 3_000, source: "file" });

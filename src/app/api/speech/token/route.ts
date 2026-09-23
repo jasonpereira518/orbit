@@ -4,6 +4,7 @@ import { isPaywallError } from "@/lib/entitlements";
 import { friendlyError } from "@/lib/errors";
 import { deepgramEnabled, mintStreamToken } from "@/lib/deepgram";
 import { keytermsFor, shortformTag } from "@/lib/deepgram-params";
+import { speechTagIdFor } from "@/lib/speech-tag-id";
 import { loadNetworkVocabulary } from "@/lib/transcription-vocabulary";
 import { speechAllowance } from "@/lib/speech-quota";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
@@ -21,12 +22,16 @@ export const dynamic = "force-dynamic";
  * signed in or the surface is off, 402 this month's shortform allowance is gone, 429 with
  * Retry-After, 503 Deepgram itself is off, 502 the grant call failed.
  *
- * `tag` is `shortform:<userId>`, which the browser puts on its Deepgram connection. Dictation
- * seconds reach `speech_usage` only as a best-effort `sendBeacon` from a closing tab, so
- * without the tag a blocked beacon is spend nothing can even notice; with it, the nightly
- * reconciliation job (`/api/ops/speech-usage`) compares Deepgram's own per-user total against
- * what was recorded. The browser is not trusted to invent it — it is minted here, beside the
- * token it belongs to.
+ * `tag` is `shortform:<speechTagId>`, which the browser puts on its Deepgram connection.
+ * Dictation seconds reach `speech_usage` only as a best-effort `sendBeacon` from a closing
+ * tab, so without the tag a blocked beacon is spend nothing can even notice; with it, the
+ * nightly reconciliation job (`/api/ops/speech-usage`) compares Deepgram's own per-account
+ * total against what was recorded. The browser is not trusted to invent it — it is minted
+ * here, beside the token it belongs to.
+ *
+ * The id in that tag is the account's opaque `speechTagId`, never its user id: the tag
+ * outlives the request inside Deepgram's usage records, which their zero-retention flag does
+ * not cover. See `src/lib/speech-tag-id.ts`.
  */
 export async function POST(request: Request) {
   let userId: string;
@@ -71,9 +76,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const [{ accessToken, expiresIn }, vocabulary] = await Promise.all([
+    const [{ accessToken, expiresIn }, vocabulary, speechTagId] = await Promise.all([
       mintStreamToken(),
       loadNetworkVocabulary(userId),
+      speechTagIdFor(userId),
     ]);
     return NextResponse.json(
       {
@@ -81,7 +87,7 @@ export async function POST(request: Request) {
         expiresIn,
         keyterms: keytermsFor(vocabulary),
         remainingSeconds: allowance.remaining,
-        tag: shortformTag(userId),
+        tag: shortformTag(speechTagId),
       },
       { headers: { "Cache-Control": "no-store" } },
     );

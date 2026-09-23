@@ -5,6 +5,7 @@ import { speechUsage } from "@/db/schema";
 import { fetchDeepgramUsage } from "@/lib/deepgram";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { notifySlack } from "@/lib/ops-notify";
+import { userIdForSpeechTagId } from "@/lib/speech-tag-id";
 import { parseMeetingTag, parseShortformTag } from "@/lib/speech-usage-tag";
 import { reportError } from "@/lib/report-error";
 
@@ -36,10 +37,14 @@ const MIN_SHORTFORM_GAP_SECONDS = 120;
  * Dictation (the chat mic) is reconciled the same way but in AGGREGATE PER USER, not per
  * session. Its seconds reach `speech_usage` only through a best-effort `navigator.sendBeacon`
  * from a closing tab — a crashed tab or a blocked beacon bills Orbit and moves the meter by
- * zero, repeatably — so its connections are tagged `shortform:<userId>` and this job compares
- * Deepgram's per-user total for the window against the short-form seconds recorded in it.
- * Per user rather than per session because a dictation session has no id to key on: the
- * connection is opened by the browser and lives and dies inside one tab.
+ * zero, repeatably — so its connections are tagged `shortform:<speechTagId>` and this job
+ * compares Deepgram's per-account total for the window against the short-form seconds
+ * recorded in it. Per account rather than per session because a dictation session has no id
+ * to key on: the connection is opened by the browser and lives and dies inside one tab.
+ *
+ * That id is opaque and per-account (`src/lib/speech-tag-id.ts`), not the Clerk user id — a
+ * tag persists in Deepgram's usage records, which zero retention does not cover — so this job
+ * resolves it back to an account with one indexed lookup before reading any meter.
  *
  * Returns `{checked, overreported, shortformChecked, shortformOverreported, pagesRead,
  * requestsSeen, invalidTags}`. The last three exist so a run that silently checked nothing is
@@ -105,6 +110,22 @@ export async function POST(request: Request) {
         continue;
       }
       if (shortform.kind === "ok") {
+        // The tag carries the account's opaque id, so the account is one indexed lookup away
+        // (`user_settings_speech_tag_uidx`). Nobody claiming it is an ordinary outcome, not a
+        // malformed tag: an account that deleted its data dropped the column and minted a new
+        // value, so yesterday's tags no longer point anywhere. Counted with the invalid ones
+        // — both mean "this spend could not be attributed" — but reported under its own
+        // `where` so the two are separable in Sentry.
+        const userId = await userIdForSpeechTagId(shortform.speechTagId);
+        if (!userId) {
+          invalidTags += 1;
+          reportError(new Error("Deepgram usage: unknown shortform tag id"), {
+            where: "job.speech-usage.unknown-tag",
+            level: "warning",
+            extra: { tag },
+          });
+          continue;
+        }
         shortformChecked += 1;
         // Summed over the window, not read from one row: short-form usage is one row per
         // voice note and one per dictation session, unlike a meeting's single growing row.
@@ -113,7 +134,7 @@ export async function POST(request: Request) {
           .from(speechUsage)
           .where(
             and(
-              eq(speechUsage.userId, shortform.userId),
+              eq(speechUsage.userId, userId),
               eq(speechUsage.kind, "shortform"),
               gte(speechUsage.createdAt, since),
               lt(speechUsage.createdAt, until),
@@ -126,12 +147,12 @@ export async function POST(request: Request) {
 
         shortformOverreported += 1;
         const text =
-          `:warning: *Deepgram dictation usage exceeds what was recorded* for user \`${shortform.userId}\`\n` +
+          `:warning: *Deepgram dictation usage exceeds what was recorded* for user \`${userId}\`\n` +
           `Deepgram reports ${deepgramSeconds}s in the last 24h; Orbit recorded ${recordedSeconds}s ` +
           `(a ${gap}s gap). Usually a beacon that never arrived — a crashed tab, an ad blocker — ` +
           `rather than abuse; go look before acting.`;
         await notifySlack(text).catch((err) => {
-          reportError(err, { where: "job.speech-usage.alert", extra: { userId: shortform.userId } });
+          reportError(err, { where: "job.speech-usage.alert", extra: { userId } });
         });
         continue;
       }

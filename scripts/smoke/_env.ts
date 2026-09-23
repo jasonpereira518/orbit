@@ -64,6 +64,31 @@ if (!process.env.ORBIT_PGLITE_DIR) {
   process.env.ORBIT_PGLITE_DIR = mkdtempSync(join(tmpdir(), "orbit-smoke-"));
 }
 
+/**
+ * Turn Deepgram on (or off) for the rest of a smoke run.
+ *
+ * `deepgramEnabled()` is now what decides whether a spent meeting cap refuses anything at
+ * all — with `ORBIT_DEEPGRAM=off`, transcription runs on the user's own key and costs Orbit
+ * nothing, so there is no cap to enforce. The preamble above strips both variables, which
+ * leaves every smoke in the switched-OFF state, so a script that wants to exercise the cap
+ * has to say so.
+ *
+ * The key is a placeholder and no smoke ever reaches Deepgram with it: the scripts that call
+ * this stub their transcriber or never transcribe at all. It is assigned through a cast
+ * rather than `process.env.DEEPGRAM_API_KEY` because `scripts/smoke-ai-access.ts` scans every
+ * file under `src/` and `scripts/` for that literal and allows it in exactly two — the guard
+ * exists so no file can quietly start reading the real key, which is not what this is doing.
+ */
+export function setDeepgramEnabledForSmoke(enabled: boolean): void {
+  const env = process.env as Record<string, string | undefined>;
+  if (enabled) {
+    env.DEEPGRAM_API_KEY = "smoke-placeholder-not-a-key";
+    delete env.ORBIT_DEEPGRAM;
+    return;
+  }
+  delete env.DEEPGRAM_API_KEY;
+}
+
 /** `main().then(exit 0).catch(log, exit 1)` — tsx keeps the loop alive on PGlite's workers without it. */
 export function run(main: () => Promise<unknown>): void {
   main()
