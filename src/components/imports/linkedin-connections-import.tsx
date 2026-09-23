@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useState, useTransition } from "react";
 import { FileSpreadsheet } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -66,7 +67,10 @@ export function LinkedInConnectionsImport() {
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-connections/70 bg-card p-6">
+    <section
+      className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-connections/70 bg-card p-6"
+      {...tourAnchor("imports.connections")}
+    >
       {/*
         The export guide shares the title's row, not the whole header's. Beside the full
         text block it took ~120px from a column already sharing a phone with the icon, and

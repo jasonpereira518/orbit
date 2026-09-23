@@ -1,5 +1,6 @@
 "use client";
 
+import { emitTourEvent } from "@/lib/tour/tour-events";
 import { usePathname, useRouter } from "next/navigation";
 import {
   useCallback,
@@ -383,6 +384,7 @@ export function RemindersStage({
           undo: (snap) => (snap ? () => reopenReminderAction(snap) : null),
         });
         refresh();
+        if (res !== undefined) emitTourEvent("reminder.done");
         return res !== undefined;
       })
     );

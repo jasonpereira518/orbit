@@ -1,3 +1,4 @@
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { Suspense } from "react";
 import { getGraphData } from "@/actions/graph";
 import { ConstellationIntro } from "@/components/graph/constellation-intro";
@@ -63,7 +64,7 @@ export default function GraphPage() {
         both of them is the honest place for it. Same colour either way, so the handover when
         the stage takes its background back is not a step.
       */}
-      <div className={`relative rounded-2xl ${STAGE_GROUND}`}>
+      <div className={`relative rounded-2xl ${STAGE_GROUND}`} {...tourAnchor("graph.stage")}>
         <ConstellationIntro />
         <Suspense
           fallback={<ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />}

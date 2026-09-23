@@ -1,3 +1,4 @@
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { Bell, Sparkles, Users } from "lucide-react";
@@ -21,8 +22,16 @@ import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
-import { getLinkedInNudgeVisible } from "@/lib/linkedin-reminder";
+import { getLinkedInNudgeVisible, hasLinkedInImport } from "@/lib/linkedin-reminder";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { getGmailConnectionStatus } from "@/actions/gmail";
+import { getOutlookConnectionStatus } from "@/actions/outlook";
+import { SetupChecklistCard, type SetupChecklistItem } from "@/components/dashboard/setup-checklist-card";
+import { integrationHref } from "@/components/settings/sections";
+import { aiReadyFromSettings } from "@/lib/ai-access";
+import { contactUsageForUser } from "@/lib/contact-writes";
+import { countTourExamples } from "@/lib/onboarding-examples/status";
+import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
 
 /**
  * Async server sections for the streamed dashboard. Every bundle section
@@ -89,6 +98,97 @@ export async function LinkedInExportNudgeSection() {
   return <LinkedInExportNudge email={settings.email ?? null} />;
 }
 
+/**
+ * "Finish setting up": what onboarding left open, with live status. Renders nothing while
+ * the guided tour's rail is up (the tour is the checklist then), and nothing once every
+ * item is done. The card itself handles per-device dismissal.
+ */
+export async function SetupChecklistSection() {
+  const userId = await requireUserId();
+  const settings = await ensureUserSettings(userId);
+  if (!settings.onboardingCompletedAt || tourRailVisible(settings)) return null;
+
+  const [entitlements, gmail, outlook, usage, linkedinImported, examples] = await Promise.all([
+    getEntitlements(userId),
+    getGmailConnectionStatus(),
+    getOutlookConnectionStatus(),
+    contactUsageForUser(userId),
+    hasLinkedInImport(userId),
+    countTourExamples(userId),
+  ]);
+
+  const items: SetupChecklistItem[] = [];
+  if (!aiReadyFromSettings(userId, settings)) {
+    items.push({
+      id: "ai-key",
+      label: "Add your AI key",
+      detail: "Capture from notes, Chat and profile briefs run on it.",
+      href: integrationHref("ai"),
+    });
+  }
+  if (settings.linkedinExportRequestedAt && !linkedinImported) {
+    items.push({
+      id: "linkedin",
+      label: "Upload your LinkedIn export when it arrives",
+      detail: "LinkedIn emails a ZIP, usually within a day.",
+      href: "/imports#import-panel-connections",
+    });
+  }
+  const anyConfigured = gmail.configured || outlook.configured;
+  const connected = gmail.connected || outlook.connected;
+  if (anyConfigured && !connected) {
+    items.push(
+      entitlements.canUseSync
+        ? {
+            id: "connect",
+            label: "Connect Google or Microsoft",
+            detail: "Bring in the people you already email.",
+            href: "/imports",
+          }
+        : {
+            id: "connect",
+            label: "Connect Google or Microsoft",
+            detail: "Included with Orbit Pro.",
+            href: "/upgrade",
+            tag: "pro",
+          },
+    );
+  }
+  if (usage.used === 0) {
+    items.push({
+      id: "people",
+      label: "Add your first people",
+      detail: "From notes, by hand, or the LinkedIn ZIP.",
+      href: "/capture",
+    });
+  }
+  if (tourResumable(settings)) {
+    items.push({
+      id: "resume-tour",
+      label: "Resume the guided tour",
+      detail: "Pick up where you left off; the example people come back for it.",
+      action: "resume-tour",
+    });
+  } else if (!settings.tourStartedAt) {
+    items.push({
+      id: "tour",
+      label: "Take the guided tour",
+      detail: "Three minutes across every page, with a few example people in place.",
+      action: "start-tour",
+    });
+  }
+  if (examples > 0) {
+    items.push({
+      id: "examples",
+      label: "Remove the example people",
+      detail: examples === 1 ? "One is still in your orbit from the tour." : `${examples} are still in your orbit from the tour.`,
+      action: "remove-examples",
+    });
+  }
+  if (items.length === 0) return null;
+  return <SetupChecklistCard items={items} />;
+}
+
 export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
   const { data } = await bundle;
   const isEmptyNetwork = data.stats.totalContacts === 0;
@@ -137,6 +237,7 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
         // today" — the cards are four short numbers and fit side by side fine.
         className="reveal-mount grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4"
         style={revealDelay(40)}
+        {...tourAnchor("dashboard.stats")}
       >
         <StatCard
           label="Contacts"

@@ -1,5 +1,6 @@
 "use client";
 
+import { emitTourEvent } from "@/lib/tour/tour-events";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Check, Clock } from "lucide-react";
@@ -46,7 +47,9 @@ export function ReminderDoneSnooze({ id }: { id: string }) {
               failure: "Couldn’t mark that done — try again?",
               refresh: () => router.refresh(),
               undo: (snap) => (snap ? () => reopenReminderAction(snap) : null),
-            }).then(() => undefined)
+            }).then((res) => {
+              if (res !== undefined) emitTourEvent("reminder.done");
+            })
           )
         }
       >

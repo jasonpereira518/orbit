@@ -19,7 +19,9 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { aiReadyFromSettings } from "@/lib/ai-access";
 import { getLinkedInReminderState } from "@/lib/linkedin-reminder";
+import { tourRailVisible } from "@/lib/tour/tour-state";
 import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { resolveThemePreference } from "@/lib/theme";
@@ -145,6 +147,12 @@ export default async function AppLayout({
       viewingAsUser={visibility.viewingAsUser}
       previewingUnreleased={visibility.previewingUnreleased}
       linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
+      tour={{
+        active: tourRailVisible(settings),
+        stop: settings.tourStop,
+        hasApiKey: aiReadyFromSettings(userId, settings),
+        linkedinRequested: settings.linkedinExportRequestedAt != null,
+      }}
     >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}

@@ -9,6 +9,7 @@ import {
   OutreachPerformanceSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
+  SetupChecklistSection,
   StatsSection,
   SuggestedOutreachSection,
   TailSection,
@@ -63,6 +64,12 @@ export default async function DashboardPage() {
           than attention, and it expires. It renders nothing when there is none. */}
       <Suspense fallback={null}>
         <AgentDraftsSection />
+      </Suspense>
+
+      {/* What onboarding left open. Nothing while the guided tour is running, nothing once
+          every item is done or the person dismissed it on this device. */}
+      <Suspense fallback={null}>
+        <SetupChecklistSection />
       </Suspense>
 
       {show("dashboard.stats") && (

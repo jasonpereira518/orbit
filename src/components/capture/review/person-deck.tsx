@@ -9,6 +9,7 @@
  * decision is written to the server as it is made; the deck itself keeps only the
  * per-card drafts (what you edited) and the animation state.
  */
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform, type PanInfo } from "motion/react";
 import { ArrowLeft, Check, Clock, Undo2, X } from "lucide-react";
@@ -275,6 +276,7 @@ export function PersonDeck({
           type="button"
           size="icon-lg"
           aria-label="Keep this person"
+          {...tourAnchor("capture.keep")}
           title="Keep (→)"
           className="size-14 rounded-full bg-primary text-primary-foreground shadow-md hover:bg-primary/90"
           onClick={() => decide("accept")}

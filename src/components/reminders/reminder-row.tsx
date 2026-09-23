@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import Link from "next/link";
 import { memo, type KeyboardEvent, type MouseEvent } from "react";
 import {
@@ -181,6 +182,7 @@ export const ReminderRow = memo(function ReminderRow({
           <button
             type="button"
             tabIndex={-1}
+            {...tourAnchor("reminders.row-done")}
             onClick={(e) => {
               stop(e);
               if (isDone) handlers.onReopen(item.id);

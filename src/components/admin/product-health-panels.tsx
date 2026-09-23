@@ -202,7 +202,9 @@ export async function FunnelParkingPanel() {
     <AdminPanel title="Where incomplete accounts are parked">
       {!parking ? (
         <EmptyState>Onboarding progress is unavailable.</EmptyState>
-      ) : parking.onboardingParking.length === 0 && parking.wizardParking.length === 0 ? (
+      ) : parking.onboardingParking.length === 0 &&
+        parking.tourParking.length === 0 &&
+        parking.wizardParking.length === 0 ? (
         <EmptyState>Nobody is mid-onboarding.</EmptyState>
       ) : (
         <>
@@ -213,6 +215,16 @@ export async function FunnelParkingPanel() {
                 count: x.count,
               }))}
             />
+          )}
+          {parking.tourParking.length > 0 && (
+            <div className="mt-3">
+              <MiniBars
+                rows={parking.tourParking.map((x) => ({
+                  label: `tour · ${x.step}`,
+                  count: x.count,
+                }))}
+              />
+            </div>
           )}
           {parking.wizardParking.length > 0 && (
             <div className="mt-3">

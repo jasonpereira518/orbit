@@ -1,5 +1,6 @@
 "use client";
 
+import { emitTourEvent } from "@/lib/tour/tour-events";
 import dynamic from "next/dynamic";
 import {
   useCallback,
@@ -1293,7 +1294,10 @@ export function NetworkGraph({
           peekToken={peekToken}
           selection={selection}
           hoveredId={hoveredId}
-          onSelect={setSelection}
+          onSelect={(picked) => {
+            setSelection(picked);
+            if (picked) emitTourEvent("graph.star-selected");
+          }}
           onHover={setHoveredId}
           onFocusCluster={focusClusterById}
           compact={compact}

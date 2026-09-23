@@ -10,6 +10,7 @@
  * the prose, and a guess is exactly what you do not want for the person whose name you were
  * about to type anyway. A pick skips the guessing — see `resolveMentionsWithPicks`.
  */
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { AiKeyNotice } from "@/components/ai-key-notice";
@@ -156,7 +157,7 @@ export function MessyNotesCapture({
           Logging with <span className="font-medium text-foreground">{preferredContactName}</span> preferred for merge when they appear in the notes.
         </p>
       )}
-      <div>
+      <div {...tourAnchor("capture.notes")}>
         <div className="flex items-baseline justify-between gap-2">
           <Label htmlFor="capture-notes">Your notes</Label>
           {restored && notes.trim() && (

@@ -1,5 +1,6 @@
 "use client";
 
+import { emitTourEvent } from "@/lib/tour/tour-events";
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
@@ -133,6 +134,7 @@ export function LogInteractionSheet({
       parseDateFromNotes: !date,
     });
     toast.success(reason ? `Logged — ${reason}` : "Logged");
+    emitTourEvent("interaction.logged");
     onOpenChange(false);
     reset();
     router.refresh();
@@ -253,6 +255,7 @@ export function LogInteractionSheet({
         onOpenChange(false);
         reset();
         router.refresh();
+        emitTourEvent("interaction.logged");
 
         const batchId = out.batchId;
         toast.success(

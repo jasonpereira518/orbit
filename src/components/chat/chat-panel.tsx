@@ -1,5 +1,7 @@
 "use client";
 
+import { emitTourEvent } from "@/lib/tour/tour-events";
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import {
   memo,
   useCallback,
@@ -840,6 +842,7 @@ export function ChatPanel() {
             onDone: (info) => {
               smoother.flush();
               ensurePlaceholder();
+              emitTourEvent("chat.answered");
               patch((m) => ({
                 ...m,
                 id: info.messageId || assistantId,
@@ -1416,6 +1419,7 @@ export function ChatPanel() {
               {/* One pill holding every control, rather than a field with satellites.
                   `items-end` keeps the buttons on the last line as the field grows. */}
               <div
+                {...tourAnchor("chat.composer")}
                 className={cn(
                   "flex items-end gap-1 rounded-[1.75rem] border border-input bg-transparent px-1.5 py-1.5 transition-colors",
                   "dark:bg-input/30",

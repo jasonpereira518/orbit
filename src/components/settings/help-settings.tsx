@@ -3,20 +3,34 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { resetOnboarding } from "@/actions/onboarding";
+import { resumeTour } from "@/actions/tour";
 import { Button } from "@/components/ui/button";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
+import { friendlyError } from "@/lib/errors";
+import { toast } from "@/lib/toast";
 import { SettingsRow } from "@/components/settings/settings-section";
 import type { OnboardingPath } from "@/lib/onboarding-steps";
 
-export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) {
+export function HelpSettings({
+  feedbackEnabled,
+  tourResumable = false,
+}: {
+  feedbackEnabled: boolean;
+  /** An in-app tour was exited part-way: offer to pick it up before offering to start over. */
+  tourResumable?: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
 
-  const replay = (path: OnboardingPath) =>
+  const go = (run: () => Promise<{ redirectTo: string }>) =>
     start(async () => {
-      const res = await resetOnboarding({ path });
-      router.replace(res.redirectTo);
-      router.refresh();
+      try {
+        const res = await run();
+        router.replace(res.redirectTo);
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t open that — try again?"));
+      }
     });
 
   return (
@@ -26,10 +40,15 @@ export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) 
       description="Walk through setup again, take the page-by-page tour, or tell us what isn’t working."
     >
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" disabled={pending} onClick={() => replay("tour")}>
+        {tourResumable && (
+          <Button size="sm" disabled={pending} onClick={() => go(resumeTour)}>
+            Resume tour
+          </Button>
+        )}
+        <Button variant="outline" size="sm" disabled={pending} onClick={() => go(() => resetOnboarding({ path: "tour" satisfies OnboardingPath }))}>
           Take the tour again
         </Button>
-        <Button variant="outline" size="sm" disabled={pending} onClick={() => replay("quick")}>
+        <Button variant="outline" size="sm" disabled={pending} onClick={() => go(() => resetOnboarding({ path: "quick" }))}>
           Quick setup again
         </Button>
         {/* The third door into the one mounted widget, alongside the floating button and

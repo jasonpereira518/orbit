@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -468,6 +469,7 @@ export function ContactsList({
                       key={c.id}
                       role="link"
                       tabIndex={0}
+                      {...tourAnchor("contacts.row")}
                       onClick={openContact}
                       onKeyDown={onRowKeyDown}
                       className={cn(
