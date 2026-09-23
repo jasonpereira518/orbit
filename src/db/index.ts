@@ -1778,15 +1778,21 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // already claimed (integrations-strategy, and the re-chunk fix in #263). Rescanned against
 // every remote branch and every local worktree on Sep 22 2026.
 //
-// 94 = the review fixes on the same Deepgram branch: meeting_sessions.off_deepgram_ms (the
+// 95 = the review fixes on the same Deepgram branch: meeting_sessions.off_deepgram_ms (the
 // audio a meeting did not spend on Orbit's key, so a fallback stretch is not charged to the
 // user's meeting cap) and user_settings.speech_tag_id plus its partial unique index (the
 // opaque per-account identifier that replaced the raw Clerk user id in the `shortform:` tag
 // Deepgram keeps in its usage records). 90 through 93 were already claimed while this branch
 // was in review — leads-p2-teams, calendar-connections-apple, leads-p3-pipeline and
-// onboarding-flow-revision-b7be62 — so this jumps past them rather than colliding. Rescanned
-// against every remote branch and every local worktree on Sep 23 2026; 94 is free.
-export const SCHEMA_VERSION = 94;
+// onboarding-flow-revision-b7be62.
+//
+// NOT 94 anymore. This branch wrote 94 and so, thirteen minutes earlier the same morning, did
+// `claude/leads-p4-hubspot` (63f2e17e) — the same silent collision 53, 54 and 73 above record,
+// and for the same reason: both sides scanned, both sides were right at the time, and neither
+// line would have conflicted on merge. Rescanned against every remote ref, every local branch
+// and every worktree's working file on Sep 23 2026 immediately before committing: 94 is the
+// highest claimed anywhere, and 95 is free.
+export const SCHEMA_VERSION = 95;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2776,7 +2782,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v89: Deepgram diarization label on a local database built before it existed.
   await ensureColumn(client, "meeting_transcript_segments", "speaker", "text");
 
-  // v94: the audio a meeting did NOT spend on Deepgram, and the opaque identifier that
+  // v95: the audio a meeting did NOT spend on Deepgram, and the opaque identifier that
   // replaced the raw user id in a dictation's Deepgram usage tag. Same reasoning as every
   // block above — the DDL template only helps a database that does not have these tables yet.
   await ensureColumn(client, "meeting_sessions", "off_deepgram_ms", "integer NOT NULL DEFAULT 0");
@@ -3351,7 +3357,7 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS speech_usage_session_uidx ON speech_usage(session_id)`,
   `ALTER TABLE meeting_transcript_segments ADD COLUMN IF NOT EXISTS speaker text`,
   `ALTER TABLE user_settings DROP COLUMN IF EXISTS wispr_api_key_encrypted`,
-  // Schema v94: the two corrections to how Deepgram spend is attributed.
+  // Schema v95: the two corrections to how Deepgram spend is attributed.
   // `meeting_sessions.off_deepgram_ms` records the milliseconds of a meeting that Orbit did
   // not pay Deepgram for, so a chunk that fell through to the user's own key is subtracted
   // from what the meeting meter books instead of being charged to their cap. Zero is the

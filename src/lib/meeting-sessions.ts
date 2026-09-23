@@ -511,6 +511,16 @@ export async function ingestMeetingChunk(
   //
   // Only booked when DEEPGRAM ran: a chunk on the user's own key, and a silent chunk, cost
   // Orbit nothing, and this meter exists to count Orbit's Deepgram spend.
+  //
+  // ONE CASE STILL OVER-BOOKS, against the user, and it is the price of the high-water rule.
+  // A fallback chunk that arrives OUT OF ORDER — after a later chunk already carried the clock
+  // past its span — raises `offDeepgramMs` without lowering `durationMs`, so the difference
+  // dips below a figure already booked and `greatest(...)` keeps the higher, earlier one.
+  // Deepgram at 0-60s, Deepgram at 120-180s, then the user's own key arriving late for
+  // 60-120s books 180 seconds for 120 seconds of Orbit's spend. It is bounded by the
+  // out-of-order span and can never exceed the clock, so it is a fraction of the bug this
+  // replaced — but it is the same direction as that bug, and the honest fix is a running sum
+  // rather than a high-water mark, which is the one thing the two paths cannot share.
   if (engine === "deepgram") {
     await recordSpeechSeconds({
       userId,
@@ -640,8 +650,15 @@ export async function recordLiveSegments(
   // The same expression `ingestMeetingChunk` books, off the same two columns, which is what
   // keeps the two paths converging on one high-water mark rather than each charging its own
   // total. This path never moves `offDeepgramMs` itself: a live segment arrived over a
-  // Deepgram socket that is billed for as long as it is open, silences included, and the
-  // recorder's coverage gate does not upload a chunk for a stretch the live path carried.
+  // Deepgram socket that is billed for as long as it is open, silences included.
+  //
+  // The two paths are MOSTLY exclusive, not strictly. `LiveCoverageGate.release()` flushes
+  // chunks it was holding when the socket drops or the meeting ends — including a silent one
+  // held while the socket was perfectly healthy — and a chunk with three or more uncovered
+  // seconds uploads even though the socket carried the rest of it. Either one raises
+  // `offDeepgramMs` for audio the open socket did in fact bill, so the meter reads low by at
+  // most a chunk per drop. That is Orbit's money, not the user's, and the nightly
+  // reconciliation job is what notices if it stops being a rounding error.
   await recordSpeechSeconds({
     userId,
     kind: "meeting",
