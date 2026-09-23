@@ -37,6 +37,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-tap-targets": "pure",
   "smoke-toast-copy": "pure",
   "smoke-vercel-ignore-build": "pure",
+  "smoke-account-routes": "pure",
   "smoke-admin-gate": "pure",
   "smoke-admin-redaction": "pure",
   "smoke-admin-yc-calculations": "pure",
