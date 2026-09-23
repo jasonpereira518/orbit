@@ -15,18 +15,24 @@
 import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
-import { getDb } from "../src/db";
+import { getDb, rowsOf } from "../src/db";
 import { contacts, interactionMentions, interactions, memoryChunks } from "../src/db/schema";
 import {
   buildMemoryChunks,
   deleteMemoryChunks,
+  memorySourceHash,
+  memorySourceHashSql,
   syncMemoryChunkMentions,
   syncMemoryChunks,
 } from "../src/lib/memory-chunks";
 import { mergeContacts, unmergeContacts } from "../src/lib/contact-merge";
-import { backfillMemoryChunks, pruneOrphanedMemoryChunks } from "../src/lib/memory-backfill";
+import {
+  backfillMemoryChunks,
+  pruneOrphanedMemoryChunks,
+  reindexInteractionPassages,
+} from "../src/lib/memory-backfill";
 import { searchMemories } from "../src/lib/memory-search";
-import { logNoteInteractionForUser } from "../src/lib/contact-writes";
+import { deleteInteractionForUser, logNoteInteractionForUser } from "../src/lib/contact-writes";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-memory-search-user";
@@ -360,6 +366,104 @@ async function main() {
     "and applying them twice changes nothing — the array is recomputed, not appended to",
     twice[0]?.contactIds.length === afterWiden[0]?.contactIds.length,
     `${JSON.stringify(afterWiden[0]?.contactIds)} -> ${JSON.stringify(twice[0]?.contactIds)}`
+  );
+
+  // --- an edited note must not keep quoting what it used to say ---------------------------------
+
+  // The bug this section exists for: the sweep's claim used to be "has no passages at all",
+  // so a note was indexed once and never revisited, and an edit left the original text
+  // quotable forever — chat could cite a sentence the user had deleted.
+  const edited = await logNoteInteractionForUser(
+    USER,
+    {
+      contactId: priya.id,
+      interactionType: "note",
+      rawNotes: "She is joining the board of the seaweed farming co-op next spring.",
+      interactionDate: new Date("2026-08-02T10:00:00Z"),
+      externalId: `smoke-edit:${Date.now()}`,
+    },
+    { skipRevalidate: true }
+  );
+  check(
+    "the note is searchable as written",
+    (await searchMemories(USER, { query: "seaweed farming" })).length > 0
+  );
+
+  // Raw UPDATE, which is what the bulk paths do: the import upsert, the calendar ingest
+  // upsert and `events/connect.ts` all rewrite this text without touching passages.
+  // The replacement deliberately shares no distinctive word with the original, so "the old
+  // text is gone" cannot be satisfied by the new passage matching on a word they both use.
+  await db.execute(sql`update interactions set raw_notes = ${"She turned that down and is taking a sabbatical instead."}
+     where id = ${edited.row.id}::uuid and user_id = ${USER}`);
+  const beforeResweep = await searchMemories(USER, { query: "sabbatical" });
+  check(
+    "editing the row alone does not change the index",
+    beforeResweep.length === 0,
+    String(beforeResweep.length)
+  );
+
+  const resweep = await backfillMemoryChunks(USER);
+  check("the sweep claims the edited note again", resweep.indexed > 0, JSON.stringify(resweep));
+  check(
+    "after which the new text is findable",
+    (await searchMemories(USER, { query: "sabbatical" })).length > 0
+  );
+  const ghost = await searchMemories(USER, { query: "seaweed farming" });
+  check(
+    "and the sentence the user deleted is no longer quotable",
+    ghost.length === 0,
+    ghost.map((m) => m.snippet.slice(0, 60)).join(" | ")
+  );
+
+  // THE parity guard. The claim computes the source hash in SQL and the writer computes it in
+  // TypeScript; if those two ever disagree, every interaction is stale on every pass and the
+  // sweep re-chunks the whole account forever. That shows up here, as a sweep that keeps
+  // finding work after it has just done it.
+  const idleSweep = await backfillMemoryChunks(USER);
+  check(
+    "a sweep straight after one does nothing — SQL and TypeScript agree on the source hash",
+    idleSweep.indexed === 0 && idleSweep.remaining === 0,
+    JSON.stringify(idleSweep)
+  );
+
+  // The same agreement, stated directly, so a failure says which side moved.
+  const hashRow = rowsOf<{ pg: string }>(
+    await db.execute(sql`select ${memorySourceHashSql("i")} as pg
+       from interactions i where i.id = ${edited.row.id}::uuid`)
+  )[0];
+  const reread = await db.query.interactions.findFirst({
+    where: eq(interactions.id, edited.row.id),
+  });
+  const tsHash = memorySourceHash({
+    text: reread?.rawNotes || reread?.aiSummary,
+    occurredAt: reread?.interactionDate ? new Date(reread.interactionDate) : null,
+    interactionType: reread?.interactionType ?? null,
+    contactId: reread?.contactId ?? null,
+  });
+  check("the two renderings of the source hash are the same string", hashRow?.pg === tsHash, `${hashRow?.pg} vs ${tsHash}`);
+
+  // The write path does not wait for the cron. (The action calls this; the smoke cannot,
+  // because the action resolves its own Clerk user.)
+  await db.execute(sql`update interactions set raw_notes = ${"She is teaching a ceramics course in Matosinhos."}
+     where id = ${edited.row.id}::uuid and user_id = ${USER}`);
+  await reindexInteractionPassages(USER, edited.row.id);
+  check(
+    "an edit re-indexed on the write path is searchable at once",
+    (await searchMemories(USER, { query: "ceramics" })).length > 0
+  );
+  check(
+    "and the sweep then has nothing to do",
+    (await backfillMemoryChunks(USER)).indexed === 0
+  );
+
+  // --- deleting a note takes its passages with it ------------------------------------------------
+
+  await deleteInteractionForUser(USER, edited.row.id, { skipRevalidate: true });
+  const afterDelete = await searchMemories(USER, { query: "ceramics" });
+  check(
+    "deleting through the write path drops the passages immediately, not at the next prune",
+    afterDelete.length === 0,
+    String(afterDelete.length)
   );
 
   // --- a merge moves the passages instead of dropping them -------------------------------------
