@@ -103,7 +103,7 @@ run(async () => {
     return { outcome: "complete" as const, pages: 2, records: 3, contactsCreated: 1, leadsCreated: 2, blocked: 0 };
   };
   const result = await runCrmSyncNow(USER, "hubspot", { sync: okSync, consume: async () => {} });
-  check("runs the sync with the claimed connection and a 40 s budget", calls[0] === "a:40000", calls.join(","));
+  check("runs the sync with the claimed connection and a 30 s budget (inside the 60 s function limit)", calls[0] === "a:30000", calls.join(","));
   check("reports what it did", result.outcome === "complete" && result.pages === 2 && result.records === 3 && result.message === null);
   check("and releases the lease", (await db.select().from(connectorConnections).where(eq(connectorConnections.userId, USER)))[0]?.syncStatus === "idle");
 

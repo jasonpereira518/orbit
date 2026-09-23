@@ -26,8 +26,13 @@ import { reportError } from "@/lib/report-error";
 
 const DIDNT_ANSWER = "HubSpot didn’t answer — the next automatic sync will try again";
 
-/** A person is waiting on the button: shorter than the scheduler's share, and resumable. */
-export const SYNC_NOW_BUDGET_MS = 40_000;
+/**
+ * A person is waiting on the button: shorter than the scheduler's share, and resumable. The
+ * (main) layout's `maxDuration` is 60 s, and the budget is only checked between pages, so it
+ * leaves room for one overshooting page (a 15 s search timeout plus its persist) — a run the
+ * platform kills holds the lease for its full term.
+ */
+export const SYNC_NOW_BUDGET_MS = 30_000;
 
 export async function crmStatusFor(userId: string): Promise<CrmStatus> {
   const [entitlements, connection] = await Promise.all([
