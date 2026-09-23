@@ -33,6 +33,12 @@ export const IMPORT_COPY = {
   undoRemoving: "Taking them back out…",
   undoConfirm: "Remove them",
   undoCancel: "Keep them",
+  /**
+   * The secondary button once removal has started. Not `undoCancel`: by then "Keep them" is a
+   * lie — clicking it only hides the dialog while the people go on being taken out.
+   */
+  undoDismiss: "Close and let it finish",
+  undoClose: "Close",
   undoFailed: "Couldn’t undo that import — try again in a moment",
   undoGone: "That import isn’t here any more",
   undoAlreadyDone: "This import has already been undone",

@@ -25,7 +25,7 @@ import {
   TARGET_LABEL_INLINE,
   type QueuedImport,
 } from "@/lib/imports/import-queue";
-import { mergeFinishSummaries } from "@/lib/imports/import-finish";
+import { finishCopy, mergeFinishSummaries } from "@/lib/imports/import-finish";
 import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
 import type { ImportTarget } from "@/lib/imports/detect-import-file";
 import type { LatestFinishedImport } from "@/actions/imports";
@@ -116,9 +116,34 @@ export function ImportQueueCard({
     ? mergeFinishSummaries(parts, unfinishedLine(unfinishedSteps))
     : null;
 
+  /**
+   * The finish, announced.
+   *
+   * A live region only speaks reliably when its content changes while it is already in the
+   * document; one that mounts with its text inside — which is what the done card's own
+   * sentence would be — is often read as nothing. So the region is rendered empty from the
+   * moment a drop is staged, at the same place in the tree whichever branch below renders,
+   * and the sentence is set into it once the run is done and the server has answered with
+   * its numbers. It persists across the running → done swap because it is the first child of
+   * the same root element in both.
+   */
+  const finished =
+    queue.phase === "done" && summary ? finishCopy(summary) : null;
+  const announcer = (
+    <div key="finish-announcer" role="status" className="sr-only">
+      {finished ? (
+        <>
+          <p>{finished.headline}</p>
+          {finished.detail ? <p>{finished.detail}</p> : null}
+        </>
+      ) : null}
+    </div>
+  );
+
   if (queue.phase === "done" && summary && parts) {
     return (
       <div className="space-y-3">
+        {announcer}
         <ImportFinishCard
           summary={summary}
           avatars={parts.flatMap((p) => p.avatars).slice(0, MAX_FACES)}
@@ -168,109 +193,112 @@ export function ImportQueueCard({
   const isRunning = queue.phase === "running";
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-medium">
-            {queue.phase === "previewing"
-              ? "Reading your files…"
-              : queue.phase === "done"
-                ? "Import finished"
-                : isRunning
-                  ? "Importing"
-                  : "Ready to import"}
-          </h2>
-          {queue.truncated ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {IMPORT_COPY.truncated}
-            </p>
+    <div className="space-y-3">
+      {announcer}
+      <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-medium">
+              {queue.phase === "previewing"
+                ? "Reading your files…"
+                : queue.phase === "done"
+                  ? "Import finished"
+                  : isRunning
+                    ? "Importing"
+                    : "Ready to import"}
+            </h2>
+            {queue.truncated ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {IMPORT_COPY.truncated}
+              </p>
+            ) : null}
+          </div>
+          {queue.phase === "done" ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={clearImportQueue}
+            >
+              <X className="size-4" />
+              <span className="sr-only">Dismiss</span>
+            </Button>
           ) : null}
         </div>
-        {queue.phase === "done" ? (
+
+        {isRunning && job?.progress ? (
+          <ImportProgress
+            {...job.progress}
+            step={job.step}
+            cancelling={job.cancelling}
+            onCancel={stopQueue}
+          />
+        ) : null}
+
+        <ul className="space-y-2">
+          {queue.items.map((item) => (
+            <QueueRow
+              key={item.id}
+              item={item}
+              people={queue.people.get(item.id) ?? []}
+              expanded={open === item.id}
+              onToggle={() => setOpen(open === item.id ? null : item.id)}
+              locked={isRunning || queue.phase === "done"}
+            />
+          ))}
+        </ul>
+
+        {emptyPreviews.length ? (
+          <p className="text-xs text-muted-foreground">
+            {emptyPreviews.map((i) => i.fileName).join(", ")} — nobody new to
+            import from {emptyPreviews.length === 1 ? "this one" : "these"}
+          </p>
+        ) : null}
+
+        {queue.ignored.length ? <IgnoredList ignored={queue.ignored} /> : null}
+
+        {!queue.items.length && queue.ignored.length ? (
+          <p className="text-sm text-muted-foreground">
+            {IMPORT_COPY.nothingRecognised}
+          </p>
+        ) : null}
+
+        {queue.phase === "review" && reviewable.length ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              disabled={running || reviewable.length === 0}
+              onClick={() =>
+                start(async () => {
+                  const { message } = await runQueue();
+                  toast.success(message);
+                })
+              }
+            >
+              {reviewable.length === 1
+                ? "Import"
+                : `Import everything (${reviewable.length} files)`}
+            </Button>
+            {selectedTotal ? (
+              <span className="text-xs text-muted-foreground">
+                {selectedTotal} {selectedTotal === 1 ? "person" : "people"} selected
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {isRunning ? (
           <Button
             type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={clearImportQueue}
+            variant="outline"
+            onClick={stopQueue}
+            disabled={queue.stopping}
           >
-            <X className="size-4" />
-            <span className="sr-only">Dismiss</span>
+            {queue.stopping ? "Stopping…" : "Stop"}
           </Button>
         ) : null}
-      </div>
-
-      {isRunning && job?.progress ? (
-        <ImportProgress
-          {...job.progress}
-          step={job.step}
-          cancelling={job.cancelling}
-          onCancel={stopQueue}
-        />
-      ) : null}
-
-      <ul className="space-y-2">
-        {queue.items.map((item) => (
-          <QueueRow
-            key={item.id}
-            item={item}
-            people={queue.people.get(item.id) ?? []}
-            expanded={open === item.id}
-            onToggle={() => setOpen(open === item.id ? null : item.id)}
-            locked={isRunning || queue.phase === "done"}
-          />
-        ))}
-      </ul>
-
-      {emptyPreviews.length ? (
-        <p className="text-xs text-muted-foreground">
-          {emptyPreviews.map((i) => i.fileName).join(", ")} — nobody new to
-          import from {emptyPreviews.length === 1 ? "this one" : "these"}
-        </p>
-      ) : null}
-
-      {queue.ignored.length ? <IgnoredList ignored={queue.ignored} /> : null}
-
-      {!queue.items.length && queue.ignored.length ? (
-        <p className="text-sm text-muted-foreground">
-          {IMPORT_COPY.nothingRecognised}
-        </p>
-      ) : null}
-
-      {queue.phase === "review" && reviewable.length ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            disabled={running || reviewable.length === 0}
-            onClick={() =>
-              start(async () => {
-                const { message } = await runQueue();
-                toast.success(message);
-              })
-            }
-          >
-            {reviewable.length === 1
-              ? "Import"
-              : `Import everything (${reviewable.length} files)`}
-          </Button>
-          {selectedTotal ? (
-            <span className="text-xs text-muted-foreground">
-              {selectedTotal} {selectedTotal === 1 ? "person" : "people"} selected
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-
-      {isRunning ? (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={stopQueue}
-          disabled={queue.stopping}
-        >
-          {queue.stopping ? "Stopping…" : "Stop"}
-        </Button>
-      ) : null}
-    </section>
+      </section>
+    </div>
   );
 }
 

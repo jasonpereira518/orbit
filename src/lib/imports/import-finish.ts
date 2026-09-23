@@ -7,6 +7,8 @@
  * as "2 updated · 2 already here" for two people. The counts arrive here already reconciled;
  * this module only chooses the words.
  */
+import { IMPORT_COPY } from "@/lib/imports/import-copy";
+
 /**
  * How long an import can be undone for.
  *
@@ -112,4 +114,21 @@ export function finishCopy(summary: FinishSummary): FinishCopy {
       : { label: "See what changed", kind: "detail" as const };
 
   return { headline, detail, action };
+}
+
+/**
+ * The undo dialog's secondary button, by what it will actually do when clicked.
+ *
+ * Before the person confirms it is the way out, so it says "Keep them". Once removal has
+ * started it is not: the operation carries on whether or not the dialog is open (it is
+ * resumable and reports itself in a toast when it ends), so the same button only hides the
+ * dialog — and saying "Keep them" while people are being taken out is a lie at exactly the
+ * moment a person is most likely to believe it.
+ */
+export function undoDismissLabel(
+  phase: "checking" | "ready" | "removing",
+  canRemove: boolean,
+): string {
+  if (phase === "removing") return IMPORT_COPY.undoDismiss;
+  return canRemove ? IMPORT_COPY.undoCancel : IMPORT_COPY.undoClose;
 }

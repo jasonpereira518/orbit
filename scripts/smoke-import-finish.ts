@@ -10,8 +10,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   finishCopy,
   mergeFinishSummaries,
+  undoDismissLabel,
   type FinishSummary,
 } from "../src/lib/imports/import-finish";
+import { IMPORT_COPY } from "../src/lib/imports/import-copy";
 import { ImportFinishCard } from "../src/components/imports/import-finish-card";
 
 let failures = 0;
@@ -132,6 +134,34 @@ check(
     "didn’t finish",
   ),
 );
+
+/**
+ * The announcement lives in the queue card, not here.
+ *
+ * A `role="status"` node that mounts with its text already inside is the one case screen
+ * readers do NOT reliably announce; the queue card keeps an empty region alive across the
+ * running → done transition and sets the sentence into it. A second, pre-filled status node
+ * on the card itself would be the old bug back, and a double announcement where it did work.
+ */
+console.log("The card leaves the announcement to the region that outlives it");
+check("the card carries no status region of its own", !cardHtml(base).includes('role="status"'));
+
+/**
+ * The dialog's secondary button while people are being taken out.
+ *
+ * "Keep them" there is a lie at the destructive moment: clicking it only hides the dialog while
+ * the removal carries on. During removal the button says what it actually does.
+ */
+console.log("The undo dialog's buttons say what they do");
+check(
+  "while removing, the button does not offer to keep them",
+  undoDismissLabel("removing", true) === IMPORT_COPY.undoDismiss &&
+    undoDismissLabel("removing", true) !== IMPORT_COPY.undoCancel,
+  undoDismissLabel("removing", true),
+);
+check("before confirming, it is still the way out", undoDismissLabel("ready", true) === IMPORT_COPY.undoCancel);
+check("with nothing to remove, it only closes", undoDismissLabel("ready", false) === IMPORT_COPY.undoClose);
+check("while checking, it only closes", undoDismissLabel("checking", false) === IMPORT_COPY.undoClose);
 
 if (failures) {
   console.error(`smoke-import-finish: ${failures} failed`);

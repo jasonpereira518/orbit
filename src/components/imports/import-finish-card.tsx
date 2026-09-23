@@ -14,7 +14,11 @@ import {
 } from "@/components/ui/dialog";
 import { ImportFinishScene } from "@/components/imports/import-finish-scene";
 import { previewImportUndo, undoImport } from "@/actions/imports";
-import { finishCopy, type FinishSummary } from "@/lib/imports/import-finish";
+import {
+  finishCopy,
+  undoDismissLabel,
+  type FinishSummary,
+} from "@/lib/imports/import-finish";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
@@ -201,9 +205,7 @@ export function ImportUndoButton({
               disabled={!dismissable}
               onClick={() => setOpen(false)}
             >
-              {preview && canRemove(preview)
-                ? IMPORT_COPY.undoCancel
-                : "Close"}
+              {undoDismissLabel(phase, Boolean(preview && canRemove(preview)))}
             </Button>
             {preview && canRemove(preview) ? (
               <Button
@@ -353,13 +355,25 @@ function UndoDialogBody({
         </p>
       ) : null}
 
-      {phase === "removing" ? (
-        <p role="status" className="text-xs text-muted-foreground">
-          {removedSoFar > 0
+      {/*
+        Always rendered, empty until removal starts: the same reason as the finish sentence's
+        region in `ImportQueueCard` — a status node that mounts with its text already inside is
+        the case screen readers skip. Visually hidden while there is nothing to say, so it
+        takes no room in the dialog.
+      */}
+      <p
+        role="status"
+        className={cn(
+          "text-xs text-muted-foreground",
+          phase !== "removing" && "sr-only",
+        )}
+      >
+        {phase === "removing"
+          ? removedSoFar > 0
             ? `${people(removedSoFar)} out so far`
-            : IMPORT_COPY.undoRemoving}
-        </p>
-      ) : null}
+            : IMPORT_COPY.undoRemoving
+          : null}
+      </p>
     </>
   );
 }
@@ -430,14 +444,13 @@ export function ImportFinishCard({
 
       <div className="space-y-1 text-center">
         {/*
-          Announced once, when it appears. `role="status"` rather than an aria-live region
-          built by hand: this node mounts with its text already in it, which is exactly the
-          case a status region is for.
+          Not a live region. A status node that mounts with its text already inside is the
+          one case screen readers do not reliably announce, so the announcement lives in
+          `ImportQueueCard`: an empty region that exists before the run ends and has this
+          sentence set into it when the phase becomes done. The card a person comes back to
+          after a refresh is read, not announced.
         */}
-        <p
-          role="status"
-          className="font-[family-name:var(--font-display)] text-xl text-ink"
-        >
+        <p className="font-[family-name:var(--font-display)] text-xl text-ink">
           {copy.headline}
         </p>
         {copy.detail ? (
