@@ -382,6 +382,31 @@ async function main() {
   const unfiltered = await listContactsPage(USER, {});
   check("without the filter everyone is listed", unfiltered.items.length > 2);
 
+  // …and to a whole run's, because one drop is one done card and its button promises
+  // everyone the run added, across every file in it.
+  const { importId: secondImport, ids: secondIds } = await seedImport(USER, [
+    { name: "Second File One", created: true },
+  ]);
+  const bothListed = await listContactsPage(USER, {
+    importId: `${filterImport},${secondImport}`,
+  });
+  check(
+    "two imports' people come back together",
+    bothListed.items.length === 3,
+    String(bothListed.items.length),
+  );
+  check(
+    "…and they are exactly those three",
+    bothListed.items.every((c) => [...filterIds, ...secondIds].includes(c.id)),
+  );
+  // A hand-typed id would fail the uuid cast and take the whole page down with it.
+  const junk = await listContactsPage(USER, { importId: "not-an-id" });
+  check("a forged id lists nobody rather than erroring", junk.items.length === 0);
+  const mixed = await listContactsPage(USER, {
+    importId: `not-an-id,${secondImport}`,
+  });
+  check("…and a good id beside it still works", mixed.items.length === 1);
+
   await reset();
   console.log("smoke-import-undo: all checks passed");
   process.exit(0);

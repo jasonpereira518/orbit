@@ -18,6 +18,9 @@ import { getDb } from "@/db";
 import { contactTags, contacts, tags } from "@/db/schema";
 import { getRankedContacts } from "@/actions/search";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
+
+/** `imports.id` is a uuid; anything else in the query string is ignored, not queried. */
+const IMPORT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import {
   contactsCursorCondition,
   contactsCursorFor,
@@ -102,17 +105,36 @@ export async function listContactsPage(
     );
   }
 
-  const importId = filters?.importId?.trim();
-  if (importId) {
-    // Narrowed to one import's people — the same set the People list reads
-    // (`importContactIds` in `src/lib/imports/import-people.ts`). Scoped by both the import
-    // and the user, so a foreign or forged `importId` simply matches nothing rather than
-    // leaking another account's contacts. A literal table name, not an interpolated column
+  // One id, or the comma-separated list the done card sends. A dropped LinkedIn archive is
+  // two imports and one card, and its button promises every person the run added — so this
+  // has to be able to answer for all of them at once.
+  // Non-uuids are dropped rather than sent: `import_job_rows.import_id` is a uuid column, so
+  // a hand-typed id would fail the cast and turn the whole page into a 500 instead of an
+  // empty list.
+  const askedForImport = Boolean(filters?.importId?.trim());
+  const importIds = (filters?.importId ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => IMPORT_ID.test(id));
+  if (askedForImport && !importIds.length) {
+    // Asked to narrow to an import, and not one usable id among them. An empty list is the
+    // answer; falling through would quietly widen the page to the whole network, which is
+    // the opposite of what the URL said.
+    conditions.push(sql`false`);
+  }
+  if (importIds.length) {
+    // Narrowed to those imports' people — the same set the People list reads
+    // (`importContactIds` in `src/lib/imports/import-people.ts`). Scoped by both the imports
+    // and the user, so a foreign or forged id simply matches nothing rather than leaking
+    // another account's contacts. A literal table name, not an interpolated column
     // reference: `import_job_rows` isn't part of this query's FROM clause.
     conditions.push(
       sql`${contacts.id} IN (
         SELECT r.contact_id FROM import_job_rows r
-        WHERE r.import_id = ${importId} AND r.user_id = ${userId}
+        WHERE r.import_id IN (${sql.join(
+          importIds.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )}) AND r.user_id = ${userId}
           AND r.status = 'done' AND r.contact_id IS NOT NULL
       )`
     );

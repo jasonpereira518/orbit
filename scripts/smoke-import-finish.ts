@@ -5,7 +5,14 @@
  *
  * Run: npx tsx scripts/smoke-import-finish.ts
  */
-import { finishCopy, type FinishSummary } from "../src/lib/imports/import-finish";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  finishCopy,
+  mergeFinishSummaries,
+  type FinishSummary,
+} from "../src/lib/imports/import-finish";
+import { ImportFinishCard } from "../src/components/imports/import-finish-card";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -17,7 +24,7 @@ function check(label: string, ok: boolean, detail?: string) {
 }
 
 const base: FinishSummary = {
-  importId: "i1",
+  importIds: ["i1"],
   added: 19,
   existing: 6,
   meetingsLogged: 0,
@@ -45,6 +52,48 @@ check("…and does not claim people", !calendar.headline.includes("0"));
 const several = finishCopy({ ...base, sources: ["Connections.csv", "messages.csv"] });
 check("several files are named", (several.detail ?? "").includes("Connections.csv") && (several.detail ?? "").includes("messages.csv"));
 
+/**
+ * One drop is one card.
+ *
+ * Each file in a queued run writes its own `imports` row, so the card's arithmetic is a sum
+ * over those rows and not a reading of any one of them. This is also the guard against the
+ * card speaking for a run it had nothing to do with: a run that finished no imports has no
+ * summary at all, so there is nothing to render.
+ */
+console.log("A run of several files is one summary");
+const connections: FinishSummary = {
+  importIds: ["a"],
+  added: 19,
+  existing: 6,
+  meetingsLogged: 0,
+  sources: ["Connections.csv"],
+};
+const messages: FinishSummary = {
+  importIds: ["b"],
+  added: 4,
+  existing: 11,
+  meetingsLogged: 38,
+  sources: ["messages.csv"],
+};
+const run = mergeFinishSummaries([connections, messages]);
+check("nothing finished means no card at all", mergeFinishSummaries([]) === null);
+check("the people add up", run?.added === 23 && run?.existing === 17);
+check("so do the meetings", run?.meetingsLogged === 38);
+check("every import in the run is carried", run?.importIds.join(",") === "a,b");
+check("both files are named", run?.sources.join("|") === "Connections.csv|messages.csv");
+check("a single file is still just itself", mergeFinishSummaries([connections])?.importIds.join(",") === "a");
+
+const runCopy = finishCopy(run!);
+check("the run's button counts everyone it added", runCopy.action.label.includes("23"));
+check(
+  "…and points at every import in it",
+  "href" in runCopy.action && runCopy.action.href === "/contacts?importId=a,b",
+);
+check("…and the detail names both files", (runCopy.detail ?? "").includes("Connections.csv") && (runCopy.detail ?? "").includes("messages.csv"));
+
+const halfDone = mergeFinishSummaries([connections], "Your LinkedIn messages didn’t finish");
+check("a step that didn’t land leads the card", halfDone?.unfinished === "Your LinkedIn messages didn’t finish");
+
 const partial = finishCopy({ ...base, unfinished: "LinkedIn messages didn’t finish" });
 check("an unfinished step leads", partial.headline.includes("didn’t finish"));
 check("…and still offers the people that landed", "href" in partial.action);
@@ -55,6 +104,30 @@ for (const copy of [normal, one, nobodyNew, calendar, several, partial]) {
     check(`house voice: ${line.slice(0, 40)}`, !/\bfailed\b/i.test(line) && !line.endsWith(".") && !line.includes("'") && (line.match(/ — /g) ?? []).length <= 1, line);
   }
 }
+
+/**
+ * No swarm over bad news (spec §1: "If any step didn't finish… the scene is not drawn").
+ *
+ * The guard is one ternary in the card, which is exactly the kind of line a later edit
+ * reinstates without noticing: a field of people settling into orbit under "your messages
+ * didn't finish" is the card celebrating anyway.
+ */
+console.log("The scene knows when not to play");
+const cardHtml = (summary: FinishSummary) =>
+  renderToStaticMarkup(
+    React.createElement(ImportFinishCard, { summary, avatars: [] }),
+  );
+check("a clean finish draws the swarm", cardHtml(base).includes("<canvas"));
+check(
+  "a step that didn’t finish does not",
+  !cardHtml({ ...base, unfinished: "Your LinkedIn messages didn’t finish" }).includes("<canvas"),
+);
+check(
+  "…and says so instead",
+  cardHtml({ ...base, unfinished: "Your LinkedIn messages didn’t finish" }).includes(
+    "didn’t finish",
+  ),
+);
 
 if (failures) {
   console.error(`smoke-import-finish: ${failures} failed`);

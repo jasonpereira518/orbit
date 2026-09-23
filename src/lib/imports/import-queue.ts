@@ -47,7 +47,23 @@ export type QueuedImport = {
   error?: string;
   /** The runner's own completion line. */
   result?: string;
+  /**
+   * The `imports.id` this step wrote, once it has one.
+   *
+   * What makes the done card speak for THIS run rather than for whatever import happens to be
+   * newest on the account. A drop of files nothing recognises finishes with no ids at all, and
+   * a run whose every step broke finishes with none either — both of which are exactly the
+   * cases where there is nothing to celebrate.
+   */
+  importId?: string;
 };
+
+/** Every import this run actually finished, in the order the steps ran. */
+export function finishedImportIds(items: readonly QueuedImport[]): string[] {
+  return items
+    .filter((i) => i.status === "done" && i.importId)
+    .map((i) => i.importId as string);
+}
 
 export type ImportQueueSnapshot = {
   items: QueuedImport[];

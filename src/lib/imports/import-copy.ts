@@ -38,7 +38,16 @@ export const IMPORT_COPY = {
   undoAlreadyDone: "This import has already been undone",
   undoWindowClosed: "The 7-day window for undoing this import has closed",
   undoNobodyLeft:
-    "Everyone this import brought in has a note, a tag or a reminder now, so there is nobody left to take back",
+    "Everyone this import brought in has been touched since, so there is nobody left to take back",
+  /**
+   * What undo does NOT do, said before it runs rather than discovered afterwards.
+   *
+   * An import that matched 6 people to contacts you already had changed those contacts, and
+   * nothing anywhere stores what they used to say — so those edits are permanent and the only
+   * honest moment to mention it is while the person still has a Cancel button.
+   */
+  undoKeepsMatched:
+    "People it matched to contacts you already had stay, and the details it filled in on them stay too",
   undoInexact:
     "This import ran before Orbit started tracking edits, so it can’t tell which of these you’ve changed",
   undoStillGoing:

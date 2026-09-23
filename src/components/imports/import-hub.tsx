@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -127,8 +128,8 @@ function noDismissedFinishesYet(): null {
   return null;
 }
 
-function dismissFinish(importId: string) {
-  const next = [...dismissedFinishesSnapshot(), importId].slice(
+function dismissFinish(importIds: string[]) {
+  const next = [...dismissedFinishesSnapshot(), ...importIds].slice(
     -MAX_REMEMBERED_DISMISSALS,
   );
   dismissedFinishes = next;
@@ -279,7 +280,15 @@ export function ImportHub({
     noDismissedFinishesYet,
   );
   const historyRef = useRef<ImportHistoryHandle>(null);
+  const router = useRouter();
   useRefreshOnVisible();
+
+  /**
+   * Re-read the page after an undo. Held here rather than inside the undo button so that the
+   * button, the done card and the history list all stay renderable outside an app router —
+   * two of them are rendered exactly that way by the pure smokes.
+   */
+  const refreshAfterUndo = useCallback(() => router.refresh(), [router]);
 
   const handleFiles = useCallback(async (files: DroppedFile[]) => {
     const result = await detectImportFiles(files, {
@@ -342,15 +351,22 @@ export function ImportHub({
   );
 
   /**
-   * The finish worth showing: one exists, it hasn't been undone, this browser hasn't put it
-   * away, and the client queue isn't already telling the same story in the card above.
+   * The finish worth showing: one exists, it hasn't been undone, and this browser hasn't put
+   * it away.
+   *
+   * The queue guard is deliberately the queue card's OWN "render nothing" condition, not
+   * `!queue.items.length`. With only that, a drop of files nothing recognises — which stages
+   * zero items but some `ignored` — passed here AND inside the queue card, and the same card
+   * was drawn twice. While any drop is in play the queue card owns this space, finished or
+   * not; this is only the card a person comes back to.
    */
   const finishToShow =
     dismissed &&
     latestFinish &&
     !latestFinish.undoneAt &&
     !queue.items.length &&
-    !dismissed.includes(latestFinish.importId)
+    !queue.ignored.length &&
+    !latestFinish.importIds.some((id) => dismissed.includes(id))
       ? latestFinish
       : null;
 
@@ -381,6 +397,7 @@ export function ImportHub({
       <ImportQueueCard
         onFinishDismiss={dismissFinish}
         onShowFinishDetail={(importId) => historyRef.current?.open(importId)}
+        onFinishUndone={refreshAfterUndo}
       />
 
       {/*
@@ -392,8 +409,11 @@ export function ImportHub({
         <ImportFinishCard
           summary={finishToShow}
           avatars={finishToShow.avatars}
-          onDismiss={() => dismissFinish(finishToShow.importId)}
-          onShowDetail={() => historyRef.current?.open(finishToShow.importId)}
+          onDismiss={() => dismissFinish(finishToShow.importIds)}
+          onShowDetail={() =>
+            historyRef.current?.open(finishToShow.importIds[0])
+          }
+          onUndone={refreshAfterUndo}
         />
       ) : null}
 
@@ -522,7 +542,11 @@ export function ImportHub({
         </h2>
         {/* Target for the "import didn't finish" alerts. */}
         <div id="import-history" className="scroll-mt-8">
-          <ImportHistory history={history} ref={historyRef} />
+          <ImportHistory
+            history={history}
+            onUndone={refreshAfterUndo}
+            ref={historyRef}
+          />
         </div>
       </section>
 

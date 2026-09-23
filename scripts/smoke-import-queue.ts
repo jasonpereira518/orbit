@@ -12,6 +12,7 @@
  */
 import {
   advance,
+  finishedImportIds,
   isTerminal,
   nextRunnable,
   queueFromDetection,
@@ -265,6 +266,41 @@ check(
   ]) === null,
 );
 check("an empty queue is not 'done'", !summarize([]).done);
+
+/**
+ * Which imports a run may speak for.
+ *
+ * The done card is built from these ids, so the cases that must return nothing are the cases
+ * where the card must not be drawn at all: a drop of files nothing recognises stages no steps,
+ * and a run whose every step broke wrote no import. Before this, the card asked the server for
+ * "the newest completed import on the account" and happily celebrated an unrelated one.
+ */
+console.log("A run only speaks for the imports it wrote");
+const ran = (over: Partial<QueuedImport>): QueuedImport => ({
+  ...queueFromDetection([detected("linkedin_connections", "c.csv")])[0],
+  ...over,
+});
+check("nothing staged means no ids", finishedImportIds([]).length === 0);
+check(
+  "every step broken means no ids",
+  finishedImportIds([
+    ran({ status: "failed", error: "nope" }),
+    ran({ id: "q2", status: "failed", error: "nope" }),
+  ]).length === 0,
+);
+check(
+  "a step that finished before the id existed is not counted",
+  finishedImportIds([ran({ status: "done" })]).length === 0,
+);
+check(
+  "skipped and failed steps are left out",
+  finishedImportIds([
+    ran({ status: "done", importId: "a" }),
+    ran({ id: "q2", status: "skipped", importId: "b" }),
+    ran({ id: "q3", status: "failed", importId: "c" }),
+    ran({ id: "q4", status: "done", importId: "d" }),
+  ]).join(",") === "a,d",
+);
 
 if (failures) {
   console.error(`\n${failures} queue check${failures === 1 ? "" : "s"} failed`);

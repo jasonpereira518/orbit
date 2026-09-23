@@ -168,19 +168,19 @@ for (const table of COPY_TABLES) {
  * that didn't land.
  */
 const FINISH_SUMMARIES: FinishSummary[] = [
-  { importId: "i1", added: 19, existing: 6, meetingsLogged: 0, sources: ["Connections.csv"] },
-  { importId: "i2", added: 1, existing: 0, meetingsLogged: 0, sources: ["Contacts.vcf"] },
-  { importId: "i3", added: 0, existing: 25, meetingsLogged: 0, sources: ["Connections.csv"] },
-  { importId: "i4", added: 0, existing: 0, meetingsLogged: 38, sources: ["work.ics"] },
+  { importIds: ["i1"], added: 19, existing: 6, meetingsLogged: 0, sources: ["Connections.csv"] },
+  { importIds: ["i2"], added: 1, existing: 0, meetingsLogged: 0, sources: ["Contacts.vcf"] },
+  { importIds: ["i3"], added: 0, existing: 25, meetingsLogged: 0, sources: ["Connections.csv"] },
+  { importIds: ["i4"], added: 0, existing: 0, meetingsLogged: 38, sources: ["work.ics"] },
   {
-    importId: "i5",
+    importIds: ["i5"],
     added: 12,
     existing: 3,
     meetingsLogged: 0,
     sources: ["Connections.csv", "messages.csv"],
   },
   {
-    importId: "i6",
+    importIds: ["i6"],
     added: 12,
     existing: 0,
     meetingsLogged: 0,
@@ -191,7 +191,7 @@ const FINISH_SUMMARIES: FinishSummary[] = [
 let finishLines = 0;
 for (const summary of FINISH_SUMMARIES) {
   const copy = finishCopy(summary);
-  const where = `src/lib/imports/import-finish.ts (finishCopy ${summary.importId})`;
+  const where = `src/lib/imports/import-finish.ts (finishCopy ${summary.importIds.join("+")})`;
   for (const line of [copy.headline, copy.detail ?? "", copy.action.label]) {
     if (!line) continue;
     finishLines++;

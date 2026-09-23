@@ -24,7 +24,15 @@ export function withinUndoWindow(createdAt: Date, now: Date = new Date()): boole
 }
 
 export type FinishSummary = {
-  importId: string;
+  /**
+   * Every import this card speaks for, in the order they ran.
+   *
+   * A list rather than one id because one drop is one card and each file in it writes its own
+   * `imports` row: a LinkedIn archive is connections *and* messages, and a card that read one
+   * row would either undercount the people or link to a fraction of them. The button carries
+   * all of them, which is why `/contacts?importId=` takes a comma-separated list.
+   */
+  importIds: string[];
   /** People the import brought into Orbit. */
   added: number;
   /** People it matched to someone already here. */
@@ -44,8 +52,36 @@ export type FinishCopy = {
 
 const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
 
+/**
+ * One drop, one card.
+ *
+ * The run's steps each finished their own import, and this is where they become a single
+ * sentence: counts sum, sources keep the order they ran in, and every import id is carried so
+ * the button can point at all of the people rather than at one file's share of them.
+ *
+ * **Null when nothing finished**, and that is the load-bearing part rather than an edge case.
+ * The card used to be drawn from "the newest completed import on the account", which meant a
+ * drop of files Orbit could not read, or a run whose every step broke, still celebrated some
+ * unrelated import from last week and offered a button into its people. A run with no finished
+ * import has no summary, so there is nothing to draw.
+ */
+export function mergeFinishSummaries(
+  parts: readonly FinishSummary[],
+  unfinished?: string,
+): FinishSummary | null {
+  if (!parts.length) return null;
+  return {
+    importIds: parts.flatMap((p) => p.importIds),
+    added: parts.reduce((n, p) => n + p.added, 0),
+    existing: parts.reduce((n, p) => n + p.existing, 0),
+    meetingsLogged: parts.reduce((n, p) => n + p.meetingsLogged, 0),
+    sources: parts.flatMap((p) => p.sources),
+    ...(unfinished ? { unfinished } : {}),
+  };
+}
+
 export function finishCopy(summary: FinishSummary): FinishCopy {
-  const { added, existing, meetingsLogged, sources, importId, unfinished } = summary;
+  const { added, existing, meetingsLogged, sources, importIds, unfinished } = summary;
 
   const headline = unfinished
     ? unfinished
@@ -65,7 +101,12 @@ export function finishCopy(summary: FinishSummary): FinishCopy {
 
   const action =
     added > 0
-      ? { label: `Meet your ${people(added)}`, href: `/contacts?importId=${importId}` }
+      ? {
+          label: `Meet your ${people(added)}`,
+          // Comma-separated, and `contacts-page-query.ts` splits it back apart: the label
+          // promises every person the run added, so the list it opens has to hold them all.
+          href: `/contacts?importId=${importIds.join(",")}`,
+        }
       : { label: "See what changed", kind: "detail" as const };
 
   return { headline, detail, action };

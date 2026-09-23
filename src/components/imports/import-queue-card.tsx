@@ -8,7 +8,7 @@ import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { ImportProgress } from "@/components/imports/import-utils";
 import { useImportJob } from "@/lib/import-job-runner";
-import { getLatestFinishedImport } from "@/actions/imports";
+import { getFinishedImportsFor } from "@/actions/imports";
 import {
   clearImportQueue,
   runQueue,
@@ -21,9 +21,12 @@ import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import {
+  finishedImportIds,
   TARGET_LABEL_INLINE,
   type QueuedImport,
 } from "@/lib/imports/import-queue";
+import { mergeFinishSummaries } from "@/lib/imports/import-finish";
+import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
 import type { ImportTarget } from "@/lib/imports/detect-import-file";
 import type { LatestFinishedImport } from "@/actions/imports";
 
@@ -37,46 +40,59 @@ import type { LatestFinishedImport } from "@/actions/imports";
 export function ImportQueueCard({
   onFinishDismiss,
   onShowFinishDetail,
+  onFinishUndone,
 }: {
   /**
    * Told which import the person just dismissed. The hub renders the same finish from the
    * server once the queue is cleared, so without this the X would put the card straight
    * back on screen.
    */
-  onFinishDismiss?: (importId: string) => void;
+  onFinishDismiss?: (importIds: string[]) => void;
   /**
    * Opens that import's history sheet — the finish with nobody new to link to says "See what
    * changed" instead, and the sheet lives in the hub, not here.
    */
   onShowFinishDetail?: (importId: string) => void;
+  /** Called after the done card's Undo has run, so the page can re-read the history. */
+  onFinishUndone?: () => void;
 } = {}) {
   const queue = useImportQueue();
   const job = useImportJob();
   const [open, setOpen] = useState<string | null>(null);
   const [running, start] = useTransition();
-  const [finish, setFinish] = useState<LatestFinishedImport | null>(null);
+  const [parts, setParts] = useState<LatestFinishedImport[] | null>(null);
   // One ask per run: the effect's other dependencies change while a queue is being cleared,
   // and re-asking each time would flash a new scene over a settled one.
   const asked = useRef(false);
 
+  /** The ids this run actually wrote — the whole basis for the card below. */
+  const runImportIds = finishedImportIds(queue.items);
+  const runKey = runImportIds.join(",");
+
   /**
-   * The finish's numbers come from the server, not from the queue.
+   * The finish's numbers come from the server, for the imports THIS run produced.
    *
    * The queue knows which files ran and which of them didn't finish; it does not know how
    * many people each one actually brought in — the runner's snapshot carries a progress bar
-   * and a completion line, not counters. Asking the server for the import it just wrote is
-   * also what makes the card's sentence and the history chips below it agree by construction
-   * rather than by two implementations of the same arithmetic.
+   * and a completion line, not counters. So the ids go to the server and the counts come
+   * back, which is also what makes the card's sentence and the history chips below it agree
+   * by construction rather than by two implementations of the same arithmetic.
+   *
+   * It used to ask for "the newest completed import on the account" instead, which is a
+   * different claim and was wrong in two reachable ways: a drop of files nothing recognises
+   * reaches `phase: "done"` with no steps at all, and a run whose every step broke reaches it
+   * with no finished ones — both then celebrated somebody else's import and offered a button
+   * into its people. An empty id list now means no card, and the "nothing recognised" line
+   * underneath becomes reachable again.
    */
   useEffect(() => {
-    if (queue.phase !== "done" || asked.current) return;
+    if (queue.phase !== "done" || !runKey || asked.current) return;
     asked.current = true;
     let alive = true;
     void (async () => {
       try {
-        const latest = await getLatestFinishedImport();
-        // An import that has already been undone has nothing to celebrate.
-        if (alive && latest && !latest.undoneAt) setFinish(latest);
+        const found = await getFinishedImportsFor(runKey.split(","));
+        if (alive && found.length) setParts(found);
       } catch {
         // The rows below already say what happened, per file. A finish card is the nicer
         // version of that, not the only one.
@@ -88,28 +104,36 @@ export function ImportQueueCard({
     return () => {
       alive = false;
       asked.current = false;
-      setFinish(null);
+      setParts(null);
     };
-  }, [queue.phase]);
+  }, [queue.phase, runKey]);
 
   if (!queue.items.length && !queue.ignored.length) return null;
 
   const unfinishedSteps = queue.items.filter((i) => i.status === "failed");
+  // One drop is one card: the run's imports summed, in the order the steps ran.
+  const summary = parts
+    ? mergeFinishSummaries(parts, unfinishedLine(unfinishedSteps))
+    : null;
 
-  if (queue.phase === "done" && finish) {
+  if (queue.phase === "done" && summary && parts) {
     return (
       <div className="space-y-3">
         <ImportFinishCard
-          summary={{
-            ...finish,
-            unfinished: unfinishedLine(unfinishedSteps),
-          }}
-          avatars={finish.avatars}
+          summary={summary}
+          avatars={parts.flatMap((p) => p.avatars).slice(0, MAX_FACES)}
           onDismiss={() => {
-            onFinishDismiss?.(finish.importId);
+            onFinishDismiss?.(summary.importIds);
             clearImportQueue();
           }}
-          onShowDetail={() => onShowFinishDetail?.(finish.importId)}
+          onShowDetail={() => onShowFinishDetail?.(summary.importIds[0])}
+          onUndone={() => {
+            // The card was celebrating the people this just removed, and its summary is
+            // client state that no server refresh reaches. Clearing the run retires the
+            // card; the history rows below now read "Undone" and tell the whole story.
+            clearImportQueue();
+            onFinishUndone?.();
+          }}
         />
         {unfinishedSteps.length ? (
           <ul className="space-y-1">

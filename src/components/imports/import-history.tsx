@@ -157,9 +157,16 @@ export type ImportHistoryHandle = { open: (importId: string) => void };
 
 export function ImportHistory({
   history,
+  onUndone,
   ref,
 }: {
   history: ImportHistoryItem[];
+  /**
+   * Called after an undo run from the detail sheet. The rows come from the server, so somebody
+   * has to re-read them — the page, which owns the router. This component stays router-free on
+   * purpose: `smoke-import-history-render.ts` renders it outside one.
+   */
+  onUndone?: () => void;
   /**
    * Lets the done card open one import's sheet. A handle rather than a prop the sheet watches:
    * opening is something a person just did, so it belongs in their click and not in an effect
@@ -290,7 +297,9 @@ export function ImportHistory({
             detail={detail}
             loading={loading}
             onUndone={() => {
+              // The sheet's own detail is client state and the rows behind it are the page's.
               if (openFor) open(openFor);
+              onUndone?.();
             }}
           />
         </SheetContent>
@@ -385,7 +394,7 @@ function ImportDetailBody({
           withinUndoWindow(new Date(item.createdAt)) ? (
             <div>
               <ImportUndoButton
-                importId={item.id}
+                importIds={[item.id]}
                 variant="outline"
                 onUndone={onUndone}
               />

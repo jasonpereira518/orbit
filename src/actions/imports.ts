@@ -481,20 +481,19 @@ export type LatestFinishedImport = FinishSummary & {
   avatars: { contactId: string; name: string; photo: string | null }[];
 };
 
-/** The most recent completed import, shaped for the done card. Null once there isn't one. */
-export async function getLatestFinishedImport(): Promise<LatestFinishedImport | null> {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const row = await db.query.imports.findFirst({
-    where: and(eq(imports.userId, userId), eq(imports.status, "completed")),
-    orderBy: [desc(imports.createdAt)],
-  });
-  if (!row) return null;
-
+/**
+ * One import row, as the done card's arithmetic.
+ *
+ * Shared by both entry points below so the refresh path and the just-finished-a-run path
+ * cannot drift into two readings of the same row.
+ */
+async function finishForImport(
+  userId: string,
+  row: typeof imports.$inferSelect,
+): Promise<LatestFinishedImport> {
   const people = await listImportPeople(userId, row.id, "added", 0);
-
   return {
-    importId: row.id,
+    importIds: [row.id],
     added: row.contactsCreated ?? 0,
     existing: row.contactsUpdated ?? 0,
     meetingsLogged: row.stats?.interactionsLogged ?? 0,
@@ -506,6 +505,61 @@ export async function getLatestFinishedImport(): Promise<LatestFinishedImport | 
       photo: p.profileImageUrl,
     })),
   };
+}
+
+/**
+ * The most recent completed import, shaped for the done card. Null once there isn't one.
+ *
+ * This is the REFRESH path only — the card a person comes back to. While a run is still in the
+ * page's memory the queue asks `getFinishedImportsFor` with the ids that run actually wrote,
+ * because "newest on the account" is not the same claim and has been wrong in both directions:
+ * a drop of unreadable files, or a run whose every step broke, would otherwise celebrate
+ * somebody else's import and offer a button into its people.
+ */
+export async function getLatestFinishedImport(): Promise<LatestFinishedImport | null> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const row = await db.query.imports.findFirst({
+    where: and(eq(imports.userId, userId), eq(imports.status, "completed")),
+    orderBy: [desc(imports.createdAt)],
+  });
+  if (!row) return null;
+  return finishForImport(userId, row);
+}
+
+/** A run's ids are one per queued step, and a drop is capped well below this. */
+const MAX_RUN_IMPORTS = 12;
+
+/**
+ * The imports a single run produced, each shaped for the done card.
+ *
+ * Returned as parts rather than pre-summed: `mergeFinishSummaries` is pure and already carries
+ * the rule (and its own smoke), so the arithmetic stays in one testable place. Rows that are
+ * not this user's, not completed, or already undone simply do not come back — an empty array
+ * is a run with nothing to celebrate, and the caller draws no card.
+ */
+export async function getFinishedImportsFor(
+  importIds: string[],
+): Promise<LatestFinishedImport[]> {
+  const wanted = [...new Set(importIds)].slice(0, MAX_RUN_IMPORTS);
+  if (!wanted.length) return [];
+  const userId = await requireUserId();
+  const db = await getDb();
+  const rows = await db.query.imports.findMany({
+    where: and(
+      eq(imports.userId, userId),
+      eq(imports.status, "completed"),
+      inArray(imports.id, wanted),
+    ),
+  });
+  // Back into the order the steps ran in — `findMany` has no reason to preserve it, and the
+  // sources line is "From Connections.csv and messages.csv", not whatever Postgres returned.
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const ordered = wanted
+    .map((id) => byId.get(id))
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+    .filter((row) => !row.stats?.undoneAt);
+  return Promise.all(ordered.map((row) => finishForImport(userId, row)));
 }
 
 /** Preview of what undoing this import would remove — see `previewUndo` in `import-undo.ts`. */

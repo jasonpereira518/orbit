@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { Undo2, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -81,21 +80,31 @@ const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
  * removed until the person has read the two numbers and the names behind the second one.
  */
 export function ImportUndoButton({
-  importId,
+  importIds,
   label = IMPORT_COPY.undoAction,
   variant = "ghost",
   size = "sm",
   className,
   onUndone,
 }: {
-  importId: string;
+  /**
+   * Every import this undo covers. One in the history sheet; a whole run's worth on the done
+   * card, because a dropped LinkedIn archive is two imports and one card, and an Undo that
+   * took back only half of what the sentence above it counted would be its own kind of lie.
+   */
+  importIds: string[];
   label?: string;
   variant?: "ghost" | "outline" | "link";
   size?: "xs" | "sm" | "default";
   className?: string;
+  /**
+   * Called once the removal has finished. The page owns what to re-read afterwards — this
+   * component deliberately does not reach for `useRouter`, so it and the card around it stay
+   * renderable outside an app router (which is how `smoke-import-finish.ts` holds the "no
+   * swarm over bad news" rule).
+   */
   onUndone?: () => void;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<UndoPreview | null>(null);
   const [phase, setPhase] = useState<"checking" | "ready" | "removing">(
@@ -109,45 +118,56 @@ export function ImportUndoButton({
     setPhase("checking");
     setOpen(true);
     try {
-      const next = await previewImportUndo(importId);
-      if (!next) {
+      const parts: UndoPreview[] = [];
+      for (const id of importIds) {
+        const next = await previewImportUndo(id);
+        if (next) parts.push(next);
+      }
+      if (!parts.length) {
         setOpen(false);
         toast.error(IMPORT_COPY.undoGone);
         return;
       }
-      setPreview(next);
+      setPreview(foldPreviews(parts));
       setPhase("ready");
     } catch (err) {
       setOpen(false);
       toast.error(friendlyError(err, IMPORT_COPY.undoFailed));
     }
-  }, [importId]);
+  }, [importIds]);
 
   const confirm = useCallback(async () => {
     setPhase("removing");
     let removed = 0;
     try {
-      let finished = false;
-      for (let round = 0; round < MAX_UNDO_ROUNDS && !finished; round++) {
-        const result = await undoImport(importId);
-        removed += result.removed;
-        setRemovedSoFar(removed);
-        finished = result.done;
+      let allFinished = true;
+      for (const id of importIds) {
+        let finished = false;
+        for (let round = 0; round < MAX_UNDO_ROUNDS && !finished; round++) {
+          const result = await undoImport(id);
+          removed += result.removed;
+          setRemovedSoFar(removed);
+          finished = result.done;
+        }
+        if (!finished) allFinished = false;
       }
       setOpen(false);
-      if (finished) toast.success(`Removed ${people(removed)}`);
+      if (allFinished) toast.success(`Removed ${people(removed)}`);
       else toast.message(IMPORT_COPY.undoStillGoing);
       onUndone?.();
-      router.refresh();
     } catch (err) {
       setPhase("ready");
       toast.error(friendlyError(err, IMPORT_COPY.undoFailed));
     }
-  }, [importId, onUndone, router]);
+  }, [importIds, onUndone]);
 
-  // Closing mid-removal would leave the work running with nothing reporting it, so the
-  // dialog stays put until the loop is done with it.
-  const dismissable = phase !== "removing";
+  /**
+   * Closing while the first round is still in flight would leave work running with nothing
+   * reporting it, so the dialog holds until something has come back. After that it lets go:
+   * the operation is idempotent and resumable — which is exactly what `undoStillGoing` tells
+   * the person — so trapping them behind a progress line buys nothing.
+   */
+  const dismissable = phase !== "removing" || removedSoFar > 0;
 
   return (
     <>
@@ -210,6 +230,34 @@ function canRemove(preview: UndoPreview): boolean {
   );
 }
 
+/**
+ * A run's previews, read as one.
+ *
+ * The confirmation has to state what the button above it promised, and on a multi-file drop
+ * that promise spans every import the run wrote. The folds are all the cautious direction:
+ * `withinWindow` needs every part to still be inside it, `alreadyUndone` means every part
+ * already went, and `exact` is false if any single part cannot vouch for itself — a caveat
+ * that applies to some of the people is a caveat the person has to see.
+ */
+function foldPreviews(parts: UndoPreview[]): UndoPreview {
+  const [first] = parts;
+  if (parts.length === 1) return first;
+  return {
+    importId: first.importId,
+    withinWindow: parts.every((p) => p.withinWindow),
+    alreadyUndone: parts.every((p) => p.alreadyUndone),
+    exact: parts.every((p) => p.exact),
+    // Kept first across the whole run, for the same reason `previewUndo` orders them that
+    // way: those are the names the confirmation actually has to explain.
+    candidates: [
+      ...parts.flatMap((p) => p.candidates.filter((c) => !c.removable)),
+      ...parts.flatMap((p) => p.candidates.filter((c) => c.removable)),
+    ],
+    removable: parts.reduce((n, p) => n + p.removable, 0),
+    keeping: parts.reduce((n, p) => n + p.keeping, 0),
+  };
+}
+
 function UndoDialogBody({
   preview,
   phase,
@@ -266,13 +314,14 @@ function UndoDialogBody({
         <DialogDescription>
           {/*
             "notes or tags" was the original wording and it read as a lie the moment the
-            reason underneath said "you’ve set a reminder". The sentence names the whole set
-            it is actually describing, and agrees with itself when there is only one.
+            reason underneath said "you’ve set a reminder" — and "notes, tags or reminders"
+            still outran three of the six reasons (merged, edited, logged). "Touched since"
+            is the one phrase that covers all six, and the per-person lines below say which.
           */}
           {preview.keeping === 1
-            ? "1 of them has a note, a tag or a reminder now, so they’ll stay"
+            ? "1 of them has been touched since, so they’ll stay"
             : preview.keeping > 1
-              ? `${preview.keeping} of them have notes, tags or reminders now, so they’ll stay`
+              ? `${preview.keeping} of them have been touched since, so they’ll stay`
               : "Everyone this import brought in goes back out"}
         </DialogDescription>
       </DialogHeader>
@@ -288,6 +337,15 @@ function UndoDialogBody({
           {unnamed > 0 ? <li>and {people(unnamed)} more like these</li> : null}
         </ul>
       ) : null}
+
+      {/*
+        What undo leaves behind. Said here, beside the Cancel button, because the field
+        changes this import made to people it matched are not stored anywhere and cannot be
+        reversed — the person deserves to know that before they choose, not after.
+      */}
+      <p className="text-xs text-muted-foreground">
+        {IMPORT_COPY.undoKeepsMatched}
+      </p>
 
       {!preview.exact ? (
         <p className="text-xs text-muted-foreground">
@@ -318,6 +376,7 @@ export function ImportFinishCard({
   avatars,
   onDismiss,
   onShowDetail,
+  onUndone,
   className,
 }: {
   summary: FinishSummary;
@@ -325,6 +384,8 @@ export function ImportFinishCard({
   onDismiss?: () => void;
   /** Opens the history detail sheet, for the finish that has no people to link to. */
   onShowDetail?: () => void;
+  /** Called after this card's Undo has finished, so the page can re-read what changed. */
+  onUndone?: () => void;
   className?: string;
 }) {
   const copy = finishCopy(summary);
@@ -355,10 +416,17 @@ export function ImportFinishCard({
         </Button>
       ) : null}
 
-      <ImportFinishScene
-        people={summary.added || summary.existing}
-        faces={faces}
-      />
+      {/*
+        No swarm over bad news (spec §1). When a step didn't finish the card leads with that
+        instead of celebrating, and a field of people settling into orbit underneath
+        "Your LinkedIn messages didn't finish" is the card celebrating anyway.
+      */}
+      {summary.unfinished ? null : (
+        <ImportFinishScene
+          people={summary.added || summary.existing}
+          faces={faces}
+        />
+      )}
 
       <div className="space-y-1 text-center">
         {/*
@@ -392,13 +460,22 @@ export function ImportFinishCard({
       </div>
 
       <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <span className="truncate">From {summary.sources.join(" and ")}</span>
+        {/*
+          Only when there is one. `finishCopy` puts "From Connections.csv and address-book.csv"
+          in the detail line the moment a run has several sources — which never happened while
+          a card described a single import, and printed the same sentence twice the moment one
+          could describe a whole drop.
+        */}
+        {summary.sources.length === 1 ? (
+          <span className="truncate">From {summary.sources[0]}</span>
+        ) : null}
         <ImportUndoButton
-          importId={summary.importId}
+          importIds={summary.importIds}
           label="Undo"
           size="xs"
           variant="link"
           className="text-muted-foreground hover:text-foreground"
+          onUndone={onUndone}
         />
       </p>
     </section>

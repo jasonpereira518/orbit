@@ -106,7 +106,11 @@ export default async function ContactsPage({
         {params.importId ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/40 p-3 text-sm">
             <p className="text-muted-foreground">
-              Showing people from one import
+              {/* A dropped LinkedIn archive is two imports and one done card, and its button
+                  sends both ids — so this line has to be able to say "that drop" too. */}
+              {params.importId.includes(",")
+                ? "Showing the people that drop brought in"
+                : "Showing people from one import"}
             </p>
             <Link
               href="/contacts"
