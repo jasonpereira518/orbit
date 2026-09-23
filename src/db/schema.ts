@@ -223,6 +223,27 @@ export const userSettings = pgTable("user_settings", {
     withTimezone: true,
   }),
   /**
+   * The opaque per-account identifier that rides on Deepgram's usage records for dictation
+   * and voice notes, as `shortform:<speechTagId>` (see `src/lib/speech-tag-id.ts`).
+   *
+   * A random value stored here rather than the Clerk user id, because a tag leaves Orbit:
+   * Deepgram's zero-retention flag covers audio and transcripts, not the usage records the
+   * nightly reconciliation job reads back, so a raw account id in them would link every
+   * dictation an account ever makes to that account, in a third party's system, forever.
+   * A meeting needs no such column — it is already tagged with its own session uuid, which
+   * is per-recording and therefore unlinkable on its own.
+   *
+   * Random and stored rather than an HMAC of the user id, because the job has to resolve a
+   * tag for accounts with no `speech_usage` rows at all, which a stored value answers with
+   * one indexed lookup. Minted lazily on the first tagged request, so no backfill is needed.
+   *
+   * Not a credential: it authenticates nothing and grants nothing, which is why it takes no
+   * `_token` suffix. Deliberately NOT in `PRESERVED_SETTINGS_COLUMNS` (user-data.ts) — a
+   * data delete drops the row, so the account's next dictation mints a fresh value and the
+   * link to whatever Deepgram still holds is severed, which is the point of the delete.
+   */
+  speechTagId: text("speech_tag_id"),
+  /**
    * Billing. Entitlements are resolved exclusively from these columns by
    * `src/lib/entitlements.ts` — never by calling Clerk's `has()` or Stripe at a gate.
    * Stripe sells both paid tiers (the Pro subscription and the one-time Lifetime), and
@@ -374,6 +395,16 @@ export const userSettings = pgTable("user_settings", {
   uniqueIndex("user_settings_stripe_customer_uidx")
     .on(t.stripeCustomerId)
     .where(sql`${t.stripeCustomerId} is not null`),
+  /**
+   * The nightly reconciliation job turns a `shortform:<speechTagId>` tag back into an
+   * account with this index, so the lookup is a direct hit rather than a scan of every
+   * settings row. Unique because a tag that resolved to two accounts would reconcile one
+   * account's Deepgram spend against the other's meter. Partial for the same reason as the
+   * Stripe index above: null is the common value until an account first dictates.
+   */
+  uniqueIndex("user_settings_speech_tag_uidx")
+    .on(t.speechTagId)
+    .where(sql`${t.speechTagId} is not null`),
 ]);
 
 export const companies = pgTable(
@@ -1215,7 +1246,7 @@ export const contactOpportunities = pgTable(
 );
 
 export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
-export type MeetingSegmentEngine = "whisper" | "gemini" | "silent";
+export type MeetingSegmentEngine = "deepgram" | "whisper" | "gemini" | "silent";
 
 /**
  * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
@@ -1242,6 +1273,24 @@ export const meetingSessions = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
     durationMs: integer("duration_ms").default(0).notNull(),
+    /**
+     * Milliseconds of this meeting's clock that Orbit did NOT pay Deepgram for — a chunk
+     * that fell through to the user's own Whisper or Gemini key when Deepgram errored, and
+     * a silent chunk, which is never sent anywhere at all.
+     *
+     * The meeting meter counts Orbit's Deepgram spend, and both metering paths book
+     * `durationMs - offDeepgramMs` rather than the raw elapsed clock. It is stored as the
+     * complement (what Deepgram did not carry) rather than as the covered total because a
+     * fallback chunk raises this by exactly what it raises `durationMs` by, which leaves the
+     * difference flat — so the number both paths book only ever grows, and the
+     * `greatest(...)` high-water upsert in `recordSpeechSeconds` still converges on one
+     * value instead of the two paths each adding their own.
+     *
+     * Only the chunk-recovery path moves it. Live segments arrive over an open Deepgram
+     * socket that is billed for the whole time it is open, including its silences, and the
+     * recorder's coverage gate never uploads a chunk for a stretch the live path carried.
+     */
+    offDeepgramMs: integer("off_deepgram_ms").default(0).notNull(),
     /** Highest segment seq stored, so a resumed recorder continues numbering after it. */
     lastSeq: integer("last_seq").default(-1).notNull(),
     digest: jsonb("digest").$type<MeetingDigest>(),
@@ -1268,6 +1317,8 @@ export const meetingTranscriptSegments = pgTable(
     endMs: integer("end_ms").notNull(),
     text: text("text").notNull(),
     engine: text("engine").$type<MeetingSegmentEngine>().notNull(),
+    /** Deepgram diarization label ("0", "1", ...), null for engines that don't diarize. */
+    speaker: text("speaker"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -1275,6 +1326,31 @@ export const meetingTranscriptSegments = pgTable(
     index("meeting_segments_user_idx").on(t.userId),
   ]
 );
+
+/**
+ * Metered speech-to-text on Orbit's key. One row per meeting session (updated as segments
+ * land) or per short-form recording. Seconds, not requests: Deepgram bills per second and
+ * the plan caps are hours.
+ */
+export const speechUsage = pgTable(
+  "speech_usage",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    kind: text("kind").$type<"meeting" | "shortform">().notNull(),
+    seconds: integer("seconds").default(0).notNull(),
+    source: text("source").$type<"stream" | "file">().notNull(),
+    sessionId: uuid("session_id"),
+    requestId: text("request_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("speech_usage_user_created_idx").on(t.userId, t.createdAt),
+    uniqueIndex("speech_usage_session_uidx").on(t.sessionId),
+  ]
+);
+
+export type SpeechUsageRow = typeof speechUsage.$inferSelect;
 
 /** The stored analysis of a meeting. Mirrors `meetingDigestSchema` in `src/lib/meeting-digest.ts`. */
 export type MeetingDigest = {
@@ -1488,10 +1564,56 @@ export type ImportStats = {
    */
   scanStartedAt?: string;
 
+  // --- Google Drive import ---
+  docsRead?: number;
+  /** Docs skipped because the same text was already saved from an earlier import. */
+  docsAlreadyImported?: number;
+  /**
+   * Past-due commitments worth a look (see `drive-reminder-rules.ts`). Shown in the import's
+   * detail sheet; nothing is written for one unless the person makes it a reminder.
+   */
+  flaggedCommitments?: {
+    id: string;
+    key: string;
+    title: string;
+    personName: string | null;
+    contactId: string | null;
+    dueDateIso: string;
+    sourceExcerpt: string;
+    actionKind: ReminderActionKind;
+    docName: string;
+  }[];
+
   /** Wall-clock milliseconds across every invocation of this job. */
   durationMs?: number;
   /** SQL statements issued across every invocation. The cost this work exists to bound. */
   statements?: number;
+  /**
+   * Why this import stopped, as one of `ImportFailureCode` in `src/lib/import-errors.ts`.
+   *
+   * Classified where the error was thrown, from the error *instance* — a `ReauthRequiredError`
+   * or a Postgres `code` — which the stored message has already thrown away. The renderers
+   * fall back to classifying `error_message` when this is absent, so every row written before
+   * this existed still reads properly and no backfill is needed.
+   *
+   * Lives in `stats` rather than a column of its own precisely because it needs no DDL and no
+   * SCHEMA_VERSION bump.
+   */
+  errorCode?: string;
+
+  /**
+   * The moment this job made its last write, frozen by the engine when it marks the import
+   * `completed` or `failed`. Undo reads it to tell the interactions this import wrote from
+   * the ones that arrived after it; `updated_at` cannot stand in, because an admin retry
+   * bumps that long after the run. Absent on imports written before this field existed, and
+   * undo falls back to `updated_at` for those. See `lib/imports/import-undo.ts`.
+   */
+  runEndedAt?: string;
+
+  /** Set when an import was undone: when, and what went. See `lib/imports/import-undo.ts`. */
+  undoneAt?: string;
+  undoneRemoved?: number;
+  undoneKept?: number;
 };
 
 export const imports = pgTable("imports", {
@@ -1543,6 +1665,31 @@ export type GmailSenderRowPayload = {
   firm: string | null;
   /** Capped at scan time; the classifier only reads the most recent few. */
   messageIds: string[];
+};
+
+/** One picked Google Doc or Slides deck in a Drive import. `contactIds` is written on success. */
+export type DriveFileRowPayload = {
+  kind: "drive_file";
+  fileId: string;
+  name: string;
+  mimeType: string;
+  /** ISO. Also the date anchor for the parse: "next Tuesday" means next from when it was written. */
+  modifiedTime: string;
+  /** Everyone the doc's save touched. The row's own `contact_id` holds only the first. */
+  contactIds?: string[];
+  /**
+   * `hashSourceNote` of the exported text, written only when the row finishes (`done`). A
+   * done row carrying it is the proof a later import uses to skip the unchanged doc.
+   */
+  sourceHash?: string;
+  /**
+   * How many runs have started reading this row. Bumped before the export; a row that has
+   * been started twice without finishing is skipped rather than retried, so a doc that kills
+   * the function can't loop forever.
+   */
+  attempts?: number;
+  /** How many times Google's rate limit sent this row back to wait for a later run. */
+  rateLimitHandoffs?: number;
 };
 
 /**
@@ -1690,12 +1837,17 @@ export type ImportJobRowPayload =
   | OutlookContactRowPayload
   | ContactsFileRowPayload
   | LinkedInMessageThreadRowPayload
-  | CalendarEventRowPayload;
+  | CalendarEventRowPayload
+  | DriveFileRowPayload;
 
 export function isGmailSenderRow(
   payload: ImportJobRowPayload
 ): payload is GmailSenderRowPayload {
   return payload.kind === "gmail_sender";
+}
+
+export function isDriveFileRow(payload: ImportJobRowPayload): payload is DriveFileRowPayload {
+  return payload.kind === "drive_file";
 }
 
 export function isOutlookSenderRow(
@@ -1898,6 +2050,13 @@ export const memoryChunks = pgTable(
     chunkIndex: integer("chunk_index").default(0).notNull(),
     content: text("content").notNull(),
     contentHash: text("content_hash").notNull(),
+    /**
+     * md5 of the source this chunk set was built from — the same value on every chunk of one
+     * source. The sweep claims an interaction that has no chunk carrying the hash of its
+     * CURRENT text, which covers "never indexed" and "indexed, then edited" in one predicate.
+     * Nullable because v79 rows predate it; they read as stale once and are re-chunked.
+     */
+    sourceHash: text("source_hash"),
     /**
      * The hash that was embedded, which is the staleness predicate: a chunk is pending when
      * `embedded_hash IS DISTINCT FROM content_hash`. Per chunk, so editing paragraph three
@@ -2535,7 +2694,7 @@ export const usageEvents = pgTable(
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
     /** "typesafe" is the decision model (Jev), which is not a selectable chat provider. */
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "typesafe">().notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "typesafe" | "deepgram">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
       .$type<"completion" | "multimodal" | "embedding" | "transcription" | "decision">()

@@ -67,6 +67,7 @@ import {
   recruiterScanState,
   reminderLists,
   reminders,
+  speechUsage,
   suggestedReminders,
   tags,
   targetCompanies,
@@ -451,10 +452,13 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   activity: {
-    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews)],
-    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents],
+    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews), own(speechUsage)],
+    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents, speechUsage],
     run: async (db, userId) => {
       await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
+      // Deepgram usage meter (v89) — same reasoning as `usage_events` above: it is a record
+      // of what the account did, not a financial or operational record anyone else needs.
+      await db.delete(speechUsage).where(eq(speechUsage.userId, userId));
       // The extension's per-user rate-limit window, keyed on `user_id` as the primary key
       // with no parent to cascade from. A counter, not prose — but it is keyed on the person,
       // and it was the FOURTH user-scoped table found unpurged. Caught the first time

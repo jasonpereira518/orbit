@@ -5,7 +5,7 @@ import { chunkFailureResponse } from "@/lib/meeting-chunk-errors";
 import { reportedFailure } from "@/lib/report-error";
 import { isPaywallError } from "@/lib/entitlements";
 import { ingestMeetingChunk } from "@/lib/meeting-sessions";
-import { requireUserForSurface } from "@/lib/plan-guards";
+import { requireMeetingsUser } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -27,17 +27,18 @@ export const maxDuration = 120;
  * The custom header is also the CSRF guard: a cross-site form cannot set it, and a
  * cross-site `fetch` that does is preflighted and refused.
  *
- * Responses the recorder acts on: 200 stored (possibly a repeat), 409 another tab owns the
+ * Responses the recorder acts on: 200 stored (possibly a repeat), 402 this month's meeting
+ * hours are gone so recovery is refused too (stop retrying), 409 another tab owns the
  * session, 410 the meeting was saved or discarded, 413 too big, 422 no usable
- * transcription key — missing, rejected, out of credit or unknown model (stop retrying)
- * (stop retrying), 429 with Retry-After, 502 transcription failed (retry).
+ * transcription key — missing, rejected, out of credit or unknown model (stop retrying),
+ * 429 with Retry-After, 502 transcription failed (retry).
  */
 type Params = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, ctx: Params) {
   let userId: string;
   try {
-    userId = await requireUserForSurface("page.capture");
+    userId = await requireMeetingsUser();
   } catch (err) {
     const status = isPaywallError(err) ? 403 : 401;
     return NextResponse.json({ error: friendlyError(err, "Sign in to record a meeting") }, { status });

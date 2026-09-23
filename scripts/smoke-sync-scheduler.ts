@@ -493,7 +493,7 @@ run(async () => {
 
   // --- Google: a pre-existing connection-level cursor threads through the migration ---------
   //
-  // `smoke-calendar-sources.ts` proves the seeder itself moves a cursor onto a fresh row, but
+  // `smoke-calendar-source-rows.ts` proves the seeder itself moves a cursor onto a fresh row, but
   // never runs it through the scheduler; the checks above never read `calendar_sources` back
   // for Google or Microsoft at all. So a `syncGoogleCalendar` that read the wrong field, or
   // never called `saveSourceCursor`, would pass every other check in this file. This one seeds

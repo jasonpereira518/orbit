@@ -197,6 +197,16 @@ async function seed() {
     engine: "whisper",
   });
 
+  // The Deepgram usage meter (v89). Tied to the same session id as the segment above —
+  // the unique index on `session_id` is what makes a meeting's usage one row that grows.
+  await db.insert(schema.speechUsage).values({
+    userId: USER,
+    kind: "meeting",
+    seconds: 60,
+    source: "stream",
+    sessionId: meetingRow.id,
+  });
+
   // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
   // thing under test, and an unseeded table proves nothing about it.
   await db.insert(schema.contactBriefs).values({

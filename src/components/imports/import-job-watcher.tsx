@@ -3,12 +3,9 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
-import {
-  clearImportJob,
-  useImportJob,
-} from "@/lib/import-job-runner";
+import { clearImportJob, useImportJob } from "@/lib/import-job-runner";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { friendlyError } from "@/lib/errors";
+import { failureText } from "@/lib/errors";
 
 /**
  * Lives in the app shell so background imports keep notifying after you leave
@@ -33,8 +30,11 @@ export function ImportJobWatcher() {
       if (job.resultMessage) toast.message(job.resultMessage);
       router.refresh();
     } else if (job.status === "failed") {
-      // `job.error` is whatever the background runner stored, which can be raw.
-      toast.error(friendlyError(job.error, TOAST_COPY.importFailed));
+      // `job.error` is whatever the background runner stored, which can be raw — unless
+      // `job.userFacingError` says it was already written to be read (see `failureText`).
+      toast.error(
+        failureText(job.error, job.userFacingError, TOAST_COPY.importFailed),
+      );
     }
 
     // Keep snapshot briefly so the Imports page can clear local UI, then drop it.
