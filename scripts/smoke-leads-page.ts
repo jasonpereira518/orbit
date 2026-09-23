@@ -172,7 +172,7 @@ function main() {
     const view = (status: Parameters<typeof CrmCardView>[0]["status"]) =>
       text(React.createElement(CrmCardView, { status, pending: null, onConnect: noop, onSync: noop, onDisconnect: noop }));
     const base = { entitled: true, configured: true, connection: null, counts: null };
-    const conn = { connectorId: "hubspot" as const, label: "acme.hubspot.com", status: "active" as const, syncing: false, lastSyncedAgo: "5 minutes ago", error: null, demo: false };
+    const conn = { connectorId: "hubspot" as const, label: "acme.hubspot.com", status: "active" as const, syncing: false, lastSyncedAgo: "5 minutes ago", error: null, demo: false, paused: false };
 
     const locked = view({ ...base, entitled: false });
     check("free: the paywall, not a connect button", locked.includes("HubSpot sync is on Orbit Pro and Lifetime") && locked.includes("See plans") && !locked.includes("Connect HubSpot"), locked);
@@ -183,6 +183,15 @@ function main() {
     const live = view({ ...base, connection: conn, counts: { workContacts: 12, pipeline: 3, blocked: 0 } });
     check("connected: account, last sync, counts", live.includes("HubSpot · acme.hubspot.com") && live.includes("Last synced 5 minutes ago") && live.includes("12 work contacts") && live.includes("3 in your pipeline"), live);
     check("connected: sync and disconnect", live.includes("Sync now") && live.includes("Disconnect") && live.includes("See work contacts"), live);
+    check("healthy: no reconnect offered", !live.includes("Reconnect HubSpot"), live);
+    const paused = view({
+      ...base,
+      connection: { ...conn, paused: true, error: "HubSpot says this connection can’t read contacts or owners — reconnect HubSpot and approve every permission" },
+      counts: { workContacts: 2, pipeline: 1, blocked: 0 },
+    });
+    check("paused: offers Reconnect before Sync now", paused.includes("Reconnect HubSpot") && paused.indexOf("Reconnect HubSpot") < paused.indexOf("Sync now"), paused);
+    const pausedUnpaid = view({ ...base, entitled: false, connection: { ...conn, paused: true, error: "HubSpot sync is on Orbit Pro and Lifetime — upgrade to keep it running" }, counts: null });
+    check("paused and not entitled: no Reconnect", !pausedUnpaid.includes("Reconnect HubSpot"), pausedUnpaid);
     const first = view({ ...base, connection: { ...conn, lastSyncedAgo: null }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } });
     check("never synced: when it will", first.includes("The first sync starts within a few minutes"), first);
     const running = view({ ...base, connection: { ...conn, syncing: true }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } });

@@ -91,6 +91,11 @@ export function CrmCardView({
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
+        {connection.paused && canConnect ? (
+          <Button type="button" size="sm" disabled={pending !== null || connection.syncing} onClick={onConnect}>
+            {pending === "connect" ? "Opening HubSpot…" : "Reconnect HubSpot"}
+          </Button>
+        ) : null}
         {connection.demo ? (
           <span className="text-xs text-muted-foreground">Sample data — this demo connection doesn’t sync.</span>
         ) : (

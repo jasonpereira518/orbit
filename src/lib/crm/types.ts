@@ -49,6 +49,11 @@ export type CrmConnectionView = {
   lastSyncedAgo: string | null;
   error: string | null;
   demo: boolean;
+  /**
+   * Active but disarmed by a stop (a 403, no owner record, a downgrade): no sync is coming
+   * until the person reconnects, which keeps the records a disconnect would delete.
+   */
+  paused: boolean;
 };
 
 export type CrmStatus = {

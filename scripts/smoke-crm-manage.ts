@@ -86,6 +86,16 @@ run(async () => {
   await db.update(connectorConnections).set({ syncError: null }).where(eq(connectorConnections.userId, USER));
   check("no error is no line", (await crmStatusFor(USER)).connection?.error === null);
 
+  console.log("\na connection a stop disarmed reads as paused");
+  check("an unarmed connection with no error is not paused", (await crmStatusFor(USER)).connection?.paused === false);
+  await db.update(connectorConnections).set({ nextSyncAt: null, syncError: rateLimited }).where(eq(connectorConnections.userId, USER));
+  check("disarmed with an error: paused", (await crmStatusFor(USER)).connection?.paused === true);
+  await db.update(connectorConnections).set({ nextSyncAt: new Date() }).where(eq(connectorConnections.userId, USER));
+  check("armed again (a retry is coming): not paused", (await crmStatusFor(USER)).connection?.paused === false);
+  await db.update(connectorConnections).set({ nextSyncAt: null, status: "needs_reauth" }).where(eq(connectorConnections.userId, USER));
+  check("needs reauth is its own state, not paused", (await crmStatusFor(USER)).connection?.paused === false);
+  await db.update(connectorConnections).set({ status: "active", syncError: null }).where(eq(connectorConnections.userId, USER));
+
   console.log("\nsync now");
   const calls: string[] = [];
   const okSync = async (conn: { id: string; accessToken: string | null }, opts: { budgetMs: number }) => {

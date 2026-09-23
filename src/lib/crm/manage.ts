@@ -48,6 +48,7 @@ export async function crmStatusFor(userId: string): Promise<CrmStatus> {
           lastSyncedAgo: connection.lastSyncedAt ? formatDistanceToNow(connection.lastSyncedAt, { addSuffix: true }) : null,
           error: crmErrorLine(connection.syncError),
           demo: connection.accountRef === DEMO_CRM_ACCOUNT_REF,
+          paused: connection.status === "active" && connection.nextSyncAt === null && connection.syncError !== null,
         }
       : null,
     counts,
