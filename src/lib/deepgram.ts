@@ -34,7 +34,7 @@ export function deepgramEnabled(): boolean {
 
 function requireKey(): string {
   const key = apiKey();
-  if (!key) throw new UserFacingError("Transcription isn't configured on this deployment.");
+  if (!key) throw new UserFacingError("Transcription isn’t configured on this deployment");
   return key;
 }
 
