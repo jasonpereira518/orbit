@@ -39,7 +39,7 @@ import {
 } from "../src/db/schema";
 import { ensureLocalDemoData } from "../src/lib/demo-data/ensure";
 import { DEMO_PEOPLE } from "../src/lib/demo-data/network";
-import { DEMO_LEADS, DEMO_TEAM_DOMAIN, DEMO_TEAMMATE_CONTACTS, DEMO_TEAMMATES } from "../src/lib/demo-data/team";
+import { DEMO_LEADS, DEMO_TEAM_DOMAIN, DEMO_TEAMMATE_CONTACTS, DEMO_TEAMMATES, demoTeamAllowed } from "../src/lib/demo-data/team";
 import { loadPipeline } from "../src/lib/leads/pipeline";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { resolveRecruiterPii } from "../src/lib/recruiters";
@@ -142,6 +142,10 @@ async function main() {
     check("goals seeded", (await rows(userGoals, userGoals.userId)) === 3);
 
     console.log("\nthe demo team");
+    check(
+      "the demo team is never seeded into a shared database",
+      !demoTeamAllowed({ DATABASE_URL: "postgres://shared.example/orbit" }) && demoTeamAllowed({})
+    );
     const pipeline = await loadPipeline(FRESH);
     check("the demo account is on a sharing team", pipeline.team === "ok", pipeline.team);
     check(`the demo leads are seeded (${DEMO_LEADS.length})`, pipeline.rows.length === DEMO_LEADS.length, String(pipeline.rows.length));

@@ -53,6 +53,7 @@ import {
   DEMO_TEAM_DOMAIN,
   DEMO_TEAMMATE_CONTACTS,
   DEMO_TEAMMATES,
+  demoTeamAllowed,
 } from "@/lib/demo-data/team";
 
 /** Written to every seeded row that has a `source`, so demo rows can always be told apart. */
@@ -985,6 +986,7 @@ async function seedGoals(userId: string, summary: DemoSeedSummary) {
  * contacts are created once; a later local account only joins.
  */
 async function seedTeam(userId: string, summary: DemoSeedSummary): Promise<void> {
+  if (!demoTeamAllowed()) return;
   const db = await getDb();
   for (const mate of DEMO_TEAMMATES) {
     await ensureUserSettings(mate.userId);

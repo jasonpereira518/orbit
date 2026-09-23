@@ -51,3 +51,12 @@ export const DEMO_LEADS: readonly DemoLead[] = [
   { displayName: "Ivy Chen", email: "ivy@brightpath.example", companyName: "Brightpath", title: "VP Engineering", expected: "cool" },
   { displayName: "Marco Russo", email: "marco@quarry.example", companyName: "Quarry", title: "Founder", expected: "cold" },
 ];
+
+/**
+ * The demo team shares networks, so it is seeded only into a LOCAL database (PGlite, which
+ * runs when DATABASE_URL is unset — see getDb in src/db/index.ts). A localhost server pointed
+ * at a shared remote database must never make two real accounts teammates behind their backs.
+ */
+export function demoTeamAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  return !env.DATABASE_URL?.trim();
+}
