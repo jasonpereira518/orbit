@@ -5,7 +5,7 @@ import { friendlyError } from "@/lib/errors";
 import { deepgramEnabled, mintStreamToken } from "@/lib/deepgram";
 import { keytermsFor } from "@/lib/deepgram-params";
 import { loadNetworkVocabulary } from "@/lib/transcription-vocabulary";
-import { getMeetingSession } from "@/lib/meeting-sessions";
+import { ACCEPTS_CHUNKS, getMeetingSession } from "@/lib/meeting-sessions";
 import { speechAllowance } from "@/lib/speech-quota";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { reportedFailure } from "@/lib/report-error";
@@ -23,9 +23,11 @@ export const dynamic = "force-dynamic";
  *   x-orbit-recorder: <the recorder id the session was started or resumed with>
  *
  * Responses: 200 {accessToken, expiresIn, keyterms, remainingSeconds, warn}, 401/403 not
- * signed in or not on a meetings plan, 404 the meeting isn't this user's, 409 another tab
- * is recording it, 402 this month's meeting allowance is gone, 429 with Retry-After, 503
- * Deepgram itself is off, 502 the grant call failed.
+ * signed in or not on a meetings plan, 404 the meeting isn't this user's, 410 it's already
+ * analyzed/saved/discarded (same `ACCEPTS_CHUNKS` list `ingestMeetingChunk` and
+ * `recordLiveSegments` check, so a stale tab can't keep buying tokens for audio nothing
+ * will ever store), 409 another tab is recording it, 402 this month's meeting allowance is
+ * gone, 429 with Retry-After, 503 Deepgram itself is off, 502 the grant call failed.
  */
 type Params = { params: Promise<{ id: string }> };
 
@@ -63,6 +65,9 @@ export async function POST(request: Request, ctx: Params) {
   const session = await getMeetingSession(userId, id);
   if (!session) {
     return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
+  }
+  if (!ACCEPTS_CHUNKS.includes(session.status)) {
+    return NextResponse.json({ error: "This meeting is no longer recording" }, { status: 410 });
   }
   const recorderId = request.headers.get("x-orbit-recorder");
   if (session.status === "recording" && session.recorderId && recorderId !== session.recorderId) {

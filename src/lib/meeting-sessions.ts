@@ -41,8 +41,13 @@ export const ABANDONED_SESSION_TTL_DAYS = 30;
 /** How far back the capture page looks for a meeting to offer resuming. */
 export const RESUMABLE_WINDOW_DAYS = 7;
 
-/** Statuses a chunk may still land in. `ended` is here for the outbox draining after Stop. */
-const ACCEPTS_CHUNKS: MeetingSessionStatus[] = ["recording", "ended"];
+/**
+ * Statuses a chunk — or a stream token — may still land in. `ended` is here for the
+ * outbox draining after Stop, and because a token can legitimately be minted moments
+ * before the first chunk arrives. Exported so the stream-token route checks the same
+ * list rather than keeping a second one that could drift.
+ */
+export const ACCEPTS_CHUNKS: MeetingSessionStatus[] = ["recording", "ended"];
 
 /** Statuses the capture page offers to resume. */
 const UNFINISHED: MeetingSessionStatus[] = ["recording", "ended", "analyzed"];
