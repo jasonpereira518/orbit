@@ -26,7 +26,7 @@ import {
 import { runCaptureJobById } from "@/lib/capture-job-runner";
 import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type {
   CaptureDecision,
@@ -182,10 +182,33 @@ export async function queueCaptureJob(input: {
         await db
           .update(captureJobs)
           .set({ status: "discarded", updatedAt: new Date() })
-          .where(and(eq(captureJobs.userId, userId), inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"])));
+          .where(
+            and(
+              eq(captureJobs.userId, userId),
+              inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"]),
+              // A row the public API enqueued (`sourceKind: "api"` — set ONLY by
+              // src/app/api/v1/notes/route.ts, never client-forgeable; see the type's own
+              // comment in src/lib/capture/types.ts) is exempt from this in-app rule. It has
+              // no way back through `CaptureQueuePanel` — that only renders for a group of
+              // more than one job — so discarding it here would be silent data loss with no
+              // recourse, unlike the ordinary single card this rule is written for, which the
+              // person just displaced themselves and can re-extract if they want it back.
+              ne(captureJobs.sourceKind, "api")
+            )
+          );
       }
       row = await createCaptureJob(userId, {
-        sourceKind: input.sourceKind,
+        // `"api"` is reserved for src/app/api/v1/notes/route.ts alone — see the type's own
+        // comment in src/lib/capture/types.ts. This action has no route boundary of its own
+        // to enforce that at (it is a "use server" action, reachable by a crafted POST that
+        // supplies any `CaptureJobSource` literal, `input.sourceKind` included), so the
+        // coercion has to live here. Without it, a forged call could exempt its own row from
+        // the discard rule below and make it immortal — `resumeStalledCaptureJobs`'s
+        // retention purge only reaps `saved | failed | discarded`, never a `ready` row stuck
+        // there by a fake exemption. `requireUserId()` above means a forger could only ever
+        // do this to their OWN account, but "harmless to everyone else" is not the same as
+        // "does not happen" — hence coercing rather than trusting the caller.
+        sourceKind: input.sourceKind === "api" ? "messy" : input.sourceKind,
         status: "queued",
         inputText: text,
         inputHints: input.hints ?? null,

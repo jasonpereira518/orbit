@@ -1317,6 +1317,63 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS connector_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  auth_kind text NOT NULL,
+  label text,
+  account_ref text,
+  api_key_encrypted text,
+  access_token_encrypted text,
+  refresh_token_encrypted text,
+  token_expires_at timestamptz,
+  scopes text,
+  capabilities jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id);
+CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS external_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  entity_type text NOT NULL,
+  entity_id text NOT NULL,
+  remote_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS external_links_entity_uidx ON external_links(user_id, connector_id, entity_type, entity_id);
+CREATE TABLE IF NOT EXISTS connector_outbox (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  action text NOT NULL,
+  entity_type text NOT NULL,
+  entity_id text NOT NULL,
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz,
+  claimed_by uuid,
+  claimed_until timestamptz,
+  last_error text,
+  last_attempted_at timestamptz,
+  delivered_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS connector_outbox_action_uidx ON connector_outbox(user_id, connector_id, action, entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS connector_outbox_due_idx ON connector_outbox(status, next_attempt_at);
 CREATE TABLE IF NOT EXISTS contact_identities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1734,6 +1791,22 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // default (3.5 Flash) to 3.8 Flash — half the price, and the eval in docs/ai-evals/ found
 // nothing lost. Checked against every remote branch on Sep 19 2026.
 //
+// 74 = connector_connections: one credential row per (user, connector) for every connector
+//      that is not Gmail or Outlook, with a capabilities list so write-back stays opt-in.
+//      71-73 were already claimed on other branches (checked against every remote branch and
+//      local worktree on Sep 19 2026: both ai-api-optimization and mcp-server-vision-5e9a07
+//      are at 73, the highest found).
+//
+// 75 = external_links + connector_outbox: at-least-once write-back to other systems, with
+//      the remote id recorded so a re-send updates instead of duplicating. Re-checked against
+//      every remote and local branch on Sep 20 2026: 74 (this branch) was the highest found.
+//
+// 76 = connector_outbox.claimed_by + claimed_until: the outbox claim becomes an identity with
+//      its own lease, instead of overloading next_attempt_at as the lock and `attempts` as the
+//      mutual-exclusion token. The overloaded version double-delivered, because enqueue's
+//      `attempts: 0` revive made a stale drain's token recur (ABA). Re-checked against every
+//      remote and local branch on Sep 20 2026: 75 (this branch) was the highest found.
+//
 // 77 = agent_send_requests: messages an assistant drafted through MCP, held until the user
 // approves them in Orbit. Built as 73, which main then took for the AI model migration above
 // — and because BOTH sides wrote `SCHEMA_VERSION = 73`, that line merged silently with no
@@ -1781,6 +1854,12 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
 // the highest found anywhere and is still free.
 //
+// 87 = merging main (77-86) into the connector foundation branch (74, 75, 76). No DDL of its
+// own. Same rule as 69 above: this branch's preview databases are stamped 76 WITHOUT main's
+// 77-86 columns, and main's are stamped 86 without 74-76, so only a number above both makes
+// every database pick up both halves. Rescanned against every remote branch and every local
+// worktree on Sep 22 2026: 86 was the highest found anywhere.
+//
 // 88 = memory_chunks.source_hash — what the passage index was built from, so an edited note
 // can be told from an unindexed one. The sweep's claim was a pure anti-join ("has no
 // passages"), so an interaction was indexed once and never revisited: editing a note left its
@@ -1793,7 +1872,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // every remote branch and every local worktree on Sep 22 2026: 87 was the highest found
 // anywhere, so this takes 88.
 //
-// 89 = speech_usage, meeting_transcript_segments.speaker, and the Deepgram engine value;
+// 89 = merging main (88) into the connector foundation branch (74-76, 87). No DDL of its own,
+// and the third time this branch has needed one: its preview databases are stamped 87 WITHOUT
+// main's `memory_chunks.source_hash`, and main's are stamped 88 without 74-76, so only a
+// number above both makes every database pick up both halves. Scanned every remote branch and
+// every local worktree on Sep 23 2026: 88 was taken by main and 90-95 by five other branches,
+// and 89 was free between them.
+// 89 (also) = speech_usage, meeting_transcript_segments.speaker, and the Deepgram engine value;
 // also drops user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept
 // until now so the removal and its migration were one version, not two. 87 and 88 were
 // already claimed (integrations-strategy, and the re-chunk fix in #263). Rescanned against
@@ -1821,7 +1906,16 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // in September. The merge itself is what needs the new number. Rescanned every remote ref,
 // every local branch and every worktree's working file on Sep 23 2026: 95 was this branch's
 // own, 94 the highest elsewhere, so 96 is free.
-export const SCHEMA_VERSION = 96;
+// 97 = merging main (89, 95, 96 — Deepgram and the re-chunk fix) into the connector
+// foundation branch (74-76, 87, 89). No DDL of its own, and the fourth time this branch has
+// needed one. Note the 89 above it: main and this branch both wrote 89, thirteen entries
+// apart, the same silent collision 53, 54, 73 and 94 record — neither line conflicted on
+// merge, and only the fingerprint check saved the databases stamped by one build and served
+// by the other. This branch's preview databases are stamped 89 WITHOUT main's Deepgram
+// columns, and main's are stamped 96 without 74-76, so only a number above both makes every
+// database pick up both halves. Scanned every remote ref, every local branch and every
+// worktree's working file on Sep 23 2026: 96 was the highest found anywhere.
+export const SCHEMA_VERSION = 97;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2807,6 +2901,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
   await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
   await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
+  // v76: the outbox claim is an identity with its own lease, not an overloaded schedule.
+  await ensureColumn(client, "connector_outbox", "claimed_by", "uuid");
+  await ensureColumn(client, "connector_outbox", "claimed_until", "timestamptz");
 
   // v89: Deepgram diarization label on a local database built before it existed.
   await ensureColumn(client, "meeting_transcript_segments", "speaker", "text");
@@ -3382,6 +3479,25 @@ const alters = [
   `ALTER TABLE user_settings ALTER COLUMN ai_model SET DEFAULT 'gemini-3.8-flash'`,
   `UPDATE user_settings SET ai_model_migrated_from = ai_model, ai_model = 'gemini-3.8-flash'
      WHERE ai_model = 'gemini-3.5-flash' AND ai_model_migrated_from IS NULL`,
+  // Schema v74: the connector platform's generic credential table. The CREATE TABLE in the
+  // template above repairs a fresh database; this repairs one already stamped past v74's
+  // predecessor, and both indexes are written in both places because smoke-schema-ddl
+  // compares the `uniqueIndex()` declarations in schema.ts against this file by name and
+  // column list.
+  `CREATE TABLE IF NOT EXISTS connector_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, auth_kind text NOT NULL, label text, account_ref text, api_key_encrypted text, access_token_encrypted text, refresh_token_encrypted text, token_expires_at timestamptz, scopes text, capabilities jsonb NOT NULL DEFAULT '[]'::jsonb, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id)`,
+  `CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v75: connector write-back. Same both-places rule as v74 above.
+  `CREATE TABLE IF NOT EXISTS external_links (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, entity_type text NOT NULL, entity_id text NOT NULL, remote_id text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS external_links_entity_uidx ON external_links(user_id, connector_id, entity_type, entity_id)`,
+  `CREATE TABLE IF NOT EXISTS connector_outbox (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, action text NOT NULL, entity_type text NOT NULL, entity_id text NOT NULL, payload jsonb NOT NULL, status text NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0, next_attempt_at timestamptz, claimed_by uuid, claimed_until timestamptz, last_error text, last_attempted_at timestamptz, delivered_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS connector_outbox_action_uidx ON connector_outbox(user_id, connector_id, action, entity_type, entity_id)`,
+  `CREATE INDEX IF NOT EXISTS connector_outbox_due_idx ON connector_outbox(status, next_attempt_at)`,
+  // Schema v76: outbox ownership moved off next_attempt_at/attempts onto its own two columns.
+  // The CREATE TABLE above already carries them for a fresh database; these are for the
+  // v75 databases that already exist.
+  `ALTER TABLE connector_outbox ADD COLUMN IF NOT EXISTS claimed_by uuid`,
+  `ALTER TABLE connector_outbox ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
   // Schema v89: Deepgram speech-to-text. speech_usage meters seconds against the plan caps;
   // meeting_transcript_segments.speaker holds Deepgram's diarization label. Also drops
   // user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept until now so

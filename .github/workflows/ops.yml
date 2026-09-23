@@ -119,6 +119,19 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
+      # Connector write-back. Rides the ten-minute schedule for the same reason the webhook
+      # drain does: a write that failed can wait, and its own route keeps its latency off the
+      # sweep above.
+      - name: Drain the connector outbox
+        if: (github.event.schedule == '*/10 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 55 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/connectors/outbox/drain"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
       # Continuous connector sync (Google Calendar today). Its own schedule rather than a
       # rider on the ten-minute sweep: that sweep is the alerting path and is already budgeted
       # to 55s, and a provider call of unpredictable latency must not make the alert cadence
