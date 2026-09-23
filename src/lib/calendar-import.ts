@@ -40,6 +40,13 @@ export type ParsedCalendarEvent = {
    * confirmed event you were only invited to is still `CONFIRMED`); this is the user's.
    */
   selfResponse?: string | null;
+  /**
+   * The raw RRULE value (no `RRULE:` prefix), when the source is a recurring master.
+   * Parsing it is `recurrence.ts`'s job; this type only carries it.
+   */
+  rrule?: string | null;
+  /** EXDATE instants, already resolved against the event's TZID. */
+  exDates?: Date[] | null;
 };
 
 /**
@@ -221,6 +228,17 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       .find((l) => /^ORGANIZER[;:]/i.test(l));
     const organizer = organizerLine ? parsePerson(organizerLine) : null;
 
+    const rrule = getProp(block, "RRULE") || null;
+    const exDates = getAllPropLines(block, "EXDATE")
+      .flatMap((line) => {
+        const zone = /;TZID=([^:;]+)/i.exec(line.slice(0, line.indexOf(":") + 1))?.[1]?.trim() ?? timezone;
+        return line
+          .slice(line.indexOf(":") + 1)
+          .split(",")
+          .map((raw) => parseIcsDate(raw.trim(), zone));
+      })
+      .filter((d): d is Date => d !== null);
+
     if (!summary && !attendees.length && !start) continue;
 
     events.push({
@@ -239,6 +257,8 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       status: getProp(block, "STATUS") || null,
       timezone,
       selfResponse,
+      rrule,
+      exDates: exDates.length > 0 ? exDates : null,
     });
   }
 

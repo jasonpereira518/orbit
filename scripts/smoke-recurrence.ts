@@ -7,7 +7,7 @@
  * because `cal:<uid>` is already written on every interaction Orbit has ever ingested.
  */
 import { expandEvent, occurrenceUid, parseRRule, MAX_OCCURRENCES } from "../src/lib/recurrence";
-import type { ParsedCalendarEvent } from "../src/lib/calendar-import";
+import { parseIcsEvents, type ParsedCalendarEvent } from "../src/lib/calendar-import";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -160,6 +160,30 @@ async function main() {
     "expanded occurrences carry occurrence uids",
     every[1]?.uid === occurrenceUid("u1", every[1]!.start!)
   );
+
+  // --- through the ICS parser ---
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VEVENT",
+    "UID:weekly-1",
+    "SUMMARY:1:1 with Priya",
+    "DTSTART;TZID=America/New_York:20260303T090000",
+    "DTEND;TZID=America/New_York:20260303T093000",
+    "RRULE:FREQ=WEEKLY;COUNT=3",
+    "EXDATE;TZID=America/New_York:20260310T090000",
+    "ATTENDEE;CN=Priya:mailto:priya@example.com",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const parsed = parseIcsEvents(ics);
+  check("parser keeps the rule", parsed[0]?.rrule === "FREQ=WEEKLY;COUNT=3");
+  check("parser keeps EXDATE", parsed[0]?.exDates?.length === 1);
+
+  const fromFeed = expandEvent(parsed[0]!, parseRRule(`RRULE:${parsed[0]!.rrule}`), WINDOW, {
+    exDates: parsed[0]!.exDates ?? [],
+  });
+  check("a weekly feed event yields its occurrences minus EXDATE", fromFeed.length === 2, `got ${fromFeed.length}`);
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

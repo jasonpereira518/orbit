@@ -3,6 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
 import { counterpartsOf } from "@/lib/calendar-classify";
+import { expandEvent, parseRRule } from "@/lib/recurrence";
 import { decideCalendarEvents } from "@/lib/decisions/calendar";
 import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
 import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
@@ -233,7 +234,20 @@ export async function syncCalendarSubscription(
 
   try {
     const ics = await fetchIcs(sub.icsUrl);
-    const events = parseIcsEvents(ics);
+    const parsed = parseIcsEvents(ics);
+    // Same window `applyNetworkingEvents` filters to below (SYNC_WINDOW_PAST_MS /
+    // SYNC_WINDOW_FUTURE_MS) — expansion must not manufacture occurrences that filter would
+    // have dropped anyway, and must not miss ones just inside it.
+    const now = Date.now();
+    const window = {
+      from: new Date(now - SYNC_WINDOW_PAST_MS),
+      to: new Date(now + SYNC_WINDOW_FUTURE_MS),
+    };
+    const events = parsed.flatMap((event) =>
+      expandEvent(event, event.rrule ? parseRRule(`RRULE:${event.rrule}`) : null, window, {
+        exDates: event.exDates ?? [],
+      })
+    );
     const stats = await applyNetworkingEvents(userId, events, {
       selfEmails: sub.selfEmail ? [sub.selfEmail] : [],
       createFollowUps: true,
