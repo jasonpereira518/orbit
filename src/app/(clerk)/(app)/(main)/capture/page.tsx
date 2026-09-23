@@ -7,6 +7,7 @@ import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
 import { CaptureHistory, CaptureHistorySkeleton } from "@/components/capture/capture-history";
 import type { CaptureMode } from "@/components/capture/capture-tabs";
 import { requireUserId } from "@/lib/auth";
+import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
 
 // Page-level, because it governs the server actions called from this page: summarizing an
@@ -54,6 +55,7 @@ export default async function CapturePage({
   const settings = await settingsPromise;
   const userId = await userIdPromise;
   const { usage } = await planPromise;
+  const { canUseMeetings } = await getEntitlements(userId);
   const resumableMeeting = await resumablePromise;
   const job = await jobPromise;
   const jobs = await jobsPromise;
@@ -86,6 +88,8 @@ export default async function CapturePage({
         hasApiKey={settings.hasApiKey}
         aiReason={settings.ai.reason}
         canTranscribe={canTranscribe}
+        canUseMeetings={canUseMeetings}
+        meetingsDeniedMessage={FEATURE_DENIAL.meetings}
         resumableMeeting={resumableMeeting}
         ignoredCount={ignoredCount}
         quota={{ used: usage.used, limit: usage.limit }}

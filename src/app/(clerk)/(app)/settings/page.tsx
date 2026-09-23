@@ -24,6 +24,8 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
+import { speechAllowance } from "@/lib/speech-quota";
+import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 
 /**
  * Anchor for a card that stands alone. Ids and grouping live in `sections.ts`.
@@ -83,6 +85,7 @@ function Group({
 }
 
 export default async function SettingsPage() {
+  const userId = await requireUserId();
   const [
     initialSettings,
     initialGoals,
@@ -91,15 +94,25 @@ export default async function SettingsPage() {
     visibility,
     targetCompanies,
     schools,
+    meetingAllowance,
+    shortformAllowance,
   ] = await Promise.all([
     getSettings(),
     listGoals(),
     getDisplayProfile(),
     getPlanOverview(),
-    requireUserId().then(resolveSurfaceVisibility),
+    resolveSurfaceVisibility(userId),
     getTargetCompanies(),
     getSchools(),
+    speechAllowance(userId, "meeting"),
+    speechAllowance(userId, "shortform"),
   ]);
+  // `speechAllowance` returns a Date; the panel below is a client component, so hand it
+  // down as an ISO string the same way `managed-ai-policy`'s allowance already does.
+  const speechAllowances: SpeechAllowances = {
+    meeting: { ...meetingAllowance, resetsAt: meetingAllowance.resetsAt.toISOString() },
+    shortform: { ...shortformAllowance, resetsAt: shortformAllowance.resetsAt.toISOString() },
+  };
 
   const { hidden } = visibility;
   const shows = (id: SettingsSectionId) => !hidden.has(surfaceKeyForSettingsId(id));
@@ -180,6 +193,7 @@ export default async function SettingsPage() {
           tabs={integrationTabs}
           initialSettings={initialSettings}
           canUseRecruiters={initialSettings.plan.canUseRecruiters}
+          speechAllowances={speechAllowances}
         />
       </Group>
 

@@ -24,6 +24,8 @@ import {
   chatThreads,
   closenessCohorts,
   companies,
+  connectorConnections,
+  connectorOutbox,
   contactBriefs,
   contactEmbeddings,
   memoryChunks,
@@ -43,6 +45,7 @@ import {
   eventProviderConnections,
   events,
   extensionUsage,
+  externalLinks,
   feedback,
   feedbackScreenshots,
   gateEvents,
@@ -65,6 +68,7 @@ import {
   recruiterScanState,
   reminderLists,
   reminders,
+  speechUsage,
   suggestedReminders,
   tags,
   targetCompanies,
@@ -270,12 +274,23 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   connections: {
-    exports: [own(gmailConnections), own(outlookConnections), own(calendarSubscriptions), own(eventProviderConnections)],
+    exports: [
+      own(gmailConnections),
+      own(outlookConnections),
+      own(calendarSubscriptions),
+      own(eventProviderConnections),
+      own(connectorConnections),
+      own(externalLinks),
+      own(connectorOutbox),
+    ],
     counts: [
       gmailConnections,
       outlookConnections,
       calendarSubscriptions,
       eventProviderConnections,
+      connectorConnections,
+      externalLinks,
+      connectorOutbox,
     ],
     run: async (db, userId) => {
       // Read before the delete: once the row is gone there is nothing to revoke with.
@@ -298,6 +313,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db
         .delete(eventProviderConnections)
         .where(eq(eventProviderConnections.userId, userId));
+      // Holds encrypted OAuth tokens, API keys and iCloud app passwords for every connector
+      // that is not Gmail or Outlook. Same class of secret as the rows above, and it must
+      // not outlive the account.
+      await db.delete(connectorConnections).where(eq(connectorConnections.userId, userId));
+      // The outbox may hold an unsent payload and external_links maps this user's rows into
+      // other systems. Both go with the connection that produced them.
+      await db.delete(connectorOutbox).where(eq(connectorOutbox.userId, userId));
+      await db.delete(externalLinks).where(eq(externalLinks.userId, userId));
     },
   },
   events: {
@@ -435,10 +458,13 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   activity: {
-    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews)],
-    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents],
+    exports: [own(usageEvents), own(extensionUsage, "user_id"), own(errorEvents), own(gateEvents), own(planUpgradeEvents), own(pageViews), own(speechUsage)],
+    counts: [usageEvents, extensionUsage, errorEvents, gateEvents, planUpgradeEvents, speechUsage],
     run: async (db, userId) => {
       await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
+      // Deepgram usage meter (v89) — same reasoning as `usage_events` above: it is a record
+      // of what the account did, not a financial or operational record anyone else needs.
+      await db.delete(speechUsage).where(eq(speechUsage.userId, userId));
       // The extension's per-user rate-limit window, keyed on `user_id` as the primary key
       // with no parent to cascade from. A counter, not prose — but it is keyed on the person,
       // and it was the FOURTH user-scoped table found unpurged. Caught the first time

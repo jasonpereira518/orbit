@@ -52,9 +52,11 @@ export const PUBLIC_ROUTES = [
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
+  "/api/ops/speech-usage",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
   "/api/webhooks/outbound/drain",
+  "/api/connectors/outbox/drain",
   // Not public either: the API and MCP surfaces authenticate with a per-user API key
   // (`src/lib/api/auth.ts`), which Clerk knows nothing about. Exempted from
   // auth.protect() only so an unauthenticated call gets a JSON 401 a client can act on

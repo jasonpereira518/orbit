@@ -65,17 +65,38 @@ export type Entitlements = {
    * which really are paid, do not silently become free with it.
    */
   canUseMcp: boolean;
+  /**
+   * Meeting recording and transcription. Orbit pays a per-minute transcription bill for
+   * every meeting, so unlike the rest of Capture (notes, voice, scans — all free), this is
+   * paid on both tiers. `loadMeetingTranscript` and `discardMeetingSession` stay ungated so
+   * a downgraded account can still read and delete meetings it already recorded — only
+   * starting, resuming, ending and analyzing a NEW recording cost money.
+   */
+  canUseMeetings: boolean;
 };
 
-/** Feature keys that `requireEntitlement` can gate on. */
-export type FeatureKey =
-  | "outreach"
-  | "hostedSending"
-  | "hostedEnrichment"
-  | "recruiters"
-  | "sync"
-  | "extension"
-  | "api";
+/**
+ * Feature keys that `requireEntitlement` can gate on.
+ *
+ * A runtime array with the type derived from it, rather than a bare type: a cross-module
+ * guard ("every connector manifest names an entitlement this layer knows",
+ * `scripts/smoke-connector-registry.ts`) needs a list it can actually read at runtime, and a
+ * hand-copied second copy of these strings is exactly the drift such a guard is supposed to
+ * catch. `FEATURE_DENIAL` and `FEATURE_FLAG` below are `Record<FeatureKey, …>`, so adding a
+ * key here without wiring it up is a type error.
+ */
+export const FEATURE_KEYS = [
+  "outreach",
+  "hostedSending",
+  "hostedEnrichment",
+  "recruiters",
+  "sync",
+  "extension",
+  "api",
+  "meetings",
+] as const;
+
+export type FeatureKey = (typeof FEATURE_KEYS)[number];
 
 /**
  * Thrown when a user's plan does not cover an action. Carries enough structure for the
@@ -161,6 +182,7 @@ export function entitlementsForPlan(
     canUseExtension: paid,
     canUseApi: paid,
     canUseMcp: true,
+    canUseMeetings: paid,
   };
 }
 
@@ -199,7 +221,7 @@ export const getEntitlements = cache(
   }
 );
 
-const FEATURE_DENIAL: Record<FeatureKey, string> = {
+export const FEATURE_DENIAL: Record<FeatureKey, string> = {
   outreach: "Outreach is available on Orbit Pro and Orbit Lifetime.",
   hostedSending:
     "Sending email and SMS on Orbit's credits is available on Orbit Pro and Orbit Lifetime.",
@@ -209,6 +231,7 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
   api: "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime. Claude and ChatGPT connect on any plan, with no key.",
   sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
+  meetings: "Meeting transcription is available on Orbit Pro and Orbit Lifetime.",
 };
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
@@ -219,6 +242,7 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   sync: "canUseSync",
   extension: "canUseExtension",
   api: "canUseApi",
+  meetings: "canUseMeetings",
 };
 
 /**

@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     await finishCronRun(handle, {
       // `partial` rather than `ok` when anything failed, so the ops sweep can tell the
       // difference between "nothing to do" and "some users are not syncing".
-      status: stats.failed > 0 ? "partial" : "ok",
+      status: stats.failed > 0 || stats.connectorFailed > 0 ? "partial" : "ok",
       stats: {
         claimed: stats.claimed,
         synced: stats.synced,
@@ -48,7 +48,12 @@ export async function POST(request: Request) {
         skippedNoScope: stats.skippedNoScope,
         eventsIngested: stats.eventsIngested,
         contactsCreated: stats.contactsCreated,
+        addressBookSeen: stats.addressBookSeen,
+        addressBookMatched: stats.addressBookMatched,
         interactionsLogged: stats.interactionsLogged,
+        connectorClaimed: stats.connectorClaimed,
+        connectorSynced: stats.connectorSynced,
+        connectorFailed: stats.connectorFailed,
         budgetExhausted: stats.budgetExhausted,
         oldestDueAgeMs: stats.oldestDueAgeMs ?? 0,
       },
