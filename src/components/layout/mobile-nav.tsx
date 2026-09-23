@@ -618,7 +618,12 @@ export function MobileNav({
             <div className="flex items-center gap-3">
               {clerkOn ? (
                 <>
-                  <AccountMenu profile={profile} />
+                  {/* Every other destination in this sheet closes it on click, and nothing
+                      closes it on a pathname change — so without this the account links
+                      navigate underneath a sheet that is still covering the page they
+                      land on. Clerk's `UserButton` never had the problem: it opened a
+                      modal instead of navigating. */}
+                  <AccountMenu profile={profile} onNavigate={() => setMoreOpen(false)} />
                   <span className="text-sm text-muted-foreground">Account</span>
                 </>
               ) : demoMode ? (

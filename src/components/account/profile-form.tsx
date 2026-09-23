@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,8 +18,17 @@ import { TOAST_COPY } from "@/lib/toast-copy";
  * Mounted only where `clerkOn` is true, so `useUser()` always has a provider above it.
  * Neither change needs reverification — Clerk asks for that on credentials, not on a
  * display name.
+ *
+ * Every success ends with `router.refresh()`. The nav's face and name are a server-resolved
+ * prop (see `AccountMenu`), and the server resolves them from the `user_settings` mirror,
+ * which only catches up when Clerk's `user.updated` webhook arrives. Without the refresh
+ * the sidebar keeps the old name and photo — until the webhook lands, and forever on a
+ * local server with no tunnel to receive it. `AccountMenu` prefers Clerk's live values for
+ * exactly the same reason; the refresh is what fixes the *server* half, so a later
+ * navigation does not paint the stale one again.
  */
 export function ProfileForm() {
+  const router = useRouter();
   const { isLoaded, user } = useUser();
   const fileInput = useRef<HTMLInputElement>(null);
   const [first, setFirst] = useState("");
@@ -51,6 +61,7 @@ export function ProfileForm() {
       setFirst(trimmedFirst);
       setLast(trimmedLast);
       toast.success("Name saved");
+      router.refresh();
     } catch (err) {
       toast.error(clerkErrorMessage(err, friendlyError(err, TOAST_COPY.saveFailed)));
     } finally {
@@ -63,6 +74,7 @@ export function ProfileForm() {
     try {
       await user.setProfileImage({ file });
       toast.success(file ? "Photo updated" : "Photo removed");
+      router.refresh();
     } catch (err) {
       toast.error(clerkErrorMessage(err, friendlyError(err, TOAST_COPY.saveFailed)));
     } finally {
