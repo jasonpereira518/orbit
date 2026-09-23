@@ -2,6 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status (Sep 23 2026): all ten tasks are built and shipped in [PR #262](https://github.com/jasonpereira518/orbit/pull/262).**
+> The checkboxes below were ticked after the fact, against the files on `claude/orbit-integrations-strategy-0b8be6`,
+> not as the work happened. Verification on the merged branch: 368/368 smoke suite, build clean, lint 0 errors.
+> Schema numbers in the task bodies are the ones the plan claimed, not the ones that shipped — see Global Constraints.
+
 **Goal:** Build the connector foundation — a registry, a generic connections table, a people-sync stream, a write-back outbox, a reusable OAuth2 helper and the API routes Shortcuts/Obsidian/Zapier need — so that every connector in the strategy spec is a manifest entry plus a fetcher/mapper rather than a new subsystem.
 
 **Architecture:** Nothing here replaces the existing spine. `src/lib/ingest/events.ts` keeps writing interactions, `src/lib/import-engine.ts` keeps handling uploaded files, and `gmail_connections` / `outlook_connections` stay exactly as they are. P0 adds a parallel set of primitives for the ~20 connectors that are not Google or Microsoft: one `connector_connections` table shaped like `event_provider_connections`, a `ConnectorManifest` registry that the scheduler and the settings status action both read, a `people` ingest stream that mirrors `ingestEvents` for delta-token contact sources, and a `connector_outbox` modelled on `outbound_webhook_deliveries`.
@@ -12,7 +17,11 @@
 
 ## Global Constraints
 
-- **Schema versions:** this plan claims **74** (Task 2) and **75** (Task 7). 71–73 are already taken on other branches (`claude/ai-api-optimization` = 72, `claude/mcp-server-vision-5e9a07` = 73), checked 2026-09-19. **Re-run the branch scan before each bump** (command in Task 2, Step 1); six silent collisions are recorded in the changelog above `SCHEMA_VERSION` in `src/db/index.ts:1595`.
+- **Schema versions:** this plan claimed **74** (Task 2) and **75** (Task 7) when it was written.
+  What actually shipped: 74, 75, **76** (the outbox lease columns, added in review), then **87**, **89**
+  and **97** for three successive merges of main — each merge needs a number above *both* sides or
+  `reconcileSchema` skips one half's DDL. Renumber again before this branch merges if main has moved.
+  71–73 were already taken on other branches (`claude/ai-api-optimization` = 72, `claude/mcp-server-vision-5e9a07` = 73), checked 2026-09-19. **Re-run the branch scan before each bump** (command in Task 2, Step 1); six silent collisions are recorded in the changelog above `SCHEMA_VERSION` in `src/db/index.ts:1595`.
 - **Never run `drizzle-kit push`** (`npm run db:push:DANGEROUS`). It drops the runtime-created `contact_embeddings.embedding_vector` column. All DDL is hand-written in `src/db/index.ts`.
 - **Every new table must be registered in the purge registry** (`src/lib/user-data.ts` `STEPS`) or `scripts/smoke-purge.ts` fails the whole suite — it derives its list from `schema.ts`.
 - **Every new smoke script must be added to `MANIFEST` in `scripts/run-smoke.ts:29`** with a tier, or the runner exits 2 before anything runs. `pglite`/`manual` tier scripts must start with `import "./smoke/_env";`; `pure` tier scripts must not import `../src/db`.
@@ -38,7 +47,7 @@
 
 This file is **pure metadata**: no `@/db` import, no `next/*` import. Both a client component (the settings dialog, later) and the scheduler load it, and a client component that reaches `@/db` fails the build with a `node:fs` chunking error naming neither file.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `scripts/smoke-connector-registry.ts`:
 
@@ -108,12 +117,12 @@ Register it in `scripts/run-smoke.ts`, in the `// pure` block of `MANIFEST`:
   "smoke-connector-registry": "pure",
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx tsx scripts/smoke-connector-registry.ts`
 Expected: FAIL — `Cannot find module '../src/lib/connectors/registry'`.
 
-- [ ] **Step 3: Write the registry**
+- [x] **Step 3: Write the registry**
 
 Create `src/lib/connectors/registry.ts`:
 
@@ -392,7 +401,7 @@ export function syncableConnectors(): ConnectorManifest[] {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx tsx scripts/smoke-connector-registry.ts`
 Expected: PASS — "All connector registry checks passed."
@@ -400,7 +409,7 @@ Expected: PASS — "All connector registry checks passed."
 Then: `npm run test:check`
 Expected: no problems (the script is in the manifest).
 
-- [ ] **Step 5: Typecheck and commit**
+- [x] **Step 5: Typecheck and commit**
 
 ```bash
 npx tsc --noEmit
@@ -424,7 +433,7 @@ git commit -m "Add the connector registry: every connector as one manifest entry
 - Consumes: nothing from Task 1 (the table is independent of the manifest).
 - Produces: `connectorConnections` (Drizzle table), `ConnectorConnection` (`$inferSelect`), `ConnectorSyncCursor`. Task 3 reads all three.
 
-- [ ] **Step 1: Re-check the free schema version**
+- [x] **Step 1: Re-check the free schema version**
 
 ```bash
 bash -c 'for b in $(git branch -a --format="%(refname)" | grep -v HEAD); do v=$(git show "${b}:src/db/index.ts" 2>/dev/null | grep -m1 "^export const SCHEMA_VERSION" | grep -oE "[0-9]+"); [ -n "$v" ] && echo "$v $b"; done | sort -rn | head -6'
@@ -432,7 +441,7 @@ bash -c 'for b in $(git branch -a --format="%(refname)" | grep -v HEAD); do v=$(
 
 Expected on 2026-09-19: `73` is the highest, so this task takes **74**. If something above 73 appears, take the next free number and use it everywhere below instead. Note the `$b:...` form must run under `bash -c` — in zsh, `$b:src/...` fires a history modifier and every iteration fails with "bad substitution".
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `scripts/smoke-connector-connections.ts`:
 
@@ -523,12 +532,12 @@ Register it in `scripts/run-smoke.ts` in the `// pglite` block:
   "smoke-connector-connections": "pglite",
 ```
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `npx tsx scripts/smoke-connector-connections.ts`
 Expected: FAIL — the column checks report nothing found, because the table does not exist.
 
-- [ ] **Step 4: Add the table to `src/db/schema.ts`**
+- [x] **Step 4: Add the table to `src/db/schema.ts`**
 
 Add the cursor type next to `EventProviderSyncCursor` (around `src/db/schema.ts:2072`):
 
@@ -615,7 +624,7 @@ export type ConnectorConnection = typeof connectorConnections.$inferSelect;
 
 Note `syncStateColumns()` is **not exported** from `schema.ts` — spreading it works only inside that file, which is where this table lives.
 
-- [ ] **Step 5: Add the DDL**
+- [x] **Step 5: Add the DDL**
 
 In `src/db/index.ts`, inside the `DDL` template (the one starting at :38), next to the `event_provider_connections` block at :1179:
 
@@ -661,7 +670,7 @@ Then in `alters` (the array at :2710), appended at the end, each entry **one lin
   `CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
 ```
 
-- [ ] **Step 6: Bump the version**
+- [x] **Step 6: Bump the version**
 
 In `src/db/index.ts`, append to the changelog immediately above `SCHEMA_VERSION` (:1595) and change the constant:
 
@@ -673,7 +682,7 @@ In `src/db/index.ts`, append to the changelog immediately above `SCHEMA_VERSION`
 export const SCHEMA_VERSION = 74;
 ```
 
-- [ ] **Step 7: Register the table for purge**
+- [x] **Step 7: Register the table for purge**
 
 In `src/lib/user-data.ts`, extend the `connections` step (:252). Import `connectorConnections` from `@/db/schema` at the top of the file alongside the other tables, then:
 
@@ -704,7 +713,7 @@ and inside `run`, after the `eventProviderConnections` delete:
       await db.delete(connectorConnections).where(eq(connectorConnections.userId, userId));
 ```
 
-- [ ] **Step 8: Refresh the DDL lock and run the tests**
+- [x] **Step 8: Refresh the DDL lock and run the tests**
 
 ```bash
 npx tsx scripts/smoke-schema-ddl.ts --update
@@ -715,7 +724,7 @@ npx tsx scripts/smoke-schema-upgrade.ts
 
 Expected: all four pass. `smoke-purge` is the one that fails loudly if the table was left unregistered.
 
-- [ ] **Step 9: Typecheck and commit**
+- [x] **Step 9: Typecheck and commit**
 
 ```bash
 npx tsc --noEmit
@@ -738,7 +747,7 @@ git commit -m "Add connector_connections: one credential row per user per connec
 
 This module is the only file that names the `connector_connections` table, exactly as `provider-connections.ts` is the only one naming the two legacy tables. Model it on `src/lib/events/connections.ts:80-334`, which solves the same problem for event providers and already imports the lease constants from `provider-connections.ts`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `scripts/smoke-connector-claim.ts`:
 
@@ -836,12 +845,12 @@ Register in `scripts/run-smoke.ts` (`// pglite` block):
   "smoke-connector-claim": "pglite",
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx tsx scripts/smoke-connector-claim.ts`
 Expected: FAIL — `Cannot find module '../src/lib/connectors/connections'`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 Create `src/lib/connectors/connections.ts`:
 
@@ -1185,12 +1194,12 @@ export async function deleteConnectorConnection(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx tsx scripts/smoke-connector-claim.ts`
 Expected: PASS — "All connector claim checks passed."
 
-- [ ] **Step 5: Typecheck and commit**
+- [x] **Step 5: Typecheck and commit**
 
 ```bash
 npx tsc --noEmit
@@ -1214,7 +1223,7 @@ git commit -m "Add the connector connections module: claim, lease, backoff, capa
 
 The fourth family slots in exactly like the event-provider block at `src/lib/sync-scheduler.ts:381-399`: an `if (!deadlineReached(deadline)) { … }` block, counters on `SyncRunStats`, surfaced in the route's stats object.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `scripts/smoke-connector-sync-pass.ts`:
 
@@ -1283,12 +1292,12 @@ Register in `scripts/run-smoke.ts` (`// pglite` block):
   "smoke-connector-sync-pass": "pglite",
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx tsx scripts/smoke-connector-sync-pass.ts`
 Expected: FAIL — `stats.connectorClaimed` is `undefined`, so the first check fails.
 
-- [ ] **Step 3: Add the counters**
+- [x] **Step 3: Add the counters**
 
 In `src/lib/sync-scheduler.ts`, add to the `SyncRunStats` type (after the `eventConnections*` fields around :133):
 
@@ -1307,7 +1316,7 @@ and to `emptyRunStats()` (:148), in the same position:
     connectorFailed: 0,
 ```
 
-- [ ] **Step 4: Add the family to `runSyncPass`**
+- [x] **Step 4: Add the family to `runSyncPass`**
 
 In `src/lib/sync-scheduler.ts`, import at the top:
 
@@ -1378,7 +1387,7 @@ Then insert this block immediately after the event-provider block (after :399, b
   }
 ```
 
-- [ ] **Step 5: Surface the counters on the route**
+- [x] **Step 5: Surface the counters on the route**
 
 In `src/app/api/sync/run/route.ts`, add the three fields to the object passed to `finishCronRun`'s `stats`, next to the existing `eventConnections*` entries, so a partial run is visible in `cron_runs`:
 
@@ -1388,7 +1397,7 @@ In `src/app/api/sync/run/route.ts`, add the three fields to the object passed to
       connectorFailed: stats.connectorFailed,
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 ```bash
 npx tsx scripts/smoke-connector-sync-pass.ts
@@ -1398,7 +1407,7 @@ npx tsx scripts/smoke-sync-concurrency.ts
 
 Expected: all three pass. The last two are the guard that the existing three families still behave.
 
-- [ ] **Step 7: Typecheck and commit**
+- [x] **Step 7: Typecheck and commit**
 
 ```bash
 npx tsc --noEmit
@@ -1421,7 +1430,7 @@ git commit -m "Dispatch connector syncs from the registry inside runSyncPass"
 
 This is the contact analogue of `ingestEvents`: same duplicate index, same bulk writers, same contact cap, but no interaction rows. It deliberately reuses `IngestContext` rather than defining its own, so one connector pass that syncs both people and events opens one context and pays for one index build.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `scripts/smoke-ingest-people.ts`:
 
@@ -1495,12 +1504,12 @@ Register in `scripts/run-smoke.ts` (`// pglite` block):
   "smoke-ingest-people": "pglite",
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx tsx scripts/smoke-ingest-people.ts`
 Expected: FAIL — `Cannot find module '../src/lib/ingest/people'`.
 
-- [ ] **Step 3: Write the stream**
+- [x] **Step 3: Write the stream**
 
 Create `src/lib/ingest/people.ts`:
 
@@ -1646,12 +1655,12 @@ export async function ingestPeople(
 
 If `createContactsBulkForUser` does not return the created rows in the shape above, read its signature at `src/lib/contact-writes.ts:506` and adapt the destructuring — the contract the index needs is `id` plus the six `DuplicateSubject` fields listed at `src/lib/duplicates.ts:11`.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx tsx scripts/smoke-ingest-people.ts`
 Expected: PASS — "All people ingest checks passed."
 
-- [ ] **Step 5: Typecheck and commit**
+- [x] **Step 5: Typecheck and commit**
 
 ```bash
 npx tsc --noEmit
@@ -1672,7 +1681,7 @@ git commit -m "Add the people ingest stream for delta-token contact sources"
 - Consumes: `connectorById` (Task 1); `upsertConnectorConnection`, `markConnectorNeedsReauth` (Task 3); `safeReturnPath` from `src/lib/oauth-return.ts`.
 - Produces: `OAuthProviderConfig`, `OAUTH_PROVIDERS: Record<string, OAuthProviderConfig>`, `buildAuthorizeUrl(connectorId, opts)`, `parseOAuthState(raw)`, `exchangeCode(connectorId, code, redirectUri)`, `refreshAccessToken(connectorId, refreshToken)`, `OAuthTokenError`. Every `oauth2` connector's callback route uses these.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `scripts/smoke-connector-oauth.ts` (pure tier — no database, no network; `fetch` is injected):
 
@@ -1759,12 +1768,12 @@ Register in `scripts/run-smoke.ts` (`// pure` block):
   "smoke-connector-oauth": "pure",
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx tsx scripts/smoke-connector-oauth.ts`
 Expected: FAIL — `Cannot find module '../src/lib/connectors/oauth'`.
 
-- [ ] **Step 3: Write the helper**
+- [x] **Step 3: Write the helper**
 
 Create `src/lib/connectors/oauth.ts`:
 
@@ -1997,12 +2006,12 @@ process.env.HUBSPOT_CLIENT_ID = "test-client";
 process.env.HUBSPOT_CLIENT_SECRET = "test-secret";
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx tsx scripts/smoke-connector-oauth.ts`
 Expected: PASS — "All connector OAuth checks passed."
 
-- [ ] **Step 5: Typecheck and commit**
+- [x] **Step 5: Typecheck and commit**
 
 ```bash
 npx tsc --noEmit
@@ -2031,7 +2040,7 @@ git commit -m "Add a generic OAuth2 helper so a new connector is config, not cod
 
 The retry rules are `outbound_webhook_deliveries`': 7 attempts, jittered backoff, dead after exhaustion. They are restated here rather than imported because `dispatch.ts` keeps `BACKOFF_MINUTES` and `backoffFor` module-private, and exporting them to share would widen a module that is deliberately narrow.
 
-- [ ] **Step 1: Re-check the free schema version, then write the failing test**
+- [x] **Step 1: Re-check the free schema version, then write the failing test**
 
 ```bash
 bash -c 'for b in $(git branch -a --format="%(refname)" | grep -v HEAD); do v=$(git show "${b}:src/db/index.ts" 2>/dev/null | grep -m1 "^export const SCHEMA_VERSION" | grep -oE "[0-9]+"); [ -n "$v" ] && echo "$v $b"; done | sort -rn | head -4'
@@ -2154,12 +2163,12 @@ Register in `scripts/run-smoke.ts` (`// pglite` block):
   "smoke-connector-outbox": "pglite",
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx tsx scripts/smoke-connector-outbox.ts`
 Expected: FAIL — the tables and module do not exist.
 
-- [ ] **Step 3: Add the two tables to `src/db/schema.ts`**
+- [x] **Step 3: Add the two tables to `src/db/schema.ts`**
 
 After `connectorConnections`:
 
@@ -2244,7 +2253,7 @@ export const connectorOutbox = pgTable(
 export type ConnectorOutboxRow = typeof connectorOutbox.$inferSelect;
 ```
 
-- [ ] **Step 4: Add the DDL, the alters and the version bump**
+- [x] **Step 4: Add the DDL, the alters and the version bump**
 
 In the `DDL` template of `src/db/index.ts`, after the `connector_connections` block:
 
@@ -2299,7 +2308,7 @@ Changelog and constant:
 export const SCHEMA_VERSION = 75;
 ```
 
-- [ ] **Step 5: Register both tables for purge**
+- [x] **Step 5: Register both tables for purge**
 
 In `src/lib/user-data.ts`, import both tables and extend the `connections` step's `exports`, `counts` and `run` the same way Task 2 did:
 
@@ -2315,7 +2324,7 @@ In `src/lib/user-data.ts`, import both tables and extend the `connections` step'
       await db.delete(externalLinks).where(eq(externalLinks.userId, userId));
 ```
 
-- [ ] **Step 6: Write the outbox module**
+- [x] **Step 6: Write the outbox module**
 
 Create `src/lib/connectors/outbox.ts`:
 
@@ -2532,7 +2541,7 @@ export async function findExternalLink(
 }
 ```
 
-- [ ] **Step 7: Add the drain route and schedule it**
+- [x] **Step 7: Add the drain route and schedule it**
 
 Create `src/app/api/connectors/outbox/drain/route.ts`, modelled on `src/app/api/webhooks/outbound/drain/route.ts`:
 
@@ -2633,7 +2642,7 @@ Add the step to `.github/workflows/ops.yml`, after the "Drain outbound webhooks"
 
 Note a `secrets.*` reference inside an `if:` fails the whole workflow at parse time — gate on the schedule only, as every other step here does.
 
-- [ ] **Step 8: Refresh the lock and run the tests**
+- [x] **Step 8: Refresh the lock and run the tests**
 
 ```bash
 npx tsx scripts/smoke-schema-ddl.ts --update
@@ -2644,7 +2653,7 @@ npx tsx scripts/smoke-schema-upgrade.ts
 
 Expected: all pass.
 
-- [ ] **Step 9: Typecheck and commit**
+- [x] **Step 9: Typecheck and commit**
 
 ```bash
 npx tsc --noEmit
@@ -2671,7 +2680,7 @@ git commit -m "Add connector write-back: external_links, connector_outbox and it
 
 `POST /v1/notes` deliberately enqueues a capture job rather than calling `saveNoteBatch` directly: `saveNoteBatch` takes an already-parsed batch (participants, commitments, anchors), which is the *output* of the AI parse, not something a Shortcut can produce. Enqueuing puts API notes through the same pipeline as the app's own capture.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `scripts/smoke-api-connector-routes.ts`:
 
@@ -2741,12 +2750,12 @@ Register in `scripts/run-smoke.ts` (`// pure` block):
   "smoke-api-connector-routes": "pure",
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx tsx scripts/smoke-api-connector-routes.ts`
 Expected: FAIL — `noteBody` is not exported from `src/lib/api/schemas.ts`.
 
-- [ ] **Step 3: Add the schemas**
+- [x] **Step 3: Add the schemas**
 
 In `src/lib/api/schemas.ts`, after `followupsQuery` (:111):
 
@@ -2785,12 +2794,12 @@ export type NoteBody = z.infer<typeof noteBody>;
 export type FollowupPatchBody = z.infer<typeof followupPatchBody>;
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx tsx scripts/smoke-api-connector-routes.ts`
 Expected: PASS — "All connector API schema checks passed."
 
-- [ ] **Step 5: Write the three routes**
+- [x] **Step 5: Write the three routes**
 
 Read `node_modules/next/dist/docs/` for the current route-handler and dynamic-segment conventions before writing these — this Next.js differs from what you may remember.
 
@@ -2918,7 +2927,7 @@ export const PATCH = apiHandler({ scope: "write", bucket: "apiWrite" }, async (r
 
 Check the real signatures of `completeReminder` (`src/lib/reminders.ts:1287`) and `snoozeReminderTo` (:1177) before wiring — if either takes `(id, userId)` rather than `(userId, id)`, match the file, and if either returns a not-found signal rather than throwing, map it to `apiError({ code: "not_found", … })`.
 
-- [ ] **Step 6: Document the routes**
+- [x] **Step 6: Document the routes**
 
 In `src/app/api/v1/openapi.json/route.ts`, add three `paths` entries beside the existing ones. Request bodies go through the same `body()` helper so the spec cannot drift from validation:
 
@@ -2962,7 +2971,7 @@ In `src/app/api/v1/openapi.json/route.ts`, add three `paths` entries beside the 
 
 and extend that file's import to `import { contactCreateBody, eventsBody, followupPatchBody, noteBody, webhookEndpointBody } from "@/lib/api/schemas";`.
 
-- [ ] **Step 7: Typecheck, lint and commit**
+- [x] **Step 7: Typecheck, lint and commit**
 
 ```bash
 npx tsc --noEmit
@@ -2993,7 +3002,7 @@ Two kinds of key live in `IntegrationStatuses` and must not be confused:
 
 Note `statuses.gmail` and `statuses.google` deliberately share one value — they are one Google grant — and `gmail` is a tab id rather than a registry id, so it is written alongside the loop rather than inside it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `scripts/smoke-integration-statuses.ts`:
 
@@ -3040,12 +3049,12 @@ Register in `scripts/run-smoke.ts` (`// pure` block):
 
 The script imports the id list from `src/lib/connectors/status.ts` rather than from the action: `src/actions/integrations.ts` reaches `@/db` through its lookups, and a `pure`-tier script that imports `../src/db` is rejected by `npm run test:check`.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx tsx scripts/smoke-integration-statuses.ts`
 Expected: FAIL — `Cannot find module '../src/lib/connectors/status'`.
 
-- [ ] **Step 3: Add the id list**
+- [x] **Step 3: Add the id list**
 
 Create `src/lib/connectors/status.ts` — names only, no database reach, so both a pure smoke script and a client component can load it:
 
@@ -3072,7 +3081,7 @@ export const CONNECTOR_STATUS_LOOKUP_IDS = [
 export type ConnectorStatusId = (typeof CONNECTOR_STATUS_LOOKUP_IDS)[number];
 ```
 
-- [ ] **Step 4: Add the five missing lookups to the action**
+- [x] **Step 4: Add the five missing lookups to the action**
 
 In `src/actions/integrations.ts`, keep the existing `settle()` fan-out and every existing status body exactly as it is — `ai`, `outreach`, `calendar`, `api`, `webhooks`, `google`/`gmail`, `outlook` and `linkedin` are all correct, including LinkedIn's hardcoded `{ state: "off", detail: "Upload a CSV export" }`, which is right because there is nothing to connect.
 
@@ -3158,7 +3167,7 @@ Then, after the existing `statuses.linkedin` line and before the `return`:
 
 If `listCalendarSubscriptions()` or `listEventConnections()` returns a different field name than `lastSyncStatus` / `status` / `provider`, read the real shape (`src/actions/calendar.ts:52`, `src/lib/events/connections.ts:222`) and match it — the file is the truth.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 ```bash
 npx tsx scripts/smoke-integration-statuses.ts
@@ -3168,11 +3177,11 @@ npx tsc --noEmit
 
 Expected: all pass.
 
-- [ ] **Step 6: Verify the dialog still renders**
+- [x] **Step 6: Verify the dialog still renders**
 
 Start the preview (`preview_start` with the project's dev server; never `npm run dev` through Bash, and check no server is already running on this worktree — a second `next dev` sharing one `.next` wedges it). Open `/settings?integration=api`, confirm the Integrations dialog opens on the API tab and every row shows a status dot rather than a blank. Check the console for errors with `read_console_messages`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/actions/integrations.ts src/lib/connectors/status.ts scripts/smoke-integration-statuses.ts scripts/run-smoke.ts
@@ -3185,7 +3194,7 @@ git commit -m "Answer for every registered connector in the integration statuses
 
 **Files:** none (verification only).
 
-- [ ] **Step 1: Run the whole smoke suite**
+- [x] **Step 1: Run the whole smoke suite**
 
 ```bash
 npm test
@@ -3193,7 +3202,7 @@ npm test
 
 Expected: every script passes. If `smoke-admin-render` or `smoke-instrumentation` times out, check machine load first — they time out above load ~100 and rerunning them alone usually passes. A `PENDING:` row is degraded coverage, not a failure.
 
-- [ ] **Step 2: Typecheck and lint the whole repo**
+- [x] **Step 2: Typecheck and lint the whole repo**
 
 ```bash
 npx tsc --noEmit
@@ -3202,7 +3211,7 @@ npm run lint
 
 Expected: 0 type errors; eslint 0 errors and roughly 36 warnings. Any error is from this plan.
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
 ```bash
 npm run build
@@ -3210,7 +3219,7 @@ npm run build
 
 Expected: pass. A `node:fs` chunking error that names neither file means a client component now reaches `@/db` — the usual cause is `registry.ts` gaining a database import.
 
-- [ ] **Step 4: Confirm the migration applies cleanly**
+- [x] **Step 4: Confirm the migration applies cleanly**
 
 ```bash
 npx tsx scripts/smoke-schema-ddl.ts
@@ -3220,7 +3229,7 @@ npx tsx scripts/smoke-purge.ts
 
 Expected: pass, with the lock file at version 75 and unmodified since Task 7's `--update`.
 
-- [ ] **Step 5: Commit any lock or snapshot drift**
+- [x] **Step 5: Commit any lock or snapshot drift**
 
 ```bash
 git status --short
