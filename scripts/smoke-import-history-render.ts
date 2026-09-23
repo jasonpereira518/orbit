@@ -17,8 +17,12 @@
  */
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ImportHistory } from "../src/components/imports/import-history";
-import type { ImportHistoryItem } from "../src/actions/imports";
+import {
+  ImportDetailBody,
+  ImportHistory,
+} from "../src/components/imports/import-history";
+import { Sheet } from "../src/components/ui/sheet";
+import type { ImportDetail, ImportHistoryItem } from "../src/actions/imports";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -181,6 +185,57 @@ check(
   "…and stops claiming the people it brought in",
   !undone.includes("19 added"),
 );
+
+/**
+ * An undo that has started but not finished.
+ *
+ * `undoneAt` is written only once the whole removal is done, so a large undo that ran out of
+ * time — or is still running in another tab — has removed people with no `undoneAt` yet. The
+ * row went on showing its chips ("19 added") for people who were already gone.
+ */
+console.log("An undo still under way says so");
+const partlyStats = { undoneRemoved: 12 };
+const partly = render([
+  item({ contactsCreated: 19, contactsUpdated: 6, duplicatesFound: 6, stats: partlyStats }),
+]);
+check("the row says it is partly undone", partly.includes("Partly undone"));
+check("…and how many have gone so far", partly.includes("12 people removed so far"));
+check("…and stops claiming the people it brought in", !partly.includes("19 added"));
+check("…and never says it is undone outright", !partly.includes("Undone ·"));
+
+// The sheet has to keep offering the undo while it is partway: it is resumable, and the way
+// to finish it is to run it again. Rendered inside the Sheet root (its title reads that
+// context) but without the portal, which renders nothing on the server.
+const detailFor = (stats: ImportHistoryItem["stats"]): ImportDetail => ({
+  item: item({
+    contactsCreated: 19,
+    contactsUpdated: 6,
+    duplicatesFound: 6,
+    // Inside the undo window, whenever this runs.
+    createdAt: new Date(),
+    stats,
+  }),
+  counts: { done: 25, skipped: 0, failed: 0, pending: 0 },
+  problems: [],
+  moreProblems: 0,
+  people: { added: 19, existing: 6 },
+});
+const sheet = (detail: ImportDetail) =>
+  renderToStaticMarkup(
+    React.createElement(
+      Sheet,
+      { open: true },
+      React.createElement(ImportDetailBody, { detail, loading: false }),
+    ),
+  );
+const partlySheet = sheet(detailFor(partlyStats));
+check("the sheet says it is partly undone", partlySheet.includes("12 people removed so far"));
+check("…and still offers the undo, to finish it", partlySheet.includes("Undo this import"));
+const doneSheet = sheet(
+  detailFor({ undoneAt: "2026-09-22T12:00:00Z", undoneRemoved: 17, undoneKept: 2 }),
+);
+check("a finished undo is not offered again", !doneSheet.includes("Undo this import"));
+check("…and says it is done", doneSheet.includes("Undone · 17 people removed"));
 
 console.log("Every import type still renders");
 const TYPES = [

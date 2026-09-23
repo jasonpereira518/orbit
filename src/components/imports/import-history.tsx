@@ -144,8 +144,15 @@ function Chips({ chips }: { chips: ImportChip[] }) {
  * purpose and not a fault.
  */
 function undoneLine(stats: ImportHistoryItem["stats"]): string | null {
-  if (!stats?.undoneAt) return null;
-  const removed = stats.undoneRemoved ?? 0;
+  const removed = stats?.undoneRemoved ?? 0;
+  if (!stats?.undoneAt) {
+    // Started but not finished: `undoneAt` is written only when the whole removal is done, so a
+    // large undo that ran out of time (or is still running elsewhere) has taken people out with
+    // no `undoneAt` yet. The chips would go on claiming them, so the row says how far it got —
+    // and not "Undone", which it isn't.
+    if (removed <= 0) return null;
+    return `Partly undone · ${removed} ${removed === 1 ? "person" : "people"} removed so far`;
+  }
   const kept = stats.undoneKept ?? 0;
   const parts = [`${removed} ${removed === 1 ? "person" : "people"} removed`];
   if (kept > 0) parts.push(`${kept} kept`);
@@ -308,7 +315,8 @@ export function ImportHistory({
   );
 }
 
-function ImportDetailBody({
+/** Exported for `smoke-import-history-render.ts`, which renders it inside a Sheet root. */
+export function ImportDetailBody({
   detail,
   loading,
   onUndone,
@@ -387,10 +395,11 @@ function ImportDetailBody({
 
         {/*
           The way back out. Offered only while it would do something: this import created
-          people, nobody has undone it already, and it is still inside the window. Past that
-          the sheet says so rather than showing a button that would refuse.
+          people, its undo has not finished, and it is still inside the window. Past that the
+          sheet says so rather than showing a button that would refuse. A partly-done undo
+          keeps the button — it is resumable, and running it again is how it finishes.
         */}
-        {!undone && (item.contactsCreated ?? 0) > 0 ? (
+        {!item.stats?.undoneAt && (item.contactsCreated ?? 0) > 0 ? (
           withinUndoWindow(new Date(item.createdAt)) ? (
             <div>
               <ImportUndoButton
