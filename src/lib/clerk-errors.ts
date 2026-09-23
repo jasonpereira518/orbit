@@ -11,13 +11,13 @@
  */
 export const CLERK_ERROR_COPY: Readonly<Record<string, string>> = {
   form_password_pwned: "That password has shown up in a breach — pick another",
-  form_code_incorrect: "That code didn't match — check and try again",
+  form_code_incorrect: "That code didn’t match — check and try again",
   form_identifier_exists: "That email is already on your account",
-  form_password_incorrect: "That password wasn't right — try again",
+  form_password_incorrect: "That password wasn’t right — try again",
   form_password_validation_failed: "That password is too weak — make it longer",
-  form_param_format_invalid: "That doesn't look like an email address",
-  form_identifier_not_allowed: "That address can't be used here",
-  session_exists: "You're already signed in on this device",
+  form_param_format_invalid: "That doesn’t look like an email address",
+  form_identifier_not_allowed: "That address can’t be used here",
+  session_exists: "You’re already signed in on this device",
 };
 
 /** Narrow, without importing Clerk, to `{ errors: [{ code }] }`. */

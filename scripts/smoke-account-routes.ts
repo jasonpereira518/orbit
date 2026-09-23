@@ -35,6 +35,7 @@ for (const [code, copy] of Object.entries(CLERK_ERROR_COPY)) {
   check(`${code} copy has no trailing period`, !copy.endsWith("."), copy);
   check(`${code} copy does not shout`, !copy.includes("!"), copy);
   check(`${code} copy is not a raw code`, !copy.includes("_"), copy);
+  check(`${code} copy uses typographic apostrophes`, !copy.includes("'"), copy);
 }
 
 console.log("\nmapping");
