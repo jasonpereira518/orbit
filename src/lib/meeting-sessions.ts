@@ -591,7 +591,7 @@ async function findSegment(sessionId: string, seq: number): Promise<MeetingSegme
 
 export type MeetingTranscript = {
   session: MeetingSessionRow;
-  segments: Pick<MeetingSegmentRow, "seq" | "startMs" | "endMs" | "text" | "engine">[];
+  segments: Pick<MeetingSegmentRow, "seq" | "startMs" | "endMs" | "text" | "engine" | "speaker">[];
   /** The spoken text only, in order, one paragraph per chunk. What the analysis reads. */
   text: string;
   /** Seqs missing from 0..lastSeq — chunks that never arrived. */
@@ -612,6 +612,7 @@ export async function getMeetingTranscript(
       endMs: meetingTranscriptSegments.endMs,
       text: meetingTranscriptSegments.text,
       engine: meetingTranscriptSegments.engine,
+      speaker: meetingTranscriptSegments.speaker,
     })
     .from(meetingTranscriptSegments)
     .where(eq(meetingTranscriptSegments.sessionId, session.id))

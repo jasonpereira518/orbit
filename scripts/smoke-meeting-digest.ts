@@ -11,11 +11,13 @@ import {
   analyzeMeetingTranscript,
   appearsIn,
   buildMeetingCorpus,
+  formatTranscriptSegment,
   groundDigest,
   isSelf,
   meetingDigestSchema,
   normalizeDigest,
   normalizeForContainment,
+  speakerLabel,
   splitTranscript,
   type CompleteJsonFn,
 } from "../src/lib/meeting-digest";
@@ -115,6 +117,28 @@ const TRANSCRIPT = [
   check("no name on file matches nobody", !isSelf("Jordan", { firstName: null, lastName: null }));
 }
 
+// ── Speaker labels ───────────────────────────────────────────────────────────────────
+{
+  check('speakerLabel maps "you" to "You"', speakerLabel("you") === "You");
+  check('speakerLabel maps "speaker-1" to "Speaker 1"', speakerLabel("speaker-1") === "Speaker 1");
+  check('speakerLabel maps "speaker-12" to "Speaker 12"', speakerLabel("speaker-12") === "Speaker 12");
+  check("speakerLabel of null is null", speakerLabel(null) === null);
+  check("speakerLabel of an unrecognized value is null", speakerLabel("narrator") === null);
+
+  check(
+    'formatTranscriptSegment prefixes a known speaker as "You: text"',
+    formatTranscriptSegment({ speaker: "you", text: "I'll send the deck." }) === "You: I'll send the deck."
+  );
+  check(
+    'formatTranscriptSegment prefixes "speaker-2" as "Speaker 2: text"',
+    formatTranscriptSegment({ speaker: "speaker-2", text: "Sounds good." }) === "Speaker 2: Sounds good."
+  );
+  check(
+    "formatTranscriptSegment renders a null speaker as bare text, exactly as today",
+    formatTranscriptSegment({ speaker: null, text: "Unlabeled audio." }) === "Unlabeled audio."
+  );
+}
+
 // ── Splitting ────────────────────────────────────────────────────────────────────────
 {
   const para = (n: number) => `${"word ".repeat(n / 5).trim()}.`;
@@ -199,6 +223,69 @@ async function main() {
     check("a short meeting is one call", calls.length === 1 && calls[0]!.operation === "meeting.digest");
     check("…with the transcript and attendees in it", calls[0]!.user.includes("Acme's counsel") && calls[0]!.user.includes("Priya Raman"));
     check("…and the result is grounded", d.blockers[0]?.sourceExcerpt === null && d.actionItems[0]?.duePhrase === "by Friday");
+  }
+
+  // The point of this task: a paragraph the caller built with `formatTranscriptSegment`
+  // (as `analyzeMeetingSession` in src/actions/meetings.ts now does) carries its speaker
+  // prefix into the prompt, the system prompt explains what the prefixes mean instead of
+  // denying they exist, and a commitment spoken on a "You:" line comes back owned by "me".
+  {
+    const calls: { system: string; user: string }[] = [];
+    const complete: CompleteJsonFn = async (_u, input) => {
+      calls.push({ system: input.system, user: input.user });
+      return reply({
+        action_items: [
+          {
+            text: "Send Priya the deck",
+            owner: "me",
+            due_phrase: "by Friday",
+            source_excerpt: "I'll send Priya the deck by Friday",
+          },
+        ],
+      });
+    };
+    const paragraphs = [
+      formatTranscriptSegment({ speaker: "you", text: "I'll send Priya the deck by Friday." }),
+      formatTranscriptSegment({ speaker: "speaker-1", text: "Sounds great, thanks." }),
+      formatTranscriptSegment({ speaker: null, text: "Some recovered audio with no speaker info." }),
+    ];
+    const d = await analyzeMeetingTranscript(
+      "u",
+      {
+        paragraphs,
+        title: "Pilot review",
+        startedAtIso: "2026-09-11T17:00:00.000Z",
+        userName: "Jordan Lee",
+        attendees: [],
+      },
+      { complete, parseJson: JSON.parse }
+    );
+    check(
+      "a You: line reaches the prompt with its prefix",
+      calls[0]!.user.includes("You: I'll send Priya the deck by Friday.")
+    );
+    check(
+      "a speaker-1 line reaches the prompt as Speaker 1:",
+      calls[0]!.user.includes("Speaker 1: Sounds great, thanks.")
+    );
+    check(
+      "an unlabeled segment stays bare text",
+      calls[0]!.user.includes("Some recovered audio with no speaker info.") &&
+        !calls[0]!.user.includes("null: Some recovered audio")
+    );
+    check(
+      "the system prompt explains the speaker prefixes",
+      calls[0]!.system.includes('"You:" is the user') && calls[0]!.system.includes("renumbered after a line saying the recording reconnected")
+    );
+    check("…and no longer claims there are no speaker labels", !calls[0]!.system.includes("NO speaker labels"));
+    check(
+      "a commitment spoken on a You: line is extracted with owner \"me\"",
+      d.actionItems[0]?.owner === "me"
+    );
+    check(
+      "…and its source excerpt still grounds against the prefixed transcript",
+      d.actionItems[0]?.sourceExcerpt === "I'll send Priya the deck by Friday"
+    );
   }
 
   {

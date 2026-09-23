@@ -6,6 +6,7 @@ import { requireUserId } from "@/lib/auth";
 import {
   analyzeMeetingTranscript,
   buildMeetingCorpus,
+  formatTranscriptSegment,
   isSelf,
 } from "@/lib/meeting-digest";
 import { requireMeetingsUser } from "@/lib/plan-guards";
@@ -180,7 +181,9 @@ export async function analyzeMeetingSession(
     if (!t) return { ok: false, error: "That meeting no longer exists" };
     if (t.session.status === "saved") return { ok: false, error: "That meeting was already saved" };
 
-    const paragraphs = t.segments.map((s) => s.text).filter((s) => s.trim());
+    const paragraphs = t.segments
+      .filter((s) => s.text.trim())
+      .map((s) => formatTranscriptSegment(s));
     if (!paragraphs.length) {
       return {
         ok: false,
