@@ -127,7 +127,7 @@ export async function joinTeamWithDomain(
     .where(eq(teamMembers.userId, userId))
     .limit(1);
   if (current && current.domain !== domain) {
-    throw new UserFacingError("You're already on another team. Leave it first.");
+    throw new UserFacingError("You’re already on another team — leave it first");
   }
   // Bare `.returning()`, not `.returning({ id: teams.id })` — an explicit field selector
   // defeats Drizzle's overload resolution against the union `Db` type after
@@ -157,7 +157,7 @@ export async function joinTeam(
   const domain = email ? teamDomainForEmail(email) : null;
   if (!domain) {
     throw new UserFacingError(
-      "Teams are keyed by a verified work email. Add one in your account settings first."
+      "Teams are keyed by a verified work email — add one in your account settings first"
     );
   }
   return joinTeamWithDomain(userId, domain, opts);

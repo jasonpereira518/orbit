@@ -68,7 +68,7 @@ export async function setTeamSharingAction(on: boolean): Promise<ActionResult<Te
   const userId = await requireLeadsUser();
   return asActionResult(async () => {
     const changed = await setTeamSharing(userId, on === true);
-    if (!changed) throw new UserFacingError("Join your team first.");
+    if (!changed) throw new UserFacingError("Join your team first");
     revalidatePath("/leads");
     return { enabled: on === true };
   });
@@ -80,9 +80,9 @@ export async function setContactTeamSharedAction(contactId: string, shared: bool
     // A forged `contactId` (not even a UUID) must not reach the DB or `revalidatePath`
     // before it is refused — same message either way, so a caller can't use it to probe
     // which ids exist.
-    if (!isUuid(contactId)) throw new UserFacingError("That contact isn't yours to change.");
+    if (!isUuid(contactId)) throw new UserFacingError("That contact isn’t yours to change");
     const changed = await setContactTeamShared(userId, contactId, shared === true);
-    if (!changed) throw new UserFacingError("That contact isn't yours to change.");
+    if (!changed) throw new UserFacingError("That contact isn’t yours to change");
     revalidatePath(`/contacts/${contactId}`);
     revalidatePath("/leads");
     return { shared: shared === true };
