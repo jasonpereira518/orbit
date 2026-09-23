@@ -12,6 +12,7 @@ import {
   isOccurrenceUid,
   occurrenceUid,
   parseRRule,
+  seriesUidOf,
   MAX_OCCURRENCES,
 } from "../src/lib/recurrence";
 import { parseIcsEvents, type ParsedCalendarEvent } from "../src/lib/calendar-import";
@@ -412,6 +413,15 @@ async function main() {
     orphanResult.length === 1 && orphanResult[0]?.uid === "orphan-1",
     orphanResult.map((e) => e.uid).join(", ")
   );
+
+  // --- seriesUidOf: the helper `postMeetingReminder`'s series-eligibility fix (REGRESSION 2)
+  //     needs, to map an occurrence uid back to the series it belongs to. ---
+  check("seriesUidOf returns a non-recurring uid unchanged", seriesUidOf("u1") === "u1");
+  check(
+    "seriesUidOf strips the occurrence suffix back to the series uid",
+    seriesUidOf(occurrenceUid("u1", new Date("2026-03-10T13:00:00Z"))) === "u1"
+  );
+  check("seriesUidOf on the bare master uid is a no-op", seriesUidOf(every[0]!.uid) === "u1");
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

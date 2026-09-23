@@ -135,8 +135,24 @@ export function occurrenceUid(uid: string, start: Date): string {
  * rather than once per occurrence, and this is what lets it skip every occurrence but the one
  * that already existed before expansion did.
  */
+const OCCURRENCE_SUFFIX = /_\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
 export function isOccurrenceUid(uid: string): boolean {
-  return /_\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(uid);
+  return OCCURRENCE_SUFFIX.test(uid);
+}
+
+/**
+ * The series a uid belongs to — the same value for every occurrence `expandEvent` produced from
+ * one master (bare or `_<instant>`-suffixed alike), and a non-recurring event's own uid
+ * unchanged (it is its own series of one).
+ *
+ * Exists so a consumer can group occurrences back into series without reimplementing the id
+ * grammar `occurrenceUid`/`isOccurrenceUid` already own — see `postMeetingReminder` in
+ * `calendar-sync.ts`, which needs "the most recent past occurrence of each series" and would
+ * otherwise have to parse the `_<instant>` suffix itself.
+ */
+export function seriesUidOf(uid: string): string {
+  return uid.replace(OCCURRENCE_SUFFIX, "");
 }
 
 /**

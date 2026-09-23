@@ -199,18 +199,20 @@ run(async () => {
           WHERE user_id = ${USER} AND description LIKE '%daily-followup-uid%'
         `)
       );
-      // Exactly one, not merely "at most one": MUST FIX 3's ruling keeps the DTSTART
-      // occurrence's uid bare, so it alone is not occurrence-derived and still earns its one
-      // follow-up, same as a non-recurring meeting always has; the nine later, occurrence-
-      // derived instances are suppressed by `isOccurrenceUid`.
+      // Exactly one, not merely "at most one": `seriesFollowUpEligibility` picks the series'
+      // single MOST RECENT PAST occurrence — here, the tenth and last (COUNT=10, so "yesterday"
+      // relative to `now`) — and suppresses the other nine, the same way a non-recurring
+      // event's single occurrence always has exactly one shot at a follow-up.
       check(
         "ten interactions from one daily series produce EXACTLY ONE follow-up reminder",
         reminderRows.length === 1,
         `got ${reminderRows.length}`
       );
+      const mostRecentDailyOccurrence = new Date(dailyStart.getTime() + 9 * 86400000);
       check(
-        "that one reminder's description carries the DTSTART occurrence's bare uid, no suffix",
-        reminderRows[0]?.description === "You met with them. Event daily-followup-uid",
+        "that one reminder's description carries the MOST RECENT occurrence's uid, not DTSTART's",
+        reminderRows[0]?.description ===
+          `You met with them. Event daily-followup-uid_${mostRecentDailyOccurrence.toISOString()}`,
         reminderRows[0]?.description
       );
     } finally {
@@ -341,6 +343,119 @@ run(async () => {
         "re-syncing a feed with an override creates no duplicates",
         rowsAfter.length === rows.length,
         `${rows.length} -> ${rowsAfter.length}`
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  // --- REGRESSION 2, the case the smoke above can't see: an ESTABLISHED series (DTSTART well
+  //     past the 90-day expansion window) still produces exactly one follow-up.
+  //
+  // `postMeetingReminder` used to suppress a follow-up for every OCCURRENCE uid
+  // (`isOccurrenceUid`), keeping only the series' bare-uid DTSTART occurrence eligible. That
+  // works only when DTSTART itself falls inside the sync window. A DTSTART 120+ days back never
+  // gets expanded at all (the window is 90 days back), so every occurrence this series ever
+  // emits carries a suffixed, occurrence-derived uid — and the old check suppressed ALL of them,
+  // the dominant real case (an established weekly 1:1) producing zero follow-ups instead of one.
+  {
+    await db.execute(sql`DELETE FROM reminders WHERE user_id = ${USER}`);
+    await db.execute(sql`DELETE FROM interactions WHERE user_id = ${USER} AND external_id LIKE 'cal:established-weekly-uid%'`);
+
+    const establishedStart = new Date(now.getTime() - 130 * 86400000);
+    establishedStart.setUTCHours(11, 0, 0, 0);
+    const establishedEnd = new Date(establishedStart.getTime() + 30 * 60000);
+
+    const establishedIcs = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:established-weekly-uid",
+      "SUMMARY:1:1 with Priya",
+      `DTSTART:${icsUtc(establishedStart)}`,
+      `DTEND:${icsUtc(establishedEnd)}`,
+      "RRULE:FREQ=WEEKLY",
+      "ATTENDEE;CN=Priya:mailto:priya-established@example.com",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    globalThis.fetch = (async () =>
+      new Response(establishedIcs, { status: 200, headers: { "Content-Type": "text/calendar" } })) as typeof fetch;
+
+    try {
+      const [establishedSub] = await db
+        .insert(calendarSubscriptions)
+        .values({ userId: USER, icsUrl: "https://example.test/established-feed.ics", enabled: 1 })
+        .returning();
+
+      await syncCalendarSubscription(USER, establishedSub!.id);
+
+      const establishedIds = (await externalIds(db)).filter((id) => id.startsWith("cal:established-weekly-uid"));
+      check(
+        "an established series (DTSTART 130 days back) still produces interactions inside the sync window",
+        establishedIds.length > 0,
+        `got ${establishedIds.length}`
+      );
+      check(
+        "none of them carry the bare, pre-window uid — DTSTART itself is outside the 90-day window",
+        establishedIds.every((id) => id.includes("_")),
+        establishedIds.join(", ")
+      );
+
+      const establishedReminders = rowsOf<{ description: string }>(
+        await db.execute(sql`
+          SELECT description FROM reminders
+          WHERE user_id = ${USER} AND description LIKE '%established-weekly-uid%'
+        `)
+      );
+      check(
+        "an established weekly series produces EXACTLY ONE follow-up, not zero",
+        establishedReminders.length === 1,
+        `got ${establishedReminders.length}`
+      );
+
+      // --- and a series with several counterparts produces one follow-up PER counterpart, as
+      //     a single (non-recurring) meeting already would.
+      await db.execute(sql`DELETE FROM reminders WHERE user_id = ${USER}`);
+      await db.execute(sql`DELETE FROM interactions WHERE user_id = ${USER} AND external_id LIKE 'cal:established-multi-uid%'`);
+
+      const multiIcs = [
+        "BEGIN:VCALENDAR",
+        "BEGIN:VEVENT",
+        "UID:established-multi-uid",
+        // "1:1 with ..." (not "Team sync") so `classifyCalendarEvent`'s NETWORKING_TITLE rule
+        // keeps it despite two counterparts (its count<=3 allowance) — a title-less classifier
+        // rejection would confound this check with the thing it's actually testing.
+        "SUMMARY:1:1 with Priya and Sam",
+        `DTSTART:${icsUtc(establishedStart)}`,
+        `DTEND:${icsUtc(establishedEnd)}`,
+        "RRULE:FREQ=WEEKLY",
+        "ATTENDEE;CN=Priya:mailto:priya-multi@example.com",
+        "ATTENDEE;CN=Sam:mailto:sam-multi@example.com",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n");
+
+      globalThis.fetch = (async () =>
+        new Response(multiIcs, { status: 200, headers: { "Content-Type": "text/calendar" } })) as typeof fetch;
+
+      const [multiSub] = await db
+        .insert(calendarSubscriptions)
+        .values({ userId: USER, icsUrl: "https://example.test/established-multi-feed.ics", enabled: 1 })
+        .returning();
+
+      await syncCalendarSubscription(USER, multiSub!.id);
+
+      const multiReminders = rowsOf<{ description: string }>(
+        await db.execute(sql`
+          SELECT description FROM reminders
+          WHERE user_id = ${USER} AND description LIKE '%established-multi-uid%'
+        `)
+      );
+      check(
+        "an established series with two counterparts produces one follow-up PER counterpart",
+        multiReminders.length === 2,
+        `got ${multiReminders.length}`
       );
     } finally {
       globalThis.fetch = realFetch;

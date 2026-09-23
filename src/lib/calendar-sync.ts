@@ -3,7 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
 import { counterpartsOf } from "@/lib/calendar-classify";
-import { expandIcsEvents, isOccurrenceUid } from "@/lib/recurrence";
+import { expandIcsEvents, seriesUidOf } from "@/lib/recurrence";
 import { decideCalendarEvents } from "@/lib/decisions/calendar";
 import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
 import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
@@ -145,7 +145,10 @@ export async function applyNetworkingEvents(
     // one contact by the next sync, silently and permanently. Name+company and name+title
     // still fold; a name on its own now becomes a review suggestion instead.
     // `calendarAdapter` keeps 0.6 because it only annotates and never creates or merges.
-    reminders: createFollowUps ? postMeetingReminder : undefined,
+    //
+    // `reminders` is set below, once `networkEvents` exists: `seriesFollowUpEligibility` needs
+    // the whole batch to pick each series' one eligible occurrence, not just the single event a
+    // per-event callback sees.
   });
   // The decision model reads every event the rules would keep before any becomes a contact
   // (decisions/calendar.ts), so the context — which carries the account's engines — opens
@@ -167,6 +170,10 @@ export async function applyNetworkingEvents(
     });
   }
 
+  if (createFollowUps) {
+    ctx.options.reminders = makePostMeetingReminder(seriesFollowUpEligibility(networkEvents));
+  }
+
   const ingested = await ingestEvents(ctx, networkEvents);
   await finalizeIngest(ctx);
 
@@ -181,50 +188,83 @@ export async function applyNetworkingEvents(
 }
 
 /**
+ * Which occurrence of each series is allowed to produce a post-meeting follow-up: the
+ * `externalIdBase` of its most recent PAST occurrence (ties broken by whichever is seen last),
+ * subject to `postMeetingReminder`'s own 21-day rule.
+ *
+ * `isOccurrenceUid` alone (skip every synthesized occurrence, keep only the series' bare-uid
+ * master) is not sufficient: the ICS expansion window is 90 days back, so a series whose
+ * DTSTART is more than 90 days old never EMITS its master occurrence at all — every occurrence
+ * this function sees for that series carries a suffixed, "occurrence" uid, and the old
+ * `isOccurrenceUid` check suppressed every one of them. That satisfies "at most one per series"
+ * only in the degenerate, zero-follow-ups sense.
+ *
+ * A non-recurring event is its own series of one (`seriesUidOf` returns its uid unchanged), so
+ * it is trivially always the "most recent" — and only — member of its series, which is what
+ * keeps this behaving exactly as before for the non-recurring case.
+ */
+function seriesFollowUpEligibility(events: NetworkEvent[]): Set<string> {
+  const now = Date.now();
+  const bestPerSeries = new Map<string, { externalIdBase: string; timestamp: number }>();
+  for (const event of events) {
+    const timestamp = event.timestamp.getTime();
+    if (timestamp > now) continue; // only a PAST occurrence can anchor a follow-up
+    const uid = event.externalIdBase.replace(/^cal:/, "");
+    const seriesUid = seriesUidOf(uid);
+    const current = bestPerSeries.get(seriesUid);
+    if (!current || timestamp >= current.timestamp) {
+      bestPerSeries.set(seriesUid, { externalIdBase: event.externalIdBase, timestamp });
+    }
+  }
+  return new Set([...bestPerSeries.values()].map((v) => v.externalIdBase));
+}
+
+/**
  * A nudge two days after a meeting that has already happened.
  *
  * The description embeds the event uid on purpose: ingest dedupes reminders on
  * `(contactId, description)`, so this is what makes a re-sync of the same calendar reproduce
  * a byte-identical candidate that gets filtered out rather than inserted again. That dedupe
- * is exactly why recurrence expansion can't be allowed to reach this function unfiltered: the
- * uid it embeds is per-OCCURRENCE now, so a daily standup expanded into 21 occurrences inside
- * the "last 21 days" window below used to mint 21 distinct descriptions — 21 reminders, one
- * series. A recurring series gets AT MOST ONE follow-up: `isOccurrenceUid` singles out the
- * occurrences expansion actually synthesized (every one but the series' own master, which
- * keeps its pre-expansion bare uid — see `expandEvent`'s ruling) and this skips exactly those,
- * the same way a non-recurring event's single occurrence always has.
+ * is exactly why recurrence expansion can't be allowed to reach this function unfiltered — see
+ * `seriesFollowUpEligibility`'s own comment for the full shape of the fix: `eligible` names the
+ * one occurrence per series allowed through, computed once per batch over every event in it,
+ * because deciding that from a single event in isolation (the previous approach) can't tell "a
+ * suffixed uid because the master fell outside the window" apart from "a suffixed uid because
+ * this genuinely isn't the series' most recent occurrence."
  */
-function postMeetingReminder(
-  event: NetworkEvent,
-  contactId: string,
-  userId: string
-): ReminderInsert[] {
-  // `externalIdBase` is `cal:<uid>`; the uid is what the old writer put in the description.
-  const uid = event.externalIdBase.replace(/^cal:/, "");
-  if (isOccurrenceUid(uid)) return [];
+function makePostMeetingReminder(eligible: Set<string>) {
+  return function postMeetingReminder(
+    event: NetworkEvent,
+    contactId: string,
+    userId: string
+  ): ReminderInsert[] {
+    if (!eligible.has(event.externalIdBase)) return [];
 
-  const now = Date.now();
-  const eventAt = event.timestamp.getTime();
-  // Only for meetings that have happened, and only recently enough to still be worth a nudge.
-  if (eventAt > now) return [];
-  if ((now - eventAt) / 86400000 > 21) return [];
+    // `externalIdBase` is `cal:<uid>`; the uid is what the old writer put in the description.
+    const uid = event.externalIdBase.replace(/^cal:/, "");
+    const now = Date.now();
+    const eventAt = event.timestamp.getTime();
+    // Only for meetings that have happened, and only recently enough to still be worth a nudge.
+    if (eventAt > now) return [];
+    if ((now - eventAt) / 86400000 > 21) return [];
 
-  const due = new Date(eventAt + 2 * 86400000);
-  if (due.getTime() < now) due.setTime(now + 2 * 86400000);
+    const due = new Date(eventAt + 2 * 86400000);
+    if (due.getTime() < now) due.setTime(now + 2 * 86400000);
 
-  return [
-    {
-      userId,
-      contactId,
-      title: `Follow up after ${event.summary || "meeting"}`,
-      description: `You met with them. Event ${uid}`,
-      dueDate: due,
-      status: "pending",
-      reminderType: "post_meeting",
-      actionKind: "follow_up",
-      createdBy: "calendar_sync",
-    },
-  ];
+    return [
+      {
+        userId,
+        contactId,
+        title: `Follow up after ${event.summary || "meeting"}`,
+        description: `You met with them. Event ${uid}`,
+        dueDate: due,
+        status: "pending",
+        reminderType: "post_meeting",
+        actionKind: "follow_up",
+        createdBy: "calendar_sync",
+      },
+    ];
+  };
 }
 
 export async function syncCalendarSubscription(
