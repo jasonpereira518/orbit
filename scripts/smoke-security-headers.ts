@@ -69,6 +69,28 @@ function main() {
   check("dev without Clerk keys still produces a valid policy", devCsp.length > 0 && !/undefined/.test(devCsp));
   check("no HSTS in development", header(dev, "Strict-Transport-Security") === null);
 
+  console.log("\nThe waitlist's own domain...");
+  // Response headers are public. The app's policy names its Clerk domain and, origin by
+  // origin, what the product does; the waitlist's must name nothing but itself.
+  const waitlist = buildSecurityHeaders({ dev: false, enforce: false, clerkPublishableKey: pk, surface: "waitlist" });
+  const wCsp = header(waitlist, "Content-Security-Policy-Report-Only") ?? "";
+  const wAll = waitlist.map((h) => `${h.key}: ${h.value}`).join("\n");
+  check("keeps HSTS, nosniff, DENY and frame-ancestors none",
+    Boolean(header(waitlist, "Strict-Transport-Security")) && header(waitlist, "X-Content-Type-Options") === "nosniff" &&
+    header(waitlist, "X-Frame-Options") === "DENY" && /frame-ancestors 'none'/.test(wCsp));
+  check("names no Clerk host", !/clerk/i.test(wAll), wAll);
+  for (const hint of ["deepgram", "google", "cloudflare", "jasonpereira", "orbit"]) {
+    check(`names nothing matching "${hint}"`, !new RegExp(hint, "i").test(wAll));
+  }
+  check("grants no camera, microphone or screen capture",
+    /camera=\(\)/.test(header(waitlist, "Permissions-Policy") ?? "") &&
+    /microphone=\(\)/.test(header(waitlist, "Permissions-Policy") ?? "") &&
+    /display-capture=\(\)/.test(header(waitlist, "Permissions-Policy") ?? ""));
+  check("still reports to /api/csp-report and allows Vercel Analytics",
+    /report-uri \/api\/csp-report/.test(wCsp) && /va\.vercel-scripts\.com/.test(wCsp));
+  check("follows CSP_ENFORCE like the app's",
+    Boolean(header(buildSecurityHeaders({ dev: false, enforce: true, clerkPublishableKey: pk, surface: "waitlist" }), "Content-Security-Policy")));
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

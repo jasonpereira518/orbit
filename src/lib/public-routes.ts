@@ -14,6 +14,8 @@ export const PUBLIC_ROUTES = [
   // The standalone interest-list page. Its form posts to a server action, which is not
   // matched here — actions POST to the page's own URL, so a public page covers them.
   "/interest",
+  // The waitlist's own privacy notice (served at /privacy on the waitlist domain).
+  "/interest/privacy",
   "/privacy",
   // How to connect an assistant. A setup guide whose whole audience is people deciding
   // whether to sign up, so it must be readable signed out.

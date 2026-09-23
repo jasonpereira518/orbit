@@ -1,9 +1,9 @@
 /**
- * The interest-list join path and its read model, end to end against a throwaway PGlite.
+ * The waitlist join path and its read model, end to end against a throwaway PGlite.
  *
- * WHY THIS EXISTS. The join action returns a *ticket* now (number, planet, share token,
- * moons) and the /interest page renders one from a token. Every rule that keeps that honest
- * — ordinals that never collide, referral credit written once and never to yourself, bots
+ * WHY THIS EXISTS. The join action returns a *ticket* (join number, place in line,
+ * referrals, planet, share token) and the waitlist page renders one from a token. Every
+ * rule that keeps that honest — ordinals that never collide, referral credit written once and never to yourself, bots
  * and rate-limited callers getting a plausible ticket and no row — is a query-shape or
  * branch-order detail that tsc cannot see. This drives the headers-free core directly.
  *
@@ -24,7 +24,6 @@ import {
   readInterestProof,
 } from "../src/lib/interest-list-ticket";
 import { INTEREST_LIST_COUNT_FLOOR, MIN_FILL_MS } from "../src/lib/interest-list";
-import { planetForSignupNumber } from "../src/lib/welcome-planets";
 import { joinInterestListCore, type JoinContext } from "../src/lib/interest-list-join";
 import type { EmailLinks } from "../src/lib/interest-list-email";
 
@@ -68,19 +67,26 @@ async function readModel() {
   console.log("\nread model…");
   // Counts are asserted as deltas: the smoke PGlite directory is shared, so rows this
   // script did not write can already be there.
-  const before = (await readInterestProof()).count;
+  const beforeProof = await readInterestProof();
+  const before = beforeProof.count;
   await seedReadModel();
 
   const t1 = await getTicketByShareToken("smoke-share-1");
   check("first row is #1 on Mercury", t1?.number === 1 && t1.planet === "mercury", JSON.stringify(t1));
-  check("first row has two moons", t1?.moons === 2, String(t1?.moons));
+  check("first row has two referrals", t1?.referrals === 2, String(t1?.referrals));
+  check("two referrals is not yet the front wave", t1?.frontWave === false);
   check("joinedAt is an ISO string", typeof t1?.joinedAt === "string" && t1.joinedAt.endsWith("Z"));
 
   const t2 = await getTicketByShareToken("smoke-share-2");
   const t3 = await getTicketByShareToken("smoke-share-3");
   check("simultaneous rows get distinct ordinals", t2 !== null && t3 !== null && t2.number !== t3.number, `${t2?.number} vs ${t3?.number}`);
   check("simultaneous rows take 2 and 3", new Set([t2!.number, t3!.number]).size === 2 && Math.min(t2!.number, t3!.number) === 2 && Math.max(t2!.number, t3!.number) === 3);
-  check("a referred row has no moons of its own", t2?.moons === 0);
+  check("a referred row has no referrals of its own", t2?.referrals === 0);
+  check(
+    "place in line follows join order",
+    t1!.position < Math.min(t2!.position, t3!.position) && Math.max(t2!.position, t3!.position) < (await getTicketByShareToken("smoke-share-4"))!.position,
+    `${t1?.position}, ${t2?.position}, ${t3?.position}`
+  );
 
   const t4 = await getTicketByShareToken("smoke-share-4");
   check("legacy row without a planet reads as Mercury", t4?.planet === "mercury" && t4.number === 4);
@@ -92,8 +98,8 @@ async function readModel() {
   check("inviter for an unknown token is null", (await getInviterPlanet("nope")) === null);
 
   const proof = await readInterestProof();
-  check("proof counts every row", proof.count === before + 4, String(proof.count));
-  check("next planet follows the count", proof.nextPlanet === planetForSignupNumber(before + 5));
+  check("proof counts everyone waiting", proof.count === before + 4, String(proof.count));
+  check("total counts every row ever", proof.total === beforeProof.total + 4, String(proof.total));
   check("recent planets are newest first, legacy as Mercury", proof.recent.join(",") === "mercury,earth,venus" || proof.recent.join(",") === "mercury,venus,earth", proof.recent.join(","));
   check("count is hidden below the floor", proof.count < INTEREST_LIST_COUNT_FLOOR && !proofShowsCount(proof));
   check("count shows at the floor", proofShowsCount({ ...proof, count: INTEREST_LIST_COUNT_FLOOR }));
@@ -120,13 +126,14 @@ async function joinPath() {
   const db = await getDb();
   // Delta baseline, for the same reason as in `readModel`.
   const before = (await readInterestProof()).count;
-  const sent: Array<{ email: string; links: EmailLinks }> = [];
+  const sent: Array<{ email: string; links: EmailLinks; position: number | null }> = [];
   const ctx = (ip: string): JoinContext => ({
     ip: `smoke-${ip}`,
     attribution: { referrer: "reddit.com", utmSource: "reddit", utmMedium: null, utmCampaign: null, landingPath: "/interest" },
-    sendWelcome: async (email, _unsub, _planet, links) => {
-      sent.push({ email, links });
+    sendWelcome: async (email, _unsub, _planet, links, position) => {
+      sent.push({ email, links, position });
     },
+    sendFrontWave: async () => undefined,
   });
   const base = { website: "", elapsedMs: MIN_FILL_MS + 10 };
   const rowFor = async (email: string) =>
@@ -141,6 +148,7 @@ async function joinPath() {
   check("ticket carries the stored share token", rowA?.shareToken === a.ticket.shareToken);
   check("ticket planet matches the stored one", rowA?.welcomePlanet === a.ticket.planet);
   check("attribution is stored", rowA?.utmSource === "reddit" && rowA.landingPath === "/interest");
+  check("welcome states the place in line", sent[0]?.position === a.ticket.position, String(sent[0]?.position));
   check("welcome sent once with both links", sent.length === 1 && sent[0]!.links.ticketUrl.includes(`me=${a.ticket.shareToken}`) && sent[0]!.links.shareUrl.includes(`ref=${a.ticket.shareToken}`));
 
   // --- duplicate: same ticket, no second mail, still one row
@@ -156,7 +164,7 @@ async function joinPath() {
   const rowB = await rowFor(`${PREFIX}b@example.test`);
   check("referred row points at the referrer", rowB?.referredById === rowA?.id);
   const a3 = await joinInterestListCore({ ...base, email: `${PREFIX}a@example.test` }, ctx("a"));
-  check("referrer now has one moon", a3.ok && a3.ticket.moons === 1, a3.ok ? String(a3.ticket.moons) : "not ok");
+  check("referrer now has one referral", a3.ok && a3.ticket.referrals === 1, a3.ok ? String(a3.ticket.referrals) : "not ok");
   check("referred ticket is the next number", b.ok && a.ok && b.ticket.number === a.ticket.number + 1);
 
   // --- self-referral and unknown ref
@@ -169,7 +177,11 @@ async function joinPath() {
   const cTicket = c.ok ? c.ticket : null;
   const c2 = await joinInterestListCore({ ...base, email: `${PREFIX}c@example.test`, ref: cTicket!.shareToken }, ctx("c"));
   const rowC = await rowFor(`${PREFIX}c@example.test`);
-  check("rejoin reactivates and re-arms the follow-up", c2.ok && rowC?.unsubscribedAt === null && rowC.followUpSentAt === null);
+  check("rejoin puts them back in line", c2.ok && rowC?.unsubscribedAt === null);
+  check(
+    "rejoin keeps the original join time",
+    c2.ok && cTicket !== null && c2.ticket.joinedAt === cTicket.joinedAt
+  );
   check("rejoin keeps the planet and token", rowC?.welcomePlanet === cTicket!.planet && rowC?.shareToken === cTicket!.shareToken);
   check("rejoin never credits a referrer", rowC?.referredById === null);
   check("rejoin sends the welcome again", sent.filter((s) => s.email === `${PREFIX}c@example.test`).length === 2);
@@ -186,7 +198,8 @@ async function joinPath() {
   const bot = await joinInterestListCore({ ...base, website: "http://spam", email: `${PREFIX}bot@example.test` }, ctx("bot"));
   const fast = await joinInterestListCore({ ...base, elapsedMs: 10, email: `${PREFIX}fast@example.test` }, ctx("fast"));
   check("honeypot answers ok with a ticket", bot.ok && bot.ticket.number > 0 && bot.ticket.shareToken.length > 10);
-  check("too-fast answers ok with a ticket", fast.ok && fast.ticket.moons === 0);
+  check("too-fast answers ok with a ticket", fast.ok && fast.ticket.referrals === 0 && !fast.ticket.frontWave);
+  check("a fake ticket stands at the back of the line", fast.ok && fast.ticket.position === (await readInterestProof()).count + 1);
   check("neither writes a row", (await db.select().from(interestListSignups)).length === rowsBefore);
   check("fake tokens resolve to nothing", bot.ok && (await getTicketByShareToken(bot.ticket.shareToken)) === null);
 
@@ -213,7 +226,7 @@ async function main() {
   await readModel();
   await joinPath();
   await cleanup();
-  console.log("\ninterest-list join: all checks passed");
+  console.log("\nwaitlist join: all checks passed");
   process.exit(0);
 }
 

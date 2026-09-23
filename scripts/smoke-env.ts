@@ -134,6 +134,23 @@ function main() {
   check("local dev with nothing set has no errors", dev.errors.length === 0, dev.errors.join("; "));
   check("local dev still warns about what production would need", dev.warnings.length > 0);
 
+  console.log("\nThe waitlist's own domain...");
+  // Optional, but once set its mail must not come from the app's domain: that would print
+  // the app's name in the From line of the one thing that must never show it.
+  check("no waitlist host, no waitlist requirements", prod({}).errors.length === 0);
+  const noSender = prod({ WAITLIST_HOST: "join.example" });
+  check("a waitlist host needs its own sender", noSender.errors.some((e) => e.includes("WAITLIST_FROM_EMAIL")), noSender.errors.join("; "));
+  const own = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "Jason <hello@join.example>" });
+  check("a sender on the waitlist's own domain is fine", own.errors.length === 0, own.errors.join("; "));
+  for (const leaky of ["hello@orbit.jasonpereira.live", "Jason <hi@jasonpereira.live>"]) {
+    const r = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: leaky });
+    check(`a sender on the app's domain is refused (${leaky})`, r.errors.some((e) => e.includes("WAITLIST_FROM_EMAIL")), r.errors.join("; "));
+  }
+  const leakyReply = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_REPLY_TO: "orbit@jasonpereira.live" });
+  check("a reply-to on the app's domain is refused", leakyReply.errors.some((e) => e.includes("WAITLIST_REPLY_TO")));
+  const insecure = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_BASE_URL: "http://join.example" });
+  check("the waitlist base URL must be https", insecure.errors.some((e) => e.includes("WAITLIST_BASE_URL")));
+
   console.log("\nAll env checks passed.");
 }
 

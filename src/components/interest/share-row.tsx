@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, Share2 } from "lucide-react";
 import { motion } from "motion/react";
-import { buildShareUrl, shareText, type InterestTicket } from "@/lib/interest-list";
+import { SHARE_TEXT, SHARE_TITLE, buildShareUrl, type InterestTicket } from "@/lib/interest-list";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -12,16 +12,17 @@ const PILL =
   "inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e8f3f1]/[0.14] px-3 text-sm text-[#e8f3f1] transition-colors hover:border-[#e8f3f1]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60";
 
 /**
- * The ticket's share tools: the link in a read-only field, Copy, X, LinkedIn, and — only
- * after mount, only where the browser has one — the native share sheet.
+ * The pass's share tools: the invite link in a read-only field, Copy, X, LinkedIn, and —
+ * only after mount, only where the browser has one — the native share sheet.
  *
- * Share intents open in a new tab; the text is prewritten (`shareText`) and the URL is the
+ * Share intents open in a new tab; the text is prewritten (`SHARE_TEXT`) and the URL is the
  * `?ref=` link, so whoever follows it lands on the invited state and the referral counts.
+ * `pageUrl` is the waitlist page on its own domain (`getWaitlistPageUrl`).
  */
-export function ShareRow({ ticket, appUrl, play }: { ticket: InterestTicket; appUrl: string; play: boolean }) {
+export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pageUrl: string; play: boolean }) {
   const reduced = usePrefersReducedMotion();
-  const url = buildShareUrl(appUrl, ticket.shareToken);
-  const text = shareText(ticket);
+  const url = buildShareUrl(pageUrl, ticket.shareToken);
+  const text = SHARE_TEXT;
   const [copied, setCopied] = useState(false);
   const [canShare, setCanShare] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -59,7 +60,7 @@ export function ShareRow({ ticket, appUrl, play }: { ticket: InterestTicket; app
 
   async function nativeShare() {
     try {
-      await navigator.share({ title: "Orbit interest list", text, url });
+      await navigator.share({ title: SHARE_TITLE, text, url });
     } catch {
       // Dismissed. Nothing to do.
     }
@@ -77,7 +78,7 @@ export function ShareRow({ ticket, appUrl, play }: { ticket: InterestTicket; app
     <div className="mt-4">
       <motion.div {...enter(0)} className="flex gap-2">
         <label htmlFor="interest-share-link" className="sr-only">
-          Your share link
+          Your invite link
         </label>
         <input
           id="interest-share-link"

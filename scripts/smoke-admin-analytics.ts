@@ -35,8 +35,8 @@ import {
   UNKNOWN_ROUTE,
   isTrackedPath,
   normalizeRoute,
-  redactUrlForVendor,
 } from "../src/lib/analytics-routes";
+import { isIdSegment, redactUrlForVendor } from "../src/lib/analytics-redact";
 import { isBotUserAgent } from "../src/lib/analytics-bots";
 import {
   analyticsEnabled,
@@ -188,7 +188,7 @@ console.log("\nvendor URL redaction");
 const token = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
 check(
   "a scan handoff token never reaches Vercel",
-  redactUrlForVendor(`https://orbit.example/scan/${token}`) === "https://orbit.example/scan/[token]",
+  redactUrlForVendor(`https://orbit.example/scan/${token}`) === "https://orbit.example/scan/[id]",
   String(redactUrlForVendor(`https://orbit.example/scan/${token}`))
 );
 check(
@@ -204,7 +204,7 @@ check(
   "query strings lose everything but campaign tags",
   redactUrlForVendor(
     "https://orbit.example/sign-in?redirect_url=%2Fcontacts%2Fabc&__clerk_ticket=secret&utm_campaign=launch"
-  ) === "https://orbit.example/sign-in/[[...sign-in]]?utm_campaign=launch",
+  ) === "https://orbit.example/sign-in?utm_campaign=launch",
   String(
     redactUrlForVendor(
       "https://orbit.example/sign-in?redirect_url=%2Fcontacts%2Fabc&__clerk_ticket=secret&utm_campaign=launch"
@@ -213,6 +213,27 @@ check(
 );
 check("a plain page passes through as itself", redactUrlForVendor("https://orbit.example/pricing") === "https://orbit.example/pricing");
 check("garbage is dropped", redactUrlForVendor("not a url") === null);
+check(
+  "page names are never mistaken for ids",
+  ROUTE_PATTERNS.flatMap((p) => p.split("/")).filter((seg) => seg && !seg.startsWith("[")).every((seg) => !isIdSegment(seg))
+);
+check(
+  "a share token and a Clerk user id are ids",
+  isIdSegment("Zq3kP9xW2mR7vT1yB5nC8dF4gH6jK0lA2sD9fG7hJ3k") && isIdSegment("user_2abcXYZ1234567890")
+);
+// The redaction ships to every page, the waitlist's own domain included. It must not be
+// the route list: that is the one place the app's page names would be in client JS.
+const redactSource = readFileSync("src/lib/analytics-redact.ts", "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, " ")
+  .replace(/^\s*\/\/.*$/gm, " ");
+check(
+  "the client-side redaction module knows no app routes",
+  !/["'`]\/(contacts|capture|outreach|recruiters|graph|knowledge|reminders|dashboard|chat)\b/.test(redactSource) &&
+    !/from\s+["'][^"']*analytics-routes["']/.test(redactSource)
+);
+for (const file of ["src/components/analytics/pageview-beacon.tsx", "src/components/analytics/vercel-telemetry.tsx"]) {
+  check(`${file} does not import the route list`, !readFileSync(file, "utf8").includes("analytics-routes"));
+}
 
 // --- 3. Visitor hashing --------------------------------------------------------------
 

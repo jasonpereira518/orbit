@@ -4,6 +4,7 @@ import { isDemoMode } from "@/lib/auth";
 import { attributionFromUrl } from "@/lib/attribution-parse";
 import { isBotUserAgent } from "@/lib/analytics-bots";
 import { isTrackedPath, normalizeRoute } from "@/lib/analytics-routes";
+import { isWaitlistHostHeader } from "@/lib/waitlist-host";
 import {
   analyticsEnabled,
   deviceFromUserAgent,
@@ -188,7 +189,7 @@ export async function POST(request: Request) {
       visitorHash,
       sessionId: body.sessionId,
       userId,
-      route: normalizeRoute(body.path),
+      route: routeFor(body.path, headers.get("host")),
       referrerHost: externalReferrer,
       utmSource: attribution.utmSource,
       utmMedium: attribution.utmMedium,
@@ -205,4 +206,16 @@ export async function POST(request: Request) {
   }
 
   return OK();
+}
+
+/**
+ * On the waitlist's own domain the page lives at `/` and its notice at `/privacy` — the
+ * app's landing and policy paths. Recorded under the waitlist's app-side routes instead,
+ * so its traffic is never counted as the landing page's.
+ */
+function routeFor(path: string, host: string | null): string {
+  if (!isWaitlistHostHeader(host)) return normalizeRoute(path);
+  const clean = (path.split("?")[0] ?? "").split("#")[0] ?? "";
+  if (clean === "/privacy") return "/interest/privacy";
+  return "/interest";
 }

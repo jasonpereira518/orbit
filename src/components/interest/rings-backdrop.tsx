@@ -10,7 +10,7 @@
  * Ring colour matches the hero's (`hero-solar-system.tsx`), a shade stronger because
  * the mask and the 720px spread would otherwise fade it to nothing.
  */
-export function OrbitRingsBackdrop() {
+export function RingsBackdrop() {
   return (
     <svg
       aria-hidden="true"

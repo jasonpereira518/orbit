@@ -7,10 +7,9 @@ import { formatTicketNumber } from "@/lib/interest-list";
 import type { InterestProof } from "@/lib/interest-list-ticket";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import { planetLabel } from "@/lib/welcome-planets";
 
 /**
- * "1,284 people have joined · next planet up: Mars", or just the planet below the floor.
+ * "1,284 people on the waitlist", or "Opening in waves" below the count floor.
  *
  * The server renders the final number; after hydration the digits roll up from a few
  * dozen below, once. The roll starts in an effect, never in render, so the HTML and the
@@ -31,13 +30,11 @@ export function ProofLine({ proof, showCount }: { proof: InterestProof; showCoun
       </span>
       {showCount ? (
         <span>
-          <RollingCount value={proof.count} /> people have joined
+          <RollingCount value={proof.count} /> people on the waitlist
         </span>
-      ) : null}
-      {showCount ? <span aria-hidden="true">·</span> : null}
-      <span>
-        next planet up: <span className="text-landing-accent">{planetLabel(proof.nextPlanet)}</span>
-      </span>
+      ) : (
+        <span>Opening in waves</span>
+      )}
     </p>
   );
 }

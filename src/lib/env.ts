@@ -147,6 +147,27 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       errors.push("APP_BASE_URL must be an https:// URL in production");
     }
 
+    // The waitlist's own domain (src/lib/waitlist-host.ts). Optional — but once it is set,
+    // its mail needs a sender of its own: falling back to the app's sender would put the
+    // app's domain in the From line of the one thing that must never show it.
+    if (has(env, "WAITLIST_HOST")) {
+      const appDomains = [hostOf(env.APP_BASE_URL), emailDomain(env.RESEND_FROM_EMAIL)].filter(
+        (d): d is string => Boolean(d)
+      );
+      if (!has(env, "WAITLIST_FROM_EMAIL")) {
+        errors.push("WAITLIST_FROM_EMAIL is required when WAITLIST_HOST is set");
+      }
+      for (const name of ["WAITLIST_FROM_EMAIL", "WAITLIST_REPLY_TO"] as const) {
+        const domain = emailDomain(env[name]);
+        if (domain && appDomains.some((app) => relatedDomains(domain, app))) {
+          errors.push(`${name} must not be on the app's own domain`);
+        }
+      }
+      if (has(env, "WAITLIST_BASE_URL") && !env.WAITLIST_BASE_URL!.startsWith("https://")) {
+        errors.push("WAITLIST_BASE_URL must be an https:// URL in production");
+      }
+    }
+
     if (has(env, "STRIPE_SECRET_KEY")) {
       if (!env.STRIPE_SECRET_KEY!.startsWith("sk_live_")) {
         errors.push("STRIPE_SECRET_KEY must be a live key (sk_live_) in production — test-mode prices fail checkout");
@@ -339,4 +360,25 @@ export function checkDrizzleCommand(
     };
   }
   return { allowed: true, reason: `target ${target} is not the production host` };
+}
+
+/** The hostname of a URL, lowercased, or null. */
+function hostOf(url: string | undefined): string | null {
+  if (!url?.trim()) return null;
+  try {
+    return new URL(url.trim()).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** The domain of an address, bare or `Name <addr>`, lowercased, or null. */
+function emailDomain(value: string | undefined): string | null {
+  const match = /@([^>\s]+)>?\s*$/.exec(value?.trim() ?? "");
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** One domain is the other or sits under it — `jasonpereira.live` vs `orbit.jasonpereira.live`. */
+function relatedDomains(a: string, b: string) {
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
 }
