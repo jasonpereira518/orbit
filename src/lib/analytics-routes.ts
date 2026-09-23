@@ -47,6 +47,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/onboarding/wizard",
   "/settings",
   "/settings/account",
+  "/settings/account/sign-in",
   "/settings/account/devices",
   // Product
   "/dashboard",

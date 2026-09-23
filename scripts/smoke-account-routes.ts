@@ -74,6 +74,7 @@ check(
 console.log("\nroutes");
 const FILE_FOR_HREF: Readonly<Record<string, string>> = {
   "/settings/account": "src/app/(clerk)/(app)/settings/account/page.tsx",
+  "/settings/account/sign-in": "src/app/(clerk)/(app)/settings/account/sign-in/page.tsx",
   "/settings/account/devices": "src/app/(clerk)/(app)/settings/account/devices/page.tsx",
 };
 for (const tab of ACCOUNT_TABS) {
