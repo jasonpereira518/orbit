@@ -60,6 +60,9 @@ export const EXPECTED_IN_PRODUCTION = [
   // Unset, every voice note, meeting and dictation falls back to the user's own OpenAI or
   // Gemini key, and an account with neither cannot transcribe at all.
   "DEEPGRAM_API_KEY",
+  // Unset, the nightly Deepgram usage reconciliation (/api/ops/speech-usage) cannot call
+  // Deepgram's project-scoped usage API and logs it rather than checking for under-reporting.
+  "DEEPGRAM_PROJECT_ID",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [
