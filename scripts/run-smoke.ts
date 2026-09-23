@@ -174,6 +174,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
   "smoke-speech-limits": "pure",
+  "smoke-speech-usage-tag": "pure",
   "smoke-stripe-ordering": "pure",
   "smoke-stripe-revocation": "pure",
   "smoke-settings-layout": "pure",

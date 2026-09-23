@@ -107,6 +107,14 @@ type DeepgramRequestsPage = {
 
 export type DeepgramUsageTotal = { tag: string | null; seconds: number };
 
+export type DeepgramUsageResult = {
+  totals: DeepgramUsageTotal[];
+  /** How many pages were actually read before the loop stopped (a short page, or the cap). */
+  pagesRead: number;
+  /** Raw count of individual request rows Deepgram returned, before grouping by tag. */
+  requestsSeen: number;
+};
+
 /**
  * Sums Deepgram-reported audio seconds per `tag` for requests in `[since, until)`, by paging
  * Deepgram's own record of what it billed — `GET /v1/projects/{project_id}/requests`
@@ -120,18 +128,26 @@ export type DeepgramUsageTotal = { tag: string | null; seconds: number };
  * param `listenParams` sets to `meeting:<sessionId>`). Paged with `limit`/`page`; the response
  * carries no total count, so paging stops on a short page rather than a known page count.
  *
+ * `pagesRead`/`requestsSeen` ride alongside the totals so the caller can tell "Deepgram truly
+ * had nothing this window" apart from "the page index was wrong and every page came back
+ * empty" — the two look identical from `totals` alone (both are `[]`), and the docs do not
+ * pin down whether `page` is 0- or 1-based, so a caller that only reads `totals` cannot rule
+ * out the latter silently checking nothing. The nightly route logs when `requestsSeen === 0`.
+ *
  * Requires `DEEPGRAM_PROJECT_ID` (the project the key lives under — Deepgram's usage endpoints
  * are scoped to a project, unlike `mintStreamToken`/`transcribeFile`, which need only the key).
  * Throws on any failure — missing config, a non-OK response, a malformed body — so the caller
  * (the nightly reconciliation route) can log it and return safely rather than this function
  * pretending "no usage" when it actually could not check.
  */
-export async function fetchDeepgramUsage(opts: { since: Date; until: Date }): Promise<DeepgramUsageTotal[]> {
+export async function fetchDeepgramUsage(opts: { since: Date; until: Date }): Promise<DeepgramUsageResult> {
   const key = requireKey();
   const project = projectId();
   if (!project) throw new Error("DEEPGRAM_PROJECT_ID is not set");
 
   const totals = new Map<string | null, number>();
+  let pagesRead = 0;
+  let requestsSeen = 0;
   for (let page = 0; page < USAGE_MAX_PAGES; page++) {
     const params = new URLSearchParams({
       start: opts.since.toISOString(),
@@ -148,6 +164,8 @@ export async function fetchDeepgramUsage(opts: { since: Date; until: Date }): Pr
     }
     const body = (await res.json()) as DeepgramRequestsPage;
     const requests = body.requests ?? [];
+    pagesRead += 1;
+    requestsSeen += requests.length;
     for (const r of requests) {
       const details = r.response?.details;
       const seconds = details?.duration ?? 0;
@@ -159,5 +177,9 @@ export async function fetchDeepgramUsage(opts: { since: Date; until: Date }): Pr
     }
     if (requests.length < USAGE_PAGE_LIMIT) break;
   }
-  return [...totals.entries()].map(([tag, seconds]) => ({ tag, seconds }));
+  return {
+    totals: [...totals.entries()].map(([tag, seconds]) => ({ tag, seconds })),
+    pagesRead,
+    requestsSeen,
+  };
 }
