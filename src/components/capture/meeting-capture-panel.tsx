@@ -8,16 +8,23 @@
  * The phases, in order:
  *
  *   setup     → title, who's on the call, mic on/off, how to share the call's audio.
- *   live      → recording. Chunks go to the upload queue as they are cut; the transcript
- *               fills in about a minute behind the conversation.
- *   finishing → Stop was pressed. The last chunk is sent and the queue drained.
+ *   live      → recording. The audio streams to Deepgram as it is captured (`use-meeting-live`)
+ *               and sentences land a second or two behind the conversation, labelled "You"
+ *               or "Speaker 2". Chunks are still cut throughout as the recovery route.
+ *   finishing → Stop was pressed. The last sentence is flushed, the socket closed, the last
+ *               chunk sent and the queue drained.
  *   analyzing → the transcript becomes a digest (`analyzeMeetingSession`).
  *   review    → the digest card, then `BulkNotesPanel` auto-extracts people and dates
  *               from the digest's notes, and everything is saved as one batch.
  *
- * A meeting survives this component: the server has every transcribed chunk and the
- * IndexedDB outbox has every unsent one, so leaving mid-call (or crashing) ends in a
- * "Resume" banner on the next visit rather than a lost meeting.
+ * TWO PATHS, ONE NUMBERING. Live sentences and uploaded chunks are both segments of the
+ * same transcript, and both draw their `seq` from `seqRef` here — in the order things
+ * happened, so the two can never claim the same number. A chunk the live path already
+ * covered is thrown away by the coverage gate and never draws one at all.
+ *
+ * A meeting survives this component: the server has every sentence and every transcribed
+ * chunk, and the IndexedDB outbox has every unsent chunk, so leaving mid-call (or crashing)
+ * ends in a "Resume" banner on the next visit rather than a lost meeting.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -57,9 +64,12 @@ import {
   useMeetingRecorder,
   type MeetingRecorderEndReason,
   type MeetingRecorderErrorCode,
+  type MeetingRecorderHandle,
   type MeetingSurface,
   type RecordedMeetingChunk,
 } from "@/lib/use-meeting-recorder";
+import { useMeetingLive, type LiveSegment, type LiveUnavailable } from "@/lib/use-meeting-live";
+import { monthWindow } from "@/lib/speech-limits";
 import { cn } from "@/lib/utils";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
@@ -73,10 +83,15 @@ type SegmentView = {
   silent: boolean;
   status: ChunkUploadStatus;
   detail?: string;
+  /** "you" / "speaker-2" from the live path. Null for a chunk, which cannot tell. */
+  speaker?: string | null;
 };
 
 /** How long Stop waits for the last chunks to upload before offering a way out. */
 const DRAIN_TIMEOUT_MS = 120_000;
+
+/** The timeline nothing has written to yet — the recorder handle arrives a render later. */
+const NO_LOUDNESS = { micDominantShare: () => null };
 
 const ERROR_COPY: Record<MeetingRecorderErrorCode, { title: string; detail: string }> = {
   cancelled: {
@@ -183,6 +198,10 @@ export function MeetingCapturePanel({
   const [busyAction, setBusyAction] = useState<string | null>(null);
   /** Where on the meeting's timeline this recorder started — for the on-screen clock. */
   const [offsetMs, setOffsetMs] = useState(0);
+  /** Minutes of this month's meeting transcription left, once the server says it is running low. */
+  const [quotaWarnMinutes, setQuotaWarnMinutes] = useState<number | null>(null);
+  /** Seqs that begin a new live connection — Deepgram renumbers speakers across one. */
+  const [reconnectSeqs, setReconnectSeqs] = useState<number[]>([]);
 
   // Declared BEFORE the recorder hook on purpose: on unmount React runs effect cleanups in
   // declaration order, so this flips first and the recorder's final `onEnd` (fired from its
@@ -203,6 +222,20 @@ export function MeetingCapturePanel({
   const offsetRef = useRef(0);
   const modeRef = useRef<"new" | "resume">("new");
   const fatalRef = useRef(false);
+  /**
+   * THE one transcript numbering for this meeting. Live sentences and uploaded chunks both
+   * draw from it, in the order things happened, so `(session, seq)` is unique across the two
+   * paths — and dense, which the server's "minutes that never arrived" check depends on. A
+   * resumed meeting starts it after everything the last recorder stored.
+   */
+  const seqRef = useRef(0);
+  const recorderRef = useRef<MeetingRecorderHandle | null>(null);
+  /** Stop the recorder from a callback declared before it exists. */
+  const stopRecorder = useRef<() => void>(() => {});
+  /** Close the live socket from an unmount cleanup, which cannot depend on render values. */
+  const liveCloseRef = useRef<() => void>(() => {});
+  const quotaStoppedRef = useRef(false);
+  const liveNoticedRef = useRef(false);
 
   useEffect(() => {
     onBusyChange?.(phase === "live" || phase === "finishing" || phase === "analyzing");
@@ -237,30 +270,101 @@ export function MeetingCapturePanel({
     });
   }, []);
 
-  const enqueue = useCallback((chunk: RecordedMeetingChunk) => {
-    const queue = queueRef.current;
-    const id = sessionIdRef.current;
-    if (!queue || !id) {
-      bufferRef.current.push(chunk);
-      return;
-    }
-    void queue.enqueue({
-      sessionId: id,
-      seq: chunk.seq,
-      startMs: chunk.startMs,
-      endMs: chunk.endMs,
-      silent: chunk.silent,
-      wav: chunk.wav ? (chunk.wav.buffer as ArrayBuffer) : null,
-    });
-  }, []);
-
-  const handleChunk = useCallback(
+  /**
+   * Send one chunk, numbering it from the shared counter as it goes out.
+   *
+   * The number is allocated HERE rather than by the chunker, because a chunk the live path
+   * already transcribed is never sent and must never claim a number — a number nothing
+   * stores is a hole, and the server reads a hole as a minute of the meeting that went
+   * missing. With Deepgram off this hands out exactly the chunker's own numbering: one
+   * chunk, one number, in order.
+   */
+  const uploadChunk = useCallback(
     (chunk: RecordedMeetingChunk) => {
-      setSegment(chunk.seq, { startMs: chunk.startMs, silent: chunk.silent, status: "queued" });
-      enqueue(chunk);
+      const queue = queueRef.current;
+      const id = sessionIdRef.current;
+      if (!queue || !id) {
+        bufferRef.current.push(chunk);
+        return;
+      }
+      const seq = seqRef.current++;
+      setSegment(seq, { startMs: chunk.startMs, silent: chunk.silent, status: "queued" });
+      void queue.enqueue({
+        sessionId: id,
+        seq,
+        startMs: chunk.startMs,
+        endMs: chunk.endMs,
+        silent: chunk.silent,
+        wav: chunk.wav ? (chunk.wav.buffer as ArrayBuffer) : null,
+      });
     },
-    [enqueue, setSegment]
+    [setSegment]
   );
+
+  const uploadChunks = useCallback(
+    (chunks: RecordedMeetingChunk[]) => {
+      for (const chunk of chunks) uploadChunk(chunk);
+    },
+    [uploadChunk]
+  );
+
+  const handleLiveSegment = useCallback(
+    (segment: LiveSegment, { reconnected }: { reconnected: boolean }) => {
+      if (reconnected) setReconnectSeqs((prev) => [...prev, segment.seq]);
+      setSegment(segment.seq, {
+        startMs: segment.startMs,
+        text: segment.text,
+        silent: false,
+        status: "done",
+        speaker: segment.speaker,
+      });
+    },
+    [setSegment]
+  );
+
+  /** The month's meeting minutes, and the day they come back. */
+  const quotaResetLabel = useMemo(
+    () =>
+      monthWindow(new Date()).resetsAt.toLocaleDateString(undefined, {
+        month: "long",
+        day: "numeric",
+      }),
+    []
+  );
+
+  const handleLiveUnavailable = useCallback(
+    (reason: LiveUnavailable) => {
+      if (reason === "quota") {
+        if (quotaStoppedRef.current) return;
+        quotaStoppedRef.current = true;
+        toast.info(
+          `Recording stopped — you’ve used this month’s meeting hours, which reset on ${quotaResetLabel}`
+        );
+        // Stop is the honest end: the recorder flushes its last chunk, the live socket
+        // flushes its last sentence, and the meeting is summarized like any other.
+        stopRecorder.current();
+        return;
+      }
+      if (liveNoticedRef.current) return;
+      liveNoticedRef.current = true;
+      toast.info("Live transcription is unavailable — this meeting will still be transcribed");
+    },
+    [quotaResetLabel]
+  );
+
+  const live = useMeetingLive({
+    nextSeq: () => seqRef.current++,
+    offsetMs: () => offsetRef.current,
+    loudness: () => recorderRef.current?.loudness ?? NO_LOUDNESS,
+    recorderId: () => recorderIdRef.current,
+    onSegment: handleLiveSegment,
+    onChunksNeeded: uploadChunks,
+    onUnavailable: handleLiveUnavailable,
+    onQuotaWarning: (remainingSeconds) => setQuotaWarnMinutes(Math.max(1, Math.round(remainingSeconds / 60))),
+  });
+  // Stable across renders, unlike the handle object itself — so the callbacks below can
+  // depend on them honestly.
+  const { close: liveClose, finish: liveFinish, reset: liveReset, start: liveStart } = live;
 
   const stopForFatal = useRef<() => void>(() => {});
 
@@ -323,17 +427,22 @@ export function MeetingCapturePanel({
     []
   );
 
-  /** Stop → end the session → drain the queue → analyze. */
+  /** Stop → flush and close the live socket → end the session → drain the queue → analyze. */
   const finishMeeting = useCallback(
     async (totalMs: number) => {
       const id = sessionIdRef.current;
       if (!id) {
         // Stopped before the session was even created: nothing reached the server.
+        liveClose();
         setPhase("setup");
         return;
       }
       setPhase("finishing");
       setDrainStuck(null);
+      // Before anything else: flush Deepgram's last sentence, store it, and hand back any
+      // chunk it never covered so the drain below picks it up. This also closes the socket
+      // — the one exit path where the meeting ends normally.
+      await liveFinish();
       await endMeetingSession(id, totalMs);
       const drained = (await queueRef.current?.drain(DRAIN_TIMEOUT_MS)) ?? true;
       if (!mountedRef.current || fatalRef.current) return;
@@ -343,7 +452,7 @@ export function MeetingCapturePanel({
       }
       await runAnalysis(id);
     },
-    [runAnalysis]
+    [liveClose, liveFinish, runAnalysis]
   );
 
   const handleStarted = useCallback(
@@ -390,15 +499,23 @@ export function MeetingCapturePanel({
       // Anything cut before the session existed — a very short meeting, in practice.
       const early = bufferRef.current;
       bufferRef.current = [];
-      for (const chunk of early) enqueue(chunk);
+      for (const chunk of early) uploadChunk(chunk);
+
+      // Last, so the numbering reads in the order things happened: anything cut before the
+      // session existed is numbered first, then the live sentences.
+      liveStart(id);
     },
-    [attendeesText, enqueue, includeMic, openQueue, resumable, showTranscript, title]
+    [attendeesText, includeMic, liveStart, openQueue, resumable, showTranscript, title, uploadChunk]
   );
 
   const handleEnd = useCallback(
     (reason: MeetingRecorderEndReason, elapsedMs: number) => {
       if (!mountedRef.current) return;
       if (fatalRef.current) {
+        // The upload queue hit something terminal (signed out, taken over, the meeting
+        // gone). Nothing more will be stored, so close the socket rather than leave it
+        // streaming audio nobody will ever read.
+        liveClose();
         setPhase("setup");
         return;
       }
@@ -406,14 +523,23 @@ export function MeetingCapturePanel({
       if (reason === "cap") toast.info(`Stopped at ${formatMeetingDuration(MAX_MEETING_MS)} — your recording was kept`);
       void finishMeeting(offsetRef.current + elapsedMs);
     },
-    [finishMeeting]
+    [finishMeeting, liveClose]
   );
 
   const recorder = useMeetingRecorder({
-    onChunk: handleChunk,
+    // Every chunk goes to the live path first, which decides whether it is needed: binned
+    // while the socket is healthy, uploaded when it covers a gap, and always uploaded when
+    // there is no socket at all.
+    onChunk: live.offerChunk,
+    // The point of the whole task: audio reaches Deepgram frame by frame rather than a
+    // minute at a time.
+    onFrame: live.pushFrame,
     onStarted: (info) => void handleStarted(info),
     onEnd: handleEnd,
-    onError: () => setPhase("setup"),
+    onError: () => {
+      liveClose();
+      setPhase("setup");
+    },
     onMicLost: () => {
       setMicLost(true);
       toast.info("Recording without your microphone — only the call’s audio will be transcribed");
@@ -421,12 +547,18 @@ export function MeetingCapturePanel({
   });
 
   useLayoutEffect(() => {
+    recorderRef.current = recorder;
     stopForFatal.current = () => recorder.stop();
+    stopRecorder.current = () => recorder.stop();
+    liveCloseRef.current = live.close;
   });
 
-  // After the recorder hook, so its final flush on unmount reaches a live queue first.
+  // After the recorder hook, so its final flush on unmount reaches a live queue first. The
+  // socket is closed here too: the recorder's unmount flush runs `handleEnd`, which returns
+  // early once unmounted and so never reaches the flush-and-close in `finishMeeting`.
   useEffect(
     () => () => {
+      liveCloseRef.current();
       queueRef.current?.dispose();
       queueRef.current = null;
     },
@@ -441,16 +573,27 @@ export function MeetingCapturePanel({
     setFatal(null);
     setAnalysis(null);
     setAnalysisError(null);
+    setQuotaWarnMinutes(null);
+    setReconnectSeqs([]);
+    quotaStoppedRef.current = false;
+    liveNoticedRef.current = false;
     if (mode === "new") {
       sessionIdRef.current = null;
       setSessionId(null);
       setSegments({});
       offsetRef.current = 0;
+      seqRef.current = 0;
     } else {
       offsetRef.current = resumePoint!.offsetMs;
+      // After everything the last recorder stored AND everything it left unsent, so a
+      // resumed meeting never reuses a number the server already has.
+      seqRef.current = resumePoint!.startSeq;
     }
     setOffsetMs(offsetRef.current);
     recorder.reset();
+    // Zero the live path's audio clock and start buffering frames now, so the seconds spent
+    // creating the session and minting a token are still streamed rather than skipped.
+    liveReset();
     // Synchronous from the click all the way to `getDisplayMedia` — see the hook.
     recorder.start({
       includeMic,
@@ -497,6 +640,9 @@ export function MeetingCapturePanel({
         fatalRef.current = true; // suppress the analyze that Stop would otherwise start
         recorder.stop();
       }
+      // Nothing from here on is stored, so the socket has no reason to stay open — and an
+      // open Deepgram stream bills for as long as it lives.
+      liveClose();
       queueRef.current?.dispose();
       queueRef.current = null;
       const res = await discardMeetingSession(id);
@@ -723,6 +869,18 @@ export function MeetingCapturePanel({
                 transcribed.
               </p>
             )}
+            {quotaWarnMinutes !== null && (
+              <p className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-xs text-foreground dark:border-amber-900/50 dark:bg-amber-950/30">
+                About {quotaWarnMinutes} minute{quotaWarnMinutes === 1 ? "" : "s"} of meeting
+                transcription left this month — it comes back on {quotaResetLabel}.
+              </p>
+            )}
+            {live.status === "reconnecting" && (
+              <p className="text-xs text-muted-foreground" aria-live="polite">
+                Live transcription dropped out — reconnecting. Nothing is being lost: this stretch is
+                uploading the slower way.
+              </p>
+            )}
             {heardNothing && (
               <p className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-xs text-foreground dark:border-amber-900/50 dark:bg-amber-950/30">
                 Orbit hasn&apos;t heard anything yet. If the call is in progress, the shared tab or screen
@@ -734,12 +892,19 @@ export function MeetingCapturePanel({
 
         {fatal && <FatalNotice message={fatal} />}
 
-        {ordered.length > 0 ? (
-          <TranscriptList segments={ordered} onRetry={failedCount ? () => queueRef.current?.retryFailed() : undefined} />
+        {ordered.length > 0 || live.interim ? (
+          <TranscriptList
+            segments={ordered}
+            interim={live.interim}
+            boundaries={reconnectSeqs}
+            onRetry={failedCount ? () => queueRef.current?.retryFailed() : undefined}
+          />
         ) : (
           recorder.state === "recording" && (
             <p className="text-sm text-muted-foreground">
-              The transcript appears here about a minute behind the conversation.
+              {live.status === "live" || live.status === "connecting"
+                ? "The transcript appears here a second or two behind the conversation."
+                : "The transcript appears here about a minute behind the conversation."}
             </p>
           )
         )}
@@ -984,23 +1149,37 @@ const STATUS_COPY: Record<ChunkUploadStatus, string> = {
   failed: "Couldn't upload this part",
 };
 
+/** "you" / "speaker-2" from the speaker map, as a person would read it. */
+function speakerLabel(speaker: string): string {
+  if (speaker === "you") return "You";
+  const n = /^speaker-(\d+)$/.exec(speaker)?.[1];
+  return n ? `Speaker ${n}` : speaker;
+}
+
 function TranscriptList({
   segments,
   compact = false,
+  interim = "",
+  boundaries,
   onRetry,
 }: {
   segments: SegmentView[];
   compact?: boolean;
+  /** The sentence being spoken right now, greyed until Deepgram settles on it. */
+  interim?: string;
+  /** Seqs where a new live connection began — Deepgram renumbers speakers across one. */
+  boundaries?: number[];
   onRetry?: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const last = segments[segments.length - 1];
+  const boundarySet = useMemo(() => new Set(boundaries ?? []), [boundaries]);
   // Follow the newest line, the way a live caption would — but only nudge the list's own
   // scroll, never the page, so reading back through it is not yanked away.
   useEffect(() => {
     const el = endRef.current?.parentElement;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [last?.seq, last?.text]);
+  }, [last?.seq, last?.text, interim]);
 
   return (
     <div className="space-y-2">
@@ -1020,26 +1199,37 @@ function TranscriptList({
         aria-live="polite"
       >
         {segments.map((s) => (
-          <p key={s.seq} className="leading-relaxed">
-            <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
-              {formatElapsed(s.startMs)}
-            </span>
-            {s.status === "done" ? (
-              s.text ? (
-                s.text
-              ) : (
-                <span className="text-muted-foreground italic">(silence)</span>
-              )
-            ) : s.silent && s.status !== "failed" ? (
-              <span className="text-muted-foreground italic">(silence)</span>
-            ) : (
-              <span className={cn("italic", s.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
-                {STATUS_COPY[s.status]}
-                {s.detail && s.status !== "uploading" ? ` — ${s.detail}` : ""}
-              </span>
+          <div key={s.seq}>
+            {boundarySet.has(s.seq) && (
+              <p className="my-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+                Reconnected — speakers renumbered from here.
+              </p>
             )}
-          </p>
+            <p className="leading-relaxed">
+              <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
+                {formatElapsed(s.startMs)}
+              </span>
+              {s.speaker && (
+                <span className="mr-1.5 font-medium text-foreground">{speakerLabel(s.speaker)}:</span>
+              )}
+              {s.status === "done" ? (
+                s.text ? (
+                  s.text
+                ) : (
+                  <span className="text-muted-foreground italic">(silence)</span>
+                )
+              ) : s.silent && s.status !== "failed" ? (
+                <span className="text-muted-foreground italic">(silence)</span>
+              ) : (
+                <span className={cn("italic", s.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
+                  {STATUS_COPY[s.status]}
+                  {s.detail && s.status !== "uploading" ? ` — ${s.detail}` : ""}
+                </span>
+              )}
+            </p>
+          </div>
         ))}
+        {interim && <p className="leading-relaxed text-muted-foreground/70">{interim}</p>}
         <div ref={endRef} />
       </div>
     </div>

@@ -77,6 +77,12 @@ export type MeetingRecorderStart = {
 
 export type UseMeetingRecorderOptions = {
   onChunk: (chunk: RecordedMeetingChunk) => void;
+  /**
+   * Every 16 kHz frame as it arrives, ahead of the chunker — for a live transcription
+   * socket, which must not wait a minute for a chunk. The array is the chunker's own input
+   * and is not retained here, so a listener that keeps it must copy it.
+   */
+  onFrame?: (pcm: Int16Array) => void;
   onStarted?: (info: { surface: MeetingSurface; micActive: boolean }) => void;
   onEnd?: (reason: MeetingRecorderEndReason, elapsedMs: number) => void;
   onError?: (code: MeetingRecorderErrorCode) => void;
@@ -400,6 +406,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
 
           const resampled = downsample(frame);
           if (resampled.length === 0) return;
+          cb.current.onFrame?.(resampled);
           // Chunk boundaries come from here — the audio clock — never from a timer. This
           // tab spends the meeting in the background, where timers are throttled.
           for (const chunk of chunker.push(resampled)) cb.current.onChunk(withWav(chunk));

@@ -189,6 +189,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-meeting-chunk-errors": "pure",
   "smoke-meeting-digest": "pure",
   "smoke-meeting-upload-queue": "pure",
+  "smoke-meeting-live-coverage": "pure",
   "smoke-outreach-email": "pure",
   "smoke-vocabulary-terms": "pure",
   "smoke-warp-journeys": "pure",
