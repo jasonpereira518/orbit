@@ -9,6 +9,7 @@ import {
   type RecruiterLinkStatus,
   type UserRecruiterLink,
 } from "@/db/schema";
+import { DELETED_ACCOUNT_SENTINEL } from "@/lib/deleted-account";
 
 export type PublicRecruiter = {
   id: string;
@@ -596,4 +597,4 @@ export function communityScore(r: {
 }
 
 /** `created_by_user_id` after the creator's data is purged: not null, so vouching stays strict. */
-export const RECRUITER_DELETED_CREATOR = "deleted-account";
+export const RECRUITER_DELETED_CREATOR = DELETED_ACCOUNT_SENTINEL;

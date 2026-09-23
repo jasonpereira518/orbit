@@ -3,12 +3,13 @@
  * on one. Pure and client-safe — the join card and the warm-path chips import it.
  */
 import { publicEmailDomain } from "@/lib/closeness-evidence";
+import { DELETED_ACCOUNT_SENTINEL } from "@/lib/deleted-account";
 
 /**
- * Written into `teams.created_by` when the creator's account is purged. Same word as
- * `RECRUITER_DELETED_CREATOR`, for the same reason: never null, never a dangling id.
+ * Written into `teams.created_by` when the creator's account is purged. Shared through
+ * `deleted-account.ts` with `RECRUITER_DELETED_CREATOR` so the two cannot drift.
  */
-export const TEAM_DELETED_CREATOR = "deleted-account";
+export const TEAM_DELETED_CREATOR = DELETED_ACCOUNT_SENTINEL;
 
 /**
  * The team a verified email belongs to, or null when it cannot form one: no address, no

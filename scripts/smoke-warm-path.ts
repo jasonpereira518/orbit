@@ -8,6 +8,7 @@
  */
 import { readFileSync } from "node:fs";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { DELETED_ACCOUNT_SENTINEL } from "../src/lib/deleted-account";
 import {
   TEAM_DELETED_CREATOR,
   teamDomainForEmail,
@@ -47,12 +48,13 @@ function main() {
     check("one name is fine", teammateDisplayName({ firstName: "Ada", lastName: null, email: null }) === "Ada");
     check("pre-mirror accounts fall back to the mailbox", teammateDisplayName({ firstName: null, lastName: null, email: "priya@acme.com" }) === "priya");
     check("and to a neutral word after that", teammateDisplayName({ firstName: null, lastName: null, email: null }) === "A teammate");
-    check("the purge sentinel matches recruiters'", TEAM_DELETED_CREATOR === "deleted-account");
+    check("the purge sentinel is the shared one", TEAM_DELETED_CREATOR === DELETED_ACCOUNT_SENTINEL);
+    check("and recruiters use the same shared constant", /RECRUITER_DELETED_CREATOR\s*=\s*DELETED_ACCOUNT_SENTINEL/.test(code("src/lib/recruiters.ts")));
   }
 
   console.log("\nclient-bundle safety");
   {
-    for (const file of ["src/lib/team-domain.ts"]) {
+    for (const file of ["src/lib/deleted-account.ts", "src/lib/team-domain.ts"]) {
       const valueDbImport = /import\s+(?!type\b)[^;]*from\s+["']@\/db/.test(code(file));
       check(`${file} never value-imports @/db`, !valueDbImport);
     }
