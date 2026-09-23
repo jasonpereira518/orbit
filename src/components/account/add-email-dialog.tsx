@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useUser } from "@clerk/nextjs";
+import { useUser, useReverification } from "@clerk/nextjs";
+import { isReverificationCancelledError } from "@clerk/nextjs/errors";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +57,17 @@ import { TOAST_COPY } from "@/lib/toast-copy";
  *    `runRef` is a token bumped every time `reset()` runs; `sendCode`/`confirm` capture it
  *    before awaiting and check it again after, so a continuation for an abandoned run cannot
  *    call `setPendingId` or toast success once nothing on screen corresponds to it any more.
+ *
+ * Adding and verifying an address are both on the spec's wrapped list, so both go through
+ * `useReverification` — the same shape Clerk's own screen uses,
+ * `const createEmailAddress = useReverification((email) => user?.createEmailAddress({ email }))`
+ * (`@clerk/ui/dist/components/UserProfile/EmailForm.js:24`). Unwrapped, on an instance where
+ * reverification applies, the call rejected straight into "That didn't save" with no prompt and
+ * no way forward. `prepareVerification` stays unwrapped, as it is in Clerk's own flow: it mails
+ * a code to an address the wrapped call just created.
+ *
+ * Backing out of Clerk's prompt is a choice, not a failure, so it gets no toast — the dialog
+ * stays where it was with the field still filled, and the button can be pressed again.
  */
 export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
   const { isLoaded, user } = useUser();
@@ -68,6 +80,16 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
   // Bumped on every reset — see the class comment. A run started before the bump checks
   // this after its await and drops itself silently if it no longer matches.
   const runRef = useRef(0);
+
+  const createEmailAddress = useReverification((email: string) =>
+    user ? user.createEmailAddress({ email }) : Promise.resolve(null)
+  );
+  const verifyEmailAddress = useReverification(async (emailId: string, verificationCode: string) => {
+    const email = user?.emailAddresses.find((e) => e.id === emailId);
+    if (!email) return false;
+    await email.attemptVerification({ code: verificationCode });
+    return true;
+  });
 
   const reset = () => {
     runRef.current += 1;
@@ -87,13 +109,18 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
     const runId = runRef.current;
     setWorking(true);
     try {
-      const created = await user.createEmailAddress({ email: address.trim() });
+      const created = await createEmailAddress(address.trim());
+      // Routed through the same clerkErrorMessage/friendlyError fallback as every other
+      // failure below — this text is a dev-facing label, never shown verbatim to a person.
+      if (!created) throw new Error("No signed-in user");
       await created.prepareVerification({ strategy: "email_code" });
       if (runId !== runRef.current) return;
       setPendingId(created.id);
       toast.success("Code sent — check that inbox");
     } catch (err) {
       if (runId !== runRef.current) return;
+      // Dismissing Clerk's "confirm it's you" prompt is a choice, not a failure.
+      if (isReverificationCancelledError(err)) return;
       toast.error(clerkErrorMessage(err, friendlyError(err, TOAST_COPY.saveFailed)));
     } finally {
       if (runId === runRef.current) setWorking(false);
@@ -105,17 +132,17 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
     const runId = runRef.current;
     setWorking(true);
     try {
-      const email = user.emailAddresses.find((e) => e.id === pendingId);
+      const verified = await verifyEmailAddress(pendingId, code.trim());
       // Routed through the same clerkErrorMessage/friendlyError fallback as every other
       // failure below — this text is a dev-facing label, never shown verbatim to a person.
-      if (!email) throw new Error("The pending address is gone");
-      await email.attemptVerification({ code: code.trim() });
+      if (!verified) throw new Error("The pending address is gone");
       await user.reload();
       if (runId !== runRef.current) return;
       toast.success("Address added");
       close();
     } catch (err) {
       if (runId !== runRef.current) return;
+      if (isReverificationCancelledError(err)) return;
       toast.error(clerkErrorMessage(err, friendlyError(err, TOAST_COPY.saveFailed)));
     } finally {
       if (runId === runRef.current) setWorking(false);

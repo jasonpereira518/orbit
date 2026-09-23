@@ -50,3 +50,16 @@ export function clerkErrorMessage(err: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * The same mapping for a bare `ClerkAPIError`, which is not wrapped in an `errors[]`.
+ *
+ * A refused OAuth consent is not thrown at anyone — Clerk records it on the external account
+ * it created, as `verification.error` (a `ClerkAPIError | null`,
+ * `@clerk/shared/dist/types/verification.d.mts:10`). That value carries the same `code`, so it
+ * belongs in the same table; only its shape differs, and wrapping it here keeps the
+ * shape-matching in one file instead of at the call sites.
+ */
+export function clerkApiErrorMessage(error: unknown, fallback: string): string {
+  return clerkErrorMessage({ errors: [error] }, fallback);
+}
