@@ -146,6 +146,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-sources": "pure",
   "smoke-import-queue": "pure",
   "smoke-import-progress-card": "pure",
+  "smoke-import-provenance": "pure",
   "smoke-linkedin-slug-guard": "pglite",
   "smoke-legal-pages": "pure",
   "smoke-landing-anchors": "pure",
