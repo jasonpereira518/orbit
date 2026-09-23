@@ -42,8 +42,15 @@ export type FingerprintInput = {
   xHandle?: string | null;
 };
 
-/** The payload key a staged row carries its provenance under. */
-export const PROVENANCE_KEY = "importedBy";
+/*
+ * The payload key a staged row carries its provenance under is `importedBy`. It is written and
+ * read only inside raw SQL, where a TypeScript constant cannot reach, so it is a literal in
+ * each place and these are all of them — rename one and rename every one:
+ *   - `src/lib/import-engine.ts`, `markRowsDone` (writes it)
+ *   - `src/lib/imports/import-undo.ts`, `candidateRows` (reads `created` and `fp`)
+ *   - `src/lib/contacts-page-query.ts`, the `importId` filter (reads `created`)
+ * `scripts/smoke-import-engine.ts` and `scripts/smoke-import-undo.ts` read and seed it too.
+ */
 
 /**
  * Order is part of the hash, and so is membership: changing either invalidates every stored
