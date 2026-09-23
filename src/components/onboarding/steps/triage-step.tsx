@@ -13,13 +13,13 @@ import { toast } from "@/lib/toast";
 import { useDelayedLoading } from "@/lib/use-delayed-loading";
 import { cn } from "@/lib/utils";
 
-/** Shown a screen at a time so the wizard never dumps the whole shortlist on one page. */
+/** Shown a screen at a time so onboarding never dumps the whole shortlist on one page. */
 const SCREEN_SIZE = 8;
 
 /** Same 1–5 scale as the contact-detail "Strength" field (contact-form.tsx). */
 const RATING_VALUES = [1, 2, 3, 4, 5] as const;
 
-export function WizardTriage({ onDone }: { onDone: () => void }) {
+export function TriageStep({ onDone }: { onDone: () => void }) {
   const [pending, start] = useTransition();
   const [loading, setLoading] = useState(true);
   // Distinct from "candidates is empty": a failed fetch must never render as

@@ -2,7 +2,7 @@
 
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
 
-export function WizardCapture({
+export function CaptureStep({
   hasApiKey,
   onSaved,
 }: {

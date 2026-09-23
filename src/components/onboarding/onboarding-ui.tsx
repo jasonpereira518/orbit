@@ -118,6 +118,20 @@ export function BackButton({ onClick, disabled }: { onClick: () => void; disable
  * A small "Pro" tag for features the viewer's plan does not include. Same tier colours as
  * `PlanBadge` — `text-tier-pro`, because the flat brand blue fails contrast on a light card.
  */
+/** "Coming soon" — `--warning` amber, never Lifetime gold, which reads as a paid tier. */
+export function SoonTag({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-warning",
+        className,
+      )}
+    >
+      Soon
+    </span>
+  );
+}
+
 export function ProTag({ className }: { className?: string }) {
   return (
     <span

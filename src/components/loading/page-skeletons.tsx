@@ -467,15 +467,28 @@ export function ImportsPageSkeleton() {
   );
 }
 
+/**
+ * Mirrors the onboarding stage (`onboarding-flow.tsx`): logo, progress orbit and Skip in a
+ * three-column header, then the welcome step's centred mark, heading and the two path
+ * cards — the step a first-run user is actually waiting on.
+ */
 export function OnboardingPageSkeleton() {
   return (
-    <div className="mx-auto flex min-h-[70vh] max-w-lg flex-col justify-center space-y-6">
-      <div className="space-y-2 text-center">
-        <Skeleton className="mx-auto h-10 w-48" />
-        <Skeleton className="mx-auto h-4 w-72" />
+    <div className="flex min-h-dvh flex-col">
+      <div className="mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
+        <Skeleton className="size-7 rounded-full" />
+        <Skeleton className="h-3 w-32 rounded-full" />
+        <Skeleton className="h-7 w-20 justify-self-end" />
       </div>
-      <Skeleton className="h-64 w-full rounded-2xl" />
-      <Skeleton className="mx-auto h-10 w-36" />
+      <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center gap-4 px-4 pb-16">
+        <Skeleton className="size-28 rounded-full" />
+        <Skeleton className="h-11 w-72" />
+        <Skeleton className="h-4 w-80 max-w-full" />
+        <div className="mt-4 grid w-full gap-3 sm:grid-cols-2">
+          <Skeleton className="h-56 w-full rounded-3xl" />
+          <Skeleton className="h-56 w-full rounded-3xl" />
+        </div>
+      </div>
     </div>
   );
 }

@@ -22,7 +22,7 @@ import { requireVisibleSurface } from "@/lib/surface-visibility";
  *   - `imports.ts` — `import-job-runner.ts` drives job continuation from the background
  *     watcher mounted in `AppShell`, so a running import would stall the moment the
  *     Imports page was hidden.
- *   - `capture.ts` — reached through `BulkNotesPanel`, which the onboarding wizard uses.
+ *   - `capture.ts` — reached through `BulkNotesPanel`, which onboarding’s quick setup uses.
  *     A hidden Capture page would break first-run for new accounts.
  *   - `suggested-reminders.ts` — the notification panel calls it.
  *

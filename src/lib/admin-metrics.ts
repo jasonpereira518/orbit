@@ -393,7 +393,7 @@ export function buildFunnel(rows: AdminUserRow[]): FunnelStage[] {
     { label: "Signed up", count: rows.length },
     { label: "Onboarded", count: rows.filter(isOnboarded).length },
     {
-      label: "Finished wizard",
+      label: "Finished setup",
       count: rows.filter((r) => r.wizardCompletedAt != null).length,
     },
     {
