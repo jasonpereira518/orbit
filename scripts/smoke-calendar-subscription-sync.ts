@@ -137,6 +137,67 @@ run(async () => {
     globalThis.fetch = realFetch;
   }
 
+  // --- a recurring series produces AT MOST ONE post-meeting follow-up, not one per occurrence
+  //
+  // `postMeetingReminder` fires for every occurrence in the last 21 days, and ingest dedupes
+  // reminders on (contactId, description) where the description embeds the now-per-occurrence
+  // uid — so before the fix, a daily standup expanded into several distinct reminder rows, one
+  // per occurrence, all clamped to the same due date. A single counterpart with a run of daily
+  // occurrences inside that window is exactly the failure case.
+  {
+    await db.execute(sql`DELETE FROM reminders WHERE user_id = ${USER}`);
+
+    const dailyStart = new Date(now.getTime() - 10 * 86400000);
+    dailyStart.setUTCHours(9, 0, 0, 0);
+    const dailyEnd = new Date(dailyStart.getTime() + 30 * 60000);
+
+    const dailyIcs = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:daily-followup-uid",
+      "SUMMARY:1:1 with Ana",
+      `DTSTART:${icsUtc(dailyStart)}`,
+      `DTEND:${icsUtc(dailyEnd)}`,
+      "RRULE:FREQ=DAILY;COUNT=10",
+      "ATTENDEE;CN=Ana:mailto:ana@example.com",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    globalThis.fetch = (async () =>
+      new Response(dailyIcs, { status: 200, headers: { "Content-Type": "text/calendar" } })) as typeof fetch;
+
+    try {
+      const [dailySub] = await db
+        .insert(calendarSubscriptions)
+        .values({ userId: USER, icsUrl: "https://example.test/daily-feed.ics", enabled: 1 })
+        .returning();
+
+      await syncCalendarSubscription(USER, dailySub!.id);
+
+      const dailyIds = (await externalIds(db)).filter((id) => id.startsWith("cal:daily-followup-uid"));
+      check(
+        "the daily series produces several interactions",
+        dailyIds.length >= 8,
+        `got ${dailyIds.length}`
+      );
+
+      const reminderRows = rowsOf<{ description: string }>(
+        await db.execute(sql`
+          SELECT description FROM reminders
+          WHERE user_id = ${USER} AND description LIKE '%daily-followup-uid%'
+        `)
+      );
+      check(
+        "many interactions from one recurring series produce AT MOST ONE follow-up reminder",
+        reminderRows.length <= 1,
+        `got ${reminderRows.length}`
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
   await reset();
 
   if (failures > 0) {

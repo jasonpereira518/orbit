@@ -127,6 +127,19 @@ export function occurrenceUid(uid: string, start: Date): string {
 }
 
 /**
+ * Whether `uid` carries the `_<instant>` suffix `occurrenceUid` produces — i.e. whether it
+ * names an occurrence that was DERIVED by expansion, as opposed to a plain event's own uid or
+ * a recurring series' master occurrence (which keeps its bare uid; see `expandEvent`'s own
+ * comment on that ruling). Callers use this to single out the synthetic, expansion-only
+ * occurrences — for example a post-meeting follow-up should fire at most once per series
+ * rather than once per occurrence, and this is what lets it skip every occurrence but the one
+ * that already existed before expansion did.
+ */
+export function isOccurrenceUid(uid: string): boolean {
+  return /_\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(uid);
+}
+
+/**
  * Whether `rule` is inside the subset this module actually knows how to expand.
  *
  * BYSETPOS only means something paired with BYDAY on a MONTHLY rule ("the last Friday").

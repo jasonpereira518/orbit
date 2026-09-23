@@ -3,7 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
 import { counterpartsOf } from "@/lib/calendar-classify";
-import { expandEvent, parseRRule } from "@/lib/recurrence";
+import { expandEvent, isOccurrenceUid, parseRRule } from "@/lib/recurrence";
 import { decideCalendarEvents } from "@/lib/decisions/calendar";
 import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
 import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
@@ -185,13 +185,24 @@ export async function applyNetworkingEvents(
  *
  * The description embeds the event uid on purpose: ingest dedupes reminders on
  * `(contactId, description)`, so this is what makes a re-sync of the same calendar reproduce
- * a byte-identical candidate that gets filtered out rather than inserted again.
+ * a byte-identical candidate that gets filtered out rather than inserted again. That dedupe
+ * is exactly why recurrence expansion can't be allowed to reach this function unfiltered: the
+ * uid it embeds is per-OCCURRENCE now, so a daily standup expanded into 21 occurrences inside
+ * the "last 21 days" window below used to mint 21 distinct descriptions — 21 reminders, one
+ * series. A recurring series gets AT MOST ONE follow-up: `isOccurrenceUid` singles out the
+ * occurrences expansion actually synthesized (every one but the series' own master, which
+ * keeps its pre-expansion bare uid — see `expandEvent`'s ruling) and this skips exactly those,
+ * the same way a non-recurring event's single occurrence always has.
  */
 function postMeetingReminder(
   event: NetworkEvent,
   contactId: string,
   userId: string
 ): ReminderInsert[] {
+  // `externalIdBase` is `cal:<uid>`; the uid is what the old writer put in the description.
+  const uid = event.externalIdBase.replace(/^cal:/, "");
+  if (isOccurrenceUid(uid)) return [];
+
   const now = Date.now();
   const eventAt = event.timestamp.getTime();
   // Only for meetings that have happened, and only recently enough to still be worth a nudge.
@@ -201,8 +212,6 @@ function postMeetingReminder(
   const due = new Date(eventAt + 2 * 86400000);
   if (due.getTime() < now) due.setTime(now + 2 * 86400000);
 
-  // `externalIdBase` is `cal:<uid>`; the uid is what the old writer put in the description.
-  const uid = event.externalIdBase.replace(/^cal:/, "");
   return [
     {
       userId,
