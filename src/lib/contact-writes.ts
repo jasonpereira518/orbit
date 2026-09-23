@@ -15,7 +15,12 @@ import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
-import { buildMemoryChunks, syncMemoryChunks } from "@/lib/memory-chunks";
+import {
+  buildMemoryChunks,
+  deleteMemoryChunks,
+  memorySourceHash,
+  syncMemoryChunks,
+} from "@/lib/memory-chunks";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import {
   contactIdentities,
@@ -996,6 +1001,14 @@ export async function logInteractionForUser(
     await syncMemoryChunks(userId, {
       sourceKind: "interaction",
       sourceId: row.id,
+      // Without this the row would read as stale to the next sweep and be re-chunked for
+      // nothing — the hash is what says "these passages describe the text as it stands".
+      sourceHash: memorySourceHash({
+        text: input.rawNotes || input.aiSummary,
+        occurredAt: when,
+        interactionType: row.interactionType,
+        contactId: input.contactId,
+      }),
       drafts: buildMemoryChunks({
         text: input.rawNotes || input.aiSummary,
         occurredAt: when,
@@ -1125,6 +1138,17 @@ export async function deleteInteractionForUser(
   await db
     .delete(interactions)
     .where(and(eq(interactions.id, interactionId), eq(interactions.userId, userId)));
+
+  // `memory_chunks.source_id` is a plain uuid with no foreign key — deliberately, so the
+  // table can index things that are not interactions — so nothing cascades here. Left to the
+  // prune, a deleted note stays quotable until the next sweep, which is the one kind of
+  // staleness in this table that is a privacy problem rather than a quality one.
+  await deleteMemoryChunks(userId, {
+    sourceKind: "interaction",
+    sourceIds: [interactionId],
+  }).catch((err) => {
+    console.warn("[memory-chunks] could not drop passages for", interactionId, err);
+  });
 
   const [remaining] = await db
     .select({ latest: sql<Date | null>`max(${interactions.interactionDate})` })
