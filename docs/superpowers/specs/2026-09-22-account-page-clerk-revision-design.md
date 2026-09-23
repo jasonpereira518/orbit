@@ -264,3 +264,42 @@ or verify the live flows himself against a preview deploy?
   `useReverification`, `useSessionList`). Re-check on any Clerk bump.
 - **Lockout bugs are the failure mode that hurts most.** The guard against removing the
   last sign-in method needs explicit test cases in the live pass, not just types.
+
+## Amendment, 2026-09-23: the account UI is a modal, not a page
+
+Jason reversed the routing decision after seeing phases 1 and 2 running: the account
+experience should open as a dialog from the avatar menu, laid out like Clerk's old
+"Manage account" modal — a left rail beside a content pane — rather than as a page at
+`/settings/account`.
+
+**What changes.** The four human-facing routes (`/settings/account`, `/sign-in`,
+`/devices`, and the shell layout) are deleted. One `AccountDialog` renders the rail and
+the section components, which are unchanged: Profile, Sign-in, Security, Devices, in that
+order. It opens from the avatar menu's "Account" item and from the Settings profile card's
+"Manage account" button.
+
+**What does not change.** The section components themselves, the lockout rules, the error
+mapper, and the reverification discipline all carry over untouched — they were always
+components rendered by a page, and now a dialog renders them instead.
+
+**The callback route survives, and must.** Connecting a provider leaves the browser and
+returns to a URL; a dialog cannot receive that. `/settings/account/sign-in/callback` stays
+a route — a machine destination, never a place a person navigates to — and its analytics
+entry and smoke coverage stay with it. It finishes the handshake and returns to
+`/settings`, where the person can reopen the dialog.
+
+**What this costs, recorded honestly.** The original decision listed three reasons for
+routes, and two of them are now accepted as costs rather than solved:
+
+1. Deep links die. Nothing in the app links into account sections today, but account
+   alerts and reminder mail link into `/settings`, and a future "go to your account"
+   link can now only land on `/settings`.
+2. There is still no `tabs` primitive in `src/components/ui`, so the rail is built here.
+   It is a list of buttons over local state, not a router — which also sidesteps the
+   third reason (a URL rewritten while a server action is in flight hangs), because the
+   dialog never touches the URL.
+
+**Security in the rail.** Phase 3 has not been built, so the Security section has no real
+content yet. It appears in the rail with one honest line saying password and two-step
+arrive next, rather than being hidden and then appearing — overridable if Jason would
+rather omit it until phase 3 lands.
