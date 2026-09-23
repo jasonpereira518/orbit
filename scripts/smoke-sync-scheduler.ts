@@ -14,8 +14,10 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import { runSyncPass, type SyncDeps } from "../src/lib/sync-scheduler";
 import { ReauthRequiredError } from "../src/lib/errors";
+import { encrypt } from "../src/lib/crypto";
 import type { CalendarFetchResult } from "../src/lib/connectors/google-calendar";
 import { CalendarSyncTokenExpiredError } from "../src/lib/connectors/google-calendar";
+import { MAX_SYNC_FAILURES } from "../src/lib/provider-connections";
 
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 
@@ -108,6 +110,75 @@ async function readConn(id: string): Promise<ConnRow> {
   )[0];
 }
 
+/** Seeds one iCloud connection with a real (fake) encrypted app-specific password. */
+async function seedApple(userId: string, opts: { armed?: boolean } = {}): Promise<string> {
+  const db = await getDb();
+  await db.execute(sql`DELETE FROM apple_connections WHERE user_id = ${userId}`);
+  const inserted = await db.execute(sql`
+    INSERT INTO apple_connections
+      (user_id, email_address, app_password_encrypted, status, next_sync_at, sync_failures)
+    VALUES (
+      ${userId}, ${userId + "@icloud.example"}, ${encrypt("app-specific-password")}, 'active',
+      ${opts.armed === false ? null : new Date(Date.now() - 60_000)}, 0
+    )
+    RETURNING id
+  `);
+  return rowsOf<{ id: string }>(inserted)[0].id;
+}
+
+async function readAppleConn(id: string): Promise<ConnRow> {
+  const db = await getDb();
+  return rowsOf<ConnRow>(
+    await db.execute(sql`
+      SELECT status, sync_status, next_sync_at, sync_failures, sync_error
+      FROM apple_connections WHERE id = ${id}
+    `)
+  )[0];
+}
+
+type SourceRow = {
+  id: string;
+  calendar_id: string;
+  enabled: number;
+  sync_cursor: { syncToken?: string | null } | string | null;
+  last_synced_at: string | Date | null;
+};
+
+function sourceCursorOf(row: SourceRow | undefined): { syncToken?: string | null } | null {
+  if (!row) return null;
+  const raw = row.sync_cursor;
+  if (raw == null) return null;
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+async function seedCalendarSource(
+  connectionId: string,
+  calendarId: string,
+  opts: { enabled?: boolean; lastSyncedAt?: Date | null } = {}
+): Promise<string> {
+  const db = await getDb();
+  const inserted = await db.execute(sql`
+    INSERT INTO calendar_sources (user_id, provider, connection_id, calendar_id, enabled, last_synced_at)
+    VALUES (
+      (SELECT user_id FROM apple_connections WHERE id = ${connectionId}),
+      'apple', ${connectionId}, ${calendarId},
+      ${opts.enabled === false ? 0 : 1},
+      ${opts.lastSyncedAt ?? null}
+    )
+    RETURNING id
+  `);
+  return rowsOf<{ id: string }>(inserted)[0].id;
+}
+
+async function readSource(id: string): Promise<SourceRow> {
+  const db = await getDb();
+  return rowsOf<SourceRow>(
+    await db.execute(sql`
+      SELECT id, calendar_id, enabled, sync_cursor, last_synced_at FROM calendar_sources WHERE id = ${id}
+    `)
+  )[0];
+}
+
 /**
  * Reset to a state where this script is the scheduler's only tenant.
  *
@@ -126,6 +197,11 @@ async function clearAll() {
   await db.execute(sql`
     UPDATE gmail_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-%'
   `);
+  await db.execute(sql`DELETE FROM apple_connections WHERE user_id LIKE 'sched-%'`);
+  await db.execute(sql`
+    UPDATE apple_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-%'
+  `);
+  await db.execute(sql`DELETE FROM calendar_sources WHERE user_id LIKE 'sched-%'`);
 }
 
 run(async () => {
@@ -395,6 +471,86 @@ run(async () => {
     const { deps } = depsFor(new Map([["sched-unarmed", "ok" as const]]));
     const stats = await runSyncPass({ deps });
     check("an unarmed connection is not claimed", stats.claimed === 0, JSON.stringify(stats));
+  }
+
+  // --- Apple: several calendars on one connection, each with its own cursor -----------------
+  await clearAll();
+  {
+    const connId = await seedApple("sched-apple-happy");
+    const sourceAId = await seedCalendarSource(connId, "cal-a", { lastSyncedAt: new Date(Date.now() - 2 * 60_000) });
+    const sourceBId = await seedCalendarSource(connId, "cal-b", { lastSyncedAt: new Date(Date.now() - 60_000) });
+    const disabledCalendarUrl = "cal-disabled";
+    await seedCalendarSource(connId, disabledCalendarUrl, { enabled: false });
+
+    const fetched: string[] = [];
+    const deps: SyncDeps = {
+      getAccessToken: async () => "unused",
+      fetchPage: async () => emptyPage(),
+      fetchApplePage: async ({ calendarUrl }) => {
+        fetched.push(calendarUrl);
+        return emptyPage({ nextSyncToken: `${calendarUrl === "cal-a" ? "a" : "b"}2` });
+      },
+    };
+    const stats = await runSyncPass({ deps });
+    check("an armed apple connection is claimed and synced", stats.synced === 1, JSON.stringify(stats));
+    check("a disabled calendar is never fetched", !fetched.includes(disabledCalendarUrl), JSON.stringify(fetched));
+
+    const sourceA = await readSource(sourceAId);
+    const sourceB = await readSource(sourceBId);
+    check(
+      "each enabled calendar advances its own cursor",
+      sourceCursorOf(sourceA)?.syncToken === "a2" && sourceCursorOf(sourceB)?.syncToken === "b2",
+      `a=${JSON.stringify(sourceA?.sync_cursor)} b=${JSON.stringify(sourceB?.sync_cursor)}`
+    );
+  }
+
+  // --- Apple: a revoked app-specific password disarms rather than retrying forever ----------
+  await clearAll();
+  {
+    const connId = await seedApple("sched-apple-revoked");
+    await seedCalendarSource(connId, "cal-a");
+    const deps: SyncDeps = {
+      getAccessToken: async () => "unused",
+      fetchPage: async () => emptyPage(),
+      fetchApplePage: async () => {
+        throw new ReauthRequiredError("app-specific password revoked");
+      },
+    };
+    await runSyncPass({ deps });
+    const afterRevoke = await readAppleConn(connId);
+    check(
+      "a revoked app password disarms rather than retrying",
+      afterRevoke.next_sync_at === null && Number(afterRevoke.sync_failures) < MAX_SYNC_FAILURES,
+      JSON.stringify(afterRevoke)
+    );
+  }
+
+  // --- Apple: a spent per-connection budget leaves the remaining calendars due now ----------
+  //
+  // The budget clock is stubbed rather than waited out for real: the first two calls (the
+  // deadline's own computation, then the check before the first calendar) read as "no time has
+  // passed yet"; every call after that reads as "the budget is long gone" — deterministic,
+  // regardless of how fast the machine running this script is.
+  await clearAll();
+  {
+    const connId = await seedApple("sched-apple-budget");
+    const sourceAId = await seedCalendarSource(connId, "cal-a", { lastSyncedAt: new Date(Date.now() - 2 * 60_000) });
+    const sourceBId = await seedCalendarSource(connId, "cal-b", { lastSyncedAt: new Date(Date.now() - 60_000) });
+    let clockCalls = 0;
+    const deps: SyncDeps = {
+      getAccessToken: async () => "unused",
+      fetchPage: async () => emptyPage(),
+      fetchApplePage: async ({ calendarUrl }) => emptyPage({ nextSyncToken: `${calendarUrl}-tok` }),
+      budgetClock: () => (++clockCalls <= 2 ? 0 : Number.MAX_SAFE_INTEGER),
+    };
+    const stats = await runSyncPass({ deps });
+    check("a spent budget reports itself", stats.budgetExhausted, JSON.stringify(stats));
+    const conn = await readAppleConn(connId);
+    check("a spent budget leaves remaining calendars due now", conn.next_sync_at !== null, String(conn.next_sync_at));
+    const sourceA = await readSource(sourceAId);
+    const sourceB = await readSource(sourceBId);
+    check("the processed calendar's cursor advanced", sourceCursorOf(sourceA)?.syncToken === "cal-a-tok", JSON.stringify(sourceA?.sync_cursor));
+    check("the un-started calendar's cursor did not", sourceCursorOf(sourceB) === null, JSON.stringify(sourceB?.sync_cursor));
   }
 
   await clearAll();
