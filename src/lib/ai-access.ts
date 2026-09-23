@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
 import { decryptOrNull } from "@/lib/crypto";
@@ -372,6 +372,14 @@ export async function managedUsageThisMonth(userId: string, now = new Date()): P
         eq(usageEvents.userId, userId),
         eq(usageEvents.keyOwner, "orbit"),
         gte(usageEvents.createdAt, start),
+        // Deepgram rows carry keyOwner "orbit" too — it's Orbit's own key, but it is a hosted
+        // service metered by `speech_usage`, not an LLM call against the managed allowance.
+        // Without this exclusion, `UNPRICED_CALL_MICROS.transcription` (managedCostSql's
+        // fallback for a null-cost transcription row, which Deepgram rows always are — see
+        // the note in ai.ts) would charge every voice note against the same monthly cap that
+        // gates a Lifetime account's chat and capture calls, so recording a few voice notes
+        // could throttle that account out of its own AI completions.
+        ne(usageEvents.provider, "deepgram"),
       ),
     );
   const [reserved] = await db

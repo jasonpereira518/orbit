@@ -876,13 +876,14 @@ export async function transcribeAudioWithAI(
           { bytes: Buffer.from(input.base64, "base64"), mimeType: input.mimeType || "audio/wav" },
           { keyterms: vocabulary },
         );
-        // `inputTokens` doubles as the billing unit here: Deepgram has no per-second column
-        // of its own, and `estimateCostMicros` already knows how to price "dollars per 1M
-        // units" — the audio-second price in `ai-pricing.ts` rides on that same math.
+        // No token counts: Deepgram bills per audio-second, not per token, and a fabricated
+        // token count would get summed into admin-facing "input tokens" totals alongside
+        // real LLM prompt tokens (see usage-events.ts's own null-vs-zero rule). The
+        // per-second price in `ai-pricing.ts` documents Deepgram's rate; `speech_usage`
+        // (via `recordSpeechSeconds` below) is the actual meter for what this cost.
         recordUsage({
           userId, operation, provider: "deepgram", model: DEEPGRAM_MODEL,
           kind: "transcription", keyOwner: "orbit", success: true, errorKind: null,
-          inputTokens: result.seconds,
         });
         await recordSpeechSeconds({
           userId, kind: "shortform", seconds: result.seconds, source: "file",
