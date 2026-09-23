@@ -32,11 +32,18 @@ account.
 3. This project **adopts the account-first Integrations dialog** of
    `2026-09-22-integrations-dialog-simplification-design.md` (PR #257). There is no "Calendars"
    tab; Apple becomes a third account page beside Google and Microsoft.
-4. **Inbound calendar sync is free**, per that spec's decision 6 (`requireSyncUser` dropped for
-   Google and Microsoft). `sync` gates write-back in sub-project 2. An earlier "one free
-   connection, pay for the second" answer was superseded by this, deliberately, because it would
-   have split free from paid *inside* a single Google connection — which decision 3 of that spec
-   fuses on purpose (one Connect grants contacts and calendar together).
+4. **Connecting a calendar account is free — Google, Microsoft and Apple alike.** The dialog
+   spec's decision 6 drops `requireSyncUser` for Google and Microsoft; Apple is neither, so it
+   was decided separately (Jason, Sep 22 2026) and lands on the same side. `sync` gates
+   write-back in sub-project 2.
+
+   An earlier "one free connection, pay for the second" answer was superseded, deliberately: it
+   would have split free from paid *inside* a single Google connection, which decision 3 of that
+   spec fuses on purpose (one Connect grants contacts and calendar together).
+
+   **Pasted ICS/webcal URLs keep `requireSyncUser`**, as they do today. The line is *an account
+   Orbit authenticates to* versus *an arbitrary URL Orbit fetches on a schedule* — the latter is
+   an open-ended fetcher, and the former is what makes a new user's network fill up.
 
 ## Sub-project 1: what exists today
 
@@ -218,8 +225,11 @@ the sync results and logs.
 2. Schema + `icloud_connections` + `calendar_sources` + migration.
 3. CalDAV client, recurrence expander, Apple connector.
 4. Scheduler fan-out, ingestion, Outlook parity.
-5. UI — this is the only task that waits on **PR #257** merging. If #257 shifts, everything else
-   proceeds.
+5. UI — the only task with an outside dependency. It needs the account pages of that branch's
+   **P2b** phase to exist, which is more than #257 merging: on
+   `claude/settings-popup-redesign-0ed30d`, `GoogleAccountPage` is written but not yet mounted
+   in the dialog's `Panel`, and `MicrosoftAccountPage` does not exist (P2b Task 5 Step 2 is
+   unstarted). Everything else here proceeds regardless.
 6. Re-scan `SCHEMA_VERSION` immediately before writing the migration.
 
 ## Risks
