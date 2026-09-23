@@ -7,6 +7,7 @@ import { outlookConnections } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { buildMicrosoftAuthUrl, getOutlookOAuthConfigSummary } from "@/lib/outlook";
+import { isAppRelativePath } from "@/lib/safe-path";
 
 const OAUTH_STATE_COOKIE = "orbit_outlook_oauth_state";
 
@@ -56,7 +57,11 @@ export async function startOutlookOAuth(returnTo?: string): Promise<{ url: strin
     );
   }
 
-  const safeReturnTo = returnTo && returnTo.startsWith("/") ? returnTo : "";
+  // returnTo is a same-origin path only — never an absolute/external URL. The callback
+  // resolves this with `new URL(returnTo, url.origin)` and redirects to the result, so
+  // `startsWith("/")` alone was not enough: `//evil.example` and the backslash and
+  // tab/newline folds all survive it. See `isAppRelativePath`.
+  const safeReturnTo = returnTo && isAppRelativePath(returnTo) ? returnTo : "";
   const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}`;
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {

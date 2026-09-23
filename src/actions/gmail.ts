@@ -9,6 +9,7 @@ import { gmailConnections, imports, userSettings } from "@/db/schema";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
+import { isAppRelativePath } from "@/lib/safe-path";
 import {
   GMAIL_SCAN_IMPORT_TYPE,
   runGmailRecruiterScanJob,
@@ -84,9 +85,11 @@ export async function startGmailOAuth(
     hasClientId: summary.hasClientId,
   });
 
-  // returnTo is a same-origin path only — never an absolute/external URL.
-  const safeReturnTo =
-    returnTo && returnTo.startsWith("/") ? returnTo : "";
+  // returnTo is a same-origin path only — never an absolute/external URL. The callback
+  // resolves this with `new URL(returnTo, url.origin)` and redirects to the result, so
+  // `startsWith("/")` alone was not enough: `//evil.example` and the backslash and
+  // tab/newline folds all survive it. See `isAppRelativePath`.
+  const safeReturnTo = returnTo && isAppRelativePath(returnTo) ? returnTo : "";
   const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}`;
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {
