@@ -690,7 +690,14 @@ export async function runImportJob(importId: string): Promise<void> {
                 contactIdByRowId.set(batch[i].row.id, contact.id);
                 provenanceByRowId.set(batch[i].row.id, {
                   created: true,
-                  fp: fingerprintContact(batch[i].input),
+                  // The PERSISTED contact, not `batch[i].input`. The two differ: the input's
+                  // `company` is the adapter's raw string, while `contactInsertValues` writes
+                  // the resolver's canonical name, so `"Acme  Corp"` lands as `"Acme Corp"`.
+                  // Hashing the input would store a fingerprint the row can never match
+                  // again, and undo would read every such person as edited — permanently
+                  // un-undoable. Undo re-hashes the contact row, so the contact row is what
+                  // has to be hashed here.
+                  fp: fingerprintContact(contact),
                 });
                 touchedContactIds.push(contact.id);
                 const lookalike = batch[i].lookalike;
@@ -988,13 +995,20 @@ export async function runImportJob(importId: string): Promise<void> {
       .update(imports)
       .set({
         status: "completed",
-        stats: accumulatedStats(latestStats, jobStart, {
-          skipped: skippedTotal,
-          blockedByPlan: blockedByPlanTotal,
-          failedRows: failedRowsTotal,
-          interactionsLogged: interactionsLoggedTotal,
-          remindersCreated: remindersCreatedTotal,
-        }),
+        stats: {
+          ...accumulatedStats(latestStats, jobStart, {
+            skipped: skippedTotal,
+            blockedByPlan: blockedByPlanTotal,
+            failedRows: failedRowsTotal,
+            interactionsLogged: interactionsLoggedTotal,
+            remindersCreated: remindersCreatedTotal,
+          }),
+          // Frozen here, at the last write this job will ever make, because `updated_at`
+          // cannot be trusted to stay put: an admin retry (`admin-operations.ts`) bumps it
+          // months later, and undo reads this boundary to tell the interactions this import
+          // wrote from the ones that arrived afterwards. See `lib/imports/import-undo.ts`.
+          runEndedAt: new Date().toISOString(),
+        },
         updatedAt: new Date(),
       })
       .where(eq(imports.id, importId));
@@ -1094,6 +1108,11 @@ export async function failImport(
       stats: sql`coalesce(stats, '{}'::jsonb) || ${JSON.stringify({
         ...(stats ?? {}),
         errorCode,
+        // A failed job has also stopped writing, so freeze undo's boundary here too — same
+        // reason as the completion path. A retry that gets further overwrites it on its own
+        // completion, so this can only ever be too early, which keeps people rather than
+        // removing them.
+        runEndedAt: new Date().toISOString(),
       })}::jsonb`,
     })
     .where(eq(imports.id, importId));
