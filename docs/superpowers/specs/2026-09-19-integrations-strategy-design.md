@@ -160,3 +160,53 @@ Each phase gets its own spec → plan → implementation cycle (brainstorming �
   run for the new tables (forced temp PGlite via `scripts/smoke/_env.ts`, never Neon), existing
   `smoke-import-engine` / sync smokes still green, Integrations dialog renders from the registry
   in the demo-mode preview.
+
+---
+
+# Revision — 2026-09-23
+
+Four days on, the ground moved. This section is the current truth; where it contradicts
+anything above, it wins. The original text stays because the reasoning behind the four
+settled decisions still holds — only the map of what exists changed.
+
+## What shipped
+
+**P0 is built** and open as [PR #262](https://github.com/jasonpereira518/orbit/pull/262) at
+schema 87: the registry, `connector_connections`, the claim-and-lease outbox, `ingestPeople`,
+the OAuth helper, the three API routes, and registry-driven statuses. Nothing in it is
+user-reachable — no manifest ships a `sync`, nothing enqueues write-back.
+
+## What was built elsewhere, in parallel
+
+**Apple Calendar — Tier 1 in the table above — already exists** on
+`claude/calendar-connections-apple` (schema 91): a CalDAV client pinned to Apple, multi-calendar
+sync, rejected-calendar handling, and disconnect cleanup. It does **not** use the registry or
+`connector_connections`; it has its own `calendar_sources` table and reads iCloud "the way Orbit
+reads Google and Outlook" — i.e. on the pre-P0 provider path.
+
+That is the parallel-worktree collision this repo keeps producing, one level up: not a rival
+function, a rival *architecture*.
+
+**Ruling (Jason, Sep 23 2026): converge on P0.** After #262 lands, calendar work migrates onto
+the registry and `connector_connections` — one credential store, one claim, one status surface.
+Two spines would mean two places to look when a sync stops, which is the drift P0 exists to end.
+The migration is real work on someone else's branch and belongs to whoever owns that branch;
+this spec's job is to say which way is home.
+
+## What that does to the phasing
+
+**P1 changes shape.** Apple Calendar comes off the "to build" list and onto a "to migrate" list.
+The Tier 1 items nothing else is building are: Gmail metadata sync, Google Contacts as a
+continuous sync rather than a one-shot import, Outlook mail/people, iCloud **Contacts** (CardDAV
+— the calendar half is done, the address book is not), and the BCC logging address.
+
+**Sequencing note.** Migrating calendar onto P0 and adding new P1 connectors both touch
+`runSyncPass` and the registry. Doing them in parallel in separate worktrees is how this
+collision happened; they should be sequenced, migration first, so the second one builds on a
+settled shape.
+
+## Unchanged
+
+The four settled decisions, the L0–L4 depth ladder, the write-back verbs, and the non-code long
+poles (Google CASA verification for `gmail.readonly`, Microsoft publisher verification, the
+Notion/HubSpot/Salesforce/Atlassian listings). None of those depend on what shipped this week.

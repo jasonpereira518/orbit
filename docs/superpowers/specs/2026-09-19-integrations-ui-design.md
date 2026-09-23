@@ -169,3 +169,59 @@ importer parses files.
   vacuously): Home renders families and the Connected strip, search filters, a detail pane opens
   and goes back, a running import survives closing the dialog, and the dialog is usable at phone
   width with no horizontal scroll.
+
+---
+
+# Revision — 2026-09-23: this spec is largely superseded
+
+Two of this spec's decisions were overtaken within days. It is kept as the record of why the
+dialog is the home and what the registry has to drive, but **do not execute the layout or the
+`/imports` decision from it**.
+
+## Decision reversed: `/imports` is not retired
+
+This spec said `/imports` and its hash anchors would 308 into the dialog. Instead
+[PR #238](https://github.com/jasonpereira518/orbit/pull/238) **redesigned** the page —
+drop-anywhere, source detection, a sequential queue, friendly errors — and it is on main today
+with `import-hub`, `import-people-review` and the file importers. Retiring it now would throw
+away shipped work that is better than what this spec imagined replacing it with.
+
+The duplication this spec set out to fix is therefore still open, and the honest framing is the
+inverse of what is written above: the page is the place a person *does an import*, and the
+dialog is the place they *manage a connection*. Whoever next touches either should write that
+split down rather than re-deciding it.
+
+## Layout superseded: the dialog is organised by account, not by family
+
+This spec proposed a family-based nav (Mail, Calendar, Contacts, Tasks, …) over a Home view.
+[PR #257](https://github.com/jasonpereira518/orbit/pull/257) — open, mergeable — instead groups
+by **account**:
+
+- `accounts`: Google, Microsoft, LinkedIn
+- `ai`: AI, Claude and ChatGPT, Reminders in calendar
+- `advanced`: API keys, Webhooks, Outreach keys
+
+with Overview as the dialog's home view. That is the better call for the same reason the
+strategy spec gives Google a single manifest entry: one Google grant powers contacts, calendar
+and mail, so a person reconnecting thinks "my Google account", not "my calendar connector".
+The Home-view-plus-detail-pane shape this spec argued for survives; the axis it sorts on does not.
+
+## A collision to expect when both land
+
+P0's Task 9 widened `IntegrationStatuses` to `Partial<Record<IntegrationTabId | ConnectorStatusId, …>>`
+and added lookups keyed by registry ids (`calendar_ics`, `luma`, `eventbrite`, `apollo`, `zapier`).
+PR #257 rewrites `INTEGRATION_TABS` itself — adding `microsoft`, `assistants`, `reminders`, and
+dropping `calendar`/`gmail`/`outlook` as tab ids. So `IntegrationTabId` changes membership under
+that union.
+
+Whichever of #262 and #257 merges second owns the reconciliation. It is mechanical, but it is
+the kind of mechanical that silently drops a status row: the guard added in P0
+(`scripts/smoke-integration-statuses.ts`) fails if a registered connector has no lookup **and**
+if a lookup names no connector, so run it after the merge and believe it.
+
+## What still holds
+
+The registry as the single source the nav, the icons, the status fan-out and the deep links all
+derive from; read-on/write-off consent with per-capability toggles; long jobs detaching so
+closing the dialog never cancels an import; `needs_reauth` as a first-class state; and planned
+connectors shown with a Request vote. None of that is affected by either PR.
