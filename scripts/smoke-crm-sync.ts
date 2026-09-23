@@ -44,16 +44,18 @@ function contact(id: string, first: string, email: string, stage: string | null,
 /** A HubSpot with owner 77 and the given pages of search results, answered in order. */
 function hubspot(
   pages: Array<{ results: unknown[]; after: string | null } | "429" | "403">,
-  opts: { onSearch?: () => void | Promise<void> } = {}
+  opts: { onSearch?: () => void | Promise<void>; introspect?: Record<string, unknown> } = {}
 ) {
   const searches: Array<Record<string, unknown>> = [];
   let introspections = 0;
+  let owners = 0;
   const impl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/token/introspect")) {
       introspections++;
-      return json(200, { active: true, hub_id: 4242, hub_domain: "acme.hubspot.com", user_id: 9, user: "sam@acme.test" });
+      return json(200, opts.introspect ?? { active: true, hub_id: 4242, hub_domain: "acme.hubspot.com", user_id: 9, user: "sam@acme.test" });
     }
+    if (url.includes("/crm/owners/")) owners++;
     if (url.includes("/crm/owners/2026-09/9?idProperty=userId")) return json(200, { id: "77" });
     if (url.endsWith("/contacts/search")) {
       searches.push(JSON.parse(String(init?.body)));
@@ -66,7 +68,7 @@ function hubspot(
     }
     throw new Error(`unscripted ${url}`);
   }) as typeof fetch;
-  return { impl, searches, introspections: () => introspections };
+  return { impl, searches, introspections: () => introspections, owners: () => owners };
 }
 
 async function connect() {
@@ -252,6 +254,14 @@ run(async () => {
     reconnectedRow?.syncStatus === "idle" && reconnectedRow?.syncError === null && reconnectedRow?.lastSyncedAt === null,
     JSON.stringify({ s: reconnectedRow?.syncStatus, e: reconnectedRow?.syncError, l: reconnectedRow?.lastSyncedAt })
   );
+
+  console.log("\nan introspection that names nobody says so");
+  await db.update(connectorConnections).set({ syncCursor: null, syncStatus: "idle" }).where(eq(connectorConnections.userId, USER));
+  const nameless = hubspot([], { introspect: { active: true, hub_id: 4242 } });
+  const r9 = await syncHubspot(await claim(), { fetchImpl: nameless.impl });
+  check("stopped with its own reason", r9.outcome === "stopped" && r9.message === "HubSpot didn’t say who connected — reconnect HubSpot", JSON.stringify(r9));
+  check("no owner lookup, no search", nameless.owners() === 0 && nameless.searches.length === 0, `${nameless.owners()} owners, ${nameless.searches.length} searches`);
+  check("the card gets the same words", (await row())?.syncError === "HubSpot didn’t say who connected — reconnect HubSpot", String((await row())?.syncError));
 
   console.log("\na downgraded account stops syncing");
   await db.update(userSettings).set({ compedPlan: null }).where(eq(userSettings.userId, USER));

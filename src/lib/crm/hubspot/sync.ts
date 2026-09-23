@@ -58,6 +58,7 @@ export type HubspotSyncResult = {
 const NOT_ENTITLED = "HubSpot sync is on Orbit Pro and Lifetime — upgrade to keep it running";
 const NO_OWNER =
   "HubSpot has no owner record for the person who connected, so no contacts are assigned to you — ask a HubSpot admin to add you as a user, then sync again";
+const NOBODY = "HubSpot didn’t say who connected — reconnect HubSpot";
 const LEASE_LOST = "HubSpot’s connection changed during the sync";
 
 export async function syncHubspot(
@@ -92,6 +93,9 @@ export async function syncHubspot(
     }
     if (!identity) {
       const info = await auth.call((token) => introspectHubspotToken(token, fetchImpl));
+      // Without a user id or an email there is nobody to look up, and "no owner record" would
+      // send the person to a HubSpot admin for nothing.
+      if (!info.userId && !info.userEmail) return stop(NOBODY);
       const owner = await auth.call((token) =>
         findHubspotOwner(token, { userId: info.userId, email: info.userEmail }, fetchImpl)
       );
