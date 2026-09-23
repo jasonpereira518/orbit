@@ -3,11 +3,14 @@
 import type { MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
+import { deepgramEnabled } from "@/lib/deepgram";
 import {
   analyzeMeetingTranscript,
   buildMeetingCorpus,
+  formatTranscriptSegment,
   isSelf,
 } from "@/lib/meeting-digest";
+import { requireMeetingsUser } from "@/lib/plan-guards";
 import {
   createMeetingSessionRow,
   discardMeetingSessionRow,
@@ -20,6 +23,7 @@ import {
   type MeetingAttendee,
 } from "@/lib/meeting-sessions";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
+import { speechAllowance } from "@/lib/speech-quota";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { actionFailure } from "@/lib/action-failure";
 
@@ -35,6 +39,17 @@ import { actionFailure } from "@/lib/action-failure";
 
 type Fail = { ok: false; error: string };
 
+/**
+ * "October 1" — the day the meeting allowance comes back.
+ *
+ * Fixed to `en-US` deliberately: this runs on a server whose locale is the deployment's, not
+ * the reader's, so leaving it to the default would render a US user's date in whatever
+ * locale Vercel's runtime happens to carry.
+ */
+function resetLabel(resetsAt: Date): string {
+  return resetsAt.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+}
+
 export async function createMeetingSession(input: {
   title?: string | null;
   attendees?: MeetingAttendee[];
@@ -43,7 +58,29 @@ export async function createMeetingSession(input: {
   recorderId: string;
 }): Promise<{ ok: true; id: string; startedAtIso: string } | Fail> {
   try {
-    const userId = await requireUserId();
+    const userId = await requireMeetingsUser();
+    // The entitlement says this plan MAY record; the allowance says whether there is
+    // anything left to record with. Without this, an account at 100% got the whole ceremony
+    // — a share picker, a started recording — and then an instant "Recording stopped" from
+    // the first stream-token 402, leaving an empty session row behind. Refuse up front, and
+    // name the day it comes back, which is the only thing the user can act on.
+    //
+    // A quota that cannot be READ throws, and the catch below turns that into `ok: false`:
+    // meetings fail closed here too.
+    //
+    // Only while DEEPGRAM is the engine. The allowance meters Orbit's own key, and
+    // `ORBIT_DEEPGRAM=off` — the incident lever — sends transcription back to the user's own
+    // OpenAI or Gemini key, where a recorded hour costs Orbit nothing. Refusing a spent cap
+    // in that state would lock a paying account out of a meeting Orbit is not paying for,
+    // and tell them their hours are gone when their hours are not what is stopping them. The
+    // read is skipped entirely rather than taken and ignored, so no stale number can leak
+    // into copy from here.
+    if (deepgramEnabled()) {
+      const allowance = await speechAllowance(userId, "meeting");
+      if (allowance.exhausted) {
+        return { ok: false, error: `You’ve used this month’s meeting hours — they reset on ${resetLabel(allowance.resetsAt)}` };
+      }
+    }
     const row = await createMeetingSessionRow(userId, input);
     return { ok: true, id: row.id, startedAtIso: row.startedAt.toISOString() };
   } catch (err) {
@@ -59,7 +96,7 @@ export async function resumeMeetingSession(
   | Fail
 > {
   try {
-    const userId = await requireUserId();
+    const userId = await requireMeetingsUser();
     const res = await resumeMeetingSessionRow(userId, id, recorderId);
     if (!res.ok) return res;
     return {
@@ -79,7 +116,7 @@ export async function endMeetingSession(
   durationMs: number
 ): Promise<{ ok: true } | Fail> {
   try {
-    const userId = await requireUserId();
+    const userId = await requireMeetingsUser();
     const row = await endMeetingSessionRow(userId, id, { durationMs });
     if (!row) return { ok: false, error: "That meeting no longer exists" };
     return { ok: true };
@@ -168,7 +205,7 @@ export async function analyzeMeetingSession(
 ): Promise<{ ok: true; analysis: MeetingAnalysis } | Fail> {
   let userId: string;
   try {
-    userId = await requireUserId();
+    userId = await requireMeetingsUser();
     await consumeBucket("capture", userId, RATE_LIMITS.capture);
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t analyze the meeting", "meetings.analyze-meeting-session") };
@@ -179,7 +216,9 @@ export async function analyzeMeetingSession(
     if (!t) return { ok: false, error: "That meeting no longer exists" };
     if (t.session.status === "saved") return { ok: false, error: "That meeting was already saved" };
 
-    const paragraphs = t.segments.map((s) => s.text).filter((s) => s.trim());
+    const paragraphs = t.segments
+      .filter((s) => s.text.trim())
+      .map((s) => formatTranscriptSegment(s));
     if (!paragraphs.length) {
       return {
         ok: false,

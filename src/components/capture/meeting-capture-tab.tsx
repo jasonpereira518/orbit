@@ -7,6 +7,7 @@
 import { useSyncExternalStore } from "react";
 import { MeetingCapturePanel } from "@/components/capture/meeting-capture-panel";
 import type { MeetingAnalysis } from "@/actions/meetings";
+import { LockedFeature } from "@/components/locked-feature";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { isMeetingCaptureSupported, isMicMeetingCaptureSupported } from "@/lib/use-meeting-recorder";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
@@ -38,6 +39,8 @@ export function MeetingCaptureTab({
   hasApiKey,
   aiReason = null,
   canTranscribe,
+  canUseMeetings,
+  meetingsDeniedMessage,
   onBusyChange,
   onAnalyzed,
   panelId,
@@ -47,6 +50,11 @@ export function MeetingCaptureTab({
   hasApiKey: boolean;
   aiReason?: AiAccessDenial | null;
   canTranscribe: boolean;
+  /** Meeting recording is Orbit Pro and Lifetime only. False renders an upgrade prompt instead of the recorder. */
+  canUseMeetings: boolean;
+  /** `FEATURE_DENIAL.meetings`, read on the server and threaded down — this is a client
+   * component and cannot import `@/lib/entitlements` (it reaches the database). */
+  meetingsDeniedMessage: string;
   onBusyChange: (busy: boolean) => void;
   onAnalyzed: (analysis: MeetingAnalysis, sessionId: string) => void;
   panelId: string;
@@ -56,16 +64,29 @@ export function MeetingCaptureTab({
   const micSupported = useMicMeetingSupported();
   return (
     <div id={panelId} role="tabpanel" aria-labelledby={tabId}>
-      <MeetingCapturePanel
-        resumable={resumable}
-        hasApiKey={hasApiKey}
-        aiReason={aiReason}
-        canTranscribe={canTranscribe}
-        captureSupported={supported}
-        micSupported={micSupported}
-        onBusyChange={onBusyChange}
-        onAnalyzed={onAnalyzed}
-      />
+      {canUseMeetings ? (
+        <MeetingCapturePanel
+          resumable={resumable}
+          hasApiKey={hasApiKey}
+          aiReason={aiReason}
+          canTranscribe={canTranscribe}
+          captureSupported={supported}
+          micSupported={micSupported}
+          onBusyChange={onBusyChange}
+          onAnalyzed={onAnalyzed}
+        />
+      ) : (
+        <LockedFeature
+          title="Meeting transcription"
+          description={meetingsDeniedMessage}
+          highlights={[
+            "Record calls straight from the browser",
+            "Live transcription while the meeting runs",
+            "An AI summary with attendees and follow-ups",
+            "Turns straight into logged interactions",
+          ]}
+        />
+      )}
     </div>
   );
 }

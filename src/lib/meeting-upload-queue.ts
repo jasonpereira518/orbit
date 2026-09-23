@@ -44,6 +44,12 @@ export type QueueFatal =
   | "taken-over"
   /** The meeting was saved or discarded elsewhere, or no longer exists. */
   | "gone"
+  /**
+   * This month's meeting hours are gone, so chunk recovery is refused too. Terminal, not a
+   * retry: the cap only moves at the start of next month, and every later chunk of this
+   * meeting would be refused identically.
+   */
+  | "meeting-quota-spent"
   | "signed-out";
 
 export type MeetingUploadQueueOptions = {
@@ -281,6 +287,9 @@ export class MeetingUploadQueue {
         return;
       case 409:
         this.fail("taken-over", message);
+        return;
+      case 402:
+        this.fail("meeting-quota-spent", message);
         return;
       case 422:
         this.fail(body?.code === "no-transcription-key" ? "no-transcription-key" : "transcription-refused", message);
