@@ -109,6 +109,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
   "smoke-deepgram-params": "pure",
+  "smoke-speaker-map": "pure",
   "smoke-dev-logging": "pure",
   "smoke-dictation": "pure",
   "smoke-duplicate-index": "pure",
