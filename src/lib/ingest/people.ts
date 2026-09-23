@@ -42,6 +42,13 @@ export type PeopleIngestStats = {
   matched: number;
   /** Would have been created but for the plan's contact cap. */
   blockedByPlan: number;
+  /**
+   * Which contact each INPUT resolved to, by its index in the array passed in — only when
+   * `ctx.options.reportResolutions` is set. By index rather than by object: a batch naming one
+   * person twice folds both rows into one contact, and a caller linking its own records (a CRM
+   * sync) needs an answer for each. No entry for a nameless input or one the cap refused.
+   */
+  resolutions?: Array<{ index: number; contactId: string }>;
 };
 
 function emptyStats(): PeopleIngestStats {
@@ -129,8 +136,11 @@ export async function ingestPeople(
   const toCreate: ContactInput[] = [];
   const createIndexByKey = new Map<string, number>();
   const mergeByContactId = new Map<string, Partial<ContactInput>>();
+  const resolved: Array<{ index: number; contactId: string }> = [];
+  /** `toCreate` position → the input indices that will become that contact. */
+  const inputsByCreate = new Map<number, number[]>();
 
-  for (const person of people) {
+  for (const [index, person] of people.entries()) {
     const name = person.fullName?.trim();
     if (!name) continue;
     stats.seen++;
@@ -146,6 +156,7 @@ export async function ingestPeople(
 
     if (best && best.confidence >= ctx.options.matchConfidence) {
       ctx.touchedContactIds.add(best.contact.id);
+      resolved.push({ index, contactId: best.contact.id });
       const input = toContactInput(person, ctx.options.source);
       const existing = mergeByContactId.get(best.contact.id);
       if (existing) {
@@ -167,6 +178,7 @@ export async function ingestPeople(
         toCreate[pending],
         toContactInput(person, ctx.options.source)
       ) as ContactInput;
+      inputsByCreate.get(pending)?.push(index);
       continue;
     }
 
@@ -176,6 +188,7 @@ export async function ingestPeople(
     }
     const input = toContactInput(person, ctx.options.source);
     if (key !== null) createIndexByKey.set(key, toCreate.length);
+    inputsByCreate.set(toCreate.length, [index]);
     toCreate.push(input);
   }
 
@@ -192,7 +205,10 @@ export async function ingestPeople(
     // Fewer created than asked for means the cap bit part-way through the batch.
     stats.blockedByPlan += toCreate.length - created.length;
     if (ctx.headroom !== null) ctx.headroom -= created.length;
-    for (const contact of created) {
+    for (const [i, contact] of created.entries()) {
+      // `created[i]` is `toCreate[i]`: one multi-row INSERT … RETURNING, the same pairing
+      // `ingestEvents` relies on. The cap only ever trims the tail.
+      for (const inputIndex of inputsByCreate.get(i) ?? []) resolved.push({ index: inputIndex, contactId: contact.id });
       ctx.touchedContactIds.add(contact.id);
       // Fold new contacts into the index so a LATER batch matches them rather than creating
       // the person again. Within this batch, `createIndexByKey` already did that job.
@@ -215,6 +231,10 @@ export async function ingestPeople(
       [...mergeByContactId.entries()].map(([contactId, input]) => ({ contactId, input })),
       ctx.companyResolve
     );
+  }
+
+  if (ctx.options.reportResolutions) {
+    stats.resolutions = resolved.sort((a, b) => a.index - b.index);
   }
 
   return stats;
