@@ -10,7 +10,7 @@
  * `upsertConnectorConnection`.
  */
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
-import { isAppRelativePath } from "@/lib/safe-path";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 export type OAuthProviderConfig = {
   authorizeUrl: string;
@@ -145,19 +145,17 @@ function stateKey(): Buffer {
  * path — because that resolution happens downstream of this function, not inside it.
  *
  * Those folds (backslash to forward slash, tab and newline stripped from the whole input,
- * both BEFORE an authority is parsed) and the two checks that survive them now live in
- * `isAppRelativePath`. They used to live here, in a second hand-maintained copy alongside
- * `sanitizePath` in `feedback-submission.ts` — and that copy drifted, admitting every one of
- * the folds this one already rejected. One predicate, so there is nothing left to drift.
+ * both BEFORE an authority is parsed) and the checks that survive them live in
+ * `safeReturnPath`, which `gmail.ts` and `outlook.ts` already redirect through. This module
+ * kept a second hand-maintained copy for a while; two copies of one security predicate is
+ * how the one nobody is looking at drifts, so there is only the shared one now.
  *
  * The `/settings` fallback stays here on purpose. A redirect has to go somewhere, and that
- * is the decision the shared predicate deliberately declines to make: the feedback path
- * wants null for the same input, so it can record that it has no route rather than invent
- * one.
+ * is the decision the shared predicate deliberately declines to make: it returns null so a
+ * caller with no route to invent — the feedback path — can record that instead.
  */
 function safeReturnTo(value: string | undefined | null): string {
-  if (!value) return "/settings";
-  return isAppRelativePath(value) ? value : "/settings";
+  return safeReturnPath(value) ?? "/settings";
 }
 
 export function signOAuthState(state: OAuthState): string {
