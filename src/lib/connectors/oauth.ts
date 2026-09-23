@@ -10,6 +10,7 @@
  * `upsertConnectorConnection`.
  */
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { isAppRelativePath } from "@/lib/safe-path";
 
 export type OAuthProviderConfig = {
   authorizeUrl: string;
@@ -141,25 +142,22 @@ function stateKey(): Buffer {
  * the callback would forward the user to it after a successful sign-in. The check has to
  * survive not just an absolute URL but everything `new URL(value, origin)` can fold into one
  * — which is exactly how both existing OAuth callbacks (`gmail`/`outlook`) resolve a return
- * path — because that resolution happens downstream of this function, not inside it:
+ * path — because that resolution happens downstream of this function, not inside it.
  *
- *   - `//evil.example` is a protocol-relative network-path reference: WHATWG URL parsing
- *     treats a value starting with two slash-or-backslash characters as a fresh authority.
- *   - `/\evil.example` and `/\/evil.example` reach the same state, because for a special
- *     scheme (http/https) the parser folds backslash to forward slash throughout — a leading
- *     "/\" is exactly as much a network-path reference as "//".
- *   - `/\t/evil.example` and `/\n/evil.example` reach it too: the URL spec strips every
- *     ASCII tab and newline from the whole input before parsing anything else, so the tab
- *     disappears and the remaining characters collapse into "//evil.example".
+ * Those folds (backslash to forward slash, tab and newline stripped from the whole input,
+ * both BEFORE an authority is parsed) and the two checks that survive them now live in
+ * `isAppRelativePath`. They used to live here, in a second hand-maintained copy alongside
+ * `sanitizePath` in `feedback-submission.ts` — and that copy drifted, admitting every one of
+ * the folds this one already rejected. One predicate, so there is nothing left to drift.
  *
- * Hence two checks: the first two characters can never both be slash-or-backslash, and the
- * value can never contain whitespace or a C0 control character anywhere, not just up front.
+ * The `/settings` fallback stays here on purpose. A redirect has to go somewhere, and that
+ * is the decision the shared predicate deliberately declines to make: the feedback path
+ * wants null for the same input, so it can record that it has no route rather than invent
+ * one.
  */
 function safeReturnTo(value: string | undefined | null): string {
   if (!value) return "/settings";
-  if (!/^\/([^/\\].*)?$/.test(value)) return "/settings";
-  if (/[\x00-\x20\x7f]/.test(value)) return "/settings";
-  return value;
+  return isAppRelativePath(value) ? value : "/settings";
 }
 
 export function signOAuthState(state: OAuthState): string {
