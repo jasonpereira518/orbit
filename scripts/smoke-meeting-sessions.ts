@@ -17,6 +17,7 @@ import {
   meetingTranscriptSegments,
   noteBatches,
   reminders,
+  speechUsage,
   userSettings,
   type MeetingDigest,
 } from "../src/db/schema";
@@ -31,6 +32,7 @@ import {
   ingestMeetingChunk,
   markMeetingSessionSaved,
   missingSeqs,
+  recordLiveSegments,
   resumeMeetingSessionRow,
   storeMeetingDigest,
   toNoteBatchMeeting,
@@ -53,6 +55,7 @@ async function reset() {
   const db = await getDb();
   for (const user of [USER, OTHER]) {
     await db.delete(meetingTranscriptSegments).where(eq(meetingTranscriptSegments.userId, user));
+    await db.delete(speechUsage).where(eq(speechUsage.userId, user));
     await db.delete(meetingSessions).where(eq(meetingSessions.userId, user));
     await db.delete(reminders).where(eq(reminders.userId, user));
     await db.delete(noteBatches).where(eq(noteBatches.userId, user));
@@ -288,6 +291,42 @@ async function main() {
     const s = await db.query.meetingSessions.findFirst({ where: eq(meetingSessions.id, doomed.id) });
     const segs = await db.query.meetingTranscriptSegments.findMany({ where: eq(meetingTranscriptSegments.sessionId, doomed.id) });
     check("discard deletes the session and every line of it", !s && segs.length === 0);
+  }
+
+  // ── Live segments ──────────────────────────────────────────────────────────────────
+  console.log("\nlive segments");
+  {
+    const session = await createMeetingSessionRow(USER, { includesMic: true, recorderId: "rec-1" });
+    const first = await recordLiveSegments(USER, session.id, {
+      recorderId: "rec-1",
+      segments: [
+        { seq: 0, startMs: 0, endMs: 4_000, speaker: "you", text: "Met Priya from Stripe." },
+        { seq: 1, startMs: 4_000, endMs: 9_000, speaker: "speaker-1", text: "We talked about pricing." },
+      ],
+    });
+    check("both segments are written", first.ok && first.written === 2);
+    check("duration follows the last segment", first.ok && first.durationMs === 9_000);
+
+    const again = await recordLiveSegments(USER, session.id, {
+      recorderId: "rec-1",
+      segments: [{ seq: 1, startMs: 4_000, endMs: 9_000, speaker: "speaker-1", text: "We talked about pricing." }],
+    });
+    check("a retried batch writes nothing new", again.ok && again.written === 0);
+
+    const stolen = await recordLiveSegments(USER, session.id, {
+      recorderId: "rec-2",
+      segments: [{ seq: 2, startMs: 9_000, endMs: 12_000, speaker: null, text: "Later." }],
+    });
+    check("another recorder is refused", !stolen.ok && stolen.status === 409);
+
+    const rows = await db.select().from(meetingTranscriptSegments).where(eq(meetingTranscriptSegments.sessionId, session.id));
+    check("speakers are stored", rows.find((r) => r.seq === 0)?.speaker === "you");
+    check("the engine is deepgram", rows.every((r) => r.engine === "deepgram"));
+
+    const usage = await db.select().from(speechUsage).where(eq(speechUsage.sessionId, session.id));
+    check("usage is metered once, in seconds", usage.length === 1 && usage[0]?.seconds === 9);
+
+    await discardMeetingSessionRow(USER, session.id);
   }
 
   await reset();

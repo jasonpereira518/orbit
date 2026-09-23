@@ -28,6 +28,7 @@ import {
   type NoteBatchMeeting,
 } from "@/db/schema";
 import type { TranscribeOptions, TranscriptionResult } from "@/lib/ai";
+import { recordSpeechSeconds } from "@/lib/speech-quota";
 
 export type MeetingAttendee = { name: string; email?: string | null };
 
@@ -453,6 +454,105 @@ export async function ingestMeetingChunk(
     .where(eq(meetingSessions.id, session.id));
 
   return { ok: true, seq: meta.seq, text, engine, duplicate: false };
+}
+
+export type LiveSegmentInput = {
+  seq: number;
+  startMs: number;
+  endMs: number;
+  speaker: string | null;
+  text: string;
+};
+
+export type RecordLiveSegmentsResult =
+  | { ok: true; written: number; durationMs: number }
+  | { ok: false; status: 400 | 404 | 409 | 410; error: string };
+
+const MAX_LIVE_BATCH = 200;
+const MAX_LIVE_TEXT_LEN = 5_000;
+
+function validateLiveSegments(segments: LiveSegmentInput[]): string | null {
+  if (!segments.length || segments.length > MAX_LIVE_BATCH) return "Bad segment batch";
+  for (const s of segments) {
+    if (!Number.isInteger(s.seq) || s.seq < 0 || s.seq > MAX_SEQ) return "Bad chunk number";
+    if (!Number.isFinite(s.startMs) || !Number.isFinite(s.endMs)) return "Bad chunk timing";
+    if (s.startMs < 0 || s.endMs < s.startMs || s.endMs > MAX_CHUNK_OFFSET_MS) return "Bad chunk timing";
+    if (s.text.length > MAX_LIVE_TEXT_LEN) return "Segment text is too long";
+  }
+  return null;
+}
+
+/**
+ * Write a batch of live (Deepgram) segments in one statement and meter the seconds they
+ * cover, same shape as `ingestMeetingChunk` but for finished sentences streamed straight
+ * from the browser rather than uploaded audio.
+ *
+ * `(session_id, seq)` still makes a repeat a no-op: `onConflictDoNothing` drops any seq
+ * already stored, so a retried batch writes nothing new. Usage is metered from the
+ * highest `endMs` across the WHOLE session so far (not just this batch), and
+ * `recordSpeechSeconds` keeps that a high-water mark per session — so re-reporting the
+ * same total, or a lower one from an out-of-order batch, never double-charges.
+ */
+export async function recordLiveSegments(
+  userId: string,
+  sessionId: string,
+  input: { recorderId: string; segments: LiveSegmentInput[] },
+): Promise<RecordLiveSegmentsResult> {
+  const invalid = validateLiveSegments(input.segments);
+  if (invalid) return { ok: false, status: 400, error: invalid };
+
+  const session = await getMeetingSession(userId, sessionId);
+  if (!session) return { ok: false, status: 404, error: "Meeting not found" };
+
+  if (!ACCEPTS_CHUNKS.includes(session.status)) {
+    return { ok: false, status: 410, error: "This meeting is no longer recording" };
+  }
+  if (session.status === "recording" && session.recorderId && input.recorderId !== session.recorderId) {
+    return { ok: false, status: 409, error: "Another tab is recording this meeting" };
+  }
+
+  const db = await getDb();
+  const inserted = await db
+    .insert(meetingTranscriptSegments)
+    .values(
+      input.segments.map((s) => ({
+        sessionId: session.id,
+        userId,
+        seq: s.seq,
+        startMs: Math.round(s.startMs),
+        endMs: Math.round(s.endMs),
+        text: s.text,
+        engine: "deepgram" as MeetingSegmentEngine,
+        speaker: s.speaker,
+      })),
+    )
+    .onConflictDoNothing({
+      target: [meetingTranscriptSegments.sessionId, meetingTranscriptSegments.seq],
+    })
+    .returning();
+
+  const maxSeq = Math.max(...input.segments.map((s) => s.seq));
+  const maxEndMs = Math.max(...input.segments.map((s) => Math.round(s.endMs)));
+
+  const [row] = await db
+    .update(meetingSessions)
+    .set({
+      lastSeq: sql`greatest(${meetingSessions.lastSeq}, ${maxSeq})`,
+      durationMs: sql`greatest(${meetingSessions.durationMs}, ${maxEndMs})`,
+      updatedAt: new Date(),
+    })
+    .where(eq(meetingSessions.id, session.id))
+    .returning(); // bare: a field selector breaks over the Db union (see ingestMeetingChunk's sibling calls)
+
+  await recordSpeechSeconds({
+    userId,
+    kind: "meeting",
+    source: "stream",
+    sessionId: session.id,
+    seconds: Math.ceil((row?.durationMs ?? maxEndMs) / 1000),
+  });
+
+  return { ok: true, written: inserted.length, durationMs: row?.durationMs ?? maxEndMs };
 }
 
 async function findSegment(sessionId: string, seq: number): Promise<MeetingSegmentRow | null> {
