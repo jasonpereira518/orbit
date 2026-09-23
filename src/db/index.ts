@@ -3353,9 +3353,19 @@ async function applySchema(run: StatementRunner, failed: SchemaFailure[]): Promi
   const statements = DDL.split(";")
     .map((s) => s.trim())
     .filter(Boolean);
-  const tables = statements.filter((s) => /^CREATE TABLE/i.test(s));
-  const columns = statements.filter((s) => /^ALTER TABLE/i.test(s));
-  const rest = statements.filter((s) => !/^(CREATE TABLE|ALTER TABLE)/i.test(s));
+  // Classify on the statement with its leading `--` comments stripped, not on its raw text.
+  // Splitting on `;` leaves any comment block that introduces a statement attached to the
+  // FRONT of it, so a CREATE TABLE with an explanation above it did not look like a CREATE
+  // TABLE and fell through to `rest` — which runs after `alters`. The first ALTER naming
+  // such a table then failed on a fresh database with "relation does not exist", and since
+  // the version is only recorded on zero failures (see `sweep`), every boot re-ran the
+  // whole sweep and the app got slower on every request until it timed out. Only the
+  // ORDER changes here; each statement still executes with its comments attached.
+  // `scripts/smoke-schema-ddl.ts` asserts no CREATE TABLE can hide in `rest` again.
+  const body = (s: string) => s.replace(/^(?:\s*--[^\n]*\n)+/, "");
+  const tables = statements.filter((s) => /^CREATE TABLE/i.test(body(s)));
+  const columns = statements.filter((s) => /^ALTER TABLE/i.test(body(s)));
+  const rest = statements.filter((s) => !/^(CREATE TABLE|ALTER TABLE)/i.test(body(s)));
   await runStatements(run, tables, "DDL", failed);
   await runStatements(run, columns, "DDL", failed);
   await runStatements(run, alters, "alters", failed);
