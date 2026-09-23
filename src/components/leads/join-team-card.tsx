@@ -27,7 +27,7 @@ export function JoinTeamCard({ domain, name, memberCount }: { domain: string; na
         toast.success(shareNetwork ? `You’re on the ${name} team, sharing your network` : `You’re on the ${name} team`);
         router.refresh();
       } catch (err) {
-        toast.error(friendlyError(err, "Couldn’t join the team â try again?"));
+        toast.error(friendlyError(err, "Couldn’t join the team — try again?"));
       }
     });
   }
@@ -35,7 +35,7 @@ export function JoinTeamCard({ domain, name, memberCount }: { domain: string; na
   const already =
     memberCount > 0
       ? `${memberCount} ${memberCount === 1 ? "colleague is" : "colleagues are"} already on it.`
-      : "You'd be the first.";
+      : "You’d be the first.";
 
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">

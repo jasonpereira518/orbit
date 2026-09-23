@@ -44,7 +44,7 @@ export function TeamCard({
         router.refresh();
       } catch (err) {
         setSharing(!next);
-        toast.error(friendlyError(err, "Couldn’t change sharing â try again?"));
+        toast.error(friendlyError(err, "Couldn’t change sharing — try again?"));
       }
     });
   }
@@ -60,7 +60,7 @@ export function TeamCard({
         toast.success(`You left the ${membership.name} team`);
         router.refresh();
       } catch (err) {
-        toast.error(friendlyError(err, "Couldn’t leave the team â try again?"));
+        toast.error(friendlyError(err, "Couldn’t leave the team — try again?"));
       } finally {
         setConfirmLeave(false);
       }
@@ -70,7 +70,9 @@ export function TeamCard({
   const others = members.filter((m) => m.userId !== viewerUserId);
   const sharingOthers = others.filter((m) => m.sharing).length;
   const summary = !sharing
-    ? "Your network is private, so you won't see who your teammates know either. Share it to find warm paths."
+    ? others.length === 0
+      ? "Your network is private. Share it and teammates who join later can find warm paths through you — it works both ways."
+      : "Your network is private, so you won’t see who your teammates know either. Share it to find warm paths."
     : others.length === 0
       ? `You’re the first one here. Colleagues with a verified @${membership.domain} address can join.`
       : `Your network is shared. ${sharingOthers} of ${others.length} ${others.length === 1 ? "teammate shares" : "teammates share"} theirs with you.`;

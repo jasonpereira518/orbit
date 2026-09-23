@@ -122,6 +122,9 @@ function main() {
       /import\s+(?!type\b)[^;]*from\s+["'](@\/db(\/[^"']*)?|@\/lib\/teams|@\/lib\/leads\/(store|pipeline|warm-path-query)|@\/lib\/apollo)["']/;
     for (const file of readdirSync(dir).filter((f) => /\.(tsx?)$/.test(f))) {
       check(`${file} never value-imports a server module`, !serverOnly.test(code(`${dir}/${file}`)));
+      const bytes = readFileSync(`${dir}/${file}`);
+      check(`${file} has no mis-encoded characters`, !/\xc3\xa2\xc2[\x80-\xbf]|\xc2[\x80-\x9f]/.test(bytes.toString("latin1")));
+      check(`${file} uses curly apostrophes`, !/[A-Za-z]'[A-Za-z]/.test(code(`${dir}/${file}`)));
     }
     for (const file of CLIENT_COMPONENTS) {
       const path = `${dir}/${file}`;
