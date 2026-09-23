@@ -100,6 +100,16 @@ export async function runCrmSyncNow(
  * Revoke (best effort), then forget. No plan check: a downgraded account must always be able
  * to disconnect. The contacts a sync created stay — they are the person's now — and CRM leads
  * stay as leads, untied by the foreign key.
+ *
+ * An active connection claims the sync lease FIRST, before either delete. Without it, a sync
+ * already in flight (the scheduler, or "Sync now" in another tab) keeps writing
+ * `crm_records`/leads from its in-memory snapshot for up to its budget after this function
+ * returns — its terminal `markConnectorSyncResult` then silently no-ops on the missing row —
+ * and the records the disconnect dialog promised to forget come back. Claiming the lease
+ * through the same predicate the scheduler and "Sync now" both claim through guarantees no
+ * sync can start once this holds it. A `needs_reauth` connection skips the claim: both claims
+ * require `status = 'active'`, so nothing can be holding its lease no matter what its
+ * (possibly stale) `sync_status` says.
  */
 export async function disconnectCrm(
   userId: string,
@@ -107,6 +117,10 @@ export async function disconnectCrm(
   deps: { revoke?: (refreshToken: string) => Promise<boolean> } = {}
 ): Promise<void> {
   const summary = await getConnectorConnection(userId, connectorId);
+  if (summary && summary.status === "active") {
+    const held = await claimConnectorConnectionForUser(userId, connectorId);
+    if (!held) throw new UserFacingError("HubSpot is syncing right now — disconnect again in a minute");
+  }
   if (summary && summary.accountRef !== DEMO_CRM_ACCOUNT_REF) {
     const refresh = await getConnectorRefreshToken(userId, connectorId);
     const revoke = deps.revoke ?? ((token: string) => (isOAuthConfigured(connectorId) ? revokeHubspotToken(token) : Promise.resolve(false)));

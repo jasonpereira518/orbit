@@ -99,7 +99,7 @@ export function CrmCardView({
             {pending === "sync" ? "Syncing…" : "Sync now"}
           </Button>
         )}
-        <Button type="button" variant="ghost" size="sm" disabled={pending !== null} onClick={onDisconnect}>
+        <Button type="button" variant="ghost" size="sm" disabled={pending !== null || connection.syncing} onClick={onDisconnect}>
           Disconnect
         </Button>
       </div>

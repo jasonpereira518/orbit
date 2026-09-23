@@ -187,6 +187,21 @@ function main() {
     check("never synced: when it will", first.includes("The first sync starts within a few minutes"), first);
     const running = view({ ...base, connection: { ...conn, syncing: true }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } });
     check("syncing: says so", running.includes("Syncing now"), running);
+    const runningHtml = renderToStaticMarkup(
+      React.createElement(CrmCardView, {
+        status: { ...base, connection: { ...conn, syncing: true }, counts: { workContacts: 0, pipeline: 0, blocked: 0 } },
+        pending: null,
+        onConnect: noop,
+        onSync: noop,
+        onDisconnect: noop,
+      })
+    );
+    const disconnectButton = runningHtml.match(/<button[^>]*>Disconnect<\/button>/);
+    check(
+      "while syncing, the Disconnect button is disabled",
+      disconnectButton !== null && disconnectButton[0].includes('disabled=""'),
+      disconnectButton?.[0] ?? runningHtml
+    );
     const erred = view({ ...base, connection: { ...conn, error: "HubSpot is rate-limiting this account — the next sync picks up where this one stopped" }, counts: { workContacts: 1, pipeline: 0, blocked: 2 } });
     check("an error and the cap are shown", erred.includes("rate-limiting") && erred.includes("2 customers didn’t fit your plan’s contact limit"), erred);
     const reauth = view({ ...base, connection: { ...conn, status: "needs_reauth", error: "HubSpot refused the access token" }, counts: null });

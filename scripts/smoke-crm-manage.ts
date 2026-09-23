@@ -115,6 +115,15 @@ run(async () => {
   const records = await db.select().from(crmRecords).where(eq(crmRecords.userId, USER));
   const { lead } = await saveLead(USER, { source: "manual", displayName: "Tied Lead" });
   await db.update(leads).set({ crmRecordId: records[1]!.id }).where(eq(leads.id, lead.id));
+
+  await db.update(connectorConnections).set({ syncStatus: "syncing", syncStartedAt: new Date() }).where(eq(connectorConnections.userId, USER));
+  const refusedRevokes: string[] = [];
+  check("a disconnect while a sync holds the lease is refused in words", (await message(disconnectCrm(USER, "hubspot", { revoke: async (t) => { refusedRevokes.push(t); return true; } }))) === "HubSpot is syncing right now — disconnect again in a minute");
+  check("nothing was revoked", refusedRevokes.length === 0);
+  check("the connection still exists", (await db.select().from(connectorConnections).where(eq(connectorConnections.userId, USER))).length === 1);
+  check("so do its records", (await db.select().from(crmRecords).where(eq(crmRecords.userId, USER))).length === records.length);
+  await db.update(connectorConnections).set({ syncStatus: "idle" }).where(eq(connectorConnections.userId, USER));
+
   const revoked: string[] = [];
   await disconnectCrm(USER, "hubspot", { revoke: async (t) => { revoked.push(t); return true; } });
   check("the refresh token was revoked", revoked.join(",") === "r");
@@ -128,6 +137,11 @@ run(async () => {
   const demoRevokes: string[] = [];
   await disconnectCrm(USER, "hubspot", { revoke: async (t) => { demoRevokes.push(t); return true; } });
   check("the demo connection is never revoked at HubSpot", demoRevokes.length === 0);
+
+  await upsertConnectorConnection({ userId: USER, connectorId: "hubspot", authKind: "oauth2", accountRef: "4242", nextSyncAt: null });
+  await db.update(connectorConnections).set({ status: "needs_reauth", syncStatus: "syncing", syncStartedAt: new Date() }).where(eq(connectorConnections.userId, USER));
+  await disconnectCrm(USER, "hubspot", { revoke: async () => true });
+  check("a needs_reauth connection with a stale syncing flag disconnects anyway", (await db.select().from(connectorConnections).where(eq(connectorConnections.userId, USER))).length === 0);
 
   await reset();
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
