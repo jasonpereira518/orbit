@@ -28,6 +28,13 @@ import {
 import { introRequestMailto } from "../src/lib/leads/intro-request";
 import { isLeadStatus, isUuid, LEAD_STATUSES } from "../src/lib/leads/validate";
 import { accountPathsStatement, directPathsStatement } from "../src/lib/leads/warm-path-sql";
+import {
+  apolloFiltersFromInput,
+  coerceProspect,
+  isEmptySearch,
+  prospectLeadInput,
+  prospectView,
+} from "../src/lib/leads/apollo-leads";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -177,14 +184,18 @@ function main() {
   }
 
   console.log("\nthe actions in front of it");
-  {
-    const source = code("src/actions/teams.ts");
-    check("is a server module", /^\s*"use server";/m.test(readFileSync("src/actions/teams.ts", "utf8")));
+  for (const file of ["src/actions/teams.ts", "src/actions/leads.ts"]) {
+    const name = file.split("/").pop();
+    const source = code(file);
+    check(`${name} is a server module`, /^\s*"use server";/m.test(readFileSync(file, "utf8")));
     const exports = [...source.matchAll(/^export\s+(async\s+)?function\s+(\w+)/gm)];
-    check("every export is an async function", exports.length >= 7 && exports.every((m) => !!m[1]), String(exports.length));
-    check("no type re-exports (they break a use-server module)", !/^export\s+type\s*\{/m.test(source));
+    check(`${name}: every export is an async function`, exports.length >= 7 && exports.every((m) => !!m[1]), String(exports.length));
+    check(`${name}: no type or const exports`, !/^export\s+(type|const|let|interface)\b/m.test(source));
     const bodies = source.split(/^export\s+async\s+function\s+/m).slice(1);
-    check("every action gates on requireLeadsUser first", bodies.every((b) => /^[^{]*\{\s*const userId = await requireLeadsUser\(\);/.test(b)));
+    check(
+      `${name}: every action gates on requireLeadsUser first`,
+      bodies.every((b) => /^[^{]*\{\s*const userId = await requireLeadsUser\(\);/.test(b))
+    );
   }
 
   console.log("\nleads are written the way contact identities are");
@@ -256,9 +267,44 @@ function main() {
     check("an unknown status fails", !isLeadStatus("won") && isLeadStatus("dismissed"));
   }
 
+  console.log("\nthe Apollo shape");
+  {
+    const filters = apolloFiltersFromInput({
+      titles: " VP Sales, Head of Partnerships ,VP Sales,",
+      companies: "Northwind",
+      locations: "",
+      keywords: "  fintech ",
+    });
+    check("comma lists are trimmed and deduplicated", filters.titles?.join("|") === "VP Sales|Head of Partnerships");
+    check("companies map to organisation names", filters.organizationNames?.join("|") === "Northwind");
+    check("an empty field is absent", filters.locations === undefined);
+    check("keywords are trimmed", filters.keywords === "fintech");
+    check("a blank form is an empty search", isEmptySearch(apolloFiltersFromInput({ titles: " , ", companies: "", locations: "", keywords: " " })));
+    check("forged input is an empty search", isEmptySearch(apolloFiltersFromInput({ titles: 7 })) && isEmptySearch(apolloFiltersFromInput(null)));
+    const view = prospectView(
+      {
+        externalId: "demo-1",
+        fullName: "Ivy Chen",
+        title: "VP Engineering",
+        company: "Brightpath",
+        email: "ivy@brightpath.example",
+        phone: null,
+        linkedinUrl: null,
+        location: "Austin",
+        enrichment: { demo: true },
+      },
+      "apollo"
+    );
+    check("a demo prospect is marked demo", view.demo === true);
+    check("a prospect becomes a lead input", prospectLeadInput(view).companyName === "Brightpath" && prospectLeadInput(view).displayName === "Ivy Chen");
+    check("a posted prospect keeps its fields", coerceProspect({ ...view, fullName: "  Ivy Chen " })?.fullName === "Ivy Chen");
+    check("a posted prospect without an id is refused", coerceProspect({ ...view, externalId: "" }) === null);
+    check("a posted prospect without a name is refused", coerceProspect({ externalId: "x", fullName: 5 }) === null);
+  }
+
   console.log("\nclient-bundle safety");
   {
-    for (const file of ["src/lib/deleted-account.ts", "src/lib/team-domain.ts", "src/lib/leads/warm-path.ts", "src/lib/leads/target-input.ts", "src/lib/leads/warm-path-sql.ts", "src/lib/leads/lead-identity.ts", "src/lib/leads/intro-request.ts", "src/lib/leads/validate.ts"]) {
+    for (const file of ["src/lib/deleted-account.ts", "src/lib/team-domain.ts", "src/lib/leads/warm-path.ts", "src/lib/leads/target-input.ts", "src/lib/leads/warm-path-sql.ts", "src/lib/leads/lead-identity.ts", "src/lib/leads/intro-request.ts", "src/lib/leads/validate.ts", "src/lib/leads/apollo-leads.ts"]) {
       const valueDbImport = /import\s+(?!type\b)[^;]*from\s+["']@\/db/.test(code(file));
       check(`${file} never value-imports @/db`, !valueDbImport);
     }
