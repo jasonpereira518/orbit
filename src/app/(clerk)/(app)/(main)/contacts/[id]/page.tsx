@@ -41,6 +41,8 @@ import { getSettings } from "@/actions/settings";
 import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
+import { getViewerTeam } from "@/lib/teams";
+import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 export default async function ContactDetailPage({
@@ -101,6 +103,19 @@ export default async function ContactDetailPage({
   const profilePromise = userIdPromise
     .then((u) => getContactProfile(u, id))
     .catch(() => null);
+  // The "Hidden from team" pill: only for a team member, and only while Leads is released for
+  // this viewer — a control for a closed feature is worse than none. Mandatory `.catch`, like
+  // its neighbours: started before the first await.
+  const teamPillPromise = userIdPromise
+    .then(async (u) => {
+      const [membership, visibility] = await Promise.all([getViewerTeam(u), resolveSurfaceVisibility(u)]);
+      return (
+        membership !== null &&
+        !visibility.hidden.has("page.leads") &&
+        !visibility.comingSoon.has("page.leads")
+      );
+    })
+    .catch(() => false);
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
@@ -120,6 +135,7 @@ export default async function ContactDetailPage({
     if (survivorId !== id) redirect(`/contacts/${survivorId}`);
     notFound();
   }
+  const showTeamPill = await teamPillPromise;
 
   const brief = await briefPromise;
   const briefStale = isBriefStale(brief, contact.lastInteractionAt);
@@ -306,6 +322,7 @@ export default async function ContactDetailPage({
                 }
               : undefined
           }
+          team={showTeamPill ? { contactId: contact.id, shared: contact.teamShared === 1 } : undefined}
         />
       </div>
 

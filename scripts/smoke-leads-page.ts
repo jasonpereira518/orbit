@@ -139,6 +139,17 @@ function main() {
     }
   }
 
+  console.log("\nthe contact page's team pill");
+  {
+    const button = "src/components/contacts/team-share-button.tsx";
+    check("the pill is a client component", existsSync(button) && /^\s*"use client";/.test(readFileSync(button, "utf8")));
+    check("the stat pills render it only when given a team", /team\s*&&\s*\(?\s*<TeamShareButton/.test(code("src/components/contacts/contact-stat-pills.tsx")));
+    const contactPage = code("src/app/(clerk)/(app)/(main)/contacts/[id]/page.tsx");
+    // A control for a closed feature is worse than none: the pill follows Leads' release.
+    check("the contact page shows it only while Leads is released", contactPage.includes('comingSoon.has("page.leads")') && contactPage.includes('hidden.has("page.leads")'));
+    check("and only to a team member", contactPage.includes("getViewerTeam("));
+  }
+
   console.log("\nstructure");
   {
     const headerSource = code("src/components/leads/leads-header.tsx");
