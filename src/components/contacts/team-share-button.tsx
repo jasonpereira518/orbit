@@ -44,7 +44,8 @@ export function TeamShareButton({ contactId, shared }: { contactId: string; shar
       size="sm"
       variant="outline"
       disabled={pending}
-      aria-pressed={!current}
+      // The label says where they are; the action is the opposite, so spell it out for screen readers.
+      aria-label={current ? "Hide this person from your team" : "Let your team see that you know this person"}
       title={
         current
           ? "Teammates who look this person up can see that you know them, and how closely — click to hide"
