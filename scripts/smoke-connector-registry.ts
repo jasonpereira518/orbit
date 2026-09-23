@@ -23,6 +23,7 @@ import {
   syncableConnectors,
   type ConnectorManifest,
 } from "../src/lib/connectors/registry";
+import { CONNECTOR_SYNCS, resolveConnectorWithSync } from "../src/lib/connectors/syncs";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -87,13 +88,11 @@ check(
   syncable.length === CONNECTORS.filter(isSyncable).length && syncable.every((c) => CONNECTORS.includes(c)),
   `${syncable.length} of ${CONNECTORS.length}`
 );
-// P0 ships the dispatch and none of the connectors it dispatches to. When this check starts
-// failing, the first real connector has landed — and `ConnectorManifest.sync`'s contract (who
-// records the outcome, and the `nextSyncAt: null` rule for its connect route) is what its
-// author has to have read. `scripts/smoke-connector-sync-pass.ts` covers the dispatch itself
-// with a stub manifest, which is why the empty set here is not a coverage hole.
+// Sync functions never live on the registry's own entries: a sync reaches the database, and
+// this file must stay loadable from a client component. They are attached by
+// `resolveConnectorWithSync` in `./syncs.ts`, which only the scheduler and actions import.
 check(
-  "P0 ships no sync functions (see ConnectorManifest.sync before adding the first)",
+  "the registry's own entries carry no sync function (they live in syncs.ts)",
   syncable.length === 0,
   syncable.map((c) => c.id).join(",")
 );
@@ -190,6 +189,31 @@ check(
   "the event-provider connectors are not registered as generic-store auth kinds",
   ["luma", "eventbrite"].every((id) => connectorById(id)?.auth === "event_provider"),
   ["luma", "eventbrite"].map((id) => `${id}:${connectorById(id)?.auth}`).join(",")
+);
+
+console.log("\nthe server-only sync resolver");
+const stubSync = async () => {};
+check(
+  "a connector with no registered sync resolves without one",
+  resolveConnectorWithSync("google", {})?.sync === undefined
+);
+check(
+  "an available connector with a registered sync resolves with it",
+  resolveConnectorWithSync("google", { google: stubSync })?.sync === stubSync
+);
+check(
+  "a planned connector never gets a sync, even if one is registered",
+  resolveConnectorWithSync("notion", { notion: stubSync })?.sync === undefined
+);
+check("an unknown id resolves to null", resolveConnectorWithSync("nope", {}) === null);
+const GENERIC = ["oauth2", "api_key", "dav_password"];
+check(
+  "every registered sync belongs to an available connections-table connector",
+  Object.keys(CONNECTOR_SYNCS).every((id) => {
+    const m = connectorById(id);
+    return m !== null && m.availability === "available" && GENERIC.includes(m.auth);
+  }),
+  Object.keys(CONNECTOR_SYNCS).join(",")
 );
 
 if (failures > 0) {

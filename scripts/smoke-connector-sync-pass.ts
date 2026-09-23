@@ -28,6 +28,7 @@ import {
 } from "../src/lib/connectors/connections";
 import type { ConnectorManifest } from "../src/lib/connectors/registry";
 import { connectorById } from "../src/lib/connectors/registry";
+import type { ClaimedConnectorConnection } from "../src/lib/connectors/connections";
 import { runSyncPass } from "../src/lib/sync-scheduler";
 
 let failures = 0;
@@ -39,7 +40,10 @@ function check(label: string, ok: boolean, detail = "") {
 const USER = "smoke-connector-pass";
 
 /** A registered connector that does not exist in the catalog, built from a real entry's shape. */
-function stubManifest(id: string, sync: (connectionId: string) => Promise<void>): ConnectorManifest {
+function stubManifest(
+  id: string,
+  sync: (conn: ClaimedConnectorConnection) => Promise<void>
+): ConnectorManifest {
   return {
     id,
     label: id,
@@ -89,7 +93,7 @@ run(async () => {
 
   console.log("a due connection is claimed and handed to its manifest's sync");
   const okConn = await arm("stub-ok");
-  const handed: string[] = [];
+  const handed: ClaimedConnectorConnection[] = [];
   const okStats = await runSyncPass({
     now: new Date(),
     deps: {
@@ -102,14 +106,17 @@ run(async () => {
         throw new Error("not used");
       },
       resolveConnector: resolverFor([
-        stubManifest("stub-ok", async (connectionId) => {
-          handed.push(connectionId);
+        stubManifest("stub-ok", async (conn) => {
+          handed.push(conn);
         }),
       ]),
     },
   });
   check("the connection was claimed", okStats.connectorClaimed >= 1, JSON.stringify(okStats.connectorClaimed));
-  check("its sync was actually called, with its connection id", handed[0] === okConn.id, JSON.stringify(handed));
+  check("its sync was actually called, with its claimed connection", handed[0]?.id === okConn.id, JSON.stringify(handed.map((c) => c.id)));
+  // The point of passing the row rather than its id: the claim already decrypted the secret,
+  // and a sync that had to re-read it would hold a second copy of the decrypt path.
+  check("and the secret arrives already decrypted", handed[0]?.accessToken === "k", String(handed[0]?.accessToken));
   // Nothing in this repo asserted `connectorSynced` at all before this line — a dispatch that
   // never counted a success would have looked identical to one that never ran.
   check("a successful sync is counted", okStats.connectorSynced === 1, String(okStats.connectorSynced));
@@ -145,8 +152,8 @@ run(async () => {
         throw new Error("not used");
       },
       resolveConnector: resolverFor([
-        stubManifest("stub-owns-result", async (connectionId) => {
-          await markConnectorSyncResult(connectionId, {
+        stubManifest("stub-owns-result", async (conn) => {
+          await markConnectorSyncResult(conn.id, {
             ok: true,
             cursor: { cursor: "page-2" },
             nextSyncAt: ownCadence,
@@ -207,8 +214,8 @@ run(async () => {
         stubManifest("stub-throws", async () => {
           throw new Error("provider exploded");
         }),
-        stubManifest("stub-ok", async (connectionId) => {
-          bothHanded.push(connectionId);
+        stubManifest("stub-ok", async (conn) => {
+          bothHanded.push(conn.id);
         }),
       ]),
     },

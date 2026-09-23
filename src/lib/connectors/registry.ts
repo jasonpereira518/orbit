@@ -25,6 +25,7 @@
  */
 import type { DataCategory } from "@/lib/data-categories";
 import type { FeatureKey } from "@/lib/entitlements";
+import type { ClaimedConnectorConnection } from "@/lib/connectors/connections";
 
 export type ConnectorFamily =
   | "people"
@@ -137,8 +138,11 @@ export type ConnectorManifest = {
   /** Search aliases so "iCloud" finds Apple Contacts and "Teams" finds Outlook Calendar. */
   aliases?: string[];
   /**
-   * One sync pass for one connection, resolved by the scheduler so this module stays
-   * loadable from a client component.
+   * One sync pass for one claimed connection — secrets already decrypted by the claim.
+   *
+   * Never set on an entry in this file: a sync reaches the database, and this module must
+   * stay loadable from a client component. `resolveConnectorWithSync` in `./syncs.ts`
+   * attaches it, and only server code (the scheduler, the CRM actions) imports that.
    *
    * ── Who records the outcome ────────────────────────────────────────────────────────────
    *
@@ -165,7 +169,7 @@ export type ConnectorManifest = {
    * is disarmed by the very next pass with "This connector is no longer available — reconnect
    * it from Settings," which is a lie the user cannot act on.
    */
-  sync?: (connectionId: string) => Promise<void>;
+  sync?: (conn: ClaimedConnectorConnection) => Promise<void>;
 };
 
 const read = (id: ConnectorCapabilityId, label: string, scopes: string[] = []): ConnectorCapability => ({

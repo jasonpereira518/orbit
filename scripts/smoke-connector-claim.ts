@@ -10,10 +10,13 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { connectorConnections } from "../src/db/schema";
 import {
+  claimConnectorConnectionForUser,
   claimDueConnectorConnections,
   disarmConnectorSync,
   listConnectorConnections,
   markConnectorSyncResult,
+  saveConnectorCursor,
+  updateConnectorTokens,
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
 import { MAX_SYNC_FAILURES, SYNC_LEASE_MS } from "../src/lib/provider-connections";
@@ -38,6 +41,7 @@ run(async () => {
     authKind: "oauth2",
     accessToken: "token-1",
     refreshToken: "refresh-1",
+    tokenExpiresAt: new Date(now.getTime() + 3_600_000),
     scopes: "crm.objects.contacts.read",
     capabilities: ["syncPeople"],
     nextSyncAt: new Date(now.getTime() - 1000),
@@ -50,6 +54,11 @@ run(async () => {
   check("a due connection is claimed", mine.length === 1);
   check("the secret comes back decrypted", mine[0]?.accessToken === "token-1");
   check("capabilities come back", mine[0]?.capabilities.includes("syncPeople") === true);
+  check(
+    "the token expiry comes back with the claim",
+    mine[0]?.tokenExpiresAt?.getTime() === now.getTime() + 3_600_000,
+    String(mine[0]?.tokenExpiresAt?.toISOString())
+  );
 
   const again = await claimDueConnectorConnections(10, now);
   check("a leased connection is not claimed twice", again.every((c) => c.userId !== USER));
@@ -232,6 +241,57 @@ run(async () => {
     "switching back to oauth2 stores the new secret as an access token",
     decryptOrNull(row4?.accessTokenEncrypted ?? null) === "access-4"
   );
+
+  console.log("\nclaiming one user's connection on demand (Sync now)");
+  const onDemand = await upsertConnectorConnection({
+    userId: USER,
+    connectorId: "on-demand",
+    authKind: "oauth2",
+    accessToken: "od-access",
+    refreshToken: "od-refresh",
+    nextSyncAt: null,
+  });
+  const firstClaim = await claimConnectorConnectionForUser(USER, "on-demand");
+  check("an idle connection is claimed even when it is not armed", firstClaim?.id === onDemand.id);
+  const secondClaim = await claimConnectorConnectionForUser(USER, "on-demand");
+  check("a leased connection is not claimed twice", secondClaim === null);
+  const laterClaim = await claimConnectorConnectionForUser(
+    USER,
+    "on-demand",
+    new Date(Date.now() + SYNC_LEASE_MS + 1000)
+  );
+  check("an expired lease is claimable again", laterClaim?.id === onDemand.id);
+  await db
+    .update(connectorConnections)
+    .set({ status: "needs_reauth", syncStatus: "idle" })
+    .where(eq(connectorConnections.id, onDemand.id));
+  check(
+    "a connection that needs reauth is never claimed",
+    (await claimConnectorConnectionForUser(USER, "on-demand")) === null
+  );
+  check("nobody else's connection is claimed", (await claimConnectorConnectionForUser("someone-else", "on-demand")) === null);
+
+  console.log("\nstoring a refreshed token");
+  const expires = new Date(Date.now() + 1_800_000);
+  await updateConnectorTokens(onDemand.id, { accessToken: "od-access-2", refreshToken: null, expiresAt: expires });
+  const [refreshed] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, onDemand.id));
+  check("the new access token is stored encrypted", decryptOrNull(refreshed?.accessTokenEncrypted ?? null) === "od-access-2");
+  check("a refresh that returns no refresh token keeps the old one", decryptOrNull(refreshed?.refreshTokenEncrypted ?? null) === "od-refresh");
+  check("the expiry is stored", refreshed?.tokenExpiresAt?.getTime() === expires.getTime());
+  await updateConnectorTokens(onDemand.id, { accessToken: "od-access-3", refreshToken: "od-refresh-2", expiresAt: null });
+  const [rotated] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, onDemand.id));
+  check("a rotated refresh token replaces the old one", decryptOrNull(rotated?.refreshTokenEncrypted ?? null) === "od-refresh-2");
+
+  console.log("\nsaving progress mid-run");
+  await db
+    .update(connectorConnections)
+    .set({ status: "active", syncStatus: "idle" })
+    .where(eq(connectorConnections.id, onDemand.id));
+  const midRun = await claimConnectorConnectionForUser(USER, "on-demand");
+  await saveConnectorCursor(onDemand.id, { cursor: "200", syncedThrough: "2026-09-01T00:00:00.000Z", meta: { portalId: "42" } });
+  const [progressed] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, onDemand.id));
+  check("the cursor is stored", progressed?.syncCursor?.cursor === "200" && progressed?.syncCursor?.meta?.portalId === "42", JSON.stringify(progressed?.syncCursor));
+  check("the lease is kept", progressed?.syncStatus === "syncing" && midRun !== null, String(progressed?.syncStatus));
 
   await db.delete(connectorConnections).where(eq(connectorConnections.userId, USER));
 

@@ -51,7 +51,8 @@ import {
   markConnectorSyncResult,
   markConnectorSyncSucceeded,
 } from "@/lib/connectors/connections";
-import { connectorById } from "@/lib/connectors/registry";
+import type { ConnectorManifest } from "@/lib/connectors/registry";
+import { resolveConnectorWithSync } from "@/lib/connectors/syncs";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import {
   claimDueCalendarSubscriptions,
@@ -136,7 +137,7 @@ export type SyncDeps = {
    */
   eventPageFetch?: typeof fetch;
   /**
-   * How a claimed connection's `connector_id` becomes a manifest.
+   * How a claimed connection's `connector_id` becomes a manifest with its sync attached.
    *
    * Injectable because no manifest in the registry has a `sync` yet — P0 ships the dispatch
    * and none of the connectors it dispatches to — so without this seam the only branch of
@@ -145,7 +146,7 @@ export type SyncDeps = {
    * nothing more, a clean return is recorded) would ship unexercised. Production passes
    * nothing and gets the registry.
    */
-  resolveConnector?: typeof connectorById;
+  resolveConnector?: (id: string) => ConnectorManifest | null;
 };
 
 const DEFAULT_DEPS: SyncDeps = {
@@ -153,7 +154,7 @@ const DEFAULT_DEPS: SyncDeps = {
   fetchPage: fetchGoogleCalendarPage,
   getMicrosoftAccessToken: getValidOutlookAccessToken,
   fetchMicrosoftPage: fetchMicrosoftCalendarPage,
-  resolveConnector: connectorById,
+  resolveConnector: resolveConnectorWithSync,
 };
 
 export type SyncRunStats = {
@@ -607,7 +608,7 @@ export async function runSyncPass(
         }).catch(() => null);
         return;
       }
-      const manifest = (deps.resolveConnector ?? connectorById)(conn.connectorId);
+      const manifest = (deps.resolveConnector ?? resolveConnectorWithSync)(conn.connectorId);
       if (!manifest?.sync) {
         // A row can outlive the code that made it — a connector removed from the registry,
         // or one whose row was written before its sync landed. Unschedule it and say so,
@@ -620,7 +621,7 @@ export async function runSyncPass(
         return;
       }
       try {
-        await manifest.sync(conn.id);
+        await manifest.sync(conn);
         // The success half of the contract documented on `ConnectorManifest.sync`: a sync
         // that recorded its own result (it had a cursor, or its own cadence) has already
         // left the row `idle`, and this no-ops against the `syncing` guard. One that just

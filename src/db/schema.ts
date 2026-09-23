@@ -2202,6 +2202,11 @@ export type ConnectorSyncCursor = {
   ctag?: string | null;
   /** High-water mark for `updated_since`-style APIs. */
   syncedThrough?: string | null;
+  /**
+   * Small facts a sync learns once and reuses every pass — a CRM's portal id and the owner
+   * record it filters on. Strings only: it round-trips through jsonb on both drivers.
+   */
+  meta?: Record<string, string> | null;
 };
 
 export type ProviderSyncCursor = {
