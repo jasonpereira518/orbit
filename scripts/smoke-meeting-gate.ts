@@ -4,6 +4,7 @@
  */
 import "./smoke/_env";
 
+import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { userSettings } from "../src/db/schema";
@@ -17,6 +18,88 @@ function check(label: string, ok: boolean, detail?: string) {
   else { failures++; console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`); }
 }
 
+/**
+ * Isolates one top-level `export async function <name>(...) { ... }` from a source string —
+ * everything from its declaration up to the next top-level `export async function`, or EOF.
+ * Pure, so it can be proven against a synthetic sample before it is trusted against the
+ * real file (same shape as the sample checks in scripts/smoke-ai-access.ts).
+ */
+function extractFunction(source: string, name: string): string {
+  const marker = new RegExp(String.raw`export\s+async\s+function\s+${name}\s*\(`);
+  const m = marker.exec(source);
+  if (!m) throw new Error(`function ${name} not found`);
+  const rest = source.slice(m.index + m[0].length);
+  const next = rest.search(/\n\s*export\s+async\s+function\s+/);
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
+const MEETINGS_ACTIONS = "src/actions/meetings.ts";
+/** Cost money to start/continue: must go through the plan gate, not bare auth. */
+const GATED_ACTIONS = ["createMeetingSession", "resumeMeetingSession", "endMeetingSession", "analyzeMeetingSession"];
+/**
+ * Read or delete a meeting a user already recorded: must stay on bare auth, DELIBERATELY —
+ * a downgraded account must keep access to its own recordings (see src/lib/plan-guards.ts).
+ */
+const UNGATED_ACTIONS = ["loadMeetingTranscript", "discardMeetingSession"];
+
+/**
+ * Source guard: proves `src/actions/meetings.ts` actually calls `requireMeetingsUser()` for
+ * the four actions that cost money, and stays on bare `requireUserId()` for the two that
+ * read or delete a meeting already recorded. A passing `requireEntitlement("meetings")`
+ * check (above) proves the GATE works in isolation; it says nothing about whether any given
+ * action actually calls it — an action that quietly kept `requireUserId()` would pass every
+ * other check in this file and still let a free account record meetings for free. This is
+ * what closes that gap.
+ */
+function sourceGuard() {
+  console.log("\nsource guard — requireMeetingsUser wiring in " + MEETINGS_ACTIONS);
+
+  // Prove the extraction itself bites before trusting it against the real file.
+  const sample = [
+    "export async function foo(x: number) {",
+    "  const userId = await requireUserId();",
+    "  return userId;",
+    "}",
+    "",
+    "export async function bar() {",
+    "  const userId = await requireMeetingsUser();",
+    "  return userId;",
+    "}",
+  ].join("\n");
+  check(
+    "extractFunction isolates one function's body",
+    /requireUserId/.test(extractFunction(sample, "foo")) && !/requireMeetingsUser/.test(extractFunction(sample, "foo"))
+  );
+  check("...and stops before the next one", /requireMeetingsUser/.test(extractFunction(sample, "bar")) && !/requireUserId/.test(extractFunction(sample, "bar")));
+
+  const raw = readFileSync(MEETINGS_ACTIONS, "utf8");
+  // Strip comments first, the same way scripts/smoke-ai-access.ts does, so a doc comment
+  // that merely NAMES the other guard (as this file's own comments do) cannot fool the scan.
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  for (const name of GATED_ACTIONS) {
+    const body = extractFunction(code, name);
+    const callsGuard = /\brequireMeetingsUser\s*\(/.test(body);
+    const callsBareAuth = /\brequireUserId\s*\(/.test(body);
+    check(
+      `${name} calls requireMeetingsUser, not bare requireUserId`,
+      callsGuard && !callsBareAuth,
+      `requireMeetingsUser=${callsGuard} requireUserId=${callsBareAuth}`
+    );
+  }
+
+  for (const name of UNGATED_ACTIONS) {
+    const body = extractFunction(code, name);
+    const callsGuard = /\brequireMeetingsUser\s*\(/.test(body);
+    const callsBareAuth = /\brequireUserId\s*\(/.test(body);
+    check(
+      `${name} stays on bare requireUserId, not requireMeetingsUser`,
+      callsBareAuth && !callsGuard,
+      `requireMeetingsUser=${callsGuard} requireUserId=${callsBareAuth}`
+    );
+  }
+}
+
 async function setPlan(plan: "free" | "orbit" | "lifetime") {
   const db = await getDb();
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
@@ -28,6 +111,8 @@ async function setPlan(plan: "free" | "orbit" | "lifetime") {
 }
 
 async function main() {
+  sourceGuard();
+
   console.log("\nentitlements");
   check("free cannot meet", entitlementsForPlan("free", "free").canUseMeetings === false);
   check("Pro can meet", entitlementsForPlan("orbit", "subscription").canUseMeetings === true);
@@ -71,18 +156,21 @@ async function main() {
   }
   check("a Lifetime account is allowed", lifetimeThrew === null, String(lifetimeThrew));
 
-  // End-to-end sanity: with a real (non-exempt) Pro plan already on the row, confirm the
-  // actual server action — not just the guard in isolation — reaches the database and
-  // creates a session. This has to run in demo mode (no Clerk keys locally), which is why
-  // it comes after the paywall assertions above rather than standing in for them: demo
-  // mode would let a FREE demo-user through too, so it cannot prove the gate on its own.
-  console.log("\ncreateMeetingSession — the real action end to end, authenticated");
+  // Wiring sanity check ONLY — this cannot distinguish free from Pro. It runs in demo mode
+  // (no Clerk keys locally), and `isDemoAccount()` bypasses every plan gate unconditionally
+  // there, so this call would return ok:true identically even if `requireMeetingsUser` had
+  // never been wired into `createMeetingSession` at all — a free demo-user would sail
+  // through it too. What actually proves the wiring is `sourceGuard()` above, which reads
+  // the action's own source and asserts it calls `requireMeetingsUser`, not bare
+  // `requireUserId`. This just confirms the action still reaches the database and returns
+  // `ok: true` for an authenticated call, i.e. that nothing else broke.
+  console.log("\ncreateMeetingSession — wiring sanity check (authenticated, NOT a plan check)");
   delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   delete process.env.CLERK_SECRET_KEY;
   process.env.ORBIT_DEMO_DATA = "off";
   (process.env as Record<string, string>).NODE_ENV = "development";
   const allowed = await createMeetingSession({ includesMic: true, recorderId: "r2" });
-  check("a Pro account can start a meeting through the real action", allowed.ok === true, JSON.stringify(allowed));
+  check("the action still works end to end when authenticated", allowed.ok === true, JSON.stringify(allowed));
 
   if (failures) { console.error(`\n${failures} check(s) failed`); process.exit(1); }
   console.log("\nAll meeting gate checks passed");

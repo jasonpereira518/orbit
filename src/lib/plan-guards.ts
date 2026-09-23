@@ -13,8 +13,10 @@ import { requireVisibleSurface } from "@/lib/surface-visibility";
  * WHICH ACTION MODULES ARE GATED ON A SURFACE, AND WHY NOT THE REST.
  *
  * Only modules whose every export belongs to exactly one hideable page are gated:
- * knowledge, graph, chat, outreach, recruiters. The rest were examined and deliberately
- * left alone, because their actions are load-bearing for surfaces that stay visible:
+ * knowledge, graph, chat, outreach, recruiters, meetings (`page.capture`, via
+ * `requireMeetingsUser` — note this is `meetings.ts`, not `capture.ts` itself; see below).
+ * The rest were examined and deliberately left alone, because their actions are
+ * load-bearing for surfaces that stay visible:
  *
  *   - `reminders.ts` — `fetchDashboard` builds the dashboard, and `listNotificationPanel`
  *     / `listDueNotificationItems` feed the notification bell that sits in the shell on
@@ -23,7 +25,11 @@ import { requireVisibleSurface } from "@/lib/surface-visibility";
  *     watcher mounted in `AppShell`, so a running import would stall the moment the
  *     Imports page was hidden.
  *   - `capture.ts` — reached through `BulkNotesPanel`, which the onboarding wizard uses.
- *     A hidden Capture page would break first-run for new accounts.
+ *     A hidden Capture page would break first-run for new accounts. `meetings.ts` is a
+ *     separate module that also serves the Capture page and IS gated on `page.capture`:
+ *     unlike notes/voice/scan capture, a meeting is a paid feature with a per-minute
+ *     transcription bill (see `requireMeetingsUser`), so hiding Capture must take meeting
+ *     recording down with it even though the rest of Capture stays reachable.
  *   - `suggested-reminders.ts` — the notification panel calls it.
  *
  * That asymmetry is fine, and is the difference between this and the paywall. The paywall
