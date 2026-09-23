@@ -12,6 +12,7 @@ import { friendlyError } from "@/lib/errors";
 import { introRequestMailto } from "@/lib/leads/intro-request";
 import type { PipelineRow } from "@/lib/leads/pipeline";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import { LEAD_SOURCE_LABEL, LEAD_STATUS_LABEL } from "./labels";
 import { PathSummary } from "./path-summary";
 import { WarmthChip } from "./warmth-chip";
@@ -77,6 +78,7 @@ function LeadDetail({ row }: { row: PipelineRow }) {
 
   /** The mail client opens from the link itself; this only records that the ask happened. */
   function recordAsk() {
+    if (pending) return;
     if (lead.status === "open") setStatus("intro_requested", "Marked as intro asked");
   }
 
@@ -119,8 +121,16 @@ function LeadDetail({ row }: { row: PipelineRow }) {
                     leadName: lead.displayName,
                     leadCompany: lead.companyName,
                   })}
-                  onClick={recordAsk}
-                  className={buttonVariants({ variant: "outline", size: "sm" })}
+                  aria-disabled={pending ? "true" : undefined}
+                  tabIndex={pending ? -1 : undefined}
+                  onClick={(event) => {
+                    if (pending) {
+                      event.preventDefault();
+                      return;
+                    }
+                    recordAsk();
+                  }}
+                  className={cn(buttonVariants({ variant: "outline", size: "sm" }), pending && "pointer-events-none opacity-50")}
                 >
                   <Mail aria-hidden />
                   Ask {mate.name.trim().split(/\s+/)[0]}

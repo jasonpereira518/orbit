@@ -32,8 +32,8 @@ const warmthOf = (row: PipelineRow): Warmth => row.path?.warmth ?? "cold";
 
 /**
  * The saved leads, already ranked by the server (hottest first). Filters are client-side over
- * one list of at most `PIPELINE_LIMIT` rows; the sheet re-finds its row by id on every render,
- * so a refresh after an action shows the updated lead.
+ * one list of at most `PIPELINE_LIMIT` rows (src/lib/leads/store.ts); the sheet re-finds its
+ * row by id on every render, so a refresh after an action shows the updated lead.
  */
 export function LeadsPipeline({ pipeline }: { pipeline: Pipeline }) {
   const [tab, setTab] = useState<StatusTab>("open");
