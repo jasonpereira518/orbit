@@ -1488,6 +1488,26 @@ export type ImportStats = {
    */
   scanStartedAt?: string;
 
+  // --- Google Drive import ---
+  docsRead?: number;
+  /** Docs skipped because the same text was already saved from an earlier import. */
+  docsAlreadyImported?: number;
+  /**
+   * Past-due commitments worth a look (see `drive-reminder-rules.ts`). Shown in the import's
+   * detail sheet; nothing is written for one unless the person makes it a reminder.
+   */
+  flaggedCommitments?: {
+    id: string;
+    key: string;
+    title: string;
+    personName: string | null;
+    contactId: string | null;
+    dueDateIso: string;
+    sourceExcerpt: string;
+    actionKind: ReminderActionKind;
+    docName: string;
+  }[];
+
   /** Wall-clock milliseconds across every invocation of this job. */
   durationMs?: number;
   /** SQL statements issued across every invocation. The cost this work exists to bound. */
@@ -1569,6 +1589,31 @@ export type GmailSenderRowPayload = {
   firm: string | null;
   /** Capped at scan time; the classifier only reads the most recent few. */
   messageIds: string[];
+};
+
+/** One picked Google Doc or Slides deck in a Drive import. `contactIds` is written on success. */
+export type DriveFileRowPayload = {
+  kind: "drive_file";
+  fileId: string;
+  name: string;
+  mimeType: string;
+  /** ISO. Also the date anchor for the parse: "next Tuesday" means next from when it was written. */
+  modifiedTime: string;
+  /** Everyone the doc's save touched. The row's own `contact_id` holds only the first. */
+  contactIds?: string[];
+  /**
+   * `hashSourceNote` of the exported text, written only when the row finishes (`done`). A
+   * done row carrying it is the proof a later import uses to skip the unchanged doc.
+   */
+  sourceHash?: string;
+  /**
+   * How many runs have started reading this row. Bumped before the export; a row that has
+   * been started twice without finishing is skipped rather than retried, so a doc that kills
+   * the function can't loop forever.
+   */
+  attempts?: number;
+  /** How many times Google's rate limit sent this row back to wait for a later run. */
+  rateLimitHandoffs?: number;
 };
 
 /**
@@ -1716,12 +1761,17 @@ export type ImportJobRowPayload =
   | OutlookContactRowPayload
   | ContactsFileRowPayload
   | LinkedInMessageThreadRowPayload
-  | CalendarEventRowPayload;
+  | CalendarEventRowPayload
+  | DriveFileRowPayload;
 
 export function isGmailSenderRow(
   payload: ImportJobRowPayload
 ): payload is GmailSenderRowPayload {
   return payload.kind === "gmail_sender";
+}
+
+export function isDriveFileRow(payload: ImportJobRowPayload): payload is DriveFileRowPayload {
+  return payload.kind === "drive_file";
 }
 
 export function isOutlookSenderRow(

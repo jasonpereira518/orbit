@@ -86,6 +86,14 @@ export default async function ImportsPage() {
         canUseSync={entitlements.canUseSync}
         google={google}
         outlook={microsoft}
+        drive={{
+          apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
+          appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,
+          // The OAuth client id is public (it's in every Google consent URL). Read on the
+          // server and passed down so the browser's drive.file-only token comes from the
+          // same client as the stored grant — see src/lib/imports/google-picker.ts.
+          clientId: process.env.GOOGLE_CLIENT_ID?.trim() || null,
+        }}
       />
     </div>
   );

@@ -36,6 +36,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
   "smoke-toast-copy": "pure",
+  "smoke-drive-picker-token": "pure",
+  "smoke-settle-once": "pure",
   "smoke-vercel-ignore-build": "pure",
   "smoke-admin-gate": "pure",
   "smoke-admin-redaction": "pure",
@@ -146,6 +148,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-sources": "pure",
   "smoke-import-queue": "pure",
   "smoke-import-progress-card": "pure",
+  "smoke-drive-reminder-rules": "pure",
+  "smoke-drive-triage": "pure",
+  "smoke-drive-client": "pure",
   "smoke-import-provenance": "pure",
   "smoke-import-finish": "pure",
   "smoke-finish-scene-geometry": "pure",
@@ -274,6 +279,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-hybrid-search": "pglite",
   "smoke-import-engine": "pglite",
   "smoke-import-people": "pglite",
+  "smoke-drive-import": "pglite",
   "smoke-import-stall": "pglite",
   "smoke-import-undo": "pglite",
   "smoke-ingest-events": "pglite",
@@ -378,6 +384,7 @@ const MANIFEST: Record<string, Tier> = {
 const TIMEOUT_MS: Partial<Record<string, number>> = {
   "smoke-page-budgets": 5 * 60_000,
   "smoke-import-engine": 5 * 60_000,
+  "smoke-drive-import": 3 * 60_000,
   "smoke-import-undo": 3 * 60_000,
 };
 const DEFAULT_TIMEOUT_MS = 3 * 60_000;

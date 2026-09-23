@@ -12,6 +12,9 @@ import {
   startLinkedInMessagesImport,
   type ImportJobStatus,
 } from "@/actions/imports";
+import { startDriveImport } from "@/actions/drive";
+import { UserFacingError, isUserFacingError } from "@/lib/errors";
+import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 import { type ImportProgressState } from "@/components/imports/import-utils";
 import {
   finishBackgroundJob,
@@ -32,7 +35,8 @@ export type ImportJobKind =
   | "google_contacts"
   | "outlook_contacts"
   | "contacts_file"
-  | "calendar";
+  | "calendar"
+  | "drive_docs";
 
 export type ImportJobSnapshot = {
   id: string;
@@ -52,6 +56,13 @@ export type ImportJobSnapshot = {
   step?: { index: number; total: number };
   cancelling?: boolean;
   error?: string;
+  /**
+   * Set only when `error` came from an `isUserFacingError` catch — a message written on
+   * purpose to be read, not raw driver/server text. `failureText` (see `src/lib/errors.ts`)
+   * is what actually branches on it; this field just carries that fact forward past the
+   * point where `error` became a plain string and lost it.
+   */
+  userFacingError?: boolean;
   resultMessage?: string;
   enrichmentMessage?: string;
 };
@@ -68,7 +79,8 @@ export type ImportJobInput =
       text: string;
       fileName: string;
       createFollowUps: boolean;
-    };
+    }
+  | { kind: "drive_docs"; files: PickedDriveFile[] };
 
 type Listener = () => void;
 
@@ -121,6 +133,8 @@ function importJobLabel(kind: ImportJobKind) {
       return "Importing address book";
     case "calendar":
       return "Importing calendar";
+    case "drive_docs":
+      return "Reading Google Drive files";
   }
 }
 
@@ -293,7 +307,8 @@ type ServerOwnedKind =
   | "google_contacts"
   | "outlook_contacts"
   | "contacts_file"
-  | "calendar";
+  | "calendar"
+  | "drive_docs";
 
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
 async function pollServerOwnedImportJob(
@@ -366,12 +381,20 @@ function completionMessage(
   kind?: ImportJobKind,
 ): string {
   const logsMeetings = kind === "calendar";
+  const readsFiles = kind === "drive_docs";
   const parts = logsMeetings
     ? []
-    : [
-        `${status.contactsCreated} created`,
-        `${status.contactsUpdated} updated`,
-      ];
+    : readsFiles
+      ? [
+          // Docs actually read, not rows processed: a skipped or unchanged doc wasn't.
+          `${status.docsRead} file${status.docsRead === 1 ? "" : "s"} read`,
+          `${status.contactsCreated} created`,
+          `${status.contactsUpdated} updated`,
+        ]
+      : [
+          `${status.contactsCreated} created`,
+          `${status.contactsUpdated} updated`,
+        ];
   if (status.interactionsLogged > 0) {
     parts.push(
       logsMeetings
@@ -554,10 +577,17 @@ export function startImportJob(
   const label =
     input.kind === "calendar"
       ? "attendees"
-      : input.ids.length === 1
-        ? "person"
-        : "people";
-  const total = input.kind === "calendar" ? 1 : input.ids.length;
+      : input.kind === "drive_docs"
+        ? "files"
+        : input.ids.length === 1
+          ? "person"
+          : "people";
+  const total =
+    input.kind === "calendar"
+      ? 1
+      : input.kind === "drive_docs"
+        ? input.files.length
+        : input.ids.length;
 
   // Fire-and-forget — callers should not await completion for navigation safety.
   void (async () => {
@@ -645,6 +675,22 @@ export function startImportJob(
         );
         return;
       }
+
+      if (input.kind === "drive_docs") {
+        await runServerOwnedImportJob(
+          jobId,
+          "drive_docs",
+          label,
+          total,
+          () =>
+            startDriveImport(input.files).then((r) => {
+              if (!r.ok) throw new UserFacingError(r.error);
+              return r.value;
+            }),
+          step,
+        );
+        return;
+      }
     } catch (err) {
       if (snapshot?.id !== jobId) return;
       cancelJobId = null;
@@ -655,6 +701,7 @@ export function startImportJob(
         status: "failed",
         progress: null,
         error: err instanceof Error ? err.message : "Import failed",
+        userFacingError: isUserFacingError(err),
       });
     }
   })();

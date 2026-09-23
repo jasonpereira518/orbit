@@ -51,6 +51,12 @@ function main() {
   check("frame-ancestors none, object-src none, base-uri self", /frame-ancestors 'none'/.test(csp ?? "") && /object-src 'none'/.test(csp ?? "") && /base-uri 'self'/.test(csp ?? ""));
   check("reports go to /api/csp-report", /report-uri \/api\/csp-report/.test(csp ?? ""));
   check("frame-src allows Clerk and Turnstile", /frame-src[^;]*clerk\.orbit\.jasonpereira\.live/.test(csp ?? "") && /frame-src[^;]*challenges\.cloudflare\.com/.test(csp ?? ""));
+  check("script-src allows Google's Picker loader", /script-src[^;]*https:\/\/apis\.google\.com/.test(csp ?? ""), csp ?? "");
+  check("frame-src allows Docs and Drive (the Picker's own frames)", /frame-src[^;]*https:\/\/docs\.google\.com/.test(csp ?? "") && /frame-src[^;]*https:\/\/drive\.google\.com/.test(csp ?? ""), csp ?? "");
+  // The Picker's drive.file-only token comes from Google Identity Services in the browser.
+  check("script-src allows the Google Identity Services library", /script-src[^;]*https:\/\/accounts\.google\.com\/gsi\/client/.test(csp ?? ""), csp ?? "");
+  check("frame-src and connect-src allow Google Identity Services", /frame-src[^;]*https:\/\/accounts\.google\.com/.test(csp ?? "") && /connect-src[^;]*https:\/\/accounts\.google\.com/.test(csp ?? ""), csp ?? "");
+  check("connect-src allows the Google APIs the Picker calls", /connect-src[^;]*https:\/\/www\.googleapis\.com/.test(csp ?? ""), csp ?? "");
 
   console.log("\nEnforced...");
   const enforced = buildSecurityHeaders({ dev: false, enforce: true, clerkPublishableKey: pk });

@@ -35,6 +35,8 @@ export type SummarisableImport = {
     remindersCreated?: number;
     messagesImported?: number;
     meetingsLogged?: number;
+    docsRead?: number;
+    flaggedCommitments?: unknown[];
   } | null;
 };
 
@@ -61,6 +63,10 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
   const duplicates = item.duplicatesFound ?? 0;
   const sameGroup = updated === duplicates;
 
+  if (item.importType === "drive_docs") {
+    add(stats.docsRead, (n) => `${n} doc${n === 1 ? "" : "s"} read`, "neutral");
+  }
+
   if (createsContacts(item.importType)) {
     add(item.contactsCreated, (n) => `${n} added`, "good");
     add(
@@ -72,7 +78,14 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
 
   // Calendar's real output, and the one every calendar row used to be missing.
   add(stats.interactionsLogged, (n) => `${n} meetings logged`, "good");
-  add(stats.remindersCreated, (n) => `${n} reminders`, "neutral");
+  add(
+    stats.remindersCreated,
+    (n) => `${n} reminder${n === 1 ? "" : "s"}`,
+    "neutral",
+  );
+  // No `href`: the section this points at only exists inside the (closed) detail sheet, so
+  // a chip on the collapsed list row has nowhere real to link.
+  add(stats.flaggedCommitments?.length, (n) => `${n} to look at`, "offer");
 
   // Legacy per-type counters, still rendered so rows from before the engine keep their numbers.
   add(stats.messagesImported, (n) => `${n} messages`, "neutral");

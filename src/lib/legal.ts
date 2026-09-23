@@ -94,6 +94,12 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
     use: "Reads recent and upcoming events on your primary calendar and adds meetings with people in your network to their timelines.",
     askedWhen: "Connect Google Calendar on Events",
   },
+  {
+    scope: GOOGLE_SCOPES.drive,
+    permission: "See and open only the Google Docs and Slides you pick (drive.file)",
+    use: "Lets you pick Google Docs and Slides from the Google Picker to import. Orbit only ever sees files you explicitly select.",
+    askedWhen: "Connect Google on Imports → Google Drive",
+  },
 ];
 
 /**

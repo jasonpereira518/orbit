@@ -31,6 +31,22 @@ export function withinUndoWindow(createdAt: Date, now: Date = new Date()): boole
   return now.getTime() - createdAt.getTime() <= UNDO_WINDOW_DAYS * 86_400_000;
 }
 
+/**
+ * Import types that never pass through the engine's provenance stamp.
+ *
+ * Undo learns who an import created from `payload.importedBy`, which the engine writes on each
+ * row as it marks it done — one row, one contact. A Drive import saves each doc the way Capture
+ * saves a note instead: nothing stamps its rows, and a doc that names several people keeps only
+ * the first on its row. Undo would see a fraction of the people, and tell the person the import
+ * ran before Orbit tracked edits, which isn't true. So it isn't offered for one.
+ */
+const NOT_UNDOABLE = new Set(["drive_docs"]);
+
+/** True when undo can act on an import of this type. */
+export function importUndoable(importType: string): boolean {
+  return !NOT_UNDOABLE.has(importType);
+}
+
 export type FinishSummary = {
   /**
    * Every import this card speaks for, in the order they ran.
@@ -54,6 +70,8 @@ export type FinishSummary = {
   blockedByPlan?: number;
   /** Rows the database refused and chunk narrowing dropped (`imports.stats.failedRows`). */
   failedRows?: number;
+  /** Set when undo can't act on any import here (see `importUndoable`) — the card offers none. */
+  notUndoable?: true;
 };
 
 /** A line under the sentence about what the run could not bring in. */
@@ -113,6 +131,7 @@ export function finishPartFromImport(row: {
     // line, which was the only place refused rows were ever mentioned, so they ride along.
     blockedByPlan: row.stats?.blockedByPlan ?? 0,
     failedRows: row.stats?.failedRows ?? 0,
+    ...(importUndoable(row.importType) ? {} : { notUndoable: true as const }),
   };
 }
 
@@ -145,6 +164,9 @@ export function mergeFinishSummaries(
     ...(unfinished ? { unfinished } : {}),
     ...(blockedByPlan ? { blockedByPlan } : {}),
     ...(failedRows ? { failedRows } : {}),
+    // Only when nothing here can be undone. A mixed run keeps its Undo, and the server skips
+    // the parts it can't act on.
+    ...(parts.every((p) => p.notUndoable) ? { notUndoable: true as const } : {}),
   };
 }
 

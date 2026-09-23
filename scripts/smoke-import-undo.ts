@@ -364,6 +364,19 @@ async function main() {
   check("…which is not the same as undone", oldPreview!.alreadyUndone === false);
   check("…and performing it removes nothing", (await performUndo(USER, old.importId, NOW)).removed === 0);
 
+  // A Drive import saves through Capture's note path, not the engine, so its rows are not a
+  // record of who it created. Undo refuses it outright rather than guessing from them.
+  const drive = await seedImport(USER, [{ name: "Named In A Doc", created: true }], {
+    importType: "drive_docs",
+    runEndedAt: RUN_END,
+  });
+  check("a Drive import gets no undo preview", (await previewUndo(USER, drive.importId, NOW)) === null);
+  check("…and undoing it removes nobody", (await performUndo(USER, drive.importId, NOW)).removed === 0);
+  check(
+    "…so the person it brought in is still here",
+    Boolean(await db.query.contacts.findFirst({ where: eq(contacts.id, drive.ids[0]) })),
+  );
+
   // A pre-fingerprint import: rows with no provenance fall back to created-after-the-import,
   // so a person who already existed before it ran is not one of its candidates.
   const legacy = await seedImport(USER, [

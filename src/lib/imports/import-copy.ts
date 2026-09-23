@@ -23,6 +23,9 @@ export const IMPORT_COPY = {
   truncated:
     "That folder had more files than Orbit reads in one go — drop the rest after this",
   stopped: "Import stopped",
+  driveUnavailable: "Couldn’t open Google Drive — try again in a moment",
+  drivePaywalled: "Google Drive is on paid plans",
+  driveWaitForQueue: "Finish or clear the files above first",
 
   // --- Undoing an import ---------------------------------------------------------------
   // Every line a person reads on the way back out of an import. The counts and the names are
