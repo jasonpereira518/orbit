@@ -123,7 +123,11 @@ export function ApolloSearch() {
                     value={input[field.key]}
                     placeholder={field.placeholder}
                     maxLength={300}
-                    onChange={(event) => setInput((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setInput((prev) => ({ ...prev, [field.key]: value }));
+                      setResult(null);
+                    }}
                   />
                 </div>
               ))}
