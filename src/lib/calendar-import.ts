@@ -95,14 +95,23 @@ function unescapeIcs(value: string) {
     .replace(/\\\\/g, "\\");
 }
 
+/**
+ * The `TZID=` parameter off a single property line, e.g. `DTSTART;TZID=America/New_York:2026…`.
+ * Shared by `tzidOf` (looks the line up by property name) and `parseIcsEvents`'s EXDATE
+ * handling (which already has each line in hand), so the two can't drift apart.
+ */
+function tzidOfLine(line: string): string | null {
+  const hit = /;TZID=([^:;]+)/i.exec(line.slice(0, line.indexOf(":") + 1));
+  return hit ? hit[1]!.trim() : null;
+}
+
 /** The `TZID=` parameter off a property line, e.g. `DTSTART;TZID=America/New_York:2026…`. */
 function tzidOf(block: string, name: string): string | null {
   const line = block
     .split(/\r?\n/)
     .find((candidate) => new RegExp(`^${name}[;:]`, "i").test(candidate));
   if (!line) return null;
-  const hit = /;TZID=([^:;]+)/i.exec(line.slice(0, line.indexOf(":") + 1));
-  return hit ? hit[1]!.trim() : null;
+  return tzidOfLine(line);
 }
 
 function parseIcsDate(raw: string, timezone?: string | null): Date | null {
@@ -231,7 +240,7 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
     const rrule = getProp(block, "RRULE") || null;
     const exDates = getAllPropLines(block, "EXDATE")
       .flatMap((line) => {
-        const zone = /;TZID=([^:;]+)/i.exec(line.slice(0, line.indexOf(":") + 1))?.[1]?.trim() ?? timezone;
+        const zone = tzidOfLine(line) ?? timezone;
         return line
           .slice(line.indexOf(":") + 1)
           .split(",")

@@ -279,6 +279,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-polish-migrations": "pglite",
   "smoke-ai-derived-interactions": "pglite",
   "smoke-calendar-feed-token": "pglite",
+  "smoke-calendar-subscription-sync": "pglite",
   "smoke-housekeeping-sweeps": "pglite",
   "smoke-linkedin-direction": "pglite",
   "smoke-linkedin-timeline-backfill": "pglite",
