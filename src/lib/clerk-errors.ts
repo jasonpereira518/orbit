@@ -8,6 +8,11 @@
  *
  * Deliberately free of any Clerk import: this is shape-matching, so it stays testable
  * from a plain tsx script with no browser and no provider.
+ *
+ * Only codes that some Orbit-owned screen can actually raise belong here. `session_exists`
+ * was dropped for that reason: it comes out of a sign-in attempt, and sign-in and sign-up
+ * are still Clerk's own components with their own copy, so nothing routes that code through
+ * this mapper. An entry no call site can reach is a claim about coverage that is not true.
  */
 export const CLERK_ERROR_COPY: Readonly<Record<string, string>> = {
   form_password_pwned: "That password has shown up in a breach — pick another",
@@ -15,9 +20,12 @@ export const CLERK_ERROR_COPY: Readonly<Record<string, string>> = {
   form_identifier_exists: "That email is already on your account",
   form_password_incorrect: "That password wasn’t right — try again",
   form_password_validation_failed: "That password is too weak — make it longer",
-  form_param_format_invalid: "That doesn’t look like an email address",
+  // Clerk uses this code for ANY malformed parameter, not just an email — and the profile
+  // name save reaches it today, so copy that names a field would be telling someone editing
+  // their last name that their email looks wrong. Field-agnostic on purpose: the toast sits
+  // beside the form that raised it, which is what says which field.
+  form_param_format_invalid: "That doesn’t look right — check it and try again",
   form_identifier_not_allowed: "That address can’t be used here",
-  session_exists: "You’re already signed in on this device",
 };
 
 /** Narrow, without importing Clerk, to `{ errors: [{ code }] }`. */
