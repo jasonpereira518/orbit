@@ -353,8 +353,17 @@ function calendarQueryBody(fromUtc: string, toUtc: string): string {
  * precondition, `CalDavRejectedError` on any other definitive 4xx, and lets every other
  * `guardedFetchText` failure (network, wrong content type, too many redirects, body too
  * large) propagate as its own `EventPageError`.
+ *
+ * Exported for `scripts/dev/icloud-caldav-probe.ts` alone. The spike that decides whether this
+ * module's assumptions about Apple hold has to travel the same transport the module does. Its
+ * first version did not: it kept a private `fetch` with `redirect: "follow"` and the credential
+ * attached once, up front. `.well-known/caldav` redirects to a shard host, which is a
+ * cross-origin hop, and the Fetch standard requires `Authorization` to be dropped across one —
+ * so the probe arrived anonymous, read Apple's 401 back as "the app-specific password was
+ * rejected", and sent a real investigation after a credential that was never the problem. A
+ * probe that does not go through this function is not testing this client.
  */
-async function davRequest(
+export async function davRequest(
   creds: CalDavCredentials,
   url: string,
   method: "PROPFIND" | "REPORT",

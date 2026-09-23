@@ -26,6 +26,14 @@
  * written, so the file is safe to commit and to paste into a conversation. Revoke the
  * app-specific password afterwards if you like — nothing here stores it.
  */
+import {
+  CalDavAuthError,
+  CalDavRejectedError,
+  CalDavStaleSyncTokenError,
+  davRequest,
+  type CalDavCredentials,
+} from "../../src/lib/caldav/client";
+
 const APPLE_ID = process.env.APPLE_ID;
 const APP_PASSWORD = process.env.APPLE_APP_PASSWORD;
 
@@ -41,7 +49,7 @@ if (!APPLE_ID || !APP_PASSWORD) {
   process.exit(1);
 }
 
-const auth = `Basic ${Buffer.from(`${APPLE_ID}:${APP_PASSWORD}`).toString("base64")}`;
+const creds: CalDavCredentials = { username: APPLE_ID, password: APP_PASSWORD };
 
 /**
  * Everything that reaches the report goes through here first.
@@ -75,20 +83,42 @@ function hasTag(xml: string, local: string): boolean {
   return new RegExp(`<[^>]*\\b${local}\\b`, "i").test(xml);
 }
 
-async function dav(method: string, url: string, body: string, depth = "0") {
-  const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: auth,
-      "Content-Type": "application/xml; charset=utf-8",
-      Depth: depth,
-      "User-Agent": "Orbit-CalDAV-Probe/1.0",
-    },
-    body,
-    redirect: "follow",
-  });
-  const text = await res.text();
-  return { status: res.status, finalUrl: res.url, text };
+/**
+ * Goes through `davRequest` — the client's own transport — rather than a private `fetch`.
+ *
+ * This used to be a bare `fetch(url, { headers: { Authorization }, redirect: "follow" })`, and
+ * that is not a smaller version of the client, it is a broken one. `.well-known/caldav`
+ * redirects to a shard host (`p42-caldav.icloud.com` and the like); that is a cross-origin
+ * hop, and the Fetch standard requires `Authorization` to be stripped across one. So the
+ * followed request arrived with no credential, Apple answered 401, and the report below
+ * concluded the app-specific password had been rejected — which was false, and cost a real
+ * investigation. `davRequest` keeps `redirect: "manual"` and re-attaches the credential per
+ * hop after re-checking the host pin, which is the whole reason it exists.
+ *
+ * `davRequest` throws where a status would have been returned, so the mapping back to a status
+ * is here: the report's value is the SHAPE of what Apple sends, and a status is part of that.
+ */
+async function dav(
+  method: "PROPFIND" | "REPORT",
+  url: string,
+  body: string,
+  depth: "0" | "1" = "0"
+): Promise<{ status: number; finalUrl: string; text: string }> {
+  try {
+    const res = await davRequest(creds, url, method, depth, body, fetch);
+    return { status: 207, finalUrl: res.url, text: res.text };
+  } catch (err) {
+    if (err instanceof CalDavAuthError) {
+      return { status: 401, finalUrl: url, text: `<!-- ${err.message} -->` };
+    }
+    if (err instanceof CalDavStaleSyncTokenError) {
+      return { status: 409, finalUrl: url, text: `<!-- ${err.message} -->` };
+    }
+    if (err instanceof CalDavRejectedError) {
+      return { status: err.status, finalUrl: url, text: `<!-- ${err.message} -->` };
+    }
+    throw err;
+  }
 }
 
 const PROPFIND_PRINCIPAL = `<d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>`;
@@ -136,7 +166,15 @@ async function main() {
     say(redact(principal.text).slice(0, 1200));
     say("```");
     say();
-    say("**Discovery failed — nothing below could run.** A 401 here means the app-specific password was rejected.");
+    say(
+      `**Discovery failed — nothing below could run.** Status was ${principal.status}. ` +
+        "A 401 here is Apple refusing the credential this probe presented: either the " +
+        "app-specific password is wrong or revoked, or `APPLE_ID` is not the address the " +
+        "password belongs to. It no longer means the request arrived without a credential — " +
+        "this probe goes through the client's own `davRequest`, which re-attaches it on every " +
+        "redirect hop. Anything other than 401 is Apple refusing the request itself, not the " +
+        "sign-in."
+    );
     await finish(lines);
     return;
   }
