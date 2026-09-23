@@ -26,6 +26,8 @@ import {
   chatThreads,
   closenessCohorts,
   companies,
+  connectorConnections,
+  connectorOutbox,
   contactBriefs,
   contactEmbeddings,
   memoryChunks,
@@ -45,6 +47,7 @@ import {
   eventProviderConnections,
   events,
   extensionUsage,
+  externalLinks,
   feedback,
   feedbackScreenshots,
   gateEvents,
@@ -280,6 +283,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(calendarSources),
       own(calendarSubscriptions),
       own(eventProviderConnections),
+      own(connectorConnections),
+      own(externalLinks),
+      own(connectorOutbox),
     ],
     counts: [
       gmailConnections,
@@ -288,6 +294,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       calendarSources,
       calendarSubscriptions,
       eventProviderConnections,
+      connectorConnections,
+      externalLinks,
+      connectorOutbox,
     ],
     run: async (db, userId) => {
       // Read before the delete: once the row is gone there is nothing to revoke with.
@@ -315,6 +324,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db
         .delete(eventProviderConnections)
         .where(eq(eventProviderConnections.userId, userId));
+      // Holds encrypted OAuth tokens, API keys and iCloud app passwords for every connector
+      // that is not Gmail or Outlook. Same class of secret as the rows above, and it must
+      // not outlive the account.
+      await db.delete(connectorConnections).where(eq(connectorConnections.userId, userId));
+      // The outbox may hold an unsent payload and external_links maps this user's rows into
+      // other systems. Both go with the connection that produced them.
+      await db.delete(connectorOutbox).where(eq(connectorOutbox.userId, userId));
+      await db.delete(externalLinks).where(eq(externalLinks.userId, userId));
     },
   },
   events: {
