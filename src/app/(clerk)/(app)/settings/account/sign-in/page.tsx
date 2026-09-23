@@ -1,5 +1,6 @@
 import { isClerkConfigured } from "@/lib/auth";
 import { AccountDemoPanel } from "@/components/account/account-demo-panel";
+import { EmailList } from "@/components/account/email-list";
 import { SettingsSection } from "@/components/settings/settings-section";
 
 /**
@@ -24,7 +25,7 @@ export default async function AccountSignInPage() {
         title="Email addresses"
         description="Where Orbit reaches you, and what you can sign in with."
       >
-        <p className="text-sm text-muted-foreground">Email management arrives in the next step</p>
+        <EmailList />
       </SettingsSection>
       <SettingsSection
         title="Connected accounts"
