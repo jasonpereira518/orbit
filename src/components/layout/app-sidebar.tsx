@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { Plus, Search } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
-import { UserButton } from "@clerk/nextjs";
 import { motion } from "motion/react";
 import {
   APP_NAV_CORE,
@@ -21,7 +20,7 @@ import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { clerkAppearance } from "@/lib/clerk-appearance";
+import { AccountMenu, type AccountMenuProfile } from "@/components/account/account-menu";
 import { useModKeyLabel } from "@/lib/use-mod-key";
 
 function SidebarNavLink({
@@ -100,6 +99,7 @@ export function AppSidebar({
   clerkOn,
   demoMode,
   plan,
+  profile,
   hidden,
   hiddenForUsers,
 }: {
@@ -107,6 +107,8 @@ export function AppSidebar({
   clerkOn: boolean;
   demoMode: boolean;
   plan: Plan;
+  /** The viewer's name, email and picture for the account menu. Null without a session. */
+  profile: AccountMenuProfile | null;
   /** Surfaces hidden from this viewer. Empty for an exempt operator. */
   hidden: ReadonlySet<string>;
   /** Surfaces hidden from ordinary users, whether or not this viewer is exempt. */
@@ -233,7 +235,7 @@ export function AppSidebar({
       <div className="mx-2 mb-2 mt-auto border-t border-black/[0.06] p-2 dark:border-white/10 lg:mx-3 lg:mb-3 lg:p-3">
         {clerkOn ? (
           <div className="flex items-center justify-center gap-3 lg:justify-start">
-            <UserButton appearance={clerkAppearance} />
+            <AccountMenu profile={profile} />
             <span className="hidden text-xs text-muted-foreground lg:inline">
               Account
             </span>

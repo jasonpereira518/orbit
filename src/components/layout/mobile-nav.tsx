@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { MessageSquarePlus, Sparkles } from "lucide-react";
-import { UserButton } from "@clerk/nextjs";
 import {
   APP_NAV,
   MOBILE_BOTTOM_NAV,
@@ -21,7 +20,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { clerkAppearance } from "@/lib/clerk-appearance";
+import { AccountMenu, type AccountMenuProfile } from "@/components/account/account-menu";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { FEEDBACK_SURFACE_KEY, isHrefComingSoon, isHrefHidden } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
@@ -38,10 +37,13 @@ type DraggableEntry = { type: "more" } | { type: "link"; href: string };
 export function MobileNav({
   clerkOn,
   demoMode,
+  profile,
   hidden,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
+  /** The viewer's name, email and picture for the account menu. Null without a session. */
+  profile: AccountMenuProfile | null;
   /** Surfaces hidden from this viewer. Empty for an exempt operator. */
   hidden: ReadonlySet<string>;
 }) {
@@ -616,7 +618,7 @@ export function MobileNav({
             <div className="flex items-center gap-3">
               {clerkOn ? (
                 <>
-                  <UserButton appearance={clerkAppearance} />
+                  <AccountMenu profile={profile} />
                   <span className="text-sm text-muted-foreground">Account</span>
                 </>
               ) : demoMode ? (

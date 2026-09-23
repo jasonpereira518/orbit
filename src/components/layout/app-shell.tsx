@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import type { Plan } from "@/lib/plan-limits";
 import type { ThemePreference } from "@/lib/theme";
+import type { AccountMenuProfile } from "@/components/account/account-menu";
 
 const FloatingAskBar = dynamic(
   () =>
@@ -50,6 +51,7 @@ export function AppShell({
   demoMode,
   theme,
   plan,
+  profile,
   hidden,
   hiddenForUsers,
   viewingAsUser,
@@ -60,6 +62,11 @@ export function AppShell({
   demoMode: boolean;
   theme: ThemePreference | null;
   plan: Plan;
+  /**
+   * The viewer's own name, email and picture, resolved on the server so the sidebar paints
+   * a face without waiting on Clerk JS. Null in demo mode and when nobody is signed in.
+   */
+  profile: AccountMenuProfile | null;
   /** Surface keys hidden from THIS viewer. Empty for an exempt operator. */
   hidden: string[];
   /** Surface keys hidden from ordinary users, for the operator's "Hidden" tags. */
@@ -163,6 +170,7 @@ export function AppShell({
               clerkOn={clerkOn}
               demoMode={demoMode}
               plan={plan}
+              profile={profile}
               hidden={hiddenSet}
               hiddenForUsers={hiddenForUsersSet}
             />
@@ -264,6 +272,7 @@ export function AppShell({
             <MobileNav
               clerkOn={clerkOn}
               demoMode={demoMode}
+              profile={profile}
               hidden={hiddenSet}
             />
           </main>

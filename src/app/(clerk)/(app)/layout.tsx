@@ -15,6 +15,7 @@ import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
+  getDisplayProfile,
   isClerkConfigured,
   isDemoMode,
 } from "@/lib/auth";
@@ -121,6 +122,9 @@ export default async function AppLayout({
     resolveSurfaceVisibility(userId),
   ]);
 
+  // The viewer's own name, email and picture, for the account menu in the nav.
+  const displayProfile = await getDisplayProfile();
+
   // Whether "Lifetime includes AI" is true on this deployment — see LifetimeAiOfferProvider.
   // False while managed AI is off, even on a dev server holding its own local keys: those
   // pay for localhost, not for Lifetime.
@@ -134,6 +138,15 @@ export default async function AppLayout({
       demoMode={demoMode}
       theme={theme}
       plan={plan}
+      profile={
+        displayProfile
+          ? {
+              name: displayProfile.name,
+              email: displayProfile.email,
+              imageUrl: displayProfile.imageUrl,
+            }
+          : null
+      }
       hidden={[...visibility.hidden]}
       hiddenForUsers={[...visibility.hiddenForUsers]}
       viewingAsUser={visibility.viewingAsUser}
