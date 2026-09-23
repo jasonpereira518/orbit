@@ -9,10 +9,12 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   finishCopy,
+  foldPreviews,
   mergeFinishSummaries,
   undoDismissLabel,
   type FinishSummary,
 } from "../src/lib/imports/import-finish";
+import type { UndoPreview } from "../src/lib/imports/import-undo";
 import { IMPORT_COPY } from "../src/lib/imports/import-copy";
 import {
   ImportFinishCard,
@@ -278,6 +280,124 @@ check("it says matched people stay", readyHtml.includes(IMPORT_COPY.undoKeepsMat
 check(
   "it says what undo does not count as a change",
   readyHtml.includes(IMPORT_COPY.undoUnchecked),
+);
+
+/**
+ * A run's previews, read as one.
+ *
+ * The done card's Undo covers every import the run wrote, so the confirmation folds one
+ * preview per import into one. The fold decides what the person is told before anything is
+ * deleted, and it had no test: a two-file run where one import was undone separately folded
+ * to "the 7-day window has closed" — untrue — and hid the other file's valid undo.
+ */
+console.log("A run's previews, read as one");
+const part = (over: Partial<UndoPreview>): UndoPreview => ({
+  importId: "x",
+  withinWindow: true,
+  alreadyUndone: false,
+  exact: true,
+  candidates: [],
+  removable: 0,
+  keeping: 0,
+  ...over,
+});
+const live = part({
+  importId: "live",
+  removable: 2,
+  keeping: 1,
+  candidates: [
+    { contactId: "l-r1", name: "Live Removable", removable: true },
+    { contactId: "l-k1", name: "Live Kept", removable: false, reason: "tagged" },
+    { contactId: "l-r2", name: "Live Removable Two", removable: true },
+  ],
+});
+const liveInexact = part({
+  importId: "live2",
+  exact: false,
+  removable: 1,
+  keeping: 1,
+  candidates: [
+    { contactId: "m-r1", name: "Other Removable", removable: true },
+    { contactId: "m-k1", name: "Other Kept", removable: false, reason: "noted" },
+  ],
+});
+// `previewUndo` reports an undone import as outside the window too: undo is no longer allowed.
+const undoneElsewhere = part({
+  importId: "gone",
+  withinWindow: false,
+  alreadyUndone: true,
+  keeping: 1,
+  candidates: [{ contactId: "g-k1", name: "Stayed Behind", removable: false, reason: "edited" }],
+});
+const expired = part({
+  importId: "old",
+  withinWindow: false,
+  exact: false,
+  removable: 5,
+  candidates: Array.from({ length: 5 }, (_, i) => ({
+    contactId: `o-r${i}`,
+    name: `Old ${i}`,
+    removable: true,
+  })),
+});
+
+check("one import is its own preview", foldPreviews([live]) === live);
+
+const partlyUndone = foldPreviews([live, undoneElsewhere]);
+check(
+  "one import undone separately does not close the other's window",
+  partlyUndone.withinWindow === true && partlyUndone.alreadyUndone === false,
+  JSON.stringify({ withinWindow: partlyUndone.withinWindow, alreadyUndone: partlyUndone.alreadyUndone }),
+);
+check(
+  "…and the counts are the ones undo would act on",
+  partlyUndone.removable === 2 && partlyUndone.keeping === 1,
+  JSON.stringify({ removable: partlyUndone.removable, keeping: partlyUndone.keeping }),
+);
+const partlyUndoneHtml = confirmation(partlyUndone);
+check(
+  "…so the confirmation offers it rather than saying the window closed",
+  partlyUndoneHtml.includes("Remove 2 people?") &&
+    !partlyUndoneHtml.includes(IMPORT_COPY.undoWindowClosed),
+);
+
+const partlyExpired = foldPreviews([live, expired]);
+check(
+  "an expired import does not inflate the number to remove",
+  partlyExpired.withinWindow === true && partlyExpired.removable === 2,
+  String(partlyExpired.removable),
+);
+check(
+  "…nor put its people in the list",
+  !partlyExpired.candidates.some((c) => c.contactId.startsWith("o-")),
+);
+check(
+  "…nor its caveat on people it will not touch",
+  partlyExpired.exact === true,
+);
+
+const allGone = foldPreviews([undoneElsewhere, { ...undoneElsewhere, importId: "gone2" }]);
+check("every import undone reads as undone", allGone.alreadyUndone === true && allGone.withinWindow === false);
+const noneLive = foldPreviews([expired, undoneElsewhere]);
+check(
+  "nothing left inside the window reads as closed, not undone",
+  noneLive.withinWindow === false && noneLive.alreadyUndone === false,
+);
+
+const mixedExact = foldPreviews([live, liveInexact]);
+check(
+  "one import that cannot vouch for itself puts the caveat on the whole run",
+  mixedExact.exact === false,
+);
+check(
+  "the counts sum across the imports that can still be undone",
+  mixedExact.removable === 3 && mixedExact.keeping === 2,
+  JSON.stringify({ removable: mixedExact.removable, keeping: mixedExact.keeping }),
+);
+check(
+  "kept people come first across the whole run, in the order the imports ran",
+  mixedExact.candidates.map((c) => c.contactId).join(",") === "l-k1,m-k1,l-r1,l-r2,m-r1",
+  mixedExact.candidates.map((c) => c.contactId).join(","),
 );
 
 if (failures) {

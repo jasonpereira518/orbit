@@ -16,6 +16,7 @@ import { ImportFinishScene } from "@/components/imports/import-finish-scene";
 import { previewImportUndo, undoImport } from "@/actions/imports";
 import {
   finishCopy,
+  foldPreviews,
   undoDismissLabel,
   type FinishSummary,
 } from "@/lib/imports/import-finish";
@@ -230,34 +231,6 @@ function canRemove(preview: UndoPreview): boolean {
   return (
     preview.withinWindow && !preview.alreadyUndone && preview.removable > 0
   );
-}
-
-/**
- * A run's previews, read as one.
- *
- * The confirmation has to state what the button above it promised, and on a multi-file drop
- * that promise spans every import the run wrote. The folds are all the cautious direction:
- * `withinWindow` needs every part to still be inside it, `alreadyUndone` means every part
- * already went, and `exact` is false if any single part cannot vouch for itself — a caveat
- * that applies to some of the people is a caveat the person has to see.
- */
-function foldPreviews(parts: UndoPreview[]): UndoPreview {
-  const [first] = parts;
-  if (parts.length === 1) return first;
-  return {
-    importId: first.importId,
-    withinWindow: parts.every((p) => p.withinWindow),
-    alreadyUndone: parts.every((p) => p.alreadyUndone),
-    exact: parts.every((p) => p.exact),
-    // Kept first across the whole run, for the same reason `previewUndo` orders them that
-    // way: those are the names the confirmation actually has to explain.
-    candidates: [
-      ...parts.flatMap((p) => p.candidates.filter((c) => !c.removable)),
-      ...parts.flatMap((p) => p.candidates.filter((c) => c.removable)),
-    ],
-    removable: parts.reduce((n, p) => n + p.removable, 0),
-    keeping: parts.reduce((n, p) => n + p.keeping, 0),
-  };
 }
 
 export function UndoDialogBody({

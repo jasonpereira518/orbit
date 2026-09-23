@@ -9,6 +9,10 @@
  */
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { joinList } from "@/lib/imports/join-list";
+// Type-only, and it has to stay that way: `import-undo.ts` reaches `@/db`, and this module is
+// imported by client components. A type import is erased; anything more is the `node:fs`
+// chunk error.
+import type { UndoPreview } from "@/lib/imports/import-undo";
 
 /**
  * How long an import can be undone for.
@@ -175,4 +179,46 @@ export function undoDismissLabel(
 ): string {
   if (phase === "removing") return IMPORT_COPY.undoDismiss;
   return canRemove ? IMPORT_COPY.undoCancel : IMPORT_COPY.undoClose;
+}
+
+/**
+ * A run's undo previews, read as one.
+ *
+ * The done card's Undo covers every import the run wrote, so its confirmation has to state one
+ * set of numbers for all of them — and those numbers have to be what the button will actually
+ * do. `undoImport` on an import that is outside its window, or already undone, removes nobody,
+ * so only the imports still inside the window count toward "Remove N people?" and the names
+ * beneath it. Counting the rest was how a two-file run with one file undone separately read
+ * "the 7-day window has closed" (the old fold required EVERY part to be inside it) while the
+ * other file's undo was perfectly valid.
+ *
+ * - `withinWindow`: some import can still be undone.
+ * - `alreadyUndone`: every import already was — the "Undone" message is only true of all.
+ * - `exact`: false if any import that will be acted on cannot vouch for itself; a caveat that
+ *   applies to some of the people being removed is one the person has to see.
+ * - Candidates: kept people first across the whole run, in the order the imports ran, the same
+ *   ordering `previewUndo` uses and for the same reason — they are the names the confirmation
+ *   has to explain.
+ *
+ * Display only: which people go is decided per import, on the server, by `performUndo`.
+ */
+export function foldPreviews(parts: readonly UndoPreview[]): UndoPreview {
+  const [first] = parts;
+  if (parts.length === 1) return first;
+  const live = parts.filter((p) => p.withinWindow);
+  // With nothing live the dialog shows the closed-or-undone line and no counts, so which parts
+  // those counts came from no longer matters.
+  const counted = live.length ? live : parts;
+  return {
+    importId: first.importId,
+    withinWindow: live.length > 0,
+    alreadyUndone: parts.every((p) => p.alreadyUndone),
+    exact: counted.every((p) => p.exact),
+    candidates: [
+      ...counted.flatMap((p) => p.candidates.filter((c) => !c.removable)),
+      ...counted.flatMap((p) => p.candidates.filter((c) => c.removable)),
+    ],
+    removable: counted.reduce((n, p) => n + p.removable, 0),
+    keeping: counted.reduce((n, p) => n + p.keeping, 0),
+  };
 }
