@@ -25,6 +25,8 @@
 - lucide-react is 1.x: the warning icon is `TriangleAlert`, there is no `AlertTriangle`.
 - Never put Tailwind class names in code comments — Tailwind scans comments and compiles them.
 - Run smokes with `npx tsx scripts/run-smoke.ts --only <name>`; the full check is `npx tsx scripts/run-smoke.ts --ci`.
+- A fresh worktree has no `node_modules` and no `.env`: run `npm ci` **in the worktree** before anything else. Without `.env` it runs in demo mode against local PGlite, which is what every task here except 11 wants.
+- Under machine load above ~100, `smoke-admin-render` and `smoke-instrumentation` time out for reasons unrelated to this work. Re-run them alone before suspecting your change.
 
 ---
 
