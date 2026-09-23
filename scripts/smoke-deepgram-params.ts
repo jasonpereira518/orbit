@@ -31,6 +31,7 @@ console.log("\nlistenParams");
   check("smart formatting on", p.get("smart_format") === "true");
   check("a file request asks for no interim results", p.get("interim_results") === null);
   check("no diarization unless asked", p.get("diarize") === null);
+  check("a file request opts out of the Model Improvement Program", p.get("mip_opt_out") === "true");
 }
 {
   const p = listenParams({ live: true, diarize: true, keyterms: ["Priya Raman"], tag: "meeting:abc" });
@@ -39,6 +40,7 @@ console.log("\nlistenParams");
   check("diarization on", p.get("diarize") === "true");
   check("keyterms are repeated params", p.getAll("keyterm").join("|") === "Priya Raman");
   check("the tag rides along", p.get("tag") === "meeting:abc");
+  check("a live request opts out of the Model Improvement Program", p.get("mip_opt_out") === "true");
 }
 {
   const p = listenParams({ live: true, keyterms: ["A", "B"] });

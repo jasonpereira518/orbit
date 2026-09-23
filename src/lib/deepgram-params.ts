@@ -57,5 +57,11 @@ export function listenParams(opts: ListenOptions): URLSearchParams {
   if (opts.diarize) params.set("diarize", "true");
   for (const term of keytermsFor(opts.keyterms ?? [])) params.append("keyterm", term);
   if (opts.tag) params.set("tag", opts.tag);
+  // Deepgram's Model Improvement Program is opt-OUT by default, which means audio and
+  // transcripts are retained to train their models unless a request says otherwise. Deepgram
+  // documents this flag as zero data retention: nothing is stored after the response. Private
+  // meeting audio is not ours to donate to a vendor's training set, so every request — live and
+  // file — carries this, unconditionally.
+  params.set("mip_opt_out", "true");
   return params;
 }

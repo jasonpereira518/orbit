@@ -63,7 +63,10 @@ export function buildSecurityHeaders(options: {
       "https://*.ingest.sentry.io",
       "https://*.ingest.us.sentry.io",
       "https://va.vercel-scripts.com",
-      "https://vitals.vercel-insights.com"
+      "https://vitals.vercel-insights.com",
+      // Live meeting/mic transcription: the browser streams audio straight to Deepgram over a
+      // 30-second token our server mints (src/lib/deepgram-live.ts).
+      "wss://api.deepgram.com"
     )}`,
     // Avatars redirect to Blob, LinkedIn's CDN, unavatar and Clerk; the set is open by design.
     `img-src 'self' data: blob: https:`,

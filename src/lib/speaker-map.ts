@@ -8,9 +8,6 @@
  * threshold is "you"; everyone else is numbered.
  */
 
-// `LiveWord` belongs to the live-transcription task, which has not landed yet. Declared here
-// rather than imported so this module has no dependency on it; once `deepgram-live.ts` exists
-// it should import `LiveWord` FROM here, not the other way round.
 export type LiveWord = { word: string; start: number; end: number; speaker: number | null };
 
 export type LoudnessSample = { atMs: number; mic: number; call: number };
