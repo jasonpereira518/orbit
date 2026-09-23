@@ -12,6 +12,9 @@
  * it must never reach `@/db`. Errors name variables, never values.
  */
 
+// Relative, not `@/`: scripts load this file directly. The policy module is pure (type-only imports).
+import { MANAGED_AI_ENABLED } from "./managed-ai-policy";
+
 export type VercelEnv = "production" | "preview" | "development" | undefined;
 
 export const REQUIRED_IN_PRODUCTION = [
@@ -168,6 +171,7 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     // without a key of their own is refused — a warning rather than a failed build, since
     // the ops sweep pages on it (`ai.managed_unconfigured`) and a key must never block a deploy.
     if (
+      MANAGED_AI_ENABLED &&
       has(env, "STRIPE_SECRET_KEY") &&
       !MANAGED_AI_KEYS.some((name) => has(env, name)) &&
       env.ORBIT_MANAGED_AI?.trim().toLowerCase() !== "off"

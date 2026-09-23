@@ -482,67 +482,18 @@ export async function fetchGooglePeopleContacts(
   return people.filter((p) => p.fullName || p.firstName || p.lastName);
 }
 
-const RECRUITER_TITLE_RE =
-  /\b(recruiter|talent\s*acquisition|sourcer|staffing|headhunter|talent\s*partner|technical\s*recruiter)\b/i;
-
-export const AGENCY_DOMAIN_HINTS = [
-  "robertwalters",
-  "michaelpage",
-  "hays",
-  "roberthalf",
-  "kforce",
-  "aerotek",
-  "randstad",
-  "adecco",
-  "manpower",
-  "teksystems",
-  "insightglobal",
-  "cybercoders",
-  "jeffersonfrank",
-  "harveynash",
-];
-
-export function parseFromHeader(from: string): { name: string; email: string } | null {
-  const match = from.match(/^(?:"?([^"<]*)"?\s*)?<?([^\s<>]+@[^\s<>]+)>?$/);
-  if (!match) return null;
-  const email = match[2].trim().toLowerCase();
-  let name = (match[1] || "").trim().replace(/^"|"$/g, "");
-  if (!name) {
-    name = email.split("@")[0].replace(/[._]/g, " ");
-  }
-  return { name, email };
-}
-
-export function firmFromEmail(email: string): string | null {
-  const domain = email.split("@")[1];
-  if (!domain) return null;
-  const base = domain.split(".")[0];
-  if (!base || ["gmail", "yahoo", "outlook", "hotmail", "icloud"].includes(base)) {
-    return null;
-  }
-  return base.charAt(0).toUpperCase() + base.slice(1);
-}
-
-export function looksLikeRecruiter(opts: {
-  from: string;
-  subject: string;
-  snippet: string;
-}): boolean {
-  const blob = `${opts.from} ${opts.subject} ${opts.snippet}`;
-  if (RECRUITER_TITLE_RE.test(blob)) return true;
-  const emailMatch = opts.from.match(/@([^\s>]+)/);
-  const domain = emailMatch?.[1]?.toLowerCase() || "";
-  if (AGENCY_DOMAIN_HINTS.some((h) => domain.includes(h))) return true;
-  if (
-    /\b(open\s+role|hiring|job\s+opportunity|opportunity\s+with|are\s+you\s+open)\b/i.test(
-      blob
-    ) &&
-    /\b(recruit|talent|staffing|hiring\s+for)\b/i.test(blob)
-  ) {
-    return true;
-  }
-  return false;
-}
+/**
+ * These are provider-agnostic (they operate on generic from/subject/snippet
+ * strings) and now live in `recruiter-detect.ts` so `outlook.ts`'s scan support can share
+ * them instead of duplicating. Re-exported here so every existing import site
+ * (`gmail-scan-processor.ts` and others) keeps working unchanged.
+ */
+export {
+  AGENCY_DOMAIN_HINTS,
+  parseFromHeader,
+  firmFromEmail,
+  looksLikeRecruiter,
+} from "@/lib/recruiter-detect";
 
 /**
  * Gmail-side keyword filter. Everything downstream is far more expensive than this —

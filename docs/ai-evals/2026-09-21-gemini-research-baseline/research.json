@@ -1,0 +1,98 @@
+{
+  "label": "gemini-gemini-3.8-flash",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-21T22:41:33.063Z",
+  "commit": "228fa615",
+  "fixtures": "3040d1fd9c4a",
+  "runs": 2,
+  "tasks": {
+    "research": {
+      "cases": 10,
+      "metrics": {
+        "mentionRecall": 1,
+        "factRecall": 0.9285714285714286,
+        "routingAccuracy": 1,
+        "forbiddenHits": 0,
+        "inventedContactIds": 0,
+        "filteredRecommendations": 0,
+        "meanLookups": 2.75,
+        "meanRounds": 2.5
+      },
+      "misses": [
+        "research-date-scoped"
+      ],
+      "p50LatencyMs": 9792,
+      "costMicros": 122000.5,
+      "costPerCaseMicros": 12200.05,
+      "usage": [
+        {
+          "operation": "chat.answer",
+          "model": "gemini-3.8-flash",
+          "calls": 20,
+          "failures": 0,
+          "inputTokens": 61896,
+          "outputTokens": 15812,
+          "cachedInputTokens": 0,
+          "costMicros": 105719,
+          "unpriced": 0
+        },
+        {
+          "operation": "chat.gather",
+          "model": "gemini-3.8-flash",
+          "calls": 40,
+          "failures": 0,
+          "inputTokens": 109942,
+          "outputTokens": 5626,
+          "cachedInputTokens": 0,
+          "costMicros": 103557,
+          "unpriced": 0
+        },
+        {
+          "operation": "chat.rerank",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 20,
+          "failures": 0,
+          "inputTokens": 28036,
+          "outputTokens": 16089,
+          "cachedInputTokens": 0,
+          "costMicros": 31147,
+          "unpriced": 0
+        },
+        {
+          "operation": "chat.understand",
+          "model": "gemini-3.1-flash-lite",
+          "calls": 20,
+          "failures": 0,
+          "inputTokens": 6032,
+          "outputTokens": 1380,
+          "cachedInputTokens": 0,
+          "costMicros": 3578,
+          "unpriced": 0
+        },
+        {
+          "operation": "search.embed",
+          "model": "gemini-embedding-001",
+          "calls": 38,
+          "failures": 0,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 38
+        },
+        {
+          "operation": "search.embed.batch",
+          "model": "gemini-embedding-001",
+          "calls": 4,
+          "failures": 0,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cachedInputTokens": 0,
+          "costMicros": 0,
+          "unpriced": 4
+        }
+      ]
+    }
+  }
+}

@@ -25,8 +25,12 @@ import type {
   StarterMode,
   StartersResponse as StartersResult,
 } from "@/lib/extension/contract";
-import { completeJson, parseAiJson, userCanUseAi } from "@/lib/ai";
+import { parseAiJson, userCanUseAi } from "@/lib/ai";
+import { cachedCompleteJson } from "@/lib/ai-result-cache";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { daysAgo } from "@/lib/duplicates";
+import { renderWritingPreferences } from "@/lib/writing-instructions";
 import {
   buildConversationTranscript,
   buildProfileBlock,
@@ -71,6 +75,11 @@ export type StarterContext = {
   networkOverlap: { companies: string[]; schools: string[] };
   /** Field-level disagreements between the page and the stored record. */
   changes: FieldChange[];
+  /**
+   * The user's own style notes. Set by the extension route from the signed-in user's row and
+   * nowhere else — the extension client never sends it, so it cannot be forged from a page.
+   */
+  writingInstructions?: string | null;
 };
 
 const DEFAULT_LIMIT = 3;
@@ -593,6 +602,10 @@ function userPrompt(ctx: StarterContext, limit: number): string {
       : "Your active goals: (none specified)"
   );
 
+  // Before the scraped page text, so the untrusted block stays the last thing in the prompt.
+  const writing = renderWritingPreferences(ctx.writingInstructions);
+  if (writing) blocks.push(writing);
+
   const untrusted = untrustedPageBlock(ctx.page);
   if (untrusted) blocks.push(untrusted);
 
@@ -634,7 +647,8 @@ function salvageStarters(content: string): ConversationStarter[] {
 export async function generateConversationStarters(
   userId: string,
   ctx: StarterContext,
-  limit: number = DEFAULT_LIMIT
+  limit: number = DEFAULT_LIMIT,
+  options?: { engines?: Engines }
 ): Promise<StartersResult> {
   const fallback = heuristicStarters(ctx, limit);
   const lowSignal = startersAreLowSignal(fallback);
@@ -648,18 +662,39 @@ export async function generateConversationStarters(
     };
   }
 
+  // With nothing person-specific to work from, the model writes the same three polite
+  // openers about any stranger, and it writes them slowly — the panel waits on this call.
+  // A decision model that is sure there is no material here returns the heuristics now,
+  // labelled as the thin result it is. Without one, the call runs exactly as before.
+  const engines = options?.engines ?? (await openEngines(userId));
+  if (await gateSkips(engines, "starters", { material: gateText(userPrompt(ctx, limit)) })) {
+    return { mode: ctx.mode, starters: fallback, degraded: true, degradedReason: "no_signal" };
+  }
+
   let content: string;
   try {
-    content = await completeJson(userId, {
-      operation: "extension.starters",
-      system: systemPrompt(ctx.mode, limit),
-      user: userPrompt(ctx, limit),
-      temperature: 0.6,
-      // Matches the house default. A tighter budget looks generous for three
-      // short sentences, but reasoning models spend this allowance before they
-      // emit any answer, and the response comes back truncated mid-word.
-      maxOutputTokens: 4096,
-    });
+    // The panel follows the tab, so the same profile is asked about every time the user
+    // comes back to it. Same page, same notes → the starters it already wrote.
+    content = await cachedCompleteJson(
+      userId,
+      {
+        operation: "extension.starters",
+        system: systemPrompt(ctx.mode, limit),
+        user: userPrompt(ctx, limit),
+        temperature: 0.6,
+        // Matches the house default. A tighter budget looks generous for three
+        // short sentences, but reasoning models spend this allowance before they
+        // emit any answer, and the response comes back truncated mid-word.
+        maxOutputTokens: 4096,
+      },
+      {
+        ttlDays: 7,
+        accept: (raw) => {
+          const reply = startersResponseSchema.safeParse(parseAiJson(raw));
+          return reply.success && reply.data.starters.some((s) => s.basis.trim() && s.text.trim());
+        },
+      }
+    );
   } catch (error) {
     console.warn("[starters] model call failed", error);
     return {

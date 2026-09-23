@@ -1,5 +1,7 @@
+import { cancelBatchJobsFor } from "@/lib/ai-batch";
 import { del } from "@vercel/blob";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
+import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { deleteAvatarBlobs } from "@/lib/avatar-blob";
 import { and, asc, eq, getTableName, inArray, lt, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
@@ -9,12 +11,15 @@ import {
   actionItems,
   aiSuggestions,
   apiIdempotencyKeys,
+  agentSendRequests,
   apiKeys,
   billingEvents,
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
   capturePhotos,
+  aiBatchJobs,
+  aiResultCache,
   chatMessages,
   chatThreads,
   closenessCohorts,
@@ -23,6 +28,7 @@ import {
   connectorOutbox,
   contactBriefs,
   contactEmbeddings,
+  memoryChunks,
   contactExperiences,
   contactIdentities,
   contactMerges,
@@ -187,12 +193,23 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(contactEmbeddings), own(closenessCohorts, "user_id")],
-    counts: [aiSuggestions, contactEmbeddings, closenessCohorts],
+    exports: [own(aiSuggestions), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs)],
+    counts: [aiSuggestions, contactEmbeddings, memoryChunks, closenessCohorts],
     run: async (db, userId) => {
+      // Background AI still in flight at a provider. Cancelled there first — the provider is
+      // holding this person's prompts, and deleting our row would only lose the handle to
+      // them. Best effort: the rows go either way.
+      await cancelBatchJobsFor(userId).catch(() => 0);
+      await db.delete(aiBatchJobs).where(eq(aiBatchJobs.userId, userId));
+      // Remembered AI answers (recruiter verdicts, profile reads, drafts): derived from this
+      // person's mail and contacts, and rebuilt on the next ask.
+      await db.delete(aiResultCache).where(eq(aiResultCache.userId, userId));
       await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, userId));
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+      // Passages of the person's own notes. Derived, but derived from the most personal text
+      // in the product — leaving these behind after a deletion would leave the notes behind.
+      await db.delete(memoryChunks).where(eq(memoryChunks.userId, userId));
       await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
     },
   },
@@ -396,11 +413,31 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // The recruiter scan's watermark. Not derived from `gmail_connections`, so it
       // survives a disconnect/reconnect on purpose — but it must not survive the account.
       await db.delete(recruiterScanState).where(eq(recruiterScanState.userId, userId));
+      // The Outlook scan's watermark is not a row of its own: it is the newest completed scan
+      // job's frozen start time (`lastCompletedScanStart`). Left behind, "disconnect and delete
+      // what was imported" would remove the recruiters but keep the record of having read the
+      // mailbox, and the next Outlook scan would run incrementally — never re-reading the
+      // history it just deleted. The rows cascade to `import_job_rows`.
+      await db
+        .delete(imports)
+        .where(and(eq(imports.userId, userId), eq(imports.importType, OUTLOOK_SCAN_IMPORT_TYPE)));
     },
   },
   api: {
-    exports: [own(apiKeys), own(webhookEndpoints), own(outboundWebhookDeliveries), own(apiIdempotencyKeys, "idempotency_key")],
-    counts: [apiKeys, webhookEndpoints, outboundWebhookDeliveries, apiIdempotencyKeys],
+    exports: [
+      own(apiKeys),
+      own(webhookEndpoints),
+      own(outboundWebhookDeliveries),
+      own(apiIdempotencyKeys, "idempotency_key"),
+      own(agentSendRequests),
+    ],
+    counts: [
+      apiKeys,
+      webhookEndpoints,
+      outboundWebhookDeliveries,
+      apiIdempotencyKeys,
+      agentSendRequests,
+    ],
     run: async (db, userId) => {
       // `api_keys` matters most: a key that outlives the data it reaches is a live credential
       // with nothing behind it. The deliveries go before the endpoints they reference,
@@ -409,6 +446,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // rule here admits no exceptions that are not written down — and this is the fifth
       // user-scoped table family caught by `scripts/smoke-purge.ts` rather than by review.
       await db.delete(apiKeys).where(eq(apiKeys.userId, userId));
+      // Drafts an assistant wrote. They hold message bodies the user never sent, which is
+      // exactly the kind of content a deletion is meant to take with it.
+      await db.delete(agentSendRequests).where(eq(agentSendRequests.userId, userId));
       await db.delete(apiIdempotencyKeys).where(eq(apiIdempotencyKeys.userId, userId));
       await db
         .delete(outboundWebhookDeliveries)
@@ -580,7 +620,7 @@ export function countedTableNames(category: DataCategory): string[] {
  * delete. The reasoning is that "delete all data" means "delete the data I put in," not
  * "erase the account":
  *   - the BYO provider keys (`*_api_key_encrypted` for Gemini/OpenAI/Anthropic/Apollo/Resend/
- *     Twilio/Wispr) plus `aiProvider`/`aiModel`, since a key without the selection that uses
+ *     Twilio) plus `aiProvider`/`aiModel`, since a key without the selection that uses
  *     it is inert — these are credentials for third-party services the user pays for
  *     directly, not Orbit data about them, unlike the Gmail/Outlook OAuth tokens the
  *     `connections` step purges
@@ -607,12 +647,12 @@ const PRESERVED_SETTINGS_COLUMNS = {
   geminiApiKeyEncrypted: true,
   openaiApiKeyEncrypted: true,
   anthropicApiKeyEncrypted: true,
+  typesafeApiKeyEncrypted: true,
   apolloApiKeyEncrypted: true,
   resendApiKeyEncrypted: true,
   twilioAccountSidEncrypted: true,
   twilioAuthTokenEncrypted: true,
   twilioFromNumber: true,
-  wisprApiKeyEncrypted: true,
   aiProvider: true,
   aiModel: true,
   theme: true,

@@ -27,14 +27,18 @@ export async function POST(request: Request) {
     // worth and then sits until the *daily* cron happens to notice, which is up to 24 hours
     // of a user's contacts being missing from semantic search.
     try {
-      const { embedded, remaining } = await runEmbeddingBackfill(userId);
+      const { embedded, passages, indexed, remaining } = await runEmbeddingBackfill(userId);
       // Gated on `embedded > 0`, not on `remaining > 0` alone. Every way this function can
       // return with work outstanding involves having done some — the provider-failure path
       // throws rather than returning, and both phases either make progress or exhaust their
       // claim. So requiring progress costs nothing in the real cases and turns any future
       // "row that is permanently pending but never claimable" bug into one wasted
       // invocation instead of an unbounded kick storm against our own function.
-      if (remaining > 0 && embedded > 0) await kickEmbeddingBackfill(userId);
+      //
+      // `passages` and `indexed` count as progress too: cutting an account's note history into passages
+      // makes no AI call at all, so a pass that only did that embedded nothing and still
+      // moved the backlog. Without it a large history would index one slice per day.
+      if (remaining > 0 && (embedded > 0 || passages > 0 || indexed > 0)) await kickEmbeddingBackfill(userId);
     } catch (err) {
       // A provider failure leaves the work pending on purpose; the cron re-kicks it. Reported
       // (throttled) so a key or provider that fails every run is visible, not silent.

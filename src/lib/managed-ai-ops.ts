@@ -3,7 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { billingEvents, errorEvents, usageEvents, userSettings } from "@/db/schema";
 import { managedAiSwitchedOff, managedCostSql, managedKeysConfigured } from "@/lib/ai-access";
 import { ERROR_SOURCES } from "@/lib/error-events";
-import { MANAGED_AI_BUDGET, managedWindow } from "@/lib/managed-ai-policy";
+import { MANAGED_AI_BUDGET, MANAGED_AI_ENABLED, managedWindow } from "@/lib/managed-ai-policy";
 import type { ManagedAiOpsFacts } from "@/lib/ops-alerts";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -16,6 +16,20 @@ const DAY_MS = 24 * HOUR_MS;
  * over one month, and the Lifetime counts are a scan of a table with one row per account.
  */
 export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFacts> {
+  // Managed AI has not shipped: nothing runs on Orbit's keys and no Lifetime account was
+  // promised it, so there is nothing to watch — and no queries to spend on watching it.
+  if (!MANAGED_AI_ENABLED) {
+    return {
+      configured: false,
+      switchedOff: true,
+      lifetimeAccounts: 0,
+      spentLast24hMicros: 0,
+      spentLast30dMicros: 0,
+      lifetimeCashCents: 0,
+      accountsAtCap: 0,
+      failingProviders: [],
+    };
+  }
   const db = await getDb();
   const hourAgo = new Date(now.getTime() - HOUR_MS);
   const dayAgo = new Date(now.getTime() - DAY_MS);

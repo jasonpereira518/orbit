@@ -32,6 +32,7 @@ export const PROVIDER_MODELS: Record<
   Array<{ value: string; label: string }>
 > = {
   gemini: [
+    { value: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
     { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
     { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite (cheapest)" },
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
@@ -49,14 +50,29 @@ export const PROVIDER_MODELS: Record<
   ],
 };
 
+/**
+ * What a new account gets, and what an account that never chose keeps.
+ *
+ * Gemini's default moved from 3.5 Flash to 3.8 Flash on Sep 19 2026: newer, and half the
+ * price per token ($0.75/$3.75 against $1.50/$9.00 — and still cheaper on output after
+ * Google's announced Jan 2027 increase). The eval in docs/ai-evals/ measured no accuracy
+ * lost on capture, OCR or chat.
+ */
 export const DEFAULT_MODELS: Record<AiProvider, string> = {
-  gemini: "gemini-3.5-flash",
+  gemini: "gemini-3.8-flash",
   openai: "gpt-4o-mini",
   anthropic: "claude-sonnet-4-5",
 };
 
+/**
+ * Stored ids that resolve to something else on read.
+ *
+ * The 2.5 entries are not cosmetic: Google answers 404 "no longer available to new users"
+ * for those models on a key issued since, so a stored 2.5 id is a broken account until it
+ * is remapped. They point at the cheapest current model of the same shape.
+ */
 const LEGACY_MODEL_MAP: Record<string, string> = {
-  "gemini-2.5-flash": "gemini-3.5-flash",
+  "gemini-2.5-flash": "gemini-3.8-flash",
   "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
   // Was offered as a preset but was never a valid Anthropic id (the 4.0 alias was
   // claude-opus-4-0, and that snapshot retired June 15 2026). Stored settings migrate on read.

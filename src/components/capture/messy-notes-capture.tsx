@@ -24,6 +24,7 @@ import {
   MentionComposer,
 } from "@/components/composer/mention-composer";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
+import { extractLinkedInProfileRefs, isLinkedInOnlyPaste } from "@/lib/linkedin-paste";
 import type { CaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { cn } from "@/lib/utils";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
@@ -54,6 +55,10 @@ export function MessyNotesCapture({
 }) {
   const busy = ingest.busy || extracting;
   const { notes, setNotes, mentionPicks, setMentionPicks } = ingest;
+  // A paste of nothing but profile URLs is looked up directly, with no model pass — so it
+  // has to stay available when there is no AI key, which is exactly when it matters most.
+  const pastedProfiles = extractLinkedInProfileRefs(notes);
+  const linkedInOnly = pastedProfiles.length > 0 && isLinkedInOnlyPaste(notes);
   const [restored, setRestored] = useState(false);
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const loadedKeyRef = useRef<string | null>(null);
@@ -138,7 +143,14 @@ export function MessyNotesCapture({
         dragging && "border-dashed border-import-scan bg-import-scan/5"
       )}
     >
-      {!ingest.hasApiKey && <MissingKeyNotice reason={ingest.aiReason} />}
+      {!ingest.hasApiKey && (
+        <>
+          <MissingKeyNotice reason={ingest.aiReason} />
+          <p className="-mt-2 text-xs text-muted-foreground">
+            Pasting a LinkedIn profile URL on its own still works without a key.
+          </p>
+        </>
+      )}
       {preferredContactName && (
         <p className="rounded-xl bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
           Logging with <span className="font-medium text-foreground">{preferredContactName}</span> preferred for merge when they appear in the notes.
@@ -180,14 +192,15 @@ export function MessyNotesCapture({
             // writing one up.
             menuEnabled={!extracting}
             id="capture-notes"
-            placeholder={`AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...`}
+            placeholder={`AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...\n\nOr paste nothing but a profile URL:\nhttps://www.linkedin.com/in/sarah-chen`}
             textareaClassName={cn("min-h-[220px]", FIELD_BARE)}
             disabled={extracting}
           />
         </div>
         <p className="mt-1.5 text-xs text-muted-foreground">
           Type <span className="font-medium text-foreground">@</span> to name someone already
-          in your orbit — the note links to them instead of the name being guessed at.
+          in your orbit — the note links to them instead of the name being guessed at. A
+          LinkedIn profile URL on its own is enough to log someone.
         </p>
       </div>
 
@@ -211,11 +224,19 @@ export function MessyNotesCapture({
       </div>
 
       <Button
-        disabled={busy || !ingest.notes.trim() || !ingest.hasApiKey}
+        disabled={busy || !ingest.notes.trim() || (!ingest.hasApiKey && !linkedInOnly)}
         className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
         onClick={onExtract}
       >
-        {extracting ? "Reading…" : "Extract people"}
+        {linkedInOnly
+          ? extracting
+            ? "Looking up…"
+            : pastedProfiles.length === 1
+              ? "Look up profile"
+              : `Look up ${pastedProfiles.length} profiles`
+          : extracting
+            ? "Reading…"
+            : "Extract people"}
       </Button>
     </div>
   );

@@ -9,6 +9,7 @@ import {
   outreachProspects,
   userSettings,
 } from "@/db/schema";
+import { countAgentSendsToday } from "@/lib/agent-sends";
 import { decryptOrNull } from "@/lib/crypto";
 import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
 import { getEntitlements } from "@/lib/entitlements";
@@ -57,6 +58,13 @@ export async function getOutreachSendConfig(userId: string) {
   };
 }
 
+/**
+ * How many messages this account has sent today, across every path that sends one.
+ *
+ * Campaign messages plus assistant drafts the user approved. The second half matters for the
+ * cap's meaning: an MCP connector that did not count here would be a documented way to send
+ * past a limit the rest of the product enforces.
+ */
 export async function countSendsToday(userId: string) {
   const db = await getDb();
   const start = new Date();
@@ -81,7 +89,7 @@ export async function countSendsToday(userId: string) {
       )
     );
 
-  return rows[0]?.count ?? 0;
+  return (rows[0]?.count ?? 0) + (await countAgentSendsToday(userId));
 }
 
 function appendComplianceFooter(channel: OutreachChannel, body: string) {

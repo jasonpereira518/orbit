@@ -13,6 +13,9 @@
  * runner (a) adopts a batch that already exists for this corpus and (b) re-runs duplicate
  * detection so a person created by the previous attempt is now an update, not a second row.
  */
+import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
+import { openEngines } from "@/lib/decisions/engine";
+import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import { and, desc, eq, gte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, noteBatches } from "@/db/schema";
@@ -36,6 +39,8 @@ import {
 } from "@/lib/capture/review-reducer";
 import type { CaptureJobResult, CaptureSavedSummary } from "@/lib/capture/types";
 
+import { resolveAvatarNow } from "@/lib/avatar-backfill";
+import { downloadAndPersistAvatar, fetchLinkedInPhotoUrl } from "@/lib/contact-avatar";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
@@ -104,6 +109,10 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
       // a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
       mentionPicks: row.mentionPicks ?? [],
       now: deps.now,
+      // Keep the claim alive between the parse's model calls: a long two-pass parse used to
+      // outlast CAPTURE_CLAIM_STALE_MS in silence and get re-claimed — and re-billed — while
+      // still running.
+      onProgress: () => heartbeatCaptureJob(id, token),
     });
     await heartbeatCaptureJob(id, token);
     const { sourceText, sourceHash, ...rest } = parsed;
@@ -173,6 +182,18 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
     await upsertIgnoredPeople(userId, ignoredRowsFor(row, out)).catch(reportAndContinue(followOn("ignored"), null));
 
     if (deps.enrich !== false) {
+      // One person logged → fetch their photo now, so they arrive on the contact with a
+      // face rather than a placeholder that fills in on some later page load. Only for a
+      // single contact: a batch of them is what the background backfill is for, and one
+      // is also the case where the missing face is most obvious.
+      if (out.contactIds.length === 1) {
+        const db = await getDb();
+        await resolveAvatarNow(db, userId, out.contactIds[0]!, {
+          persistRemote: downloadAndPersistAvatar,
+          resolveLinkedIn: (id, url) => fetchLinkedInPhotoUrl(id, url, userId),
+        }).catch(reportAndContinue(followOn("avatar"), false));
+      }
+
       await kickEmbeddingBackfill(userId).catch(reportAndContinue(followOn("embeddings"), null));
       for (const contactId of out.contactIds) {
         await generateAndStoreContactBrief(userId, contactId).catch(reportAndContinue(followOn("brief"), null));
@@ -250,7 +271,9 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
   // decorative.
   const opportunityChoices = decisions.opportunities;
 
-  const participants: NoteBatchParticipantInput[] = accepted.map(({ item, decision }) => {
+  // Edits applied, and the save-time duplicate look-up done, before anything is decided —
+  // so the name-evidence folds among them can go to the decision model in one batch.
+  const prepared = accepted.map(({ item, decision }) => {
     const edits = decision.edits ?? {};
     const parsed = {
       ...item.parsed,
@@ -260,19 +283,54 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
       met_at: edits.metAt === undefined ? item.parsed.met_at : edits.metAt?.trim() || null,
       summary: edits.summary === undefined ? item.parsed.summary : edits.summary?.trim() || null,
     };
+    const top =
+      !decision.mergeContactId && index
+        ? findDuplicateCandidatesIndexed(index, {
+            fullName: parsed.name,
+            email: parsed.email,
+            linkedinUrl: parsed.linkedin_url,
+            company: parsed.company,
+            title: parsed.role,
+          })[0]
+        : undefined;
+    return { item, decision, parsed, top };
+  });
+
+  // (c) This fold is silent — the card said "new", and nobody sees the contact it lands in.
+  // So one resting on a NAME (not an identifier) is checked first; a confident "different
+  // people" saves the card as the new contact it said it was. Jev only.
+  const vetoed = new Set<number>();
+  const nameFolds = prepared
+    .map((p, i) => ({ p, i }))
+    .filter(
+      ({ p }) =>
+        p.top &&
+        !p.top.strong &&
+        saveTimeMergeTarget(p.item, p.decision, { id: p.top.contact.id, confidence: p.top.confidence }, DUPLICATE_MERGE_CONFIDENCE)
+    );
+  if (nameFolds.length) {
+    const vetoes = await nameMergeVetoes(
+      await openEngines(row.userId),
+      nameFolds.map(({ p }) =>
+        [
+          personCard({ fullName: p.parsed.name, company: p.parsed.company, title: p.parsed.role, email: p.parsed.email }),
+          personCard(p.top!.contact),
+        ] as const
+      ),
+      DUPLICATE_TUNING.backgroundBudgetMs
+    );
+    nameFolds.forEach(({ i }, j) => {
+      if (vetoes[j]) vetoed.add(i);
+    });
+  }
+
+  const participants: NoteBatchParticipantInput[] = prepared.map(({ item, decision, parsed, top }, i) => {
     let mergeContactId = decision.mergeContactId;
-    if (!mergeContactId && index) {
-      const top = findDuplicateCandidatesIndexed(index, {
-        fullName: parsed.name,
-        email: parsed.email,
-        linkedinUrl: parsed.linkedin_url,
-        company: parsed.company,
-        title: parsed.role,
-      })[0];
+    if (!mergeContactId && top && !vetoed.has(i)) {
       mergeContactId = saveTimeMergeTarget(
         item,
         decision,
-        top ? { id: top.contact.id, confidence: top.confidence } : null,
+        { id: top.contact.id, confidence: top.confidence },
         DUPLICATE_MERGE_CONFIDENCE
       );
     }

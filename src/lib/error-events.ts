@@ -87,11 +87,6 @@ export const ERROR_SOURCES = {
   /** A Stripe event no account matched (checkout, invoice, refund). Ids only. */
   stripeUnattributed: "stripe.unattributed",
   /**
-   * Wispr answered 401/403 to a user's own key. One row per rejected capture at most; the
-   * key's fingerprint (never the key) lets Settings say "this key" rather than "a key".
-   */
-  wisprTranscribe: "wispr.transcribe",
-  /**
    * Resend refused an email Orbit tried to send ON ORBIT'S KEY: an interest-list welcome or
    * follow-up, or a hosted outreach message. Invisible before — a console line Vercel keeps
    * for an hour (every waitlist welcome of Sep 7–9 2026 died this way) or a per-message error

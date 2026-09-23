@@ -15,6 +15,9 @@ export const PUBLIC_ROUTES = [
   // matched here — actions POST to the page's own URL, so a public page covers them.
   "/interest",
   "/privacy",
+  // How to connect an assistant. A setup guide whose whole audience is people deciding
+  // whether to sign up, so it must be readable signed out.
+  "/connect",
   "/terms",
   "/contact",
   "/sign-in(.*)",
@@ -43,6 +46,9 @@ export const PUBLIC_ROUTES = [
   "/api/imports/(.*)/continue",
   // The capture job runner's internal kick — same gate, same reasons.
   "/api/capture/jobs/(.*)/run",
+  // The photo encoder — the one function that carries `sharp`. Called by the app's own
+  // `fetch` from other functions, which carry no Clerk session; same CRON_SECRET gate.
+  "/api/avatars/encode",
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
@@ -57,6 +63,11 @@ export const PUBLIC_ROUTES = [
   // The key check is fail-closed and rejects a malformed bearer before any database work.
   "/api/v1(.*)",
   "/api/mcp(.*)",
+  // OAuth discovery for the MCP server. These must be readable by a client that has never
+  // authenticated — discovering how to sign in is the whole point — and they are fetched
+  // before any token exists, so a 302 to /sign-in here stops the connect flow at step one.
+  // They expose two public URLs and no user data (`src/lib/mcp/oauth.ts`).
+  "/.well-known/(.*)",
   // Genuinely public: browsers POST Content-Security-Policy violation reports here with
   // no session. The handler stores nothing but a directive and a URI, throttled.
   "/api/csp-report",

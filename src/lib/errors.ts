@@ -1,4 +1,8 @@
 import { isGooglePurpose, missingScopeMessage } from "@/lib/google-scopes";
+import {
+  isMicrosoftPurpose,
+  missingScopeMessage as missingMicrosoftScopeMessage,
+} from "@/lib/microsoft-scopes";
 import { AI_ACCESS_COPY, AI_ACCESS_MESSAGES, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
 
 /**
@@ -39,7 +43,7 @@ export function aiProviderLabel(
 /** Orbit's own no-key errors, thrown from `lib/ai.ts` before any provider is called. */
 const MISSING_KEY_PATTERNS = [
   /\bno (?:(?:google )?gemini |openai |anthropic )?api key configured\b/i,
-  /\bneeds an? (?:openai|gemini|wispr)\b[^.]*\bapi key\b/i,
+  /\bneeds an? (?:openai|gemini)\b[^.]*\bapi key\b/i,
 ];
 
 /**
@@ -500,9 +504,14 @@ export function describeOAuthReason(
     };
   }
   if (reason === "missing_scope") {
+    // The purpose names overlap ("contacts", "calendar", "recruiter_scan"), so the provider
+    // the caller is talking about — not the purpose alone — picks the wording.
+    const microsoft = /outlook|microsoft/i.test(provider);
     return {
       cancelled: false,
-      message: missingScopeMessage(isGooglePurpose(purpose) ? purpose : null),
+      message: microsoft
+        ? missingMicrosoftScopeMessage(isMicrosoftPurpose(purpose) ? purpose : null)
+        : missingScopeMessage(isGooglePurpose(purpose) ? purpose : null),
     };
   }
   return {

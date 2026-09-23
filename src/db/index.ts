@@ -2,9 +2,11 @@ import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
 import type { BatchItem } from "drizzle-orm/batch";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { neon } from "@neondatabase/serverless";
-import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
-import { PGlite } from "@electric-sql/pglite";
-import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
+// Type-only on purpose. PGlite is the local-development database (no DATABASE_URL); a real
+// import would load it — and make the bundler trace its 21MB of WASM into every serverless
+// function — in production, where it can never run. `ensureReady` imports it lazily instead.
+import type { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import type { PGlite } from "@electric-sql/pglite";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
@@ -25,6 +27,7 @@ type Db =
 
 const globalForDb = globalThis as unknown as {
   orbitPglite?: PGlite;
+  orbitDrizzlePglite?: typeof drizzlePglite;
   orbitNeonSql?: ReturnType<typeof neon>;
   orbitReady?: Promise<void>;
   orbitPgvector?: boolean;
@@ -43,8 +46,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  typesafe_api_key_encrypted text,
   wispr_api_key_encrypted text,
-  ai_model text DEFAULT 'gemini-3.5-flash',
+  ai_model text DEFAULT 'gemini-3.8-flash',
+  ai_model_migrated_from text,
+  writing_instructions text,
   onboarding_completed_at timestamptz,
   first_name text,
   last_name text,
@@ -327,7 +333,8 @@ CREATE TABLE IF NOT EXISTS contact_briefs (
   recent_discussions jsonb NOT NULL DEFAULT '[]',
   generated_at timestamptz NOT NULL DEFAULT now(),
   basis_interaction_id uuid,
-  model text
+  model text,
+  input_hash text
 );
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -378,6 +385,45 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   source_id text,
   embedding jsonb NOT NULL,
   content text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+-- The user's own writing, cut into passages that can be retrieved on their own.
+--
+-- Deliberately NOT more source_type rows in contact_embeddings. Two reasons, and the first is
+-- the expensive one: semanticArm selects contact_id ordered by distance with a 4x overscan
+-- and takes the best row per contact, so several rows per contact would spend that overscan
+-- on duplicates of one person and move a recall floor that is currently measured and passing.
+-- The second is that contact_embeddings.contact_id is NOT NULL, while a passage does not
+-- always have exactly one subject: a note about a dinner names four people, and one written
+-- before anyone was resolved names none.
+--
+-- No backticks in this block. It is inside a template literal, and a pair of them would both
+-- end the string and read as a statement to the schema-DDL smoke.
+CREATE TABLE IF NOT EXISTS memory_chunks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  -- 'interaction' | 'note_batch' | 'brief'. Text, not an enum, for the same reason every
+  -- other discriminator here is: a new kind must not need a migration to be writable.
+  source_kind text NOT NULL,
+  source_id uuid NOT NULL,
+  -- The passage's primary subject. Nullable so a note nobody has been resolved from is still
+  -- indexed. contact_ids carries the full set including anyone merely mentioned.
+  --
+  -- NO SEMICOLONS IN THESE COMMENTS, not even quoted ones. This template is split into
+  -- statements on that character by a splitter that does not respect quotes, so one inside a
+  -- comment cuts the CREATE TABLE in half and both halves fail at runtime — while the
+  -- schema-DDL guard, which reads the source rather than running it, still passes.
+  contact_id uuid REFERENCES contacts(id) ON DELETE CASCADE,
+  contact_ids uuid[] NOT NULL DEFAULT '{}',
+  occurred_at timestamptz,
+  chunk_index integer NOT NULL DEFAULT 0,
+  content text NOT NULL,
+  content_hash text NOT NULL,
+  -- The staleness predicate is embedded_hash IS DISTINCT FROM content_hash, per chunk.
+  -- Deliberately not contacts.embedding_stale_at, which is contact-grained and already has
+  -- five writers stamping it.
+  embedded_hash text,
+  embedding jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS embedding_failures (
@@ -536,10 +582,20 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   content text NOT NULL,
   recommendations jsonb,
   attached_contacts jsonb DEFAULT '[]',
+  activity jsonb DEFAULT '[]',
+  evidence jsonb DEFAULT '{}',
+  proposed_actions jsonb DEFAULT '[]',
+  feedback text,
+  feedback_note text,
+  slot uuid,
+  version integer NOT NULL DEFAULT 1,
+  is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
 CREATE INDEX IF NOT EXISTS chat_messages_user_idx ON chat_messages(user_id);
+CREATE INDEX IF NOT EXISTS chat_messages_slot_idx ON chat_messages(slot);
+CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_slot_version_role_uidx ON chat_messages(slot, version, role) WHERE slot is not null;
 CREATE TABLE IF NOT EXISTS recruiters (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   full_name text NOT NULL,
@@ -677,6 +733,38 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS ai_result_cache (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  operation text NOT NULL,
+  input_hash text NOT NULL,
+  result jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_result_cache_key_uidx ON ai_result_cache(user_id, operation, input_hash);
+CREATE INDEX IF NOT EXISTS ai_result_cache_created_idx ON ai_result_cache(created_at);
+CREATE TABLE IF NOT EXISTS ai_batch_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  operation text NOT NULL,
+  provider text NOT NULL,
+  model text NOT NULL,
+  key_owner text NOT NULL DEFAULT 'user',
+  provider_batch_id text NOT NULL,
+  status text NOT NULL DEFAULT 'submitted',
+  request_count integer NOT NULL,
+  est_cost_micros integer,
+  payload jsonb NOT NULL DEFAULT '{}',
+  provider_meta jsonb,
+  attempts integer NOT NULL DEFAULT 0,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS ai_batch_jobs_user_idx ON ai_batch_jobs(user_id, status);
+CREATE INDEX IF NOT EXISTS ai_batch_jobs_status_idx ON ai_batch_jobs(status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS ai_batch_jobs_provider_batch_uidx ON ai_batch_jobs(provider, provider_batch_id);
 CREATE TABLE IF NOT EXISTS plan_upgrade_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -789,6 +877,26 @@ CREATE TABLE IF NOT EXISTS ops_alert_state (
   detail jsonb NOT NULL DEFAULT '{}',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS agent_send_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  channel text NOT NULL DEFAULT 'email',
+  to_email text NOT NULL,
+  subject text,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  client_name text,
+  error_message text,
+  delivery_id text,
+  decided_at timestamptz,
+  sent_at timestamptz,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_send_requests_user_status_idx ON agent_send_requests(user_id, status, created_at);
+CREATE INDEX IF NOT EXISTS agent_send_requests_contact_idx ON agent_send_requests(contact_id);
 CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   bucket text PRIMARY KEY,
   window_started_at timestamptz NOT NULL DEFAULT now(),
@@ -1650,6 +1758,18 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // through 69; renumbered past every claim (checked against all remote branches and local
 // worktrees on Sep 18 2026: none above 69).
 //
+// 71 = the AI cost work's first schema: contact_briefs.input_hash (skip a brief regeneration
+// whose inputs did not change) and the ai_result_cache table (recruiter verdicts, extension
+// profile reads, follow-up drafts keyed by exactly what was asked). Checked against every
+// remote branch and local worktree on Sep 19 2026: none above 70.
+//
+// 72 = ai_batch_jobs: background AI work submitted to a provider's Batch API (half price,
+// results minutes to a day later). Checked against every remote branch on Sep 19 2026.
+//
+// 73 = user_settings.ai_model_migrated_from, plus the move of accounts on the old Gemini
+// default (3.5 Flash) to 3.8 Flash — half the price, and the eval in docs/ai-evals/ found
+// nothing lost. Checked against every remote branch on Sep 19 2026.
+//
 // 74 = connector_connections: one credential row per (user, connector) for every connector
 //      that is not Gmail or Outlook, with a capabilities list so write-back stays opt-in.
 //      71-73 were already claimed on other branches (checked against every remote branch and
@@ -1665,7 +1785,60 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //      mutual-exclusion token. The overloaded version double-delivered, because enqueue's
 //      `attempts: 0` revive made a stale drain's token recur (ABA). Re-checked against every
 //      remote and local branch on Sep 20 2026: 75 (this branch) was the highest found.
-export const SCHEMA_VERSION = 76;
+//
+// 77 = agent_send_requests: messages an assistant drafted through MCP, held until the user
+// approves them in Orbit. Built as 73, which main then took for the AI model migration above
+// — and because BOTH sides wrote `SCHEMA_VERSION = 73`, that line merged silently with no
+// conflict, which would have left every database main had already stamped 73 skipping this
+// table forever. Renumbered past 74-76, claimed by the unpushed integrations-strategy
+// worktree (connector_connections, external_links + connector_outbox, and the outbox lease).
+// Checked against every remote branch and local worktree on Sep 20 2026.
+//
+// 78 = showing the chat its own work: chat_messages.activity (the stages an answer actually
+// ran, with their real counts and durations), plus feedback and feedback_note for thumbs on
+// an answer. Checked against all 493 refs on Sep 20 2026 — main was at 77, and the only
+// other claimant of 77 is the unmerged mcp-server-vision branch, which has the same silent
+// collision described above waiting for it. 78 is free.
+//
+// 79 = memory_chunks: the user's own writing, chunked and retrievable at passage level, plus
+// tsvector columns on `interactions` and `reminders` — the first full-text index either has
+// ever had. Chat could rank a contact by a note it then could not quote from, because notes
+// were embedded as one blob per contact and the prompt took the head of the field.
+//
+// NOT 78. 78 was claimed by the unpushed `recursing-matsumoto-4f1d1d` worktree (chat ask-bar
+// narration), whose own changelog note says "78 is free" — it was, when that line was
+// written. 76 is likewise claimed by the unpushed `brave-bouman-df6c4f` worktree. This is the
+// third time a number has been contested, so: the scan has to cover `git worktree list`, not
+// just the remote. Checked against every remote branch AND all 69 local worktrees on
+// Sep 20 2026; 78 was the highest found anywhere.
+// 82 = chat_messages.evidence — citations for a chat answer, keyed by the `[eN]` id each
+// interaction or contact's summary/notes was cited under. Branch B, item 1 of the chat plan.
+// #252 (chat UX branch) holds 80/81 unmerged; rescanned against every local and remote ref on
+// Sep 22 2026 — nothing else claims 82.
+//
+// 83 = chat_messages.proposed_actions — log/remind/follow-up actions a chat answer PROPOSED,
+// never one it took; a person's own click is the only path to the real write. Branch B, item
+// 2. Rescanned against every local and remote ref on Sep 22 2026 — nothing claims 83.
+//
+// 84 (landed in main via PR #256) = user_settings.typesafe_api_key_encrypted — a person's own
+// TypeSafe key, for Jev, the decision model behind the recruiter gate and the chat rerank
+// (src/lib/decisions/).
+//
+// 85 (landed in main via PR #252, chat-ux-features-v2) = user_settings.writing_instructions
+// and chat_messages.slot/version/is_active, for the chat Context sheet's writing preferences
+// and edit-and-regenerate on the last turn of a chat.
+//
+// NOT 83 anymore. Both 84 and 85 above landed in main while this branch (chat-source-chips)
+// was still in review. Rescanned against every remote branch and every local worktree on
+// Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
+// the highest found anywhere and is still free.
+//
+// 87 = merging main (77-86) into the connector foundation branch (74, 75, 76). No DDL of its
+// own. Same rule as 69 above: this branch's preview databases are stamped 76 WITHOUT main's
+// 77-86 columns, and main's are stamped 86 without 74-76, so only a number above both makes
+// every database pick up both halves. Rescanned against every remote branch and every local
+// worktree on Sep 22 2026: 86 was the highest found anywhere.
+export const SCHEMA_VERSION = 87;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -1892,6 +2065,47 @@ export const SCALE_DDL: string[] = [
   // Lets upsertContactEmbedding and rebuildContactEmbeddingsBatch skip the embedding API
   // call entirely when a row's source content hasn't changed since it was last embedded.
   `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS content_hash text`,
+
+  // --- Passage retrieval over the user's own writing (v79) -------------------------------
+  //
+  // `interactions` — the real note, meeting and call rows — has never had a full-text index.
+  // Only `contacts` did, which is why the only way to find a note was to already know whose
+  // it was: "what did I discuss about fundraising in March" had no query plan at all.
+  //
+  // 'simple', matching `contacts.search_tsv`, so one `websearch_to_tsquery('simple', …)`
+  // string serves both and the stopword handling cannot diverge between them. A generated
+  // column is legal here because every source column lives on the same row — unlike the tags
+  // that could not join `contacts.search_tsv`.
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (
+       setweight(to_tsvector('simple', coalesce(ai_summary, '')), 'B') ||
+       setweight(to_tsvector('simple', coalesce(topics::text, '') || ' ' || coalesce(action_items::text, '')), 'C') ||
+       setweight(to_tsvector('simple', coalesce(raw_notes, '')), 'D')
+     ) STORED`,
+  `CREATE INDEX IF NOT EXISTS interactions_search_gin ON interactions USING gin(search_tsv)`,
+  // Reminders are the other thing the user wrote that chat could not find by its words.
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (
+       to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(description, ''))
+     ) STORED`,
+  `CREATE INDEX IF NOT EXISTS reminders_search_gin ON reminders USING gin(search_tsv)`,
+
+  `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED`,
+  `CREATE INDEX IF NOT EXISTS memory_chunks_search_gin ON memory_chunks USING gin(search_tsv)`,
+  // The identity of a chunk: one row per (source, position). `syncMemoryChunks` writes
+  // against it, so re-chunking an edited note replaces rather than accumulates.
+  `CREATE UNIQUE INDEX IF NOT EXISTS memory_chunks_source_uidx
+     ON memory_chunks(user_id, source_kind, source_id, chunk_index)`,
+  // Date-scoped recall — "in March" — is a plain range predicate on this.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_user_date_idx ON memory_chunks(user_id, occurred_at DESC)`,
+  // Anyone named in the passage, not just its subject: this is what makes a note about a
+  // dinner findable from any of the four people at it.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_contacts_gin ON memory_chunks USING gin(contact_ids)`,
+  // The backfill's claim. Partial, so it stays the size of the work outstanding rather than
+  // the size of the table — the same shape as `contacts.embedding_stale_at`'s index.
+  `CREATE INDEX IF NOT EXISTS memory_chunks_pending_idx ON memory_chunks(user_id)
+     WHERE embedded_hash IS DISTINCT FROM content_hash`,
 
   // --- YC-mode admin console --------------------------------------------------------
   //
@@ -2772,6 +2986,16 @@ async function migratePgvector(run: StatementRunner) {
       `CREATE INDEX IF NOT EXISTS embeddings_vector_hnsw_idx
        ON contact_embeddings USING hnsw (embedding_vector vector_cosine_ops)`
     );
+    // The passage index (v79). Its own column and its own HNSW, for the same reason
+    // `memory_chunks` is its own table: sharing `contact_embeddings`' index would have put
+    // many rows per contact into an overscan that assumes roughly one.
+    await run(
+      `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)`
+    );
+    await run(
+      `CREATE INDEX IF NOT EXISTS memory_chunks_vector_hnsw_idx
+       ON memory_chunks USING hnsw (embedding_vector vector_cosine_ops)`
+    );
     globalForDb.orbitPgvector = true;
   } catch {
     globalForDb.orbitPgvector = false;
@@ -2828,6 +3052,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS typesafe_api_key_encrypted text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS preferred_name text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS website text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS met_context text`,
@@ -2966,6 +3191,17 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS activity jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS evidence jsonb DEFAULT '{}'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS proposed_actions jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_slot_idx ON chat_messages(slot)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_slot_version_role_uidx ON chat_messages(slot, version, role) WHERE slot is not null`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,
@@ -3053,6 +3289,9 @@ const alters = [
     WHERE status = 'active' AND next_sync_at IS NULL AND sync_status IS NULL`,
   // Schema v31: the connector platform. The CREATE TABLEs above land on a fresh database;
   // these repair an existing one, which is why every index appears in both places.
+  `CREATE TABLE IF NOT EXISTS agent_send_requests (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL, channel text NOT NULL DEFAULT 'email', to_email text NOT NULL, subject text, body text NOT NULL, status text NOT NULL DEFAULT 'pending', client_name text, error_message text, delivery_id text, decided_at timestamptz, sent_at timestamptz, expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS agent_send_requests_user_status_idx ON agent_send_requests(user_id, status, created_at)`,
+  `CREATE INDEX IF NOT EXISTS agent_send_requests_contact_idx ON agent_send_requests(contact_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash)`,
   `CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS api_idempotency_uidx ON api_idempotency_keys(user_id, idempotency_key)`,
@@ -3141,6 +3380,16 @@ const alters = [
   `ALTER TABLE page_views ADD COLUMN IF NOT EXISTS nav_type text`,
   // Schema v70: chat context note.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS context_note text`,
+  // Schema v71: a brief remembers what it was asked, so an unchanged regeneration is free.
+  `ALTER TABLE contact_briefs ADD COLUMN IF NOT EXISTS input_hash text`,
+  // Schema v73: the Gemini default moved to 3.8 Flash — newer, and half the price of 3.5
+  // Flash. Accounts still carrying the OLD DEFAULT move with it and are told so once;
+  // anyone who chose a model themselves is left alone. `ai_model_migrated_from IS NULL`
+  // keeps this from re-migrating someone who read the notice and picked 3.5 Flash again.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_model_migrated_from text`,
+  `ALTER TABLE user_settings ALTER COLUMN ai_model SET DEFAULT 'gemini-3.8-flash'`,
+  `UPDATE user_settings SET ai_model_migrated_from = ai_model, ai_model = 'gemini-3.8-flash'
+     WHERE ai_model = 'gemini-3.5-flash' AND ai_model_migrated_from IS NULL`,
   // Schema v74: the connector platform's generic credential table. The CREATE TABLE in the
   // template above repairs a fresh database; this repairs one already stamped past v74's
   // predecessor, and both indexes are written in both places because smoke-schema-ddl
@@ -3237,8 +3486,10 @@ async function ensureReady(): Promise<void> {
     // package (`@electric-sql/pglite-pgvector`) pinned to a newer PGlite than the one this
     // project has installed; it is not installed here, so local vector search uses the JS
     // fallback instead.
+    const { PGlite: PGliteClient } = await import("@electric-sql/pglite");
+    const { pg_trgm } = await import("@electric-sql/pglite/contrib/pg_trgm");
     const open = () =>
-      PGlite.create({ dataDir, extensions: { pg_trgm } });
+      PGliteClient.create({ dataDir, extensions: { pg_trgm } });
 
     try {
       globalForDb.orbitPglite = await open();
@@ -3273,6 +3524,7 @@ async function ensureReady(): Promise<void> {
     simulateNetworkLatency(globalForDb.orbitPglite);
   }
 
+  globalForDb.orbitDrizzlePglite ??= (await import("drizzle-orm/pglite")).drizzle;
   await globalForDb.orbitPglite.waitReady;
 }
 
@@ -3549,13 +3801,13 @@ export async function getDb(): Promise<Db> {
     if (globalForDb.orbitNeonSql) {
       return drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db;
     }
-    return drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
+    return globalForDb.orbitDrizzlePglite!(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
 
   if (!globalForDb.orbitDrizzle) {
     globalForDb.orbitDrizzle = globalForDb.orbitNeonSql
       ? (drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db)
-      : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
+      : globalForDb.orbitDrizzlePglite!(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
 }

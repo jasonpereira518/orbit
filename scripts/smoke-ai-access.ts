@@ -12,6 +12,12 @@
  *      buying, refund/revoke mid-session, the allowance running out, the kill switch, a
  *      managed key the provider refuses, and a paid checkout whose webhook has not landed.
  *
+ * While `MANAGED_AI_ENABLED` is false (managed AI has not shipped), 3 and 4 are replaced by
+ * `byokOnly()`: with every managed AND local-dev key set, no account of any plan — Lifetime,
+ * comped, showcase-demo — gets anything but its own key on the wire, and the one exception
+ * (`next dev` on the developer's `.env.local`) is proved to need NODE_ENV=development and
+ * no VERCEL, so no deployment can reach it.
+ *
  * Run: npx tsx scripts/smoke-ai-access.ts
  */
 import "./smoke/_env";
@@ -19,7 +25,7 @@ import "./smoke/_env";
 // Production's key rules: the local-dev key names are ignored on Vercel, so the only managed
 // key is the explicit one set here. Set BEFORE the gate is imported or first called.
 process.env.VERCEL = "1";
-for (const name of ["GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "WISPR_API_KEY"]) {
+for (const name of ["GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
   delete process.env[name];
   delete process.env[`ORBIT_MANAGED_${name}`];
 }
@@ -37,15 +43,19 @@ import { getDb } from "../src/db";
 import { billingEvents, errorEvents, rateLimitBuckets, usageEvents, userSettings } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
 import { priceFor } from "../src/lib/ai-pricing";
+import type { AiOperationId } from "../src/lib/ai-operations";
 import {
   AiAccessError,
   aiReadyFromSettings,
   geminiClient,
   getAiAccessStatus,
   isAiAccessError,
+  managedKeysConfigured,
   resolveAiAccess,
   runOnGrant,
+  typesafeClient,
   type AiGrant,
+  type DecisionGrant,
 } from "../src/lib/ai-access";
 import {
   AI_ACCESS_COPY,
@@ -54,6 +64,8 @@ import {
 } from "../src/lib/ai-access-copy";
 import {
   MANAGED_AI_BUDGET,
+  MANAGED_AI_ENABLED,
+  MANAGED_DEFAULT_MODELS,
   MANAGED_MODELS,
   chooseCompletionKey,
   chooseEmbeddingKey,
@@ -127,7 +139,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
  *
  * `join` uses the OS separator, so on Windows this yielded `src\lib\ai-access.ts` while every
  * exemption below is written `src/lib/ai-access.ts`. Nothing matched, and the guard reported
- * the gate itself — plus `wispr.ts` and its own source file — as offenders on a clean tree.
+ * the gate itself — plus its own source file — as offenders on a clean tree.
  */
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -145,6 +157,13 @@ const GATE = "src/lib/ai-access.ts";
  * merge does not fail this guard.
  */
 const KEY_PROBE = "src/lib/ai-key-check.ts";
+/**
+ * TypeSafe's transport (the decision model). It takes a raw key, so it is guarded like an
+ * SDK: only the gate and the key probe may import it, and it is the one file allowed to name
+ * TypeSafe's host. Its own smoke tests it directly, with a stubbed fetch.
+ */
+const TYPESAFE_TRANSPORT = "src/lib/typesafe-api.ts";
+const TYPESAFE_TRANSPORT_TEST = "scripts/smoke-jev-client.ts";
 
 function sourceGuard() {
   console.log("\nOnly the gate can reach a provider");
@@ -155,9 +174,9 @@ function sourceGuard() {
   );
   const dynamicImport = new RegExp(String.raw`import\(\s*["'](${SDKS.map((s) => s.replace(/[/@.-]/g, (c) => `\\${c}`)).join("|")})["']\s*\)`);
   const construct = /new\s+(GoogleGenAI|OpenAI|Anthropic)\s*\(/;
-  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|WISPR_API_KEY|GOOGLE_API_KEY)\b/;
-  const wisprCall = /\btranscribeWithWispr\s*\(/;
-  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com/;
+  const transportImport = /^\s*import\s+(?!type\b)[^;]*?from\s+["'](?:@\/lib|\.\.?(?:\/[\w.-]+)*)\/typesafe-api["']|import\(\s*["'][^"']*typesafe-api["']\s*\)/m;
+  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|TYPESAFE_API_KEY)\b/;
+  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai/;
 
   const offenders: string[] = [];
   for (const file of [...walk("src"), ...walk("scripts")]) {
@@ -167,14 +186,20 @@ function sourceGuard() {
     const probe = file === KEY_PROBE;
     if (!probe && (valueImport.test(code) || dynamicImport.test(code))) offenders.push(`${file}: imports an AI SDK`);
     if (!probe && construct.test(code)) offenders.push(`${file}: constructs an AI client`);
+    if (!probe && file !== TYPESAFE_TRANSPORT_TEST && transportImport.test(code)) offenders.push(`${file}: imports TypeSafe's raw-key transport`);
     if (envKey.test(code) && file !== "scripts/smoke-contact-brief.ts") offenders.push(`${file}: reads an AI key from the environment`);
-    if (wisprCall.test(code) && file !== "src/lib/wispr.ts") offenders.push(`${file}: calls Wispr directly`);
-    if (providerHost.test(code)) offenders.push(`${file}: talks to a provider host directly`);
+    if (providerHost.test(code) && file !== TYPESAFE_TRANSPORT) offenders.push(`${file}: talks to a provider host directly`);
   }
   check("no file outside the gate imports an SDK, builds a client, reads a key or calls a provider", offenders.length === 0, offenders.join("\n       "));
 
   const gate = readFileSync(GATE, "utf8");
   check("the gate itself holds all three SDK constructors", ["new GoogleGenAI(", "new OpenAI(", "new Anthropic("].every((c) => gate.includes(c)));
+  check("…and the only hand-off of a TypeSafe key to its transport", /systemOneRequest\(key,/.test(gate));
+  // The rules above are regexes over source text; prove each new one bites on a sample.
+  check("the transport-import rule catches a stray import", transportImport.test(`import { systemOneRequest } from "@/lib/typesafe-api";`) && transportImport.test(`import { x } from "../src/lib/typesafe-api";`));
+  check("…but not a type-only one", !transportImport.test(`import type { SystemOneRequest } from "@/lib/typesafe-api";`));
+  check("the env rule catches TYPESAFE_API_KEY", envKey.test("process.env.TYPESAFE_API_KEY"));
+  check("the host rule catches TypeSafe's host", providerHost.test("https://api.typesafe.ai/v1/systemone"));
   const ai = readFileSync("src/lib/ai.ts", "utf8");
   check("ai.ts imports the SDKs for types only", !valueImport.test(ai) && /import type OpenAI/.test(ai));
   check("every ai.ts provider path starts at resolveAiAccess", (ai.match(/resolveAiAccess\(/g) ?? []).length >= 6);
@@ -205,17 +230,29 @@ function purePolicy() {
   check("non-Lifetime + no key + managed keys configured → still refused", pick(facts({ managed: { gemini: true, openai: true, anthropic: true } })) === "refused:key_required");
   check("Lifetime + no key + no managed key → managed_unavailable", pick(facts({ eligibility: "lifetime", managed: { gemini: false, openai: false, anthropic: false } })) === "refused:managed_unavailable");
   check("Pro resolves to no managed eligibility", managedEligibility("orbit", false) === null && managedEligibility("free", false) === null);
-  check("Lifetime and demo are eligible", managedEligibility("lifetime", false) === "lifetime" && managedEligibility("free", true) === "demo");
+  if (MANAGED_AI_ENABLED) {
+    check("Lifetime and demo are eligible", managedEligibility("lifetime", false) === "lifetime" && managedEligibility("free", true) === "demo");
+  } else {
+    check("managed AI is off: no plan is eligible, not even Lifetime",
+      managedEligibility("lifetime", false) === null && managedEligibility("free", false) === null);
+    check("…and 'demo' is the localhost dev-key path only", managedEligibility("free", true) === "demo");
+  }
   check("a demo account with no key anywhere is told to add one — it was never promised Orbit's AI",
     pick(facts({ eligibility: "demo", managed: { gemini: false, openai: false, anthropic: false } })) === "refused:key_required");
 
   console.log("\nManaged keys run managed models");
-  check("an expensive model on Orbit's key is downgraded",
-    pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro" })) === "managed:gemini:gemini-3.5-flash");
+  // The allowlist protects Orbit's money; with managed AI off the only key behind that path
+  // is the developer's own, so `next dev` runs the model Settings asks for.
+  check(
+    MANAGED_AI_ENABLED
+      ? "an expensive model on Orbit's key is downgraded"
+      : "managed AI off: the local dev key runs the model that was asked for",
+    pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro" })) ===
+      (MANAGED_AI_ENABLED ? `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}` : "managed:gemini:gemini-2.5-pro"));
   check("…the same model on their own key is theirs to choose",
     pick(facts({ eligibility: "lifetime", selectedModel: "gemini-2.5-pro", personal: own })) === "personal:gemini:gemini-2.5-pro");
   check("an Anthropic user on Lifetime with only a managed Gemini key runs on Gemini",
-    pick(facts({ eligibility: "lifetime", selectedProvider: "anthropic", selectedModel: "claude-opus-4" })) === "managed:gemini:gemini-3.5-flash");
+    pick(facts({ eligibility: "lifetime", selectedProvider: "anthropic", selectedModel: "claude-opus-4" })) === `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}`);
   check("every managed model is priced (an unpriced one would slip under the dollar cap)",
     Object.values(MANAGED_MODELS).flat().every((m) => priceFor(m) !== null));
 
@@ -289,6 +326,8 @@ const U = {
   freeNone: "smoke-aia-free-none",
   proNone: "smoke-aia-pro-none",
   compNone: "smoke-aia-comp-none",
+  demoNone: "smoke-aia-demo-none",
+  localDev: "smoke-aia-local-dev",
   buyer: "smoke-aia-buyer",
   keeper: "smoke-aia-keeper",
   capped: "smoke-aia-capped",
@@ -319,7 +358,7 @@ async function lastSent(fn: () => Promise<unknown>): Promise<{ result: unknown; 
   return { result, err, req: sent.length > before ? sent[sent.length - 1] : null, count: sent.length - before };
 }
 
-const json = (userId: string, operation = "capture.parse") =>
+const json = (userId: string, operation: AiOperationId = "capture.parse") =>
   completeJson(userId, { system: "Return JSON.", user: "hi", operation });
 
 /** Usage rows are written fire-and-forget; give them a tick to land. */
@@ -338,7 +377,11 @@ async function realGate() {
   check("Lifetime + own key: their key went on the wire", r.req?.key === USER_KEY, r.req?.key ?? r.err);
   r = await lastSent(() => json(U.lifetimeNone));
   check("Lifetime + no key: Orbit's managed key went on the wire", r.req?.key === MANAGED, r.req?.key ?? r.err);
-  check("…at the managed model, not the gemini-2.5-pro they picked", /models\/gemini-3\.5-flash:/.test(r.req?.url ?? ""), r.req?.url);
+  check(
+    "…at the managed model, not the gemini-2.5-pro they picked",
+    (r.req?.url ?? "").includes(`models/${MANAGED_DEFAULT_MODELS.gemini}:`),
+    r.req?.url
+  );
   r = await lastSent(() => json(U.freeOwn));
   check("non-Lifetime + own key: their key went on the wire", r.req?.key === USER_KEY, r.req?.key ?? r.err);
   r = await lastSent(() => json(U.freeNone));
@@ -517,6 +560,170 @@ async function transitions() {
   check("someone else's session id grants nothing", replay.kind === "refused");
 }
 
+/** `NODE_ENV` is readonly in the Node types; the gate reads it at call time either way. */
+function setNodeEnv(value: string | undefined) {
+  const env = process.env as Record<string, string | undefined>;
+  if (value === undefined) delete env.NODE_ENV;
+  else env.NODE_ENV = value;
+}
+
+/**
+ * Managed AI is off: every plan is BYOK. Sets every key Orbit or a developer could hold —
+ * the explicit managed names, the bare local-dev names with `VERCEL` unset so the local
+ * fallback would be live, and a showcase demo account — and proves none reaches the wire.
+ */
+async function byokOnly() {
+  const db = await getDb();
+  const DEV_KEY = "dev-laptop-gemini-key";
+  const DEV_TYPESAFE_KEY = "dev-laptop-typesafe-key";
+  const saved = {
+    VERCEL: process.env.VERCEL,
+    DEMO: process.env.DEMO_ACCOUNT_USER_ID,
+    NODE_ENV: process.env.NODE_ENV,
+  };
+  delete process.env.VERCEL;
+  for (const p of ["GEMINI", "OPENAI", "ANTHROPIC"]) {
+    process.env[`ORBIT_MANAGED_${p}_API_KEY`] = MANAGED;
+    process.env[`${p}_API_KEY`] = DEV_KEY;
+  }
+  process.env.TYPESAFE_API_KEY = DEV_TYPESAFE_KEY;
+  process.env.DEMO_ACCOUNT_USER_ID = U.demoNone;
+
+  try {
+    await account(U.lifetimeOwn, { lifetimePurchasedAt: PAST, ...ownKey() });
+    await account(U.lifetimeNone, { lifetimePurchasedAt: PAST });
+    await account(U.compNone, { compedPlan: "lifetime" });
+    await account(U.demoNone, {});
+    await account(U.localDev, {});
+    await account(U.proNone, { subscriptionPlan: "orbit", subscriptionStatus: "active" });
+    await account(U.freeNone, {});
+    await account(U.freeOwn, ownKey());
+
+    console.log("\nManaged AI is off: every plan is bring-your-own-key");
+    check("no managed key counts as configured, whatever the environment holds",
+      Object.values(managedKeysConfigured()).every((v) => !v));
+
+    const keyless = [U.lifetimeNone, U.compNone, U.demoNone, U.proNone, U.freeNone];
+    const audio = { mimeType: "audio/webm", base64: Buffer.from("fake audio").toString("base64") };
+    for (const u of keyless) {
+      let r = await lastSent(() => json(u));
+      check(`${u}: completion refused as key_required, nothing sent`,
+        isAiAccessError(r.err) && (r.err as AiAccessError).reason === "key_required" && r.count === 0, r.req?.key ?? r.err);
+      r = await lastSent(() => createEmbedding(u, "a contact"));
+      check(`${u}: embedding refused, nothing sent`, isAiAccessError(r.err) && r.count === 0, r.req?.key ?? r.err);
+      r = await lastSent(() => transcribeAudioWithAI(u, audio));
+      check(`${u}: transcription refused, nothing sent`, isAiAccessError(r.err) && r.count === 0, r.req?.key ?? r.err);
+      const s = await getAiAccessStatus(u);
+      check(`${u}: the UI is told to add a key`, !s.ready && s.reason === "key_required" && s.source === null && s.allowance === null, JSON.stringify(s));
+      const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, u) });
+      check(`${u}: the notification alert agrees`, aiReadyFromSettings(u, row ?? null) === false);
+      check(`${u}: no decision grant — TypeSafe is BYOK, and .env.local is not a deployment's`,
+        (await resolveAiAccess(u)).decision("chat.rerank.decide") === null);
+    }
+
+    for (const u of [U.lifetimeOwn, U.freeOwn]) {
+      const r = await lastSent(() => json(u));
+      check(`${u}: their own key went on the wire`, r.req?.key === USER_KEY, r.req?.key ?? r.err);
+    }
+    await settle();
+    const owners = await db.select({ o: usageEvents.keyOwner }).from(usageEvents).where(inArray(usageEvents.userId, Object.values(U)));
+    check("no usage row names Orbit as the payer", owners.length > 0 && owners.every((x) => x.o === "user"), owners.map((x) => x.o).join(","));
+    check("neither Orbit's nor the developer's key ever went on the wire", sent.every((x) => x.key !== MANAGED && x.key !== DEV_KEY));
+
+    console.log("\nA just-paid Lifetime checkout does not ask Stripe for AI");
+    await account(U.pending, { lifetimeCheckoutSessionId: "cs_test_paid", lifetimeCheckoutStartedAt: new Date() });
+    let asked = false;
+    const access = await resolveAiAccess(U.pending, {
+      retrieveSession: async () => {
+        asked = true;
+        throw new Error("the gate should not look up a checkout");
+      },
+    });
+    const err = await refusal(access.completion("chat.answer"));
+    check("refused as key_required, never upgrade_pending", err?.reason === "key_required", err);
+    check("…without a Stripe round trip", !asked);
+
+    console.log("\nLocalhost still runs on the developer's .env.local");
+    setNodeEnv("development");
+    check("…and only then does a key count as configured", Object.values(managedKeysConfigured()).every(Boolean));
+    let local = await lastSent(() => json(U.localDev));
+    check("`next dev`: the key from .env.local went on the wire", local.req?.key === DEV_KEY, local.req?.key ?? local.err);
+    await account(U.localDev, { aiModel: "gemini-2.5-pro" });
+    local = await lastSent(() => json(U.localDev));
+    check("…at the model Settings asks for, with no allowance to ration it",
+      /models\/gemini-2\.5-pro:/.test(local.req?.url ?? ""), local.req?.url ?? local.err);
+    const localStatus = await getAiAccessStatus(U.localDev);
+    check("…and the UI says AI will run, with no allowance to show",
+      localStatus.ready && localStatus.source === "managed" && localStatus.allowance === null, JSON.stringify(localStatus));
+    await db.update(userSettings).set(ownKey()).where(eq(userSettings.userId, U.localDev));
+    local = await lastSent(() => json(U.localDev));
+    check("a saved key still wins over .env.local", local.req?.key === USER_KEY, local.req?.key ?? local.err);
+
+    console.log("\nThe decision model: the account's own TypeSafe key, or .env.local on a dev server");
+    let decision = (await resolveAiAccess(U.localDev)).decision("chat.rerank.decide");
+    check("`next dev`: .env.local's TypeSafe key backs a decision grant",
+      decision?.provider === "typesafe" && decision.source === "managed", JSON.stringify(decision));
+    await db.update(userSettings).set({ typesafeApiKeyEncrypted: encrypt("user-typesafe-key") }).where(eq(userSettings.userId, U.localDev));
+    decision = (await resolveAiAccess(U.localDev)).decision("chat.rerank.decide");
+    check("…and a saved TypeSafe key wins over it, on the user's bill",
+      decision?.source === "personal" && decision.keyOwner === "user", JSON.stringify(decision));
+    process.env.ORBIT_JEV = "off";
+    check("ORBIT_JEV=off: no decision grant, even with a key saved",
+      (await resolveAiAccess(U.localDev)).decision("chat.rerank.decide") === null);
+    delete process.env.ORBIT_JEV;
+    await db.update(userSettings).set({ typesafeApiKeyEncrypted: null }).where(eq(userSettings.userId, U.localDev));
+
+    process.env.ORBIT_DEMO_MANAGED_AI = "off";
+    await account(U.localDev, {});
+    local = await lastSent(() => json(U.localDev));
+    check("ORBIT_DEMO_MANAGED_AI=off: localhost sees what a deployment sees",
+      isAiAccessError(local.err) && (local.err as AiAccessError).reason === "key_required" && local.count === 0, local.err);
+    delete process.env.ORBIT_DEMO_MANAGED_AI;
+
+    process.env.VERCEL = "1";
+    local = await lastSent(() => json(U.localDev));
+    check("a Vercel runtime never reaches .env.local, whatever NODE_ENV says",
+      isAiAccessError(local.err) && local.count === 0, local.req?.key ?? local.err);
+    delete process.env.VERCEL;
+    setNodeEnv("production");
+    local = await lastSent(() => json(U.localDev));
+    check("neither does a production build off Vercel",
+      isAiAccessError(local.err) && local.count === 0, local.req?.key ?? local.err);
+    setNodeEnv(undefined);
+
+    console.log("\nA grant cannot be forged");
+    const forged = Object.freeze({ provider: "gemini", model: "x", source: "managed", keyOwner: "orbit", operation: "x" }) as AiGrant;
+    let threw = false;
+    try {
+      geminiClient(forged);
+    } catch {
+      threw = true;
+    }
+    check("a hand-built grant gets no client", threw);
+    const forgedDecision = Object.freeze({ provider: "typesafe", model: "x", source: "personal", keyOwner: "user", operation: "x" }) as DecisionGrant;
+    threw = false;
+    try {
+      typesafeClient(forgedDecision);
+    } catch {
+      threw = true;
+    }
+    check("…nor does a hand-built decision grant", threw);
+  } finally {
+    for (const p of ["GEMINI", "OPENAI", "ANTHROPIC"]) {
+      delete process.env[`${p}_API_KEY`];
+      delete process.env[`ORBIT_MANAGED_${p}_API_KEY`];
+    }
+    delete process.env.TYPESAFE_API_KEY;
+    delete process.env.ORBIT_JEV;
+    process.env.ORBIT_MANAGED_GEMINI_API_KEY = MANAGED;
+    if (saved.VERCEL === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = saved.VERCEL;
+    if (saved.DEMO === undefined) delete process.env.DEMO_ACCOUNT_USER_ID;
+    else process.env.DEMO_ACCOUNT_USER_ID = saved.DEMO;
+    setNodeEnv(saved.NODE_ENV);
+  }
+}
+
 /**
  * `run-smoke` shares one PGlite directory across scripts, and the ops sweep and admin
  * readers scan every account — so the Lifetime accounts, managed usage and managed-failure
@@ -537,8 +744,12 @@ run(async () => {
   purePolicy();
   await cleanup();
   try {
-    await realGate();
-    await transitions();
+    if (MANAGED_AI_ENABLED) {
+      await realGate();
+      await transitions();
+    } else {
+      await byokOnly();
+    }
   } finally {
     await cleanup();
   }

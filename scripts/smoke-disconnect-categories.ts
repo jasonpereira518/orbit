@@ -24,7 +24,7 @@ for (const [provider, ids] of Object.entries(DISCONNECT_DELETE_CATEGORIES)) {
   check(`${provider}: expands to nothing it did not name`, expandCategories(ids).size === ids.length);
 }
 check("Google offers the recruiter scan's data", DISCONNECT_DELETE_CATEGORIES.gmail.includes("recruiters"));
-check("Outlook offers nothing (it only fills contacts)", DISCONNECT_DELETE_CATEGORIES.outlook.length === 0);
+check("Outlook offers the recruiter scan's data", DISCONNECT_DELETE_CATEGORIES.outlook.includes("recruiters"));
 
 if (failures > 0) process.exit(1);
 console.log("\nAll disconnect-category checks passed.");

@@ -75,6 +75,11 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   { table: "contact_identities", column: "contact_id", scoped: true },
   { table: "note_batches", column: "seed_contact_id", scoped: true },
   { table: "import_job_rows", column: "contact_id", scoped: true },
+  // memory_chunks is unique on (user_id, source_kind, source_id, chunk_index) — no contact
+  // column in the key, so this cannot collide either. Only `contact_id` moves here; the
+  // `contact_ids` array it also carries is rewritten separately (step 4c-2), because an
+  // array rewrite is not reversible from a list of ids alone.
+  { table: "memory_chunks", column: "contact_id", scoped: true },
 ];
 
 /** Fold a statement's moved ids into the archive row, additively. */
@@ -300,6 +305,44 @@ export async function mergeContacts(
         sql`DELETE FROM interaction_mentions
              WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
          RETURNING to_jsonb(interaction_mentions) AS row`
+      )
+    );
+
+    // 4c-2. memory_chunks.contact_ids: everyone a passage names, as a uuid[] with no foreign
+    //     key — so nothing in the database moves or cascades it, and a merged-away id would
+    //     sit in the index forever while the note stopped being findable from the person who
+    //     survived. Without this the loser's passages were cascade-deleted with its contact
+    //     row (`contact_id` is ON DELETE CASCADE) and only came back when the sweep next ran.
+    //
+    //     Two cases, recorded under separate labels because the archive stores ids and the
+    //     rewrite is only reversible if unmerge knows which one it is undoing:
+    //      - collapsed: the passage named BOTH people, so the pair dedupes to one element and
+    //        undoing means putting the loser back, not swapping.
+    //      - replaced: it named only the loser, so undoing is a straight swap.
+    //     ORDER MATTERS. Collapse first: run the replace first and a passage naming both ends
+    //     up holding the winner twice, with nothing left for the collapse to match.
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "memory_chunks.contact_ids.collapsed",
+        sql`UPDATE memory_chunks SET contact_ids = array_remove(contact_ids, ${loserId}::uuid)
+             WHERE user_id = ${userId}
+               AND ${loserId}::uuid = ANY(contact_ids)
+               AND ${winnerId}::uuid = ANY(contact_ids)
+         RETURNING id`
+      )
+    );
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "memory_chunks.contact_ids.replaced",
+        sql`UPDATE memory_chunks
+               SET contact_ids = array_replace(contact_ids, ${loserId}::uuid, ${winnerId}::uuid)
+             WHERE user_id = ${userId}
+               AND ${loserId}::uuid = ANY(contact_ids)
+         RETURNING id`
       )
     );
 
@@ -633,6 +676,37 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
       );
     }
 
+    // 2b. memory_chunks.contact_ids, the mirror of the merge's two cases. These id sets are
+    //     disjoint, so unlike the merge side the order here is free.
+    const collapsedChunks = repointed["memory_chunks.contact_ids.collapsed"] ?? [];
+    if (collapsedChunks.length) {
+      statements.push(
+        tx.execute(sql`
+          UPDATE memory_chunks SET contact_ids = contact_ids || ${loserId}::uuid
+           WHERE user_id = ${userId}
+             AND id = ANY(${sql`ARRAY[${sql.join(
+               collapsedChunks.map((id) => sql`${id}::uuid`),
+               sql`, `
+             )}]`})
+             AND NOT (${loserId}::uuid = ANY(contact_ids))
+        `)
+      );
+    }
+    const replacedChunks = repointed["memory_chunks.contact_ids.replaced"] ?? [];
+    if (replacedChunks.length) {
+      statements.push(
+        tx.execute(sql`
+          UPDATE memory_chunks
+             SET contact_ids = array_replace(contact_ids, ${winnerId}::uuid, ${loserId}::uuid)
+           WHERE user_id = ${userId}
+             AND id = ANY(${sql`ARRAY[${sql.join(
+               replacedChunks.map((id) => sql`${id}::uuid`),
+               sql`, `
+             )}]`})
+        `)
+      );
+    }
+
     // 3. Restore rows that were deleted rather than moved. ON CONFLICT DO NOTHING because
     //    the winner may legitimately have recreated an equivalent row since.
     for (const [table, rows] of Object.entries(deleted)) {
@@ -674,6 +748,12 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
 
     return statements;
   });
+
+  // An undo is the strongest "these are two people" there is. Recorded as a dismissal, so
+  // neither the sweep (which re-runs on every duplicates-page render and skips only
+  // dismissed pairs) nor a decision-model merge puts them back together — before this, an
+  // undone automatic merge came straight back on the page refresh that followed the Undo.
+  await dismissDuplicatePair(userId, winnerId, loserId, "Merge undone");
 
   // Both contacts changed; both need rescoring.
   await invalidateAfterMerge(userId, winnerId);
@@ -723,7 +803,8 @@ export async function recordDuplicateSuggestion(
 export async function dismissDuplicatePair(
   userId: string,
   contactIdA: string,
-  contactIdB: string
+  contactIdB: string,
+  reason = "Dismissed by hand"
 ) {
   if (contactIdA === contactIdB) return;
   // Same canonical ordering as `recordDuplicateSuggestion`, so this writes the row a write
@@ -737,7 +818,7 @@ export async function dismissDuplicatePair(
       userId,
       contactAId: a,
       contactBId: b,
-      reason: "Dismissed by hand",
+      reason,
       confidence: 0,
       status: "dismissed",
       resolvedAt: now,

@@ -3,21 +3,14 @@ import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { usageEvents, userSettings } from "@/db/schema";
+import { aiBatchJobs, usageEvents, userSettings } from "@/db/schema";
 import { decryptOrNull } from "@/lib/crypto";
-import { isDemoAccount } from "@/lib/demo-account";
+import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
 import type { SessionRetriever } from "@/lib/lifetime-checkout";
 import type { Plan } from "@/lib/plan-limits";
-import {
-  recordWisprKeyRejected,
-  transcribeWithWispr,
-  transcribeWithWisprOutcome,
-  type WisprOutcome,
-  type WisprTranscribeInput,
-} from "@/lib/wispr";
 import {
   AI_PROVIDERS,
   resolveAiModel,
@@ -26,10 +19,15 @@ import {
   type EmbeddingBackend,
 } from "@/lib/ai-providers";
 import { AI_ACCESS_COPY, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
+import { JEV_MODEL } from "@/lib/ai-models";
+import {
+  systemOneRequest,
+  type SystemOneRequest,
+  type SystemOneResponse,
+} from "@/lib/typesafe-api";
 import {
   chooseCompletionKey,
   chooseEmbeddingKey,
-  chooseProviderKey,
   aiReadyFromFacts,
   managedCallAllowed,
   managedEligibility,
@@ -37,6 +35,7 @@ import {
   managedWindow,
   nothingUsable,
   MANAGED_AI_BUDGET,
+  MANAGED_AI_ENABLED,
   MANAGED_PROVIDER_ORDER,
   UNPRICED_CALL_MICROS,
   type AiAccessDenial,
@@ -96,13 +95,10 @@ export function isAiAccessError(err: unknown): err is AiAccessError {
 
 /* ------------------------------------------------------------------ managed keys ----- */
 
-type KeyedProvider = AiProvider | "wispr";
-
-const MANAGED_ENV: Record<KeyedProvider, string> = {
+const MANAGED_ENV: Record<AiProvider, string> = {
   gemini: "ORBIT_MANAGED_GEMINI_API_KEY",
   openai: "ORBIT_MANAGED_OPENAI_API_KEY",
   anthropic: "ORBIT_MANAGED_ANTHROPIC_API_KEY",
-  wispr: "ORBIT_MANAGED_WISPR_API_KEY",
 };
 
 /**
@@ -111,19 +107,41 @@ const MANAGED_ENV: Record<KeyedProvider, string> = {
  * account at all when a tsx script ran against a shared database; now it pays only for the
  * accounts the policy says Orbit pays for.
  */
-const LOCAL_ENV: Record<KeyedProvider, string> = {
+const LOCAL_ENV: Record<AiProvider, string> = {
   gemini: "GEMINI_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
-  wispr: "WISPR_API_KEY",
 };
 
-/** `ORBIT_MANAGED_AI=off` — the emergency stop. Every Lifetime account falls back to BYOK. */
+/**
+ * TypeSafe (Jev, the decision model) is BYOK only — Jason's call, Sep 21 2026 — so it has no
+ * managed name at all. This one is read on a dev server alone, like `LOCAL_ENV`.
+ */
+const LOCAL_TYPESAFE_ENV = "TYPESAFE_API_KEY";
+
+/**
+ * `ORBIT_JEV=off` — the decision model's emergency stop. Every decision call site falls
+ * back to the path it had before Jev, so switching it off loses speed and savings, never a
+ * feature.
+ */
+export function jevSwitchedOff(): boolean {
+  return process.env.ORBIT_JEV?.trim().toLowerCase() === "off";
+}
+
+/**
+ * `ORBIT_MANAGED_AI=off` — the emergency stop. Every Lifetime account falls back to BYOK.
+ * Always on while `MANAGED_AI_ENABLED` is false: managed AI has not shipped.
+ */
 export function managedAiSwitchedOff(): boolean {
+  if (!MANAGED_AI_ENABLED) return true;
   return process.env.ORBIT_MANAGED_AI?.trim().toLowerCase() === "off";
 }
 
-function managedKey(provider: KeyedProvider): string | null {
+function managedKey(provider: AiProvider): string | null {
+  // Managed AI off: the local-dev names are the only ones read, and only on a dev server.
+  if (!MANAGED_AI_ENABLED) {
+    return localDevAiEnabled() ? process.env[LOCAL_ENV[provider]]?.trim() || null : null;
+  }
   if (managedAiSwitchedOff()) return null;
   const explicit = process.env[MANAGED_ENV[provider]]?.trim();
   if (explicit) return explicit;
@@ -141,17 +159,38 @@ export function managedKeysConfigured(): Record<AiProvider, boolean> {
 }
 
 /** The env var an operator sets for a provider's managed key — for Settings and the runbook. */
-export function managedEnvVar(provider: KeyedProvider): string {
+export function managedEnvVar(provider: AiProvider): string {
   return MANAGED_ENV[provider];
+}
+
+/**
+ * LOCALHOST ONLY — `next dev` runs AI on the keys in the developer's own `.env.local`, the
+ * way local development always worked, so a fresh clone can capture a note without pasting a
+ * key into Settings first. It is the only path left to a key the account did not save.
+ *
+ * Three conditions, all required, and none of them settable by a deployment: managed AI is
+ * off (with it on, these names are Orbit's own managed keys and the plan rule applies), the
+ * process is not a Vercel runtime, and `NODE_ENV` is development — which `next build` and
+ * every deployment are not. `ORBIT_DEMO_MANAGED_AI=off` still turns it off, which is how the
+ * production BYOK states are seen on a laptop.
+ */
+function localDevAiEnabled(): boolean {
+  if (MANAGED_AI_ENABLED) return false;
+  if (process.env.ORBIT_DEMO_MANAGED_AI?.trim().toLowerCase() === "off") return false;
+  return !process.env.VERCEL && isLocalhost();
 }
 
 /**
  * Demo accounts count as Lifetime (see `managed-ai-policy.ts`).
  * `ORBIT_DEMO_MANAGED_AI=off` switches that off, so the BYOK states can be seen on `next dev`
  * — the same shape as `ORBIT_DEMO_DATA=off` for onboarding.
+ *
+ * With managed AI off this narrows to the localhost case: the showcase account
+ * (`DEMO_ACCOUNT_USER_ID`) is a deployed account, and no deployment pays for AI.
  */
 function demoCountsAsManaged(userId: string): boolean {
   if (process.env.ORBIT_DEMO_MANAGED_AI?.trim().toLowerCase() === "off") return false;
+  if (!MANAGED_AI_ENABLED) return localDevAiEnabled() && isDemoAccount(userId);
   return isDemoAccount(userId);
 }
 
@@ -161,7 +200,7 @@ function demoCountsAsManaged(userId: string): boolean {
  * Permission to make ONE kind of call on ONE key. Everything a caller may know about it —
  * never the key itself. `keyOwner` is what `usage_events.key_owner` records.
  */
-export type AiGrant<P extends KeyedProvider = AiProvider> = Readonly<{
+export type AiGrant<P extends AiProvider = AiProvider> = Readonly<{
   provider: P;
   model: string;
   source: AiKeySource;
@@ -171,7 +210,7 @@ export type AiGrant<P extends KeyedProvider = AiProvider> = Readonly<{
 
 const GRANT_KEYS = new WeakMap<object, string>();
 
-function mint<P extends KeyedProvider>(
+function mint<P extends AiProvider>(
   provider: P,
   model: string,
   source: AiKeySource,
@@ -189,7 +228,7 @@ function mint<P extends KeyedProvider>(
   return grant;
 }
 
-function keyFor(grant: AiGrant<KeyedProvider>, provider: KeyedProvider): string {
+function keyFor(grant: AiGrant<AiProvider>, provider: AiProvider): string {
   const key = GRANT_KEYS.get(grant);
   if (!key || grant.provider !== provider) {
     // A programming error, not a user state: something tried to build a client without
@@ -199,40 +238,53 @@ function keyFor(grant: AiGrant<KeyedProvider>, provider: KeyedProvider): string 
   return key;
 }
 
-export function geminiClient(grant: AiGrant<KeyedProvider>): GoogleGenAI {
+export function geminiClient(grant: AiGrant<AiProvider>): GoogleGenAI {
   return new GoogleGenAI({ apiKey: keyFor(grant, "gemini") });
 }
 
-export function openaiClient(grant: AiGrant<KeyedProvider>): OpenAI {
+export function openaiClient(grant: AiGrant<AiProvider>): OpenAI {
   return new OpenAI({ apiKey: keyFor(grant, "openai") });
 }
 
-export function anthropicClient(grant: AiGrant<KeyedProvider>): Anthropic {
+export function anthropicClient(grant: AiGrant<AiProvider>): Anthropic {
   return new Anthropic({ apiKey: keyFor(grant, "anthropic") });
 }
 
-/** Wispr has no SDK; its one call takes the key directly, so the gate makes that call. */
-export function transcribeWithWisprGrant(
-  grant: AiGrant<"wispr">,
-  input: WisprTranscribeInput,
-): Promise<string | null> {
-  return transcribeWithWispr(keyFor(grant, "wispr"), input);
-}
-
-/** Like `transcribeWithWisprGrant`, but says WHICH failure: a rejected key is not an empty answer. */
-export function transcribeWithWisprOutcomeGrant(
-  grant: AiGrant<"wispr">,
-  input: WisprTranscribeInput,
-): Promise<WisprOutcome> {
-  return transcribeWithWisprOutcome(keyFor(grant, "wispr"), input);
-}
-
 /**
- * Remembers that Wispr refused this grant's key — by fingerprint, never the key — so
- * Settings can say "this key". Here rather than in ai.ts because only the gate holds keys.
+ * Permission to ask TypeSafe's decision model one set of questions. Deliberately NOT an
+ * `AiGrant`: TypeSafe is not an `AiProvider`, because an `AiProvider` is something a person
+ * can pick for chat, and every completion path in `ai.ts` would fall through to its
+ * Anthropic branch for a fourth value. Same WeakMap, so it cannot be forged either.
  */
-export function recordWisprGrantRejected(userId: string, grant: AiGrant<"wispr">, status: number): Promise<void> {
-  return recordWisprKeyRejected(userId, keyFor(grant, "wispr"), status);
+export type DecisionGrant = Readonly<{
+  provider: "typesafe";
+  model: string;
+  source: AiKeySource;
+  keyOwner: "user" | "orbit";
+  operation: string;
+}>;
+
+function mintDecision(model: string, source: AiKeySource, key: string, operation: string): DecisionGrant {
+  const grant = Object.freeze({
+    provider: "typesafe" as const,
+    model,
+    source,
+    keyOwner: source === "managed" ? ("orbit" as const) : ("user" as const),
+    operation,
+  });
+  GRANT_KEYS.set(grant, key);
+  return grant;
+}
+
+/** The decision model's client. `ai-access.ts` is the only file allowed to hand it a key. */
+export function typesafeClient(grant: DecisionGrant): {
+  systemOne(body: SystemOneRequest, opts?: { signal?: AbortSignal }): Promise<SystemOneResponse>;
+} {
+  const key = GRANT_KEYS.get(grant);
+  if (!key || grant.provider !== "typesafe") {
+    throw new Error("No typesafe grant — AI clients are only issued by src/lib/ai-access.ts");
+  }
+  return { systemOne: (body, opts) => systemOneRequest(key, body, { signal: opts?.signal }) };
 }
 
 /**
@@ -245,7 +297,7 @@ export function recordWisprGrantRejected(userId: string, grant: AiGrant<"wispr">
  * `withUsage` call, not its callback, so `usage_events.error_kind` still records the
  * provider's real failure kind.
  */
-export async function runOnGrant<T>(grant: AiGrant<KeyedProvider>, call: Promise<T>): Promise<T> {
+export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>): Promise<T> {
   try {
     return await call;
   } catch (err) {
@@ -296,7 +348,14 @@ export function managedCostSql() {
     ELSE 0 END)`;
 }
 
-/** This month's managed spend for one account — an index scan on `(user_id, created_at)`. */
+/**
+ * This month's managed spend for one account — an index scan on `(user_id, created_at)`,
+ * plus what batches still in flight are expected to cost.
+ *
+ * The reservation matters: a submitted batch has spent the money but written no usage rows
+ * yet (they land when its results do, hours later). Without counting it, an account could
+ * submit batch after batch and only discover the cap when the bill arrived.
+ */
 export async function managedUsageThisMonth(userId: string, now = new Date()): Promise<ManagedUsage> {
   const { start } = managedWindow(now);
   const db = await getDb();
@@ -313,7 +372,24 @@ export async function managedUsageThisMonth(userId: string, now = new Date()): P
         gte(usageEvents.createdAt, start),
       ),
     );
-  return { spentMicros: Number(row?.spent ?? 0), calls: Number(row?.calls ?? 0) };
+  const [reserved] = await db
+    .select({
+      micros: sql<string>`coalesce(sum(${aiBatchJobs.estCostMicros}), 0)::bigint`,
+      calls: sql<string>`coalesce(sum(${aiBatchJobs.requestCount}), 0)::bigint`,
+    })
+    .from(aiBatchJobs)
+    .where(
+      and(
+        eq(aiBatchJobs.userId, userId),
+        eq(aiBatchJobs.keyOwner, "orbit"),
+        eq(aiBatchJobs.status, "submitted"),
+        gte(aiBatchJobs.createdAt, start),
+      ),
+    );
+  return {
+    spentMicros: Number(row?.spent ?? 0) + Number(reserved?.micros ?? 0),
+    calls: Number(row?.calls ?? 0) + Number(reserved?.calls ?? 0),
+  };
 }
 
 export function allowanceFrom(usage: ManagedUsage, now = new Date()): ManagedAllowance {
@@ -342,8 +418,10 @@ export class AiAccess {
     readonly eligibility: ManagedEligibility,
     /** A paid Lifetime checkout Stripe says has not cleared yet. */
     readonly upgradePending: boolean,
-    private readonly personal: Partial<Record<KeyedProvider, string>>,
-    private readonly managed: Partial<Record<KeyedProvider, string>>,
+    private readonly personal: Partial<Record<AiProvider, string>>,
+    private readonly managed: Partial<Record<AiProvider, string>>,
+    /** The decision model's key: the account's own, or on `next dev` the developer's. */
+    private readonly decisionKey: { key: string; source: AiKeySource } | null,
   ) {}
 
   static async open(userId: string, opts: AiAccessOptions = {}): Promise<AiAccess> {
@@ -354,6 +432,7 @@ export class AiAccess {
     // Only an account about to be refused is worth a Stripe round trip: not on Lifetime,
     // no key of its own, and a Lifetime checkout opened recently.
     if (
+      MANAGED_AI_ENABLED &&
       plan !== "lifetime" &&
       row?.lifetimeCheckoutSessionId &&
       !hasAnyPersonalKey(row) &&
@@ -371,27 +450,40 @@ export class AiAccess {
       }
     }
 
-    const personal: Partial<Record<KeyedProvider, string>> = {};
+    const personal: Partial<Record<AiProvider, string>> = {};
     const decrypted = {
       gemini: decryptOrNull(row?.geminiApiKeyEncrypted),
       openai: decryptOrNull(row?.openaiApiKeyEncrypted),
       anthropic: decryptOrNull(row?.anthropicApiKeyEncrypted),
-      wispr: decryptOrNull(row?.wisprApiKeyEncrypted),
     };
     for (const [provider, key] of Object.entries(decrypted)) {
-      if (key) personal[provider as KeyedProvider] = key;
+      if (key) personal[provider as AiProvider] = key;
     }
 
     const eligibility = managedEligibility(plan, demoCountsAsManaged(userId));
-    const managed: Partial<Record<KeyedProvider, string>> = {};
+    const managed: Partial<Record<AiProvider, string>> = {};
     if (eligibility) {
-      for (const provider of [...MANAGED_PROVIDER_ORDER, "wispr"] as const) {
+      for (const provider of MANAGED_PROVIDER_ORDER) {
         const key = managedKey(provider);
         if (key) managed[provider] = key;
       }
     }
 
-    return new AiAccess(userId, row, plan, eligibility, upgradePending, personal, managed);
+    // BYOK only. The one exception is the dev server's own `.env.local`, on the same terms
+    // as every other provider there (a localhost demo account, managed AI off) — so it can
+    // never become an Orbit-paid key, even the day managed AI ships.
+    const ownDecisionKey = decryptOrNull(row?.typesafeApiKeyEncrypted);
+    const devDecisionKey =
+      eligibility === "demo" && localDevAiEnabled()
+        ? process.env[LOCAL_TYPESAFE_ENV]?.trim() || null
+        : null;
+    const decisionKey = ownDecisionKey
+      ? { key: ownDecisionKey, source: "personal" as const }
+      : devDecisionKey
+        ? { key: devDecisionKey, source: "managed" as const }
+        : null;
+
+    return new AiAccess(userId, row, plan, eligibility, upgradePending, personal, managed, decisionKey);
   }
 
   get selectedProvider(): AiProvider {
@@ -431,7 +523,7 @@ export class AiAccess {
     return new AiAccessError(reason, message);
   }
 
-  private async grant<P extends KeyedProvider>(
+  private async grant<P extends AiProvider>(
     provider: P,
     source: AiKeySource,
     model: string,
@@ -440,7 +532,9 @@ export class AiAccess {
     const key = source === "personal" ? this.personal[provider] : this.managed[provider];
     // Unreachable when the policy and the maps agree; a refusal beats a crash if they don't.
     if (!key) throw this.refusal(nothingUsable(this.eligibility).reason);
-    if (source === "managed") {
+    // The allowance is Orbit's spend ceiling. On a dev server the "managed" key is the
+    // developer's own, so there is nothing to ration and no usage query to pay for.
+    if (source === "managed" && MANAGED_AI_ENABLED) {
       const usage = await managedUsageThisMonth(this.userId);
       if (!managedCallAllowed(usage, operation)) throw this.refusal("managed_limit");
     }
@@ -485,7 +579,17 @@ export class AiAccess {
   }
 
   /**
-   * Speech to text, after Wispr. The user's own OpenAI key (Whisper), then their own Gemini
+   * A grant for the decision model (TypeSafe's Jev), or null — no key, or `ORBIT_JEV=off`.
+   * Null is the normal answer for most accounts, and every caller has the path it used
+   * before Jev to fall back on; that is why this returns rather than refuses.
+   */
+  decision(operation: string): DecisionGrant | null {
+    if (!this.decisionKey || jevSwitchedOff()) return null;
+    return mintDecision(JEV_MODEL, this.decisionKey.source, this.decisionKey.key, operation);
+  }
+
+  /**
+   * Speech to text. The user's own OpenAI key (Whisper), then their own Gemini
    * key; for an eligible account with neither, Orbit's Gemini before Orbit's OpenAI —
    * Gemini's audio is priced per token, where Whisper's usage is invisible to the allowance.
    * Null when nothing is available.
@@ -504,29 +608,13 @@ export class AiAccess {
   }
 
   /**
-   * Whether any speech-to-text engine is available — the same chain as `wispr()` then
-   * `transcription()`, presence only. Anthropic has no speech-to-text, so an Anthropic-only
+   * Whether any speech-to-text engine is available — the same chain as `transcription()`,
+   * presence only. Anthropic has no speech-to-text, so an Anthropic-only
    * BYOK account can summarize but not transcribe.
    */
   canTranscribe(): boolean {
-    if (this.personal.wispr || this.personal.openai || this.personal.gemini) return true;
-    return Boolean(
-      this.eligibility && (this.managed.wispr || this.managed.openai || this.managed.gemini),
-    );
-  }
-
-  /** Wispr: their own key, or — for an eligible account — Orbit's, if it holds one. */
-  async wispr(operation: string): Promise<AiGrant<"wispr"> | null> {
-    const source = chooseProviderKey(
-      {
-        eligibility: this.eligibility,
-        personal: { wispr: Boolean(this.personal.wispr) },
-        managed: { wispr: Boolean(this.managed.wispr) },
-      },
-      "wispr",
-    );
-    if (!source) return null;
-    return this.grant("wispr", source, "flow", operation);
+    if (this.personal.openai || this.personal.gemini) return true;
+    return Boolean(this.eligibility && (this.managed.openai || this.managed.gemini));
   }
 }
 
@@ -580,9 +668,10 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   const choice = chooseCompletionKey(facts);
   const now = new Date();
 
-  const allowance = access.eligibility
-    ? allowanceFrom(await managedUsageThisMonth(userId, now), now)
-    : null;
+  const allowance =
+    access.eligibility && MANAGED_AI_ENABLED
+      ? allowanceFrom(await managedUsageThisMonth(userId, now), now)
+      : null;
 
   let reason: AiAccessDenial | null = null;
   if (!choice.ok) {

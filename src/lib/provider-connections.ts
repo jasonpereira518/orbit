@@ -243,6 +243,11 @@ export async function disarmSync(
  * "has actually synced" rather than "a row exists". Coverage is a claim that Orbit could have
  * observed this person; a connection that has never completed a sync has observed nobody, and
  * counting it would hand out evidence nothing earned.
+ *
+ * The Microsoft scope test is a case-insensitive exact-token regex, not a substring: Microsoft
+ * echoes Graph scopes as short names or full URIs in any case (see `microsoft-scopes.ts`), and
+ * a case-sensitive `LIKE` read a real grant as no calendar. Written with POSIX classes rather
+ * than a `\s` escape because a backslash in this template literal would be eaten before it reaches SQL.
  */
 export async function loadCoverageSources(
   userId: string
@@ -262,6 +267,11 @@ export async function loadCoverageSources(
          WHERE user_id = ${userId} AND status = 'active'
            AND last_synced_at IS NOT NULL
            AND scopes LIKE '%calendar.readonly%'
+      ) OR EXISTS (
+        SELECT 1 FROM outlook_connections
+         WHERE user_id = ${userId} AND status = 'active'
+           AND last_synced_at IS NOT NULL
+           AND scopes ~* '(^|[[:space:]])(https://graph[.]microsoft[.]com/)?calendars[.]read([[:space:]]|$)'
       ) OR EXISTS (
         SELECT 1 FROM calendar_subscriptions
          WHERE user_id = ${userId} AND enabled = 1 AND last_sync_status = 'ok'

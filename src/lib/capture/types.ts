@@ -12,6 +12,7 @@ import type {
   ReminderOrigin,
 } from "@/db/schema";
 import type { ImpliedNextStep } from "@/lib/implied-next-steps";
+import type { LinkedInLookupSummary } from "@/lib/linkedin-paste";
 import type { PreviewMention } from "@/lib/note-batches";
 
 export type BulkNoteDuplicate = {
@@ -38,6 +39,11 @@ export type BulkNotePersonPreview = {
   cadence: { days: number; phrase: string; sourceExcerpt: string } | null;
   duplicates: BulkNoteDuplicate[];
   suggestedMergeId: string | null;
+  /**
+   * The decision model is confident this is a NEW person, not any of `duplicates` — so the
+   * card should default to "create" rather than to the top name match. Absent otherwise.
+   */
+  suggestedNew?: boolean;
   /** Shared group/event notes folded into this person's save payload. */
   sharedNoteTexts: string[];
   interactionDate: string | null;
@@ -54,6 +60,8 @@ export type CaptureOpportunityPreview = {
   confidenceScore: number;
   /** YYYY-MM-DD, so a date input round-trips without timezone drift. */
   dueDateIso: string | null;
+  /** The model's kind when the referral language test overrode it (see ExtractedOpportunity). */
+  overriddenKind?: OpportunityKind;
 };
 
 /** A dated commitment awaiting the user's review, shaped for the client. */
@@ -106,6 +114,12 @@ export type CaptureParseResult = {
   suggestionsSkipped: RejectedCounts;
   mentions: PreviewMention[];
   mentionedOnly: MentionedOnlyPerson[];
+  /**
+   * Set when the notes carried LinkedIn profile URLs, so the review step can say when a
+   * name was read off a URL rather than looked up. Null when none were pasted, and absent
+   * on a job result stored before this field existed.
+   */
+  linkedinLookup?: LinkedInLookupSummary | null;
 };
 
 // --- the durable capture job ----------------------------------------------------------

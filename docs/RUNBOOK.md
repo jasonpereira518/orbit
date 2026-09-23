@@ -20,6 +20,12 @@ Push to `main`. CI (`typecheck · lint · build`, `smoke suite`) must be green; 
 runs `npm run check:env && npm run db:migrate && next build`. A missing production
 variable or a failing DDL statement fails the build and the previous deployment stays live.
 
+**A `claude/*` branch with no pull request does not build a preview.** Vercel's Ignored Build
+Step (`vercel.json` → `scripts/vercel-ignore-build.sh`) skips it, because every retained
+deployment's function bundles count against Functions Storage. It builds once the branch has a
+PR and gets a push. To get a preview sooner, put `[deploy]` in the commit message, or redeploy
+from the dashboard. Everything else (main, other branches, production) always builds.
+
 ## Roll back
 
 Vercel → Deployments → the last good one → **Promote to Production**. Schema changes are
@@ -94,7 +100,11 @@ above. Vercel Pro crons remove the rule entirely.
 | `ai.managed_spend_spike` / `ai.managed_runway` | Managed spend is outrunning what Lifetime brought in. `/admin/billing/costs` → "On Orbit's AI keys". Lower `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, or in an emergency set `ORBIT_MANAGED_AI=off` and redeploy. |
 | `ai.managed_cap_hit` | Info: accounts used their whole monthly allowance. A rising count means the cap is too tight for real use. |
 
-## Managed AI keys (Orbit Lifetime)
+## Managed AI keys (Orbit Lifetime) — NOT SHIPPED
+
+**Currently off.** `MANAGED_AI_ENABLED = false` in `src/lib/managed-ai-policy.ts`: AI is bring-your-own-key on every deployed plan, Lifetime included, and no `ORBIT_MANAGED_*` variable is read anywhere. Setting one does nothing. Turning managed AI on is that flag plus the public copy (pricing, `/privacy`, `/terms`, which bumps `TERMS_VERSION`). The rest of this section describes the dormant path.
+
+**The one exception is `next dev`**, which runs AI on the bare `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `WISPR_API_KEY` names in the developer's `.env.local` (`localDevAiEnabled` in `ai-access.ts`: managed AI off, `VERCEL` unset, `NODE_ENV=development` — a deployment is none of these). A key saved in Settings still wins, and `ORBIT_DEMO_MANAGED_AI=off` turns it off to see the production BYOK states.
 
 AI is bring-your-own-key on every plan except Lifetime. A Lifetime account with no key of its own runs on Orbit's managed keys, and only `src/lib/ai-access.ts` can issue one (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client).
 

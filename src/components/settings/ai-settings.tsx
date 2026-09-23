@@ -6,7 +6,6 @@ import {
   clearApiKey,
   getSettings,
   saveAiSettings,
-  saveVoiceSettings,
 } from "@/actions/settings";
 import {
   AI_PROVIDERS,
@@ -32,7 +31,7 @@ import {
   allowancePercentUsed,
   formatAllowanceReset,
 } from "@/lib/ai-access-copy";
-import { managedModel } from "@/lib/managed-ai-policy";
+import { MANAGED_AI_ENABLED, managedModel } from "@/lib/managed-ai-policy";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
@@ -56,8 +55,12 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   const [provider, setProvider] = useState<AiProvider>(initialSettings.aiProvider);
   const [apiKey, setApiKey] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
-  const [wisprKey, setWisprKey] = useState("");
   const [model, setModel] = useState(initialSettings.aiModel);
+  /**
+   * Set when a default changed under this account (`ai_model_migrated_from`). Shown once,
+   * beside the model it moved to; saving anything clears it server-side.
+   */
+  const movedFrom = initialSettings.aiModelMigratedFrom;
   const [customModel, setCustomModel] = useState(
     !PROVIDER_MODELS[initialSettings.aiProvider].some(
       (m) => m.value === initialSettings.aiModel
@@ -74,6 +77,10 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   ];
   const activeProviderStatus = settings.providers.find((p) => p.id === provider);
   const { ai } = settings;
+  // Managed AI is off, and this is a dev server running on the keys in `.env.local`. The
+  // same machinery as Lifetime's included AI, but it is the developer's own key, so it says
+  // so rather than promising something no deployment does.
+  const onLocalDevKeys = !MANAGED_AI_ENABLED && ai.eligibility === "demo" && ai.managedConfigured;
   // Lifetime, or a demo account that actually has a (local) managed key to run on.
   const onLifetime =
     ai.eligibility === "lifetime" || (ai.eligibility === "demo" && ai.managedConfigured);
@@ -86,9 +93,11 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
     <SettingsSection
       title="AI provider"
       description={
-        onLifetime
-          ? "Orbit Lifetime includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key: whenever one is saved, Orbit uses yours instead. Keys are encrypted at rest and only used for your account."
-          : `Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Orbit Lifetime includes AI, so no key is needed there." : ""}`
+        onLocalDevKeys
+          ? "This dev server runs AI on the keys in your .env.local — nothing to set up. Save a key here and it is used instead, which is also how you see what a deployed account sees. Keys are encrypted at rest and only used for your account."
+          : onLifetime
+            ? "Orbit Lifetime includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key: whenever one is saved, Orbit uses yours instead. Keys are encrypted at rest and only used for your account."
+            : `Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Orbit Lifetime includes AI, so no key is needed there." : ""}`
       }
     >
       <div className="space-y-1.5">
@@ -124,13 +133,17 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           <p>
             Status:{" "}
             {activeProviderStatus.hasPersonalKey
-              ? onLifetime
-                ? `Your ${providerMeta.label} key is saved, so Orbit uses it — clear it to switch to Orbit’s included AI`
-                : `Your ${providerMeta.label} key is saved`
+              ? onLocalDevKeys
+                ? `Your ${providerMeta.label} key is saved, so Orbit uses it — clear it to fall back to .env.local`
+                : onLifetime
+                  ? `Your ${providerMeta.label} key is saved, so Orbit uses it — clear it to switch to Orbit’s included AI`
+                  : `Your ${providerMeta.label} key is saved`
               : provider === ai.selectedProvider && ai.reason
                 ? AI_NOTICE_COPY[ai.reason].title("use AI")
                 : managedRuns
-                  ? `Using Orbit’s included AI — ${modelLabel(provider, managedRuns)} on Orbit’s key`
+                  ? onLocalDevKeys
+                    ? `Using your .env.local ${providerMeta.label} key — ${modelLabel(provider, managedRuns)}`
+                    : `Using Orbit’s included AI — ${modelLabel(provider, managedRuns)} on Orbit’s key`
                   : onLifetime && ai.source === "managed"
                     ? `No ${providerMeta.label} key — Orbit’s included AI runs on ${modelLabel(ai.provider, ai.model)} instead`
                     : "No key yet — paste one below to turn on AI features"}
@@ -231,6 +244,19 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             </Button>
           </div>
         )}
+        {movedFrom && model === DEFAULT_MODELS[provider] ? (
+          <p className="text-xs text-muted-foreground">
+            Moved from {modelLabel(provider, movedFrom)} to {modelLabel(provider, model)}: newer, and
+            about half the price per token.{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2 hover:text-ink"
+              onClick={() => setModel(movedFrom)}
+            >
+              Switch back
+            </button>
+          </p>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -292,74 +318,19 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         </Button>
       </div>
 
-      <SettingsRow
-        title="Voice transcription"
-        description={
-          <>
-            Voice notes are transcribed with{" "}
-            <span className="font-medium text-foreground">Wispr Flow</span>{" "}
-            when a key is saved here, because it accepts your contacts&apos; names as a vocabulary and
-            gets their spelling right. Without one, Orbit falls back to your AI provider
-            above — which still receives the same list of names, just less reliably.
-          </>
-        }
-      >
-        <div className="space-y-1.5">
-          <Label htmlFor="wispr-key">Wispr Flow API key</Label>
-          <Input
-            id="wispr-key"
-            type="password"
-            autoComplete="off"
-            placeholder={settings.hasWisprKey ? "Saved — enter a new key to replace" : "Optional"}
-            value={wisprKey}
-            onChange={(e) => setWisprKey(e.target.value)}
-          />
-        </div>
-        {settings.wisprKeyRejected ? (
-          <p role="status" className="text-sm text-warning">
-            Wispr didn’t accept this key, so voice notes use your AI provider instead — replace it or clear it
-          </p>
-        ) : null}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending || !wisprKey.trim()}
-            onClick={() =>
-              start(async () => {
-                await saveVoiceSettings({ wisprApiKey: wisprKey.trim() });
-                setWisprKey("");
-                setSettings(await getSettings());
-                toast.success("Wispr key saved");
-              })
-            }
-          >
-            Save Wispr key
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={pending || !settings.hasWisprKey}
-            onClick={() =>
-              start(async () => {
-                // "" clears; `undefined` would leave it untouched.
-                await saveVoiceSettings({ wisprApiKey: "" });
-                setSettings(await getSettings());
-                toast.success("Wispr key cleared");
-              })
-            }
-          >
-            Clear
-          </Button>
-        </div>
-      </SettingsRow>
-
       <SettingsRow title="Saved keys">
         <ul className="space-y-1 text-sm text-muted-foreground">
           {settings.providers.map((p) => (
             <li key={p.id} className="flex min-h-9 items-center justify-between gap-3">
               <span>
-                {p.label}: {p.hasPersonalKey ? "saved" : p.managedAvailable ? "none — Orbit’s key" : "none"}
+                {p.label}:{" "}
+                {p.hasPersonalKey
+                  ? "saved"
+                  : p.managedAvailable
+                    ? onLocalDevKeys
+                      ? "none — .env.local"
+                      : "none — Orbit’s key"
+                    : "none"}
               </span>
               {/* Per key, not per selected provider: switching provider used to leave the
                   old key live for embeddings and transcription with no way to remove it. */}

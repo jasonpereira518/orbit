@@ -30,10 +30,14 @@
  */
 export const NEVER_REVEALABLE: readonly string[] = [
   "chat_messages.content",
+  // Free text the user wrote about how they write — a chat note and style notes are the same
+  // kind of thing as a chat message, so the console never shows them either.
+  "chat_threads.context_note",
+  "user_settings.writing_instructions",
   "user_settings.gemini_api_key_encrypted",
   "user_settings.openai_api_key_encrypted",
   "user_settings.anthropic_api_key_encrypted",
-  "user_settings.wispr_api_key_encrypted",
+  "user_settings.typesafe_api_key_encrypted",
   "user_settings.apollo_api_key_encrypted",
   "user_settings.resend_api_key_encrypted",
   "user_settings.twilio_account_sid_encrypted",

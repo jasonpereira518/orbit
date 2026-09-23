@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { contactBriefs, contactOpportunities, contacts, interactions, reminders } from "@/db/schema";
 import { completeJson, getAiConfig } from "@/lib/ai";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { formatHowMetSummary, metContextLabel } from "@/lib/met-context";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { listOpenActionItems } from "@/lib/action-items";
@@ -34,6 +37,36 @@ const contactBriefSchema = z.object({
 
 /** How many open items of each kind reach the prompt. Enough to choose from, not a list. */
 const OPEN_ITEM_LIMIT = 8;
+
+const BRIEF_SYSTEM = `You write concise relationship memory for a personal networking CRM called Orbit.
+Return strict JSON: { "summary": string, "standing": string, "next_step": string|null }
+summary — 2–4 sentences as before (who, how met, what discussed).
+standing — 2–3 sentences on WHERE THINGS STAND RIGHT NOW: the most recent thread, anything the user owes or is waiting on, and the natural next step. Present tense, second person, under 70 words, grounded only in what you were given. If nothing is open, say so plainly.
+next_step — ONE imperative clause naming the single most useful thing to do next, 12 words or fewer, no trailing period. Prefer a named open commitment or opportunity over anything generic: "Ask Maya about the infra referral" beats "stay in touch". Null when nothing is open — do not invent one to fill the field.
+
+Write 2–4 sentences for summary that cover:
+1) who this person is (role/company when known),
+2) how the user met them (context, date, details),
+3) what they have talked about or the relationship substance so far.
+
+Rules:
+- Use only facts supported by the profile, the open items and the interactions. Do not invent.
+- Open opportunities and open commitments are things this relationship already owes or offers. They are the strongest evidence for what to do next; name one rather than reaching for a generic gesture.
+- Prefer concrete topics and context over generic praise.
+- Write in second person about the relationship ("You met…", "You've talked about…").
+- Keep summary under 90 words.`;
+
+/**
+ * What the model would be asked, hashed. Stored with the brief so a regeneration whose
+ * inputs have not changed — an opportunity touched and put back, a capture that mentioned
+ * this contact without saying anything new, a page view after a calendar sync — returns the
+ * brief already on file instead of paying for the same answer again. The system prompt is
+ * part of the hash, so editing it invalidates every brief; the model is not, so switching
+ * models in Settings does not.
+ */
+export function briefInputHash(user: string): string {
+  return createHash("sha256").update(BRIEF_SYSTEM).update("\0").update(user).digest("hex");
+}
 
 export type ContactBrief = typeof contactBriefs.$inferSelect;
 
@@ -79,16 +112,34 @@ export function buildRecentDiscussions(
     .slice(0, RECENT_DISCUSSIONS_LIMIT);
 }
 
+/**
+ * How often a brief is re-checked while the contact's latest interaction is still in the
+ * future. See `isBriefStale`.
+ */
+const FUTURE_INTERACTION_RECHECK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether the contact page should regenerate this brief in the background.
+ *
+ * Stale when an interaction happened after the brief was written. The trap is the future:
+ * calendar sync logs meetings up to 60 days AHEAD as interactions, and `last_interaction_at`
+ * only ever widens, so a contact with an upcoming meeting had a `lastInteractionAt` no brief
+ * could ever be newer than — and paid for a model call on every single page view until the
+ * meeting date passed. A future date says nothing has happened yet, so the page only
+ * re-checks such a brief daily; real edits regenerate it directly anyway, and an unchanged
+ * regeneration costs no model call (`input_hash`).
+ */
 export function isBriefStale(
   brief: { generatedAt: Date | string } | null,
-  lastInteractionAt: Date | string | null
+  lastInteractionAt: Date | string | null,
+  now: Date = new Date()
 ) {
   if (!brief) return true;
   if (!lastInteractionAt) return false;
-  return (
-    new Date(brief.generatedAt).getTime() <
-    new Date(lastInteractionAt).getTime()
-  );
+  const generated = new Date(brief.generatedAt).getTime();
+  const last = new Date(lastInteractionAt).getTime();
+  if (last > now.getTime()) return generated < now.getTime() - FUTURE_INTERACTION_RECHECK_MS;
+  return generated < last;
 }
 
 export async function getContactBrief(
@@ -180,7 +231,7 @@ function buildDeterministicSummary(input: {
 export async function generateAndStoreContactBrief(
   userId: string,
   contactId: string,
-  options?: { force?: boolean }
+  options?: { force?: boolean; engines?: Engines }
 ): Promise<{ summary: string | null; standing: string | null; nextStep?: string | null } | null> {
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
@@ -306,6 +357,49 @@ export async function generateAndStoreContactBrief(
       ? interactionSnippets.join("\n").slice(0, 12_000)
       : "(no interactions logged yet)";
 
+  const userPrompt = [
+    `Profile:\n${profileBlock}`,
+    opportunityLines.length ? `Open opportunities:\n${opportunityLines.join("\n")}` : null,
+    commitmentLines.length ? `Open commitments:\n${commitmentLines.join("\n")}` : null,
+    `Interactions (newest first):\n${transcript}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const inputHash = briefInputHash(userPrompt);
+
+  if (!options?.force) {
+    const onFile = await getContactBrief(userId, contactId);
+    if (onFile?.inputHash === inputHash) {
+      // Same question, same answer: mark it current so the page stops asking, and skip the
+      // model entirely.
+      await db
+        .update(contactBriefs)
+        .set({ generatedAt: new Date() })
+        .where(and(eq(contactBriefs.contactId, contactId), eq(contactBriefs.userId, userId)));
+      return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep };
+    }
+    // The input changed — a tag, a logged call, an edited note — but a changed input is not
+    // the same as a changed relationship, and rewriting the brief to say what it already
+    // says costs a full-model call. With a decision model, a confident "nothing new here"
+    // keeps the brief on file and marks it current against the new input. Without one, or
+    // on any less certain answer, it regenerates exactly as it always has. `force` (the
+    // Regenerate button) never reaches this.
+    if (onFile && contact.aiSummary) {
+      const engines = options?.engines ?? (await openEngines(userId));
+      const skip = await gateSkips(engines, "brief", {
+        current_brief: [contact.aiSummary, onFile.standing, onFile.nextStep].filter(Boolean).join(" "),
+        new_input: gateText(userPrompt),
+      });
+      if (skip) {
+        await db
+          .update(contactBriefs)
+          .set({ generatedAt: new Date(), inputHash })
+          .where(and(eq(contactBriefs.contactId, contactId), eq(contactBriefs.userId, userId)));
+        return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep };
+      }
+    }
+  }
+
   let summary: string | null = null;
   let standing: string | null = null;
   let nextStep: string | null = null;
@@ -316,31 +410,8 @@ export async function generateAndStoreContactBrief(
     const content = await completeJson(userId, {
       operation: "contact.brief",
       temperature: 0.3,
-      user: [
-        `Profile:\n${profileBlock}`,
-        opportunityLines.length ? `Open opportunities:\n${opportunityLines.join("\n")}` : null,
-        commitmentLines.length ? `Open commitments:\n${commitmentLines.join("\n")}` : null,
-        `Interactions (newest first):\n${transcript}`,
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-      system: `You write concise relationship memory for a personal networking CRM called Orbit.
-Return strict JSON: { "summary": string, "standing": string, "next_step": string|null }
-summary — 2–4 sentences as before (who, how met, what discussed).
-standing — 2–3 sentences on WHERE THINGS STAND RIGHT NOW: the most recent thread, anything the user owes or is waiting on, and the natural next step. Present tense, second person, under 70 words, grounded only in what you were given. If nothing is open, say so plainly.
-next_step — ONE imperative clause naming the single most useful thing to do next, 12 words or fewer, no trailing period. Prefer a named open commitment or opportunity over anything generic: "Ask Maya about the infra referral" beats "stay in touch". Null when nothing is open — do not invent one to fill the field.
-
-Write 2–4 sentences for summary that cover:
-1) who this person is (role/company when known),
-2) how the user met them (context, date, details),
-3) what they have talked about or the relationship substance so far.
-
-Rules:
-- Use only facts supported by the profile, the open items and the interactions. Do not invent.
-- Open opportunities and open commitments are things this relationship already owes or offers. They are the strongest evidence for what to do next; name one rather than reaching for a generic gesture.
-- Prefer concrete topics and context over generic praise.
-- Write in second person about the relationship ("You met…", "You've talked about…").
-- Keep summary under 90 words.`,
+      user: userPrompt,
+      system: BRIEF_SYSTEM,
     });
     const parsed = contactBriefSchema.parse(JSON.parse(content));
     summary = parsed.summary.trim();
@@ -392,6 +463,9 @@ Rules:
   const recentDiscussions = buildRecentDiscussions(recentRows);
   const generatedAt = new Date();
   const basisInteractionId = recent[0]?.id ?? null;
+  // Only a brief the model wrote is keyed by its inputs. The deterministic fallback (no key,
+  // or the call failed) must be replaced as soon as a model can run, so it is never "current".
+  const briefHash = model ? inputHash : null;
   await db
     .insert(contactBriefs)
     .values({
@@ -403,6 +477,7 @@ Rules:
       generatedAt,
       basisInteractionId,
       model,
+      inputHash: briefHash,
     })
     .onConflictDoUpdate({
       target: contactBriefs.contactId,
@@ -413,6 +488,7 @@ Rules:
         generatedAt,
         basisInteractionId,
         model,
+        inputHash: briefHash,
       },
     });
 

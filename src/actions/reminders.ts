@@ -14,6 +14,7 @@ import { listActiveGoalTexts } from "@/actions/goals";
 import { requireUserId, getDisplayProfile } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
+import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
   inferReminderActionKind,
   isReminderActionKind,
@@ -32,6 +33,10 @@ import {
   normalizeListName,
 } from "@/lib/reminder-lists";
 import { resolveTimeZone, TZ_COOKIE } from "@/lib/reminder-due-bucket";
+import {
+  createReminderForUser,
+  scheduleContactFollowUpForUser,
+} from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
 import {
   REMINDERS_PAGE_SIZE,
@@ -277,42 +282,7 @@ export async function createReminder(input: {
   actionKind?: ReminderActionKind;
 }) {
   const userId = await requireUserId();
-  const db = await getDb();
-  const inboxId = await getInboxListId(userId);
-
-  let listId = input.listId || inboxId;
-  if (input.listId) {
-    const list = await findReminderListForUser(userId, input.listId);
-    if (!list) throw new Error("List not found");
-    listId = list.id;
-  }
-
-  const actionKind =
-    input.actionKind && isReminderActionKind(input.actionKind)
-      ? input.actionKind
-      : inferReminderActionKind({
-          title: input.title,
-          description: input.description,
-          reminderType: input.reminderType,
-          contactId: input.contactId,
-        });
-
-  const [row] = await db
-    .insert(reminders)
-    .values({
-      userId,
-      contactId: input.contactId,
-      listId,
-      title: input.title,
-      description: input.description,
-      dueDate: input.dueDate ? new Date(input.dueDate) : null,
-      reminderType: input.reminderType || "manual",
-      actionKind,
-      createdBy: "user",
-      status: "pending",
-    })
-    .returning();
-
+  const row = await createReminderForUser(userId, input);
   revalidateReminderPaths(input.contactId);
   return row;
 }
@@ -559,81 +529,10 @@ export async function scheduleContactFollowUp(
   days = 7
 ) {
   const userId = await requireUserId();
-  const db = await getDb();
-  const inboxId = await getInboxListId(userId);
-
-  const contact = await db.query.contacts.findFirst({
-    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: { id: true, fullName: true, preferredName: true },
-  });
-  if (!contact) throw new Error("Contact not found");
-
-  const due = new Date();
-  due.setDate(due.getDate() + Math.max(1, Math.min(90, days)));
-  const name = contact.preferredName || contact.fullName;
-  const title = `Follow up with ${name}`;
-  const actionKind = inferReminderActionKind({
-    title,
-    reminderType: "manual",
-    contactId,
-  });
-
-  const existing = await db.query.reminders.findFirst({
-    where: and(
-      eq(reminders.userId, userId),
-      eq(reminders.contactId, contactId),
-      eq(reminders.status, "pending")
-    ),
-  });
-
-  let row;
-  if (existing) {
-    // Rescheduling changes WHEN a follow-up is due, not WHAT it says.
-    //
-    // This used to also write `title`, `reminderType` and `actionKind`, which meant
-    // pressing a day preset on the dashboard silently renamed the reminder: a
-    // hand-written "Send Priya the deck" became "Follow up with Priya", and its type
-    // was reset to "manual". The generated `title`/`actionKind` above are still
-    // correct for the INSERT below, where there is no existing wording to protect.
-    const [updated] = await db
-      .update(reminders)
-      .set({
-        dueDate: due,
-        listId: existing.listId || inboxId,
-      })
-      .where(eq(reminders.id, existing.id))
-      .returning();
-    row = updated;
-  } else {
-    const [created] = await db
-      .insert(reminders)
-      .values({
-        userId,
-        contactId,
-        listId: inboxId,
-        title,
-        dueDate: due,
-        reminderType: "manual",
-        actionKind,
-        createdBy: "user",
-        status: "pending",
-      })
-      .returning();
-    row = created;
-  }
-
-  await db
-    .update(contacts)
-    .set({
-      nextFollowUpAt: due,
-      followUpStatus: "pending",
-      updatedAt: new Date(),
-    })
-    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
-
+  const result = await scheduleContactFollowUpForUser(userId, contactId, days);
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
-  return { reminder: row, dueDate: due.toISOString(), days };
+  return result;
 }
 
 /** Schedule a follow-up reminder for an absolute calendar date (local YYYY-MM-DD). */
@@ -818,7 +717,8 @@ export async function reopenDoneReminderAction(id: string) {
 export async function draftFollowUpResponse(reminderId: string) {
   const userId = await requireUserId();
   const goals = await listActiveGoalTexts();
-  return generateFollowUpDraft(userId, reminderId, goals);
+  const writingInstructions = await loadWritingInstructions(userId);
+  return generateFollowUpDraft(userId, reminderId, goals, { writingInstructions });
 }
 
 export async function snoozeReminderAction(id: string, days = 7) {

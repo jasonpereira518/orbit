@@ -9,6 +9,10 @@ export const USAGE_SUMMARY_DAYS = 30;
  * One grouped statement over `usage_events_user_created_idx` (user_id, created_at). Costs
  * are the estimates stored per row at write time, so a price-table change never rewrites
  * what a past month cost. float8 sums: a bigint sum comes back as a string on neon-http.
+ *
+ * Only calls billed to the person's OWN key (`key_owner = 'user'`): the card says "calls
+ * made with your key", and a Lifetime account's calls on Orbit's managed key cost them
+ * nothing — those are metered against the allowance, which Settings shows on its own.
  */
 export async function loadUsageSummary(
   userId: string,
@@ -31,7 +35,14 @@ export async function loadUsageSummary(
       unpricedCalls: sql<number>`(count(*) filter (where ${usageEvents.estimatedCostMicros} is null and ${usageEvents.success} = 1))::int`,
     })
     .from(usageEvents)
-    .where(and(eq(usageEvents.userId, userId), gte(usageEvents.createdAt, since), sql`${usageEvents.createdAt} <= ${now}`))
+    .where(
+      and(
+        eq(usageEvents.userId, userId),
+        eq(usageEvents.keyOwner, "user"),
+        gte(usageEvents.createdAt, since),
+        sql`${usageEvents.createdAt} <= ${now}`
+      )
+    )
     .groupBy(usageEvents.operation)
     .orderBy(desc(cost));
 

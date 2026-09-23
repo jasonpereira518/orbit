@@ -12,7 +12,13 @@
  * again. That is a consequence of storing only its hash, and the UI has to make it obvious
  * rather than letting someone close the panel and lose it.
  */
-import { useCallback, useEffect, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Copy, KeyRound, Plug, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -59,6 +65,11 @@ async function copy(value: string, what: string) {
   }
 }
 
+/** The connector URL is derived from wherever Orbit is being served, so a preview domain
+ * hands out its own URL rather than production's. */
+const subscribeNever = () => () => {};
+const getOriginSnapshot = () => `${window.location.origin}/api/mcp`;
+
 export function ApiSettings() {
   const [keys, setKeys] = useState<ApiKeySummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +80,10 @@ export function ApiSettings() {
   const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const revokeFocus = useConfirmFocus(confirmingRevoke);
+  // `useSyncExternalStore` rather than state-in-an-effect: the origin never changes, so there
+  // is nothing to subscribe to, and the server snapshot is null because the server has no
+  // `window` — which is exactly the hydration-safe shape this hook exists to express.
+  const mcpUrl = useSyncExternalStore(subscribeNever, getOriginSnapshot, () => null);
 
   // Deliberately does not clear the error synchronously: doing so inside the mount effect
   // triggers a cascading render, and clearing it on success reads the same to the user.
@@ -133,8 +148,38 @@ export function ApiSettings() {
   return (
     <SettingsSection
       title="API and connectors"
-      description="Connect Orbit to Zapier, Make, n8n, or an AI assistant like Claude. Keys act as you, so treat them like a password."
+      description="Use Orbit from Claude or ChatGPT, or connect it to Zapier, Make and n8n. Keys act as you, so treat them like a password."
     >
+      {/* Connect an assistant. First, because it is what most people come here for. */}
+      <div className="space-y-3 rounded-lg border p-4">
+        <div className="flex items-center gap-2">
+          <Plug className="size-4" aria-hidden />
+          <p className="text-sm font-medium">Connect Claude or ChatGPT</p>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          Add this as a custom connector, then sign in to Orbit when it asks. No key to copy,
+          and you can disconnect it from your assistant at any time.
+        </p>
+        <div className="flex items-center gap-2">
+          <code className="bg-background flex-1 overflow-x-auto rounded border px-3 py-2 font-mono text-xs">
+            {mcpUrl ?? "…"}
+          </code>
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label="Copy connector URL"
+            disabled={!mcpUrl}
+            onClick={() => mcpUrl && copy(mcpUrl, "Connector URL")}
+          >
+            <Copy className="size-4" />
+          </Button>
+        </div>
+        <ol className="text-muted-foreground list-decimal space-y-1 pl-4 text-xs">
+          <li>In Claude: Settings → Connectors → Add custom connector.</li>
+          <li>In ChatGPT: Settings → Connectors → Add.</li>
+          <li>Paste the URL, then sign in to Orbit on the page that opens.</li>
+        </ol>
+      </div>
 
       {/* A new key, shown once. */}
       {created ? (
@@ -202,19 +247,10 @@ export function ApiSettings() {
             <KeyRound className="size-4" />
             API key
           </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={pending}
-            onClick={() => onCreate("mcp_url")}
-          >
-            <Plug className="size-4" />
-            Claude connector URL
-          </Button>
         </div>
         <p className="text-muted-foreground text-xs">
-          Use an API key for Zapier, Make, n8n, or Claude Code. Use a connector URL for
-          claude.ai, which has no field for a header.
+          Use an API key for Zapier, Make, n8n, or the command line. Claude and ChatGPT do not
+          need one — connect them above and sign in instead.
         </p>
       </div>
 

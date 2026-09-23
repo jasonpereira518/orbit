@@ -2,6 +2,8 @@ import { count, isNotNull, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts, errorEvents, usageEvents } from "@/db/schema";
+import { pruneAiResultCache } from "@/lib/ai-result-cache";
+import { runAiBatchSweep } from "@/lib/ai-batch-apply";
 import { resumeStalledImports } from "@/lib/import-stall";
 import { resumeStrandedPurges } from "@/lib/user-data";
 import { sweepOrphanedAccounts } from "@/lib/clerk-orphan-sweep";
@@ -20,7 +22,8 @@ import {
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { sweepInterestListFollowUps } from "@/lib/interest-list-follow-up";
 import { findStaleCohorts } from "@/lib/closeness-materialize";
-import { kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { accountCanEmbed, kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { usersWithPendingMemoryWork } from "@/lib/memory-backfill";
 import {
   kickLinkedInTimelineBackfill,
   usersWithPendingTimelineEvents,
@@ -134,6 +137,9 @@ export async function GET(request: Request) {
     meetingSessionsSwept: 0,
     /** Phone-scan grants past their expiry. */
     handoffsSwept: 0,
+    /** Background AI sent to a provider's Batch API: what came back this sweep. */
+    aiBatchesApplied: 0,
+    aiBatchesPending: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
     embeddingsGenerated: 0,
@@ -187,6 +193,12 @@ export async function GET(request: Request) {
         errorEvents,
         ERROR_EVENT_RETENTION_DAYS
       );
+      // Remembered AI answers past the longest TTL any caller reads them with.
+      await pruneAiResultCache();
+      // Batched background AI: whatever the providers have finished since the last sweep.
+      const batches = await runAiBatchSweep();
+      stats.aiBatchesApplied = batches.applied;
+      stats.aiBatchesPending = batches.pending;
       // Photos uploaded to a capture that was never saved. Nobody can see these — the
       // history only lists saved captures — so keeping them would be holding pictures of
       // someone's notes for no one.
@@ -288,11 +300,22 @@ export async function GET(request: Request) {
     try {
       // Backstop only — imports kick the backfill directly on completion. This catches
       // users whose kick was lost along with the invocation that sent it.
-      const staleUsers = await db
+      const staleContactUsers = await db
         .selectDistinct({ userId: contacts.userId })
         .from(contacts)
         .where(isNotNull(contacts.embeddingStaleAt))
         .limit(EMBED_BACKFILL_USERS);
+      // Stale contacts used to be the only way onto this list, so an account whose only
+      // outstanding work was passages of its notes — every existing account, the day those
+      // shipped — would never have been swept unless it happened to import something.
+      const memoryUsers = await usersWithPendingMemoryWork(EMBED_BACKFILL_USERS, accountCanEmbed).catch(
+        reportAndContinue({ where: "job.process-stalled.memory-users" }, [] as string[])
+      );
+      const staleUsers = [
+        ...new Set([...staleContactUsers.map((u) => u.userId), ...memoryUsers]),
+      ]
+        .slice(0, EMBED_BACKFILL_USERS)
+        .map((userId) => ({ userId }));
 
       const sweepDeadline = Date.now() + EMBED_SWEEP_BUDGET_MS;
       for (const { userId: staleUser } of staleUsers) {

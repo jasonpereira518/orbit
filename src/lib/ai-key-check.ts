@@ -2,7 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { AI_PROVIDERS, DEFAULT_MODELS, type AiProvider } from "@/lib/ai-providers";
+import { JEV_MODEL } from "@/lib/ai-models";
 import { isAiKeyRejectedError } from "@/lib/errors";
+import { systemOneRequest } from "@/lib/typesafe-api";
 
 /**
  * One cheap, read-only provider call that answers "does this key work", made when a key is
@@ -15,7 +17,18 @@ import { isAiKeyRejectedError } from "@/lib/errors";
  *
  * Server-only: imported by `src/actions/settings.ts`. No `@/db`, no `next/server`.
  */
-export type KeyCheckVerdict = "accepted" | "rejected" | "unverified";
+export type KeyCheckVerdict = "accepted" | "rejected" | "unverified" | "malformed";
+
+/**
+ * Every provider's keys are printable ASCII with no spaces. A paste that picked up anything
+ * else — a typographic ellipsis, a non-breaking space, a smart quote — cannot even be sent:
+ * `fetch` refuses the header before any request leaves, and that TypeError used to read as
+ * "the provider didn't answer", so the broken key was SAVED and then failed quietly on
+ * every call. Caught here, before any probe runs.
+ */
+export function looksLikeApiKey(key: string): boolean {
+  return /^[\x21-\x7E]{8,}$/.test(key);
+}
 export type KeyProbe = (apiKey: string, signal: AbortSignal) => Promise<void>;
 
 export const KEY_CHECK_TIMEOUT_MS = 6_000;
@@ -48,14 +61,42 @@ export async function checkAiKey(
   apiKey: string,
   opts: { probes?: Record<AiProvider, KeyProbe>; timeoutMs?: number } = {}
 ): Promise<KeyCheckVerdict> {
-  const probe = (opts.probes ?? KEY_PROBES)[provider];
+  return runKeyProbe((opts.probes ?? KEY_PROBES)[provider], apiKey, opts.timeoutMs);
+}
+
+/**
+ * TypeSafe has no free metadata endpoint to ask, so the probe is the smallest real call: one
+ * yes/no question about a few words — a dozen input tokens, about a millionth of a cent.
+ */
+export const TYPESAFE_KEY_PROBE: KeyProbe = async (apiKey, signal) => {
+  await systemOneRequest(
+    apiKey,
+    {
+      model: JEV_MODEL,
+      state: "Orbit is checking that this key works.",
+      questions: { check: { type: "noul", instructions: "Is this text about checking a key?" } },
+    },
+    { signal, retries: 0 }
+  );
+};
+
+/** The decision model's key (TypeSafe), checked the same way as a chat provider's. */
+export function checkDecisionKey(
+  apiKey: string,
+  opts: { probe?: KeyProbe; timeoutMs?: number } = {}
+): Promise<KeyCheckVerdict> {
+  return runKeyProbe(opts.probe ?? TYPESAFE_KEY_PROBE, apiKey, opts.timeoutMs);
+}
+
+async function runKeyProbe(probe: KeyProbe, apiKey: string, timeoutMs?: number): Promise<KeyCheckVerdict> {
+  if (!looksLikeApiKey(apiKey)) return "malformed";
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
       reject(new Error("key check timed out"));
-    }, opts.timeoutMs ?? KEY_CHECK_TIMEOUT_MS);
+    }, timeoutMs ?? KEY_CHECK_TIMEOUT_MS);
   });
   try {
     await Promise.race([probe(apiKey, controller.signal), deadline]);
@@ -69,10 +110,16 @@ export async function checkAiKey(
 
 export type KeyCheckOutcome = { save: true; note: string | null } | { save: false; error: string };
 
-export function keyCheckOutcome(verdict: KeyCheckVerdict, provider: AiProvider): KeyCheckOutcome {
-  const label = AI_PROVIDERS.find((p) => p.id === provider)?.label ?? "Your AI provider";
+export function keyCheckOutcome(verdict: KeyCheckVerdict, provider: AiProvider | "typesafe"): KeyCheckOutcome {
+  const label =
+    provider === "typesafe"
+      ? "TypeSafe"
+      : (AI_PROVIDERS.find((p) => p.id === provider)?.label ?? "Your AI provider");
   if (verdict === "rejected") {
     return { save: false, error: `${label} didn’t accept that key — check it and try again` };
+  }
+  if (verdict === "malformed") {
+    return { save: false, error: `That key has a character API keys don’t contain — copy it again from ${label}` };
   }
   if (verdict === "unverified") {
     return { save: true, note: `Saved — ${label} didn’t answer, so the key isn’t checked yet` };

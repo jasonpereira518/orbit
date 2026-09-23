@@ -38,9 +38,16 @@ check("the table discloses nothing the code does not request", GOOGLE_SCOPE_DISC
 check("the privacy page renders the table", privacy.includes("GOOGLE_SCOPE_DISCLOSURES.map"));
 
 console.log("Processors");
-for (const name of ["Clerk", "Vercel", "Neon", "Stripe", "Resend", "Twilio", "Apollo", "Microsoft", "Eventbrite", "Luma", "Partiful", "Google Gemini, OpenAI, Anthropic", "Wispr Flow", "Sentry", "Slack", "Better Stack", "unavatar.io", "Microlink", "Gravatar"]) {
+for (const name of ["Clerk", "Vercel", "Neon", "Stripe", "Resend", "Twilio", "Apollo", "Microsoft", "Eventbrite", "Luma", "Partiful", "Google Gemini, OpenAI, Anthropic", "Sentry", "Slack", "Better Stack", "unavatar.io", "Microlink", "Gravatar"]) {
   check(`${name} is listed`, privacy.includes(`name: "${name}`));
 }
+
+console.log("Microsoft");
+check("Outlook mail is no longer said to go unread", !privacy.includes("Orbit does not read Outlook mail"));
+check("Microsoft is no longer said to be contacts-only", !privacy.includes("used only to import Outlook contacts"));
+check("the Microsoft row names contacts, calendar and mail", /name: "Microsoft"[^\n]*contacts[^\n]*calendar[^\n]*mail/.test(privacy));
+check("Microsoft permissions are described as read-only and per feature", privacy.includes("one read-only permission per feature you turn on"));
+check("the Outlook recruiter scan is described", privacy.includes("<strong>Outlook.</strong>"));
 
 console.log("Corrections that must not regress");
 check("photos are no longer said to be discarded", !privacy.includes("then discarded"));

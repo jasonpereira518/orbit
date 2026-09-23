@@ -369,6 +369,27 @@ async function seed() {
     title: "Reach out",
   });
 
+  // Background AI still in flight at a provider when the account went.
+  await db.insert(schema.aiBatchJobs).values({
+    userId: USER,
+    operation: "import.enrich",
+    provider: "gemini",
+    model: "gemini-3.5-flash",
+    keyOwner: "user",
+    providerBatchId: "batches/smoke-purge",
+    requestCount: 1,
+    payload: { items: [] },
+  });
+
+  // A remembered AI answer: a recruiter verdict, a profile read or a draft — prose derived
+  // from this person's mail and contacts, so it goes with their data.
+  await db.insert(schema.aiResultCache).values({
+    userId: USER,
+    operation: "followup.draft",
+    inputHash: "smoke-purge-hash",
+    result: { v: "Great catching up last week — here is the deck I promised." },
+  });
+
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
 
   await db.insert(schema.contactEmbeddings).values({
@@ -377,6 +398,20 @@ async function seed() {
     sourceType: "note",
     embedding: [0.1, 0.2],
     content: "embedded note content",
+  });
+
+  // A passage of the user's own note. Derived data, but derived from the most personal text
+  // in the product — a deletion that left these behind would leave the notes behind.
+  await db.insert(schema.memoryChunks).values({
+    userId: USER,
+    sourceKind: "interaction",
+    sourceId: interaction.id,
+    contactId: contact.id,
+    contactIds: [contact.id],
+    occurredAt: new Date(),
+    chunkIndex: 0,
+    content: "2026-03-12 · Note · Ada Lovelace\nShe is raising a Series A.",
+    contentHash: "smoke-purge-memory-chunk-hash",
   });
 
   await db.insert(schema.embeddingFailures).values({
@@ -574,6 +609,14 @@ async function seed() {
     prefix: "orb_live_deadbeef",
     keyHash: "0".repeat(64),
     scopes: ["read"],
+  });
+  // A message an assistant drafted. It holds a body the user never sent, which is exactly
+  // the kind of content a deletion has to take with it.
+  await db.insert(schema.agentSendRequests).values({
+    userId: USER,
+    toEmail: "someone@example.org",
+    body: "purge fixture",
+    expiresAt: new Date(Date.now() + 86_400_000),
   });
   await db.insert(schema.apiIdempotencyKeys).values({
     userId: USER,

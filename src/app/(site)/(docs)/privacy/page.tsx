@@ -26,7 +26,7 @@ const LAST_UPDATED = LEGAL_LAST_UPDATED;
 
 const HIGHLIGHTS: readonly Highlight[] = [
   { icon: ShieldCheck, title: "Your network isn't a product", body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies." },
-  { icon: Sparkles, title: "AI runs on your key", body: "AI features are opt-in and you choose the provider. Calls bill to a key you supply — except on Orbit Lifetime without one, where they run on Orbit's, up to a monthly allowance. Settings shows what the last 30 days cost." },
+  { icon: Sparkles, title: "AI runs on your key", body: "AI features are opt-in and you choose the provider. Every call, on every plan, bills to a key you supply. Settings shows what the last 30 days cost." },
   { icon: Download, title: "Export on demand", body: "One control in Settings produces a JSON download of your core Orbit data, on every plan including Free." },
   { icon: Trash2, title: "Deletion is real deletion", body: "Delete some or all of your data from Settings, or delete your account — which erases your data, keys and sign-in and cancels any subscription." },
 ];
@@ -63,10 +63,10 @@ const PROCESSORS = [
   { name: "Microlink", badge: "Automatic", body: "When unavatar.io has no photo, fetches the public preview image of the contact's LinkedIn profile URL." },
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro and Orbit Lifetime payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider and key you choose in Settings — or, on Orbit Lifetime without a key of your own, the provider Orbit's own keys run on." },
-  { name: "Wispr Flow", badge: "Optional", body: "Meeting transcription, only if you add a Wispr key." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider and key you choose in Settings." },
+  { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
-  { name: "Microsoft", badge: "Optional", body: "Outlook contacts import, read-only. Orbit does not read Outlook mail." },
+  { name: "Microsoft", badge: "Optional", body: "Outlook, read-only, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know, and your mail only for the recruiter scan you start. See The recruiter scan." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), and your personal Luma calendar link if you paste it." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to." },
@@ -129,8 +129,15 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Connected accounts</strong> — if you connect Google, Orbit reads only what the
-              feature you turned on needs (see <a href="#google">Google user data</a>). Microsoft is
-              used only to import Outlook contacts.
+              feature you turned on needs (see <a href="#google">Google user data</a>). If you connect
+              Microsoft, Orbit asks for one read-only permission per feature you turn on: your
+              Outlook contacts, so you can pick who to import; your calendar, to add meetings with
+              people you know to their timelines; and your mail, only for the recruiter scan you
+              start. Each connection also asks for your Microsoft sign-in identity and email
+              address, to show which account is connected. Orbit cannot send mail or change
+              anything in your Microsoft account. Disconnecting deletes the tokens Orbit holds; to
+              also revoke the grant on Microsoft&rsquo;s side, remove Orbit from your Microsoft
+              account&rsquo;s app permissions.
             </li>
             <li>
               <strong>The browser extension</strong> — when you open its panel on a LinkedIn profile,
@@ -147,10 +154,9 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Usage records</strong> — for each AI call: the feature, provider, model, token
-              counts, an estimated cost, duration, whether it succeeded and whether it ran on your key
-              or Orbit&rsquo;s. Never the prompt or the reply. This powers your cost view and measures
-              Orbit Lifetime&rsquo;s monthly AI allowance; you can see your last 30 days in Settings
-              under Integrations → AI provider.
+              counts, an estimated cost, duration and whether it succeeded. Never the prompt or the
+              reply. This powers your cost view; you can see your last 30 days in Settings under
+              Integrations → AI provider.
             </li>
             <li>
               <strong>Page views</strong> — which pages are opened, when and for how long; device type;
@@ -255,6 +261,14 @@ export default function PrivacyPage() {
             sender is a recruiter and writes a short summary of the conversation.
           </p>
           <p>
+            <strong>Outlook.</strong> If you connect Outlook instead, or as well, the scan works the
+            same way on Outlook mail: it needs the read-only mail permission, which Orbit asks for
+            only when you press Allow mail access on the Recruiters page. It searches your mailbox
+            for the same terms, skips Junk Email and Deleted Items, and sends the same text to the
+            same AI provider on your key. What is kept is the same too, apart from the thread id,
+            which Outlook does not provide. Message bodies are not stored.
+          </p>
+          <p>
             <strong>What is kept.</strong> For each recruiter found: their name, firm and email
             address; the companies and roles discussed; how many emails you exchanged and when; the
             latest thread id, so a reply can continue it; and the summary, which only you can see.
@@ -293,32 +307,41 @@ export default function PrivacyPage() {
             the relevant content with those providers, where it is governed by their own terms and
             privacy policies.
           </p>
+          <p>
+            <strong>Assistants you connect yourself.</strong> If you connect Orbit to Claude,
+            ChatGPT or another assistant, whatever it reads from Orbit goes to that assistant&rsquo;s
+            provider under their privacy policy, not ours — the same as if you had copied the
+            text into their chat window. Orbit sends nothing on its own: a connected assistant
+            can draft a message, but it waits for you to read and approve it before anything
+            leaves. You can disconnect an assistant from its own settings, and revoke any API
+            key from Orbit&rsquo;s.
+          </p>
         </DocSection>
 
         <DocSection id="ai" index={7} title="AI processing">
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
             meeting audio, photos of pages you scan, recruiter emails when you run the scan — is sent
-            to an AI provider: Google Gemini, OpenAI or Anthropic. Whose account the request lands on
-            depends on your plan:
+            to the provider you chose in Settings: Google Gemini, OpenAI or Anthropic. On every plan,
+            every call runs on an API key you supply, so the request lands on your own account with
+            that provider and is governed by the retention settings you have agreed with them. Orbit
+            never runs AI on its own provider accounts.
           </p>
-          <ul>
-            <li>
-              <strong>With an API key you supply</strong>{" "}
-              — required on the Free
-              Plan and Orbit Pro, optional on Orbit Lifetime — the request lands
-              on your own account with the provider you chose in Settings, and
-              is governed by the retention settings you have agreed with them.
-            </li>
-            <li>
-              <strong>On Orbit Lifetime without a key of your own</strong>, the
-              request runs on Orbit&apos;s account with the provider and is
-              governed by Orbit&apos;s agreement with them. Orbit picks the
-              provider and model: the provider you selected where Orbit holds a
-              key for it, otherwise another of the three. Adding your own key
-              moves your requests back to your own account.
-            </li>
-          </ul>
+          <p>
+            If you also add a TypeSafe key, the yes-or-no and ranking steps run on Jev,
+            TypeSafe&rsquo;s decision model, on your own TypeSafe account. Each one sees only what
+            that step already works from: the emails described above, for deciding which senders in
+            a recruiter scan are recruiters; your question and a short card per contact (name,
+            title, company, school, tags and summary), for ranking which contacts a chat answer
+            draws on, and those same cards for deciding whether two records are one person; a
+            calendar event&rsquo;s title, description and the domains &mdash; not the addresses
+            &mdash; of its organiser and guests; and a note you captured, for matching the tags it
+            proposes against the ones you already have and reading who was actually there. Jev is
+            also asked, in front of the slower steps, whether there is anything in a note or a
+            message thread worth sending to your chat model at all; when the answer is a confident
+            no, that call is not made. Jev only returns yes-or-no answers and scores; it writes
+            nothing.
+          </p>
           <p>
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
@@ -520,7 +543,7 @@ export default function PrivacyPage() {
             Orbit&rsquo;s hosting, database, payment and AI providers operate globally, so your data
             may be processed outside the country you live in — most often the United States. Where
             you supply your own API keys, the processing location follows what you configured with
-            that vendor; AI that runs on Orbit&rsquo;s keys follows Orbit&rsquo;s configuration with it.
+            that vendor.
           </p>
         </DocSection>
 

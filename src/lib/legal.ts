@@ -7,8 +7,8 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  * TERMS_VERSION is what `user_settings.terms_version` records at acceptance. Change it (and
  * LEGAL_LAST_UPDATED) in the same commit as any material change to /terms or /privacy.
  */
-export const TERMS_VERSION = "2026-09-16";
-export const LEGAL_LAST_UPDATED = "September 16, 2026";
+export const TERMS_VERSION = "2026-09-19";
+export const LEGAL_LAST_UPDATED = "September 19, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -85,8 +85,8 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailSend,
     permission: "Send email as you (gmail.send)",
-    use: "Sends the recruiter messages you write and press Send on, from your own address, so replies reach your inbox. Orbit never sends a message you did not send.",
-    askedWhen: "Allow Gmail to send, in the recruiter composer",
+    use: "Sends the messages you write and press Send on — recruiter emails, and drafts from Chat — from your own address, so replies reach your inbox. Each one is shown to you first and goes only when you confirm it. Orbit never sends a message you did not send.",
+    askedWhen: "Allow Gmail to send, in the recruiter composer or on a draft in Chat",
   },
   {
     scope: GOOGLE_SCOPES.calendar,

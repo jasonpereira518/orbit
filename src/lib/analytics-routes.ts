@@ -29,6 +29,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/",
   "/pricing",
   "/interest",
+  "/connect",
   "/privacy",
   "/terms",
   "/contact",
