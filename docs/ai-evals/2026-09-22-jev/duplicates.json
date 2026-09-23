@@ -1,0 +1,91 @@
+{
+  "label": "jev",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T16:46:32.782Z",
+  "commit": "351fbe0c",
+  "fixtures": "6f98553308b3",
+  "runs": 1,
+  "decisions": "jev",
+  "tasks": {
+    "duplicates": {
+      "cases": 45,
+      "metrics": {
+        "wrongMergesRules": 13,
+        "wrongMerges": 0,
+        "lostMerges": 0,
+        "pairAccuracy": 0.9111111111111111
+      },
+      "misses": [
+        "diff-title-01",
+        "diff-title-06",
+        "diff-thin-01",
+        "diff-thin-02"
+      ],
+      "p50LatencyMs": 193,
+      "costMicros": 901,
+      "costPerCaseMicros": 20.022222222222222,
+      "usage": [
+        {
+          "operation": "duplicates.same_person",
+          "model": "jev-1.13.0",
+          "calls": 45,
+          "failures": 0,
+          "inputTokens": 21481,
+          "outputTokens": 990,
+          "cachedInputTokens": 0,
+          "costMicros": 901,
+          "unpriced": 0,
+          "p50Ms": 187
+        }
+      ],
+      "decisionCostMicros": 901,
+      "calibration": {
+        "duplicates.same_person": [
+          {
+            "from": 0,
+            "to": 0.1,
+            "n": 1,
+            "meanP": 0.08,
+            "observed": 0
+          },
+          {
+            "from": 0.1,
+            "to": 0.3,
+            "n": 7,
+            "meanP": 0.2,
+            "observed": 0
+          },
+          {
+            "from": 0.3,
+            "to": 0.5,
+            "n": 13,
+            "meanP": 0.38461538461538464,
+            "observed": 0
+          },
+          {
+            "from": 0.5,
+            "to": 0.7,
+            "n": 4,
+            "meanP": 0.54,
+            "observed": 0
+          },
+          {
+            "from": 0.7,
+            "to": 0.9,
+            "n": 3,
+            "meanP": 0.86,
+            "observed": 1
+          },
+          {
+            "from": 0.9,
+            "to": 1,
+            "n": 17,
+            "meanP": 0.9429411764705883,
+            "observed": 1
+          }
+        ]
+      }
+    }
+  }
+}

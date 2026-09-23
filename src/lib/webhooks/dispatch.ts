@@ -69,6 +69,7 @@ function backoffFor(attempt: number): number {
  * `scripts/smoke-webhook-delivery.ts` all import it from this module.
  */
 import { assertDeliverable, isBlockedAddress } from "@/lib/net-guard";
+import { reportError } from "@/lib/report-error";
 
 export { isBlockedAddress, assertDeliverable };
 
@@ -123,8 +124,10 @@ export async function enqueueWebhookEvent(
       .onConflictDoNothing();
 
     return subscribed.slice(0, INLINE_ENDPOINT_LIMIT).map((e) => e.id);
-  } catch {
-    // The sweep is the safety net; a queue failure must never surface to the caller.
+  } catch (err) {
+    // The sweep is the safety net; a queue failure must never surface to the caller — but
+    // an event that was never queued is an integration that silently missed it, so report.
+    reportError(err, { where: "job.webhooks.enqueue", userId, extra: { type } });
     return [];
   }
 }
@@ -353,8 +356,9 @@ export async function emitDueFollowupEvents(
         );
         if (queued.length > 0) events++;
       }
-    } catch {
+    } catch (err) {
       // One user's dashboard failing must not stop the others.
+      reportError(err, { where: "job.webhooks.followup-emit", level: "warning" });
     }
   }
   return { users: users.length, events };

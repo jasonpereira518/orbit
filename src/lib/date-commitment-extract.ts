@@ -14,6 +14,10 @@ import { z } from "zod";
 import { completeJson } from "@/lib/ai";
 import { MONTHS, atLocalNoon } from "@/lib/interaction-date";
 import { resolveRelativeDate, type DateBasis } from "@/lib/relative-date";
+import { containsVerbatim, normalizeForMatch } from "@/lib/verbatim";
+import { nextCadenceOccurrence, parseCadencePhrase } from "@/lib/cadence-phrase";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import type { Engines } from "@/lib/decisions/engine";
 import {
   isReminderActionKind,
   inferReminderActionKind,
@@ -43,6 +47,14 @@ export type RejectedCounts = {
   relative: number;
   unverifiable: number;
   past: number;
+  /**
+   * The unrecognized relative phrases themselves, spelled as the note spells them, deduped
+   * case-insensitively, at most `MAX_REPORTED_PHRASES`. Only a phrase that passed the
+   * verbatim-containment check can be counted as `relative`, so the review can quote these
+   * without ever quoting the model. Optional: capture jobs stored before this field existed
+   * carry counts only.
+   */
+  relativePhrases?: string[];
 };
 
 export type DatedCommitmentResult = {
@@ -51,7 +63,7 @@ export type DatedCommitmentResult = {
 };
 
 export function emptyCommitmentResult(): DatedCommitmentResult {
-  return { commitments: [], rejected: { relative: 0, unverifiable: 0, past: 0 } };
+  return { commitments: [], rejected: { relative: 0, unverifiable: 0, past: 0, relativePhrases: [] } };
 }
 
 const nullTrimmed = z
@@ -90,12 +102,77 @@ const commitmentItemSchema = z.object({
 
 export type RawCommitmentItem = z.infer<typeof commitmentItemSchema>;
 
+const cadenceItemSchema = z.object({
+  raw_phrase: z.string().min(1),
+  person_name: nullTrimmed,
+  source_excerpt: z
+    .string()
+    .nullish()
+    .transform((v) => v?.trim() || ""),
+});
+
+export type RawCadenceItem = z.infer<typeof cadenceItemSchema>;
+
 export const datedCommitmentsSchema = z.object({
   commitments: z
     .array(commitmentItemSchema)
     .nullish()
     .transform((v) => v ?? []),
+  /**
+   * Recurring rhythms, kept apart from commitments because they are not dates. "Check in
+   * monthly" is not a thing to be reminded of on a day; it is how often this relationship
+   * wants contact, and it changes the thresholds rather than adding a row.
+   */
+  cadences: z
+    .array(cadenceItemSchema)
+    .nullish()
+    .transform((v) => v ?? []),
 });
+
+export type ExtractedCadence = {
+  days: number;
+  rawPhrase: string;
+  personName: string | null;
+  sourceExcerpt: string;
+  /** Already rolled forward past today — see `nextCadenceOccurrence`. */
+  nextDueDate: Date;
+};
+
+/**
+ * Two guards, both here rather than in the prompt: the phrase must appear verbatim in the
+ * notes, and `parseCadencePhrase` must recognise it. Anything else is dropped rather than
+ * guessed, because a wrong cadence silently retunes the dormancy thresholds for that person.
+ */
+export function validateCadences(
+  raw: readonly RawCadenceItem[],
+  notes: string,
+  opts: ValidateOptions
+): ExtractedCadence[] {
+  const haystack = normalizeForMatch(notes);
+  const today = opts.today;
+  const anchor = opts.anchor ?? opts.today;
+  const out: ExtractedCadence[] = [];
+  const seen = new Set<string>();
+
+  for (const item of raw) {
+    if (!containsVerbatim(haystack, item.raw_phrase)) continue;
+    const parsedCadence = parseCadencePhrase(item.raw_phrase);
+    if (!parsedCadence) continue;
+    // One cadence per person. A note that says "monthly" twice about the same person is one
+    // agreement stated twice, and a second row would just fight the first.
+    const key = (item.person_name || "").trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      days: parsedCadence.days,
+      rawPhrase: parsedCadence.phrase,
+      personName: item.person_name,
+      sourceExcerpt: item.source_excerpt.replace(/\s+/g, " ").trim().slice(0, 500),
+      nextDueDate: nextCadenceOccurrence(anchor, parsedCadence.days, today),
+    });
+  }
+  return out;
+}
 
 /* ------------------------------------------------------------------ */
 /* Date-shape recognition                                              */
@@ -127,8 +204,19 @@ const NUMERIC_RE = /\b(\d{1,2})\/(\d{1,2})(?:\/(20\d{2}))?\b/;
 const RELATIVE_RE =
   /\b(next|this|last|coming|following|upcoming|tomorrow|yesterday|today|soon|later|sometime|eod|eow|eom|q[1-4]|in\s+\d+\s+(day|week|month|year)s?|end\s+of\s+(the\s+)?(week|month|quarter|year))\b/i;
 
-function normalizeForMatch(text: string) {
-  return text.replace(/\s+/g, " ").trim().toLowerCase();
+
+const MAX_REPORTED_PHRASES = 5;
+
+/** The phrase as the note spells it (case and spacing), or null when it is not there. */
+function spellingInNote(notes: string, phrase: string): string | null {
+  const words = phrase
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!words.length) return null;
+  const match = notes.match(new RegExp(words.join("\\s+"), "i"));
+  return match ? match[0] : null;
 }
 
 type MonthDay = { month: number; day: number; statedYear: number | null };
@@ -237,7 +325,8 @@ export function validateCommitments(
   const anchor = atLocalNoon(opts.anchor ?? today);
   const anchorIso = toIsoDay(anchor);
 
-  const rejected: RejectedCounts = { relative: 0, unverifiable: 0, past: 0 };
+  const relativePhrases: string[] = [];
+  const rejected: RejectedCounts = { relative: 0, unverifiable: 0, past: 0, relativePhrases };
   const commitments: DatedCommitment[] = [];
   const seen = new Set<string>();
 
@@ -267,6 +356,15 @@ export function validateCommitments(
       const rel = resolveRelativeDate(phrase, anchor);
       if (!rel) {
         rejected.relative += 1;
+        // Step 1 above already proved the phrase is in the note; quote the note's spelling.
+        const spelled = spellingInNote(notes, phrase);
+        if (
+          spelled &&
+          relativePhrases.length < MAX_REPORTED_PHRASES &&
+          !relativePhrases.some((p) => p.toLowerCase() === spelled.toLowerCase())
+        ) {
+          relativePhrases.push(spelled);
+        }
         continue;
       }
       resolvedDate = rel.date;
@@ -374,6 +472,13 @@ Return strict JSON matching this shape:
       "confidence": 0-1,
       "source_excerpt": string
     }
+  ],
+  "cadences": [
+    {
+      "raw_phrase": string,
+      "person_name": string|null,
+      "source_excerpt": string
+    }
   ]
 }
 
@@ -399,16 +504,30 @@ Other rules:
 - Use only dates, people, and facts present in the notes. Never invent a date, a person, or an event.
 - Do not extract dates describing something already finished that needs no action ("we met on Aug 3", "she joined in 2019", "shipped it March 4"). Only extract things the user should be reminded about.
 - One object per distinct commitment. If the same event is mentioned twice, emit it once.
-- Return {"commitments": []} when the notes contain no dated commitments. An empty array is a correct and very common answer.`;
+- Return {"commitments": []} when the notes contain no dated commitments. An empty array is a correct and very common answer.
+
+CADENCES. Separately, extract any RECURRING rhythm the notes state for staying in touch — "check in monthly", "ping me every two weeks", "quarterly catch-ups", "let's talk once a month".
+- raw_phrase: the rhythm copied VERBATIM from the notes, character for character. "check in monthly", not "monthly check-ins".
+- A cadence is recurring. A one-off date ("next Tuesday", "in two weeks") is a commitment, never a cadence — put those in commitments only.
+- Vague frequency is NOT a cadence: "we should talk more often", "stay in touch regularly", "a few times a year" all return nothing.
+- person_name: whose rhythm it is, spelled as the notes spell it, or null when the notes name nobody.
+- source_excerpt: the sentence it came from, copied verbatim.
+- Return {"cadences": []} when the notes state no rhythm. That is the common answer.`;
 }
 
 export async function fetchRawCommitments(
   userId: string,
   notes: string,
-  options?: { today?: Date; knownPeople?: string[] }
-): Promise<RawCommitmentItem[]> {
+  options?: { today?: Date; knownPeople?: string[]; engines?: Engines | Promise<Engines> }
+): Promise<{ commitments: RawCommitmentItem[]; cadences: RawCadenceItem[] }> {
   const trimmed = notes.trim();
-  if (!trimmed) return [];
+  if (!trimmed) return { commitments: [], cadences: [] };
+  // Most notes name no date at all. A ~200ms decision-model "no" saves the whole pass;
+  // without a decision model, or on anything short of a confident no, it runs as always.
+  const engines = await options?.engines;
+  if (engines && (await gateSkips(engines, "dates", { notes: gateText(trimmed) }))) {
+    return { commitments: [], cadences: [] };
+  }
   const today = options?.today ?? new Date();
   const todayIso = toIsoDay(today);
   const todayWeekday = WEEKDAY_NAMES[today.getDay()];
@@ -426,21 +545,5 @@ export async function fetchRawCommitments(
     system: buildSystemPrompt(todayIso, todayWeekday),
     user: `Today: ${todayIso} (${todayWeekday})\n\n${peopleBlock}Notes:\n${corpus}`,
   });
-  return datedCommitmentsSchema.parse(JSON.parse(content)).commitments;
-}
-
-export async function extractDatedCommitments(
-  userId: string,
-  notes: string,
-  options?: { today?: Date; anchor?: Date; knownPeople?: string[] }
-): Promise<DatedCommitmentResult> {
-  const today = options?.today ?? new Date();
-  const raw = await fetchRawCommitments(userId, notes, {
-    today,
-    knownPeople: options?.knownPeople,
-  });
-  return validateCommitments(raw, notes.trim().slice(0, MAX_NOTE_CHARS), {
-    today,
-    anchor: options?.anchor,
-  });
+  return datedCommitmentsSchema.parse(JSON.parse(content));
 }

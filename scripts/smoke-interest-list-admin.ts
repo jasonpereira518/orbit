@@ -146,7 +146,7 @@ async function main() {
   });
 
   const { default: Page } = await import(
-    "../src/app/(admin)/admin/growth/interest-list/page"
+    "../src/app/(clerk)/(admin)/admin/growth/interest-list/page"
   );
 
   // --- unfiltered

@@ -10,7 +10,7 @@
  */
 import { and, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, contacts, interactionMentions, noteBatches, reminders, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
+import { actionItems, contacts, interactionMentions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
@@ -18,18 +18,28 @@ import {
   createContactForUser,
   logNoteInteractionForUser,
   updateContactForUser,
+  withExistingTagNames,
 } from "@/lib/contact-writes";
 import {
   DEFAULT_FOLLOW_UP_WINDOW_DAYS,
+  dropSupersededWindowDrafts,
   emptyNoteBatchResult,
   noteInteractionExternalId,
   titlesCollide,
   windowDueDate,
-  withinCollisionWindow,
 } from "@/lib/note-batches";
+import {
+  buildOpportunityItemHash,
+  dismissOpportunitiesForBatch,
+  insertOpportunities,
+  syncContactOpportunityMirrors,
+} from "@/lib/contact-opportunities";
+import type { ExtractedOpportunity } from "@/lib/opportunity-extract";
+import { syncMemoryChunkMentions } from "@/lib/memory-chunks";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
+import { reportAndContinue } from "@/lib/report-error";
 
 export type NoteBatchParticipantInput = {
   notes: string;
@@ -41,14 +51,56 @@ export type NoteBatchParticipantInput = {
   followUpDays?: number | null;
   interactionDate?: string | null;
   interactionType?: string | null;
+  /**
+   * Typed opportunities this person's card kept. Already validated and already filtered by
+   * whatever the review UI left ticked — this module stores, it does not re-decide.
+   */
+  opportunities?: NoteBatchOpportunityInput[];
+  /** A cadence the notes stated for this person, resolved to days. */
+  cadenceDays?: number | null;
+  cadencePhrase?: string | null;
 };
 
-export type NoteBatchCommitmentInput = Pick<
-  DatedCommitment,
-  "title" | "description" | "rawDatePhrase" | "yearInferred" | "personName" | "actionKind" | "confidenceScore" | "sourceExcerpt" | "dateBasis" | "anchorIso"
-> & { dueDateIso: string; contactId?: string | null };
+export type NoteBatchOpportunityInput = Pick<
+  ExtractedOpportunity,
+  "kind" | "label" | "direction" | "sourceExcerpt" | "rawDatePhrase" | "confidenceScore"
+> & {
+  /** YYYY-MM-DD, so the date round-trips through the client without timezone drift. */
+  dueDateIso?: string | null;
+};
 
-export type NoteBatchMentionInput = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | "user_pick" | null };
+export type NoteBatchCommitmentInput = Omit<
+  Pick<
+    DatedCommitment,
+    "title" | "description" | "rawDatePhrase" | "yearInferred" | "personName" | "actionKind" | "confidenceScore" | "sourceExcerpt" | "dateBasis" | "anchorIso"
+  >,
+  "rawDatePhrase"
+> & {
+  dueDateIso: string;
+  contactId?: string | null;
+  /**
+   * Null for an implied next step, which travels this same path: nobody named a date, so
+   * there is no phrase to quote back. `DatedCommitment` keeps it non-null because a dated
+   * commitment by definition has one.
+   */
+  rawDatePhrase: string | null;
+  /** Defaults to `"explicit"` — everything that reached here before implied steps existed was. */
+  origin?: ReminderOrigin;
+};
+
+export type NoteBatchMentionInput = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | null };
+
+/**
+ * A digest item from a recorded meeting that the user ticked "make a reminder" on: an
+ * action item nobody's card carried, a blocker, or an open question.
+ */
+export type MeetingExtraReminderInput = {
+  kind: "action" | "blocker" | "question";
+  title: string;
+  /** A participant's name, resolved to their contact when they are in this batch. */
+  ownerName: string | null;
+  sourceExcerpt: string | null;
+};
 
 export type SaveNoteBatchInput = {
   sourceText: string;
@@ -61,6 +113,19 @@ export type SaveNoteBatchInput = {
   commitments: NoteBatchCommitmentInput[];
   mentions?: NoteBatchMentionInput[];
   skipped: { relative: number; unverifiable: number; past: number };
+  /** How the notes arrived — see `noteBatches.inputSources`. Defaults to none recorded. */
+  inputSources?: CaptureSourceKind[];
+  /**
+   * Set when the batch is a recorded meeting. Its summary is stored on the result, and a
+   * meeting is saveable with no people and no dates — the summary is the point.
+   */
+  meeting?: { summary: NoteBatchMeeting; extraReminders: MeetingExtraReminderInput[] } | null;
+};
+
+const MEETING_REMINDER_PREFIX: Record<MeetingExtraReminderInput["kind"], string> = {
+  action: "",
+  blocker: "Unblock: ",
+  question: "Answer: ",
 };
 
 export type SaveNoteBatchOutput = {
@@ -92,15 +157,25 @@ type ReminderDraft = {
   rawDatePhrase: string | null;
   sourceExcerpt: string | null;
   actionItemId: string | null;
+  origin: ReminderOrigin;
+  confidenceScore: number | null;
 };
 
 export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): Promise<SaveNoteBatchOutput> {
-  if (!input.participants.length && !input.commitments.length) {
+  if (!input.meeting && !input.participants.length && !input.commitments.length) {
     throw new Error("Nothing to save");
   }
   const db = await getDb();
   const result = emptyNoteBatchResult();
-  result.skipped = { ...input.skipped, duplicate: 0 };
+  // Counts only. The phrase list is review-screen copy that comes back from the client with
+  // the save; the batch result has no use for it and should not store client strings.
+  result.skipped = {
+    relative: input.skipped.relative,
+    unverifiable: input.skipped.unverifiable,
+    past: input.skipped.past,
+    duplicate: 0,
+  };
+  if (input.meeting) result.meeting = input.meeting.summary;
   const anchor = isoDayToLocalNoon(input.anchorIso);
   const [batch] = await db
     .insert(noteBatches)
@@ -114,6 +189,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       anchorBasis: input.anchorBasis,
       status: "saved",
       result,
+      inputSources: input.inputSources ?? [],
     })
     .returning();
   const batchId = batch.id;
@@ -149,15 +225,46 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         aiSummary: parsed.summary || undefined,
         keyFacts: parsed.key_facts,
         sharedInterests: parsed.shared_interests,
-        opportunities: parsed.opportunities,
+        // `opportunities` is deliberately NOT written here any more.
+        //
+        // It used to be, on both the create and the merge branch — and
+        // `updateContactForUser` overwrites the column outright, so a second note about the
+        // same person silently deleted the first note's opportunities. The typed rows in
+        // `contact_opportunities` are the record now, and `contacts.opportunities` is a
+        // mirror DERIVED from them by `syncContactOpportunityMirror` (step 1d below), which
+        // is the only writer left.
         relationshipScore: p.relationshipScore,
         statedCloseness: p.relationshipScore,
         tagNames: p.tagNames,
+        // A rhythm the notes stated, e.g. "check in monthly". Written on create AND merge:
+        // the newest note is the most recent thing the person said about how often they want
+        // to hear from you, so it supersedes an older one rather than racing it.
+        ...(p.cadenceDays
+          ? {
+              cadenceDays: p.cadenceDays,
+              cadencePhrase: p.cadencePhrase ?? null,
+              cadenceSource: "note" as const,
+              cadenceSetAt: new Date(),
+            }
+          : {}),
         ...(followUpDate ? { nextFollowUpAt: followUpDate.toISOString() } : {}),
       };
       if (contactId) {
         // Merge: never overwrite contacts.notes — the new material lives on the timeline.
-        await updateContactForUser(userId, contactId, { fullName: parsed.name || undefined, ...fields }, WRITE_OPTS);
+        // Tags are ADDED to the contact's own, never a replacement list: `updateContactForUser`
+        // sets the full list, and the note's tags alone would delete the rest (an empty list
+        // deleted them all).
+        const { tagNames, ...rest } = fields;
+        await updateContactForUser(
+          userId,
+          contactId,
+          {
+            fullName: parsed.name || undefined,
+            ...rest,
+            ...(tagNames?.length ? { tagNames: await withExistingTagNames(userId, contactId, tagNames) } : {}),
+          },
+          WRITE_OPTS
+        );
         updated += 1;
       } else {
         if (!parsed.name) throw new Error("A name is required to create a contact");
@@ -194,6 +301,42 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       if (!interactionCreated) result.skipped.duplicate += 1;
       result.participants.push({ contactId, interactionId: row.id, name: parsed.name || "Unnamed", created: wasCreated, duplicate: !interactionCreated });
 
+      // 1c. Typed opportunities. After the interaction, so `source_interaction_id` can point
+      //     at it. Hashed on (sourceHash, contactId, kind, label) so a re-paste creates
+      //     nothing — the same idempotency contract as the reminders below, and for the same
+      //     reason: people re-paste a note to fix a typo, not to duplicate their pipeline.
+      if (p.opportunities?.length) {
+        const inserted = await insertOpportunities(
+          userId,
+          p.opportunities.map((o) => ({
+            contactId: contactId!,
+            kind: o.kind,
+            label: o.label,
+            direction: o.direction,
+            sourceInteractionId: row.id,
+            noteBatchId: batchId,
+            sourceExcerpt: o.sourceExcerpt,
+            dueDate: o.dueDateIso ? isoDayToLocalNoon(o.dueDateIso) : null,
+            rawDatePhrase: o.rawDatePhrase,
+            confidenceScore: o.confidenceScore,
+            createdBy: "ai" as const,
+            itemHash: buildOpportunityItemHash(input.sourceHash, contactId!, o.kind, o.label),
+          }))
+        );
+        // `emptyNoteBatchResult` always seeds this, but the field is optional on the type so
+        // that batches saved before it existed still parse — hence the local narrowing.
+        const opportunityResults = (result.opportunities ??= []);
+        for (const r of inserted) {
+          opportunityResults.push({
+            id: r.id,
+            contactId: contactId!,
+            kind: r.kind,
+            label: r.label,
+            dueIso: r.dueDate ? isoDay(new Date(r.dueDate)) : null,
+          });
+        }
+      }
+
       // 1a. Each new open action item gets its own window reminder draft (skip items that
       // already carry a reminderId — e.g. a re-sync that didn't touch this item).
       if (interactionCreated && parsed.action_items.length) {
@@ -208,6 +351,8 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
             dueDate: windowDueDate(anchor), reminderType: "ai_suggested",
             actionKind: inferReminderActionKind({ title: item.text, description: null, reminderType: "ai_suggested", contactId }),
             dateBasis: "window", rawDatePhrase: null, sourceExcerpt: null, actionItemId: item.id,
+            // An action item is something the note SAID somebody would do.
+            origin: "explicit", confidenceScore: null,
           });
           result.actionItems.push({ id: item.id, contactId, text: item.text, reminderId: null });
         }
@@ -218,13 +363,29 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     //     no interaction to hang them on, so they stay in the result as unresolved.
     const participantIds = new Set(contactIds);
     const firstInteraction = result.participants[0]?.interactionId ?? null;
+    // Every mention's contact id is confirmed to be this user's before anything is written.
+    // The ids reach here from a browser — `confirmBulkCapture` takes them straight off the
+    // request — so without this, a forged id writes a row into `interaction_mentions`
+    // pointing at somebody else's contact. It also covers the honest case: a contact deleted
+    // between the parse and the save, which reads here as exactly what it is, a name in the
+    // note that no longer links to anyone.
+    const claimedIds = [...new Set((input.mentions ?? []).map((m) => m.contactId).filter((id): id is string => Boolean(id)))];
+    const ownedIds = new Set<string>(
+      claimedIds.length
+        ? (await db
+            .select({ id: contacts.id })
+            .from(contacts)
+            .where(and(eq(contacts.userId, userId), inArray(contacts.id, claimedIds)))
+          ).map((r) => r.id)
+        : []
+    );
     const mentionRows: (typeof interactionMentions.$inferInsert)[] = [];
     for (const m of input.mentions ?? []) {
       // A mention that resolved to somebody already IN this batch is not unresolved — the
       // person is right there on the results page as a participant. Drop it silently
       // rather than offering "add as a contact" for someone just created.
       if (m.contactId && participantIds.has(m.contactId)) continue;
-      if (!m.contactId) {
+      if (!m.contactId || !ownedIds.has(m.contactId)) {
         result.unresolvedMentions.push({ text: m.text, context: m.context });
         continue;
       }
@@ -236,6 +397,15 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     }
     if (mentionRows.length) {
       await db.insert(interactionMentions).values(mentionRows).onConflictDoNothing({ target: [interactionMentions.interactionId, interactionMentions.contactId] });
+      // The passages of these interactions, if any exist yet, were chunked before these rows
+      // existed and so name only the person the note was filed under. Batch writes set
+      // `skipEmbedding`, so usually there are none and the sweep picks the mentions up itself
+      // — this is for the re-paste onto an interaction that has already been indexed, which
+      // the sweep will never revisit (it claims only interactions with no passages at all).
+      // Never fatal: failing to widen the index must not fail saving the batch.
+      await syncMemoryChunkMentions(userId, mentionRows.map((m) => m.interactionId)).catch(
+        (err) => console.warn("[memory-chunks] could not apply mentions", err)
+      );
     }
 
     // 2. Dated commitments → reminder drafts.
@@ -253,6 +423,8 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         rawDatePhrase: c.rawDatePhrase,
         sourceExcerpt: c.sourceExcerpt,
         actionItemId: null,
+        origin: c.origin ?? "explicit",
+        confidenceScore: c.confidenceScore,
       });
     }
 
@@ -276,19 +448,47 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         rawDatePhrase: null,
         sourceExcerpt: null,
         actionItemId: null,
+        origin: "explicit",
+        confidenceScore: null,
       });
     }
 
-    // 4. Collision rule. Action-item drafts push their own `window` reminders (step 1a
-    //    above); this drops one when it collides with a dated commitment for the same
-    //    contact so the two don't produce duplicate-looking reminders.
-    const kept = drafts.filter((d) => {
-      if (d.dateBasis !== "window") return true;
-      return !drafts.some(
-        (other) => other !== d && other.dateBasis !== "window" && other.contactId === d.contactId &&
-          titlesCollide(other.title, d.title) && withinCollisionWindow(other.dueDate, d.dueDate)
-      );
-    });
+    // 3b. Meeting digest items the user ticked. Due on the default window, like an action
+    //     item. Skipped when a draft above already says the same thing — the per-person
+    //     parse and the call-level digest read the same meeting and often agree.
+    for (const extra of input.meeting?.extraReminders ?? []) {
+      const text = extra.title.replace(/\s+/g, " ").trim().slice(0, 300);
+      if (!text) continue;
+      const prefix = MEETING_REMINDER_PREFIX[extra.kind];
+      const title = prefix && !text.toLowerCase().startsWith(prefix.trim().toLowerCase()) ? `${prefix}${text}` : text;
+      if (drafts.some((d) => titlesCollide(d.title, text) || titlesCollide(d.title, title))) continue;
+      const contactId = extra.ownerName ? contactIdByName.get(extra.ownerName.trim().toLowerCase()) ?? null : null;
+      drafts.push({
+        contactId,
+        sourceInteractionId: contactId ? interactionIdByContact.get(contactId) ?? null : null,
+        title,
+        description: input.meeting!.summary.title ? `From the meeting "${input.meeting!.summary.title}"` : null,
+        dueDate: windowDueDate(anchor),
+        reminderType: "ai_suggested",
+        actionKind:
+          extra.kind === "action"
+            ? inferReminderActionKind({ title, description: null, reminderType: "ai_suggested", contactId })
+            : "task",
+        dateBasis: "window",
+        rawDatePhrase: null,
+        sourceExcerpt: extra.sourceExcerpt?.slice(0, 500) ?? null,
+        actionItemId: null,
+        // A digest item is something the call produced, not something Orbit inferred.
+        origin: "explicit",
+        confidenceScore: null,
+      });
+    }
+
+    // 4. Collision rule. Action-item and fallback drafts carry a `window` date Orbit chose;
+    //    one yields to a dated commitment for the same contact that says the same thing
+    //    (see `dropSupersededWindowDrafts`), so one follow-up never becomes two reminders.
+    //    The review's Save button counts with the same function (`planReminders`).
+    const kept = dropSupersededWindowDrafts(drafts, (d) => d.contactId);
 
     // 5. Insert reminders, idempotent through itemHash. An action-item draft hashes its
     //    own item id rather than its title: two participants in one batch can share the
@@ -320,6 +520,8 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
             rawDatePhrase: d.rawDatePhrase,
             dateBasis: d.dateBasis,
             actionItemId: d.actionItemId,
+            origin: d.origin,
+            confidenceScore: d.confidenceScore,
             itemHash: d.actionItemId
               ? buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), `action-item:${d.actionItemId}`)
               : buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), d.title),
@@ -343,12 +545,26 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     }
   } catch (err) {
     // Persist what was written so the results page and undo can still see it.
-    await db.update(noteBatches).set({ result }).where(eq(noteBatches.id, batchId)).catch(() => null);
+    await db
+      .update(noteBatches)
+      .set({ result })
+      .where(eq(noteBatches.id, batchId))
+      .catch(reportAndContinue({ where: "job.note-batch.persist-partial", userId, extra: { batchId } }, null));
     throw err;
   }
 
-  if (contactIds.length) {
-    await db.update(contacts).set({ embeddingStaleAt: new Date() }).where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)));
+  // 6. Re-derive `contacts.opportunities` from the rows just written. Once per contact,
+  //    after the loop rather than inside it: a contact with three new opportunities would
+  //    otherwise have the same column rewritten three times. This also stamps
+  //    `embeddingStaleAt`, which is why the blanket stamp below skips the touched ones.
+  const opportunityContactIds = [...new Set((result.opportunities ?? []).map((o) => o.contactId))];
+  if (opportunityContactIds.length) {
+    await syncContactOpportunityMirrors(userId, opportunityContactIds);
+  }
+
+  const needStamp = contactIds.filter((id) => !opportunityContactIds.includes(id));
+  if (needStamp.length) {
+    await db.update(contacts).set({ embeddingStaleAt: new Date() }).where(and(eq(contacts.userId, userId), inArray(contacts.id, needStamp)));
   }
   await db.update(noteBatches).set({ result }).where(eq(noteBatches.id, batchId));
   return { batchId, created, updated, contactIds, remindersCreated, result };
@@ -360,7 +576,7 @@ export async function undoNoteBatchForUser(userId: string, batchId: string) {
     where: and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId)),
   });
   if (!batch) throw new Error("Batch not found");
-  if (batch.status === "undone") return { remindersDismissed: 0, mentionsRemoved: 0 };
+  if (batch.status === "undone") return { remindersDismissed: 0, mentionsRemoved: 0, opportunitiesDismissed: 0 };
 
   const dismissed = await db
     .update(reminders)
@@ -383,8 +599,24 @@ export async function undoNoteBatchForUser(userId: string, batchId: string) {
     mentionsRemoved = removed.length;
   }
 
+  // Opportunities this batch opened are dismissed, never deleted — the `item_hash` has to
+  // keep blocking, or re-pasting the same note would recreate everything just undone. An
+  // opportunity the person has since marked `landed` is a decision they made after the save,
+  // so `dismissOpportunitiesForBatch` leaves it alone.
+  const dismissedOpportunities = await dismissOpportunitiesForBatch(userId, batchId);
+  if (dismissedOpportunities.length) {
+    await syncContactOpportunityMirrors(
+      userId,
+      dismissedOpportunities.map((o) => o.contactId)
+    );
+  }
+
   await db.update(noteBatches).set({ status: "undone", undoneAt: new Date() }).where(eq(noteBatches.id, batchId));
-  return { remindersDismissed: dismissed.length, mentionsRemoved };
+  return {
+    remindersDismissed: dismissed.length,
+    mentionsRemoved,
+    opportunitiesDismissed: dismissedOpportunities.length,
+  };
 }
 
 export async function dismissNoteReminderForUser(userId: string, reminderId: string) {

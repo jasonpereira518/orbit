@@ -3,10 +3,9 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
-import {
-  clearImportJob,
-  useImportJob,
-} from "@/lib/import-job-runner";
+import { clearImportJob, useImportJob } from "@/lib/import-job-runner";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { failureText } from "@/lib/errors";
 
 /**
  * Module-level, not a ref: the shell (or this component) can remount while a finished job's
@@ -44,7 +43,12 @@ export function ImportJobWatcher() {
       if (job.resultMessage) toast.message(job.resultMessage, { id: toastId });
       router.refresh();
     } else if (job.status === "failed") {
-      toast.error(job.error || "Import failed", { id: toastId });
+      // `job.error` is whatever the background runner stored, which can be raw — unless
+      // `job.userFacingError` says it was already written to be read (see `failureText`).
+      toast.error(
+        failureText(job.error, job.userFacingError, TOAST_COPY.importFailed),
+        { id: toastId },
+      );
     }
 
     // Keep snapshot briefly so the Imports page can clear local UI, then drop it.

@@ -1,4 +1,4 @@
-import { formatDistanceToNow } from "date-fns";
+import { formatLastTouch } from "@/lib/relative-date";
 import { ConstellationPinButton } from "@/components/contacts/constellation-pin-button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -33,9 +33,7 @@ export function ContactStatPills({
   };
 }) {
   const pct = Math.round(closeness.closeness * 100);
-  const since = lastTouchAt
-    ? formatDistanceToNow(new Date(lastTouchAt), { addSuffix: true })
-    : null;
+  const since = lastTouchAt ? formatLastTouch(new Date(lastTouchAt)) : null;
   const lastLabel = !since
     ? "No interactions yet"
     : hasLoggedInteraction

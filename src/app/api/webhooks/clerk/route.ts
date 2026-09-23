@@ -3,9 +3,11 @@ import type { NextRequest } from "next/server";
 import { purgeUserData } from "@/lib/user-data";
 import {
   ensureUserSettings,
+  recordTermsAcceptance,
   setUserEmail,
   setUserIdentity,
 } from "@/lib/user-settings";
+import { termsAcceptanceFromClerk } from "@/lib/legal";
 import { recordBillingEvent } from "@/lib/billing-events";
 import { shouldRecordThrottled } from "@/lib/error-events";
 import {
@@ -92,6 +94,15 @@ export async function POST(req: NextRequest) {
           lastName: evt.data.last_name,
           imageUrl: evt.data.image_url,
         });
+        // Clerk's "require express legal consent" checkbox stamps legal_accepted_at at
+        // sign-up. Recorded from user.created only, write-once, so a later user.updated
+        // can never attribute today's TERMS_VERSION to an old acceptance.
+        if (evt.type === "user.created") {
+          const acceptance = termsAcceptanceFromClerk(evt.data.legal_accepted_at);
+          if (acceptance) {
+            await recordTermsAcceptance(userId, acceptance, { onlyIfUnset: true });
+          }
+        }
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {
         result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };
@@ -99,7 +110,11 @@ export async function POST(req: NextRequest) {
     } else if (evt.type === "user.deleted") {
       const userId = evt.data.id;
       if (userId) {
-        await purgeUserData(userId);
+        // The account no longer exists in Clerk, so nothing of it may outlive it here:
+        // `keepSettings: false` deletes the settings row too — email, name, avatar, every
+        // encrypted provider key and the Stripe customer id. The Settings "Delete data" path
+        // keeps that row on purpose (its person is still signed in); this one must not.
+        await purgeUserData(userId, { keepSettings: false });
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {
         result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };

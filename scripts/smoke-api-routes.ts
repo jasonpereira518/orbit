@@ -16,7 +16,7 @@ import { getDb, rowsOf } from "../src/db";
 import { generateApiKey } from "../src/lib/api/keys";
 import { GET as meGet } from "../src/app/api/v1/me/route";
 import { POST as eventsPost } from "../src/app/api/v1/events/route";
-import { GET as contactsGet } from "../src/app/api/v1/contacts/route";
+import { GET as contactsGet, POST as contactsPost } from "../src/app/api/v1/contacts/route";
 import { POST as endpointsPost } from "../src/app/api/v1/webhook-endpoints/route";
 import { GET as openapiGet } from "../src/app/api/v1/openapi.json/route";
 
@@ -172,6 +172,115 @@ run(async () => {
   );
   check("a read-only key can still read", readRead.status === 200, String(readRead.status));
 
+  // --- POST /contacts duplicate check is bounded, not a full-table scan ------------------------------
+  //
+  // Both used to be one `findMany` of the whole account, run on every single write. This
+  // seeds enough contacts that an accidental full scan would still pass functionally but is
+  // the regression this guards: the checks below assert the *outcomes* the bounded rewrite
+  // must still produce, not the query shape (that's `smoke-related-contacts-scale.ts`'s job
+  // for the sibling function it shares `contact-resolve.ts` with).
+  for (let i = 0; i < 30; i++) {
+    await eventsPost(
+      post("https://orbit.test/api/v1/events", key.token, {
+        events: [
+          {
+            externalId: `filler-${i}`,
+            occurredAt: "2026-01-01T00:00:00Z",
+            participants: [{ name: `Filler Person ${i}`, email: `filler-${i}@example.com` }],
+          },
+        ],
+        createContacts: true,
+      })
+    );
+  }
+
+  const created = await contactsPost(
+    post("https://orbit.test/api/v1/contacts", key.token, {
+      fullName: "Duplicate Probe",
+      email: "dup-probe@example.com",
+      linkedinUrl: "https://www.linkedin.com/in/dup-probe/",
+    })
+  );
+  check("first POST creates a contact", created.status === 201, String(created.status));
+
+  const byIdentifier = await contactsPost(
+    post("https://orbit.test/api/v1/contacts", key.token, {
+      // Different name, same LinkedIn URL — the identifier tier must still catch this.
+      fullName: "Dupe P.",
+      linkedinUrl: "https://www.linkedin.com/in/dup-probe/",
+    })
+  );
+  check("identifier match reports matched, not created", byIdentifier.status === 200, String(byIdentifier.status));
+  const byIdentifierBody = (await byIdentifier.json()) as Envelope;
+  check(
+    "identifier match does not create a second row",
+    (byIdentifierBody.data as { created: boolean }).created === false
+  );
+
+  const byName = await contactsPost(
+    post("https://orbit.test/api/v1/contacts", key.token, {
+      // No email/linkedin this time, so only the bare-name tier (0.60) can fire — below
+      // DUPLICATE_MERGE_CONFIDENCE, so this must create rather than report a match.
+      fullName: "Duplicate Probe",
+    })
+  );
+  check(
+    "a bare full-name match (0.60) is below the merge threshold and still creates",
+    byName.status === 201,
+    String(byName.status)
+  );
+
+  const forced = await contactsPost(
+    post("https://orbit.test/api/v1/contacts", key.token, {
+      fullName: "Dupe P.",
+      linkedinUrl: "https://www.linkedin.com/in/dup-probe/",
+      force: true,
+    })
+  );
+  check(
+    "force:true creates despite a confident identifier match",
+    forced.status === 201,
+    String(forced.status)
+  );
+
+  const genuinelyNew = await contactsPost(
+    post("https://orbit.test/api/v1/contacts", key.token, { fullName: "Nobody Seen Before" })
+  );
+  check("an unrelated name creates normally", genuinelyNew.status === 201, String(genuinelyNew.status));
+
+  // --- GET /contacts cursor is applied, not silently ignored ------------------------------------------
+  const firstPage = await contactsGet(
+    new Request("https://orbit.test/api/v1/contacts?limit=5", {
+      headers: { authorization: `Bearer ${key.token}` },
+    })
+  );
+  const firstPageBody = (await firstPage.json()) as Envelope;
+  const firstData = firstPageBody.data as { contacts: { id: string }[]; nextCursor: string | null };
+  check("a page under the limit-or-more has a nextCursor", Boolean(firstData.nextCursor));
+
+  const secondPage = await contactsGet(
+    new Request(
+      `https://orbit.test/api/v1/contacts?limit=5&cursor=${encodeURIComponent(firstData.nextCursor ?? "")}`,
+      { headers: { authorization: `Bearer ${key.token}` } }
+    )
+  );
+  const secondData = ((await secondPage.json()) as Envelope).data as {
+    contacts: { id: string }[];
+  };
+  const firstIds = new Set(firstData.contacts.map((c) => c.id));
+  check(
+    "the second page does not repeat the first page's rows",
+    secondData.contacts.every((c) => !firstIds.has(c.id))
+  );
+  check("the second page returns rows", secondData.contacts.length > 0);
+
+  const badCursor = await contactsGet(
+    new Request("https://orbit.test/api/v1/contacts?cursor=not-a-real-cursor", {
+      headers: { authorization: `Bearer ${key.token}` },
+    })
+  );
+  check("a malformed cursor is a 400, not a crash", badCursor.status === 400, String(badCursor.status));
+
   // --- Registering a webhook rejects an unreachable target, with a usable message -------------------
   for (const [url, why] of [
     ["http://example.com/hook", "http://"],
@@ -201,7 +310,16 @@ run(async () => {
     components: { securitySchemes: Record<string, unknown> };
   };
   check("it declares its OpenAPI version", doc.openapi.startsWith("3."), doc.openapi);
-  for (const path of ["/me", "/events", "/contacts", "/followups", "/webhook-endpoints"]) {
+  for (const path of [
+    "/me",
+    "/events",
+    "/contacts",
+    "/followups",
+    "/followups/{id}",
+    "/notes",
+    "/interactions",
+    "/webhook-endpoints",
+  ]) {
     check(`it documents ${path}`, Boolean(doc.paths[path]));
   }
   check("it documents bearer auth", Boolean(doc.components.securitySchemes.bearerAuth));

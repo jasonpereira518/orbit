@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
 import {
   Copy,
   Mail,
@@ -13,52 +12,38 @@ import {
   NotebookPen,
   Coffee,
 } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { runToastAction, toast } from "@/lib/toast";
 import {
   draftFollowUpResponse,
   moveReminderToList,
 } from "@/actions/reminders";
 import type { ReminderActionKind } from "@/db/schema";
 import { ACTION_KIND_LABELS } from "@/lib/reminder-action-kind";
+import { dueDayOf, dueLabelFor, ymdInZone } from "@/lib/reminder-due-bucket";
+import { reminderTypeLabel, reminderTypeStyle } from "@/lib/reminder-display";
 import { ReminderDoneSnooze } from "@/components/reminders/reminder-done-snooze";
 import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
-const TYPE_LABELS: Record<string, string> = {
-  manual: "Task",
-  capture: "From capture",
-  post_meeting: "Post-meeting",
-  generated: "Auto-generated",
-  ai_suggested: "AI suggested",
-  extracted_date: "From notes",
-};
-
-const TYPE_STYLES: Record<string, string> = {
-  manual: "bg-muted text-muted-foreground",
-  capture: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
-  post_meeting: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
-  generated: "bg-muted text-muted-foreground",
-  ai_suggested: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
-  extracted_date: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
-};
-
+/**
+ * Due text on the viewer's calendar — the same rule the reminders page uses
+ * (`reminder-due-bucket.ts`), so a card and a row never disagree about "overdue". Computed
+ * in the browser's zone, which the server can't know; the span suppresses the hydration
+ * warning for the one render where the two differ.
+ */
 function dueLabel(dueDate: Date | string | null | undefined) {
-  if (!dueDate) return null;
-  const d = new Date(dueDate);
-  if (Number.isNaN(d.getTime())) return null;
-  const overdue = d <= new Date();
-  if (overdue) {
-    const days = Math.max(
-      1,
-      Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24))
-    );
-    return { text: `Overdue ${days} day${days === 1 ? "" : "s"}`, overdue: true };
-  }
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const label = dueLabelFor(dueDayOf(dueDate, tz), ymdInZone(new Date(), tz));
+  if (!label) return null;
   return {
-    text: `Due ${formatDistanceToNow(d, { addSuffix: true })}`,
-    overdue: false,
+    text: label.bucket === "overdue" || label.bucket === "today" || label.bucket === "tomorrow"
+      ? label.text
+      : `Due ${label.text}`,
+    overdue: label.bucket === "overdue",
   };
 }
 
@@ -102,7 +87,7 @@ export function ReminderCard({
   noteBatchId?: string | null;
 }) {
   const due = dueLabel(dueDate);
-  const typeLabel = noteBatchId ? "From notes" : TYPE_LABELS[reminderType] ?? "Task";
+  const typeLabel = reminderTypeLabel(reminderType, noteBatchId);
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<string | null>(null);
@@ -116,7 +101,7 @@ export function ReminderCard({
         setDraft(result.body);
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not draft follow-up"
+          friendlyError(err, TOAST_COPY.draftFollowUpFailed)
         );
       }
     });
@@ -144,7 +129,7 @@ export function ReminderCard({
                 href={`/capture/${noteBatchId}`}
                 className={cn(
                   "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide hover:underline",
-                  TYPE_STYLES[reminderType] ?? TYPE_STYLES.manual
+                  reminderTypeStyle(reminderType)
                 )}
               >
                 {typeLabel}
@@ -153,7 +138,7 @@ export function ReminderCard({
               <span
                 className={cn(
                   "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                  TYPE_STYLES[reminderType] ?? TYPE_STYLES.manual
+                  reminderTypeStyle(reminderType)
                 )}
               >
                 {typeLabel}
@@ -177,7 +162,11 @@ export function ReminderCard({
             <ExpandableText text={description} lines={2} className="mt-1" />
           )}
           {due && (
+            // The label is the viewer's calendar day (see `dueLabel` above), which the
+            // server can't know — it renders in its own zone — so the one hydrating render
+            // may differ. That's a timezone difference, not a data mismatch.
             <p
+              suppressHydrationWarning
               className={cn(
                 "mt-1 text-xs",
                 due.overdue
@@ -255,17 +244,20 @@ export function ReminderCard({
                 onChange={(e) => {
                   const next = e.target.value;
                   if (!next || next === listId) return;
-                  startMove(async () => {
-                    try {
-                      await moveReminderToList(id, next);
-                      toast.success("Moved");
-                      router.refresh();
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Could not move"
-                      );
-                    }
-                  });
+                  const previous = listId;
+                  const nextName = lists.find((l) => l.id === next)?.name;
+                  startMove(() =>
+                    runToastAction({
+                      run: () => moveReminderToList(id, next),
+                      success: nextName ? `Moved to ${nextName}` : "Moved",
+                      failure: "Couldn’t move that reminder — try again?",
+                      refresh: () => router.refresh(),
+                      // The prior list is already on the card, so the inverse is just
+                      // a move back. Offered only when there was a list to return to.
+                      undo: () =>
+                        previous ? () => moveReminderToList(id, previous) : null,
+                    }).then(() => undefined)
+                  );
                 }}
               >
                 {lists.map((l) => (
@@ -277,12 +269,12 @@ export function ReminderCard({
             </div>
           )}
         </div>
-        <div className="flex shrink-0 items-start gap-1">
+        <div className="flex shrink-0 items-start gap-1 pointer-coarse:gap-4">
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
-            className="text-muted-foreground"
+            className="tap-target relative text-muted-foreground"
             aria-label="Edit reminder"
             onClick={() => setEditing(true)}
           >
@@ -305,6 +297,7 @@ export function ReminderCard({
           dueDate,
           listId,
           contactId,
+          contactName,
           actionKind,
         }}
       />
@@ -322,7 +315,7 @@ export function ReminderCard({
               className="h-7 px-2 text-xs"
               onClick={() => {
                 void navigator.clipboard.writeText(draft);
-                toast.success("Copied to clipboard");
+                toast.success(TOAST_COPY.copied);
               }}
             >
               <Copy className="mr-1 h-3 w-3" />

@@ -4,16 +4,21 @@ import { imports } from "@/db/schema";
 import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
 import { GOOGLE_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/google-contacts";
 import { OUTLOOK_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/outlook-contacts";
+import { CONTACTS_FILE_IMPORT_TYPE } from "@/lib/import-adapters/contacts-file";
 import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-messages";
 import {
   CALENDAR_CSV_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
 } from "@/lib/import-adapters/calendar";
 import { runImportJob } from "@/lib/import-engine";
-import {
-  GMAIL_SCAN_IMPORT_TYPE,
-  runGmailRecruiterScanJob,
-} from "@/lib/gmail-scan-processor";
+import { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-type";
+// Value-only, used inside a function: this module and the processor are in an import cycle,
+// so the constant above must come from a module that is never mid-initialisation.
+import { runGmailRecruiterScanJob } from "@/lib/gmail-scan-processor";
+import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
+import { runOutlookRecruiterScanJob } from "@/lib/outlook-scan-processor";
+import { DRIVE_IMPORT_TYPE } from "@/lib/drive-import-type";
+import { runDriveImportJob } from "@/lib/drive-import-processor";
 
 /**
  * Re-exported from their adapters, which is where these constants now live: the adapter
@@ -24,6 +29,7 @@ export {
   LINKEDIN_IMPORT_TYPE,
   GOOGLE_CONTACTS_IMPORT_TYPE,
   OUTLOOK_CONTACTS_IMPORT_TYPE,
+  CONTACTS_FILE_IMPORT_TYPE,
   LINKEDIN_MESSAGES_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
   CALENDAR_CSV_IMPORT_TYPE,
@@ -44,10 +50,13 @@ export const RESUMABLE_IMPORT_TYPES = [
   LINKEDIN_IMPORT_TYPE,
   GOOGLE_CONTACTS_IMPORT_TYPE,
   OUTLOOK_CONTACTS_IMPORT_TYPE,
+  CONTACTS_FILE_IMPORT_TYPE,
   LINKEDIN_MESSAGES_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
   CALENDAR_CSV_IMPORT_TYPE,
   GMAIL_SCAN_IMPORT_TYPE,
+  OUTLOOK_SCAN_IMPORT_TYPE,
+  DRIVE_IMPORT_TYPE,
 ] as const;
 
 /**
@@ -68,9 +77,14 @@ export async function runImportJobById(importId: string): Promise<void> {
   switch (row.importType) {
     case GMAIL_SCAN_IMPORT_TYPE:
       return runGmailRecruiterScanJob(importId);
+    case OUTLOOK_SCAN_IMPORT_TYPE:
+      return runOutlookRecruiterScanJob(importId);
+    case DRIVE_IMPORT_TYPE:
+      return runDriveImportJob(importId);
     case LINKEDIN_IMPORT_TYPE:
     case GOOGLE_CONTACTS_IMPORT_TYPE:
     case OUTLOOK_CONTACTS_IMPORT_TYPE:
+    case CONTACTS_FILE_IMPORT_TYPE:
     case LINKEDIN_MESSAGES_IMPORT_TYPE:
     case CALENDAR_ICS_IMPORT_TYPE:
     case CALENDAR_CSV_IMPORT_TYPE:

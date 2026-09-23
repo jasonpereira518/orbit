@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { friendlyError } from "@/lib/errors";
 
 type ContactReminder = {
   id: string;
@@ -59,7 +60,7 @@ export function ContactRemindersSection({
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not save note"
+          friendlyError(err, "That note didn’t save — try again?")
         );
       }
     });

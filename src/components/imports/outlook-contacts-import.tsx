@@ -10,13 +10,19 @@ import {
 } from "@/actions/outlook";
 import { previewOutlookContacts, type OutlookContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
+import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
+import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
-export function OutlookContactsImport() {
+/** `returnTo`: see `GoogleContactsImport`. */
+export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
   const router = useRouter();
   const job = useImportJob();
   const [pending, start] = useTransition();
@@ -29,6 +35,32 @@ export function OutlookContactsImport() {
     job?.kind === "outlook_contacts" && job.status === "running" ? job : null;
   const importProgress = outlookJob?.progress ?? null;
   const busy = pending || job?.status === "running";
+  // One handler for every button: each asks Microsoft for that feature's scope and nothing
+  // else. "Reconnect" after a session expiry asks as "contacts" (this is the contacts card);
+  // a paused calendar sync reconnects as "calendar", which was already granted, so fixing it
+  // never asks for anything new.
+  const connect = (purpose: MicrosoftPurpose = "contacts") =>
+    start(async () => {
+      try {
+        const { url } = await startOutlookOAuth({ purpose, returnTo });
+        window.location.href = url;
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+      }
+    });
+
+  const loadContacts = () =>
+    start(async () => {
+      try {
+        const res = await previewOutlookContacts();
+        setPeople(res.people);
+        setSelected(new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id)));
+        setLoaded(true);
+        toast.success(`Loaded ${res.people.length} contacts`);
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.loadContactsFailed));
+      }
+    });
 
   // Clear local review UI once this job finishes (toast handled globally by
   // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
@@ -62,16 +94,36 @@ export function OutlookContactsImport() {
       toast.success("Outlook connected");
       params.delete("outlook");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
       router.refresh();
       getOutlookConnectionStatus().then(setStatus).catch(() => {});
     } else if (outlook === "error") {
-      toast.error(params.get("reason") || "Outlook connection failed");
+      {
+        const oauth = describeOAuthReason(params.get("reason"), "Outlook", params.get("purpose"));
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
       params.delete("outlook");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
+      );
+      // Re-read the status: a Next router "restore" (which `replaceState` is) drops any
+      // server action still queued — here, the status fetch this card fired a moment ago
+      // on mount — without settling it, which would leave the card rendering nothing.
+      getOutlookConnectionStatus().then(setStatus).catch(() => {});
     }
   }, [router]);
 
@@ -84,7 +136,7 @@ export function OutlookContactsImport() {
       <IntegrationUnavailable
         id="import-outlook-contacts"
         title="Outlook Contacts"
-        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        blurb="Not connected yet. Export your Outlook contacts as a CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
           "MICROSOFT_CLIENT_ID",
           "MICROSOFT_CLIENT_SECRET",
@@ -100,58 +152,43 @@ export function OutlookContactsImport() {
         <div>
           <h2 className="text-lg font-medium text-ink">Outlook Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {status.connected
-              ? `Connected as ${status.emailAddress}`
-              : "Connect your Microsoft account to import contacts directly."}
+            {status.status === "needs_reauth"
+              ? `${SESSION_EXPIRED_LINE} to import contacts again`
+              : status.connected
+                ? `Connected as ${status.emailAddress}${!status.hasContactsScope ? " — allow contacts access to import" : ""}`
+                : "Connect your Microsoft account to import contacts directly."}
           </p>
+          {status.status === "disarmed" ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
+              <span>{calendarPauseLine(status.syncError, "Microsoft")}</span>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={() => connect("calendar")}>
+                Reconnect Microsoft
+              </Button>
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {!status.connected ? (
-            <Button
-              disabled={busy}
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const { url } = await startOutlookOAuth("/imports");
-                    window.location.href = url;
-                  } catch (err) {
-                    toast.error(err instanceof Error ? err.message : "OAuth failed");
-                  }
-                })
-              }
-            >
-              Connect Microsoft
+            <Button disabled={busy} onClick={() => connect()}>
+              {status.status === "needs_reauth" ? "Reconnect Microsoft" : "Connect Microsoft"}
             </Button>
           ) : (
             <>
-              <Button
+              {!status.hasContactsScope ? (
+                <Button disabled={busy} onClick={() => connect("contacts")}>
+                  Allow contacts access
+                </Button>
+              ) : (
+                <Button disabled={busy} onClick={loadContacts}>
+                  {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
+                </Button>
+              )}
+              <DisconnectAccountDialog
+                provider="outlook"
                 disabled={busy}
-                onClick={() =>
+                onConfirm={(opts) =>
                   start(async () => {
-                    try {
-                      const res = await previewOutlookContacts();
-                      setPeople(res.people);
-                      setSelected(
-                        new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
-                      );
-                      setLoaded(true);
-                      toast.success(`Loaded ${res.people.length} contacts`);
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Could not load contacts"
-                      );
-                    }
-                  })
-                }
-              >
-                {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  start(async () => {
-                    await disconnectOutlook();
+                    await disconnectOutlook(opts);
                     setPeople([]);
                     setLoaded(false);
                     setStatus(null);
@@ -160,13 +197,31 @@ export function OutlookContactsImport() {
                     getOutlookConnectionStatus().then(setStatus).catch(() => {});
                   })
                 }
-              >
-                Disconnect
-              </Button>
+              />
             </>
           )}
         </div>
       </div>
+
+      {status.connected ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-muted/40 px-4 py-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium text-ink">Outlook calendar</h3>
+            <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
+              {!status.hasCalendarScope
+                ? "Read-only. Orbit logs meetings with people you know onto their timelines, and keeps them current."
+                : status.status === "disarmed"
+                  ? "Sync is paused — see above."
+                  : "Sync is on — meetings with people you know are logged on their timelines."}
+            </p>
+          </div>
+          {!status.hasCalendarScope ? (
+            <Button variant="outline" disabled={busy} onClick={() => connect("calendar")}>
+              Sync your Outlook calendar
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       {pending && !loaded ? <BusyHint>Loading contacts…</BusyHint> : null}
 
@@ -204,7 +259,7 @@ export function OutlookContactsImport() {
                 setSelected(new Set());
                 setLoaded(false);
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Import failed");
+                toast.error(friendlyError(err, TOAST_COPY.importFailed));
               }
             }}
           >

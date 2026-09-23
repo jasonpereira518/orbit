@@ -41,6 +41,9 @@ import {
 } from "@/lib/duplicates";
 import { claimIdentities, findIdentityOwners } from "@/lib/contact-identity";
 import { mergeContacts, recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
+import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import {
   createContactForUser,
   updateContactForUser,
@@ -76,6 +79,13 @@ export type ResolveOptions = ContactWriteOptions & {
    * over the whole batch rather than per row.
    */
   skipSuggestions?: boolean;
+  /**
+   * The account's decision engines, when the caller already opened them. A fold on NAME
+   * evidence (not an identifier) is checked with the decision model first; a confident
+   * "different people" creates a new contact and queues the pair instead. Opened here when
+   * absent; pass `NO_ENGINES` to resolve exactly as before.
+   */
+  engines?: Engines;
 };
 
 /**
@@ -109,8 +119,12 @@ async function pickWinner(userId: string, a: string, b: string): Promise<[string
  * that matter here (name+company, name+title, bare name), which all require an exact name
  * match anyway. The fuzzy near-miss tiers need a wider net and are left to the bulk paths,
  * which already hold a full `DuplicateIndex`, and to the review page's own scan.
+ *
+ * Exported so single-write callers outside this module (the public API, MCP) can run the
+ * same bounded name check `resolveOrCreateContact` does, instead of each re-implementing
+ * duplicate detection against a full unbounded `findMany` of the account.
  */
-async function nameMatchesFor(
+export async function nameMatchesFor(
   userId: string,
   contactId: string | null,
   input: ContactInput
@@ -176,6 +190,66 @@ async function recordNameSuggestions(
   }));
 }
 
+export type DuplicateCheckResult = {
+  contact: DuplicateSubject;
+  confidence: number;
+  reason: string;
+};
+
+/**
+ * A read-only duplicate check for callers that decide for themselves what to do with a
+ * confident match rather than going through the create-or-merge flow below — the public API
+ * and MCP `create_contact`, where `force: false` must report a match without silently
+ * updating an existing contact with unreviewed data from an external caller.
+ *
+ * Bounded the same way `resolveOrCreateContact` is: identifier tiers are an indexed
+ * `contact_identities` lookup (`findIdentityOwners`), and the name tiers are
+ * `nameMatchesFor`'s narrow by-name scan — never a `findMany` of the whole account, which is
+ * what both of these callers did before this existed.
+ */
+export async function findConfidentDuplicate(
+  userId: string,
+  input: ContactInput
+): Promise<DuplicateCheckResult | null> {
+  const keys = identityKeysFor(input);
+  if (keys.length) {
+    const owners = await findIdentityOwners(userId, keys);
+    if (owners.length) {
+      const db = await getDb();
+      const contact = (await db.query.contacts.findFirst({
+        where: and(eq(contacts.userId, userId), eq(contacts.id, owners[0].contactId)),
+        columns: {
+          id: true,
+          fullName: true,
+          email: true,
+          linkedinUrl: true,
+          xHandle: true,
+          company: true,
+          title: true,
+        },
+      })) as DuplicateSubject | undefined;
+      if (contact) {
+        const kind = owners[0].key.kind;
+        const confidence =
+          kind === "linkedin_slug" ? 0.98 : kind === "x_handle" ? 0.97 : 0.95;
+        const reason =
+          kind === "linkedin_slug"
+            ? "Same LinkedIn URL"
+            : kind === "x_handle"
+              ? "Same X handle"
+              : kind === "phone_e164"
+                ? "Same phone number"
+                : "Same email";
+        return { contact, confidence, reason };
+      }
+    }
+  }
+
+  const nameMatches = await nameMatchesFor(userId, null, input);
+  const confident = nameMatches.find((m) => m.confidence >= DUPLICATE_MERGE_CONFIDENCE);
+  return confident ? { contact: confident.contact, confidence: confident.confidence, reason: confident.reason } : null;
+}
+
 /**
  * Resolve an incoming record to a contact, creating one only if nobody already owns its
  * identifiers.
@@ -237,7 +311,34 @@ export async function resolveOrCreateContact(
   // duplicate at all, rather than creating one and merging it away. It also keeps a free
   // user's contact cap from being consumed by a row that was never going to survive.
   const nameMatches = await nameMatchesFor(userId, null, input);
-  const confident = nameMatches.find((m) => m.confidence >= DUPLICATE_MERGE_CONFIDENCE);
+  let confident = nameMatches.find((m) => m.confidence >= DUPLICATE_MERGE_CONFIDENCE);
+
+  // Every match here is a NAME match (identifiers were handled above), so it is exactly the
+  // evidence the decision model is asked about before anything folds. A confident "two
+  // different people" keeps them apart: create below, and queue the pair for a person.
+  let heldForReview: typeof confident;
+  if (confident) {
+    const engines = options.engines ?? (await openEngines(userId));
+    const [veto] = await nameMergeVetoes(
+      engines,
+      [[personCard(input), personCard(confident.contact)]],
+      DUPLICATE_TUNING.resolveBudgetMs
+    );
+    if (veto) {
+      heldForReview = confident;
+      confident = undefined;
+    }
+  }
+  const holdForReview = async (createdId: string) => {
+    if (!heldForReview) return;
+    await recordDuplicateSuggestion(
+      userId,
+      createdId,
+      heldForReview.contact.id,
+      `${heldForReview.reason} — held for review`,
+      Math.min(heldForReview.confidence, DUPLICATE_MERGE_CONFIDENCE - 0.01)
+    );
+  };
 
   if (confident) {
     const contactId = confident.contact.id;
@@ -263,6 +364,7 @@ export async function resolveOrCreateContact(
   // `createContactForUser` can throw PaywallError before inserting anything, in which case
   // there is no row to clean up and nothing has been claimed — the error propagates as-is.
   const created = await createContactForUser(userId, input, options);
+  await holdForReview(created.id);
 
   if (!keys.length) {
     // Nothing identifies this person, so no claim can be raced for. The unresolved name

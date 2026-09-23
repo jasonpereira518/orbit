@@ -52,8 +52,12 @@ import {
 } from "@/lib/contact-writes";
 import { createCompanyResolver, type CompanyResolver } from "@/lib/companies";
 import { recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
+import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import { interactionExternalId } from "@/lib/ingest/external-id";
 import type { InteractionInsert, ReminderInsert } from "@/lib/import-engine";
+import { reportAndContinue } from "@/lib/report-error";
 
 /** One identifiable person on an event. Every field optional — sources differ in what they know. */
 export type NetworkParticipant = {
@@ -163,6 +167,8 @@ export type IngestContext = {
   /** Remaining contact allowance, or null for unlimited. Decremented locally as we create. */
   headroom: number | null;
   touchedContactIds: Set<string>;
+  /** The account's decision engines, opened once per sync (Jev vetoes name-evidence folds). */
+  engines: Engines;
 };
 
 function emptyStats(): IngestStats {
@@ -277,6 +283,7 @@ export async function openIngestContext(
     companyResolve: await createCompanyResolver(userId),
     headroom: options.createsContacts ? await contactHeadroomForUser(userId) : null,
     touchedContactIds: new Set(),
+    engines: await openEngines(userId),
   };
 }
 
@@ -336,16 +343,36 @@ export async function ingestEvents(
   const mergeByContactId = new Map<string, { input: Partial<ContactInput>; pairs: Pair[] }>();
   const resolved: Array<{ pair: Pair; contactId: string }> = [];
 
-  for (const pair of pairs) {
-    const probe = {
-      fullName: pair.participant.name ?? null,
-      email: pair.participant.email ?? null,
-      linkedinUrl: pair.participant.linkedinUrl ?? null,
-      xHandle: pair.participant.handle ?? null,
-      company: pair.participant.company ?? null,
-      title: pair.participant.title ?? null,
-    };
-    const [best] = findDuplicateCandidatesIndexed(ctx.index, probe);
+  // Every fold that rests on a NAME (not an identifier) is checked by the decision model
+  // first, in one batch before the loop; a confident "different people" becomes a new
+  // contact plus a review item instead of a silent fold — which overwrites the existing
+  // contact's fields and cannot be undone. Jev only; without it nothing changes.
+  const probeOf = (pair: Pair) => ({
+    fullName: pair.participant.name ?? null,
+    email: pair.participant.email ?? null,
+    linkedinUrl: pair.participant.linkedinUrl ?? null,
+    xHandle: pair.participant.handle ?? null,
+    company: pair.participant.company ?? null,
+    title: pair.participant.title ?? null,
+  });
+  const bestByPair = pairs.map((pair) => findDuplicateCandidatesIndexed(ctx.index, probeOf(pair))[0]);
+  const nameFolds = bestByPair
+    .map((best, i) => ({ best, i }))
+    .filter((x) => x.best && !x.best.strong && x.best.confidence >= ctx.options.matchConfidence);
+  const vetoed = new Set<number>();
+  if (nameFolds.length) {
+    const vetoes = await nameMergeVetoes(
+      ctx.engines,
+      nameFolds.map(({ best, i }) => [personCard(probeOf(pairs[i])), personCard(best!.contact)] as const),
+      DUPLICATE_TUNING.backgroundBudgetMs
+    );
+    nameFolds.forEach(({ i }, j) => {
+      if (vetoes[j]) vetoed.add(i);
+    });
+  }
+
+  for (const [pairIndex, pair] of pairs.entries()) {
+    const best = bestByPair[pairIndex];
 
     // Fold when the match is confident enough to stand on its own; otherwise create the
     // contact and record the pair for review (below).
@@ -355,7 +382,8 @@ export async function ingestEvents(
     // pair of people in a network who happened to share a name was merged into one contact by
     // the next sync — silently, and with no way back. Both calendar paths now use the default
     // 0.85, which name+company and name+title clear and a bare name does not.
-    const canFold = best ? best.confidence >= ctx.options.matchConfidence : false;
+    const heldForReview = vetoed.has(pairIndex);
+    const canFold = best ? best.confidence >= ctx.options.matchConfidence && !heldForReview : false;
 
     if (best && canFold) {
       const contactId = best.contact.id;
@@ -386,7 +414,14 @@ export async function ingestEvents(
     // simply be discarded, and the likeliest duplicate in the batch would leave no trace.
     const lookalike =
       best && !best.strong && !canFold
-        ? { contactId: best.contact.id, reason: best.reason, confidence: best.confidence }
+        ? heldForReview
+          ? {
+              contactId: best.contact.id,
+              reason: `${best.reason} — held for review`,
+              // Below the line, or the review queue (which lists only pairs under it) hides it.
+              confidence: Math.min(best.confidence, DUPLICATE_MERGE_CONFIDENCE - 0.01),
+            }
+          : { contactId: best.contact.id, reason: best.reason, confidence: best.confidence }
         : undefined;
 
     const key = participantIdentityKey(pair.participant);
@@ -582,6 +617,6 @@ export async function finalizeIngest(ctx: IngestContext): Promise<void> {
   if (ctx.touchedContactIds.size === 0) return;
   const { markCohortDirty } = await import("@/lib/closeness-materialize");
   const { kickEmbeddingBackfill } = await import("@/lib/embedding-backfill");
-  await markCohortDirty(ctx.userId).catch(() => null);
-  await kickEmbeddingBackfill(ctx.userId).catch(() => null);
+  await markCohortDirty(ctx.userId).catch(reportAndContinue({ where: "job.ingest.cohort-dirty", userId: ctx.userId }, null));
+  await kickEmbeddingBackfill(ctx.userId).catch(reportAndContinue({ where: "job.ingest.embedding-kick", userId: ctx.userId }, null));
 }

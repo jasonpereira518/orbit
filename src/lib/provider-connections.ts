@@ -22,7 +22,7 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import type { ProviderSyncCursor } from "@/db/schema";
 
-export type SyncProvider = "google" | "microsoft";
+export type SyncProvider = "google" | "microsoft" | "apple";
 
 /**
  * Table name per provider. A plain string map rather than Drizzle table objects because
@@ -36,9 +36,8 @@ export type SyncProvider = "google" | "microsoft";
 const PROVIDER_TABLES: Record<SyncProvider, string> = {
   google: "gmail_connections",
   microsoft: "outlook_connections",
+  apple: "apple_connections",
 };
-
-export const SYNC_PROVIDERS = Object.keys(PROVIDER_TABLES) as SyncProvider[];
 
 /**
  * How long a claim is honoured before another run may take the row.
@@ -245,6 +244,11 @@ export async function disarmSync(
  * "has actually synced" rather than "a row exists". Coverage is a claim that Orbit could have
  * observed this person; a connection that has never completed a sync has observed nobody, and
  * counting it would hand out evidence nothing earned.
+ *
+ * The Microsoft scope test is a case-insensitive exact-token regex, not a substring: Microsoft
+ * echoes Graph scopes as short names or full URIs in any case (see `microsoft-scopes.ts`), and
+ * a case-sensitive `LIKE` read a real grant as no calendar. Written with POSIX classes rather
+ * than a `\s` escape because a backslash in this template literal would be eaten before it reaches SQL.
  */
 export async function loadCoverageSources(
   userId: string
@@ -265,8 +269,19 @@ export async function loadCoverageSources(
            AND last_synced_at IS NOT NULL
            AND scopes LIKE '%calendar.readonly%'
       ) OR EXISTS (
+        SELECT 1 FROM outlook_connections
+         WHERE user_id = ${userId} AND status = 'active'
+           AND last_synced_at IS NOT NULL
+           AND scopes ~* '(^|[[:space:]])(https://graph[.]microsoft[.]com/)?calendars[.]read([[:space:]]|$)'
+      ) OR EXISTS (
         SELECT 1 FROM calendar_subscriptions
          WHERE user_id = ${userId} AND enabled = 1 AND last_sync_status = 'ok'
+      ) OR EXISTS (
+        -- Apple grants no scopes to check (see apple_connections.scopes's own comment) — the
+        -- bar is the same "has actually synced" one the other two providers hold, just without
+        -- a scope clause, since there is no scope for a CalDAV app-specific password to carry.
+        SELECT 1 FROM apple_connections
+         WHERE user_id = ${userId} AND status = 'active' AND last_synced_at IS NOT NULL
       ) AS calendar_connected
   `);
   const row = rowsOf<{ mail_connected: boolean; calendar_connected: boolean }>(result)[0];
@@ -274,4 +289,19 @@ export async function loadCoverageSources(
     mailConnected: Boolean(row?.mail_connected),
     calendarConnected: Boolean(row?.calendar_connected),
   };
+}
+
+/**
+ * How long the most overdue armed connection has waited past its `next_sync_at`, in ms, or
+ * null when nothing is due. The scheduler's lag metric; the ops sweep alerts on it.
+ */
+export async function oldestDueAgeMs(provider: SyncProvider, now: Date = new Date()): Promise<number | null> {
+  const db = await getDb();
+  const table = sql.raw(PROVIDER_TABLES[provider]);
+  const result = await db.execute(sql`
+    SELECT min(next_sync_at) AS oldest FROM ${table}
+     WHERE status = 'active' AND next_sync_at IS NOT NULL AND next_sync_at <= ${now}
+  `);
+  const oldest = rowsOf<{ oldest: string | Date | null }>(result)[0]?.oldest ?? null;
+  return oldest ? Math.max(0, now.getTime() - new Date(oldest).getTime()) : null;
 }

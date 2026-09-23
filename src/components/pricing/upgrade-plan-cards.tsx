@@ -183,6 +183,16 @@ export function UpgradePlanCards({
             footer={
               hasLifetime ? (
                 <CardNotice>Yours permanently. Nothing further to pay.</CardNotice>
+              ) : hasPro && lifetimePurchasable ? (
+                // One plan at a time: switching ends Pro with no refund, and the dialog in
+                // Settings is where that is spelled out. Checkout refuses a subscriber anywhere else.
+                <CardNotice>
+                  Lifetime replaces Pro — switch from{" "}
+                  <Link href="/settings#settings-plan" className="text-[#e8f3f1] underline underline-offset-4">
+                    Settings
+                  </Link>{" "}
+                  to see what changes first.
+                </CardNotice>
               ) : lifetimePurchasable ? (
                 <LifetimeCheckoutButton priceUsd={lifetimeOffer.priceUsd} />
               ) : (

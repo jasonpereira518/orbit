@@ -54,7 +54,11 @@ export function buildSecurityHeaders(options: {
       clerk,
       "https://*.clerk.accounts.dev",
       "https://challenges.cloudflare.com",
-      "https://va.vercel-scripts.com"
+      "https://va.vercel-scripts.com",
+      // Google Picker for Drive imports
+      "https://apis.google.com",
+      // Google Identity Services: mints the Picker's drive.file-only token in the browser
+      "https://accounts.google.com/gsi/client"
     )}`,
     `connect-src ${join(
       "'self'",
@@ -63,7 +67,14 @@ export function buildSecurityHeaders(options: {
       "https://*.ingest.sentry.io",
       "https://*.ingest.us.sentry.io",
       "https://va.vercel-scripts.com",
-      "https://vitals.vercel-insights.com"
+      "https://vitals.vercel-insights.com",
+      // Google Picker for Drive imports
+      "https://www.googleapis.com",
+      // Google Identity Services (host-wide, as Google advises for connect-src)
+      "https://accounts.google.com",
+      // Live meeting/mic transcription: the browser streams audio straight to Deepgram over a
+      // 30-second token our server mints (src/lib/deepgram-live.ts).
+      "wss://api.deepgram.com"
     )}`,
     // Avatars redirect to Blob, LinkedIn's CDN, unavatar and Clerk; the set is open by design.
     `img-src 'self' data: blob: https:`,
@@ -72,7 +83,17 @@ export function buildSecurityHeaders(options: {
     // Capture records voice and photos in the browser before upload.
     `media-src 'self' blob: data:`,
     `worker-src 'self' blob:`,
-    `frame-src ${join("'self'", clerk, "https://*.clerk.accounts.dev", "https://challenges.cloudflare.com")}`,
+    `frame-src ${join(
+      "'self'",
+      clerk,
+      "https://*.clerk.accounts.dev",
+      "https://challenges.cloudflare.com",
+      // Google Picker for Drive imports
+      "https://docs.google.com",
+      "https://drive.google.com",
+      // Google Identity Services' own frames
+      "https://accounts.google.com"
+    )}`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,
@@ -85,8 +106,10 @@ export function buildSecurityHeaders(options: {
     { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
     { key: "X-Frame-Options", value: "DENY" },
     {
+      // `display-capture` is already `self` by default; stated so that tightening this list
+      // later cannot silently break meeting capture and the feedback screenshot.
       key: "Permissions-Policy",
-      value: "camera=(self), microphone=(self), geolocation=(), payment=()",
+      value: "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=()",
     },
     {
       key: options.enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only",

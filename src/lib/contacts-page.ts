@@ -4,13 +4,17 @@
  * Kept out of `src/actions/contacts.ts` because that file is `"use server"`, and a server
  * actions file may only export async functions — a plain `const` there is a build error.
  * Both the server action and the client list component import from here.
+ *
+ * Deliberately types and constants ONLY — no drizzle, no `@/db`. `ContactsList` (a client
+ * component) imports `CONTACTS_PAGE_SIZE` from this file, so anything with a real runtime
+ * import of `@/db` living here gets pulled into the browser bundle too: Next.js fails the
+ * build with an unhelpful `node:fs` chunk error (`@electric-sql/pglite` reaches for
+ * `node:fs`). The actual query — `listContactsPage`, which takes `userId` explicitly so it
+ * is unit-testable outside a request — lives in `contacts-page-query.ts`, a server-only
+ * sibling nothing client-side imports.
  */
 
-/**
- * How a contacts page is ordered. The cursor's shape follows from this, so a page fetched
- * under one sort cannot be continued under another.
- */
-export type ContactSort = "name" | "closeness" | "recent";
+export type ContactSort = "name" | "closeness" | "recent" | "relevance";
 
 export const CONTACTS_PAGE_SIZE = 50;
 
@@ -24,6 +28,8 @@ export type ContactsPageFilters = {
   letter?: string;
   cursor?: string;
   limit?: number;
+  /** Narrow the list to one import's people — the added and the matched-existing alike. */
+  importId?: string;
 };
 
 export type ContactListRow = {
@@ -38,6 +44,8 @@ export type ContactListRow = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar: boolean;
   relationshipScore: number;
   /** 0–1, matching what the UI renders. Stored as a 0–100 integer so it can be indexed. */
   closeness: number;
@@ -46,6 +54,10 @@ export type ContactListRow = {
   nextFollowUpAt: Date | null;
   lastInteractionAt: Date | null;
   tags: string[];
+  /** Why this contact matched an active search, only when that isn't obvious from the row
+   *  itself (e.g. a past role, not their current company field). Null outside a search, and
+   *  for the common case where the match is already visible in the row's own text. */
+  matchReason: string | null;
 };
 
 export type ContactsPage = {
@@ -60,4 +72,11 @@ export type ContactPickerOption = {
   fullName: string;
   preferredName: string | null;
   company: string | null;
+  /** For the gendered fallback illustration when there is no photo. */
+  firstName: string | null;
+  /**
+   * Already browser-safe — `clientAvatarUrlSql` decides this in Postgres so a picker never
+   * selects `profile_image_url`, which holds up to 120 KB of base64 per contact.
+   */
+  avatarUrl: string | null;
 };
