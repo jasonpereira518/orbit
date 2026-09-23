@@ -36,6 +36,7 @@ const BUCKET_LABELS: Record<string, string> = {
   eventHostFetch: "event lookup",
   eventWhy: "attendee lookup",
   lifetimeConfirm: "checkout check",
+  speechToken: "speech transcription",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -193,6 +194,8 @@ export const RATE_LIMITS = {
    * path, so this is a ceiling on an abandoned checkout costing a lookup per AI click.
    */
   lifetimeConfirm: { limit: 6, windowSec: 60 },
+  /** One token per connection attempt; a stuck reconnect loop must not mint endlessly. */
+  speechToken: { limit: 30, windowSec: 300 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**
