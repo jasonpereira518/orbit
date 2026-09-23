@@ -8,6 +8,7 @@ import {
   buildMeetingCorpus,
   isSelf,
 } from "@/lib/meeting-digest";
+import { requireMeetingsUser } from "@/lib/plan-guards";
 import {
   createMeetingSessionRow,
   discardMeetingSessionRow,
@@ -43,7 +44,7 @@ export async function createMeetingSession(input: {
   recorderId: string;
 }): Promise<{ ok: true; id: string; startedAtIso: string } | Fail> {
   try {
-    const userId = await requireUserId();
+    const userId = await requireMeetingsUser();
     const row = await createMeetingSessionRow(userId, input);
     return { ok: true, id: row.id, startedAtIso: row.startedAt.toISOString() };
   } catch (err) {
@@ -59,7 +60,7 @@ export async function resumeMeetingSession(
   | Fail
 > {
   try {
-    const userId = await requireUserId();
+    const userId = await requireMeetingsUser();
     const res = await resumeMeetingSessionRow(userId, id, recorderId);
     if (!res.ok) return res;
     return {
@@ -79,7 +80,7 @@ export async function endMeetingSession(
   durationMs: number
 ): Promise<{ ok: true } | Fail> {
   try {
-    const userId = await requireUserId();
+    const userId = await requireMeetingsUser();
     const row = await endMeetingSessionRow(userId, id, { durationMs });
     if (!row) return { ok: false, error: "That meeting no longer exists" };
     return { ok: true };
@@ -168,7 +169,7 @@ export async function analyzeMeetingSession(
 ): Promise<{ ok: true; analysis: MeetingAnalysis } | Fail> {
   let userId: string;
   try {
-    userId = await requireUserId();
+    userId = await requireMeetingsUser();
     await consumeBucket("capture", userId, RATE_LIMITS.capture);
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t analyze the meeting", "meetings.analyze-meeting-session") };

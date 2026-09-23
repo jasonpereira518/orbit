@@ -5,7 +5,7 @@ import { chunkFailureResponse } from "@/lib/meeting-chunk-errors";
 import { reportedFailure } from "@/lib/report-error";
 import { isPaywallError } from "@/lib/entitlements";
 import { ingestMeetingChunk } from "@/lib/meeting-sessions";
-import { requireUserForSurface } from "@/lib/plan-guards";
+import { requireMeetingsUser } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +37,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function POST(request: Request, ctx: Params) {
   let userId: string;
   try {
-    userId = await requireUserForSurface("page.capture");
+    userId = await requireMeetingsUser();
   } catch (err) {
     const status = isPaywallError(err) ? 403 : 401;
     return NextResponse.json({ error: friendlyError(err, "Sign in to record a meeting") }, { status });
