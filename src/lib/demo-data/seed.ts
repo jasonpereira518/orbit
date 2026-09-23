@@ -32,10 +32,14 @@ import {
 } from "@/db/schema";
 import { actionItemHash } from "@/lib/action-items";
 import { markCohortDirty } from "@/lib/closeness-materialize";
-import { createCompanyResolver } from "@/lib/companies";
+import { createCompanyResolver, resolveCompany } from "@/lib/companies";
 import { normalizeCompanyKey } from "@/lib/company-name";
 import { buildRecentDiscussions } from "@/lib/contact-brief";
+import { claimIdentities } from "@/lib/contact-identity";
 import { identityKeysFor } from "@/lib/duplicates";
+import { saveLead } from "@/lib/leads/store";
+import { joinTeamWithDomain } from "@/lib/teams";
+import { ensureUserSettings } from "@/lib/user-settings";
 import {
   normalizeEmail,
   normalizeFirm,
@@ -44,6 +48,12 @@ import {
 } from "@/lib/recruiters";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { DEMO_GOALS, DEMO_PEOPLE, type DemoPerson } from "@/lib/demo-data/network";
+import {
+  DEMO_LEADS,
+  DEMO_TEAM_DOMAIN,
+  DEMO_TEAMMATE_CONTACTS,
+  DEMO_TEAMMATES,
+} from "@/lib/demo-data/team";
 
 /** Written to every seeded row that has a `source`, so demo rows can always be told apart. */
 export const DEMO_SOURCE = "demo-seed";
@@ -77,6 +87,7 @@ export async function seedDemoWorkspace(userId: string): Promise<DemoSeedSummary
     ["chat", () => seedChat(userId, contactIdByName, ago, summary)],
     ["imports", () => seedImports(userId, ago, summary)],
     ["goals", () => seedGoals(userId, summary)],
+    ["team", () => seedTeam(userId, summary)],
   ];
   for (const [name, run] of surfaces) {
     try {
@@ -963,6 +974,63 @@ async function seedGoals(userId: string, summary: DemoSeedSummary) {
   const db = await getDb();
   await db.insert(userGoals).values(DEMO_GOALS.map((text) => ({ userId, text })));
   summary.goals = DEMO_GOALS.length;
+}
+
+/* ------------------------------------------------------------------------------ team */
+
+/**
+ * The demo team on `orbit.local`: two colleagues who share their networks, the people they
+ * know (with explicit closeness — nobody ever reads their accounts, so nothing would score
+ * them), and four leads for this account that land hot, warm, cool and cold. Colleagues'
+ * contacts are created once; a later local account only joins.
+ */
+async function seedTeam(userId: string, summary: DemoSeedSummary): Promise<void> {
+  const db = await getDb();
+  for (const mate of DEMO_TEAMMATES) {
+    await ensureUserSettings(mate.userId);
+    await db
+      .update(userSettings)
+      .set({ firstName: mate.firstName, lastName: mate.lastName, email: mate.email })
+      .where(eq(userSettings.userId, mate.userId));
+    await joinTeamWithDomain(mate.userId, DEMO_TEAM_DOMAIN, { shareNetwork: true });
+
+    const existing = await db.query.contacts.findFirst({
+      where: eq(contacts.userId, mate.userId),
+      columns: { id: true },
+    });
+    if (existing) continue;
+    for (const person of DEMO_TEAMMATE_CONTACTS.filter((c) => c.teammate === mate.userId)) {
+      const company = await resolveCompany(mate.userId, person.company);
+      const [row] = await db
+        .insert(contacts)
+        .values({
+          userId: mate.userId,
+          fullName: person.fullName,
+          email: person.email,
+          title: person.title,
+          company: company?.name ?? person.company,
+          companyId: company?.id ?? null,
+          closenessTier: person.tier,
+          closeness: person.closeness,
+          source: DEMO_SOURCE,
+        })
+        .returning();
+      await claimIdentities(mate.userId, row.id, identityKeysFor({ email: person.email }), DEMO_SOURCE);
+    }
+  }
+
+  await joinTeamWithDomain(userId, DEMO_TEAM_DOMAIN, { shareNetwork: true });
+  for (const lead of DEMO_LEADS) {
+    await saveLead(userId, {
+      source: "manual",
+      displayName: lead.displayName,
+      email: lead.email,
+      companyName: lead.companyName,
+      title: lead.title,
+    });
+  }
+  summary.teamMembers = DEMO_TEAMMATES.length + 1;
+  summary.leads = DEMO_LEADS.length;
 }
 
 function sha256(text: string) {
