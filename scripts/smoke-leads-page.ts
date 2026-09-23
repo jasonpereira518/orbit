@@ -143,6 +143,12 @@ function main() {
   {
     const button = "src/components/contacts/team-share-button.tsx";
     check("the pill is a client component", existsSync(button) && /^\s*"use client";/.test(readFileSync(button, "utf8")));
+    const buttonBytes = readFileSync(button);
+    check(
+      "team-share-button.tsx has no mis-encoded characters",
+      !/\xc3\xa2\xc2[\x80-\xbf]|\xc2[\x80-\x9f]/.test(buttonBytes.toString("latin1"))
+    );
+    check("team-share-button.tsx uses curly apostrophes", !/[A-Za-z]'[A-Za-z]/.test(code(button)));
     check("the stat pills render it only when given a team", /team\s*&&\s*\(?\s*<TeamShareButton/.test(code("src/components/contacts/contact-stat-pills.tsx")));
     const contactPage = code("src/app/(clerk)/(app)/(main)/contacts/[id]/page.tsx");
     // A control for a closed feature is worse than none: the pill follows Leads' release.

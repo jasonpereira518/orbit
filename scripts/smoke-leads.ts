@@ -78,6 +78,46 @@ async function main() {
     const sam = await saveLead(V, { source: "apollo", apolloId: "ap-1", displayName: "Sam Patel", companyName: "Brightpath" });
     const samAgain = await saveLead(V, { source: "apollo", apolloId: "ap-1", displayName: "Sam Patel" });
     check("the same Apollo person is the same lead", sam.created && !samAgain.created && samAgain.lead.id === sam.lead.id);
+    // These two checks run against OTHER, not V: V's lead count is asserted exactly further
+    // down (the pipeline-ranking section), and these rows would otherwise throw it off.
+    const withPhone = await saveLead(OTHER, {
+      source: "manual",
+      displayName: "Phone Pair",
+      phone: "+1 (415) 555-0199",
+    });
+    const samePhone = await saveLead(OTHER, {
+      source: "manual",
+      displayName: "Phone Pair Again",
+      phone: "415.555.0199",
+    });
+    check(
+      "the same phone, spelled two ways, is the same lead",
+      withPhone.created && !samePhone.created && samePhone.lead.id === withPhone.lead.id
+    );
+    // Identity columns fill as a pair, gated on the raw column: a raw value the first save
+    // wrote must never end up next to a normalized value computed from a different save's
+    // different identifier.
+    const pair = await saveLead(OTHER, {
+      source: "manual",
+      displayName: "Pair Test",
+      email: "sales@pair.test", // a role mailbox: normalizeLeadInput leaves emailNormalized null
+      linkedinUrl: "https://www.linkedin.com/in/pair-l",
+    });
+    const pairAgain = await saveLead(OTHER, {
+      source: "manual",
+      displayName: "Pair Test Again",
+      email: "jane@pair.test",
+      linkedinUrl: "https://www.linkedin.com/in/pair-l",
+    });
+    check(
+      "the shared LinkedIn profile matched the pair-test lead",
+      !pairAgain.created && pairAgain.lead.id === pair.lead.id
+    );
+    check(
+      "the email pair was not split: the raw value stayed and its normalized companion stayed null",
+      pairAgain.lead.email === "sales@pair.test" && pairAgain.lead.emailNormalized === null,
+      JSON.stringify({ email: pairAgain.lead.email, emailNormalized: pairAgain.lead.emailNormalized })
+    );
     let nameless: unknown = null;
     try {
       await saveLead(V, { source: "manual", displayName: "   " });

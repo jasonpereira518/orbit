@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { LeadStatus } from "@/db/schema";
-import { searchPeople, userHasApolloKey } from "@/lib/apollo";
+import { searchPeople } from "@/lib/apollo";
 import { isPaywallError } from "@/lib/entitlements";
 import { asActionResult, UserFacingError, type ActionResult } from "@/lib/errors";
 import {
@@ -37,7 +37,6 @@ import { requireLeadsUser } from "@/lib/plan-guards";
 type SavedLead = { id: string; created: boolean };
 type LeadStatusResult = { status: LeadStatus };
 type ConvertedLead = { contactId: string };
-type ApolloStatus = { hasApollo: boolean };
 
 const NOT_YOURS = "That lead isn’t yours to change";
 
@@ -62,6 +61,7 @@ export async function setLeadStatusAction(
   const userId = await requireLeadsUser();
   return asActionResult(async () => {
     if (!isUuid(leadId) || !isLeadStatus(status)) throw new UserFacingError(NOT_YOURS);
+    if (status === "converted") throw new UserFacingError("Use Add to contacts to convert a lead");
     if (!(await setLeadStatus(userId, leadId, status))) throw new UserFacingError(NOT_YOURS);
     revalidatePath("/leads");
     return { status };
@@ -83,11 +83,6 @@ export async function convertLeadAction(leadId: string): Promise<ActionResult<Co
       throw err;
     }
   });
-}
-
-export async function getApolloStatusAction(): Promise<ApolloStatus> {
-  const userId = await requireLeadsUser();
-  return { hasApollo: await userHasApolloKey(userId) };
 }
 
 export async function searchApolloLeadsAction(

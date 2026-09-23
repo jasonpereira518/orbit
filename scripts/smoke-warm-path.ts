@@ -184,12 +184,17 @@ function main() {
   }
 
   console.log("\nthe actions in front of it");
+  const EXPECTED_EXPORTS: Record<string, number> = { "src/actions/teams.ts": 7, "src/actions/leads.ts": 6 };
   for (const file of ["src/actions/teams.ts", "src/actions/leads.ts"]) {
     const name = file.split("/").pop();
     const source = code(file);
     check(`${name} is a server module`, /^\s*"use server";/m.test(readFileSync(file, "utf8")));
     const exports = [...source.matchAll(/^export\s+(async\s+)?function\s+(\w+)/gm)];
-    check(`${name}: every export is an async function`, exports.length >= 7 && exports.every((m) => !!m[1]), String(exports.length));
+    check(
+      `${name}: every export is an async function`,
+      exports.length === EXPECTED_EXPORTS[file] && exports.every((m) => !!m[1]),
+      String(exports.length)
+    );
     check(`${name}: no type or const exports`, !/^export\s+(type|const|let|interface)\b/m.test(source));
     const bodies = source.split(/^export\s+async\s+function\s+/m).slice(1);
     check(

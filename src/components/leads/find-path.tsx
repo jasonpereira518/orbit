@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type FormEvent } from "react";
+import { useRef, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { saveLeadAction } from "@/actions/leads";
@@ -47,15 +47,18 @@ export function FindPath() {
   const [company, setCompany] = useState("");
   const [searching, startSearch] = useTransition();
   const [saving, startSave] = useTransition();
+  const latest = useRef(0);
 
   function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = raw.trim();
     if (!value) return;
     setFound(null);
+    const ticket = ++latest.current;
     startSearch(async () => {
       try {
         const { parsed, lookup } = await lookupWarmLead(value);
+        if (ticket !== latest.current) return;
         const next = { raw: value, parsed, lookup };
         setFound(next);
         setName(suggestedName(next));
@@ -107,6 +110,7 @@ export function FindPath() {
           onChange={(event) => {
             setRaw(event.target.value);
             setFound(null);
+            latest.current += 1;
           }}
           placeholder="jane@northwind.com"
           aria-label="Who do you want to reach?"
@@ -119,45 +123,49 @@ export function FindPath() {
         </Button>
       </form>
 
-      {found && found.parsed.kind === "empty" && (
-        <p className="text-sm text-muted-foreground" aria-live="polite">
-          That doesn’t look like an email, a LinkedIn profile, a phone number or “Name, Company”.
-        </p>
-      )}
+      {/* Always rendered, so the live region exists before its content ever changes — a
+          region mounted only once there is something to announce is not reliably read. */}
+      <div aria-live="polite">
+        {found && found.parsed.kind === "empty" && (
+          <p className="text-sm text-muted-foreground">
+            That doesn’t look like an email, a LinkedIn profile, a phone number or “Name, Company”.
+          </p>
+        )}
 
-      {found && found.parsed.kind !== "empty" && (
-        <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4" aria-live="polite">
-          {found.lookup.status === "ok" ? (
-            <div className="space-y-3">
-              <WarmthChip warmth={found.lookup.path.warmth} />
-              <PathSummary path={found.lookup.path} companyName={company || null} />
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">{LOOKUP_NOTE[found.lookup.status]}</p>
-          )}
-          {found.parsed.kind === "name" && (
-            <p className="text-xs text-muted-foreground">
-              A name alone can’t be matched — add their email or LinkedIn profile to find a path.
-            </p>
-          )}
-          <form
-            onSubmit={save}
-            className="grid gap-3 border-t border-border/60 pt-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
-          >
-            <div className="space-y-1.5">
-              <Label htmlFor="lead-name">Name</Label>
-              <Input id="lead-name" value={name} onChange={(event) => setName(event.target.value)} required maxLength={200} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="lead-company">Company</Label>
-              <Input id="lead-company" value={company} onChange={(event) => setCompany(event.target.value)} maxLength={200} />
-            </div>
-            <Button type="submit" variant="outline" disabled={saving || searching || !name.trim()}>
-              {saving ? "Saving…" : "Save as a lead"}
-            </Button>
-          </form>
-        </div>
-      )}
+        {found && found.parsed.kind !== "empty" && (
+          <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+            {found.lookup.status === "ok" ? (
+              <div className="space-y-3">
+                <WarmthChip warmth={found.lookup.path.warmth} />
+                <PathSummary path={found.lookup.path} companyName={company || null} />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">{LOOKUP_NOTE[found.lookup.status]}</p>
+            )}
+            {found.parsed.kind === "name" && (
+              <p className="text-xs text-muted-foreground">
+                A name alone can’t be matched — add their email or LinkedIn profile to find a path.
+              </p>
+            )}
+            <form
+              onSubmit={save}
+              className="grid gap-3 border-t border-border/60 pt-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+            >
+              <div className="space-y-1.5">
+                <Label htmlFor="lead-name">Name</Label>
+                <Input id="lead-name" value={name} onChange={(event) => setName(event.target.value)} required maxLength={200} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="lead-company">Company</Label>
+                <Input id="lead-company" value={company} onChange={(event) => setCompany(event.target.value)} maxLength={200} />
+              </div>
+              <Button type="submit" variant="outline" disabled={saving || searching || !name.trim()}>
+                {saving ? "Saving…" : "Save as a lead"}
+              </Button>
+            </form>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

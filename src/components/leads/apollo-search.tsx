@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type FormEvent } from "react";
+import { useRef, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, Search } from "lucide-react";
 import { saveApolloLeadAction, searchApolloLeadsAction } from "@/actions/leads";
@@ -46,11 +46,14 @@ export function ApolloSearch() {
   const [saved, setSaved] = useState<ReadonlySet<string>>(new Set());
   const [searching, startSearch] = useTransition();
   const [saving, startSave] = useTransition();
+  const latest = useRef(0);
 
   function run(page: number) {
+    const ticket = ++latest.current;
     startSearch(async () => {
       try {
         const res = await searchApolloLeadsAction(input, page);
+        if (ticket !== latest.current) return;
         if (!res.ok) {
           toast.error(res.error);
           return;
@@ -127,6 +130,7 @@ export function ApolloSearch() {
                       const value = event.target.value;
                       setInput((prev) => ({ ...prev, [field.key]: value }));
                       setResult(null);
+                      latest.current += 1;
                     }}
                   />
                 </div>
@@ -138,48 +142,53 @@ export function ApolloSearch() {
             </Button>
           </form>
 
-          {result && (
-            <div className="space-y-3" aria-live="polite">
-              {result.source === "demo" && (
-                <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-                  Demo results — add your Apollo key in Settings to search real people. Warm paths
-                  still work on them.
-                </p>
-              )}
-              {result.team !== "ok" && <p className="text-xs text-muted-foreground">{TEAM_NOTE[result.team]}</p>}
-              {result.rows.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Nobody matched — try fewer filters.</p>
-              ) : (
-                <ul className="divide-y divide-border/60 rounded-xl border border-border/60">
-                  {result.rows.map((row) => {
-                    const done = saved.has(row.prospect.externalId);
-                    return (
-                      <li key={row.prospect.externalId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium text-ink">{row.prospect.fullName}</p>
-                          <p className="truncate text-sm text-muted-foreground">
-                            {[row.prospect.title, row.prospect.company, row.prospect.location].filter(Boolean).join(" · ")}
-                          </p>
-                          {row.path && <PathSummary path={row.path} companyName={row.prospect.company} compact />}
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          {row.path ? <WarmthChip warmth={row.path.warmth} /> : null}
-                          <Button type="button" size="sm" variant="outline" disabled={saving || done} onClick={() => save(row)}>
-                            {done ? "Saved" : "Save"}
-                          </Button>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-              {hasMore && (
-                <Button type="button" variant="ghost" size="sm" disabled={searching} onClick={() => run(result.page + 1)}>
-                  {searching ? "Loading…" : "More results"}
-                </Button>
-              )}
-            </div>
-          )}
+          {/* Always rendered while the panel is open, so the live region exists before its
+              content ever changes — a region mounted only once there is a result is not
+              reliably read. */}
+          <div aria-live="polite">
+            {result && (
+              <div className="space-y-3">
+                {result.source === "demo" && (
+                  <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+                    Demo results — add your Apollo key in Settings to search real people. Warm paths
+                    still work on them.
+                  </p>
+                )}
+                {result.team !== "ok" && <p className="text-xs text-muted-foreground">{TEAM_NOTE[result.team]}</p>}
+                {result.rows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nobody matched — try fewer filters.</p>
+                ) : (
+                  <ul className="divide-y divide-border/60 rounded-xl border border-border/60">
+                    {result.rows.map((row) => {
+                      const done = saved.has(row.prospect.externalId);
+                      return (
+                        <li key={row.prospect.externalId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium text-ink">{row.prospect.fullName}</p>
+                            <p className="truncate text-sm text-muted-foreground">
+                              {[row.prospect.title, row.prospect.company, row.prospect.location].filter(Boolean).join(" · ")}
+                            </p>
+                            {row.path && <PathSummary path={row.path} companyName={row.prospect.company} compact />}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {row.path ? <WarmthChip warmth={row.path.warmth} /> : null}
+                            <Button type="button" size="sm" variant="outline" disabled={saving || done} onClick={() => save(row)}>
+                              {done ? "Saved" : "Save"}
+                            </Button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {hasMore && (
+                  <Button type="button" variant="ghost" size="sm" disabled={searching} onClick={() => run(result.page + 1)}>
+                    {searching ? "Loading…" : "More results"}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </section>

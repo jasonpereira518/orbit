@@ -41,8 +41,12 @@ export function LeadsPipeline({ pipeline }: { pipeline: Pipeline }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const activeTab = STATUS_TABS.find((t) => t.key === tab) ?? STATUS_TABS[0];
+  // The warmth filter buttons only render when the team is "ok" (below); once the team is
+  // gone, a lingering non-"all" warmth choice must not keep hiding every row with no way in
+  // the UI to clear it.
+  const effectiveWarmth = pipeline.team === "ok" ? warmth : "all";
   const visible = pipeline.rows.filter(
-    (row) => activeTab.matches(row.lead.status) && (warmth === "all" || warmthOf(row) === warmth)
+    (row) => activeTab.matches(row.lead.status) && (effectiveWarmth === "all" || warmthOf(row) === effectiveWarmth)
   );
   const selected = selectedId ? (pipeline.rows.find((row) => row.lead.id === selectedId) ?? null) : null;
 
@@ -117,14 +121,15 @@ export function LeadsPipeline({ pipeline }: { pipeline: Pipeline }) {
                 onClick={() => setSelectedId(row.lead.id)}
                 className="flex w-full flex-wrap items-center justify-between gap-3 px-5 py-3.5 text-left transition-colors duration-fast hover:bg-muted/40"
               >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-ink">{row.lead.displayName}</p>
-                  <p className="truncate text-sm text-muted-foreground">
+                {/* A button's content model is phrasing content only — span, not div/p. */}
+                <span className="block min-w-0 flex-1">
+                  <span className="block truncate font-medium text-ink">{row.lead.displayName}</span>
+                  <span className="block truncate text-sm text-muted-foreground">
                     {[row.lead.title, row.lead.companyName].filter(Boolean).join(" · ") || "No title or company yet"}
-                  </p>
+                  </span>
                   {row.path && <PathSummary path={row.path} companyName={row.lead.companyName} compact />}
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
                   {row.lead.status !== "open" && (
                     <Badge variant="outline" className="text-[10px]">
                       {LEAD_STATUS_LABEL[row.lead.status]}
@@ -136,7 +141,7 @@ export function LeadsPipeline({ pipeline }: { pipeline: Pipeline }) {
                     </Badge>
                   )}
                   {row.path ? <WarmthChip warmth={row.path.warmth} /> : null}
-                </div>
+                </span>
               </button>
             </li>
           ))}

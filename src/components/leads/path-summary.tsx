@@ -34,7 +34,9 @@ export function PathSummary({
       ? `people at ${company} via ${path.account.map((a) => firstName(a.teammate.name)).join(", ")}`
       : "";
     const line = [direct, viaCompany].filter(Boolean).join(" · ");
-    return <p className="truncate text-xs text-muted-foreground">{line || "Nobody on your team yet"}</p>;
+    // This branch is also rendered inside a <button> (leads-pipeline.tsx's row): a button's
+    // content model is phrasing content only, so this stays a span, never a p.
+    return <span className="block truncate text-xs text-muted-foreground">{line || "Nobody on your team yet"}</span>;
   }
 
   if (!path.direct.length && !path.account.length) {

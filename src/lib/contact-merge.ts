@@ -80,6 +80,9 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   // `contact_ids` array it also carries is rewritten separately (step 4c-2), because an
   // array rewrite is not reversible from a list of ids alone.
   { table: "memory_chunks", column: "contact_id", scoped: true },
+  // leads.contact_id is ON DELETE SET NULL: without this line a merge would silently unlink a
+  // converted lead from the contact it became. No unique index on leads includes contact_id.
+  { table: "leads", column: "contact_id", scoped: true },
 ];
 
 /** Fold a statement's moved ids into the archive row, additively. */

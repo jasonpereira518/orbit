@@ -17,18 +17,27 @@ export type SaveLeadInput = LeadInput & {
   apolloId?: string | null;
 };
 
-/** The columns a second save may fill when the first left them blank. */
-const FILLABLE = [
-  "email",
-  "emailNormalized",
-  "linkedinUrl",
-  "linkedinSlug",
-  "phone",
-  "phoneE164",
-  "companyName",
-  "companyNormalized",
-  "title",
-] as const satisfies readonly (keyof NormalizedLead & keyof Lead)[];
+/**
+ * Fill one identity pair in `fill` from `normalized`, gated on the RAW column alone, and only
+ * ever filling the pair together. Filling either half alone — the original single-column
+ * loop's bug — could leave a raw value the first save wrote sitting beside a normalized value
+ * computed from a second save's different identifier, splitting a pair that must describe the
+ * same address. A standalone generic (rather than looping over an array of key pairs) so each
+ * call below infers its own literal key types instead of the wide `keyof NormalizedLead` union
+ * a shared loop variable would carry, which is not narrow enough for the indexed assignment.
+ */
+function fillPair<Raw extends keyof NormalizedLead & keyof Lead, Derived extends keyof NormalizedLead & keyof Lead>(
+  fill: Partial<NormalizedLead>,
+  existing: Lead,
+  normalized: NormalizedLead,
+  raw: Raw,
+  derived: Derived
+): void {
+  if (existing[raw] == null && normalized[raw] != null) {
+    fill[raw] = normalized[raw];
+    fill[derived] = normalized[derived];
+  }
+}
 
 async function findByApolloId(userId: string, apolloId: string): Promise<Lead | null> {
   const db = await getDb();
@@ -44,6 +53,7 @@ async function findByIdentity(userId: string, lead: NormalizedLead): Promise<Lea
   const matches: SQL[] = [];
   if (lead.emailNormalized) matches.push(eq(leads.emailNormalized, lead.emailNormalized));
   if (lead.linkedinSlug) matches.push(eq(leads.linkedinSlug, lead.linkedinSlug));
+  if (lead.phoneE164) matches.push(eq(leads.phoneE164, lead.phoneE164));
   if (!matches.length) return null;
   const db = await getDb();
   const [row] = await db
@@ -56,9 +66,9 @@ async function findByIdentity(userId: string, lead: NormalizedLead): Promise<Lea
 }
 
 /**
- * Save a target. The same person saved twice — by email, LinkedIn or Apollo id — is one lead:
- * the existing row keeps its values and only fills its blanks, and a dismissed lead saved
- * again is reopened.
+ * Save a target. The same person saved twice — by email, LinkedIn, phone or Apollo id — is
+ * one lead: the existing row keeps its values and only fills its blanks, and a dismissed lead
+ * saved again is reopened.
  */
 export async function saveLead(
   userId: string,
@@ -74,9 +84,11 @@ export async function saveLead(
     (await findByIdentity(userId, normalized));
   if (existing) {
     const fill: Partial<NormalizedLead> = {};
-    for (const key of FILLABLE) {
-      if (existing[key] == null && normalized[key] != null) fill[key] = normalized[key];
-    }
+    fillPair(fill, existing, normalized, "email", "emailNormalized");
+    fillPair(fill, existing, normalized, "linkedinUrl", "linkedinSlug");
+    fillPair(fill, existing, normalized, "phone", "phoneE164");
+    fillPair(fill, existing, normalized, "companyName", "companyNormalized");
+    if (existing.title == null && normalized.title != null) fill.title = normalized.title;
     const [updated] = await db
       .update(leads)
       .set({

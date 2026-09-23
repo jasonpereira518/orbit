@@ -48,7 +48,7 @@ export function TeamShareButton({ contactId, shared }: { contactId: string; shar
       aria-label={current ? "Hide this person from your team" : "Let your team see that you know this person"}
       title={
         current
-          ? "Teammates who look this person up can see that you know them, and how closely — click to hide"
+          ? "While you share your network, teammates who look this person up can see that you know them, and how closely — click to hide"
           : "Hidden from your team — click to let teammates see that you know them"
       }
       onClick={toggle}
