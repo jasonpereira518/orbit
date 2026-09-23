@@ -20,6 +20,9 @@ import {
 import { internalFetch } from "@/lib/internal-auth";
 import { createCompanyResolver } from "@/lib/companies";
 import { recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
+import { NO_ENGINES, openEngines, type Engines } from "@/lib/decisions/engine";
+import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
@@ -28,6 +31,7 @@ import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
   type DuplicateIndex,
+  type DuplicateMatch,
   type DuplicateSubject,
 } from "@/lib/duplicates";
 import { getAdapter } from "@/lib/import-adapters";
@@ -380,6 +384,7 @@ export async function runImportJob(importId: string): Promise<void> {
     let existingContacts: DuplicateSubject[];
     let duplicateIndex: DuplicateIndex;
     let companyResolve: Awaited<ReturnType<typeof createCompanyResolver>>;
+    let engines: Engines = NO_ENGINES;
     try {
       existingContacts = await db.query.contacts.findMany({
         where: eq(contacts.userId, userId),
@@ -395,6 +400,8 @@ export async function runImportJob(importId: string): Promise<void> {
       });
       duplicateIndex = buildDuplicateIndex(existingContacts);
       companyResolve = await createCompanyResolver(userId);
+      // Opened once per invocation, like the index: Jev checks name-evidence folds below.
+      engines = await openEngines(userId);
     } catch (err) {
       await failImport(
         importId,
@@ -523,6 +530,33 @@ export async function runImportJob(importId: string): Promise<void> {
         const toUpdate: { row: PendingRow; contactId: string; input: Partial<ContactInput> }[] = [];
         const toSkip: PendingRow[] = [];
 
+        // Folds that rest on a NAME are checked by the decision model first, one batch per
+        // chunk: a fold overwrites the existing contact's fields and cannot be undone, so a
+        // confident "different people" becomes a new contact plus a review item instead.
+        // Jev only (`engines` has no LLM); without it this is a no-op.
+        const vetoedRows = new Set<string>();
+        if (engines.jev) {
+          const nameFolds: Array<{ rowId: string; probe: DuplicateProbe; best: DuplicateMatch }> = [];
+          for (const row of pendingRows) {
+            const probe = adapter.identity(row.payload as ImportJobRowPayload);
+            if (!probe) continue;
+            const best = findDuplicateCandidatesIndexed(duplicateIndex, probe)[0];
+            if (best && !best.strong && best.confidence >= matchConfidence) {
+              nameFolds.push({ rowId: row.id, probe, best });
+            }
+          }
+          if (nameFolds.length) {
+            const vetoes = await nameMergeVetoes(
+              engines,
+              nameFolds.map((f) => [personCard(f.probe), personCard(f.best.contact)] as const),
+              DUPLICATE_TUNING.backgroundBudgetMs
+            );
+            nameFolds.forEach((f, j) => {
+              if (vetoes[j]) vetoedRows.add(f.rowId);
+            });
+          }
+        }
+
         for (const row of pendingRows) {
           // The adapter was chosen from this job's own `importType` and the rows belong to
           // that job, so the payload union is narrowed once here rather than at each of the
@@ -540,7 +574,8 @@ export async function runImportJob(importId: string): Promise<void> {
           // match clears the confidence floor, otherwise create and queue the pair for
           // review rather than discarding it.
           const best = dups[0];
-          const canFold = best ? best.confidence >= matchConfidence : false;
+          const heldForReview = vetoedRows.has(row.id);
+          const canFold = best ? best.confidence >= matchConfidence && !heldForReview : false;
 
           if (best && canFold) {
             toUpdate.push({
@@ -557,8 +592,12 @@ export async function runImportJob(importId: string): Promise<void> {
               lookalike: best && !best.strong && !canFold
                 ? {
                     contactId: best.contact.id,
-                    reason: best.reason,
-                    confidence: best.confidence,
+                    reason: heldForReview ? `${best.reason} — held for review` : best.reason,
+                    // A vetoed fold scored at or above the line; the review queue lists only
+                    // pairs below it, so it is recorded just under.
+                    confidence: heldForReview
+                      ? Math.min(best.confidence, DUPLICATE_MERGE_CONFIDENCE - 0.01)
+                      : best.confidence,
                   }
                 : undefined,
             });

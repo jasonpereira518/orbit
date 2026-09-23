@@ -50,6 +50,21 @@ export type Entitlements = {
    * table exists to collect.
    */
   canUseApi: boolean;
+  /**
+   * The MCP server — Orbit inside Claude, ChatGPT or any other assistant that speaks the
+   * protocol. True on every plan, including free, which is the one deliberate exception to
+   * the paid-connector line above.
+   *
+   * The reasoning is that this is the funnel, not an add-on. Someone who asks their assistant
+   * "who do I know at Stripe?" and gets a real answer has understood the product in one
+   * sentence, which no landing page has managed. The plan limits that cost money still apply
+   * underneath: the free contact cap bounds `create_contact`, and sending is not a tool at
+   * all — an agent can only queue a message for the user to approve.
+   *
+   * Kept as its own flag rather than reusing `canUseApi` so that the REST API and webhooks,
+   * which really are paid, do not silently become free with it.
+   */
+  canUseMcp: boolean;
 };
 
 /** Feature keys that `requireEntitlement` can gate on. */
@@ -145,6 +160,7 @@ export function entitlementsForPlan(
     canUseSync: paid,
     canUseExtension: paid,
     canUseApi: paid,
+    canUseMcp: true,
   };
 }
 
@@ -190,7 +206,7 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
   hostedEnrichment:
     "Contact enrichment on Orbit's credits requires Orbit Pro. On any other plan, add your own Apollo key in Settings.",
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
-  api: "The Orbit API, webhooks and MCP server are available on Orbit Pro and Orbit Lifetime.",
+  api: "The Orbit API and webhooks are available on Orbit Pro and Orbit Lifetime. Claude and ChatGPT connect on any plan, with no key.",
   sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
 };

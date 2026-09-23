@@ -15,13 +15,21 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
-import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
+import { ArrowUp, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events";
 import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
+import {
+  createStreamSmoother,
+  prefersReducedMotionNow,
+  type StreamSmoother,
+} from "@/lib/stream-smoother";
+import type { ChatStep } from "@/lib/chat-stream-protocol";
+import { ChatActivity } from "@/components/chat/chat-activity";
+import { OrbitMark } from "@/components/chat/orbit-mark";
 import { SuggestionPills } from "@/components/chat/suggestion-cards";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
@@ -37,6 +45,7 @@ import {
 } from "@/lib/keyword-search";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 /**
  * Split out of the shell's chunk.
@@ -78,6 +87,8 @@ type AssistantMessage = {
   retrieved: ChatResult["retrieved"];
   /** True while the answer is still arriving from `/api/chat`. */
   streaming?: boolean;
+  /** The stages the server reported, so this bar narrates the same work `/chat` does. */
+  steps?: ChatStep[];
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -145,6 +156,7 @@ export function FloatingAskBar() {
   // itself is the progress indicator.
   const awaitingFirstToken =
     chatPending && !messages.some((m) => m.role === "assistant" && m.streaming);
+  const reduceMotion = usePrefersReducedMotion();
 
   const [profileContact, setProfileContact] = useState<AskBarContact | null>(
     null
@@ -211,6 +223,9 @@ export function FloatingAskBar() {
   // Read through a ref so the listener below is registered once, not re-bound every time
   // `sendQuestion`'s identity changes with a pending reply.
   const sendQuestionRef = useRef<(q: string) => void>(() => {});
+  // The reveal buffer for the answer in flight, so unmounting stops it drawing.
+  const smootherRef = useRef<StreamSmoother | null>(null);
+  useEffect(() => () => smootherRef.current?.cancel(), []);
 
   useEffect(() => {
     function onOpenRequest(e: Event) {
@@ -390,6 +405,16 @@ export function FloatingAskBar() {
           ]);
         };
 
+        // Same frame-at-a-time reveal as the chat page; every path that ends the answer flushes it.
+        const smoother = createStreamSmoother(
+          (chunk) => {
+            ensurePlaceholder();
+            patch((m) => ({ ...m, answer: m.answer + chunk }));
+          },
+          { reduced: prefersReducedMotionNow() }
+        );
+        smootherRef.current = smoother;
+
         await streamChat(
           {
             question: q,
@@ -403,26 +428,39 @@ export function FloatingAskBar() {
               : undefined,
           },
           {
-            onAnswer: (delta) => {
-              ensurePlaceholder();
-              patch((m) => ({ ...m, answer: m.answer + delta }));
-            },
+            onAnswer: (delta) => smoother.push(delta),
             onRecommendations: (items) => {
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, recommendations: items }));
             },
+            onStep: (step) => {
+              ensurePlaceholder();
+              patch((m) => {
+                const steps = m.steps ?? [];
+                const at = steps.findIndex((s) => s.id === step.id);
+                if (at === -1) return { ...m, steps: [...steps, step] };
+                const next = steps.slice();
+                next[at] = step;
+                return { ...m, steps: next };
+              });
+            },
             onDone: (info) => {
+              smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, retrieved: info.retrieved, streaming: false }));
               if (info.notice) toast.message(info.notice);
             },
             onError: (message) => {
+              smoother.cancel();
               toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               setQuery(q);
             },
           }
         );
+        smoother.flush();
+        smootherRef.current = null;
         setChatPending(false);
       })();
     },
@@ -649,10 +687,13 @@ export function FloatingAskBar() {
                         />
                       )
                     )}
+                    {/* Only until the first step lands, which is now near-immediate — after
+                        that ChatActivity names the stage actually running, rather than
+                        claiming a search that may already be finished. */}
                     {awaitingFirstToken && (
                       <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" />
-                        Searching your network…
+                        <OrbitMark reduceMotion={reduceMotion} />
+                        Starting…
                       </div>
                     )}
                     <div ref={threadEndRef} />
@@ -661,8 +702,8 @@ export function FloatingAskBar() {
 
                 {messages.length === 0 && chatPending && (
                   <div className="flex items-center gap-2 px-3.5 py-4 text-sm text-muted-foreground">
-                    <Loader2 className="size-3.5 animate-spin" />
-                    Searching your network…
+                    <OrbitMark reduceMotion={reduceMotion} />
+                    Starting…
                   </div>
                 )}
               </div>
@@ -789,7 +830,7 @@ export function FloatingAskBar() {
             aria-label={query.trim() ? "Ask" : "Recall last message"}
           >
             {chatPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <OrbitMark reduceMotion={reduceMotion} tone="current" />
             ) : (
               <ArrowUp className="size-3.5" />
             )}
@@ -817,11 +858,22 @@ const AssistantBubble = memo(function AssistantBubble({
   msg: AssistantMessage;
   onNavigate: (open: boolean) => void;
 }) {
+  const steps = msg.steps ?? [];
   return (
     <div className="space-y-2">
-      <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
-        <ChatMarkdown>{msg.answer}</ChatMarkdown>
-      </div>
+      {steps.length > 0 && (
+        <ChatActivity
+          steps={steps}
+          state={msg.streaming ? "live" : "final"}
+          variant="compact"
+          className="px-1"
+        />
+      )}
+      {msg.answer && (
+        <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
+          <ChatMarkdown>{msg.answer}</ChatMarkdown>
+        </div>
+      )}
       {msg.recommendations.map((r) => (
         <MiniRecommendation
           key={r.recruiter_id || r.contact_id || r.name}

@@ -5,6 +5,8 @@
 
 import { z } from "zod";
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { gateSkips, gateText } from "@/lib/decisions/gates";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { qualifiesForTimelineAi } from "@/lib/timeline-cost";
 import { parseInteractionDateFromNotes } from "@/lib/interaction-date";
 
@@ -178,11 +180,20 @@ export function dedupeTimelineEvents(events: LinkedInTimelineEvent[]): LinkedInT
 export async function extractLinkedInTimelineEvents(
   userId: string,
   scopeId: string,
-  messages: LinkedInTimelineMessage[]
+  messages: LinkedInTimelineMessage[],
+  options?: { engines?: Engines }
 ): Promise<LinkedInTimelineEvent[]> {
   const { usable, baseEvents, prompt } = prepareTimelineExtraction(scopeId, messages);
   if (usable.length === 0) return [];
   if (!prompt) return dedupeTimelineEvents(baseEvents);
+
+  // The model is asked one thing here: did these two ever arrange to meet? Most threads
+  // never do, and for those the rule-derived events are the whole answer. A decision model
+  // that is sure no meeting is proposed returns them now. Without one, the call runs.
+  const engines = options?.engines ?? (await openEngines(userId));
+  if (await gateSkips(engines, "timeline", { messages: gateText(prompt.user) })) {
+    return dedupeTimelineEvents(baseEvents);
+  }
 
   try {
     const content = await completeJson(userId, {

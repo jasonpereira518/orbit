@@ -25,7 +25,8 @@
     "db:check": "tsx scripts/smoke-schema-ddl.ts",
     "ext:dev": "npm --prefix extension run dev",
     "ext:build": "npm --prefix extension run build",
-    "ext:zip": "npm --prefix extension run zip"
+    "ext:zip": "npm --prefix extension run zip",
+    "eval:retrieval": "tsx scripts/eval-retrieval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
@@ -58,6 +59,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "resend": "^6.17.2",
     "sonner": "^2.0.7",
     "stripe": "^22.6.2",

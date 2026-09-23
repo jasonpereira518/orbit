@@ -11,6 +11,11 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
+// Type-only, and that file imports nothing at all — so the wire shape and the stored shape
+// cannot drift, without the schema dragging any runtime dependency behind it.
+import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
+import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
+import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -94,16 +99,26 @@ export const userSettings = pgTable("user_settings", {
   openaiApiKeyEncrypted: text("openai_api_key_encrypted"),
   anthropicApiKeyEncrypted: text("anthropic_api_key_encrypted"),
   /**
-   * Wispr Flow transcription. Not an `AiProvider`: Wispr transcribes and does not
-   * complete, so it never participates in provider/model selection. See `src/lib/wispr.ts`.
+   * The account's own TypeSafe key, for Jev — the decision model behind classification and
+   * ranking steps (`src/lib/decisions/`). Optional and BYOK only: with none saved, those
+   * steps run exactly as they did before Jev.
    */
-  wisprApiKeyEncrypted: text("wispr_api_key_encrypted"),
+  typesafeApiKeyEncrypted: text("typesafe_api_key_encrypted"),
   aiModel: text("ai_model").default("gemini-3.8-flash"),
   /**
    * The model this account was moved OFF when a default changed under it, so Settings can
    * say so once and offer the old one back. Null for everyone who chose their own.
    */
   aiModelMigratedFrom: text("ai_model_migrated_from"),
+  /**
+   * The user's own standing notes on how answers and drafts should read — tone, length,
+   * sign-off. Free text they wrote, capped and cleaned by `src/lib/writing-instructions.ts`.
+   * Null means none, and every prompt is then byte-identical to what it was before this
+   * column existed. It is content, not a setting: a preferences purge clears it, and it is
+   * never a credential, so it must not take a `_hash`/`_token`/`_secret` suffix (export
+   * redacts those by name).
+   */
+  writingInstructions: text("writing_instructions"),
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),
@@ -1084,7 +1099,7 @@ export const interactionMentions = pgTable(
     contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
     mentionText: text("mention_text").notNull(),
     confidence: real("confidence").notNull(),
-    matchedBy: text("matched_by").$type<"exact_name" | "name_company" | "first_name_unique" | "user_pick">().notNull(),
+    matchedBy: text("matched_by").$type<"exact_name" | "name_company" | "first_name_unique" | "user_pick" | "decision">().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -1200,7 +1215,7 @@ export const contactOpportunities = pgTable(
 );
 
 export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
-export type MeetingSegmentEngine = "wispr" | "whisper" | "gemini" | "silent";
+export type MeetingSegmentEngine = "whisper" | "gemini" | "silent";
 
 /**
  * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
@@ -1866,6 +1881,53 @@ export const outreachMessages = pgTable(
   ]
 );
 
+/**
+ * The user's own writing, cut into passages that can be retrieved on their own.
+ *
+ * Why a table of its own rather than more `source_type` rows in `contact_embeddings`: the
+ * semantic arm there selects `contact_id ... order by distance` with a 4x overscan and keeps
+ * the best row per contact, so several rows per contact would spend that overscan on
+ * duplicates of one person and move a recall floor that is currently measured and passing.
+ * And `contact_embeddings.contact_id` is NOT NULL, while a passage may name four people or
+ * none.
+ *
+ * The same warning as `contactEmbeddings` applies to `embedding_vector`: it is created and
+ * indexed at runtime by `migratePgvector`, is deliberately absent from this declaration, and
+ * `drizzle-kit push` would drop it. Migrations here are hand-written SQL on purpose.
+ */
+export const memoryChunks = pgTable(
+  "memory_chunks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceKind: text("source_kind").$type<"interaction" | "note_batch" | "brief">().notNull(),
+    sourceId: uuid("source_id").notNull(),
+    /** The passage's primary subject. Null when nobody has been resolved from it yet. */
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+    /** Everyone named in it, including mentions — what makes a dinner note findable from any guest. */
+    contactIds: uuid("contact_ids").array().notNull().default(sql`'{}'`),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    chunkIndex: integer("chunk_index").default(0).notNull(),
+    content: text("content").notNull(),
+    contentHash: text("content_hash").notNull(),
+    /**
+     * The hash that was embedded, which is the staleness predicate: a chunk is pending when
+     * `embedded_hash IS DISTINCT FROM content_hash`. Per chunk, so editing paragraph three
+     * of a note does not re-embed paragraphs one and two, and so it never contends with the
+     * contact-grained `contacts.embedding_stale_at` that five writers already stamp.
+     */
+    embeddedHash: text("embedded_hash"),
+    embedding: jsonb("embedding").$type<number[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("memory_chunks_source_uidx").on(t.userId, t.sourceKind, t.sourceId, t.chunkIndex),
+    index("memory_chunks_user_date_idx").on(t.userId, t.occurredAt),
+  ]
+);
+
+export type MemoryChunk = typeof memoryChunks.$inferSelect;
+
 export const contactEmbeddings = pgTable(
   "contact_embeddings",
   {
@@ -1931,7 +1993,7 @@ export const embeddingFailures = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
-    sourceType: text("source_type").$type<"profile" | "meeting">().notNull(),
+    sourceType: text("source_type").$type<"profile" | "meeting" | "memory_chunk">().notNull(),
     sourceId: text("source_id").notNull(),
     errorKind: text("error_kind"),
     failedAt: timestamp("failed_at", { withTimezone: true }).defaultNow().notNull(),
@@ -2330,11 +2392,61 @@ export const chatMessages = pgTable(
     attachedContacts: jsonb("attached_contacts")
       .$type<Array<{ id: string; name: string }>>()
       .default([]),
+    /**
+     * The stages this answer actually ran — see `ChatStep` in `@/lib/chat-stream-protocol`.
+     *
+     * Persisted rather than recomputed because it is a record of one particular run: the
+     * counts, durations and people it names describe the network as it was when the
+     * question was asked. Re-deriving it later would quietly answer a different question.
+     */
+    activity: jsonb("activity").$type<ChatStepRecord[]>().default([]),
+    /**
+     * Every source this answer actually cited, keyed by its `[eN]` id — see
+     * `@/lib/chat-evidence`. Ids only, never a copy of the note or interaction text: the
+     * popover that shows a citation re-reads the live record, user-scoped, so nothing here
+     * duplicates the most private table in the schema.
+     */
+    evidence: jsonb("evidence").$type<Record<string, EvidenceSourceRecord>>().default({}),
+    /**
+     * Actions this answer PROPOSED — log a note, set a reminder, schedule a follow-up —
+     * never ones it took. See `@/lib/chat-proposed-actions` for the shape and validation, and
+     * `commitProposedAction` (@/actions/chat-actions) for the only path that turns one into a
+     * real write, which always starts with a person's own click.
+     */
+    proposedActions: jsonb("proposed_actions").$type<StoredProposedActionRecord[]>().default([]),
+    /** Thumbs on the answer. Null until the user says something. */
+    feedback: text("feedback").$type<"up" | "down">(),
+    /** The optional note a thumbs-down can carry. */
+    feedbackNote: text("feedback_note"),
+    /**
+     * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
+     * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
+     * that has `slot` null and is its own slot, backfilled the first time it is edited or
+     * regenerated (see `resolveVersionTarget` in `@/lib/chat-versions`). Only the LAST turn
+     * in a thread ever grows more than one version — editing an older turn discards what
+     * came after it instead (see `chat-versions.ts`).
+     */
+    slot: uuid("slot"),
+    version: integer("version").default(1).notNull(),
+    /**
+     * Which version of its slot is the one shown and the one prior-turn context reads. A
+     * new version is inserted INACTIVE and flipped in one statement once its answer is
+     * ready, so a stopped or failed regenerate leaves the version it was replacing active.
+     */
+    isActive: boolean("is_active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     index("chat_messages_thread_idx").on(t.threadId),
     index("chat_messages_user_idx").on(t.userId),
+    index("chat_messages_slot_idx").on(t.slot),
+    // Guards the version-flip statement rather than application logic: two regenerate
+    // clicks racing to claim "version 2" of the same slot can only ever produce one row —
+    // one PER ROLE, since a version is a pair, a user row and an assistant row, both
+    // legitimately sharing the same (slot, version).
+    uniqueIndex("chat_messages_slot_version_role_uidx")
+      .on(t.slot, t.version, t.role)
+      .where(sql`slot is not null`),
   ]
 );
 
@@ -2357,10 +2469,11 @@ export const usageEvents = pgTable(
     userId: text("user_id").notNull(),
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "wispr">().notNull(),
+    /** "typesafe" is the decision model (Jev), which is not a selectable chat provider. */
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "typesafe">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
-      .$type<"completion" | "multimodal" | "embedding" | "transcription">()
+      .$type<"completion" | "multimodal" | "embedding" | "transcription" | "decision">()
       .notNull(),
     /**
      * Null means the provider did not report a count — Whisper bills per second of audio
@@ -2565,6 +2678,70 @@ export const apiKeys = pgTable(
     index("api_keys_user_idx").on(t.userId),
   ]
 );
+
+/**
+ * A message an assistant wrote, waiting for the user to approve or reject it.
+ *
+ * THE TABLE IS THE SAFETY CONTROL, not a queue for convenience. The MCP server has a
+ * `request_send` tool and no send tool: an agent can only ever write a row here, and the
+ * transition from row to sent email happens in a Clerk-authenticated server action a human
+ * triggers, after reading the recipient and the body. An agent talked into exfiltration by a
+ * poisoned note still cannot send anything — it can only ask, visibly, in the user's own
+ * inbox of pending drafts.
+ *
+ * It is NOT `outreach_messages`. Those hang off a prospect and a campaign, so reusing them
+ * would mean inventing a fake campaign per conversation. But sent rows here DO count toward
+ * the same daily send limit (`countSendsToday`), or an assistant would be a way around a cap
+ * the rest of the product respects.
+ */
+export const agentSendRequests = pgTable(
+  "agent_send_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Null when the agent wrote to an address that is not in the user's network. */
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    channel: text("channel").$type<"email">().default("email").notNull(),
+    toEmail: text("to_email").notNull(),
+    subject: text("subject"),
+    body: text("body").notNull(),
+    /**
+     * pending → sending → sent, or pending → rejected | expired.
+     *
+     * A send that fails goes back to `pending` with `error_message` set, because the usual
+     * cause is a mailbox that is not connected yet and the draft should survive being fixed.
+     * `failed` is therefore reserved rather than written — kept in the union so a future
+     * terminal failure has a name and does not get spelled as something else.
+     *
+     * `sending` exists so the claim that takes a row out of `pending` is the same statement
+     * that proves nobody else has it: two approve clicks, or a click racing the expiry
+     * sweep, must not both reach Resend.
+     */
+    status: text("status")
+      .$type<"pending" | "sending" | "sent" | "rejected" | "failed" | "expired">()
+      .default("pending")
+      .notNull(),
+    /** Which assistant asked, when the client told us. Shown on the approval card. */
+    clientName: text("client_name"),
+    errorMessage: text("error_message"),
+    deliveryId: text("delivery_id"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    /**
+     * A pending draft is a standing offer to send something, so it must not stand forever:
+     * an approval clicked weeks later would send a message whose context is long gone.
+     */
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("agent_send_requests_user_status_idx").on(t.userId, t.status, t.createdAt),
+    index("agent_send_requests_contact_idx").on(t.contactId),
+  ]
+);
+
+export type AgentSendRequest = typeof agentSendRequests.$inferSelect;
 
 /**
  * One scanning session, handed from a signed-in desktop to a phone that is not signed in.

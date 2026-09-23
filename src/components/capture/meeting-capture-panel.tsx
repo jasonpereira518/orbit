@@ -133,7 +133,7 @@ export function MeetingCapturePanel({
   hasApiKey: boolean;
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
   aiReason?: AiAccessDenial | null;
-  /** An OpenAI, Gemini or Wispr key, for transcription. Anthropic cannot transcribe. */
+  /** An OpenAI or Gemini key, for transcription. Anthropic cannot transcribe. */
   canTranscribe: boolean;
   /**
    * Desktop Chromium. Without it a meeting can still be summarized — the banner works
@@ -828,7 +828,7 @@ export function MeetingCapturePanel({
             <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
               <p className="font-medium text-foreground">Add a key that can transcribe audio</p>
               <p className="mt-1 text-muted-foreground">
-                Meeting capture transcribes with OpenAI, Gemini or Wispr — Anthropic can&apos;t hear
+                Meeting capture transcribes with OpenAI or Gemini — Anthropic can&apos;t hear
                 audio. Add one in{" "}
                 <Link href="/settings" className="font-medium text-primary underline-offset-2 hover:underline">
                   Settings

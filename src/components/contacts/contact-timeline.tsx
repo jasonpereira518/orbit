@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { CircleDashed, FileText, Plus, Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -258,6 +258,22 @@ export function ContactTimeline({
     window.addEventListener(REVEAL_INTERACTION_EVENT, onReveal);
     return () => window.removeEventListener(REVEAL_INTERACTION_EVENT, onReveal);
   }, [sorted]);
+
+  /**
+   * A `?interaction=<id>` link — a chat citation's "Open in profile", today — reveals the same
+   * way a same-page "recent discussion" click does. Read once per landing rather than kept in
+   * sync with the URL: the id is only ever meant to act on arrival, and a stale one left in the
+   * address bar after the person has scrolled elsewhere must not re-fire on an unrelated update.
+   */
+  const dest = useSearchParams().get("interaction");
+  const revealedFromUrl = useRef(false);
+  useEffect(() => {
+    if (!dest || revealedFromUrl.current || !sorted.some((i) => i.id === dest)) return;
+    revealedFromUrl.current = true;
+    setFilter("all");
+    setExpanded(true);
+    setPendingReveal(dest);
+  }, [dest, sorted]);
 
   /**
    * A just-logged interaction flies from the button that saved it onto its node on the spine.

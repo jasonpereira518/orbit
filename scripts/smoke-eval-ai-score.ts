@@ -12,8 +12,10 @@ import {
   rate,
   sameField,
   sameName,
+  scoreResearchAnswer,
   tally,
   wordErrorRate,
+  calibrationBins,
 } from "./lib/eval-ai-score";
 
 let failures = 0;
@@ -91,6 +93,89 @@ check(
   "a task only one side ran is skipped, not failed",
   gate(rules, { capture: { personRecall: 0.9 } }, {}).length === 0
 );
+
+// --- scoreResearchAnswer ---------------------------------------------------------------
+
+const JAMES = { id: "c-james", fullName: "James Okafor" };
+const TOM = { id: "c-tom", fullName: "Tomás Rivera" };
+const KNOWN = new Set(["c-james", "c-tom", "c-maya"]);
+const baseScore = {
+  mustMention: [JAMES],
+  mustSay: ["treasury"],
+  forbidden: ["Series A"],
+  knownContactIds: KNOWN,
+};
+
+const good = scoreResearchAnswer({
+  ...baseScore,
+  answer: "James Okafor said Sequoia is leading a seed round for an SMB treasury startup (12 Mar).",
+  rawRecommendationIds: ["c-james"],
+  keptRecommendationIds: ["c-james"],
+});
+check("a named person and a stated note fact both count", good.mentioned[0] && good.said[0]);
+check("no forbidden claim, no invented id", good.forbiddenHits === 0 && good.inventedIds === 0);
+
+const byRecommendation = scoreResearchAnswer({
+  ...baseScore,
+  answer: "Your best lead on this is below.",
+  rawRecommendationIds: ["c-james"],
+  keptRecommendationIds: ["c-james"],
+});
+check("a person counts as mentioned through a recommendation that survived the filter", byRecommendation.mentioned[0]);
+
+const droppedByFilter = scoreResearchAnswer({
+  ...baseScore,
+  answer: "Your best lead on this is below.",
+  rawRecommendationIds: ["c-james"],
+  keptRecommendationIds: [],
+});
+check(
+  "a recommendation the filter dropped reached nobody, so it does not count",
+  droppedByFilter.mentioned[0] === false
+);
+check("and it is reported as filtered, not invented — the id is real", droppedByFilter.filteredOut === 1 && droppedByFilter.inventedIds === 0);
+
+const invented = scoreResearchAnswer({
+  ...baseScore,
+  answer: "James Okafor.",
+  rawRecommendationIds: ["c-james", "c-does-not-exist"],
+  keptRecommendationIds: ["c-james"],
+});
+check("an id that is none of the user's contacts is counted as invented", invented.inventedIds === 1, String(invented.inventedIds));
+
+const unsupported = scoreResearchAnswer({
+  ...baseScore,
+  answer: "James Okafor is leading a Series A in SMB treasury.",
+  rawRecommendationIds: [],
+  keptRecommendationIds: [],
+});
+check("a claim the notes do not support is a forbidden hit", unsupported.forbiddenHits === 1);
+
+const missedFact = scoreResearchAnswer({
+  ...baseScore,
+  mustMention: [JAMES, TOM],
+  answer: "James Okafor is leading a seed round.",
+  rawRecommendationIds: [],
+  keptRecommendationIds: [],
+});
+check(
+  "each person and each fact is scored on its own",
+  missedFact.mentioned.join() === "true,false" && missedFact.said.join() === "false",
+  JSON.stringify(missedFact)
+);
+
+const bins = calibrationBins([
+  { p: 0.95, label: true },
+  { p: 1, label: true },
+  { p: 0.92, label: false },
+  { p: 0.05, label: false },
+  { p: 0.5, label: true },
+]);
+check("calibration: p = 1 lands in the top band, which is closed", bins[bins.length - 1].n === 3, JSON.stringify(bins));
+check("…whose observed rate is the share of true labels", Math.abs((bins[bins.length - 1].observed ?? 0) - 2 / 3) < 1e-9);
+check("…with the band's mean claimed probability beside it", Math.abs((bins[bins.length - 1].meanP ?? 0) - (0.95 + 1 + 0.92) / 3) < 1e-9);
+check("a band's lower edge is inclusive, its upper exclusive", bins[3].n === 1 && bins[2].n === 0, JSON.stringify(bins.map((b) => b.n)));
+check("an empty band reports nulls, not zeros", bins[1].n === 0 && bins[1].meanP === null && bins[1].observed === null);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

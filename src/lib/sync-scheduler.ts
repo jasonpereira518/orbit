@@ -24,7 +24,7 @@ import {
   CalendarSyncTokenExpiredError,
   advanceCursor as advanceGoogleCalendarCursor,
   fetchCalendarPage as fetchGoogleCalendarPage,
-  toNetworkEvents,
+  toNetworkEventsDecided,
 } from "@/lib/connectors/google-calendar";
 import {
   advanceCursor as advanceMicrosoftCalendarCursor,
@@ -146,6 +146,9 @@ export type SyncRunStats = {
   failed: number;
   skippedNoScope: number;
   eventsIngested: number;
+  /** Calendar events the decision model (Jev) skipped or kept against the rules' call. */
+  calendarSkippedByDecision: number;
+  calendarKeptByDecision: number;
   contactsCreated: number;
   interactionsLogged: number;
   /** Luma/Eventbrite. Named apart from the calendar counters so one pass reports both. */
@@ -176,6 +179,8 @@ function emptyRunStats(): SyncRunStats {
     failed: 0,
     skippedNoScope: 0,
     eventsIngested: 0,
+    calendarSkippedByDecision: 0,
+    calendarKeptByDecision: 0,
     contactsCreated: 0,
     interactionsLogged: 0,
     eventConnectionsClaimed: 0,
@@ -235,7 +240,10 @@ async function syncGoogleCalendar(
       throw err;
     }
 
-    const events = toNetworkEvents(page.events, page.selfEmails);
+    const decided = await toNetworkEventsDecided(ctx.engines, page.events, page.selfEmails);
+    const events = decided.events;
+    stats.calendarSkippedByDecision += decided.skippedByDecision;
+    stats.calendarKeptByDecision += decided.keptByDecision;
     if (events.length > 0) {
       const ingested = await ingestEvents(ctx, events);
       stats.eventsIngested += ingested.eventsSeen;
@@ -329,7 +337,10 @@ async function syncMicrosoftCalendar(
       throw err;
     }
 
-    const events = toNetworkEvents(page.events, page.selfEmails);
+    const decided = await toNetworkEventsDecided(ctx.engines, page.events, page.selfEmails);
+    const events = decided.events;
+    stats.calendarSkippedByDecision += decided.skippedByDecision;
+    stats.calendarKeptByDecision += decided.keptByDecision;
     if (events.length > 0) {
       const ingested = await ingestEvents(ctx, events);
       stats.eventsIngested += ingested.eventsSeen;

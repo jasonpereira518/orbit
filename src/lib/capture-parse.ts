@@ -13,7 +13,7 @@
  */
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts } from "@/db/schema";
+import { contacts, tags } from "@/db/schema";
 import {
   parseMultiPersonNotesWithAI,
   type ParseProgress,
@@ -42,6 +42,8 @@ import {
 } from "@/lib/linkedin-paste";
 import { isSelf } from "@/lib/meeting-digest";
 import { getMeetingTranscript, loadMeetingSelf } from "@/lib/meeting-sessions";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
+import { decideCaptureChecks, decideMentions, decideMergeTargets } from "@/lib/decisions/capture";
 import { resolveMentionsWithPicks, type MentionCandidate } from "@/lib/mention-resolution";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type { PreviewMention } from "@/lib/note-batches";
@@ -81,6 +83,11 @@ export type CaptureParseOptions = {
   mentionPicks?: readonly MentionPick[];
   /** Injectable clock, for the smoke suite. */
   now?: Date;
+  /**
+   * The account's decision engines — who a mention means, and a card's default save target
+   * (decisions/capture.ts). Opened here when absent; pass `NO_ENGINES` for the rules alone.
+   */
+  engines?: Engines;
   /**
    * Called after each model call of the people parse. The capture runner heartbeats its
    * claim here so a long multi-call parse is never mistaken for a dead one and run twice.
@@ -212,11 +219,15 @@ export async function runCaptureParse(
   // extraction is the core value and must survive a bad dates response. The duplicate
   // lookup only depends on userId, so it doesn't need to wait on either AI call.
   const today = opts.now ?? new Date();
+  // Opened here rather than at its first use below: the dates pass is gated on a decision
+  // model, and it starts inside this same Promise.all.
+  const enginesP = opts.engines ? Promise.resolve(opts.engines) : openEngines(userId, { llm: true });
   const [personParse, rawCommitments, existing] = await Promise.all([
     parseMultiPersonNotesWithAI(userId, corpus, mergedHints, { onProgress: opts.onProgress }),
     fetchRawCommitments(userId, corpus, {
       today,
       knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
+      engines: enginesP,
     }).catch(
       () => ({ commitments: [], cadences: [] }) as Awaited<ReturnType<typeof fetchRawCommitments>>
     ),
@@ -375,6 +386,7 @@ export async function runCaptureParse(
         rawDatePhrase: o.rawDatePhrase,
         confidenceScore: o.confidenceScore,
         dueDateIso: o.dueDate ? isoDay(o.dueDate) : null,
+        ...(o.overriddenKind ? { overriddenKind: o.overriddenKind } : {}),
       })),
       impliedSteps: impliedResult.steps,
       cadence: (() => {
@@ -407,12 +419,48 @@ export async function runCaptureParse(
     // non-null assertion above would otherwise hand `resolveMentions` a null name.
     ...mentionedOnly.map((p) => ({ name: p.name, context: p.context, company: p.company, nearPerson: null })),
   ];
-  const { resolved, unresolved } = resolveMentionsWithPicks(
-    existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title })),
+  const engines = await enginesP;
+
+  // A card's default target, where the rules only have a sub-0.85 name match to offer. Done
+  // before mentions, which exclude whoever a card already saves into.
+  const targets = await decideMergeTargets(
+    engines,
+    items.map((item) => ({
+      person: { name: item.parsed.name, company: item.parsed.company ?? null, role: item.parsed.role ?? null, excerpt: item.notes },
+      duplicates: item.duplicates,
+    }))
+  ).catch(() => items.map(() => null));
+  items.forEach((item, i) => {
+    const target = targets[i];
+    if (!target || item.suggestedMergeId) return;
+    if (target === "new") item.suggestedNew = true;
+    else item.suggestedMergeId = target;
+  });
+
+  // Referral overrides, tags and invented people, read against the note (Jev only).
+  if (engines.jev) {
+    const existingTags = await (async () => {
+      const db = await getDb();
+      const rows = await db.select({ name: tags.name }).from(tags).where(eq(tags.userId, userId));
+      return rows.map((r) => r.name);
+    })().catch(() => [] as string[]);
+    await decideCaptureChecks(engines, { items, corpus, existingTags }).catch(() => null);
+  }
+
+  const subjects = existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title }));
+  const ruled = resolveMentionsWithPicks(
+    subjects,
     candidates,
     opts.mentionPicks ?? [],
     { excludeContactIds: items.map((i) => i.suggestedMergeId).filter((id): id is string => Boolean(id)) }
   );
+  // The rules' blind first-name guesses and unsettled names, read against their sentence.
+  const excluded = new Set(items.map((i) => i.suggestedMergeId).filter((id): id is string => Boolean(id)));
+  const { resolved, unresolved } = await decideMentions(engines, {
+    ...ruled,
+    subjects: subjects.filter((s) => !excluded.has(s.id)),
+    corpus,
+  }).catch(() => ruled);
   const mentions: PreviewMention[] = [
     ...resolved.map((m) => ({ text: m.text, context: m.context, nearPerson: m.nearPerson, contactId: m.contactId, confidence: m.confidence, matchedBy: m.matchedBy })),
     ...unresolved.map((m) => ({ text: m.text, context: m.context, nearPerson: m.nearPerson, contactId: null, confidence: 0, matchedBy: null })),

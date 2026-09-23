@@ -14,7 +14,7 @@ import "./smoke/_env";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { chatMessages, chatThreads, contacts, interactions } from "../src/db/schema";
+import { chatMessages, chatThreads, contacts, interactions, userGoals } from "../src/db/schema";
 import { prepareChatContext } from "../src/lib/chat-context";
 import { saveContactProfile } from "../src/lib/contact-profile";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -66,15 +66,19 @@ async function main() {
   check("snippets exist for every retrieved contact", ctx.retrieved.every((c) => ctx.snippets.has(c.id)));
   check(
     "Ada's message reaches the timeline",
-    (ctx.snippets.get(ada)?.timeline ?? []).some((m: string) => /Tuesday/.test(m)),
+    (ctx.snippets.get(ada)?.timeline ?? []).some((m: { line: string }) => /Tuesday/.test(m.line)),
     JSON.stringify(ctx.snippets.get(ada)?.timeline)
   );
   check(
     "and it is dated and labelled, not bare text",
-    (ctx.snippets.get(ada)?.timeline ?? []).some((m: string) =>
-      /^\d{4}-\d{2}-\d{2} · LinkedIn: /.test(m)
+    (ctx.snippets.get(ada)?.timeline ?? []).some((m: { line: string }) =>
+      /^\d{4}-\d{2}-\d{2} · LinkedIn: /.test(m.line)
     ),
     JSON.stringify(ctx.snippets.get(ada)?.timeline)
+  );
+  check(
+    "every timeline entry carries the interaction id it came from",
+    (ctx.snippets.get(ada)?.timeline ?? []).every((m: { id: string }) => typeof m.id === "string" && m.id.length > 0)
   );
   check("no focus: the question is passed through unscoped", ctx.scopedQuestion === ctx.q);
   check("no thread: no prior turns", ctx.priorTurns.length === 0 && ctx.thread === null);
@@ -205,12 +209,12 @@ async function main() {
   const fair = await prepareChatContext(USER, "Who do I know at Acme?", {});
   check(
     "a coffee reaches the model, not just LinkedIn messages",
-    (fair.snippets.get(chatty)?.timeline ?? []).some((l: string) => /In person: Chatty meeting/.test(l)),
+    (fair.snippets.get(chatty)?.timeline ?? []).some((l: { line: string }) => /In person: Chatty meeting/.test(l.line)),
     JSON.stringify(fair.snippets.get(chatty)?.timeline?.slice(0, 2))
   );
   check(
     "a quiet contact is not starved by a chatty one",
-    (fair.snippets.get(quiet)?.timeline ?? []).some((l: string) => /The one call we ever had/.test(l)),
+    (fair.snippets.get(quiet)?.timeline ?? []).some((l: { line: string }) => /The one call we ever had/.test(l.line)),
     JSON.stringify(fair.snippets.get(quiet)?.timeline)
   );
   check(
@@ -360,6 +364,49 @@ async function main() {
     none.attachedPeople.length === 0 && none.attachedContext === null
   );
 
+  // --- goals reach the context, for the ANSWER and not just the query parse -------------
+
+  check(
+    "a user with no goals gets an empty list, not a crash",
+    Array.isArray(none.goals) && none.goals.length === 0,
+    JSON.stringify(none.goals)
+  );
+
+  await db.insert(userGoals).values([
+    { userId: USER, text: "Raise a seed round", active: 1 },
+    { userId: USER, text: "Hire a founding engineer", active: 1 },
+    { userId: USER, text: "Something I already did", active: 0 },
+  ]);
+  const withGoals = await prepareChatContext(USER, "who should I talk to next?", {});
+  check(
+    "active goals reach the context",
+    withGoals.goals.includes("Raise a seed round") &&
+      withGoals.goals.includes("Hire a founding engineer"),
+    JSON.stringify(withGoals.goals)
+  );
+  check(
+    "an inactive goal does not",
+    !withGoals.goals.includes("Something I already did"),
+    JSON.stringify(withGoals.goals)
+  );
+
+  // --- the lite follow-up line is computed for EVERY question, not only gated ones -------
+
+  // "who do I know at Acme?" trips none of ATTENTION_PATTERNS, which is the whole point:
+  // the full brief stays absent while the one-line summary is still there to answer with.
+  check("the gated full brief is absent for a non-attention question", none.attention === null);
+  check(
+    "but the lite follow-up line is present anyway",
+    typeof none.attentionLite === "string" && none.attentionLite.length > 0,
+    String(none.attentionLite)
+  );
+  check(
+    "with nothing overdue it says so plainly rather than going silent",
+    none.attentionLite?.includes("No follow-up is overdue") === true,
+    String(none.attentionLite)
+  );
+
+  await db.delete(userGoals).where(eq(userGoals.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

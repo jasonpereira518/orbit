@@ -9,7 +9,9 @@ export type UsageKind =
   | "completion"
   | "multimodal"
   | "embedding"
-  | "transcription";
+  | "transcription"
+  /** A question set answered by the decision model (TypeSafe's Jev). */
+  | "decision";
 
 /**
  * Token counts as reported by the provider.
@@ -35,13 +37,10 @@ export type TokenCounts = {
 };
 
 /**
- * Who was billed for a call.
- *
- * A superset of `AiProvider`, not the same type. Wispr transcribes and does not complete,
- * so it never takes part in provider/model selection and must not be assignable where an
- * `AiProvider` is expected — but its calls still cost money and still belong in the ledger.
+ * Who was billed for a call. "typesafe" is the decision model — a ledger value, never a
+ * provider a person picks for chat (see `DecisionGrant` in ai-access.ts).
  */
-export type UsageProvider = AiProvider | "wispr";
+export type UsageProvider = AiProvider | "typesafe";
 
 export type UsageMeta = {
   userId: string;
@@ -243,4 +242,16 @@ export function tokensFromAnthropic(response: unknown): TokenCounts {
     cachedInputTokens: usage.cache_read_input_tokens ?? null,
     ...(write > 0 ? { cacheWriteTokens: write } : {}),
   };
+}
+
+type JevUsage = { usage?: { input_tokens?: unknown; output_tokens?: unknown } };
+
+/**
+ * TypeSafe reports `usage.input_tokens` / `usage.output_tokens`. Output is free, but it is
+ * recorded when reported so the ledger says what happened rather than what it cost.
+ */
+export function tokensFromJev(response: unknown): TokenCounts {
+  const u = (response as JevUsage | null)?.usage;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return { inputTokens: num(u?.input_tokens), outputTokens: num(u?.output_tokens) };
 }

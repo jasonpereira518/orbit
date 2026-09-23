@@ -16,7 +16,7 @@ import {
   isAiOperationId,
 } from "../src/lib/ai-operations";
 import { EMBEDDING_MODELS, FAST_MODELS, VISION_MODELS } from "../src/lib/ai";
-import { modelForOperation } from "../src/lib/ai-models";
+import { JEV_MODEL, modelForOperation } from "../src/lib/ai-models";
 import { AI_PROVIDERS, DEFAULT_MODELS, PROVIDER_MODELS } from "../src/lib/ai-providers";
 import { MANAGED_AI_ENABLED, MANAGED_DEFAULT_MODELS, MANAGED_MODELS } from "../src/lib/managed-ai-policy";
 import { priceFor } from "../src/lib/ai-pricing";
@@ -49,7 +49,7 @@ console.log("Every emitted operation id is registered");
   const patterns = [
     /operation:\s*"([a-z][\w.-]*)"/g,
     /operation\s*\?\?\s*"([a-z][\w.-]*)"/g,
-    /\.(?:completion|embedding|transcription|wispr)\(\s*"([a-z][\w.-]*)"/g,
+    /\.(?:completion|embedding|transcription)\(\s*"([a-z][\w.-]*)"/g,
     /getAiConfig\(\s*\w+,\s*"([a-z][\w.-]*)"/g,
   ];
   const emitted = new Map<string, string>();
@@ -121,15 +121,29 @@ console.log("\nEvery reachable model is priced");
     for (const m of MANAGED_MODELS[p.id]) reachable.add(m);
   }
   for (const m of Object.values(EMBEDDING_MODELS)) reachable.add(m);
+  // The decision tier's one model: unpriced, every Jev call would record no cost.
+  reachable.add(JEV_MODEL);
   for (const model of reachable) check(`${model} has a price row`, priceFor(model) !== null);
 }
 
 console.log("\nDerived lists");
 {
   check(
-    "background set is the four bulk operations",
+    "background set is the bulk operations (the scan's two decision steps included)",
     [...BACKGROUND_AI_OPERATIONS].sort().join(",") ===
-      ["import.enrich", "import.linkedin.timeline", "recruiter.scan", "search.embed.batch"].join(","),
+      [
+        "calendar.kind",
+        "duplicates.same_person",
+        "duplicates.same_person.llm",
+        "import.enrich",
+        "import.enrich.gate",
+        "import.linkedin.timeline",
+        "import.linkedin.timeline.decide",
+        "recruiter.gate",
+        "recruiter.prefilter",
+        "recruiter.scan",
+        "search.embed.batch",
+      ].join(","),
     [...BACKGROUND_AI_OPERATIONS].join(",")
   );
   for (const id of AI_OPERATION_IDS) {
