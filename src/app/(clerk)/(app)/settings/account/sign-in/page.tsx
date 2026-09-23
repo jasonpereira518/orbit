@@ -1,6 +1,8 @@
 import { isClerkConfigured } from "@/lib/auth";
 import { AccountDemoPanel } from "@/components/account/account-demo-panel";
+import { AddEmailDialog } from "@/components/account/add-email-dialog";
 import { EmailList } from "@/components/account/email-list";
+import { Button } from "@/components/ui/button";
 import { SettingsSection } from "@/components/settings/settings-section";
 
 /**
@@ -24,6 +26,15 @@ export default async function AccountSignInPage() {
       <SettingsSection
         title="Email addresses"
         description="Where Orbit reaches you, and what you can sign in with."
+        action={
+          <AddEmailDialog
+            trigger={
+              <Button type="button" size="sm" variant="outline">
+                Add address
+              </Button>
+            }
+          />
+        }
       >
         <EmailList />
       </SettingsSection>
