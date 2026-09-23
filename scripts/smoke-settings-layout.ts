@@ -50,12 +50,23 @@ function parse(file: string): ts.SourceFile {
 }
 
 /**
- * The string labels of the `case` clauses inside the named function.
+ * The string labels of the `case` clauses inside the named function that carry their own
+ * body — a `CaseClause` with a non-empty `statements` list.
  *
  * Read off the syntax tree, the way `smoke-connect-gates.ts`'s `callsIn` reads calls, and
  * deliberately not with a regex over the source: a guard in this repo that regex-sliced source
  * kept passing over a branch someone had commented out. A parser sees the comment for what it
  * is.
+ *
+ * A label with no statements of its own (`case "a": case "b": return x;`) falls through into
+ * its neighbour's body and does not count — that shape is exactly what let `webhooks` answer
+ * with the API panel while looking "covered". The cost is that two ids sharing one intentional
+ * answer (`tabForImportJob`'s several kinds returning the same tab) must each spell out their
+ * own `return`; a case folded into someone else's body — intentionally or by accident — then
+ * comes up missing here instead of silently passing. That is the whole point: the rule cannot
+ * tell an intentional group from a wrong-panel fall-through by shape alone, so it asks every id
+ * to write its own answer and leaves grouping to be true two functions have in common (calling
+ * the same value), not one shared `case` body.
  */
 function switchCasesIn(file: string, fn: string): string[] {
   const source = parse(file);
@@ -73,7 +84,9 @@ function switchCasesIn(file: string, fn: string): string[] {
 
   const cases: string[] = [];
   const walk = (node: ts.Node) => {
-    if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression)) cases.push(node.expression.text);
+    if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression) && node.statements.length > 0) {
+      cases.push(node.expression.text);
+    }
     ts.forEachChild(node, walk);
   };
   ts.forEachChild(body, walk);

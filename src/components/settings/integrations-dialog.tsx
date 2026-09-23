@@ -50,10 +50,17 @@ type Settings = Awaited<ReturnType<typeof getSettings>>;
 /**
  * The page an in-flight import job belongs to. The calendar-file and contacts-file imports
  * live only on /imports, so they have none.
+ *
+ * Each kind spells out its own `return` even where several agree on the same answer, rather
+ * than sharing one via fall-through (`case "connections": case "messages": return
+ * "linkedin";`). `smoke-settings-layout.ts` only credits a case that carries its own body, so
+ * a kind folded into a neighbour's case — the shape that once let an id go "covered" while
+ * answering with someone else's tab — comes up missing instead of silently passing.
  */
 export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
   switch (kind) {
     case "connections":
+      return "linkedin";
     case "messages":
       return "linkedin";
     case "google_contacts":
@@ -61,6 +68,7 @@ export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
     case "outlook_contacts":
       return "microsoft";
     case "contacts_file":
+      return null;
     case "calendar":
       return null;
   }

@@ -146,9 +146,15 @@ export function IntegrationsSettings({
     function openForHash() {
       const hash = window.location.hash;
       if (hash === handledHash.current) return;
-      handledHash.current = hash;
       const target = legacyHashTab(hash);
-      if (target && tabs.includes(target)) show(target);
+      // Only an acted-on hash counts as spent. A hash naming a page this viewer cannot yet
+      // see must stay available — a later `router.refresh()` that widens `tabs` re-runs this
+      // effect, and if it were marked handled here regardless, that widening would find the
+      // hash already spent and never open the page it now names.
+      if (target && tabs.includes(target)) {
+        handledHash.current = hash;
+        show(target);
+      }
     }
     openForHash();
     window.addEventListener("hashchange", openForHash);
