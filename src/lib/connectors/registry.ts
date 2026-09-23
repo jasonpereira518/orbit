@@ -344,7 +344,7 @@ const CONNECTOR_MANIFESTS = [
     family: "crm",
     auth: "oauth2",
     availability: "planned",
-    entitlement: "sync",
+    entitlement: "crm",
     rateBucket: "providerSync",
     purgeCategory: "connections",
     capabilities: [

@@ -216,6 +216,12 @@ check(
   Object.keys(CONNECTOR_SYNCS).join(",")
 );
 
+check(
+  "HubSpot is gated on the crm entitlement, not sync",
+  connectorById("hubspot")?.entitlement === "crm",
+  String(connectorById("hubspot")?.entitlement)
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

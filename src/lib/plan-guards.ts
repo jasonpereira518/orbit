@@ -60,10 +60,21 @@ export async function requireUserForSurface(surfaceKey: string) {
 
 /**
  * Auth plus "Leads is switched on and released". No plan gate: joining a team and looking
- * up warm paths are free (the CRM connection is the paid part, gated separately later).
+ * up warm paths are free (the CRM connection is the paid part: `requireCrmUser`).
  */
 export async function requireLeadsUser() {
   const userId = await requireUserId();
   await requireReleasedSurface(userId, "page.leads");
+  return userId;
+}
+
+/**
+ * `requireLeadsUser` plus the paid half of Leads: connecting, syncing and disconnecting a CRM.
+ * The surface is checked first, so a paywall hit is only ever recorded for someone who can
+ * see the page.
+ */
+export async function requireCrmUser() {
+  const userId = await requireLeadsUser();
+  await requireEntitlement(userId, "crm");
   return userId;
 }
