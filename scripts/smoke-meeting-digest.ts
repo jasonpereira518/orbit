@@ -228,63 +228,104 @@ async function main() {
   // The point of this task: a paragraph the caller built with `formatTranscriptSegment`
   // (as `analyzeMeetingSession` in src/actions/meetings.ts now does) carries its speaker
   // prefix into the prompt, the system prompt explains what the prefixes mean instead of
-  // denying they exist, and a commitment spoken on a "You:" line comes back owned by "me".
+  // denying they exist, and a commitment spoken on a "You:" line comes back owned by
+  // "me" — while the SAME commitment with no speaker prefix does not.
+  //
+  // The stub below is not canned: it decides "owner" by checking whether the prompt it
+  // was actually given contains `You: ${COMMITMENT}` as a substring. That makes the
+  // "me" assertion capable of failing — delete the prefixing (or never call
+  // `formatTranscriptSegment`) and the "you"-speaker run degrades to the same prompt as
+  // the null-speaker run, so both would come back with owner null and the first check
+  // below would fail. A stub that always returned owner "me" regardless of input, as an
+  // earlier version of this test did, could not distinguish "the prompt change did
+  // something" from "the pipeline doesn't strip a returned me" — see fix round 1.
   {
-    const calls: { system: string; user: string }[] = [];
-    const complete: CompleteJsonFn = async (_u, input) => {
-      calls.push({ system: input.system, user: input.user });
-      return reply({
+    const COMMITMENT = "I'll send Priya the deck by Friday.";
+    const COMMITMENT_EXCERPT = "I'll send Priya the deck by Friday";
+
+    const replyDecidingOwnerFromPrompt = (transcriptSentToModel: string) =>
+      JSON.stringify({
+        title: "Pilot review",
+        summary: "We reviewed the pilot.",
+        key_points: ["Pilot is live"],
+        decisions: [],
         action_items: [
           {
             text: "Send Priya the deck",
-            owner: "me",
+            owner: transcriptSentToModel.includes(`You: ${COMMITMENT}`) ? "me" : null,
             due_phrase: "by Friday",
-            source_excerpt: "I'll send Priya the deck by Friday",
+            source_excerpt: COMMITMENT_EXCERPT,
           },
         ],
+        blockers: [],
+        open_questions: [],
+        participants: [],
+        dated_quotes: [],
+        notes: "Notes.",
       });
+
+    const run = async (commitmentSpeaker: string | null) => {
+      const calls: { system: string; user: string }[] = [];
+      const complete: CompleteJsonFn = async (_u, input) => {
+        calls.push({ system: input.system, user: input.user });
+        return replyDecidingOwnerFromPrompt(input.user);
+      };
+      const paragraphs = [
+        formatTranscriptSegment({ speaker: commitmentSpeaker, text: COMMITMENT }),
+        formatTranscriptSegment({ speaker: "speaker-1", text: "Sounds great, thanks." }),
+        formatTranscriptSegment({ speaker: null, text: "Some recovered audio with no speaker info." }),
+      ];
+      const d = await analyzeMeetingTranscript(
+        "u",
+        {
+          paragraphs,
+          title: "Pilot review",
+          startedAtIso: "2026-09-11T17:00:00.000Z",
+          userName: "Jordan Lee",
+          attendees: [],
+        },
+        { complete, parseJson: JSON.parse }
+      );
+      return { d, calls };
     };
-    const paragraphs = [
-      formatTranscriptSegment({ speaker: "you", text: "I'll send Priya the deck by Friday." }),
-      formatTranscriptSegment({ speaker: "speaker-1", text: "Sounds great, thanks." }),
-      formatTranscriptSegment({ speaker: null, text: "Some recovered audio with no speaker info." }),
-    ];
-    const d = await analyzeMeetingTranscript(
-      "u",
-      {
-        paragraphs,
-        title: "Pilot review",
-        startedAtIso: "2026-09-11T17:00:00.000Z",
-        userName: "Jordan Lee",
-        attendees: [],
-      },
-      { complete, parseJson: JSON.parse }
-    );
+
+    const you = await run("you");
     check(
       "a You: line reaches the prompt with its prefix",
-      calls[0]!.user.includes("You: I'll send Priya the deck by Friday.")
+      you.calls[0]!.user.includes(`You: ${COMMITMENT}`)
     );
     check(
       "a speaker-1 line reaches the prompt as Speaker 1:",
-      calls[0]!.user.includes("Speaker 1: Sounds great, thanks.")
+      you.calls[0]!.user.includes("Speaker 1: Sounds great, thanks.")
     );
     check(
       "an unlabeled segment stays bare text",
-      calls[0]!.user.includes("Some recovered audio with no speaker info.") &&
-        !calls[0]!.user.includes("null: Some recovered audio")
+      you.calls[0]!.user.includes("Some recovered audio with no speaker info.") &&
+        !you.calls[0]!.user.includes("null: Some recovered audio")
     );
     check(
       "the system prompt explains the speaker prefixes",
-      calls[0]!.system.includes('"You:" is the user') && calls[0]!.system.includes("renumbered after a line saying the recording reconnected")
+      you.calls[0]!.system.includes('"You:" is the user') &&
+        you.calls[0]!.system.includes("renumbered after a line saying the recording reconnected")
     );
-    check("…and no longer claims there are no speaker labels", !calls[0]!.system.includes("NO speaker labels"));
+    check("…and no longer claims there are no speaker labels", !you.calls[0]!.system.includes("NO speaker labels"));
     check(
-      "a commitment spoken on a You: line is extracted with owner \"me\"",
-      d.actionItems[0]?.owner === "me"
+      'a commitment spoken on a You: line is extracted with owner "me"',
+      you.d.actionItems[0]?.owner === "me"
     );
     check(
       "…and its source excerpt still grounds against the prefixed transcript",
-      d.actionItems[0]?.sourceExcerpt === "I'll send Priya the deck by Friday"
+      you.d.actionItems[0]?.sourceExcerpt === COMMITMENT_EXCERPT
+    );
+
+    const unprefixed = await run(null);
+    check(
+      "the same commitment with no speaker prefix does NOT reach the prompt as You:",
+      !unprefixed.calls[0]!.user.includes(`You: ${COMMITMENT}`)
+    );
+    check(
+      '…and comes back with owner null — proving the "me" above came from the You: prefix, not a canned stub',
+      unprefixed.d.actionItems[0]?.owner === null
     );
   }
 
