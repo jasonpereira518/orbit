@@ -362,7 +362,10 @@ export async function upsertConnectorConnection(
     syncStartedAt: null,
     syncError: null,
     syncFailures: 0,
-    nextSyncAt: input.nextSyncAt ?? new Date(),
+    // `??` would treat an explicit `null` the same as "omitted" and arm the row anyway —
+    // and `null` is exactly what a caller passes to mean "leave this connection unarmed"
+    // (the module doc above, and the demo HubSpot connection, both depend on that holding).
+    nextSyncAt: input.nextSyncAt === undefined ? new Date() : input.nextSyncAt,
     updatedAt: new Date(),
   };
   const [row] = await db
