@@ -357,6 +357,15 @@ export function expandEvent(
 
   const durationMs = event.end ? event.end.getTime() - event.start.getTime() : null;
   const cap = Math.max(0, Math.min(opts.cap ?? MAX_OCCURRENCES, MAX_OCCURRENCES));
+  // A series whose DTSTART sits inside the window was, before expansion existed, already
+  // ingested once as `cal:<uid>` — that's what a non-recurring event still writes today, and
+  // recurring ones did too until RRULE was expanded. Ruling: the occurrence whose start
+  // equals the master's own DTSTART keeps that bare id; only LATER occurrences (which never
+  // had a stored row before expansion) get the `_<instant>` suffix. That preserves dedupe
+  // against everything already ingested, and — via `isOccurrenceUid` — is what lets a
+  // downstream consumer like a post-meeting reminder tell a series' one pre-existing
+  // occurrence apart from the ones expansion synthesized.
+  const masterMs = event.start.getTime();
 
   // EXDATE matches by exact instant, per RFC 5545. Task 3 builds these by parsing a real
   // EXDATE property through the same TZID-aware wall-clock resolution DTSTART gets, so by
@@ -400,7 +409,7 @@ export function expandEvent(
       ...event,
       start: instant,
       end: durationMs !== null ? new Date(instant.getTime() + durationMs) : event.end,
-      uid: occurrenceUid(event.uid, instant),
+      uid: instant.getTime() === masterMs ? event.uid : occurrenceUid(event.uid, instant),
     });
   }
 

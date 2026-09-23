@@ -6,7 +6,7 @@
  * property that protects stored data: a NON-recurring event's uid must come out byte-identical,
  * because `cal:<uid>` is already written on every interaction Orbit has ever ingested.
  */
-import { expandEvent, occurrenceUid, parseRRule, MAX_OCCURRENCES } from "../src/lib/recurrence";
+import { expandEvent, isOccurrenceUid, occurrenceUid, parseRRule, MAX_OCCURRENCES } from "../src/lib/recurrence";
 import { parseIcsEvents, type ParsedCalendarEvent } from "../src/lib/calendar-import";
 
 let failures = 0;
@@ -224,6 +224,24 @@ async function main() {
   check(
     "expanded occurrences carry occurrence uids",
     every[1]?.uid === occurrenceUid("u1", every[1]!.start!)
+  );
+
+  // --- MUST FIX 3 ruling: the occurrence matching the master's own DTSTART keeps the bare
+  //     uid (it may already be stored under `cal:<uid>` from before expansion existed); only
+  //     LATER occurrences carry the `_<instant>` suffix. `every`'s DTSTART (2026-03-03) sits
+  //     inside WINDOW, so `every[0]` is that master occurrence.
+  check(
+    "the DTSTART occurrence keeps the master's bare uid, not a suffixed one",
+    every[0]?.uid === "u1" && !isOccurrenceUid(every[0]!.uid)
+  );
+  check(
+    "later occurrences are recognisable as occurrence-derived",
+    isOccurrenceUid(every[1]!.uid)
+  );
+  check("isOccurrenceUid rejects a bare uid", !isOccurrenceUid("u1"));
+  check(
+    "isOccurrenceUid accepts exactly the shape occurrenceUid produces",
+    isOccurrenceUid(occurrenceUid("u1", new Date("2026-03-10T13:00:00Z")))
   );
 
   // --- through the ICS parser ---

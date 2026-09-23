@@ -110,12 +110,23 @@ run(async () => {
     const singleIds = ids.filter((id) => id.startsWith("cal:single-sub-uid"));
 
     check("a recurring feed event yields several interactions", weeklyIds.length === 4, `got ${weeklyIds.length}`);
+    check("each occurrence's external_id is distinct", new Set(weeklyIds).size === 4, weeklyIds.join(", "));
+    // MUST FIX 3 ruling: the occurrence matching the master's own DTSTART (`weeklyStart`, 21
+    // days back, inside the sync window) keeps the bare `cal:<uid>` id — the same id it would
+    // already have from before expansion existed; only the three LATER occurrences carry the
+    // `_<instant>` suffix.
+    const bareWeeklyIds = weeklyIds.filter((id) => /^cal:weekly-sub-uid:[0-9a-f-]{36}$/.test(id));
+    const suffixedWeeklyIds = weeklyIds.filter((id) =>
+      /^cal:weekly-sub-uid_\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z:[0-9a-f-]{36}$/.test(id)
+    );
     check(
-      "each occurrence's external_id is distinct and carries the occurrence instant",
-      new Set(weeklyIds).size === 4 &&
-        weeklyIds.every((id) =>
-          /^cal:weekly-sub-uid_\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z:[0-9a-f-]{36}$/.test(id)
-        ),
+      "the DTSTART occurrence keeps the bare external_id",
+      bareWeeklyIds.length === 1,
+      weeklyIds.join(", ")
+    );
+    check(
+      "the three later occurrences carry the occurrence instant",
+      suffixedWeeklyIds.length === 3,
       weeklyIds.join(", ")
     );
     check("a non-recurring feed event yields exactly one interaction", singleIds.length === 1, `got ${singleIds.length}`);
@@ -188,10 +199,19 @@ run(async () => {
           WHERE user_id = ${USER} AND description LIKE '%daily-followup-uid%'
         `)
       );
+      // Exactly one, not merely "at most one": MUST FIX 3's ruling keeps the DTSTART
+      // occurrence's uid bare, so it alone is not occurrence-derived and still earns its one
+      // follow-up, same as a non-recurring meeting always has; the nine later, occurrence-
+      // derived instances are suppressed by `isOccurrenceUid`.
       check(
-        "many interactions from one recurring series produce AT MOST ONE follow-up reminder",
-        reminderRows.length <= 1,
+        "ten interactions from one daily series produce EXACTLY ONE follow-up reminder",
+        reminderRows.length === 1,
         `got ${reminderRows.length}`
+      );
+      check(
+        "that one reminder's description carries the DTSTART occurrence's bare uid, no suffix",
+        reminderRows[0]?.description === "You met with them. Event daily-followup-uid",
+        reminderRows[0]?.description
       );
     } finally {
       globalThis.fetch = realFetch;

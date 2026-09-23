@@ -167,11 +167,21 @@ async function main() {
     now: NOW,
     fetchImpl: pageImpl,
   });
-  const recurringOccurrences = page.events.filter((e) => e.uid.startsWith("recurring-1_"));
-  check("a recurring master expands", recurringOccurrences.length === 4, `got ${recurringOccurrences.length}`);
+  const recurringFamily = page.events.filter((e) => e.uid === "recurring-1" || e.uid.startsWith("recurring-1_"));
+  check("a recurring master expands to 4 occurrences", recurringFamily.length === 4, `got ${recurringFamily.length}`);
   check(
     "the single event in the same page is not expanded — its uid is untouched",
     page.events.some((e) => e.uid === "abc-123")
+  );
+  // MUST FIX 3 ruling: the occurrence matching the master's own DTSTART keeps the bare uid;
+  // only LATER occurrences carry the `_<instant>` suffix.
+  check(
+    "the DTSTART occurrence of a recurring master keeps its bare uid",
+    page.events.some((e) => e.uid === "recurring-1")
+  );
+  check(
+    "exactly the three LATER occurrences carry the suffixed uid",
+    recurringFamily.filter((e) => e.uid.startsWith("recurring-1_")).length === 3
   );
   check("a deleted href counts as a tombstone", page.tombstones === 1, String(page.tombstones));
   check("selfEmails is the owner address, lowercased", page.selfEmails[0] === OWNER, page.selfEmails.join(","));
@@ -185,8 +195,12 @@ async function main() {
     pageNetworkEvents.some((e) => e.externalIdBase === "cal:abc-123")
   );
   check(
-    "the connector's own output suffixes an expanded occurrence's id with its instant",
+    "the connector's own output suffixes a LATER expanded occurrence's id with its instant",
     pageNetworkEvents.some((e) => /^cal:recurring-1_/.test(e.externalIdBase))
+  );
+  check(
+    "the connector's own output keeps the bare cal:<uid> for a recurring series' DTSTART occurrence",
+    pageNetworkEvents.some((e) => e.externalIdBase === "cal:recurring-1")
   );
 
   // --- Apple, like Graph, has no per-attendee "self" flag — the owner is excluded by address --
