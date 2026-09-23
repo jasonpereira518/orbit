@@ -100,6 +100,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-event-wall-clock": "pure",
   "smoke-events-page": "pure",
   "smoke-leads-page": "pure",
+  "smoke-warm-path": "pure",
   "smoke-closeness-materialized": "pure",
   "smoke-comet-cap": "pure",
   "smoke-constellation-eligibility": "pure",
