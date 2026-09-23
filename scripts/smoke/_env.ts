@@ -12,11 +12,12 @@
  *      every script that forgot this line, hard-deleting rows in the remote database. dotenv
  *      only fills in UNSET variables, which is why the delete has to come after it.
  *   3. DELETES every billable provider key unless `SMOKE_ALLOW_PROVIDER_KEYS=1` — the
- *      local-dev AI keys, their `ORBIT_MANAGED_*` twins, Apollo and Resend. Off Vercel the AI
- *      gate treats a `GEMINI_API_KEY` in `.env.local` as a managed key, so a developer's real
- *      key turned "no key configured" cases into live, billed provider calls (and failures
- *      when the account ran dry). CI has no `.env.local`, which is why only laptops saw it.
- *      A script that needs a key sets a fake one itself, after this import.
+ *      local-dev AI keys, their `ORBIT_MANAGED_*` twins, Apollo, Resend and Deepgram. Off
+ *      Vercel the AI gate treats a `GEMINI_API_KEY` in `.env.local` as a managed key, so a
+ *      developer's real key turned "no key configured" cases into live, billed provider
+ *      calls (and failures when the account ran dry). CI has no `.env.local`, which is why
+ *      only laptops saw it. A script that needs a key sets a fake one itself, after this
+ *      import.
  *   4. Points PGlite at a throwaway directory (`ORBIT_PGLITE_DIR`), so smoke runs never
  *      contend with a dev server's `.data/pglite` (two writers corrupt it) and every run
  *      bootstraps the full DDL on a fresh database — free schema coverage.
@@ -47,6 +48,12 @@ export const PROVIDER_KEY_ENV = [
   "TYPESAFE_API_KEY",
   "APOLLO_API_KEY",
   "RESEND_API_KEY",
+  // A real DEEPGRAM_API_KEY now lives in this worktree's .env.local (task 8). Left unstripped,
+  // smoke-ai-access's "transcription refused, nothing sent" assertions stop asserting anything
+  // and the suite reaches the live Deepgram API instead. ORBIT_DEEPGRAM rides along so a smoke
+  // cannot re-enable the feature out from under the key being gone.
+  "DEEPGRAM_API_KEY",
+  "ORBIT_DEEPGRAM",
 ] as const;
 
 if (process.env.SMOKE_ALLOW_PROVIDER_KEYS !== "1") {

@@ -109,25 +109,52 @@ export async function openDeepgramLive(opts: {
   };
 
   await new Promise<void>((resolve, reject) => {
-    socket.onopen = () => resolve();
-    const failed = () => reject(new Error(`Deepgram socket closed before opening (${DEEPGRAM_MODEL})`));
+    // A handshake that finishes AFTER this fires must not leave a live connection nobody
+    // holds the handle to — that is a leaked, billable stream. Close it before rejecting,
+    // and clear the timer on the success path so it cannot fire once the caller already has
+    // a handle.
+    const timer = setTimeout(() => {
+      try {
+        socket.close();
+      } catch {
+        /* already closing */
+      }
+      reject(new Error("Deepgram socket timed out"));
+    }, 10_000);
+    socket.onopen = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const failed = () => {
+      clearTimeout(timer);
+      reject(new Error(`Deepgram socket closed before opening (${DEEPGRAM_MODEL})`));
+    };
     socket.addEventListener("close", failed, { once: true });
-    setTimeout(() => reject(new Error("Deepgram socket timed out")), 10_000);
   });
+
+  // `finish()` is called from both the reducer's stop path and its abort path in the next
+  // task; memoizing the in-flight promise makes a second call join the first rather than
+  // re-sending Finalize/CloseStream into an already-closing stream.
+  let finishPromise: Promise<void> | null = null;
 
   return {
     openedAt: Date.now(),
     send(pcm: Int16Array) {
       if (socket.readyState === WebSocket.OPEN) socket.send(pcm.buffer as ArrayBuffer);
     },
-    async finish() {
-      if (socket.readyState !== WebSocket.OPEN) return;
-      socket.send(JSON.stringify({ type: "Finalize" }));
-      socket.send(JSON.stringify({ type: "CloseStream" }));
-      await new Promise<void>((resolve) => {
-        finished = resolve;
-        setTimeout(resolve, 5_000);
-      });
+    finish() {
+      if (!finishPromise) {
+        finishPromise = (async () => {
+          if (socket.readyState !== WebSocket.OPEN) return;
+          socket.send(JSON.stringify({ type: "Finalize" }));
+          socket.send(JSON.stringify({ type: "CloseStream" }));
+          await new Promise<void>((resolve) => {
+            finished = resolve;
+            setTimeout(resolve, 5_000);
+          });
+        })();
+      }
+      return finishPromise;
     },
     close() {
       try {

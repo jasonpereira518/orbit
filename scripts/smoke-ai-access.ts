@@ -170,6 +170,19 @@ const TYPESAFE_TRANSPORT_TEST = "scripts/smoke-jev-client.ts";
  * exactly one host — so it gets the same narrow exemption as the gate and the transport.
  */
 const DEEPGRAM_CLIENT = "src/lib/deepgram.ts";
+/**
+ * The live Deepgram socket wrapper (task 8). It runs in the BROWSER, holds only the
+ * 30-second grant token `deepgram.ts` minted server-side, and never sees `DEEPGRAM_API_KEY`
+ * — so it is exempted from the host check (it does legitimately open a socket to Deepgram)
+ * but not from the env-key check (it has no business reading the raw key, and doesn't).
+ */
+const DEEPGRAM_LIVE_CLIENT = "src/lib/deepgram-live.ts";
+/**
+ * The CSP builder (task 8). It only NAMES `api.deepgram.com` inside a policy string so the
+ * browser is allowed to reach it — it never dials the host itself — so it gets the same
+ * host-check exemption as the two files above.
+ */
+const SECURITY_HEADERS = "src/lib/security-headers.ts";
 
 function sourceGuard() {
   console.log("\nOnly the gate can reach a provider");
@@ -195,7 +208,13 @@ function sourceGuard() {
     if (!probe && file !== TYPESAFE_TRANSPORT_TEST && transportImport.test(code)) offenders.push(`${file}: imports TypeSafe's raw-key transport`);
     if (envKey.test(code) && file !== "scripts/smoke-contact-brief.ts" && file !== DEEPGRAM_CLIENT)
       offenders.push(`${file}: reads an AI key from the environment`);
-    if (providerHost.test(code) && file !== TYPESAFE_TRANSPORT && file !== DEEPGRAM_CLIENT)
+    if (
+      providerHost.test(code) &&
+      file !== TYPESAFE_TRANSPORT &&
+      file !== DEEPGRAM_CLIENT &&
+      file !== DEEPGRAM_LIVE_CLIENT &&
+      file !== SECURITY_HEADERS
+    )
       offenders.push(`${file}: talks to a provider host directly`);
   }
   check("no file outside the gate imports an SDK, builds a client, reads a key or calls a provider", offenders.length === 0, offenders.join("\n       "));
