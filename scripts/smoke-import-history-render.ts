@@ -237,6 +237,12 @@ const doneSheet = sheet(
 );
 check("a finished undo is not offered again", !doneSheet.includes("Undo this import"));
 check("…and says it is done", doneSheet.includes("Undone · 17 people removed"));
+// A Drive import's rows carry no provenance for undo to read, so its sheet never offers one.
+const driveSheet = sheet({
+  ...detailFor({}),
+  item: { ...detailFor({}).item, importType: "drive_docs" },
+});
+check("a Drive import's sheet offers no undo", !driveSheet.includes("Undo this import"));
 
 console.log("Every import type still renders");
 const TYPES = [

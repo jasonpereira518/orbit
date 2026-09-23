@@ -481,14 +481,16 @@ export function ImportFinishCard({
         {summary.sources.length === 1 ? (
           <span className="truncate">From {summary.sources[0]}</span>
         ) : null}
-        <ImportUndoButton
-          importIds={summary.importIds}
-          label="Undo"
-          size="xs"
-          variant="link"
-          className="text-muted-foreground hover:text-foreground"
-          onUndone={onUndone}
-        />
+        {summary.notUndoable ? null : (
+          <ImportUndoButton
+            importIds={summary.importIds}
+            label="Undo"
+            size="xs"
+            variant="link"
+            className="text-muted-foreground hover:text-foreground"
+            onUndone={onUndone}
+          />
+        )}
       </p>
     </section>
   );

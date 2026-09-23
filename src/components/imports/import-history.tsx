@@ -59,7 +59,7 @@ import { ImportUndoButton } from "@/components/imports/import-finish-card";
 import { importSourceLabel } from "@/lib/imports/import-sources";
 import { summarizeImport, type ImportChip } from "@/lib/imports/import-summary";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
-import { withinUndoWindow } from "@/lib/imports/import-finish";
+import { importUndoable, withinUndoWindow } from "@/lib/imports/import-finish";
 import { cn } from "@/lib/utils";
 
 const CONNECTIONS_BADGE = "bg-import-connections/10 text-import-connections";
@@ -402,11 +402,14 @@ export function ImportDetailBody({
 
         {/*
           The way back out. Offered only while it would do something: this import created
-          people, its undo has not finished, and it is still inside the window. Past that the
-          sheet says so rather than showing a button that would refuse. A partly-done undo
-          keeps the button — it is resumable, and running it again is how it finishes.
+          people, it is a type undo can act on, its undo has not finished, and it is still
+          inside the window. Past that the sheet says so rather than showing a button that
+          would refuse. A partly-done undo keeps the button — it is resumable, and running it
+          again is how it finishes.
         */}
-        {!item.stats?.undoneAt && (item.contactsCreated ?? 0) > 0 ? (
+        {!item.stats?.undoneAt &&
+        (item.contactsCreated ?? 0) > 0 &&
+        importUndoable(item.importType) ? (
           withinUndoWindow(new Date(item.createdAt)) ? (
             <div>
               <ImportUndoButton
