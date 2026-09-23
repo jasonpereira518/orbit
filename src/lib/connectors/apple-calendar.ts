@@ -127,6 +127,9 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
     nextPageToken: null,
     tombstones: changes.tombstones,
     selfEmails: [ownerEmail.toLowerCase()],
+    // What `advanceCursor` persists as `windowStart`/`windowEnd` — see that function's own
+    // comment for why `fetchChanges`'s ctag fallback short-circuit needs this written down.
+    window,
   };
 }
 
@@ -139,6 +142,13 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
  * is looking at. `nextSyncToken` here is whatever `fetchChanges` returned: a real WebDAV-Sync
  * token, or a `ctag:<probedAt>:<value>` fallback cursor — `client.ts` decides which, and this
  * function round-trips it opaquely either way.
+ *
+ * `windowStart`/`windowEnd` are persisted here too, from the SAME `window` `fetchCalendarPage`
+ * queried against to produce this page — `caldav/client.ts`'s own module comment names this
+ * function as the one place that must do it: without it, `fetchChanges`'s fallback path can
+ * never tell an unchanged ctag apart from a rolling window simply not having reached a future
+ * event yet, and its short-circuit (skip the time-range query when nothing could have changed)
+ * never fires — every fallback-path calendar re-runs the full query on every pass, forever.
  */
 export function advanceCursor(
   previous: CalendarSyncCursor | null,
@@ -150,5 +160,7 @@ export function advanceCursor(
   return {
     syncToken: page.nextSyncToken ?? previous?.syncToken ?? null,
     pageToken: null,
+    windowStart: page.window ? page.window.from.toISOString() : (previous?.windowStart ?? null),
+    windowEnd: page.window ? page.window.to.toISOString() : (previous?.windowEnd ?? null),
   };
 }

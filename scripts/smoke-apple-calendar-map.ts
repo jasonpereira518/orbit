@@ -22,6 +22,7 @@ import {
 } from "../src/lib/connectors/apple-calendar";
 import { parseIcsEvents } from "../src/lib/calendar-import";
 import { CalDavRejectedError, type CalDavCredentials } from "../src/lib/caldav/client";
+import { CALENDAR_QUERY_RESPONSE, CTAG_PROPFIND_RESPONSE } from "../src/lib/caldav/fixtures/index";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -290,6 +291,49 @@ async function main() {
     "the cursor is never adopted while pages remain",
     advanceCursor(null, { ...page, nextPageToken: "more" }).syncToken === undefined
   );
+
+  // --- SHOULD FIX 4: advanceCursor must persist the window it queried, so a later pass with an
+  //     unchanged ctag AND a covered window can skip the calendar-query REPORT entirely — the
+  //     short-circuit `caldav/client.ts`'s `windowCoveredByCursor` already implements, but which
+  //     stayed unreachable in practice because nothing wrote `windowStart`/`windowEnd`. --------
+  {
+    const freshCtagCursor = `ctag:${Date.now()}:99`;
+    // Pass 1: the calendar is already known to be ctag-fallback-only, but no window has been
+    // persisted for it yet, so even though the ctag will turn out unchanged, the query still
+    // has to run.
+    const { impl: impl1 } = stubFetch([xml(CTAG_PROPFIND_RESPONSE), xml(CALENDAR_QUERY_RESPONSE)]);
+    const page1 = await fetchCalendarPage({
+      creds: CREDS,
+      calendarUrl: CALENDAR_URL,
+      cursor: { syncToken: freshCtagCursor },
+      ownerEmail: OWNER,
+      now: NOW,
+      fetchImpl: impl1,
+    });
+    const cursor2 = advanceCursor({ syncToken: freshCtagCursor }, page1);
+    check(
+      "advanceCursor persists the window it queried against",
+      typeof cursor2.windowStart === "string" && typeof cursor2.windowEnd === "string",
+      JSON.stringify(cursor2)
+    );
+
+    // Pass 2: same `now` (so the identical window) and the ctag unchanged — the short-circuit
+    // should fire, so only the ctag PROPFIND runs and the calendar-query REPORT never does.
+    const { impl: impl2, calls } = stubFetch([xml(CTAG_PROPFIND_RESPONSE)]);
+    await fetchCalendarPage({
+      creds: CREDS,
+      calendarUrl: CALENDAR_URL,
+      cursor: cursor2,
+      ownerEmail: OWNER,
+      now: NOW,
+      fetchImpl: impl2,
+    });
+    check(
+      "a second pass with an unchanged ctag and a persisted, covering window issues no calendar-query",
+      calls.length === 1,
+      `${calls.length} call(s): ${calls.join(" | ")}`
+    );
+  }
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
