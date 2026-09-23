@@ -21,6 +21,10 @@ import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/in
 import { IntegrationsOverview } from "@/components/settings/integrations-overview";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { SettingsSurfaceProvider } from "@/components/settings/settings-section";
+import {
+  useConnectGoogle,
+  useConnectMicrosoft,
+} from "@/components/settings/use-provider-connection";
 import { WebhookSettings } from "@/components/settings/webhook-settings";
 import {
   INTEGRATION_TAB_GROUPS,
@@ -38,7 +42,7 @@ import {
   useImportJob,
   type ImportJobKind,
 } from "@/lib/import-job-runner";
-import type { IntegrationStatuses } from "@/lib/integration-status";
+import type { AccountProvider, IntegrationStatuses } from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
@@ -193,6 +197,25 @@ function DialogBody({
   canUseRecruiters: boolean;
 }) {
   const job = useImportJob();
+  // The Overview's "Connect Google" / "Connect Microsoft", which start the consent screen
+  // from the card rather than opening the page to press Connect there.
+  //
+  // The connect primitive alone, never `useGoogleConnection`: that one also OWNS the sign-in
+  // return — it toasts, strips `?google=`/`?outlook=` with `history.replaceState` and re-reads
+  // the status — and this dialog keeps every page it has opened mounted, so an account page
+  // visited once is already that owner. Two owners race each other's `replaceState`, and the
+  // loser's queued server action is dropped unsettled (`use-provider-connection.ts`,
+  // "## Why one owner"). `useConnectGoogle` reads no status and touches no param, so it can
+  // sit here beside them. `returnTo` is that account's own page — the same value `Panel`
+  // hands it below — so the consent screen comes back to the page that owns the return, and
+  // the person lands on what they just connected rather than back on a card.
+  const googleConnect = useConnectGoogle(integrationHref("google"));
+  const microsoftConnect = useConnectMicrosoft(integrationHref("microsoft"));
+  const connectingProvider: AccountProvider | null = googleConnect.connecting
+    ? "google"
+    : microsoftConnect.connecting
+      ? "microsoft"
+      : null;
   const [visited, setVisited] = useState<ReadonlySet<IntegrationView>>(() => new Set([view]));
   const [advancedOpen, setAdvancedOpen] = useState(() => isAdvanced(view));
   const tabRefs = useRef(new Map<IntegrationView, HTMLButtonElement>());
@@ -502,7 +525,15 @@ function DialogBody({
                 className="space-y-5 p-5 outline-none md:p-7"
               >
                 {id === OVERVIEW ? (
-                  <IntegrationsOverview tabs={tabs} statuses={statuses} onOpen={openPage} />
+                  <IntegrationsOverview
+                    tabs={tabs}
+                    statuses={statuses}
+                    onOpen={openPage}
+                    onConnect={(provider) =>
+                      (provider === "google" ? googleConnect : microsoftConnect).connect()
+                    }
+                    connecting={connectingProvider}
+                  />
                 ) : (
                   <>
                     {runningProgress && runningTab === id ? (

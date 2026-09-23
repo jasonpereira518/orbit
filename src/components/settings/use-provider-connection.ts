@@ -51,9 +51,10 @@
  *    re-read is itself exposed to the same restore, so a rejection — or a resolved status with
  *    no address — still falls back to the plain "connected" toast rather than leaving the
  *    person with no feedback at all.
- * 4. **Connect** — starts the provider's OAuth with the given purposes (default: that
- *    provider's `*_CONNECT_PURPOSES`) and navigates to the result; a failure toasts
- *    `TOAST_COPY.connectFailed`. `busy` covers the round trip.
+ * 4. **Connect** — `useOAuthConnect`, below, which this composes and which the Integrations
+ *    dialog's Overview mounts on its own: it starts the provider's OAuth with the given
+ *    purposes (default: that provider's `*_CONNECT_PURPOSES`) and navigates to the result; a
+ *    failure toasts `TOAST_COPY.connectFailed`. `busy` covers the round trip.
  * 5. **Disconnect** — calls the provider's disconnect action, toasts the outcome, refreshes
  *    the server data (`router.refresh()`), and re-reads the status. Returns a promise that
  *    settles only once all of that has happened, so a caller can sequence its own local
@@ -107,6 +108,72 @@ export type MicrosoftConnection = ConnectionBase<OutlookConnectionStatus> & {
 const GOOGLE_EXTRA_STRIP_KEYS: readonly string[] = ["gmail"];
 const MICROSOFT_EXTRA_STRIP_KEYS: readonly string[] = [];
 
+/**
+ * Connect on its own: ask the provider for a consent URL and go there. It reads no status
+ * and touches no `?google=`/`?outlook=` param, so nothing in it can call
+ * `history.replaceState`.
+ *
+ * `useConnection` below composes this as its step 4, so there is exactly one implementation
+ * of Connect. It is separate because the Integrations dialog's Overview needs a Connect
+ * button of its own, and mounting a whole `useConnection` at dialog level would put a SECOND
+ * owner of the sign-in return beside the account page — the dialog keeps every page it has
+ * opened mounted — which is precisely the race "## Why one owner" above describes.
+ * `enabled: false` would not help: it only skips the load (see "## `enabled: false`").
+ */
+function useOAuthConnect<Purpose extends string>({
+  returnTo,
+  defaultPurposes,
+  startOAuth,
+}: {
+  returnTo: string;
+  defaultPurposes: readonly Purpose[];
+  startOAuth: (input: { purposes: readonly Purpose[]; returnTo?: string }) => Promise<{ url: string }>;
+}): { connect: (purposes?: readonly Purpose[]) => void; connecting: boolean } {
+  const [connecting, startConnectTransition] = useTransition();
+
+  const connect = useCallback(
+    (purposes?: readonly Purpose[]) => {
+      startConnectTransition(async () => {
+        try {
+          const { url } = await startOAuth({ purposes: purposes ?? defaultPurposes, returnTo });
+          window.location.href = url;
+        } catch (err) {
+          toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+        }
+      });
+    },
+    [startOAuth, defaultPurposes, returnTo]
+  );
+
+  return { connect, connecting };
+}
+
+/**
+ * Connect Google from somewhere that is not the Google page: the Overview card's
+ * "Connect Google".
+ *
+ * `returnTo` is that account's own page — `integrationHref("google")`, the same value the
+ * dialog already hands `GoogleAccountPage` — so the consent screen comes back to the page
+ * that owns the sign-in return, and the person lands on what they just connected rather than
+ * back on a card.
+ */
+export function useConnectGoogle(returnTo: string) {
+  return useOAuthConnect<GooglePurpose>({
+    returnTo,
+    defaultPurposes: GOOGLE_CONNECT_PURPOSES,
+    startOAuth: startGmailOAuth,
+  });
+}
+
+/** Connect Microsoft from somewhere that is not the Microsoft page — see `useConnectGoogle`. */
+export function useConnectMicrosoft(returnTo: string) {
+  return useOAuthConnect<MicrosoftPurpose>({
+    returnTo,
+    defaultPurposes: MICROSOFT_CONNECT_PURPOSES,
+    startOAuth: startOutlookOAuth,
+  });
+}
+
 function useConnection<Status extends { emailAddress: string | null }, Purpose extends string>({
   returnTo,
   enabled = true,
@@ -135,7 +202,9 @@ function useConnection<Status extends { emailAddress: string | null }, Purpose e
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [failed, setFailed] = useState(false);
-  const [connecting, startConnectTransition] = useTransition();
+  // 4. Connect — the primitive above, so this page's Connect and the Overview's run the
+  // same code.
+  const { connect, connecting } = useOAuthConnect<Purpose>({ returnTo, defaultPurposes, startOAuth });
   const [disconnecting, setDisconnecting] = useState(false);
   const busy = connecting || disconnecting;
 
@@ -227,21 +296,6 @@ function useConnection<Status extends { emailAddress: string | null }, Purpose e
       void refreshStatus().catch(() => {});
     }
   }, [router, refreshStatus, oauthParam, extraStripKeys, label]);
-
-  // 4. Connect.
-  const connect = useCallback(
-    (purposes?: readonly Purpose[]) => {
-      startConnectTransition(async () => {
-        try {
-          const { url } = await startOAuth({ purposes: purposes ?? defaultPurposes, returnTo });
-          window.location.href = url;
-        } catch (err) {
-          toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-        }
-      });
-    },
-    [startOAuth, defaultPurposes, returnTo]
-  );
 
   // 5. Disconnect. Returns a promise — see `ConnectionBase.disconnect` — so a caller only
   // clears its own local state (a review list, a scan card) once the action has actually

@@ -4,7 +4,11 @@ import { useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { type GmailConnectionStatus, type GmailScanStatus } from "@/actions/gmail";
 import { Button } from "@/components/ui/button";
-import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
+import {
+  SESSION_EXPIRED_LINE,
+  calendarOffLine,
+  calendarPauseLine,
+} from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { useGoogleConnection } from "@/components/settings/use-provider-connection";
 import { useRecruiterScan } from "@/components/settings/use-recruiter-scan";
@@ -78,6 +82,10 @@ export function GmailImportPanel({
                 Reconnect Google
               </Button>
             </p>
+          ) : connection.status === "paused" ? (
+            // The person switched meetings off themselves: not a fault, so no warning colour
+            // and no Reconnect — a consent screen would not turn them back on.
+            <p className="mt-1 text-sm text-muted-foreground">{calendarOffLine()}</p>
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2">

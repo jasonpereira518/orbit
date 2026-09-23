@@ -1,7 +1,11 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
+import {
+  SESSION_EXPIRED_LINE,
+  calendarOffLine,
+  calendarPauseLine,
+} from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
@@ -70,6 +74,10 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
                 Reconnect Microsoft
               </Button>
             </p>
+          ) : status.status === "paused" ? (
+            // The person switched meetings off themselves: not a fault, so no warning colour
+            // and no Reconnect — a consent screen would not turn them back on.
+            <p className="mt-1 text-sm text-muted-foreground">{calendarOffLine("Microsoft")}</p>
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -111,7 +119,9 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
                 ? "Read-only. Orbit logs meetings with people you know onto their timelines, and keeps them current."
                 : status.status === "disarmed"
                   ? "Sync is paused — see above."
-                  : "Sync is on — meetings with people you know are logged on their timelines."}
+                  : status.status === "paused"
+                    ? "Sync is off — see above."
+                    : "Sync is on — meetings with people you know are logged on their timelines."}
             </p>
           </div>
           {!status.hasCalendarScope ? (

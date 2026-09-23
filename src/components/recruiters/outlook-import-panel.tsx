@@ -4,7 +4,11 @@ import { useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { type OutlookConnectionStatus, type OutlookScanStatus } from "@/actions/outlook";
 import { Button } from "@/components/ui/button";
-import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
+import {
+  SESSION_EXPIRED_LINE,
+  calendarOffLine,
+  calendarPauseLine,
+} from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
 import { useMicrosoftConnection } from "@/components/settings/use-provider-connection";
@@ -81,6 +85,10 @@ export function OutlookImportPanel({
                 Reconnect Microsoft
               </Button>
             </p>
+          ) : connection.status === "paused" ? (
+            // The person switched meetings off themselves: not a fault, so no warning colour
+            // and no Reconnect — a consent screen would not turn them back on.
+            <p className="mt-1 text-sm text-muted-foreground">{calendarOffLine("Microsoft")}</p>
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2">

@@ -269,12 +269,18 @@ export function attentionItems(input: {
 /**
  * The one button on each Overview card. Only "Connect …", "Sign in again" and "Turn on AI"
  * are primary: they are the steps that make something work, not ways to look at it.
+ *
+ * `connects` names the account whose consent screen the button starts itself instead of
+ * opening that account's page — the Overview's only button that isn't navigation. It is set
+ * here rather than read off the label so the two can't drift apart. "Manage", "Sign in again"
+ * and "Open" all open the page, which is where that account's own hook owns the sign-in
+ * return.
  */
 export function overviewAction(
   id: IntegrationTabId,
   page: PageStatus | "unknown" | undefined,
   account?: AccountStatus | "unknown"
-): { label: string; primary: boolean } {
+): { label: string; primary: boolean; connects?: AccountProvider } {
   const on = page !== undefined && page !== "unknown" && page.state === "on";
   switch (id) {
     case "google":
@@ -283,7 +289,11 @@ export function overviewAction(
         return { label: "Open", primary: false };
       }
       if (account.state === "not_connected") {
-        return { label: `Connect ${id === "google" ? "Google" : "Microsoft"}`, primary: true };
+        return {
+          label: `Connect ${id === "google" ? "Google" : "Microsoft"}`,
+          primary: true,
+          connects: id,
+        };
       }
       if (account.state === "needs_reauth") return { label: "Sign in again", primary: true };
       return { label: "Manage", primary: false };

@@ -39,6 +39,16 @@ export function calendarPauseLine(syncError: string | null, provider: "Google" |
   return `${CALENDAR_PAUSED_SHORT} — reconnect ${provider} to start it again`;
 }
 
+/**
+ * The other reason meetings aren't arriving: the person switched them off themselves
+ * (`pauseSync`), which is a choice and not a fault. `calendarPauseLine` says "reconnect" —
+ * right for `disarmed`, wrong here, where a consent screen would fix nothing — so this names
+ * the switch instead. One line for all four cards, so they cannot word it four ways.
+ */
+export function calendarOffLine(provider: "Google" | "Microsoft" = "Google"): string {
+  return `Meetings are switched off — turn them on in Settings → Integrations → ${provider}, on the Meetings row`;
+}
+
 /** One line for the Integrations card and nav, which truncate — so the short forms. */
 export function connectionSummary(c: {
   configured: boolean;

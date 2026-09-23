@@ -23,7 +23,9 @@
  *   dialog body once its exit animation ends, which a backgrounded tab never finishes, so
  *   stopping on unmount alone would leave the poll running.
  * - `useLatestScan` owns the one read that tells that hook where the scan already is — see
- *   "The scan that is already running", below.
+ *   "The scan that is already running", below. The same read answers the disconnect dialog:
+ *   recruiter data can only come from a scan, so a read that ran, succeeded and found none
+ *   is the one case where there is nothing for it to offer to delete.
  * - `microsoftAccountStatus` + `rowControl` decide what each row offers; neither lives here,
  *   so this page cannot answer a state differently from the Google one.
  *
@@ -103,6 +105,15 @@ export function MicrosoftAccountPage({
     getOutlookScanStatus,
     showsInbox && canUseRecruiters && account?.state === "connected"
   );
+  // What the disconnect dialog offers to delete is this account's recruiter data, and that
+  // can only come from a scan — so "no scan has ever run" is "there is nothing to delete".
+  // Only an answer this page actually has counts. The read above is gated, so where it never
+  // ran this knows nothing (a free plan is the case that matters: an account can still hold
+  // recruiter data from a past subscription), and a rejected read settles as "no scan" for
+  // the row's sake. Either would hide the offer for data that exists, so both stay
+  // `undefined`, which leaves the dialog's checkbox exactly where it was.
+  const hasDeletableData =
+    latestScan.loaded && !latestScan.failed ? latestScan.scan !== null : undefined;
 
   return (
     <AccountPageShell
@@ -118,6 +129,7 @@ export function MicrosoftAccountPage({
           (err) => toast.error(friendlyError(err, "Couldn’t disconnect that account — try again?"))
         )
       }
+      hasDeletableData={hasDeletableData}
     >
       <ContactsRow
         capability={capabilities.contacts}

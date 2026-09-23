@@ -151,15 +151,19 @@ const OUTLOOK_SCAN_CONFIG: ScanConfig<OutlookScanStatus> = {
  *    is not the same as there being none.
  *
  * A read that rejects settles as "loaded, no scan": the row then behaves exactly as it did
- * before this existed, which is better than a control that never becomes pressable.
+ * before this existed, which is better than a control that never becomes pressable. `failed`
+ * is how a caller tells that apart from a read that genuinely found none — the disconnect
+ * dialog asks, because "no scan has ever run" is its reason for not offering to delete
+ * recruiter data, and a rejection is not that. Nothing about `loaded` changes.
  */
 export function useLatestScan<S extends Scan>(
   read: () => Promise<S | null>,
   enabled: boolean
-): { scan: S | null; loaded: boolean } {
-  const [state, setState] = useState<{ scan: S | null; loaded: boolean }>({
+): { scan: S | null; loaded: boolean; failed: boolean } {
+  const [state, setState] = useState<{ scan: S | null; loaded: boolean; failed: boolean }>({
     scan: null,
     loaded: false,
+    failed: false,
   });
 
   useEffect(() => {
@@ -167,10 +171,10 @@ export function useLatestScan<S extends Scan>(
     let cancelled = false;
     void read().then(
       (scan) => {
-        if (!cancelled) setState({ scan, loaded: true });
+        if (!cancelled) setState({ scan, loaded: true, failed: false });
       },
       () => {
-        if (!cancelled) setState({ scan: null, loaded: true });
+        if (!cancelled) setState({ scan: null, loaded: true, failed: true });
       }
     );
     return () => {

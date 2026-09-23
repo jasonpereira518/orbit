@@ -10,7 +10,11 @@ import {
   integrationLabel,
   type IntegrationTabId,
 } from "@/components/settings/sections";
-import { overviewAction, type IntegrationStatuses } from "@/lib/integration-status";
+import {
+  overviewAction,
+  type AccountProvider,
+  type IntegrationStatuses,
+} from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTIONS: Partial<Record<IntegrationTabId, string>> = {
@@ -30,16 +34,28 @@ const DESCRIPTIONS: Partial<Record<IntegrationTabId, string>> = {
  *
  * The button that opens each page carries `data-integration-card`, so the dialog's phone Back
  * can return focus to it.
+ *
+ * One card button doesn't open its page: "Connect Google" / "Connect Microsoft"
+ * (`overviewAction`'s `connects`) starts the consent screen from here, because opening the
+ * page only to press Connect again is a step that says nothing. The consent screen still
+ * comes back to that account's page — the dialog picks the `returnTo`.
  */
 export function IntegrationsOverview({
   tabs,
   statuses,
   onOpen,
+  onConnect,
+  connecting,
 }: {
   /** Visible pages — hidden surfaces already filtered out. */
   tabs: IntegrationTabId[];
   statuses: IntegrationStatuses | null;
   onOpen: (tab: IntegrationTabId) => void;
+  /** Starts that account's consent screen, for the cards whose action `connects`. */
+  onConnect: (provider: AccountProvider) => void;
+  /** The account whose consent screen is being asked for, so its button can disable until
+   *  the browser leaves for the provider. Null when nothing is in flight. */
+  connecting: AccountProvider | null;
 }) {
   const cards = OVERVIEW_TABS.filter((id) => tabs.includes(id));
   const attention = (statuses?.attention ?? []).filter((item) => tabs.includes(item.tab));
@@ -98,7 +114,10 @@ export function IntegrationsOverview({
                   size="sm"
                   variant={action.primary ? "default" : "outline"}
                   data-integration-card={id}
-                  onClick={() => onOpen(id)}
+                  disabled={action.connects ? connecting === action.connects : undefined}
+                  onClick={() =>
+                    action.connects ? onConnect(action.connects) : onOpen(id)
+                  }
                 >
                   {action.label}
                 </Button>

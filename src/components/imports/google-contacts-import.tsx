@@ -1,7 +1,11 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
+import {
+  SESSION_EXPIRED_LINE,
+  calendarOffLine,
+  calendarPauseLine,
+} from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
@@ -72,6 +76,10 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
                 Reconnect Google
               </Button>
             </p>
+          ) : status.status === "paused" ? (
+            // The person switched meetings off themselves: not a fault, so no warning colour
+            // and no Reconnect — a consent screen would not turn them back on.
+            <p className="mt-1 text-sm text-muted-foreground">{calendarOffLine()}</p>
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2">

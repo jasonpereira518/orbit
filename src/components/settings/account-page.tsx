@@ -71,6 +71,7 @@ export function AccountPageShell({
   onRetry,
   onConnect,
   onDisconnect,
+  hasDeletableData,
   children,
 }: {
   provider: AccountProvider;
@@ -82,6 +83,12 @@ export function AccountPageShell({
   /** Both Connect and Switch account: switching accounts is connecting again. */
   onConnect: () => void;
   onDisconnect: (opts: { alsoDelete: boolean }) => void;
+  /**
+   * Whether this account has produced any of the data the disconnect dialog offers to
+   * delete. Straight through to `DisconnectAccountDialog`: `undefined` is "not known",
+   * which keeps the offer.
+   */
+  hasDeletableData?: boolean;
   /** The feature rows. */
   children: React.ReactNode;
 }) {
@@ -132,6 +139,7 @@ export function AccountPageShell({
         email={account.email}
         onConnect={onConnect}
         onDisconnect={onDisconnect}
+        hasDeletableData={hasDeletableData}
       />
 
       {signedOut ? (
@@ -280,12 +288,14 @@ function AccountHeader({
   email,
   onConnect,
   onDisconnect,
+  hasDeletableData,
 }: {
   provider: AccountProvider;
   name: string;
   email: string | null;
   onConnect: () => void;
   onDisconnect: (opts: { alsoDelete: boolean }) => void;
+  hasDeletableData?: boolean;
 }) {
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
@@ -326,6 +336,7 @@ function AccountHeader({
         open={confirmingDisconnect}
         onOpenChange={setConfirmingDisconnect}
         onConfirm={onDisconnect}
+        hasDeletableData={hasDeletableData}
       />
     </div>
   );
