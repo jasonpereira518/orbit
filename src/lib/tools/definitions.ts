@@ -15,12 +15,13 @@
  * that decided its own presentation would have to know who was asking.
  */
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, interactions } from "@/db/schema";
+import { actionItems, contacts, interactions } from "@/db/schema";
 import { hybridSearchContacts } from "@/lib/hybrid-search";
 import { findOrgRosters } from "@/lib/chat-roster";
 import { getDashboardData } from "@/lib/reminders";
+import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import { getNetworkStats } from "@/lib/network-stats";
 import { queryRemindersPage } from "@/lib/reminders-page-query";
@@ -70,6 +71,24 @@ async function ownedContact(userId: string, contactId: string) {
   return db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: { id: true, fullName: true, email: true },
+  });
+}
+
+/** The ranking fields for a set of the user's own contacts. Tenant-scoped, like everything here. */
+async function contactsByIds(userId: string, ids: string[]) {
+  if (!ids.length) return [];
+  const db = await getDb();
+  return db.query.contacts.findMany({
+    where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
+    columns: {
+      id: true,
+      fullName: true,
+      company: true,
+      title: true,
+      closenessTier: true,
+      relationshipScore: true,
+      lastInteractionAt: true,
+    },
   });
 }
 
@@ -319,6 +338,180 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
   },
 
   {
+    name: "get_timeline",
+    title: "One person's history",
+    description:
+      "The dated history with one person — meetings, calls, notes and messages, newest " +
+      "first — and a total for the range. Use it for when they last spoke, how often they " +
+      "meet, or what happened over a period; narrow with since/until (YYYY-MM-DD). " +
+      "get_contact returns only the handful most recent.",
+    inputSchema: {
+      contactId: z.string().uuid(),
+      since: isoDay.optional().describe("Only entries on or after this day."),
+      until: isoDay.optional().describe("Only entries on or before this day."),
+      limit: z.number().int().min(1).max(20).default(10),
+    },
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "timeline",
+    async run(
+      userId,
+      args: { contactId: string; since?: string; until?: string; limit: number },
+      ctx
+    ) {
+      const contact = await ownedContact(userId, args.contactId);
+      if (!contact) return toolError("No such contact.");
+
+      const db = await getDb();
+      const since = dayBound(args.since, false);
+      const until = dayBound(args.until, true);
+      const where = and(
+        eq(interactions.userId, userId),
+        eq(interactions.contactId, args.contactId),
+        ...(since ? [gte(interactions.interactionDate, since)] : []),
+        ...(until ? [lte(interactions.interactionDate, until)] : [])
+      );
+
+      // The count is the point of half the questions this answers ("how often do we
+      // actually talk?"), and it has to be the real total rather than the length of a
+      // capped list, for the same reason `findOrgRosters` counts separately from listing.
+      const [rows, totals] = await Promise.all([
+        db.query.interactions.findMany({
+          where,
+          orderBy: [desc(interactions.interactionDate), desc(interactions.sameDayOrder)],
+          limit: args.limit,
+          columns: {
+            interactionType: true,
+            interactionDate: true,
+            source: true,
+            aiSummary: true,
+            rawNotes: true,
+          },
+        }),
+        db.select({ n: sql<number>`count(*)::int` }).from(interactions).where(where),
+      ]);
+
+      // Raw note text is withheld over MCP, not truncated. `get_contact` is the ONE
+      // documented exception to the fan-out rule — one person, by id, capped — and a
+      // timeline is a wider window on the same field for the same person. Widening an
+      // exception is how it stops being one, so MCP gets the dates, the kinds and the
+      // summaries, which is enough to say when and how often without quoting anything.
+      const wide = ctx.surface === "chat";
+      return {
+        contactId: contact.id,
+        name: contact.fullName,
+        total: Number(totals[0]?.n ?? 0),
+        entries: rows.map((i) => ({
+          at: i.interactionDate ? new Date(i.interactionDate).toISOString() : null,
+          type: i.interactionType,
+          source: i.source,
+          summary: i.aiSummary,
+          ...(wide ? { notes: i.rawNotes } : {}),
+        })),
+      };
+    },
+  },
+
+  {
+    name: "get_goals",
+    title: "What the user is working towards",
+    description:
+      "The user's active networking goals, in their own words. Use it when a question is " +
+      "open-ended — who to reconnect with, who matters right now, what to say — so the " +
+      "answer serves what they are actually trying to do.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "goals",
+    async run(userId) {
+      // The user's own words, typed into settings — not a field anything else writes, which
+      // is why this one crosses to MCP whole.
+      return { goals: await listActiveGoalTextsForUser(userId, { limit: 10 }) };
+    },
+  },
+
+  {
+    name: "find_path_to",
+    title: "Find a way in",
+    description:
+      "Who in the user's network could open a door to a company, a school or a person, " +
+      "ranked by how well the user actually knows them. Give an organisation (\"Stripe\") or " +
+      "a person's name. If that person is already in the network it says so, because then " +
+      "there is no path to find.",
+    inputSchema: {
+      target: z.string().min(2).max(200).describe("A company, a school, or a person's name."),
+      limit: z.number().int().min(1).max(15).default(8),
+    },
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "paths",
+    async run(userId, args: { target: string; limit: number }) {
+      // Two readings of one string, because "how do I get to Stripe" and "how do I get to
+      // Dana Wu" are the same question with different answers, and the caller should not
+      // have to know which kind of name they are holding.
+      const [rosters, named] = await Promise.all([
+        findOrgRosters(userId, args.target),
+        hybridSearchContacts(userId, { query: args.target, limit: 5 }),
+      ]);
+
+      // The shortest path is no path: if the target is already a contact, say so first.
+      // Substring both ways so "Dana" matches "Dana Wu" and "Dana Wu from Stripe" matches
+      // "Dana Wu" — a rank alone would promote whoever came top of an unrelated search.
+      const needle = args.target.trim().toLowerCase();
+      const alreadyKnown = named
+        .filter((c) => {
+          const name = c.fullName.toLowerCase();
+          return name.includes(needle) || needle.includes(name);
+        })
+        .slice(0, 3)
+        .map((c) => ({ contactId: c.id, name: c.fullName, company: c.company, title: c.title }));
+
+      const known = new Set(alreadyKnown.map((c) => c.contactId));
+      const via = new Map<string, string>();
+      for (const roster of rosters) {
+        for (const person of roster.people) {
+          if (!known.has(person.id) && !via.has(person.id)) via.set(person.id, roster.name);
+        }
+      }
+      if (!via.size) return { target: args.target, alreadyKnown, introducers: [] };
+
+      const rows = await contactsByIds(userId, [...via.keys()]);
+      // Ranked on the closeness the rest of the app already shows, rather than by recomputing
+      // a cohort: `getClosenessCohort` scores the WHOLE network to produce these same
+      // numbers, and a question about eight people should not pay for that.
+      const TIERS: Record<string, number> = { inner: 0, mid: 1, outer: 2 };
+      const at = (v: Date | string | null) => (v ? new Date(v).getTime() : 0);
+      const ranked = rows
+        .sort(
+          (a, b) =>
+            (TIERS[a.closenessTier ?? ""] ?? 3) - (TIERS[b.closenessTier ?? ""] ?? 3) ||
+            (b.relationshipScore ?? 0) - (a.relationshipScore ?? 0) ||
+            at(b.lastInteractionAt) - at(a.lastInteractionAt)
+        )
+        .slice(0, args.limit);
+
+      return {
+        target: args.target,
+        alreadyKnown,
+        introducers: ranked.map((c) => ({
+          contactId: c.id,
+          name: c.fullName,
+          company: c.company,
+          title: c.title,
+          closenessTier: c.closenessTier ?? null,
+          lastInteractionAt: c.lastInteractionAt
+            ? new Date(c.lastInteractionAt).toISOString()
+            : null,
+          via: via.get(c.id) ?? null,
+        })),
+      };
+    },
+  },
+
+  {
     name: "search_notes",
     title: "Search your notes",
     description:
@@ -364,6 +557,99 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         contactIds: p.contactIds,
         snippet: p.snippet,
       }));
+    },
+  },
+
+  {
+    name: "list_open_commitments",
+    title: "What the user owes",
+    description:
+      "Open promises and to-dos across the whole network: reminders that are overdue or due " +
+      "today, reminders with no date, and action items taken from notes. Narrow to one " +
+      "person with contactId. Use list_reminders for what is coming up later, and " +
+      "due_followups for people going quiet.",
+    inputSchema: {
+      contactId: z.string().uuid().optional().describe("Only what is owed to this person."),
+      limit: z.number().int().min(1).max(25).default(15),
+    },
+    annotations: { readOnlyHint: true },
+    // Chat only, which is a deliberate narrowing of what the plan for this tool said.
+    // An action item is text a model pulled OUT of a note, so a list of them across many
+    // contacts is the same fan-out of attacker-writable text that keeps `search_notes` off
+    // MCP — and the MCP surface already has `list_reminders` for the dated half of this.
+    // (`list_reminders` does carry AI-drafted reminder titles over MCP today, which are
+    // note-derived by the same route. That is worth a look, but widening it further here
+    // is not the way to settle it.)
+    surfaces: CHAT_ONLY,
+    scope: "read",
+    resultLabel: "commitments",
+    fields: {
+      chat: ["kind", "id", "contactId", "contactName", "text", "dueDate", "sourceId"],
+    },
+    async run(userId, args: { contactId?: string; limit: number }) {
+      const db = await getDb();
+      const inboxId = await getInboxListId(userId);
+      // "today" is overdue AND today; "anytime" is the undated pile. Both are things the
+      // user is already late on or has never scheduled — which is what "owe" means. What is
+      // merely coming up is `list_reminders`, and it is a different question.
+      const page = (view: "today" | "anytime") =>
+        queryRemindersPage(
+          db,
+          userId,
+          { view, listId: null, contactId: args.contactId, limit: args.limit, tz: "UTC" },
+          { inboxId }
+        );
+
+      const [dueNow, undated, items] = await Promise.all([
+        page("today"),
+        page("anytime"),
+        db
+          .select({
+            id: actionItems.id,
+            text: actionItems.text,
+            contactId: actionItems.contactId,
+            contactName: contacts.fullName,
+            interactionId: actionItems.interactionId,
+          })
+          .from(actionItems)
+          .innerJoin(contacts, eq(contacts.id, actionItems.contactId))
+          .where(
+            and(
+              eq(actionItems.userId, userId),
+              eq(actionItems.status, "open"),
+              ...(args.contactId ? [eq(actionItems.contactId, args.contactId)] : [])
+            )
+          )
+          .orderBy(desc(actionItems.createdAt))
+          .limit(args.limit),
+      ]);
+
+      const fromReminders = [...dueNow.items, ...undated.items].map((r) => ({
+        kind: "reminder" as const,
+        id: r.id,
+        contactId: r.contactId,
+        contactName: r.contactName,
+        text: r.title,
+        dueDate: r.dueDate,
+        sourceId: null as string | null,
+      }));
+      const fromNotes = items.map((i) => ({
+        kind: "action_item" as const,
+        id: i.id,
+        contactId: i.contactId,
+        contactName: i.contactName,
+        text: i.text,
+        dueDate: null,
+        // The interaction it was taken from, so an answer can point at the note rather than
+        // assert the promise on its own authority.
+        sourceId: i.interactionId,
+      }));
+
+      // Dated first and soonest first — the overdue ones — then everything with no date.
+      const dated = fromReminders.filter((r) => r.dueDate);
+      const rest = [...fromReminders.filter((r) => !r.dueDate), ...fromNotes];
+      dated.sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+      return [...dated, ...rest].slice(0, args.limit);
     },
   },
 
