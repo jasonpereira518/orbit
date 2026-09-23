@@ -98,6 +98,17 @@ export const OVERVIEW_TABS: readonly IntegrationTabId[] = INTEGRATION_TABS.filte
 export type IntegrationFocus = "inbox";
 
 /**
+ * The element a `focus` lands on, e.g. `integration-google-inbox`.
+ *
+ * Here rather than in the dialog because the two ends of that link live in different files:
+ * the dialog looks the id up to scroll to it, and the account page puts it on the one row it
+ * names. A constant spelled out by hand at either end would drift without failing anything.
+ */
+export function focusTargetId(view: IntegrationView, focus: IntegrationFocus): string {
+  return `integration-${view}-${focus}`;
+}
+
+/**
  * Ids the dialog used before it was organised by account. Links, bookmarks and the
  * `returnTo` of Google and Microsoft consent screens already in flight still say these, and
  * `gmail` stays the way to link straight to the Google page's inbox.

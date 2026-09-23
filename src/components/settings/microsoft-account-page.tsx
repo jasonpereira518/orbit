@@ -1,29 +1,31 @@
 "use client";
 
 /**
- * Google, as one page: connect once, then a row per feature.
+ * Microsoft, as one page: connect once, then a row per feature. The Google page's twin.
  *
- * What this replaces is two separate cards on the same panel — the Google Contacts importer
- * and the Gmail recruiter-scan panel — each stating the account, each with its own Connect and
- * its own Disconnect, and neither able to say anything about the other three things the same
- * grant covers. Here the account is stated once by `AccountPageShell`, and contacts, meetings,
- * the inbox scan, sending and reminders each get a row that answers for itself.
+ * Four rows where Google has five. Microsoft has no send purpose — `microsoft-scopes.ts`
+ * asks for Contacts, Calendars and Mail and nothing else — so there is no "Send from"
+ * row here, and `microsoftAccountStatus` returns no `send` capability for one to read.
+ *
+ * The recruiter scan appears in Settings for the first time on this page. Before it, the
+ * Outlook scan lived only on /recruiters: the Settings dialog had a Gmail tab and no Outlook
+ * one, so an Outlook account's inbox was set up in one place and its contacts in another.
  *
  * ## Who owns what
  *
- * - `useGoogleConnection` owns the status, the sign-in return and Connect/Disconnect. One
+ * - `useMicrosoftConnection` owns the status, the sign-in return and Connect/Disconnect. One
  *   owner per page: two components each stripping the OAuth params race each other's
  *   `history.replaceState`, and the loser's queued server action is dropped unsettled (see
  *   `use-provider-connection.ts`).
- * - `useContactsImport("google")` owns the preview, the selection and the import job.
- * - `useRecruiterScan("google", …)` owns the scan — mounted inside `InboxRow` so that
+ * - `useContactsImport("microsoft")` owns the preview, the selection and the import job.
+ * - `useRecruiterScan("microsoft", …)` owns the scan — mounted inside `InboxRow` so that
  *   `active` going false unmounts it and stops its two-second poll. Base UI only unmounts the
  *   dialog body once its exit animation ends, which a backgrounded tab never finishes, so
  *   stopping on unmount alone would leave the poll running.
  * - `useLatestScan` owns the one read that tells that hook where the scan already is — see
  *   "The scan that is already running", below.
- * - `googleAccountStatus` + `rowControl` decide what each row offers; neither lives here, so
- *   the Microsoft page cannot answer the same state differently.
+ * - `microsoftAccountStatus` + `rowControl` decide what each row offers; neither lives here,
+ *   so this page cannot answer a state differently from the Google one.
  *
  * ## The scan that is already running
  *
@@ -34,33 +36,33 @@
  * disabled: pressing Scan in that window would start a scan the remount then forgot about.
  *
  * The read is held back until the connection status has landed, which is what keeps it clear
- * of the sign-in return: `useGoogleConnection` strips the OAuth params with
+ * of the sign-in return: `useMicrosoftConnection` strips the OAuth params with
  * `history.replaceState`, and that drops any server action queued at the time without ever
  * settling it. A status in hand means the strip has already happened.
  *
  * ## `jobRunning`, not any job
  *
- * The cards this replaces disabled their buttons whenever *any* import was running — a
- * LinkedIn import greyed out the Google contacts button. These rows read this provider's own
- * job (`contacts.jobRunning`) instead. It is the one deliberate behaviour change here.
+ * The card this replaces disabled its buttons whenever *any* import was running — a LinkedIn
+ * import greyed out the Outlook contacts button. These rows read this provider's own job
+ * (`contacts.jobRunning`) instead, as the Google page's do.
  */
 
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
-import { CalendarClock, CalendarDays, Loader2, Mail, Send, Users } from "lucide-react";
-import { getGmailScanStatus, setCalendarSync, type GmailScanStatus } from "@/actions/gmail";
+import { CalendarClock, CalendarDays, Loader2, Mail, Users } from "lucide-react";
+import { getOutlookScanStatus, setCalendarSync, type OutlookScanStatus } from "@/actions/outlook";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { AccountPageShell, FeatureRow } from "@/components/settings/account-page";
 import { useContactsImport } from "@/components/settings/use-contacts-import";
-import { useGoogleConnection } from "@/components/settings/use-provider-connection";
+import { useMicrosoftConnection } from "@/components/settings/use-provider-connection";
 import { useLatestScan, useRecruiterScan } from "@/components/settings/use-recruiter-scan";
-import { focusTargetId, type IntegrationTabId } from "@/components/settings/sections";
+import type { IntegrationTabId } from "@/components/settings/sections";
 import { friendlyError } from "@/lib/errors";
 import {
-  googleAccountStatus,
+  microsoftAccountStatus,
   rowControl,
   type CapabilityStatus,
   type RowControl,
@@ -68,10 +70,7 @@ import {
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-/** Where `?integration=gmail` lands. Kept on the inbox row itself, which is what it names. */
-const INBOX_ROW_ID = focusTargetId("google", "inbox");
-
-export function GoogleAccountPage({
+export function MicrosoftAccountPage({
   returnTo,
   inboxVisible,
   canUseRecruiters,
@@ -90,10 +89,10 @@ export function GoogleAccountPage({
   /** Opens another page of this dialog — the Reminders row and the "Turn on AI" link. */
   onOpenPage: (page: IntegrationTabId) => void;
 }) {
-  const connection = useGoogleConnection({ returnTo });
-  const contacts = useContactsImport("google");
+  const connection = useMicrosoftConnection({ returnTo });
+  const contacts = useContactsImport("microsoft");
   const { status } = connection;
-  const account = status ? googleAccountStatus(status, { canUseRecruiters }) : null;
+  const account = status ? microsoftAccountStatus(status, { canUseRecruiters }) : null;
   const capabilities = account?.capabilities ?? {};
 
   const showsInbox = inboxVisible && active;
@@ -101,13 +100,13 @@ export function GoogleAccountPage({
   // includes it, and the account is reachable. `account` being set also means the connection
   // status has landed, which is what holds this read clear of the sign-in return's strip.
   const latestScan = useLatestScan(
-    getGmailScanStatus,
+    getOutlookScanStatus,
     showsInbox && canUseRecruiters && account?.state === "connected"
   );
 
   return (
     <AccountPageShell
-      provider="google"
+      provider="microsoft"
       account={account}
       loading={connection.loading}
       failed={connection.failed}
@@ -152,20 +151,11 @@ export function GoogleAccountPage({
       ) : null}
 
       <FeatureRow
-        icon={<Send className="size-4" />}
-        title="Send from Gmail"
-        description="Replies you approve go out from your address."
-        control={rowControl("send", capabilities.send)}
-        disabled={connection.busy}
-        onAction={() => connection.connect(["send"])}
-      />
-
-      <FeatureRow
         icon={<CalendarClock className="size-4" />}
-        title="Reminders in Google Calendar"
+        title="Reminders in Outlook"
         description="See your follow-ups next to your meetings."
         // Not a capability of the grant: the reminders page hands out its own private
-        // calendar address, which works whether or not Google is connected at all.
+        // calendar address, which works whether or not Microsoft is connected at all.
         control={{ kind: "action", label: "Add" }}
         onAction={() => onOpenPage("reminders")}
       />
@@ -211,7 +201,7 @@ function ContactsRow({
       description={
         imported
           ? `${imported} You pick who comes in.`
-          : "Bring your Google contacts into Orbit. You choose who before anything’s added."
+          : "Bring your Microsoft contacts into Orbit. You choose who before anything’s added."
       }
       control={rowControlForState}
       disabled={working}
@@ -289,8 +279,8 @@ function MeetingsRow({
       control={control}
       disabled={busy || pending}
       onAction={() => {
-        // Fix and Allow both come down to asking Google for the calendar again; only a live
-        // grant has a switch to flip.
+        // Fix and Allow both come down to asking Microsoft for the calendar again; only a
+        // live grant has a switch to flip.
         if (control.kind === "switch") toggle(!control.on);
         else onAllow();
       }}
@@ -324,7 +314,7 @@ function InboxRow({
   aiReady: boolean;
   busy: boolean;
   /** The scan the page found, if any. Only meaningful once `scanKnown`. */
-  initialScan: GmailScanStatus | null;
+  initialScan: OutlookScanStatus | null;
   /** The page's scan read has settled. False means "not known yet", never "no scan". */
   scanKnown: boolean;
   onAllow: () => void;
@@ -333,7 +323,7 @@ function InboxRow({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const { scan, running, phaseLabel, percent, start, cancel } = useRecruiterScan(
-    "google",
+    "microsoft",
     initialScan
   );
 
@@ -354,13 +344,12 @@ function InboxRow({
 
   return (
     <FeatureRow
-      id={INBOX_ROW_ID}
       icon={<Mail className="size-4" />}
-      title="Recruiters in Gmail"
+      title="Recruiters in Outlook"
       description={
         needsAi ? (
           <>
-            Finds recruiter emails and sums up each one. Asks Google first.{" "}
+            Finds recruiter emails and sums up each one. Asks Microsoft first.{" "}
             <Button
               variant="link"
               size="sm"
@@ -372,7 +361,7 @@ function InboxRow({
             to use it.
           </>
         ) : (
-          "Finds recruiter emails and sums up each one. Asks Google first."
+          "Finds recruiter emails and sums up each one. Asks Microsoft first."
         )
       }
       control={control}
@@ -429,7 +418,7 @@ function InboxRow({
 
       {!running && scan?.status === "failed" ? (
         <p className="rounded-xl bg-destructive/10 p-4 text-sm text-destructive">
-          {/* The stored message can be a raw Gmail body. */}
+          {/* The stored message can be a raw Graph body. */}
           {friendlyError(scan.errorMessage, "The last scan didn’t finish — try again?")}
         </p>
       ) : null}

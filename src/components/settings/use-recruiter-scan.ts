@@ -126,6 +126,61 @@ const OUTLOOK_SCAN_CONFIG: ScanConfig<OutlookScanStatus> = {
   cancelScan: cancelOutlookRecruiterScan,
 };
 
+/**
+ * The scan the server already has, read once, so a row can mount already knowing about it.
+ *
+ * `useRecruiterScan` takes its `initialScan` as a `useState` initialiser — the panels on
+ * /recruiters are handed one by their server page, and never learn of a second. A row inside
+ * the Settings dialog has no server page to hand it one, and starting from `null` loses what
+ * the surface it replaces showed: a scan started from /recruiters and still running reads as
+ * "not started", and a finished scan's summary never appears at all.
+ *
+ * So: the page reads the latest scan itself (`getGmailScanStatus()` / `getOutlookScanStatus()`
+ * with no argument answer exactly that), and remounts the row once it lands — the caller keys
+ * the row on what comes back, because a `useState` initialiser is only read on mount.
+ *
+ * Two rules the caller has to hold up:
+ *
+ * 1. **`enabled` only once the connection status has landed.** A `history.replaceState` —
+ *    which `useGoogleConnection` performs on the sign-in return — makes Next drop any server
+ *    action still queued, without ever settling it. That is the race `integrations-gmail-tab`
+ *    carried an `awaitingStrip` gate for. Waiting for the connection's own status means this
+ *    read is fired after the strip, by a render the strip's re-read caused, so there is no
+ *    second watcher of the OAuth params and nothing to race.
+ * 2. **Nothing may act on the scan until `loaded`.** Until then this knows of no scan, which
+ *    is not the same as there being none.
+ *
+ * A read that rejects settles as "loaded, no scan": the row then behaves exactly as it did
+ * before this existed, which is better than a control that never becomes pressable.
+ */
+export function useLatestScan<S extends Scan>(
+  read: () => Promise<S | null>,
+  enabled: boolean
+): { scan: S | null; loaded: boolean } {
+  const [state, setState] = useState<{ scan: S | null; loaded: boolean }>({
+    scan: null,
+    loaded: false,
+  });
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void read().then(
+      (scan) => {
+        if (!cancelled) setState({ scan, loaded: true });
+      },
+      () => {
+        if (!cancelled) setState({ scan: null, loaded: true });
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [read, enabled]);
+
+  return state;
+}
+
 export function useRecruiterScan(
   provider: "google",
   initialScan: GmailScanStatus | null

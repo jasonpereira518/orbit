@@ -47,7 +47,7 @@ export function IntegrationsSettings({
 }: {
   /** Visible pages, in order — hidden surfaces already filtered out by the page. */
   tabs: IntegrationTabId[];
-  /** False when /recruiters is hidden — the Google page drops its inbox block. */
+  /** False when /recruiters is hidden — both account pages drop their inbox row. */
   inboxVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;

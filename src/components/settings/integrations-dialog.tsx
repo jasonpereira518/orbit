@@ -26,6 +26,7 @@ import {
   INTEGRATION_TAB_GROUPS,
   INTEGRATION_TABS,
   OVERVIEW,
+  focusTargetId,
   integrationHref,
   type IntegrationFocus,
   type IntegrationTabId,
@@ -70,19 +71,19 @@ const PanelSkeleton = () => (
   </div>
 );
 
-// The importers are the heavy half of this dialog — CSV parsing, review tables — and most
-// visits never open them, so they load on first open of their page, as on /imports.
-const GoogleContactsImport = dynamic(
+// The account pages and the importers are the heavy half of this dialog — review tables, CSV
+// parsing — and most visits never open them, so they load on first open of their page.
+const GoogleAccountPage = dynamic(
   () =>
-    import("@/components/imports/google-contacts-import").then((m) => ({
-      default: m.GoogleContactsImport,
+    import("@/components/settings/google-account-page").then((m) => ({
+      default: m.GoogleAccountPage,
     })),
   { loading: () => <PanelSkeleton /> }
 );
-const OutlookContactsImport = dynamic(
+const MicrosoftAccountPage = dynamic(
   () =>
-    import("@/components/imports/outlook-contacts-import").then((m) => ({
-      default: m.OutlookContactsImport,
+    import("@/components/settings/microsoft-account-page").then((m) => ({
+      default: m.MicrosoftAccountPage,
     })),
   { loading: () => <PanelSkeleton /> }
 );
@@ -100,21 +101,9 @@ const LinkedInMessagesImport = dynamic(
     })),
   { loading: () => <PanelSkeleton /> }
 );
-const GmailTab = dynamic(
-  () =>
-    import("@/components/settings/integrations-gmail-tab").then((m) => ({
-      default: m.GmailTab,
-    })),
-  { loading: () => <PanelSkeleton /> }
-);
 
 function isAdvanced(view: IntegrationView): boolean {
   return INTEGRATION_TABS.some((tab) => tab.id === view && tab.group === "advanced");
-}
-
-/** The element a `focus` lands on, e.g. `integration-google-inbox`. */
-function focusTargetId(view: IntegrationView, focus: IntegrationFocus) {
-  return `integration-${view}-${focus}`;
 }
 
 /**
@@ -148,7 +137,7 @@ export function IntegrationsDialog({
   /** The pages this viewer may see, in order — already filtered for hidden surfaces. */
   tabs: IntegrationTabId[];
   statuses: IntegrationStatuses | null;
-  /** False when /recruiters is hidden: the Google page then leaves out its Gmail inbox block. */
+  /** False when /recruiters is hidden: both account pages then leave out their inbox row. */
   inboxVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
@@ -225,16 +214,25 @@ function DialogBody({
   // Each page starts at its own top (or at the spot a link asked for) rather than wherever
   // the last one was scrolled to, and its nav row is brought into view.
   useEffect(() => {
-    const target = focus ? document.getElementById(focusTargetId(view, focus)) : null;
-    if (target) target.scrollIntoView({ block: "start" });
-    else panelScroller.current?.scrollTo({ top: 0 });
-    tabRefs.current.get(view)?.scrollIntoView({ block: "nearest" });
-    if (!target) return;
-
-    // The page's importers are still loading skeletons on this first scroll, and push the
-    // target down once they resolve — keep re-scrolling to it until the panel stops resizing,
-    // the person takes over, or 3s pass.
     const scroller = panelScroller.current;
+    // Looked up again on every pass rather than captured: the row a link names arrives late.
+    // The page behind it is a `dynamic()` chunk, and it renders a skeleton of its own until
+    // its connection status lands, so on this first pass the id is usually not in the
+    // document at all — and the row that eventually carries it is replaced once more when
+    // the page learns where its scan is.
+    const findTarget = () =>
+      focus ? document.getElementById(focusTargetId(view, focus)) : null;
+
+    const first = findTarget();
+    if (first) first.scrollIntoView({ block: "start" });
+    else scroller?.scrollTo({ top: 0 });
+    tabRefs.current.get(view)?.scrollIntoView({ block: "nearest" });
+    if (!focus) return;
+
+    // Keep looking, and keep re-scrolling to what turns up — the rest of the page loading
+    // around it pushes it down too — until the panel stops resizing, the person takes over,
+    // or 3s pass. The panel is observed rather than the row, because there may be no row yet.
+    const panel = document.getElementById(`integration-panel-${view}`);
     let stopped = false;
     let observer: ResizeObserver | undefined;
 
@@ -255,14 +253,11 @@ function DialogBody({
     scroller?.addEventListener("keydown", stop);
     const timer = setTimeout(stop, 3_000);
 
-    if (typeof ResizeObserver !== "undefined") {
-      const panel = target.closest('[role="tabpanel"]');
-      if (panel) {
-        observer = new ResizeObserver(() => {
-          if (!stopped) target.scrollIntoView({ block: "start" });
-        });
-        observer.observe(panel);
-      }
+    if (panel && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => {
+        if (!stopped) findTarget()?.scrollIntoView({ block: "start" });
+      });
+      observer.observe(panel);
     }
 
     return stop;
@@ -287,8 +282,12 @@ function DialogBody({
     panel?.focus({ preventScroll: true });
   }, [view]);
 
-  /** A page opened from the Overview's own buttons, which the Overview then hides. */
-  function openFromOverview(tab: IntegrationTabId) {
+  /**
+   * A page opened by a control that the move then hides — an Overview card's button, or a
+   * row on an account page sending the reader to Reminders or AI. Focus follows into the
+   * page, because what was focused is no longer on screen.
+   */
+  function openPage(tab: IntegrationTabId) {
     if (tab !== view) focusAfterViewChange.current = { to: "panel" };
     onViewChange(tab);
   }
@@ -479,7 +478,7 @@ function DialogBody({
                 className="space-y-5 p-5 outline-none md:p-7"
               >
                 {id === OVERVIEW ? (
-                  <IntegrationsOverview tabs={tabs} statuses={statuses} onOpen={openFromOverview} />
+                  <IntegrationsOverview tabs={tabs} statuses={statuses} onOpen={openPage} />
                 ) : (
                   <>
                     {runningProgress && runningTab === id ? (
@@ -495,6 +494,7 @@ function DialogBody({
                       inboxVisible={inboxVisible}
                       initialSettings={initialSettings}
                       canUseRecruiters={canUseRecruiters}
+                      onOpenPage={openPage}
                     />
                   </>
                 )}
@@ -513,27 +513,43 @@ function Panel({
   inboxVisible,
   initialSettings,
   canUseRecruiters,
+  onOpenPage,
 }: {
   id: IntegrationTabId;
   active: boolean;
   inboxVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  onOpenPage: (page: IntegrationTabId) => void;
 }) {
   switch (id) {
+    // One page per account, not a stack of cards. `returnTo` is the page itself: the page is
+    // the sole owner of the sign-in return, so there is one place to come back to whichever
+    // row asked. `?integration=gmail` still lands on the inbox row, which carries
+    // `focusTargetId("google", "inbox")` itself now that there is no wrapper to hang it on.
+    // `hasApiKey` is the AI gate's verdict, not key presence (see `getSettings`).
     case "google":
       return (
-        <div className="space-y-5">
-          <GoogleContactsImport returnTo={integrationHref("google")} />
-          {inboxVisible ? (
-            <div id={focusTargetId("google", "inbox")} className="scroll-mt-4">
-              <GmailTab active={active} canUseRecruiters={canUseRecruiters} returnTo={integrationHref("gmail")} />
-            </div>
-          ) : null}
-        </div>
+        <GoogleAccountPage
+          returnTo={integrationHref("google")}
+          inboxVisible={inboxVisible}
+          canUseRecruiters={canUseRecruiters}
+          aiReady={initialSettings.hasApiKey}
+          active={active}
+          onOpenPage={onOpenPage}
+        />
       );
     case "microsoft":
-      return <OutlookContactsImport returnTo={integrationHref("microsoft")} />;
+      return (
+        <MicrosoftAccountPage
+          returnTo={integrationHref("microsoft")}
+          inboxVisible={inboxVisible}
+          canUseRecruiters={canUseRecruiters}
+          aiReady={initialSettings.hasApiKey}
+          active={active}
+          onOpenPage={onOpenPage}
+        />
+      );
     case "linkedin":
       return (
         <div className="space-y-5">

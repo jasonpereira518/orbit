@@ -17,17 +17,17 @@
  *
  * If TWO components on the same page each watch that param and each strip it, they race:
  * whichever calls `history.replaceState` first wins, and the loser's own queued status
- * re-read is dropped by that restore, leaving it stuck. `src/components/settings/
- * integrations-gmail-tab.tsx`'s `awaitingStrip` gate exists only because of that race — it
- * defers `GmailTab`'s own load until the Google Contacts card, mounted beside it on the same
- * Settings page, has already stripped the params, so the panel below mounts with them already
- * gone. A later task deletes that gate; the fix is for a page to hand the whole job to one
- * hook instance instead of two components each half-owning it.
+ * re-read is dropped by that restore, leaving it stuck. The Settings dialog used to have
+ * exactly that pair — a Google Contacts card and a Gmail tab on one page — and the tab
+ * carried an `awaitingStrip` gate that deferred its own load until the card beside it had
+ * stripped the params. Both are gone: `GoogleAccountPage` and `MicrosoftAccountPage` each
+ * hand the whole job to one instance of this hook, and anything else on the page that needs
+ * a server action of its own waits for that instance's status to land first.
  *
  * ## `enabled: false`
  *
- * `GmailImportPanel` and `OutlookImportPanel` are handed `connection` as a prop by a server
- * page (`/recruiters`, or `GmailTab` in Settings) and never fetch it themselves. Passing
+ * `GmailImportPanel` and `OutlookImportPanel` are handed `connection` as a prop by the
+ * /recruiters server page and never fetch it themselves. Passing
  * `enabled: false` skips the load — this hook's own `status`/`loading`/`failed` simply go
  * unused, and the caller renders from its prop instead. Connect, Disconnect and the OAuth
  * return still run: the OAuth return re-reads the status regardless, to name the address in
