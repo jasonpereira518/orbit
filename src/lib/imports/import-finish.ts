@@ -9,6 +9,7 @@
  */
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { joinList } from "@/lib/imports/join-list";
+import { importSourceLabel } from "@/lib/imports/import-sources";
 // Type-only, and it has to stay that way: `import-undo.ts` reaches `@/db`, and this module is
 // imported by client components. A type import is erased; anything more is the `node:fs`
 // chunk error.
@@ -79,6 +80,41 @@ export type FinishCopy = {
 const PLAN_SETTINGS_HREF = "/settings?section=settings-plan";
 
 const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
+
+/**
+ * One `imports` row, in the card's terms.
+ *
+ * Kept here rather than in the actions file that reads the row: that file is "use server", so
+ * nothing in it can be tested outside a request, and this mapping is where the card's numbers
+ * are decided. Meetings read the engine's `interactionsLogged` and fall back to the legacy
+ * `meetingsLogged`, as `summarizeImport` does for the history chips — without the fallback a
+ * calendar import from before the engine told its card "Nothing new this time".
+ */
+export function finishPartFromImport(row: {
+  id: string;
+  importType: string;
+  fileName: string | null;
+  contactsCreated: number | null;
+  contactsUpdated: number | null;
+  stats: {
+    interactionsLogged?: number;
+    meetingsLogged?: number;
+    blockedByPlan?: number;
+    failedRows?: number;
+  } | null;
+}): FinishSummary {
+  return {
+    importIds: [row.id],
+    added: row.contactsCreated ?? 0,
+    existing: row.contactsUpdated ?? 0,
+    meetingsLogged: row.stats?.interactionsLogged || row.stats?.meetingsLogged || 0,
+    sources: [row.fileName ? row.fileName : importSourceLabel(row.importType)],
+    // What this import could not bring in. The done card replaced the runner's completion
+    // line, which was the only place refused rows were ever mentioned, so they ride along.
+    blockedByPlan: row.stats?.blockedByPlan ?? 0,
+    failedRows: row.stats?.failedRows ?? 0,
+  };
+}
 
 /**
  * One drop, one card.

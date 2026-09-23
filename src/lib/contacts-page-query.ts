@@ -18,9 +18,7 @@ import { getDb } from "@/db";
 import { contactTags, contacts, tags } from "@/db/schema";
 import { getRankedContacts } from "@/actions/search";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
-
-/** `imports.id` is a uuid; anything else in the query string is ignored, not queried. */
-const IMPORT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { importIdsFrom } from "@/lib/imports/import-ids";
 import {
   contactsCursorCondition,
   contactsCursorFor,
@@ -112,10 +110,7 @@ export async function listContactsPage(
   // a hand-typed id would fail the cast and turn the whole page into a 500 instead of an
   // empty list.
   const askedForImport = Boolean(filters?.importId?.trim());
-  const importIds = (filters?.importId ?? "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter((id) => IMPORT_ID.test(id));
+  const importIds = importIdsFrom((filters?.importId ?? "").split(","));
   if (askedForImport && !importIds.length) {
     // Asked to narrow to an import, and not one usable id among them. An empty list is the
     // answer; falling through would quietly widen the page to the whole network, which is

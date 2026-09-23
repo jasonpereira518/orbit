@@ -12,9 +12,12 @@ import {
   type ImportPeoplePage,
   type ImportPersonOutcome,
 } from "@/lib/imports/import-people";
-import type { FinishSummary } from "@/lib/imports/import-finish";
+import {
+  finishPartFromImport,
+  type FinishSummary,
+} from "@/lib/imports/import-finish";
+import { importIdsFrom, isImportId } from "@/lib/imports/import-ids";
 import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
-import { importSourceLabel } from "@/lib/imports/import-sources";
 import {
   performUndo,
   previewUndo,
@@ -359,6 +362,8 @@ export async function getImportDetail(
   importId: string,
 ): Promise<ImportDetail | null> {
   const userId = await requireUserId();
+  // Not a uuid, so not an import: "no such import" is the true answer, not a failed cast.
+  if (!isImportId(importId)) return null;
   const db = await getDb();
 
   const row = await db.query.imports.findFirst({
@@ -469,6 +474,7 @@ export async function getImportPeople(
   offset = 0,
 ): Promise<ImportPeoplePage> {
   const userId = await requireUserId();
+  if (!isImportId(importId)) return { people: [], hasMore: false };
   return listImportPeople(userId, importId, outcome, offset);
 }
 
@@ -493,15 +499,9 @@ async function finishForImport(
 ): Promise<LatestFinishedImport> {
   const people = await listImportPeople(userId, row.id, "added", 0);
   return {
-    importIds: [row.id],
-    added: row.contactsCreated ?? 0,
-    existing: row.contactsUpdated ?? 0,
-    meetingsLogged: row.stats?.interactionsLogged ?? 0,
-    sources: [row.fileName ? row.fileName : importSourceLabel(row.importType)],
-    // What this import could not bring in. The done card replaced the runner's completion
-    // line, which was the only place refused rows were ever mentioned, so they ride along.
-    blockedByPlan: row.stats?.blockedByPlan ?? 0,
-    failedRows: row.stats?.failedRows ?? 0,
+    // The numbers themselves are `finishPartFromImport`'s, in the pure finish module, where
+    // a smoke can hold them — this adds only what needs the database.
+    ...finishPartFromImport(row),
     undoneAt: row.stats?.undoneAt ?? null,
     avatars: people.people.slice(0, MAX_FACES).map((p) => ({
       contactId: p.id,
@@ -545,7 +545,9 @@ const MAX_RUN_IMPORTS = 12;
 export async function getFinishedImportsFor(
   importIds: string[],
 ): Promise<LatestFinishedImport[]> {
-  const wanted = [...new Set(importIds)].slice(0, MAX_RUN_IMPORTS);
+  // Only uuid-shaped ids reach `inArray` on a uuid column: one forged id would otherwise fail
+  // the cast and take the whole run's card down with it.
+  const wanted = importIdsFrom(importIds).slice(0, MAX_RUN_IMPORTS);
   if (!wanted.length) return [];
   const userId = await requireUserId();
   const db = await getDb();
@@ -569,6 +571,8 @@ export async function getFinishedImportsFor(
 /** Preview of what undoing this import would remove — see `previewUndo` in `import-undo.ts`. */
 export async function previewImportUndo(importId: string): Promise<UndoPreview | null> {
   const userId = await requireUserId();
+  // The same answer as an import that does not exist, which the dialog already handles.
+  if (!isImportId(importId)) return null;
   return previewUndo(userId, importId);
 }
 
@@ -592,6 +596,8 @@ const UNDO_ACTION_BUDGET_MS = 120_000;
  */
 export async function undoImport(importId: string): Promise<UndoResult> {
   const userId = await requireUserId();
+  // What `performUndo` answers for an import it cannot find: nothing removed, nothing left.
+  if (!isImportId(importId)) return { removed: 0, kept: 0, done: true, remaining: 0 };
   const startedAt = Date.now();
   let removed = 0;
   let result: UndoResult = { removed: 0, kept: 0, done: true, remaining: 0 };
@@ -600,6 +606,9 @@ export async function undoImport(importId: string): Promise<UndoResult> {
     removed += result.removed;
   } while (!result.done && Date.now() - startedAt < UNDO_ACTION_BUDGET_MS);
   revalidatePath("/imports");
+  // The people just removed were on the People list too — and the done card's own button
+  // links there, filtered to this import.
+  revalidatePath("/contacts");
   return { ...result, removed };
 }
 
@@ -630,6 +639,7 @@ export async function getImportJobStatus(
   importId: string,
 ): Promise<ImportJobStatus> {
   const userId = await requireUserId();
+  if (!isImportId(importId)) throw new Error("Import session not found");
   const db = await getDb();
   const row = await db.query.imports.findFirst({
     where: and(eq(imports.id, importId), eq(imports.userId, userId)),
@@ -654,6 +664,7 @@ export async function getImportJobStatus(
 /** Stop a processing import; rows already written are kept. */
 export async function cancelImportSession(importId: string) {
   const userId = await requireUserId();
+  if (!isImportId(importId)) throw new Error("Import session not found");
   const db = await getDb();
   const existing = await db.query.imports.findFirst({
     where: and(eq(imports.id, importId), eq(imports.userId, userId)),

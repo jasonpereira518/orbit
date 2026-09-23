@@ -9,11 +9,13 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   finishCopy,
+  finishPartFromImport,
   foldPreviews,
   mergeFinishSummaries,
   undoDismissLabel,
   type FinishSummary,
 } from "../src/lib/imports/import-finish";
+import { importIdsFrom, isImportId } from "../src/lib/imports/import-ids";
 import type { UndoPreview } from "../src/lib/imports/import-undo";
 import { IMPORT_COPY } from "../src/lib/imports/import-copy";
 import {
@@ -417,6 +419,63 @@ check(
   "kept people come first across the whole run, in the order the imports ran",
   mixedExact.candidates.map((c) => c.contactId).join(",") === "l-k1,m-k1,l-r1,l-r2,m-r1",
   mixedExact.candidates.map((c) => c.contactId).join(","),
+);
+
+/**
+ * One `imports` row, as the card's numbers.
+ *
+ * The mapping used to live inside the "use server" actions file, where nothing could test it —
+ * and it read meetings from `interactionsLogged` only, so a calendar import from before the
+ * engine (which kept them in `meetingsLogged`) told its card "Nothing new this time".
+ */
+console.log("An import row, as the card's numbers");
+const row = (over: Partial<Parameters<typeof finishPartFromImport>[0]>) =>
+  finishPartFromImport({
+    id: "r1",
+    importType: "calendar_ics",
+    fileName: "work.ics",
+    contactsCreated: 0,
+    contactsUpdated: 0,
+    stats: {},
+    ...over,
+  });
+const legacyCalendar = row({ stats: { meetingsLogged: 38 } });
+check(
+  "a calendar import from before the engine still reports its meetings",
+  legacyCalendar.meetingsLogged === 38,
+  String(legacyCalendar.meetingsLogged),
+);
+check("…so its card says so", finishCopy(legacyCalendar).headline === "38 meetings logged", finishCopy(legacyCalendar).headline);
+check("an engine-era calendar import reads its own counter", row({ stats: { interactionsLogged: 12 } }).meetingsLogged === 12);
+const people = row({
+  importType: "linkedin_connections",
+  fileName: null,
+  contactsCreated: 19,
+  contactsUpdated: 6,
+  stats: { blockedByPlan: 40, failedRows: 3 },
+});
+check("people added and matched come from the engine's counters", people.added === 19 && people.existing === 6);
+check("a file with no name is named for its source", people.sources.join() === "LinkedIn connections", people.sources.join());
+check("the plan cap and refused rows ride along", people.blockedByPlan === 40 && people.failedRows === 3);
+check("the part speaks for exactly its own import", people.importIds.join() === "r1");
+
+/**
+ * Ids are checked before they reach a uuid column.
+ *
+ * `imports.id` and `import_job_rows.import_id` are uuids: a hand-typed or forged id sent
+ * straight into a query fails the cast (22P02) and turns a read into an error instead of "no
+ * such import". Every action that takes an import id, and the People list's `importId` filter,
+ * filters through this one check.
+ */
+console.log("Import ids are checked before they are queried");
+const uuid = "3f2b8a4c-1d2e-4f5a-9b6c-7d8e9f0a1b2c";
+check("a uuid is an import id", isImportId(uuid));
+check("…in capitals too", isImportId(uuid.toUpperCase()));
+check("anything else is not", !isImportId("not-an-id") && !isImportId("") && !isImportId(`${uuid}x`) && !isImportId(42));
+check(
+  "a list keeps only the usable ids, trimmed, once each, in order",
+  importIdsFrom([` ${uuid} `, "nope", uuid, "1; drop table imports"]).join() === uuid,
+  importIdsFrom([` ${uuid} `, "nope", uuid, "1; drop table imports"]).join(),
 );
 
 if (failures) {
