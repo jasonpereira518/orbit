@@ -134,11 +134,21 @@ export function occurrenceUid(uid: string, start: Date): string {
  * conflicting ways of picking the day). A bare MONTHLY+BYDAY with no BYSETPOS ("every Friday
  * of the month", i.e. several occurrences a month) is real RFC 5545 but outside what this
  * module was asked to support.
+ *
+ * Also rejects a BYMONTHDAY outside 1..31 (negative/"from the end of the month" values —
+ * `-1` for "last day" — are real RFC 5545 but out of subset here) and a BYDAY code this
+ * module doesn't know. Both matter beyond correctness: `monthlyByMonthDaySeries` and
+ * `monthlySetPosSeries` walk forward a month at a time looking for a match, and a rule that
+ * can never match would otherwise spin those generators forever with nothing to stop them —
+ * this is the gate that keeps such a rule from ever reaching them.
  */
 function isSupportedRule(rule: RecurrenceRule): boolean {
   const hasByDay = rule.byDay.length > 0;
   const hasByMonthDay = rule.byMonthDay.length > 0;
   const hasBySetPos = rule.bySetPos.length > 0;
+
+  if (hasByDay && rule.byDay.some((d) => !(d in WEEKDAY_INDEX))) return false;
+  if (hasByMonthDay && rule.byMonthDay.some((d) => d < 1 || d > 31)) return false;
 
   if (hasByMonthDay && hasByDay) return false;
   if (hasByMonthDay && rule.freq !== "MONTHLY") return false;
@@ -160,6 +170,26 @@ function daysInMonth(y: number, mo: number): number {
 }
 
 const DAY_MS = 86_400_000;
+
+/**
+ * Defense in depth for `monthlyByMonthDaySeries` / `monthlySetPosSeries`: `isSupportedRule`
+ * should already keep a rule that can never match a day out of those generators, but a
+ * generator that CAN spin forever on a bad rule is worse than one that gives up — 3 years of
+ * consecutive empty months is well past any real "day N of the month" or "Nth weekday"
+ * pattern ever going quiet that long.
+ */
+const MAX_EMPTY_MONTHLY_PERIODS = 36;
+
+/** `{ y, mo }` stepped forward by `interval` months, carrying the year on 12-month overflow. */
+function stepMonths(y: number, mo: number, interval: number): { y: number; mo: number } {
+  let nextMo = mo + interval;
+  let nextY = y;
+  while (nextMo > 12) {
+    nextMo -= 12;
+    nextY++;
+  }
+  return { y: nextY, mo: nextMo };
+}
 
 function* dailySeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
   let anchor = civilToUtcMs(start);
@@ -207,19 +237,20 @@ function* monthlyByMonthDaySeries(rule: RecurrenceRule, start: Civil): Generator
   let y = start.y;
   let mo = start.mo;
   let first = true;
+  let emptyPeriods = 0;
   while (true) {
+    let yielded = false;
     for (const day of days) {
       if (day < 1 || day > daysInMonth(y, mo)) continue;
       const candidateMs = Date.UTC(y, mo - 1, day);
       if (first && candidateMs < startMs) continue;
+      yielded = true;
       yield { y, mo, d: day };
     }
     first = false;
-    mo += rule.interval;
-    while (mo > 12) {
-      mo -= 12;
-      y++;
-    }
+    emptyPeriods = yielded ? 0 : emptyPeriods + 1;
+    if (emptyPeriods > MAX_EMPTY_MONTHLY_PERIODS) return;
+    ({ y, mo } = stepMonths(y, mo, rule.interval));
   }
 }
 
@@ -230,6 +261,7 @@ function* monthlySetPosSeries(rule: RecurrenceRule, start: Civil): Generator<Civ
   let y = start.y;
   let mo = start.mo;
   let first = true;
+  let emptyPeriods = 0;
   while (true) {
     const matches: number[] = [];
     const total = daysInMonth(y, mo);
@@ -241,17 +273,20 @@ function* monthlySetPosSeries(rule: RecurrenceRule, start: Civil): Generator<Civ
       const day = pos > 0 ? matches[pos - 1] : matches[matches.length + pos];
       if (day !== undefined) selected.add(day);
     }
+    let yielded = false;
     for (const day of [...selected].sort((a, b) => a - b)) {
       const candidateMs = Date.UTC(y, mo - 1, day);
       if (first && candidateMs < startMs) continue;
+      yielded = true;
       yield { y, mo, d: day };
     }
     first = false;
-    mo += rule.interval;
-    while (mo > 12) {
-      mo -= 12;
-      y++;
-    }
+    emptyPeriods = yielded ? 0 : emptyPeriods + 1;
+    // BYSETPOS values that a real month can never satisfy (e.g. BYSETPOS=6 — no month has a
+    // 6th Friday) are a valid rule SHAPE, so isSupportedRule can't reject them by range the
+    // way it does BYMONTHDAY. This bail-out is the actual guard for that case.
+    if (emptyPeriods > MAX_EMPTY_MONTHLY_PERIODS) return;
+    ({ y, mo } = stepMonths(y, mo, rule.interval));
   }
 }
 
@@ -261,11 +296,7 @@ function* monthlySimpleSeries(rule: RecurrenceRule, start: Civil): Generator<Civ
   let mo = start.mo;
   while (true) {
     if (start.d <= daysInMonth(y, mo)) yield { y, mo, d: start.d };
-    mo += rule.interval;
-    while (mo > 12) {
-      mo -= 12;
-      y++;
-    }
+    ({ y, mo } = stepMonths(y, mo, rule.interval));
   }
 }
 
@@ -314,17 +345,11 @@ export function expandEvent(
   const durationMs = event.end ? event.end.getTime() - event.start.getTime() : null;
   const cap = Math.max(0, Math.min(opts.cap ?? MAX_OCCURRENCES, MAX_OCCURRENCES));
 
-  // EXDATE is matched by local CALENDAR DATE, not exact instant. An ICS producer that writes
-  // EXDATE without recomputing the DST offset for that specific date still means "skip the
-  // occurrence on this day" — and a producer that resolved it correctly (via the same
-  // TZID-aware parsing DTSTART gets) lands on the same day anyway, so this is a superset of
-  // exact-instant matching, not a weaker one.
-  const exDateKeys = new Set(
-    (opts.exDates ?? [])
-      .map((d) => toWallClockInput(d, timezone))
-      .filter((s) => s.length >= 10)
-      .map((s) => s.slice(0, 10))
-  );
+  // EXDATE matches by exact instant, per RFC 5545. Task 3 builds these by parsing a real
+  // EXDATE property through the same TZID-aware wall-clock resolution DTSTART gets, so by
+  // the time a Date reaches here it is already the correct instant in the event's own zone —
+  // no zone math needed at this end.
+  const exDateTimes = new Set((opts.exDates ?? []).map((d) => d.getTime()));
 
   const results: ParsedCalendarEvent[] = [];
   let n = 0;
@@ -342,7 +367,7 @@ export function expandEvent(
     if (rule.count !== null && n > rule.count) break;
 
     if (instant.getTime() < window.from.getTime()) continue;
-    if (exDateKeys.has(civilKey(civil))) continue;
+    if (exDateTimes.has(instant.getTime())) continue;
 
     results.push({
       ...event,

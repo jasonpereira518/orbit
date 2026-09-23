@@ -63,18 +63,24 @@ async function main() {
   );
   check("UNTIL stops expansion", untilled.length === 2, `got ${untilled.length}`);
 
+  // EXDATE matches by exact instant (RFC 5545) — this value is the DST-correct Mar 10
+  // occurrence (13:00Z, not the naive 14:00Z a fixed-offset producer would write; see the
+  // DST check just below for why).
   const skipped = expandEvent(evt("2026-03-03T14:00:00Z"), parseRRule("RRULE:FREQ=WEEKLY"), WINDOW, {
-    exDates: [new Date("2026-03-10T14:00:00Z")],
+    exDates: [new Date("2026-03-10T13:00:00Z")],
   });
-  check("EXDATE removes that occurrence", skipped.length === 4 && !skipped.some((e) => e.start?.toISOString() === "2026-03-10T14:00:00.000Z"));
+  check("EXDATE removes exactly one occurrence", skipped.length === 4, `got ${skipped.length}`);
+  check(
+    "EXDATE removes the Mar 10 occurrence specifically",
+    !skipped.some((e) => e.start?.toISOString() === "2026-03-10T13:00:00.000Z")
+  );
 
   // DST: America/New_York moves on 2026-03-08. A 09:00 local meeting stays 09:00 local,
   // which means its UTC hour changes from 14:00 to 13:00.
-  const dst = expandEvent(evt("2026-03-03T14:00:00Z"), parseRRule("RRULE:FREQ=WEEKLY"), WINDOW);
   check(
     "keeps local wall-clock across a DST change",
-    dst[1]?.start?.toISOString() === "2026-03-10T13:00:00.000Z",
-    `got ${dst[1]?.start?.toISOString()}`
+    every[1]?.start?.toISOString() === "2026-03-10T13:00:00.000Z",
+    `got ${every[1]?.start?.toISOString()}`
   );
 
   const capped = expandEvent(evt("2026-03-01T00:00:00Z"), parseRRule("RRULE:FREQ=DAILY"), {
@@ -82,6 +88,64 @@ async function main() {
     to: new Date("2030-01-01T00:00:00Z"),
   });
   check("caps runaway rules", capped.length === MAX_OCCURRENCES, `got ${capped.length}`);
+
+  // --- MONTHLY ---
+  const SIX_MONTH_WINDOW = { from: new Date("2026-01-01T00:00:00Z"), to: new Date("2026-07-01T00:00:00Z") };
+
+  const monthlyByMonthDay = expandEvent(
+    evt("2026-01-15T14:00:00Z"),
+    parseRRule("RRULE:FREQ=MONTHLY;BYMONTHDAY=15"),
+    SIX_MONTH_WINDOW
+  );
+  check("MONTHLY BYMONTHDAY fills six months", monthlyByMonthDay.length === 6, `got ${monthlyByMonthDay.length}`);
+  check(
+    "MONTHLY BYMONTHDAY keeps the 15th every month, DST notwithstanding",
+    monthlyByMonthDay.every((e) => e.start?.getUTCDate() === 15),
+    monthlyByMonthDay.map((e) => e.start?.toISOString()).join(",")
+  );
+
+  // "Last Friday of the month": Jan 30, Feb 27, Mar 27, 2026 — crossing the same DST change.
+  const lastFriday = expandEvent(
+    evt("2026-01-30T14:00:00Z"),
+    parseRRule("RRULE:FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1"),
+    { from: new Date("2026-01-01T00:00:00Z"), to: new Date("2026-04-01T00:00:00Z") }
+  );
+  check("MONTHLY BYDAY+BYSETPOS finds one Friday per month", lastFriday.length === 3, `got ${lastFriday.length}`);
+  check(
+    "MONTHLY BYDAY+BYSETPOS finds the LAST Friday each month",
+    lastFriday.map((e) => e.start?.toISOString()).join(",") ===
+      ["2026-01-30T14:00:00.000Z", "2026-02-27T14:00:00.000Z", "2026-03-27T13:00:00.000Z"].join(","),
+    lastFriday.map((e) => e.start?.toISOString()).join(",")
+  );
+
+  // Out of the documented subset (negative BYMONTHDAY — "last day of the month" — is real
+  // RFC 5545 but not one this module implements): falls back to the master alone. The point
+  // of this check is as much that it RETURNS at all as what it returns — a rule like this
+  // used to be able to hang the generator forever.
+  const negativeMonthDay = expandEvent(
+    evt("2026-01-15T14:00:00Z"),
+    parseRRule("RRULE:FREQ=MONTHLY;BYMONTHDAY=-1"),
+    SIX_MONTH_WINDOW
+  );
+  check(
+    "out-of-subset BYMONTHDAY=-1 returns the master alone",
+    negativeMonthDay.length === 1 && negativeMonthDay[0]?.uid === "u1"
+  );
+
+  // BYSETPOS=6 is a supported rule SHAPE (MONTHLY + BYDAY + BYSETPOS) but no month has a 6th
+  // Friday, so it can never match. isSupportedRule can't reject this by range the way it
+  // rejects BYMONTHDAY; the generator's own empty-period bail-out is what stops this from
+  // hanging, and this pins that it stops with zero occurrences rather than hanging or throwing.
+  const neverMatchingSetPos = expandEvent(
+    evt("2026-01-30T14:00:00Z"),
+    parseRRule("RRULE:FREQ=MONTHLY;BYDAY=FR;BYSETPOS=6"),
+    SIX_MONTH_WINDOW
+  );
+  check(
+    "a BYSETPOS that can never match terminates with no occurrences",
+    neverMatchingSetPos.length === 0,
+    `got ${neverMatchingSetPos.length}`
+  );
 
   // --- ids ---
   check(
