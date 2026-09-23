@@ -65,9 +65,39 @@
  * unprefixed `response` under a default `xmlns="DAV:"` all read as the same `response` key.
  * Apple's real responses are not guaranteed to match any one fixture's prefix choice — see
  * `src/lib/caldav/fixtures/index.ts` for how that variation is exercised on purpose.
+ *
+ * ## The `syncToken` cursor's value grammar — a contract Tasks 6 and 7 depend on
+ *
+ * `fetchChanges` returns `nextSyncToken` as one of three shapes, and whoever persists it
+ * into `CalendarSyncCursor.syncToken` (Task 7) must round-trip it byte-for-byte as the
+ * `cursor` on the next call:
+ *
+ *   - `null` — no successful fetch has completed yet, or the collection offered neither a
+ *     sync-token nor a ctag. Treat this the same as no stored cursor at all next time.
+ *   - An opaque, UNPREFIXED string — a real WebDAV-Sync `sync-token` from a
+ *     `sync-collection` REPORT (RFC 6578). Sent back verbatim as `<D:sync-token>` next time.
+ *   - `ctag:<value>` — a CalendarServer `getctag`, from the non-sync fallback path, prefixed
+ *     so a later call can tell on sight (`ctagFromCursor` below) that this calendar has
+ *     already been probed and does not support `sync-collection` — and skip straight to the
+ *     fallback, rather than spending one doomed credentialed REPORT reconfirming that on
+ *     every single call. A real sync-token happening to start with the literal characters
+ *     `ctag:` is not a case RFC 6578 rules out, but it is astronomically unlikely for an
+ *     opaque server-issued token, and the cost of a false positive is one wasted PROPFIND,
+ *     not a security issue.
+ *
+ * The fallback path's short-circuit (skip the time-range query entirely when nothing could
+ * have changed) also depends on `cursor.windowStart` / `cursor.windowEnd` — already fields
+ * on `CalendarSyncCursor` — being the window `fetchChanges` was called with on the run that
+ * produced the stored `syncToken`. This function does NOT write those fields itself; its own
+ * return shape has no room for them. Task 7 must persist `windowStart`/`windowEnd` from the
+ * SAME `window` argument it passed into the call that produced the `nextSyncToken` it is
+ * storing, every time. Without that, an unchanged ctag cannot be told apart from a rolling
+ * window simply not having reached a future event yet, and the two look identical from a
+ * ctag alone — see the fix log in task-5-report.md for the failure this caused.
  */
 import { XMLParser } from "fast-xml-parser";
 import { guardedFetchText } from "@/lib/events/guarded-fetch";
+import { ERROR_SOURCES } from "@/lib/error-events";
 import type { CalendarSyncCursor } from "@/db/schema";
 
 export type CalDavCredentials = { username: string; password: string };
@@ -90,6 +120,23 @@ export class CalDavAuthError extends Error {
   }
 }
 
+/**
+ * Internal: a request was rejected with a definitive 4xx — not 401 (its own error, handled
+ * separately), and not 429 (which `guardedFetchText` already classifies as transient and
+ * retries, same as a 5xx). Only this range means "the server looked at this exact request
+ * and refused it", which is `fetchChanges`' signal to fall back to the non-sync path rather
+ * than a fault to surface. Not exported: nothing outside this file is meant to catch it —
+ * everything else should see either `CalDavAuthError` or a plain propagated failure.
+ */
+class CalDavRejectedError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "CalDavRejectedError";
+    this.status = status;
+  }
+}
+
 /** Apple's well-known CalDAV entry point. Discovery starts here and nowhere else. */
 const DISCOVERY_URL = "https://caldav.icloud.com/";
 
@@ -102,6 +149,18 @@ const XML_CONTENT_TYPES = ["application/xml", "text/xml", "text/calendar"] as co
  * worth of events while still being a bound, not an absence of one.
  */
 const MAX_CALDAV_BYTES = 8_000_000;
+
+/**
+ * `guardedFetchText`'s own doc comment pairs its default timeout with its default byte cap —
+ * "a multi-megabyte document needs longer, and 8s would abort it mid-download every time on
+ * a cold connection" — and then leaves the pairing to the caller when the cap is raised.
+ * `MAX_CALDAV_BYTES` is over 15x the 512 KB default; even a slow connection (a rough
+ * 200 KB/s floor) needs ~40s to pull the full cap, so 8s aborted nearly every response near
+ * that size before it could finish, retried, and aborted again. 45s covers that with room to
+ * spare, while three exhausted attempts (~135s worst case, plus backoff) still fit inside the
+ * sync run's own multi-minute budget rather than consuming most of it on one calendar.
+ */
+const CALDAV_TIMEOUT_MS = 45_000;
 
 const xmlParser = new XMLParser({
   removeNSPrefix: true,
@@ -241,9 +300,13 @@ function calendarQueryBody(fromUtc: string, toUtc: string): string {
 /**
  * One PROPFIND or REPORT, with the Apple-only host pin and the Basic auth header attached at
  * the transport layer — see the module doc comment for why both live here rather than in
- * `GuardedFetchOptions`. Returns the raw XML body; throws `CalDavAuthError` on a 401 and lets
- * every other `guardedFetchText` failure (network, wrong content type, too many redirects,
- * body too large) propagate as its own `EventPageError`.
+ * `GuardedFetchOptions`. Returns the raw XML body AND the URL it actually came from — not
+ * necessarily `url` above, since Apple is free to redirect a request to a shard host
+ * (`p42-caldav.icloud.com` and the like) and a relative href in the response must resolve
+ * against where the response actually came from, not where the request was first aimed.
+ * Throws `CalDavAuthError` on a 401 and lets every other `guardedFetchText` failure (network,
+ * wrong content type, too many redirects, body too large) propagate as its own
+ * `EventPageError`.
  */
 async function davRequest(
   creds: CalDavCredentials,
@@ -252,7 +315,7 @@ async function davRequest(
   depth: "0" | "1",
   body: string,
   fetchImpl: typeof fetch
-): Promise<string> {
+): Promise<{ text: string; url: string }> {
   // Fails fast, with no network access at all, for a bad ENTRY url. A url discovered mid
   // redirect chain is re-checked inside `authedFetch` below, which is what `guardedFetchText`
   // actually invokes per hop.
@@ -267,8 +330,19 @@ async function davRequest(
     // `guardedFetchText` calls for EVERY hop, including a redirect target it read out of
     // Apple's own response a moment ago. That is the credential-leak path this guards.
     assertAppleHost(target);
+    // `guardedFetchText` always calls us with `redirect: "manual"` today — that is what
+    // makes ITS OWN redirect loop (and the host pin just above) the thing deciding whether a
+    // redirect is ever followed, rather than `fetch` itself. Verified here, not trusted:
+    // `RequestInit.redirect` defaults to `"follow"`, so if `guarded-fetch.ts` ever stopped
+    // setting it explicitly, the real `fetch` below would silently start following redirects
+    // itself, off-host, with `Authorization` already attached and no guard in that loop at
+    // all. A loud failure the day that changes beats a silent security regression.
+    if (init?.redirect !== "manual") {
+      throw new Error(`Expected guardedFetchText to request redirect: "manual", got ${String(init?.redirect)}`);
+    }
     const res = await fetchImpl(target, {
-      redirect: init?.redirect,
+      // Hardcoded, not `init.redirect` — belt and suspenders with the check just above.
+      redirect: "manual",
       signal: init?.signal,
       method,
       headers: {
@@ -288,10 +362,18 @@ async function davRequest(
       accept: "application/xml, text/xml",
       contentTypes: XML_CONTENT_TYPES,
       maxBytes: MAX_CALDAV_BYTES,
+      timeoutMs: CALDAV_TIMEOUT_MS,
+      // "truncate" (the default) would hand back a clean-looking partial XML tree instead of
+      // an error — fast-xml-parser does not notice a document cut mid-element. A caller here
+      // (`fetchChanges`) advances a cursor off what it's given; a silently partial response
+      // would advance PAST events it never actually saw, permanently. See
+      // `guarded-fetch.ts`'s own doc comment on `onOverflow` for this exact hazard.
+      onOverflow: "error",
       wrongTypeMessage: "iCloud returned something that was not XML.",
+      errorSource: ERROR_SOURCES.caldavSync,
       deps: { fetch: authedFetch },
     });
-    return result.text;
+    return { text: result.text, url: result.url };
   } catch (err) {
     // `guardedFetchText` throws a generic `EventPageError` for every non-2xx status; 401 is
     // the one status this module must surface distinctly. `lastStatus` is read from the
@@ -299,6 +381,15 @@ async function davRequest(
     // `guardedFetchText` happens to word its own error.
     if (lastStatus === 401) {
       throw new CalDavAuthError();
+    }
+    // A definitive 4xx (not 401, not 429 — see `CalDavRejectedError`'s own comment) is the
+    // one status range `fetchChanges` is entitled to read as "unsupported, fall back to the
+    // non-sync path". Everything else — a network failure, an exhausted 429/5xx retry ladder,
+    // too many redirects, the wrong content type, a body over `MAX_CALDAV_BYTES` — propagates
+    // as-is: those are real faults, and folding them into "fall back" is exactly what
+    // permanently downgrades a sync-capable calendar over one bad moment.
+    if (lastStatus >= 400 && lastStatus < 500 && lastStatus !== 401 && lastStatus !== 429) {
+      throw new CalDavRejectedError(lastStatus, err instanceof Error ? err.message : String(err));
     }
     throw err;
   }
@@ -314,7 +405,7 @@ export async function discoverPrincipal(
 ): Promise<{ principalUrl: string; calendarHomeUrl: string }> {
   const fetchImpl = deps?.fetchImpl ?? fetch;
 
-  const principalXml = await davRequest(
+  const principal = await davRequest(
     creds,
     DISCOVERY_URL,
     "PROPFIND",
@@ -322,28 +413,24 @@ export async function discoverPrincipal(
     PROPFIND_CURRENT_USER_PRINCIPAL_BODY,
     fetchImpl
   );
-  const principalHref = firstPropHref(principalXml, "current-user-principal");
+  const principalHref = firstPropHref(principal.text, "current-user-principal");
   if (!principalHref) {
     throw new Error("iCloud did not return a current-user-principal");
   }
-  const principalUrl = new URL(principalHref, DISCOVERY_URL).href;
+  // Resolved against `principal.url` — the URL the response actually came FROM, which is not
+  // necessarily `DISCOVERY_URL` if Apple redirected the request to a shard host — not the
+  // request's starting URL, so a relative href lands on the right origin either way.
+  const principalUrl = new URL(principalHref, principal.url).href;
   // The href came from the server's own response — re-validate it before using it as the
   // target of the next request, same as any other discovery URL Apple hands back.
   assertAppleHost(principalUrl);
 
-  const homeXml = await davRequest(
-    creds,
-    principalUrl,
-    "PROPFIND",
-    "0",
-    PROPFIND_CALENDAR_HOME_SET_BODY,
-    fetchImpl
-  );
-  const homeHref = firstPropHref(homeXml, "calendar-home-set");
+  const home = await davRequest(creds, principalUrl, "PROPFIND", "0", PROPFIND_CALENDAR_HOME_SET_BODY, fetchImpl);
+  const homeHref = firstPropHref(home.text, "calendar-home-set");
   if (!homeHref) {
     throw new Error("iCloud did not return a calendar-home-set");
   }
-  const calendarHomeUrl = new URL(homeHref, principalUrl).href;
+  const calendarHomeUrl = new URL(homeHref, home.url).href;
   assertAppleHost(calendarHomeUrl);
 
   return { principalUrl, calendarHomeUrl };
@@ -368,8 +455,8 @@ export async function listCalendars(
   deps?: { fetchImpl?: typeof fetch }
 ): Promise<CalDavCalendar[]> {
   const fetchImpl = deps?.fetchImpl ?? fetch;
-  const xml = await davRequest(creds, calendarHomeUrl, "PROPFIND", "1", PROPFIND_CALENDAR_LIST_BODY, fetchImpl);
-  const ms = parseMultistatus(xml);
+  const listing = await davRequest(creds, calendarHomeUrl, "PROPFIND", "1", PROPFIND_CALENDAR_LIST_BODY, fetchImpl);
+  const ms = parseMultistatus(listing.text);
 
   const calendars: CalDavCalendar[] = [];
   for (const response of toArray(ms.response as XmlNode | XmlNode[] | undefined)) {
@@ -405,8 +492,17 @@ export async function listCalendars(
     }
 
     if (!isCalendar) continue; // the calendar-home collection itself, or a non-calendar child
+    // Resolved against `listing.url` (where the PROPFIND response actually came from), not
+    // `calendarHomeUrl` (where it was first aimed) — same reasoning as `discoverPrincipal`.
+    const url = new URL(href, listing.url).href;
+    // No credential rides on this — the transport pin in `davRequest` refuses it at request
+    // time regardless. But a spoofed absolute href would otherwise become stored,
+    // user-visible, permanently-broken state in `calendar_sources` the moment anything tries
+    // to sync it, so it is refused here too, at the source, rather than left for a later
+    // caller to discover the hard way.
+    assertAppleHost(url);
     calendars.push({
-      url: new URL(href, calendarHomeUrl).href,
+      url,
       displayName: displayName ?? "Calendar",
       color,
       readOnly: isSubscribed,
@@ -460,6 +556,35 @@ function parseSyncCollectionResponse(xml: string): {
   return { icsDocuments, nextSyncToken: textOf(ms["sync-token"]), tombstones };
 }
 
+/** Prefix marking a fallback-path (ctag) cursor value — see the module doc comment's cursor
+ *  grammar section for the full contract. */
+const CTAG_CURSOR_PREFIX = "ctag:";
+
+function ctagCursor(ctag: string): string {
+  return `${CTAG_CURSOR_PREFIX}${ctag}`;
+}
+
+/** Unwraps a stored cursor value to its bare ctag, or returns `null` if `value` is not one —
+ *  either there is no stored cursor, or it holds a real (unprefixed) WebDAV-Sync token. */
+function ctagFromCursor(value: string | null | undefined): string | null {
+  if (!value || !value.startsWith(CTAG_CURSOR_PREFIX)) return null;
+  return value.slice(CTAG_CURSOR_PREFIX.length);
+}
+
+/** Whether the window this run was asked to cover is fully inside the window the stored
+ *  cursor was last computed for — the only condition under which an unchanged ctag actually
+ *  proves nothing relevant changed. A rolling window (today's is 90 days back / 60 forward,
+ *  same shape as the Google and Microsoft connectors) moves every run, so without this an
+ *  event that only just entered the window would be invisible until something unrelated
+ *  edited the calendar and finally changed the ctag. */
+function windowCoveredByCursor(cursor: CalendarSyncCursor | null, window: { from: Date; to: Date }): boolean {
+  if (!cursor?.windowStart || !cursor?.windowEnd) return false;
+  const storedStart = new Date(cursor.windowStart).getTime();
+  const storedEnd = new Date(cursor.windowEnd).getTime();
+  if (Number.isNaN(storedStart) || Number.isNaN(storedEnd)) return false;
+  return storedStart <= window.from.getTime() && storedEnd >= window.to.getTime();
+}
+
 export async function fetchChanges(
   creds: CalDavCredentials,
   calendarUrl: string,
@@ -469,41 +594,52 @@ export async function fetchChanges(
 ): Promise<{ icsDocuments: string[]; nextSyncToken: string | null; tombstones: number }> {
   const fetchImpl = deps?.fetchImpl ?? fetch;
 
-  // Try WebDAV-Sync first. There is no separate "does this calendar support sync" flag on
-  // this call — `CalDavCalendar.supportsSync` (from `listCalendars`) is a snapshot from
-  // whenever that calendar was last listed, and could be stale; asking the server directly,
-  // every time, is what stays correct if Apple ever adds or drops support for a calendar.
-  // A calendar that does not support it answers with a non-2xx status (RFC 6578: an invalid
-  // or unrecognised sync-token is a 403 with a `valid-sync-token` precondition; an
-  // unsupported REPORT is a plain 4xx too) — `davRequest` throws either way, and that is the
-  // signal to fall back, not a fault to surface.
-  try {
-    const xml = await davRequest(
-      creds,
-      calendarUrl,
-      "REPORT",
-      "1",
-      syncCollectionBody(cursor?.syncToken ?? null),
-      fetchImpl
-    );
-    return parseSyncCollectionResponse(xml);
-  } catch (err) {
-    // A revoked password is a revoked password regardless of which request surfaced it —
-    // never swallowed into "must just be an unsupported report".
-    if (err instanceof CalDavAuthError) throw err;
+  // A `ctag:`-prefixed cursor means a PRIOR call already learned, from the server itself,
+  // that this calendar does not support `sync-collection` — see the cursor grammar in the
+  // module doc comment. Skip straight to the fallback rather than spending one guaranteed-
+  // rejected credentialed REPORT reconfirming that on every single call.
+  const knownCtag = ctagFromCursor(cursor?.syncToken);
+  const probeSync = knownCtag === null;
+
+  if (probeSync) {
+    // Try WebDAV-Sync first. `CalDavCalendar.supportsSync` (from `listCalendars`) is a
+    // snapshot from whenever that calendar was last listed and could be stale; asking the
+    // server directly is what stays correct if Apple ever adds sync support to a calendar
+    // that lacked it, and the `ctag:` prefix above is what stops this from happening on
+    // every call once a calendar's answer is already known.
+    try {
+      const synced = await davRequest(
+        creds,
+        calendarUrl,
+        "REPORT",
+        "1",
+        syncCollectionBody(cursor?.syncToken ?? null),
+        fetchImpl
+      );
+      return parseSyncCollectionResponse(synced.text);
+    } catch (err) {
+      // A revoked password is a revoked password regardless of which request surfaced it —
+      // never swallowed into "must just be an unsupported report". Likewise anything that
+      // isn't a definitive rejection (a network failure, an exhausted 429/5xx retry ladder,
+      // too many redirects, an oversized body): those are real faults, and treating them as
+      // "unsupported, fall back" is exactly what would permanently downgrade a sync-capable
+      // calendar over one bad moment. Only `CalDavRejectedError` — the server looked at this
+      // exact request and said no — means fall back.
+      if (!(err instanceof CalDavRejectedError)) throw err;
+    }
   }
 
   // Fallback: ctag change-detection plus a bounded time-range query. `calendar-query` has no
   // incremental mode of its own (RFC 4791), so `getctag` (a CalendarServer extension, not in
   // any of the three RFCs, but the only cheap "did anything change" signal available) is the
-  // only way to skip the query entirely when nothing has.
-  const ctagXml = await davRequest(creds, calendarUrl, "PROPFIND", "0", PROPFIND_CTAG_BODY, fetchImpl);
-  const newCtag = firstPropText(ctagXml, "getctag");
-  if (newCtag !== null && cursor?.syncToken && newCtag === cursor.syncToken) {
-    return { icsDocuments: [], nextSyncToken: newCtag, tombstones: 0 };
+  // only way to skip the query when nothing relevant has.
+  const ctagResult = await davRequest(creds, calendarUrl, "PROPFIND", "0", PROPFIND_CTAG_BODY, fetchImpl);
+  const newCtag = firstPropText(ctagResult.text, "getctag");
+  if (newCtag !== null && knownCtag !== null && newCtag === knownCtag && windowCoveredByCursor(cursor, window)) {
+    return { icsDocuments: [], nextSyncToken: ctagCursor(newCtag), tombstones: 0 };
   }
 
-  const queryXml = await davRequest(
+  const queryResult = await davRequest(
     creds,
     calendarUrl,
     "REPORT",
@@ -514,8 +650,8 @@ export async function fetchChanges(
   // A time-range query only ever returns what currently matches the window — it has no way
   // to report a deletion, unlike a sync-collection report's tombstones.
   return {
-    icsDocuments: allCalendarData(queryXml),
-    nextSyncToken: newCtag,
+    icsDocuments: allCalendarData(queryResult.text),
+    nextSyncToken: newCtag !== null ? ctagCursor(newCtag) : null,
     tombstones: 0,
   };
 }
