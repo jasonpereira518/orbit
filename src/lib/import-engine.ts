@@ -36,6 +36,10 @@ import {
 } from "@/lib/duplicates";
 import { getAdapter } from "@/lib/import-adapters";
 import { classifyImportFailure } from "@/lib/import-errors";
+import {
+  fingerprintContact,
+  type ImportedContactProvenance,
+} from "@/lib/imports/import-provenance";
 import { startQueryCount, stopQueryCount } from "@/lib/query-counter";
 import { reportAndContinue, reportError } from "@/lib/report-error";
 import { withReference } from "@/lib/errors";
@@ -191,18 +195,28 @@ export const PLAN_LIMIT_ROW_REASON = "Contact limit reached on your plan";
  * `Promise.all`, which on `neon-http` is one HTTPS request per row, with no transaction to
  * make the chunk atomic. A single statement is both faster and all-or-nothing.
  */
-async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, string>) {
+async function markRowsDone(
+  rowIds: string[],
+  contactIdByRowId: Map<string, string>,
+  provenanceByRowId: Map<string, ImportedContactProvenance>
+) {
   if (rowIds.length === 0) return;
   const db = await getDb();
   const now = new Date();
   const tuples = rowIds.map(
     (rowId) =>
-      sql`(${rowId}::uuid, ${contactIdByRowId.get(rowId) ?? null}::uuid)`
+      sql`(${rowId}::uuid, ${contactIdByRowId.get(rowId) ?? null}::uuid, ${JSON.stringify(
+        provenanceByRowId.get(rowId) ?? { created: false }
+      )}::jsonb)`
   );
   await db.execute(sql`
     UPDATE import_job_rows AS r
-    SET status = 'done', contact_id = v.contact_id, updated_at = ${now}
-    FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, contact_id)
+    SET status = 'done',
+        contact_id = v.contact_id,
+        -- Merged, not replaced: the payload is the adapter's own row data and must survive.
+        payload = coalesce(r.payload, '{}'::jsonb) || jsonb_build_object('importedBy', v.provenance),
+        updated_at = ${now}
+    FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, contact_id, provenance)
     WHERE r.id = v.id
   `);
 }
@@ -620,6 +634,7 @@ export async function runImportJob(importId: string): Promise<void> {
 
         const touchedContactIds: string[] = [];
         const contactIdByRowId = new Map<string, string>();
+        const provenanceByRowId = new Map<string, ImportedContactProvenance>();
 
         // `createContactsBulk` admits only what the plan's contact headroom allows, taking
         // from the front, so anything past `created.length` was refused by the cap rather
@@ -673,6 +688,10 @@ export async function runImportJob(importId: string): Promise<void> {
               created.forEach((contact, i) => {
                 addToDuplicateIndex(duplicateIndex, contact);
                 contactIdByRowId.set(batch[i].row.id, contact.id);
+                provenanceByRowId.set(batch[i].row.id, {
+                  created: true,
+                  fp: fingerprintContact(batch[i].input),
+                });
                 touchedContactIds.push(contact.id);
                 const lookalike = batch[i].lookalike;
                 if (lookalike) {
@@ -711,6 +730,7 @@ export async function runImportJob(importId: string): Promise<void> {
               );
               for (const item of batch) {
                 contactIdByRowId.set(item.row.id, item.contactId);
+                provenanceByRowId.set(item.row.id, { created: false });
                 touchedContactIds.push(item.contactId);
               }
               contactsUpdated += batch.length;
@@ -896,7 +916,7 @@ export async function runImportJob(importId: string): Promise<void> {
                 })
                 .where(inArray(importJobRows.id, [...blockedRowIds]))
             : Promise.resolve(),
-          markRowsDone(doneRowIds, contactIdByRowId),
+          markRowsDone(doneRowIds, contactIdByRowId, provenanceByRowId),
           toSkip.length > 0
             ? db
                 .update(importJobRows)

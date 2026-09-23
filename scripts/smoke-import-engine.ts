@@ -206,7 +206,9 @@ async function main() {
   }
 
   // --- re-importing the same file merges instead of duplicating ---
+  const createImportId = id;
   id = await seedJob(fixture(50));
+  const mergeImportId = id;
   await runJob(id);
   out = await outcome(id);
   check("re-import merges all 50", out.updated === 50, JSON.stringify(out));
@@ -224,6 +226,43 @@ async function main() {
       "every merged contact is (re-)flagged embedding_stale_at",
       merged.length === 50 && merged.every((c) => c.embeddingStaleAt !== null),
       `flagged ${merged.filter((c) => c.embeddingStaleAt !== null).length}/${merged.length}`
+    );
+  }
+
+  console.log("Rows remember whether they created or merged");
+  {
+    const db = await getDb();
+    // The create run and the re-import run are two separate jobs (createImportId,
+    // mergeImportId) — the first creates all 50 rows, the second merges all 50 — so
+    // together they exercise both branches `markRowsDone` stamps provenance from.
+    const createdJobRows = await db.query.importJobRows.findMany({
+      where: eq(importJobRows.importId, createImportId),
+    });
+    const mergedJobRows = await db.query.importJobRows.findMany({
+      where: eq(importJobRows.importId, mergeImportId),
+    });
+    const done = [...createdJobRows, ...mergedJobRows].filter((r) => r.status === "done");
+    check(
+      "every done row carries provenance",
+      done.every((r) => (r.payload as Record<string, unknown>).importedBy !== undefined)
+    );
+    const created = done.filter(
+      (r) => (r.payload as { importedBy?: { created?: boolean } }).importedBy?.created === true
+    );
+    const merged = done.filter(
+      (r) => (r.payload as { importedBy?: { created?: boolean } }).importedBy?.created === false
+    );
+    check("created rows are marked created", created.length > 0);
+    check("merged rows are marked merged", merged.length > 0);
+    check(
+      "created rows carry a fingerprint",
+      created.every(
+        (r) => typeof (r.payload as { importedBy?: { fp?: string } }).importedBy?.fp === "string"
+      )
+    );
+    check(
+      "merged rows carry no fingerprint",
+      merged.every((r) => (r.payload as { importedBy?: { fp?: string } }).importedBy?.fp === undefined)
     );
   }
 
