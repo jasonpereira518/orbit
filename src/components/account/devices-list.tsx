@@ -19,6 +19,19 @@ type Row = {
   current: boolean;
 };
 
+/**
+ * A union rather than `rows: Row[] | null` plus a boolean flag, so a failed fetch cannot be
+ * confused with "there are zero other devices" — the two used to collapse onto the same
+ * `rows.length === 0` branch, which rendered "No other devices are signed in" even when the
+ * fetch itself had failed and we had no idea how many devices there really were.
+ */
+type ListState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; rows: Row[] };
+
+const LOAD_FAILED_COPY = "Couldn’t load your devices — try again?";
+
 /** "Chrome on macOS · Toronto, CA · active 2 hours ago", from whatever Clerk gives us. */
 function describe(
   session: SessionWithActivitiesResource,
@@ -52,7 +65,7 @@ function describe(
 export function DevicesList() {
   const { isLoaded, user } = useUser();
   const { session: currentSession } = useSession();
-  const [rows, setRows] = useState<Row[] | null>(null);
+  const [state, setState] = useState<ListState>({ status: "loading" });
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -60,10 +73,10 @@ export function DevicesList() {
     try {
       const sessions = await user.getSessions();
       const currentId = currentSession?.id ?? null;
-      setRows(sessions.map((s) => describe(s, currentId)));
+      setState({ status: "ready", rows: sessions.map((s) => describe(s, currentId)) });
     } catch (err) {
-      toast.error(clerkErrorMessage(err, friendlyError(err, "Couldn’t load your devices — try again?")));
-      setRows([]);
+      toast.error(clerkErrorMessage(err, friendlyError(err, LOAD_FAILED_COPY)));
+      setState({ status: "error" });
     }
   }, [user, currentSession]);
 
@@ -71,18 +84,27 @@ export function DevicesList() {
     if (isLoaded && user) void load();
   }, [isLoaded, user, load]);
 
-  const revoke = useReverification(async (sessionId: string) => {
-    if (!user) return;
+  // Resolves to whether a session actually got revoked, so `signOutOne` never claims success
+  // for a no-op — there being no signed-in user, or the session already having ended
+  // elsewhere between the list load and the click.
+  const revoke = useReverification(async (sessionId: string): Promise<boolean> => {
+    if (!user) return false;
     const sessions = await user.getSessions();
     const target = sessions.find((s) => s.id === sessionId);
-    if (target) await target.revoke();
+    if (!target) return false;
+    await target.revoke();
+    return true;
   });
 
   const signOutOne = async (sessionId: string) => {
     setBusy(sessionId);
     try {
-      await revoke(sessionId);
-      toast.success("Signed that device out");
+      const revoked = await revoke(sessionId);
+      if (revoked) {
+        toast.success("Signed that device out");
+      } else {
+        toast.error(TOAST_COPY.saveFailed);
+      }
       await load();
     } catch (err) {
       toast.error(clerkErrorMessage(err, friendlyError(err, TOAST_COPY.saveFailed)));
@@ -91,9 +113,20 @@ export function DevicesList() {
     }
   };
 
-  if (!isLoaded || rows === null) {
+  if (!isLoaded || state.status === "loading") {
     return <div className="h-24 animate-pulse rounded-lg bg-muted/40" aria-hidden />;
   }
+  if (state.status === "error") {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">{LOAD_FAILED_COPY}</p>
+        <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
+  const { rows } = state;
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground">No other devices are signed in.</p>;
   }
@@ -119,6 +152,7 @@ export function DevicesList() {
               variant="outline"
               size="sm"
               disabled={busy === row.id}
+              aria-label={`${busy === row.id ? "Signing out" : "Sign out"} ${row.browser} on ${row.os}`}
               onClick={() => void signOutOne(row.id)}
             >
               {busy === row.id ? "Signing out…" : "Sign out"}
