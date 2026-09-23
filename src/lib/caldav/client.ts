@@ -760,8 +760,21 @@ export async function fetchChanges(
   // only way to skip the query when nothing relevant has.
   const ctagResult = await davRequest(creds, calendarUrl, "PROPFIND", "0", PROPFIND_CTAG_BODY, fetchImpl);
   const newCtag = firstPropText(ctagResult.text, "getctag");
+
+  // The "unsupported" classification only just got (re-)confirmed when `probeSync` is true —
+  // this call either had no prior ctag cursor at all, or its TTL had expired and the
+  // sync-collection re-probe above failed again. Either way, that is what
+  // `CTAG_PROBE_TTL_MS` is timed FROM, so it gets a fresh stamp. When `probeSync` is false,
+  // this call never tested sync-collection support at all — the classification carries over
+  // unchanged from `parsedCtagCursor`, which is guaranteed non-null here (that is what made
+  // `probeSync` false) — so its `probedAt` must carry over too. Stamping `new Date()` here
+  // unconditionally was the bug: every fallback-path call restamped "probed now," so
+  // `Date.now() - probedAt >= CTAG_PROBE_TTL_MS` could never become true and the TTL never
+  // elapsed.
+  const probedAt = probeSync ? new Date() : (parsedCtagCursor?.probedAt ?? new Date());
+
   if (newCtag !== null && knownCtag !== null && newCtag === knownCtag && windowCoveredByCursor(cursor, window)) {
-    return { icsDocuments: [], nextSyncToken: ctagCursor(newCtag), tombstones: 0 };
+    return { icsDocuments: [], nextSyncToken: ctagCursor(newCtag, probedAt), tombstones: 0 };
   }
 
   const queryResult = await davRequest(
@@ -776,7 +789,7 @@ export async function fetchChanges(
   // to report a deletion, unlike a sync-collection report's tombstones.
   return {
     icsDocuments: allCalendarData(queryResult.text),
-    nextSyncToken: newCtag !== null ? ctagCursor(newCtag) : null,
+    nextSyncToken: newCtag !== null ? ctagCursor(newCtag, probedAt) : null,
     tombstones: 0,
   };
 }

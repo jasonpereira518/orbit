@@ -251,12 +251,15 @@ async function main() {
 
   console.log("\na known non-sync calendar (ctag-prefixed cursor) skips the probe entirely");
   {
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const inputCursor = ctagCursorFor("99", THREE_DAYS_MS); // fresh (well under the 7-day TTL), but not age 0
+    const inputProbedAt = Number(inputCursor.split(":")[1]);
     const { impl, calls } = stubFetch([xml(CTAG_PROPFIND_RESPONSE)]);
     const result = await fetchChanges(
       CREDS,
       "https://caldav.icloud.com/1234567/calendars/no-sync/",
       {
-        syncToken: ctagCursorFor("99"), // already known: this calendar does not support sync-collection (fresh, not expired)
+        syncToken: inputCursor, // already known: this calendar does not support sync-collection (fresh, not expired)
         windowStart: "2026-01-01T00:00:00Z", // covers the requested window below
         windowEnd: "2026-06-01T00:00:00Z",
       },
@@ -269,10 +272,11 @@ async function main() {
       calls.length === 1 && calls[0]?.method === "PROPFIND",
       JSON.stringify(calls.map((c) => c.method))
     );
+    check("the ctag cursor is returned unchanged", /^ctag:\d+:99$/.test(result.nextSyncToken ?? ""), String(result.nextSyncToken));
     check(
-      "the ctag cursor is returned unchanged (its ctag, at least — the probe timestamp refreshes)",
-      /^ctag:\d+:99$/.test(result.nextSyncToken ?? ""),
-      String(result.nextSyncToken)
+      "...and its probedAt carries FORWARD rather than restamping — this call never re-tested the classification",
+      Number((result.nextSyncToken ?? "").split(":")[1]) === inputProbedAt,
+      `input ${inputProbedAt}, output ${result.nextSyncToken}`
     );
   }
 
@@ -281,11 +285,14 @@ async function main() {
     // Same unchanged ctag as above, but the cursor's stored window is narrower than what is
     // being requested now (a rolling window moved forward). An event that only just entered
     // the window must not be invisible just because nothing ELSE about the calendar changed.
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const inputCursor = ctagCursorFor("99", THREE_DAYS_MS);
+    const inputProbedAt = Number(inputCursor.split(":")[1]);
     const { impl, calls } = stubFetch([xml(CTAG_PROPFIND_RESPONSE), xml(CALENDAR_QUERY_RESPONSE)]);
     const result = await fetchChanges(
       CREDS,
       "https://caldav.icloud.com/1234567/calendars/no-sync/",
-      { syncToken: ctagCursorFor("99"), windowStart: "2026-03-01T00:00:00Z", windowEnd: "2026-03-15T00:00:00Z" },
+      { syncToken: inputCursor, windowStart: "2026-03-01T00:00:00Z", windowEnd: "2026-03-15T00:00:00Z" },
       { from: new Date("2026-03-01T00:00:00Z"), to: new Date("2026-04-01T00:00:00Z") }, // extends past windowEnd
       { fetchImpl: impl }
     );
@@ -296,6 +303,11 @@ async function main() {
       JSON.stringify(calls.map((c) => c.method))
     );
     check("the ctag cursor comes back prefixed", /^ctag:\d+:99$/.test(result.nextSyncToken ?? ""), String(result.nextSyncToken));
+    check(
+      "...and its probedAt carries forward here too — running the query does not re-test the classification",
+      Number((result.nextSyncToken ?? "").split(":")[1]) === inputProbedAt,
+      `input ${inputProbedAt}, output ${result.nextSyncToken}`
+    );
   }
 
   console.log("\na transient failure never permanently downgrades a sync-capable calendar");
@@ -398,6 +410,31 @@ async function main() {
       "the re-probe sent an EMPTY token — a ctag cursor never carries a real sync-token to resume from",
       calls[0]?.body?.includes("<D:sync-token></D:sync-token>") ?? false,
       calls[0]?.body ?? ""
+    );
+  }
+
+  console.log("\na re-probe that still finds the calendar unsupported gets a FRESH probedAt stamp");
+  {
+    // The other side of the previous case: sync support was newly RE-RULED-OUT this call (not
+    // carried over from an already-fresh classification), so the TTL clock must restart — a
+    // calendar misclassified by one transient failure heals within a week, but a calendar that
+    // genuinely doesn't support sync-collection must not re-probe on every single call either.
+    const EIGHT_DAYS_MS = 8 * 24 * 60 * 60 * 1000;
+    const staleInputCursor = ctagCursorFor("99", EIGHT_DAYS_MS);
+    const staleInputProbedAt = Number(staleInputCursor.split(":")[1]);
+    const { impl } = stubFetch([forbidden(), xml(CTAG_PROPFIND_RESPONSE), xml(CALENDAR_QUERY_RESPONSE)]);
+    const result = await fetchChanges(
+      CREDS,
+      "https://caldav.icloud.com/1234567/calendars/no-sync/",
+      { syncToken: staleInputCursor }, // classified "unsupported" over a week ago — due for re-probe
+      { from: new Date("2026-03-01T00:00:00Z"), to: new Date("2026-04-01T00:00:00Z") },
+      { fetchImpl: impl }
+    );
+    const outputProbedAt = Number((result.nextSyncToken ?? "").split(":")[1]);
+    check(
+      "the new probedAt is a FRESH timestamp, not the expired one carried forward",
+      Number.isFinite(outputProbedAt) && outputProbedAt > staleInputProbedAt,
+      `stale input ${staleInputProbedAt}, output ${outputProbedAt}`
     );
   }
   {
