@@ -108,9 +108,14 @@ export async function runCrmSyncNow(
  * returns — its terminal `markConnectorSyncResult` then silently no-ops on the missing row —
  * and the records the disconnect dialog promised to forget come back. Claiming the lease
  * through the same predicate the scheduler and "Sync now" both claim through guarantees no
- * sync can start once this holds it. A `needs_reauth` connection skips the claim: both claims
- * require `status = 'active'`, so nothing can be holding its lease no matter what its
- * (possibly stale) `sync_status` says.
+ * sync can start once this holds it. The claim also writes a new `sync_started_at`, which is
+ * how this and a run that outlived its lease term meet: `syncHubspot` checks
+ * `connectorLeaseHeld` before every page it persists and before it records its end, sees the
+ * lease it claimed is gone, and stops writing. A purge or a reconnect, which take no claim, end
+ * a run the same way — the row is gone, or its lease reset.
+ *
+ * A `needs_reauth` connection skips the claim: both claims require `status = 'active'`, so
+ * nothing can be holding its lease no matter what its (possibly stale) `sync_status` says.
  */
 export async function disconnectCrm(
   userId: string,

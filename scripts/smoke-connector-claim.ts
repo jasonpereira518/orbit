@@ -12,6 +12,7 @@ import { connectorConnections } from "../src/db/schema";
 import {
   claimConnectorConnectionForUser,
   claimDueConnectorConnections,
+  connectorLeaseHeld,
   disarmConnectorSync,
   listConnectorConnections,
   markConnectorSyncResult,
@@ -292,6 +293,24 @@ run(async () => {
   const [progressed] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, onDemand.id));
   check("the cursor is stored", progressed?.syncCursor?.cursor === "200" && progressed?.syncCursor?.meta?.portalId === "42", JSON.stringify(progressed?.syncCursor));
   check("the lease is kept", progressed?.syncStatus === "syncing" && midRun !== null, String(progressed?.syncStatus));
+
+  console.log("\nthe lease a run holds, and when it stops holding it");
+  const leased = await upsertConnectorConnection({ userId: USER, connectorId: "lease", authKind: "oauth2", accessToken: "l", nextSyncAt: null });
+  const holder = await claimConnectorConnectionForUser(USER, "lease");
+  check("the claim carries the lease it wrote", holder?.leaseStartedAt instanceof Date, String(holder?.leaseStartedAt));
+  check("the live claim holds its lease", holder !== null && (await connectorLeaseHeld(holder.id, holder.leaseStartedAt)));
+  await markConnectorSyncResult(leased.id, { ok: true, cursor: null });
+  check("a run that recorded its end no longer holds it", holder !== null && !(await connectorLeaseHeld(holder.id, holder.leaseStartedAt)));
+  const secondHolder = await claimConnectorConnectionForUser(USER, "lease");
+  // A run killed mid-sync: its lease expires and the next claim takes the row over.
+  const takeover = await claimConnectorConnectionForUser(USER, "lease", new Date(Date.now() + SYNC_LEASE_MS + 1000));
+  check("a fresh claim holds its own lease", takeover !== null && (await connectorLeaseHeld(takeover.id, takeover.leaseStartedAt)));
+  check(
+    "…and the lease it replaced is gone",
+    secondHolder !== null && !(await connectorLeaseHeld(secondHolder.id, secondHolder.leaseStartedAt))
+  );
+  await db.delete(connectorConnections).where(eq(connectorConnections.id, leased.id));
+  check("a deleted row holds no lease", takeover !== null && !(await connectorLeaseHeld(takeover.id, takeover.leaseStartedAt)));
 
   await db.delete(connectorConnections).where(eq(connectorConnections.userId, USER));
 

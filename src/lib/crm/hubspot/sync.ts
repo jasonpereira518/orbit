@@ -7,9 +7,16 @@
  * page (so a run killed at its time limit resumes at the next page), and the run's end. What
  * it throws is retryable by construction; everything the person has to act on is resolved on
  * the row before it returns.
+ *
+ * It writes only while it holds its lease. Before every page it persists, and before it
+ * records its end, it checks `connectorLeaseHeld`: a disconnect claims the lease before it
+ * deletes (writing a new `sync_started_at`), a reconnect resets it, and a purge deletes the
+ * row — so a run whose connection changed under it stops there, writes nothing more, and
+ * leaves the row to whoever holds it now. Third-party personal data never lands after the
+ * person was told it was forgotten.
  */
 import type { ClaimedConnectorConnection } from "@/lib/connectors/connections";
-import { markConnectorSyncResult, saveConnectorCursor } from "@/lib/connectors/connections";
+import { connectorLeaseHeld, markConnectorSyncResult, saveConnectorCursor } from "@/lib/connectors/connections";
 import { ConnectorNeedsReauthError } from "@/lib/connectors/auth-errors";
 import { openConnectorAuth, type ConnectorAuthDeps } from "@/lib/connectors/token";
 import { persistCrmPage } from "@/lib/crm/persist";
@@ -51,6 +58,7 @@ export type HubspotSyncResult = {
 const NOT_ENTITLED = "HubSpot sync is on Orbit Pro and Lifetime — upgrade to keep it running";
 const NO_OWNER =
   "HubSpot has no owner record for the person who connected, so no contacts are assigned to you — ask a HubSpot admin to add you as a user, then sync again";
+const LEASE_LOST = "HubSpot’s connection changed during the sync";
 
 export async function syncHubspot(
   conn: ClaimedConnectorConnection,
@@ -66,6 +74,9 @@ export async function syncHubspot(
     await markConnectorSyncResult(conn.id, { ok: false, error: message, retryable: false });
     return { ...result, outcome: "stopped", message };
   };
+  // Nothing recorded: the row is gone, or belongs to a newer run.
+  const leaseLost = (): HubspotSyncResult => ({ ...result, outcome: "stopped", message: LEASE_LOST });
+  const holdsLease = () => connectorLeaseHeld(conn.id, conn.leaseStartedAt);
 
   const entitlements = await getEntitlements(conn.userId);
   if (!entitlements.canUseCrm) return stop(NOT_ENTITLED);
@@ -95,6 +106,7 @@ export async function syncHubspot(
 
     const ctx = await openIngestContext(conn.userId, { source: "hubspot", createsContacts: true, reportResolutions: true });
     let done = false;
+    let lost = false;
     try {
       while (now().getTime() - started < budget) {
         const page = await auth.call((token) =>
@@ -103,6 +115,10 @@ export async function syncHubspot(
         const people = page.results
           .map((raw) => mapHubspotContact(raw, { portalId: who.portalId }))
           .filter((p): p is CrmPerson => p !== null);
+        if (!(await holdsLease())) {
+          lost = true;
+          break;
+        }
         const stats = await persistCrmPage(ctx, "hubspot", people, now());
         result.pages++;
         result.records += stats.records;
@@ -126,9 +142,11 @@ export async function syncHubspot(
         }
       }
     } finally {
-      await finalizeIngest(ctx);
+      // A lost lease writes nothing more — not even the derived-state kick for pages already in.
+      if (!lost) await finalizeIngest(ctx);
     }
 
+    if (lost || !(await holdsLease())) return leaseLost();
     await markConnectorSyncResult(conn.id, {
       ok: true,
       cursor: cursorFromWindow(window, who),

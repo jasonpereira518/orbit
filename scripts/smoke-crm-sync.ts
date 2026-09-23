@@ -44,7 +44,7 @@ function contact(id: string, first: string, email: string, stage: string | null,
 /** A HubSpot with owner 77 and the given pages of search results, answered in order. */
 function hubspot(
   pages: Array<{ results: unknown[]; after: string | null } | "429" | "403">,
-  opts: { onSearch?: () => void } = {}
+  opts: { onSearch?: () => void | Promise<void> } = {}
 ) {
   const searches: Array<Record<string, unknown>> = [];
   let introspections = 0;
@@ -57,7 +57,7 @@ function hubspot(
     if (url.includes("/crm/owners/2026-09/9?idProperty=userId")) return json(200, { id: "77" });
     if (url.endsWith("/contacts/search")) {
       searches.push(JSON.parse(String(init?.body)));
-      opts.onSearch?.();
+      await opts.onSearch?.();
       const next = pages.shift();
       if (!next) return json(200, { total: 0, results: [] });
       if (next === "429") return json(429, { errorType: "RATE_LIMIT" });
@@ -208,6 +208,50 @@ run(async () => {
   await syncHubspot(await claim(), { fetchImpl: other.impl });
   check("it re-identified", other.introspections() === 1);
   await db.update(connectorConnections).set({ accountRef: "4242", syncStatus: "idle" }).where(eq(connectorConnections.userId, USER));
+
+  console.log("\na connection deleted mid-run: the run stops writing");
+  await db.update(connectorConnections).set({ syncCursor: null, syncStatus: "idle" }).where(eq(connectorConnections.userId, USER));
+  let purgeSearches = 0;
+  const purged = hubspot(
+    [
+      { results: [contact("20", "Before", "before@x.test", "lead", "2026-09-10T00:00:00.000Z")], after: "100" },
+      { results: [contact("21", "After", "after@x.test", "customer", "2026-09-11T00:00:00.000Z")], after: null },
+    ],
+    // Account deletion, or the "Connected accounts" data category, lands while page 2 is in flight.
+    { onSearch: async () => {
+      if (++purgeSearches === 2) await db.delete(connectorConnections).where(eq(connectorConnections.userId, USER));
+    } }
+  );
+  const r7 = await syncHubspot(await claim(), { fetchImpl: purged.impl });
+  check("stopped, and says why", r7.outcome === "stopped" && r7.message === "HubSpot’s connection changed during the sync", JSON.stringify(r7));
+  const afterPurge = await db.select().from(crmRecords).where(eq(crmRecords.userId, USER));
+  check("page 1 was written before the purge", afterPurge.some((r) => r.remoteId === "20"));
+  check("the person from page 2 never was", !afterPurge.some((r) => r.remoteId === "21"));
+  check("…nor became a contact", (await db.select().from(contacts).where(eq(contacts.userId, USER))).every((c) => c.email !== "after@x.test"));
+  check("nothing brought the row back", (await row()) === undefined);
+
+  console.log("\na reconnect mid-run: the old run stops writing");
+  await connect();
+  let reconnectSearches = 0;
+  const reconnected = hubspot(
+    [
+      { results: [contact("22", "Early", "early@x.test", "lead", "2026-09-12T00:00:00.000Z")], after: "100" },
+      { results: [contact("23", "Late", "late@x.test", "lead", "2026-09-13T00:00:00.000Z")], after: null },
+    ],
+    { onSearch: async () => {
+      if (++reconnectSearches === 2) await connect();
+    } }
+  );
+  const r8 = await syncHubspot(await claim(), { fetchImpl: reconnected.impl });
+  check("stopped", r8.outcome === "stopped" && r8.message === "HubSpot’s connection changed during the sync", JSON.stringify(r8));
+  const afterReconnect = await db.select().from(crmRecords).where(eq(crmRecords.userId, USER));
+  check("page 2 was never written", afterReconnect.some((r) => r.remoteId === "22") && !afterReconnect.some((r) => r.remoteId === "23"));
+  const reconnectedRow = await row();
+  check(
+    "the reconnect’s row is left as the reconnect wrote it",
+    reconnectedRow?.syncStatus === "idle" && reconnectedRow?.syncError === null && reconnectedRow?.lastSyncedAt === null,
+    JSON.stringify({ s: reconnectedRow?.syncStatus, e: reconnectedRow?.syncError, l: reconnectedRow?.lastSyncedAt })
+  );
 
   console.log("\na downgraded account stops syncing");
   await db.update(userSettings).set({ compedPlan: null }).where(eq(userSettings.userId, USER));

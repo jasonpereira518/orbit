@@ -45,6 +45,11 @@ export type ClaimedConnectorConnection = {
   capabilities: string[];
   cursor: ConnectorSyncCursor | null;
   syncFailures: number;
+  /**
+   * The `sync_started_at` this claim wrote: the run's lease. A disconnect's claim, a reconnect
+   * or a purge replaces or removes it, and `connectorLeaseHeld` is how a run finds out.
+   */
+  leaseStartedAt: Date;
 };
 
 type ClaimRow = {
@@ -61,6 +66,7 @@ type ClaimRow = {
   capabilities: string[] | string | null;
   sync_cursor: ConnectorSyncCursor | string | null;
   sync_failures: number;
+  sync_started_at: Date | string;
 };
 
 /** PGlite hands back parsed jsonb; `neon-http` can hand back a string. */
@@ -90,6 +96,7 @@ function toClaimed(row: ClaimRow): ClaimedConnectorConnection {
     capabilities: parseJson<string[]>(row.capabilities) ?? [],
     cursor: parseJson<ConnectorSyncCursor>(row.sync_cursor),
     syncFailures: row.sync_failures,
+    leaseStartedAt: new Date(row.sync_started_at),
   };
 }
 
@@ -120,7 +127,7 @@ export async function claimDueConnectorConnections(
        )
       RETURNING id, user_id, connector_id, auth_kind, account_ref, api_key_encrypted,
                 access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes,
-                capabilities, sync_cursor, sync_failures
+                capabilities, sync_cursor, sync_failures, sync_started_at
     `)
   );
   return rows.map(toClaimed);
@@ -149,10 +156,33 @@ export async function claimConnectorConnectionForUser(
          AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
       RETURNING id, user_id, connector_id, auth_kind, account_ref, api_key_encrypted,
                 access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes,
-                capabilities, sync_cursor, sync_failures
+                capabilities, sync_cursor, sync_failures, sync_started_at
     `)
   );
   return rows[0] ? toClaimed(rows[0]) : null;
+}
+
+/**
+ * Whether a run still holds the lease it claimed: the row exists, is active, is syncing, and
+ * carries the very `sync_started_at` the claim wrote. False once the run recorded its end, a
+ * newer claim took the row over (a disconnect claims before it deletes), a reconnect reset
+ * it, or a purge deleted it — a run that sees false must write nothing more.
+ */
+export async function connectorLeaseHeld(id: string, leaseStartedAt: Date): Promise<boolean> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ id: connectorConnections.id })
+    .from(connectorConnections)
+    .where(
+      and(
+        eq(connectorConnections.id, id),
+        eq(connectorConnections.status, "active"),
+        eq(connectorConnections.syncStatus, "syncing"),
+        eq(connectorConnections.syncStartedAt, leaseStartedAt)
+      )
+    )
+    .limit(1);
+  return row !== undefined;
 }
 
 /**
