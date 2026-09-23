@@ -535,6 +535,24 @@ async function seed() {
     });
   }
 
+  // An iCloud connection: an app-specific password rather than OAuth tokens.
+  await db.insert(schema.appleConnections).values({
+    userId: USER,
+    emailAddress: `${USER}@icloud.test`,
+    appPasswordEncrypted: "ciphertext-app-password",
+    principalUrl: "https://caldav.icloud.com/1/principal/",
+    calendarHomeUrl: "https://caldav.icloud.com/1/calendars/",
+  });
+
+  // A calendar picked off one of the connections above. No FK to any of the three connection
+  // tables by design (they are separate — see provider-connections.ts), so any uuid does.
+  await db.insert(schema.calendarSources).values({
+    userId: USER,
+    provider: "google",
+    connectionId: randomUUID(),
+    calendarId: "primary",
+  });
+
   const [thread] = await db
     .insert(schema.chatThreads)
     .values({ userId: USER, title: "thread" })

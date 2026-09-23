@@ -13,7 +13,9 @@ import {
   apiIdempotencyKeys,
   agentSendRequests,
   apiKeys,
+  appleConnections,
   billingEvents,
+  calendarSources,
   calendarSubscriptions,
   captureHandoffs,
   captureJobs,
@@ -270,10 +272,19 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   connections: {
-    exports: [own(gmailConnections), own(outlookConnections), own(calendarSubscriptions), own(eventProviderConnections)],
+    exports: [
+      own(gmailConnections),
+      own(outlookConnections),
+      own(appleConnections),
+      own(calendarSources),
+      own(calendarSubscriptions),
+      own(eventProviderConnections),
+    ],
     counts: [
       gmailConnections,
       outlookConnections,
+      appleConnections,
+      calendarSources,
       calendarSubscriptions,
       eventProviderConnections,
     ],
@@ -286,13 +297,18 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         })
         .from(gmailConnections)
         .where(eq(gmailConnections.userId, userId));
+      // Before the connection tables: `calendar_sources` has no FK (the three connection
+      // tables are separate by design — see provider-connections.ts), so nothing cascades it.
+      await db.delete(calendarSources).where(eq(calendarSources.userId, userId));
       await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
       await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
       // Best-effort and time-boxed (see oauth-revoke.ts): a Google outage must never
       // block an erasure. Outlook has no per-app revoke endpoint; Luma keys and Eventbrite
-      // tokens have none Orbit can call.
+      // tokens have none Orbit can call. Apple's app-specific password is revocable only by
+      // the user, at appleid.apple.com — there is nothing here to call either.
       for (const grant of googleGrants) await revokeGoogleGrant(grant);
       await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+      await db.delete(appleConnections).where(eq(appleConnections.userId, userId));
       // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as
       // the Gmail/Outlook rows above, and it must not outlive the account.
       await db
