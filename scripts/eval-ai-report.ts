@@ -9,13 +9,14 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { gate, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
+import { formatMetric, gate, type GateRules, type TaskMetrics } from "./lib/eval-ai-score";
 
 type Report = {
   label: string;
   model: string;
   tasks: Record<string, { cases: number; metrics: TaskMetrics; costMicros: number; costPerCaseMicros: number | null; misses: string[] }>;
 };
+
 
 function load(dir: string): Report["tasks"] {
   const tasks: Report["tasks"] = {};
@@ -28,7 +29,6 @@ function load(dir: string): Report["tasks"] {
 }
 
 const usd = (micros: number | null) => (micros == null ? "—" : `$${(micros / 1_000_000).toFixed(4)}`);
-const pct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(0)}%`);
 const pad = (s: string, n: number) => (s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length));
 
 function main() {
@@ -43,8 +43,23 @@ function main() {
   let baseTotal = 0;
   let candTotal = 0;
   console.log(`\n${pad("task", 11)}${pad("cases", 7)}${pad("cost/case", 12)}${cand ? pad("candidate", 12) + pad("change", 9) : ""}accuracy`);
-  for (const [task, b] of Object.entries(base)) {
+  // Every task either side ran — not just the baseline's. A task added after the baseline was
+  // recorded (research, say) would otherwise vanish from the table entirely, and nobody would
+  // see its numbers until someone re-ran the baseline.
+  const tasks = [...new Set([...Object.keys(base), ...Object.keys(cand ?? {})])];
+  for (const task of tasks) {
+    const b = base[task];
     const c = cand?.[task];
+    if (!b) {
+      const metrics = Object.entries(c!.metrics)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => `${k} ${formatMetric(k, v as number)}`)
+        .join(" · ");
+      console.log(
+        `${pad(task, 11)}${pad(String(c!.cases), 7)}${pad("(new)", 12)}${pad(usd(c!.costPerCaseMicros), 12)}${pad("—", 9)}${metrics}  [no baseline: reported, not gated]`
+      );
+      continue;
+    }
     baseTotal += b.costMicros;
     if (c) candTotal += c.costMicros;
     const delta =
@@ -53,7 +68,7 @@ function main() {
         : "—";
     const metrics = Object.entries((c ?? b).metrics)
       .filter(([, v]) => v != null)
-      .map(([k, v]) => `${k} ${k.endsWith("Hits") || k.startsWith("phantom") ? v : pct(v as number)}`)
+      .map(([k, v]) => `${k} ${formatMetric(k, v as number)}`)
       .join(" · ");
     console.log(
       `${pad(task, 11)}${pad(String(b.cases), 7)}${pad(usd(b.costPerCaseMicros), 12)}${cand ? pad(usd(c?.costPerCaseMicros ?? null), 12) + pad(delta, 9) : ""}${metrics}`

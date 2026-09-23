@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
@@ -12,6 +12,18 @@ import {
   type ImportPeoplePage,
   type ImportPersonOutcome,
 } from "@/lib/imports/import-people";
+import {
+  finishPartFromImport,
+  type FinishSummary,
+} from "@/lib/imports/import-finish";
+import { importIdsFrom, isImportId } from "@/lib/imports/import-ids";
+import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
+import {
+  performUndo,
+  previewUndo,
+  type UndoPreview,
+  type UndoResult,
+} from "@/lib/imports/import-undo";
 import {
   contacts,
   gmailConnections,
@@ -353,6 +365,8 @@ export async function getImportDetail(
   importId: string,
 ): Promise<ImportDetail | null> {
   const userId = await requireUserId();
+  // Not a uuid, so not an import: "no such import" is the true answer, not a failed cast.
+  if (!isImportId(importId)) return null;
   const db = await getDb();
 
   const row = await db.query.imports.findFirst({
@@ -444,6 +458,12 @@ export async function getImportDetail(
         docsRead: row.stats?.docsRead,
         docsAlreadyImported: row.stats?.docsAlreadyImported,
         flaggedCommitments: row.stats?.flaggedCommitments,
+        // Without these the sheet goes on offering an undo for an import that has already
+        // had one — the row beside it, which reads the same fields through `listImports`,
+        // would say "Undone" at the same moment.
+        undoneAt: row.stats?.undoneAt,
+        undoneRemoved: row.stats?.undoneRemoved,
+        undoneKept: row.stats?.undoneKept,
       },
     },
     counts,
@@ -460,7 +480,142 @@ export async function getImportPeople(
   offset = 0,
 ): Promise<ImportPeoplePage> {
   const userId = await requireUserId();
+  if (!isImportId(importId)) return { people: [], hasMore: false };
   return listImportPeople(userId, importId, outcome, offset);
+}
+
+/** What the done card shows for the most recent completed import. See `finishCopy` in
+ *  `import-finish.ts` for how these numbers become words. */
+export type LatestFinishedImport = FinishSummary & {
+  /** Set once this import's undo has run — Task 9 checks this before rendering the card. */
+  undoneAt: string | null;
+  /** Up to `MAX_FACES` of the people it added, for the swarm scene. */
+  avatars: { contactId: string; name: string; photo: string | null }[];
+};
+
+/**
+ * One import row, as the done card's arithmetic.
+ *
+ * Shared by both entry points below so the refresh path and the just-finished-a-run path
+ * cannot drift into two readings of the same row.
+ */
+async function finishForImport(
+  userId: string,
+  row: typeof imports.$inferSelect,
+): Promise<LatestFinishedImport> {
+  const people = await listImportPeople(userId, row.id, "added", 0);
+  return {
+    // The numbers themselves are `finishPartFromImport`'s, in the pure finish module, where
+    // a smoke can hold them — this adds only what needs the database.
+    ...finishPartFromImport(row),
+    undoneAt: row.stats?.undoneAt ?? null,
+    avatars: people.people.slice(0, MAX_FACES).map((p) => ({
+      contactId: p.id,
+      name: p.name,
+      photo: p.profileImageUrl,
+    })),
+  };
+}
+
+/**
+ * The most recent completed import, shaped for the done card. Null once there isn't one.
+ *
+ * This is the REFRESH path only — the card a person comes back to. While a run is still in the
+ * page's memory the queue asks `getFinishedImportsFor` with the ids that run actually wrote,
+ * because "newest on the account" is not the same claim and has been wrong in both directions:
+ * a drop of unreadable files, or a run whose every step broke, would otherwise celebrate
+ * somebody else's import and offer a button into its people.
+ */
+export async function getLatestFinishedImport(): Promise<LatestFinishedImport | null> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const row = await db.query.imports.findFirst({
+    where: and(eq(imports.userId, userId), eq(imports.status, "completed")),
+    orderBy: [desc(imports.createdAt)],
+  });
+  if (!row) return null;
+  return finishForImport(userId, row);
+}
+
+/** A run's ids are one per queued step, and a drop is capped well below this. */
+const MAX_RUN_IMPORTS = 12;
+
+/**
+ * The imports a single run produced, each shaped for the done card.
+ *
+ * Returned as parts rather than pre-summed: `mergeFinishSummaries` is pure and already carries
+ * the rule (and its own smoke), so the arithmetic stays in one testable place. Rows that are
+ * not this user's, not completed, or already undone simply do not come back — an empty array
+ * is a run with nothing to celebrate, and the caller draws no card.
+ */
+export async function getFinishedImportsFor(
+  importIds: string[],
+): Promise<LatestFinishedImport[]> {
+  // Only uuid-shaped ids reach `inArray` on a uuid column: one forged id would otherwise fail
+  // the cast and take the whole run's card down with it.
+  const wanted = importIdsFrom(importIds).slice(0, MAX_RUN_IMPORTS);
+  if (!wanted.length) return [];
+  const userId = await requireUserId();
+  const db = await getDb();
+  const rows = await db.query.imports.findMany({
+    where: and(
+      eq(imports.userId, userId),
+      eq(imports.status, "completed"),
+      inArray(imports.id, wanted),
+    ),
+  });
+  // Back into the order the steps ran in — `findMany` has no reason to preserve it, and the
+  // sources line is "From Connections.csv and messages.csv", not whatever Postgres returned.
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const ordered = wanted
+    .map((id) => byId.get(id))
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+    .filter((row) => !row.stats?.undoneAt);
+  return Promise.all(ordered.map((row) => finishForImport(userId, row)));
+}
+
+/** Preview of what undoing this import would remove — see `previewUndo` in `import-undo.ts`. */
+export async function previewImportUndo(importId: string): Promise<UndoPreview | null> {
+  const userId = await requireUserId();
+  // The same answer as an import that does not exist, which the dialog already handles.
+  if (!isImportId(importId)) return null;
+  return previewUndo(userId, importId);
+}
+
+/**
+ * Wall-clock ceiling on the whole undo, across every `performUndo` call this action makes —
+ * well inside the route's own 300s `maxDuration`. `performUndo`'s own budget
+ * (`UNDO_BUDGET_MS`, ~20s) bounds ONE invocation so a single call can't blow past a request's
+ * time limit on its own; this bounds how long THIS action spends draining the whole job
+ * before handing back to the caller. Both exist because a large enough import still needs
+ * more than one round trip, and neither layer alone can promise "finished" in one request —
+ * this loop drains what it can inside its ceiling, and a caller that gets back `done: false`
+ * is expected to call `undoImport` again (see `UndoResult.done`'s own doc comment).
+ */
+const UNDO_ACTION_BUDGET_MS = 120_000;
+
+/**
+ * Undo an import: remove the people it created, if nobody has touched them since. Loops on
+ * `performUndo` while it reports `done: false` (a budget-exhausted single call, not a
+ * finished one — see `UNDO_ACTION_BUDGET_MS` above), accumulating `removed` across calls, so
+ * a caller only needs to retry when even 120s wasn't enough to finish a very large import.
+ */
+export async function undoImport(importId: string): Promise<UndoResult> {
+  const userId = await requireUserId();
+  // What `performUndo` answers for an import it cannot find: nothing removed, nothing left.
+  if (!isImportId(importId)) return { removed: 0, kept: 0, done: true, remaining: 0 };
+  const startedAt = Date.now();
+  let removed = 0;
+  let result: UndoResult = { removed: 0, kept: 0, done: true, remaining: 0 };
+  do {
+    result = await performUndo(userId, importId);
+    removed += result.removed;
+  } while (!result.done && Date.now() - startedAt < UNDO_ACTION_BUDGET_MS);
+  revalidatePath("/imports");
+  // The people just removed were on the People list too — and the done card's own button
+  // links there, filtered to this import.
+  revalidatePath("/contacts");
+  return { ...result, removed };
 }
 
 /** A person's name out of whichever row payload this import type stages. */
@@ -490,6 +645,7 @@ export async function getImportJobStatus(
   importId: string,
 ): Promise<ImportJobStatus> {
   const userId = await requireUserId();
+  if (!isImportId(importId)) throw new Error("Import session not found");
   const db = await getDb();
   const row = await db.query.imports.findFirst({
     where: and(eq(imports.id, importId), eq(imports.userId, userId)),
@@ -515,6 +671,7 @@ export async function getImportJobStatus(
 /** Stop a processing import; rows already written are kept. */
 export async function cancelImportSession(importId: string) {
   const userId = await requireUserId();
+  if (!isImportId(importId)) throw new Error("Import session not found");
   const db = await getDb();
   const existing = await db.query.imports.findFirst({
     where: and(eq(imports.id, importId), eq(imports.userId, userId)),
@@ -794,6 +951,10 @@ export type ImportHistoryItem = {
     docsRead?: number;
     docsAlreadyImported?: number;
     flaggedCommitments?: NonNullable<ImportStats["flaggedCommitments"]>;
+    /** Set once this import's undo finished — the row then says so instead of its chips. */
+    undoneAt?: string;
+    undoneRemoved?: number;
+    undoneKept?: number;
   };
 };
 
@@ -854,6 +1015,9 @@ export async function listImports(
       docsRead: r.stats?.docsRead,
       docsAlreadyImported: r.stats?.docsAlreadyImported,
       flaggedCommitments: r.stats?.flaggedCommitments,
+      undoneAt: r.stats?.undoneAt,
+      undoneRemoved: r.stats?.undoneRemoved,
+      undoneKept: r.stats?.undoneKept,
     },
   }));
 }

@@ -1,0 +1,40 @@
+{
+  "label": "rules",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T16:46:05.897Z",
+  "commit": "351fbe0c",
+  "fixtures": "6f98553308b3",
+  "runs": 1,
+  "decisions": null,
+  "tasks": {
+    "duplicates": {
+      "cases": 45,
+      "metrics": {
+        "wrongMergesRules": 13,
+        "wrongMerges": 13,
+        "lostMerges": 0,
+        "pairAccuracy": null
+      },
+      "misses": [
+        "diff-title-01",
+        "diff-title-02",
+        "diff-title-03",
+        "diff-title-04",
+        "diff-title-05",
+        "diff-title-06",
+        "diff-co-01",
+        "diff-co-02",
+        "diff-co-03",
+        "diff-co-04",
+        "diff-co-05",
+        "diff-fuzzy-01",
+        "diff-co-06"
+      ],
+      "p50LatencyMs": 0,
+      "costMicros": 0,
+      "costPerCaseMicros": 0,
+      "usage": []
+    }
+  }
+}

@@ -20,6 +20,7 @@ import { rateLimitBuckets } from "@/db/schema";
 /** What a bucket scope means to the person hitting it, for the error message. */
 const BUCKET_LABELS: Record<string, string> = {
   chat: "chat",
+  chatSend: "email send",
   capture: "capture",
   captureHandoff: "scan",
   meetingChunk: "meeting transcription",
@@ -66,6 +67,13 @@ export type BucketPolicy = { limit: number; windowSec: number };
 export const RATE_LIMITS = {
   /** `askNetwork` / `/api/chat`: a full retrieval plus a model completion per call. */
   chat: { limit: 20, windowSec: 60 },
+  /**
+   * A chat draft sent from the user's own Gmail. Outbound and irreversible, so tighter than
+   * anything else here and measured over ten minutes: the shape to bound is a loop or a
+   * hijacked session mailing people in bulk from a real address, not a person sending a few
+   * follow-ups. The daily cap (`CHAT_SEND_DAILY_CAP`) is counted from the claim rows.
+   */
+  chatSend: { limit: 10, windowSec: 600 },
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
   /**
@@ -131,8 +139,19 @@ export const RATE_LIMITS = {
   apiWrite: { limit: 60, windowSec: 60 },
   /** Event ingestion. Fewer, because each request carries a batch of up to 500 events. */
   apiIngest: { limit: 30, windowSec: 60 },
-  /** MCP tool calls. An agent can loop far faster than a person can click. */
-  mcp: { limit: 60, windowSec: 60 },
+  /**
+   * MCP tool calls on a paid plan. An agent can loop far faster than a person can click, and
+   * a single chat turn now fans out over several tools — search, then a contact, then a
+   * reminder — so the ceiling is per conversation rather than per question.
+   */
+  mcp: { limit: 120, windowSec: 60 },
+  /**
+   * MCP tool calls on the free plan. Lower because the connector is free on every plan and
+   * this is the one surface an unpaid account can drive continuously. Generous enough that a
+   * real conversation never touches it: a person asking questions produces a handful of calls
+   * a minute, and a loop producing thirty is a runaway, not a user.
+   */
+  mcpFree: { limit: 30, windowSec: 60 },
   /** One provider sync run per connection per window — see `sync-scheduler.ts`. */
   providerSync: { limit: 4, windowSec: 3600 },
   /**

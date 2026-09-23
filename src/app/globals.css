@@ -2547,3 +2547,39 @@ html[data-celebration-handoff] [data-app-logo] {
     }
   }
 }
+
+/* ── Chat activity orbit ──
+ * The scene behind a working answer: a planet, two rings, and the people the search is
+ * looking at circling it. Linear, like every other orbit here — an easing orbit reads as a
+ * wobble. Each ring spins; each person on it spins the opposite way at the same rate, so a
+ * face stays upright while it travels. Direction rides a custom property so both halves of
+ * that pair are derived from one value.
+ *
+ * Paused while the pointer is over the scene or keyboard focus is in it, because a photo is a
+ * click target and a moving target is a bad one. Keyboard focus only (`:focus-visible`), not
+ * any focus: a click leaves the photo focused, and pausing on that would freeze the scene
+ * for good after the first click. Removed (not just slowed) under reduced motion:
+ * the people then sit where they would have started. */
+@keyframes chat-orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.chat-orbit-ring {
+  animation: chat-orbit-spin var(--orbit-dur, 24s) linear infinite var(--orbit-dir, normal);
+}
+.chat-orbit-rider {
+  animation: chat-orbit-spin var(--orbit-dur, 24s) linear infinite var(--orbit-counter, reverse);
+}
+.chat-orbit:hover .chat-orbit-ring,
+.chat-orbit:hover .chat-orbit-rider,
+.chat-orbit:has(:focus-visible) .chat-orbit-ring,
+.chat-orbit:has(:focus-visible) .chat-orbit-rider {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-orbit-ring,
+  .chat-orbit-rider {
+    animation: none;
+  }
+}

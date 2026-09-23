@@ -22,6 +22,8 @@ import {
   type Detected,
   type ImportTarget,
 } from "@/lib/imports/detect-import-file";
+import { joinList } from "@/lib/imports/join-list";
+import { IMPORT_COPY } from "@/lib/imports/import-copy";
 
 export type QueuedImportStatus =
   | "waiting"
@@ -47,7 +49,74 @@ export type QueuedImport = {
   error?: string;
   /** The runner's own completion line. */
   result?: string;
+  /**
+   * The `imports.id` this step wrote, once it has one.
+   *
+   * What makes the done card speak for THIS run rather than for whatever import happens to be
+   * newest on the account. A drop of files nothing recognises finishes with no ids at all, and
+   * a run whose every step broke finishes with none either — both of which are exactly the
+   * cases where there is nothing to celebrate.
+   */
+  importId?: string;
+  /**
+   * The person's Stop ended this step: either before it started (`skipped`) or while it ran
+   * (`done` — the rows it wrote before the cancel are kept — with a `cancelled` import).
+   *
+   * Separate from `status` because neither of those statuses can say it on its own. `skipped`
+   * is also what a file the person chose not to import becomes, and `done` is also a clean
+   * finish; the done card has to tell a stopped run from both, or stopping a five-file drop
+   * after the first file reads as a pure celebration of that one file.
+   */
+  stopped?: boolean;
 };
+
+/** Every import this run actually finished, in the order the steps ran. */
+export function finishedImportIds(items: readonly QueuedImport[]): string[] {
+  return items
+    // A stopped step can hold an import id — the one the runner was driving when Stop landed —
+    // but that import is `cancelled`, not finished, and it is not the run's to celebrate.
+    .filter((i) => i.status === "done" && i.importId && !i.stopped)
+    .map((i) => i.importId as string);
+}
+
+/**
+ * The steps that did not end in a finished import: every one that broke, and every one Stop
+ * ended. Not the files the person chose to skip in review, nor the ones whose preview found
+ * nobody to import — those ran exactly as asked.
+ */
+export function unfinishedSteps(
+  items: readonly QueuedImport[],
+): QueuedImport[] {
+  return items.filter((i) => i.status === "failed" || i.stopped);
+}
+
+const inlineLabel = (i: QueuedImport) =>
+  TARGET_LABEL_INLINE[i.target as Exclude<ImportTarget, "unknown">] ?? i.label;
+
+/**
+ * The one line a done card leads with when a step didn't land.
+ *
+ * `finishCopy` puts this where the celebration would go, so it has to be the whole story in a
+ * sentence — the per-step rows are right underneath it. A stopped run says it was stopped: the
+ * person pressed the button, so "didn’t finish" alone would read as a fault they now have to
+ * investigate. Named with the inline labels, which keep LinkedIn a proper noun mid-sentence.
+ */
+export function unfinishedLine(
+  items: readonly QueuedImport[],
+): string | undefined {
+  const failed = items.filter((i) => i.status === "failed");
+  const stopped = items.filter((i) => i.stopped);
+  if (failed.length && stopped.length) {
+    return `Your ${joinList(failed.map(inlineLabel))} didn’t finish — you stopped the rest`;
+  }
+  if (failed.length) {
+    return `Your ${joinList(failed.map(inlineLabel))} didn’t finish`;
+  }
+  if (stopped.length) {
+    return `You stopped the import before your ${joinList(stopped.map(inlineLabel))} finished`;
+  }
+  return undefined;
+}
 
 export type ImportQueueSnapshot = {
   items: QueuedImport[];
@@ -144,7 +213,7 @@ export function stopAll(items: readonly QueuedImport[]): QueuedImport[] {
     i.status === "waiting" ||
     i.status === "needs_review" ||
     i.status === "previewing"
-      ? { ...i, status: "skipped" as const }
+      ? { ...i, status: "skipped" as const, stopped: true }
       : i,
   );
 }
@@ -176,20 +245,14 @@ export function summarize(items: readonly QueuedImport[]): ImportQueueSnapshot {
  * House voice — no "failed", no trailing period, " — " as the one connector.
  */
 export function summaryMessage(items: readonly QueuedImport[]): string {
-  const done = items.filter((i) => i.status === "done");
+  // A step Stop ended mid-run is `done` (its rows were kept) but it did not import the file,
+  // so it is not named as imported. And only Stop makes a run "stopped": a file the person
+  // chose not to import in review is `skipped` too, and the run still did all it was asked.
+  const done = items.filter((i) => i.status === "done" && !i.stopped);
   const failed = items.filter((i) => i.status === "failed");
-  const skipped = items.filter((i) => i.status === "skipped");
+  const skipped = items.filter((i) => i.stopped);
 
-  const names = (list: readonly QueuedImport[]) => {
-    const labels = list.map(
-      (i) =>
-        TARGET_LABEL_INLINE[i.target as Exclude<ImportTarget, "unknown">] ??
-        i.label,
-    );
-    if (labels.length === 1) return labels[0];
-    if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
-    return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
-  };
+  const names = (list: readonly QueuedImport[]) => joinList(list.map(inlineLabel));
 
   if (done.length && !failed.length && !skipped.length) {
     return `Imported your ${names(done)}`;
@@ -203,5 +266,8 @@ export function summaryMessage(items: readonly QueuedImport[]): string {
   if (failed.length) {
     return `Your ${names(failed)} didn’t finish — try that file on its own`;
   }
+  // Stopped during the first step: nothing finished, but that step's rows up to the cancel were
+  // kept, so "Nothing was imported" would not be true.
+  if (skipped.length) return IMPORT_COPY.stopped;
   return "Nothing was imported";
 }

@@ -25,6 +25,8 @@
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { finishCopy, type FinishSummary } from "../src/lib/imports/import-finish";
+import { unfinishedLine, type QueuedImport } from "../src/lib/imports/import-queue";
 
 const ROOT = "src";
 const TOAST_CALL = /\btoast\.(error|success|message|warning|info)\(/g;
@@ -156,8 +158,135 @@ for (const table of COPY_TABLES) {
   }
 }
 
+/**
+ * The done card's words, which no amount of source reading would find.
+ *
+ * `finishCopy` builds every line it returns at runtime, out of counts — so the headline, the
+ * detail and the button label are three strings a person reads that this guard had no way to
+ * see. The table above covers `IMPORT_COPY`, including the undo's lines; this covers the
+ * other half of the finish by running the function over the shapes it is actually given: a
+ * plain import, one person, nobody new, a calendar file, several files at once, and a step
+ * that didn't land.
+ */
+/**
+ * The lead line a done card shows when a step didn't land, built by `unfinishedLine` from the
+ * queue: a step that broke, a run the person stopped, and both at once.
+ */
+const step = (over: Partial<QueuedImport>): QueuedImport => ({
+  id: "q",
+  target: "linkedin_messages",
+  label: "LinkedIn messages",
+  fileName: "messages.csv",
+  status: "done",
+  ...over,
+});
+const UNFINISHED_LINES = [
+  unfinishedLine([step({ status: "failed", error: "x" })]),
+  unfinishedLine([
+    step({ status: "done", importId: "a", target: "linkedin_connections" }),
+    step({ id: "q2", status: "skipped", stopped: true }),
+    step({ id: "q3", status: "skipped", stopped: true, target: "calendar_ics" }),
+  ]),
+  unfinishedLine([
+    step({ status: "failed", error: "x", target: "contacts_file" }),
+    step({ id: "q2", status: "skipped", stopped: true }),
+  ]),
+].filter((line): line is string => Boolean(line));
+if (UNFINISHED_LINES.length !== 3) {
+  throw new Error("unfinishedLine returned nothing for a run that didn’t finish");
+}
+
+const FINISH_SUMMARIES: FinishSummary[] = [
+  { importIds: ["i1"], added: 19, existing: 6, meetingsLogged: 0, sources: ["Connections.csv"] },
+  // One person already here: the verb has to agree ("1 person was", never "1 person were").
+  { importIds: ["i1b"], added: 4, existing: 1, meetingsLogged: 0, sources: ["Connections.csv"] },
+  { importIds: ["i2"], added: 1, existing: 0, meetingsLogged: 0, sources: ["Contacts.vcf"] },
+  { importIds: ["i3"], added: 0, existing: 25, meetingsLogged: 0, sources: ["Connections.csv"] },
+  { importIds: ["i4"], added: 0, existing: 0, meetingsLogged: 38, sources: ["work.ics"] },
+  {
+    importIds: ["i5"],
+    added: 12,
+    existing: 3,
+    meetingsLogged: 0,
+    sources: ["Connections.csv", "messages.csv"],
+  },
+  {
+    importIds: ["i6"],
+    added: 12,
+    existing: 0,
+    meetingsLogged: 0,
+    sources: ["Connections.csv"],
+    unfinished: "Your LinkedIn messages didn’t finish",
+  },
+  // Three files: a list, not "a.csv and b.csv and c.csv".
+  {
+    importIds: ["i7"],
+    added: 30,
+    existing: 2,
+    meetingsLogged: 0,
+    sources: ["Connections.csv", "messages.csv", "contacts.vcf"],
+  },
+  // What the run could not bring in: the plan cap and the rows the database refused.
+  {
+    importIds: ["i8"],
+    added: 60,
+    existing: 0,
+    meetingsLogged: 0,
+    sources: ["Connections.csv"],
+    blockedByPlan: 40,
+    failedRows: 3,
+  },
+  ...UNFINISHED_LINES.map((unfinished, i) => ({
+    importIds: [`u${i}`],
+    added: 5,
+    existing: 0,
+    meetingsLogged: 0,
+    sources: ["Connections.csv"],
+    unfinished,
+  })),
+];
+let finishLines = 0;
+for (const summary of FINISH_SUMMARIES) {
+  const copy = finishCopy(summary);
+  const where = `src/lib/imports/import-finish.ts (finishCopy ${summary.importIds.join("+")})`;
+  const lines = [
+    copy.headline,
+    copy.detail ?? "",
+    copy.action.label,
+    ...copy.notices.map((n) => n.text),
+  ];
+  for (const line of lines) {
+    if (!line) continue;
+    finishLines++;
+    checkText(where, line);
+    // Not one of the shared RULES: this one is about the finish's own connector budget, and
+    // `checkText` skips short fragments that a chip is allowed to be.
+    if ((line.match(/ — /g) ?? []).length > 1) {
+      problems.push(`${where}  [two — connectors in one line]  ${line.slice(0, 90)}`);
+    }
+    // Also the finish's own: a count of one takes a singular verb. `people(n)` pluralises the
+    // noun, and the verb after it was once written for the plural only.
+    if (/\b1 (person|row|meeting) (were|are|have)\b/.test(line)) {
+      problems.push(`${where}  [one takes a singular verb]  ${line.slice(0, 90)}`);
+    }
+    // And a list of three reads "A, B and C".
+    if (/ and [^,]+ and /.test(line)) {
+      problems.push(`${where}  [a list joined with “and” twice]  ${line.slice(0, 90)}`);
+    }
+  }
+}
+// A guard on the guard: a `finishCopy` that started returning empty strings would otherwise
+// sail through with nothing checked.
+if (finishLines < 12) {
+  throw new Error(
+    `only ${finishLines} finish lines read — has finishCopy's shape changed?`,
+  );
+}
+
 console.log("Toast copy");
-console.log(`  ${toastCalls} toast calls, ${messagesChecked} messages checked`);
+console.log(
+  `  ${toastCalls} toast calls, ${messagesChecked} messages checked (${finishLines} from the import finish)`,
+);
 if (toastCalls < 250) {
   // A guard on the guard: if the call pattern stopped matching, this would pass vacuously.
   throw new Error(

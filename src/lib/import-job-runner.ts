@@ -42,6 +42,15 @@ export type ImportJobSnapshot = {
   id: string;
   kind: ImportJobKind;
   status: "running" | "completed" | "failed" | "cancelled";
+  /**
+   * The `imports.id` this job is driving, once the server has created it.
+   *
+   * `id` above is a client-side job id and never was a database key, so a caller that wanted
+   * to know which row a finished step actually wrote had nothing to go on. The import queue
+   * needs exactly that: a done card speaks for the imports its own run produced, and without
+   * this it had to guess by asking for "the newest completed import on the account".
+   */
+  importId?: string;
   progress: ImportProgressState | null;
   /** Which step of a queued run this is, when a drop staged more than one file. */
   step?: { index: number; total: number };
@@ -329,6 +338,7 @@ async function pollServerOwnedImportJob(
     setSnapshot({
       id: jobId,
       kind,
+      importId,
       status: "running",
       cancelling: isCancelRequested(jobId),
       progress: {
@@ -459,6 +469,7 @@ async function runServerOwnedImportJob(
   setSnapshot({
     id: jobId,
     kind,
+    importId,
     step,
     status: "running",
     progress: {
@@ -485,6 +496,7 @@ async function runServerOwnedImportJob(
     setSnapshot({
       id: jobId,
       kind,
+      importId,
       step,
       status: "cancelled",
       progress: null,
@@ -498,6 +510,7 @@ async function runServerOwnedImportJob(
     setSnapshot({
       id: jobId,
       kind,
+      importId,
       step,
       status: "failed",
       progress: null,
@@ -510,6 +523,7 @@ async function runServerOwnedImportJob(
     setSnapshot({
       id: jobId,
       kind,
+      importId,
       step,
       status: "cancelled",
       progress: null,
@@ -521,6 +535,7 @@ async function runServerOwnedImportJob(
   setSnapshot({
     id: jobId,
     kind,
+    importId,
     step,
     status: "completed",
     progress: null,

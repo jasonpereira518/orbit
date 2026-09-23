@@ -19,12 +19,15 @@ import type { ThinkingLevel } from "@/lib/ai-request-options";
  *  - `fast`        `FAST_MODELS[provider]` — the cheap tier
  *  - `vision`      `VISION_MODELS[provider]` — OCR, where a misread name can't be recovered
  *  - `embed`       the embedding model for the account's embedding backend
- *  - `transcribe`  the transcription chain (Wispr → Whisper → Gemini)
+ *  - `transcribe`  the transcription chain (Whisper → Gemini)
+ *  - `decision`    TypeSafe's Jev (`JEV_MODEL`), the decision model: typed questions in,
+ *                  calibrated probabilities out. Runs only on the account's own TypeSafe key,
+ *                  and every decision operation has the pre-Jev path to fall back to.
  *
  * This DRIVES routing: `modelForOperation` in `ai-models.ts` reads the tier, and the AI
  * entry points read that — there is no per-call-site model argument to disagree with it.
  */
-export type AiTier = "user" | "fast" | "vision" | "embed" | "transcribe";
+export type AiTier = "user" | "fast" | "vision" | "embed" | "transcribe" | "decision";
 
 type OperationSpec = {
   /** In words a person would use — the settings usage card shows this. */
@@ -73,6 +76,13 @@ export const AI_OPERATIONS = {
   "chat.answer": { label: "Chat answers", tier: "user" },
   "chat.understand": { label: "Chat: understanding the question", tier: "fast", thinking: "minimal" },
   "chat.rerank": { label: "Chat: ranking results", tier: "fast", thinking: "minimal" },
+  "chat.title": { label: "Chat: naming the conversation", tier: "fast", thinking: "minimal" },
+  // The research rounds before a multi-step answer: which lookups to make, not the answer
+  // itself. On the user's model, because a weak tool choice wastes the rounds it costs. No
+  // thinking level: this file only sets one where the eval showed it loses nothing, and this
+  // operation has not been through the eval yet.
+  "chat.gather": { label: "Chat: looking things up", tier: "user" },
+  "chat.refine": { label: "Chat: rewriting a draft", tier: "fast", thinking: "minimal" },
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },
@@ -85,6 +95,32 @@ export const AI_OPERATIONS = {
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },
   "recruiter.draft": { label: "Recruiter drafts", tier: "user" },
   "import.enrich": { label: "LinkedIn import summaries", tier: "fast", thinking: "minimal", background: true },
+  // Jev (the decision model). Own ids, never an LLM operation's: `ai_result_cache` keys on
+  // the operation and not the model, so a shared id would replay one engine's answer as the
+  // other's.
+  "recruiter.prefilter": { label: "Recruiter scan: spotting recruiters", tier: "decision", background: true },
+  "recruiter.gate": { label: "Recruiter scan: ruling out non-recruiters", tier: "decision", background: true },
+  "chat.rerank.decide": { label: "Chat: ranking results (decision model)", tier: "decision" },
+  "chat.route": { label: "Chat: routing the question (decision model)", tier: "decision" },
+  "chat.roster": { label: "Chat: company rosters (decision model)", tier: "decision" },
+  "duplicates.same_person": { label: "Duplicates: same person? (decision model)", tier: "decision", background: true },
+  "mentions.resolve": { label: "Capture: linking mentions (decision model)", tier: "decision" },
+  "capture.merge_target": { label: "Capture: matching existing contacts (decision model)", tier: "decision" },
+  "capture.checks": { label: "Capture: checking people, tags and referrals (decision model)", tier: "decision" },
+  "calendar.kind": { label: "Calendar: which events are meetings (decision model)", tier: "decision", background: true },
+  "capture.dates.gate": { label: "Capture: any dates to extract? (decision model)", tier: "decision" },
+  "contact.brief.gate": { label: "Contact briefs: anything new? (decision model)", tier: "decision" },
+  "extension.starters.gate": { label: "Extension: enough for openers? (decision model)", tier: "decision" },
+  "import.enrich.gate": { label: "LinkedIn import: worth summarizing? (decision model)", tier: "decision", background: true },
+  "import.linkedin.timeline.decide": {
+    label: "LinkedIn timeline events (decision model)",
+    tier: "decision",
+    background: true,
+  },
+  // The same decisions answered by the person's own model when there is no TypeSafe key
+  // (decisions/llm.ts). Own ids: the answer cache keys on the operation, not the model.
+  "duplicates.same_person.llm": { label: "Duplicates: same person?", tier: "fast", thinking: "minimal", background: true },
+  "mentions.resolve.llm": { label: "Capture: linking mentions", tier: "fast", thinking: "minimal" },
   "import.linkedin.timeline": {
     label: "LinkedIn timeline events",
     tier: "fast",
@@ -94,6 +130,11 @@ export const AI_OPERATIONS = {
 } as const satisfies Record<string, OperationSpec>;
 
 export type AiOperationId = keyof typeof AI_OPERATIONS;
+
+/** The operations that run on the decision model — the only ids `Decider.ask` accepts. */
+export type DecisionOperationId = {
+  [K in AiOperationId]: (typeof AI_OPERATIONS)[K]["tier"] extends "decision" ? K : never;
+}[AiOperationId];
 
 /**
  * Ids that only exist in history: rows written before a call site was renamed or given its

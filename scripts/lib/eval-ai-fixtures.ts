@@ -136,3 +136,105 @@ export type DigestEvalFixture = {
     };
   }>;
 };
+
+export type ResearchEvalFixture = {
+  cases: Array<{
+    id: string;
+    question: string;
+    /** Earlier turns of the conversation, for follow-up cases. */
+    priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
+    /** What `chooseDepth` must route this to. */
+    expectDepth: "single" | "research";
+    /** Emails (from contact-search-eval.json) the answer must name or recommend. */
+    mustMention: string[];
+    /** Facts that live only in a note (passage-search-eval.json), which the answer must state. */
+    mustSay: string[];
+    /** Claims the notes do not support. */
+    forbidden?: string[];
+  }>;
+};
+
+export type ChatRoutingEvalFixture = {
+  cases: Array<{
+    id: string;
+    question: string;
+    priorTurns?: Array<{ role: "user" | "assistant"; content: string }>;
+    expect: {
+      depth: "single" | "research";
+      attention: boolean;
+      recruiters: boolean;
+      /** Seeded company names whose rosters should attach. */
+      roster: string[];
+    };
+    why?: string;
+  }>;
+};
+
+/** A contact card as the duplicate and mention fixtures write one. */
+export type EvalCard = {
+  fullName: string;
+  title?: string;
+  company?: string;
+  school?: string;
+  location?: string;
+  email?: string;
+  aiSummary?: string;
+};
+
+export type DuplicatesEvalFixture = {
+  pairs: Array<{ id: string; a: EvalCard; b: EvalCard; same: boolean; why?: string }>;
+};
+
+export type MentionsEvalFixture = {
+  cases: Array<{
+    id: string;
+    sentence: string;
+    mention: string;
+    nearPerson?: string;
+    candidates: EvalCard[];
+    /** The candidate index the mention means, or "none". */
+    expect: number | "none";
+    why?: string;
+  }>;
+};
+
+export type CalendarEvalFixture = {
+  self: string;
+  events: Array<{
+    id: string;
+    summary: string;
+    description: string;
+    location: string;
+    minutes: number;
+    attendees: Array<{ name: string; email: string }>;
+    organizer?: { name: string; email: string };
+    selfResponse?: string;
+    /** A 1:1 or networking touch that should become a contact and a logged meeting. */
+    keep: boolean;
+    why?: string;
+  }>;
+};
+
+export type CaptureChecksEvalFixture = {
+  referrals: Array<{ id: string; label: string; sentence: string; referral: boolean }>;
+  tags: Array<{ id: string; existing: string[]; proposed: string; expect: string }>;
+  presence: Array<{ id: string; note: string; people: Record<string, "participant" | "mentioned" | "not_in_note"> }>;
+};
+
+
+/**
+ * One shape for all five skip-gates (decisions/gates.ts). `skip` is what the gate SHOULD
+ * say: true when the model call would find nothing, false when there is something in the
+ * input to find. A wrong skip — `skip: false` that the gate skipped — loses real output, so
+ * the task gates on that count being zero and reports the saved share separately.
+ */
+export type SkipGatesEvalFixture = {
+  cases: Array<{
+    id: string;
+    gate: "dates" | "brief" | "starters" | "enrich" | "timeline";
+    /** The gate's state, verbatim: the same keys the call site passes. */
+    state: Record<string, string>;
+    skip: boolean;
+    why?: string;
+  }>;
+};

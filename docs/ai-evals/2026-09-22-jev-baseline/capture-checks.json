@@ -1,0 +1,40 @@
+{
+  "label": "rules",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T16:57:52.257Z",
+  "commit": "d416723a",
+  "fixtures": "d6aaf8aadeea",
+  "runs": 1,
+  "decisions": null,
+  "tasks": {
+    "capture-checks": {
+      "cases": 25,
+      "metrics": {
+        "referralAccuracy": 0.6,
+        "wrongReferrals": 4,
+        "tagAccuracy": 0.3,
+        "presenceAccuracy": null,
+        "inventedRecall": 1,
+        "presenceAct": null
+      },
+      "misses": [
+        "ref-no-01",
+        "ref-no-02",
+        "ref-no-04",
+        "ref-no-06",
+        "tag-01",
+        "tag-02",
+        "tag-03",
+        "tag-04",
+        "tag-06",
+        "tag-07",
+        "tag-09"
+      ],
+      "p50LatencyMs": 0,
+      "costMicros": 0,
+      "costPerCaseMicros": 0,
+      "usage": []
+    }
+  }
+}

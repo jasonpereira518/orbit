@@ -4,7 +4,7 @@
  * drive every boundary under plain node — the same split as `voice-recording.ts`.
  *
  * WHY CHUNK AT ALL. Every engine in the transcription chain has a per-request ceiling
- * (Wispr's is six minutes), Vercel refuses bodies over 4.5MB, and an hour of meeting held
+ * (Whisper's is 25 MB), Vercel refuses bodies over 4.5MB, and an hour of meeting held
  * in memory until Stop is an hour lost to one crashed tab. So the recorder sends about a
  * minute at a time and the transcript grows while the call is still going.
  *

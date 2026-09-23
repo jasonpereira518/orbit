@@ -49,6 +49,14 @@ export const EMBEDDING_MODELS: Record<EmbeddingBackend, string> = {
 };
 
 /**
+ * TypeSafe's decision model, pinned to a version rather than `jev-latest`. Every threshold in
+ * `src/lib/decisions/catalog.ts` was tuned against this version's probabilities; a new one
+ * can shift them, so moving this means re-running `scripts/eval-ai.ts --decisions jev` and
+ * re-reading the calibration bins before anything ships.
+ */
+export const JEV_MODEL = "jev-1.13.0";
+
+/**
  * A rough price for comparing two models: a prompt is mostly input, and an answer is a few
  * hundred tokens, so input is weighted accordingly. Null when either model is unpriced —
  * an unknown model is never assumed cheap.

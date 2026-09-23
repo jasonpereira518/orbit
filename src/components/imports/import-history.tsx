@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useState,
+  useTransition,
+  type Ref,
+} from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -48,8 +55,11 @@ import {
   splitReference,
   type ImportFailureCode,
 } from "@/lib/import-errors";
+import { ImportUndoButton } from "@/components/imports/import-finish-card";
 import { importSourceLabel } from "@/lib/imports/import-sources";
 import { summarizeImport, type ImportChip } from "@/lib/imports/import-summary";
+import { IMPORT_COPY } from "@/lib/imports/import-copy";
+import { withinUndoWindow } from "@/lib/imports/import-finish";
 import { cn } from "@/lib/utils";
 
 const CONNECTIONS_BADGE = "bg-import-connections/10 text-import-connections";
@@ -132,18 +142,68 @@ function Chips({ chips }: { chips: ImportChip[] }) {
   );
 }
 
-export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
+/**
+ * What an undone import says instead of its chips.
+ *
+ * The chips describe what the import brought in. Once it has been taken back out they are
+ * describing people who are no longer here, so the row says what happened to them instead —
+ * and says it in the plainest way available, because "undone" is a thing the person did on
+ * purpose and not a fault.
+ */
+function undoneLine(stats: ImportHistoryItem["stats"]): string | null {
+  const removed = stats?.undoneRemoved ?? 0;
+  if (!stats?.undoneAt) {
+    // Started but not finished: `undoneAt` is written only when the whole removal is done, so a
+    // large undo that ran out of time (or is still running elsewhere) has taken people out with
+    // no `undoneAt` yet. The chips would go on claiming them, so the row says how far it got —
+    // and not "Undone", which it isn't.
+    if (removed <= 0) return null;
+    return `Partly undone · ${removed} ${removed === 1 ? "person" : "people"} removed so far`;
+  }
+  const kept = stats.undoneKept ?? 0;
+  const parts = [`${removed} ${removed === 1 ? "person" : "people"} removed`];
+  if (kept > 0) parts.push(`${kept} kept`);
+  return `Undone · ${parts.join(" · ")}`;
+}
+
+/** What the done card holds on to so its "See what changed" button can open this sheet. */
+export type ImportHistoryHandle = { open: (importId: string) => void };
+
+export function ImportHistory({
+  history,
+  onUndone,
+  ref,
+}: {
+  history: ImportHistoryItem[];
+  /**
+   * Called after an undo run from the detail sheet. The rows come from the server, so somebody
+   * has to re-read them — the page, which owns the router. This component stays router-free on
+   * purpose: `smoke-import-history-render.ts` renders it outside one.
+   */
+  onUndone?: () => void;
+  /**
+   * Lets the done card open one import's sheet. A handle rather than a prop the sheet watches:
+   * opening is something a person just did, so it belongs in their click and not in an effect
+   * chasing a prop that changed.
+   */
+  ref?: Ref<ImportHistoryHandle>;
+}) {
   const [detail, setDetail] = useState<ImportDetail | null>(null);
   const [openFor, setOpenFor] = useState<string | null>(null);
   const [loading, load] = useTransition();
 
-  function open(id: string) {
-    setOpenFor(id);
-    setDetail(null);
-    load(async () => {
-      setDetail(await getImportDetail(id));
-    });
-  }
+  const open = useCallback(
+    (id: string) => {
+      setOpenFor(id);
+      setDetail(null);
+      load(async () => {
+        setDetail(await getImportDetail(id));
+      });
+    },
+    [load],
+  );
+
+  useImperativeHandle(ref, () => ({ open }), [open]);
 
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
@@ -172,6 +232,7 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
               h.status === "failed"
                 ? describeImportFailure(failureCodeOf(h))
                 : null;
+            const undone = undoneLine(h.stats);
 
             return (
               <li
@@ -189,7 +250,13 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                     {label !== title ? (
                       <p className="text-xs text-muted-foreground">{label}</p>
                     ) : null}
-                    <Chips chips={summarizeImport(h)} />
+                    {undone ? (
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {undone}
+                      </p>
+                    ) : (
+                      <Chips chips={summarizeImport(h)} />
+                    )}
                     <p className="mt-1 text-xs text-muted-foreground">
                       {formatDistanceToNow(new Date(h.createdAt), {
                         addSuffix: true,
@@ -240,19 +307,30 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
         }}
       >
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-          <ImportDetailBody detail={detail} loading={loading} />
+          <ImportDetailBody
+            detail={detail}
+            loading={loading}
+            onUndone={() => {
+              // The sheet's own detail is client state and the rows behind it are the page's.
+              if (openFor) open(openFor);
+              onUndone?.();
+            }}
+          />
         </SheetContent>
       </Sheet>
     </section>
   );
 }
 
-function ImportDetailBody({
+/** Exported for `smoke-import-history-render.ts`, which renders it inside a Sheet root. */
+export function ImportDetailBody({
   detail,
   loading,
+  onUndone,
 }: {
   detail: ImportDetail | null;
   loading: boolean;
+  onUndone?: () => void;
 }) {
   if (loading || !detail) {
     return (
@@ -276,6 +354,7 @@ function ImportDetailBody({
       ? describeImportFailure(failureCodeOf(item))
       : null;
   const ref = splitReference(item.errorMessage).ref;
+  const undone = undoneLine(item.stats);
 
   return (
     <>
@@ -307,13 +386,41 @@ function ImportDetailBody({
 
         <div>
           <h3 className="text-sm font-medium">What came in</h3>
-          <Chips chips={summarizeImport(item)} />
-          {summarizeImport(item).length === 0 ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Nothing was brought in by this one
-            </p>
-          ) : null}
+          {undone ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">{undone}</p>
+          ) : (
+            <>
+              <Chips chips={summarizeImport(item)} />
+              {summarizeImport(item).length === 0 ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Nothing was brought in by this one
+                </p>
+              ) : null}
+            </>
+          )}
         </div>
+
+        {/*
+          The way back out. Offered only while it would do something: this import created
+          people, its undo has not finished, and it is still inside the window. Past that the
+          sheet says so rather than showing a button that would refuse. A partly-done undo
+          keeps the button — it is resumable, and running it again is how it finishes.
+        */}
+        {!item.stats?.undoneAt && (item.contactsCreated ?? 0) > 0 ? (
+          withinUndoWindow(new Date(item.createdAt)) ? (
+            <div>
+              <ImportUndoButton
+                importIds={[item.id]}
+                variant="outline"
+                onUndone={onUndone}
+              />
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {IMPORT_COPY.undoWindowClosed}
+            </p>
+          )
+        ) : null}
 
         {counts.done + counts.skipped + counts.failed + counts.pending > 0 ? (
           <div>

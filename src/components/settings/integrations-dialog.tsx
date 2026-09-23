@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
+import { DecisionModelSettings } from "@/components/settings/decision-model-settings";
 import { AiUsageCard } from "@/components/settings/ai-usage-card";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
@@ -427,6 +428,7 @@ function Panel({
       return (
         <div className="space-y-5">
           <AiSettings initialSettings={initialSettings} />
+          <DecisionModelSettings initialSettings={initialSettings} />
           <AiUsageCard />
         </div>
       );

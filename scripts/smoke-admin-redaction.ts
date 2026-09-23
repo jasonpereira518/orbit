@@ -40,7 +40,7 @@ for (const value of Object.values(schema)) {
 }
 
 console.log("Every encrypted column");
-check("the schema has the encrypted columns this guard expects", encrypted.length >= 16, `${encrypted.length}`);
+check("the schema has the encrypted columns this guard expects", encrypted.length >= 15, `${encrypted.length}`);
 for (const qualified of encrypted) {
   check(`${qualified} is never revealable`, denied.has(qualified));
 }
@@ -48,6 +48,8 @@ for (const qualified of encrypted) {
 console.log("Private content with no support use");
 for (const qualified of [
   "chat_messages.content",
+  "chat_threads.context_note",
+  "user_settings.writing_instructions",
   "note_batches.source_text",
   "meeting_transcript_segments.text",
   "capture_photos.inline_data",

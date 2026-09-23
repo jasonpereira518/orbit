@@ -302,22 +302,6 @@ export function chooseEmbeddingKey(facts: KeyFacts): KeyChoice<EmbeddingBackend>
 }
 
 /**
- * One named provider, for chains that walk several (transcription: Wispr, Whisper, Gemini).
- * Null when neither the user nor, for an eligible account, Orbit has a key for it.
- */
-export function chooseProviderKey(
-  facts: Pick<KeyFacts, "eligibility"> & {
-    personal: Partial<Record<string, boolean>>;
-    managed: Partial<Record<string, boolean>>;
-  },
-  provider: string,
-): AiKeySource | null {
-  if (facts.personal[provider]) return "personal";
-  if (facts.eligibility && facts.managed[provider]) return "managed";
-  return null;
-}
-
-/**
  * Whether AI would run at all, before any allowance is consulted — the question every
  * "add your key" notice asks. Presence only; never needs a decrypted key.
  */

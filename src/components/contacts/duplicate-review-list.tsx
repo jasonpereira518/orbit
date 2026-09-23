@@ -82,6 +82,19 @@ function Side({
   );
 }
 
+/**
+ * The model's read on a pair, in words. A hint only: the queue is ordered by it, but nothing
+ * merges without a click, and the person's own judgement is the one that counts.
+ */
+function decisionHint(decision: DuplicatePair["decision"]): string | null {
+  if (!decision) return null;
+  const who = decision.engine === "jev" ? "decision model" : "your AI model";
+  const p = decision.sameProbability;
+  if (p >= 0.7) return `Likely the same person, says the ${who}`;
+  if (p <= 0.3) return `Likely two different people, says the ${who}`;
+  return `Hard to tell, says the ${who}`;
+}
+
 function PairCard({ pair }: { pair: DuplicatePair }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -137,6 +150,9 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
             </Badge>
           ) : null}
         </CardTitle>
+        {decisionHint(pair.decision) ? (
+          <p className="text-xs text-muted-foreground">{decisionHint(pair.decision)}</p>
+        ) : null}
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">

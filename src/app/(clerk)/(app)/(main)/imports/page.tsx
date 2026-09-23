@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import Link from "next/link";
-import { listImports } from "@/actions/imports";
+import { getLatestFinishedImport, listImports } from "@/actions/imports";
 import {
   listCalendarSubscriptions,
   syncStaleCalendarSubscriptions,
@@ -24,9 +24,10 @@ export default async function ImportsPage() {
   // Both connection statuses are fetched here rather than in a mount effect inside the cards,
   // so the calendar section knows on first paint whether anything is syncing — and so the
   // contacts cards stop flashing "Not connected" before their own fetch resolves.
-  const [history, calendarSubscriptions, entitlements, gmail, outlook] =
+  const [history, latestFinish, calendarSubscriptions, entitlements, gmail, outlook] =
     await Promise.all([
       listImports(),
+      getLatestFinishedImport(),
       listCalendarSubscriptions(),
       getEntitlements(await requireUserId()),
       getGmailConnectionStatus().catch(() => null),
@@ -80,6 +81,7 @@ export default async function ImportsPage() {
 
       <ImportHub
         history={history}
+        latestFinish={latestFinish}
         calendarSubscriptions={calendarSubscriptions}
         canUseSync={entitlements.canUseSync}
         google={google}

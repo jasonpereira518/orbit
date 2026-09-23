@@ -9,8 +9,7 @@ import { requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
-// One chunk is one transcription, but the engine chain can fall through Wispr's 60s
-// deadline before Whisper even starts.
+// One chunk is one transcription, whose own deadline is 90s (`TRANSCRIBE_TIMEOUT_MS`).
 export const maxDuration = 120;
 
 /**

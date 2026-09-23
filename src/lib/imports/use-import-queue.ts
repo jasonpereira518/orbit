@@ -391,6 +391,9 @@ export async function runQueue(): Promise<RunResult> {
           items: advance(state.items, item.id, {
             status: "done",
             result: final.resultMessage,
+            // The row this step actually wrote. The done card is built by summing these,
+            // which is what keeps it from describing somebody else's import.
+            importId: final.importId,
           }),
         });
       } else if (final.status === "cancelled") {
@@ -399,6 +402,10 @@ export async function runQueue(): Promise<RunResult> {
             advance(state.items, item.id, {
               status: "done",
               result: final.resultMessage,
+              importId: final.importId,
+              // Done because the rows it wrote before the cancel are kept; stopped because it
+              // did not finish. The done card needs both halves — see `QueuedImport.stopped`.
+              stopped: true,
             }),
           ),
         });

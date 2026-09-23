@@ -400,6 +400,20 @@ async function seed() {
     content: "embedded note content",
   });
 
+  // A passage of the user's own note. Derived data, but derived from the most personal text
+  // in the product — a deletion that left these behind would leave the notes behind.
+  await db.insert(schema.memoryChunks).values({
+    userId: USER,
+    sourceKind: "interaction",
+    sourceId: interaction.id,
+    contactId: contact.id,
+    contactIds: [contact.id],
+    occurredAt: new Date(),
+    chunkIndex: 0,
+    content: "2026-03-12 · Note · Ada Lovelace\nShe is raising a Series A.",
+    contentHash: "smoke-purge-memory-chunk-hash",
+  });
+
   await db.insert(schema.embeddingFailures).values({
     userId: USER,
     sourceType: "meeting",
@@ -570,6 +584,14 @@ async function seed() {
     prefix: "orb_live_deadbeef",
     keyHash: "0".repeat(64),
     scopes: ["read"],
+  });
+  // A message an assistant drafted. It holds a body the user never sent, which is exactly
+  // the kind of content a deletion has to take with it.
+  await db.insert(schema.agentSendRequests).values({
+    userId: USER,
+    toEmail: "someone@example.org",
+    body: "purge fixture",
+    expiresAt: new Date(Date.now() + 86_400_000),
   });
   await db.insert(schema.apiIdempotencyKeys).values({
     userId: USER,

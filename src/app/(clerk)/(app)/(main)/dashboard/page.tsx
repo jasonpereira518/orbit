@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { getOutreachPerformanceSummary } from "@/actions/outreach";
 import { fetchDashboard } from "@/actions/reminders";
+import { AgentDraftsCard } from "@/components/dashboard/agent-drafts-card";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
@@ -15,8 +16,14 @@ import {
   DashboardCardSkeleton,
   DashboardStatRowSkeleton,
 } from "@/components/loading/page-skeletons";
+import { listPendingAgentSends } from "@/lib/agent-sends";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+
+async function AgentDraftsSection() {
+  const drafts = await listPendingAgentSends(await requireUserId());
+  return <AgentDraftsCard drafts={drafts} />;
+}
 
 export default async function DashboardPage() {
   // Start the bundle BEFORE the visibility await below. That await is free on a full page
@@ -44,6 +51,13 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-8">
       <DashboardHeader />
+
+      {/* Above every other card, and outside the surface-visibility switches: a message
+          waiting to go out is the only thing on this page that needs a decision rather
+          than attention, and it expires. It renders nothing when there is none. */}
+      <Suspense fallback={null}>
+        <AgentDraftsSection />
+      </Suspense>
 
       {show("dashboard.stats") && (
         <Suspense fallback={<DashboardStatRowSkeleton />}>

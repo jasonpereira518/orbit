@@ -1,0 +1,447 @@
+{
+ "$comment": "Which calendar events are relationship touches (decisions/calendar.ts). keep = a 1:1 or networking touch that should create/update a contact and log a meeting. The user's own address is me@orbit.example.",
+ "self": "me@orbit.example",
+ "events": [
+  {
+   "id": "keep-01",
+   "summary": "Coffee with Priya",
+   "description": "",
+   "location": "",
+   "minutes": 45,
+   "attendees": [
+    {
+     "name": "Priya Natarajan",
+     "email": "priya@stripe.com"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-02",
+   "summary": "Ada / Jason",
+   "description": "",
+   "location": "",
+   "minutes": 30,
+   "attendees": [
+    {
+     "name": "Ada Park",
+     "email": "ada@notion.so"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-03",
+   "summary": "Intro: Marcus <> Jason",
+   "description": "",
+   "location": "",
+   "minutes": 30,
+   "attendees": [
+    {
+     "name": "Marcus Webb",
+     "email": "marcus@ramp.com"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-04",
+   "summary": "Catch up",
+   "description": "",
+   "location": "",
+   "minutes": 60,
+   "attendees": [
+    {
+     "name": "Leo Chen",
+     "email": "leo@gmail.com"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-05",
+   "summary": "Lunch with Dana",
+   "description": "",
+   "location": "",
+   "minutes": 75,
+   "attendees": [
+    {
+     "name": "Dana Holt",
+     "email": "dana@talentbridge.example"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-06",
+   "summary": "Informational chat — PM career paths",
+   "description": "",
+   "location": "",
+   "minutes": 30,
+   "attendees": [
+    {
+     "name": "Sam Patel",
+     "email": "sam@looplabs.io"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-07",
+   "summary": "Wedding planning with Sarah",
+   "description": "",
+   "location": "",
+   "minutes": 60,
+   "attendees": [
+    {
+     "name": "Sarah Kim",
+     "email": "sarah.kim@gmail.com"
+    }
+   ],
+   "keep": true,
+   "why": "rules drop it for 'planning'"
+  },
+  {
+   "id": "keep-08",
+   "summary": "Walk + talk",
+   "description": "",
+   "location": "",
+   "minutes": 45,
+   "attendees": [
+    {
+     "name": "Nora Lindqvist",
+     "email": "nora@klarna.com"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-09",
+   "summary": "Founder coffee: Tidepool x Orbit",
+   "description": "",
+   "location": "",
+   "minutes": 45,
+   "attendees": [
+    {
+     "name": "Ethan Wright",
+     "email": "ethan@tidepool.eco"
+    },
+    {
+     "name": "Mia Lopez",
+     "email": "mia@tidepool.eco"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-10",
+   "summary": "Mentorship session",
+   "description": "",
+   "location": "",
+   "minutes": 60,
+   "attendees": [
+    {
+     "name": "Aisha Bello",
+     "email": "aisha@seedcamp.com"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-11",
+   "summary": "Chat about Series A",
+   "description": "",
+   "location": "",
+   "minutes": 30,
+   "attendees": [
+    {
+     "name": "Tomas Berg",
+     "email": "tomas@northzone.com"
+    }
+   ],
+   "keep": true
+  },
+  {
+   "id": "keep-12",
+   "summary": "Kai Moreno",
+   "description": "",
+   "location": "",
+   "minutes": 30,
+   "attendees": [],
+   "keep": true,
+   "why": "ICS feed, no guests, title is a person"
+  },
+  {
+   "id": "skip-01",
+   "summary": "Dentist appointment - Dr. Lee",
+   "description": "",
+   "location": "",
+   "minutes": 45,
+   "attendees": [
+    {
+     "name": "Front Desk",
+     "email": "frontdesk@smiledental.example"
+    }
+   ],
+   "keep": false,
+   "why": "rules exclude 'dentist' already"
+  },
+  {
+   "id": "skip-02",
+   "summary": "Plumber visit",
+   "description": "Fix kitchen sink leak. Technician will call 30 min before arrival.",
+   "location": "",
+   "minutes": 120,
+   "attendees": [
+    {
+     "name": "Joe's Plumbing",
+     "email": "booking@joesplumbing.example"
+    }
+   ],
+   "keep": false
+  },
+  {
+   "id": "skip-03",
+   "summary": "Interview: Senior Backend Engineer — candidate Alex Rivera",
+   "description": "Interview loop via Greenhouse. Scorecard link inside.",
+   "location": "",
+   "minutes": 60,
+   "attendees": [
+    {
+     "name": "Alex Rivera",
+     "email": "alex.rivera@gmail.com"
+    }
+   ],
+   "keep": false,
+   "why": "an interview the user conducts"
+  },
+  {
+   "id": "skip-04",
+   "summary": "Design/Eng sync",
+   "description": "Weekly design and engineering sync.",
+   "location": "",
+   "minutes": 30,
+   "attendees": [
+    {
+     "name": "Olivia Brooks",
+     "email": "olivia@orbit.example"
+    }
+   ],
+   "keep": false,
+   "why": "'x/y' title read as a paired 1:1"
+  },
+  {
+   "id": "skip-05",
+   "summary": "Car service",
+   "description": "Annual maintenance. Bring the key card.",
+   "location": "",
+   "minutes": 90,
+   "attendees": [
+    {
+     "name": "Tesla Service",
+     "email": "service@tesla.example"
+    }
+   ],
+   "keep": false
+  },
+  {
+   "id": "skip-06",
+   "summary": "Physical therapy",
+   "description": "",
+   "location": "",
+   "minutes": 50,
+   "attendees": [
+    {
+     "name": "Bay PT Clinic",
+     "email": "appointments@baypt.example"
+    }
+   ],
+   "keep": false
+  },
+  {
+   "id": "skip-07",
+   "summary": "1:1 with manager",
+   "description": "Weekly one-on-one: priorities, blockers.",
+   "location": "",
+   "minutes": 30,
+   "attendees": [
+    {
+     "name": "Rachel Green",
+     "email": "rachel@orbit.example"
+    }
+   ],
+   "keep": false,
+   "why": "internal weekly 1:1 with a colleague — arguably a touch; labelled team"
+  },
+  {
+   "id": "skip-08",
+   "summary": "Contract review call with vendor",
+   "description": "Review MSA redlines for the new vendor agreement.",
+   "location": "",
+   "minutes": 30,
+   "attendees": [
+    {
+     "name": "Acme Legal",
+     "email": "contracts@acmelegal.example"
+    }
+   ],
+   "keep": false
+  },
+  {
+   "id": "skip-09",
+   "summary": "Customer onboarding: Globex",
+   "description": "Onboarding session for Globex's admin team. Agenda: SSO setup, data import.",
+   "location": "",
+   "minutes": 45,
+   "attendees": [
+    {
+     "name": "Hank Scorpio",
+     "email": "hank@globex.example"
+    }
+   ],
+   "keep": false,
+   "why": "a customer call, not a relationship"
+  },
+  {
+   "id": "skip-10",
+   "summary": "Hair appointment",
+   "description": "",
+   "location": "",
+   "minutes": 60,
+   "attendees": [
+    {
+     "name": "Studio 9",
+     "email": "book@studio9.example"
+    }
+   ],
+   "keep": false
+  },
+  {
+   "id": "skip-11",
+   "summary": "Flight to NYC",
+   "description": "",
+   "location": "",
+   "minutes": 360,
+   "attendees": [],
+   "keep": false
+  },
+  {
+   "id": "skip-12",
+   "summary": "Focus: Q4 planning doc",
+   "description": "",
+   "location": "",
+   "minutes": 120,
+   "attendees": [],
+   "keep": false
+  },
+  {
+   "id": "skip-13",
+   "summary": "Recruiting screen — Jamie",
+   "description": "Phone screen for the SDR role. Use the screening rubric.",
+   "location": "",
+   "minutes": 30,
+   "attendees": [
+    {
+     "name": "Jamie Fox",
+     "email": "jamie.fox@gmail.com"
+    }
+   ],
+   "keep": false,
+   "why": "the user screening a candidate"
+  },
+  {
+   "id": "skip-14",
+   "summary": "Pick up dry cleaning",
+   "description": "",
+   "location": "",
+   "minutes": 15,
+   "attendees": [],
+   "keep": false
+  },
+  {
+   "id": "skip-15",
+   "summary": "Webinar: Scaling Postgres",
+   "description": "Join 500 others for a live session.",
+   "location": "",
+   "minutes": 60,
+   "attendees": [
+    {
+     "name": "Events Team",
+     "email": "events@neon.example"
+    }
+   ],
+   "keep": false
+  },
+  {
+   "id": "skip-16",
+   "summary": "Sprint retro",
+   "description": "",
+   "location": "",
+   "minutes": 60,
+   "attendees": [
+    {
+     "name": "Team",
+     "email": "team@orbit.example"
+    },
+    {
+     "name": "Olivia Brooks",
+     "email": "olivia@orbit.example"
+    }
+   ],
+   "keep": false
+  },
+  {
+   "id": "skip-17",
+   "summary": "Coffee with Priya",
+   "description": "",
+   "location": "",
+   "minutes": 45,
+   "attendees": [
+    {
+     "name": "Priya Natarajan",
+     "email": "priya@stripe.com"
+    }
+   ],
+   "keep": false,
+   "selfResponse": "declined",
+   "why": "declined"
+  },
+  {
+   "id": "skip-18",
+   "summary": "Kids pickup",
+   "description": "",
+   "location": "",
+   "minutes": 30,
+   "attendees": [],
+   "keep": false
+  },
+  {
+   "id": "skip-19",
+   "summary": "Tax prep with accountant",
+   "description": "Bring W-2s and receipts.",
+   "location": "",
+   "minutes": 60,
+   "attendees": [
+    {
+     "name": "H&R Block",
+     "email": "appointments@hrblock.example"
+    }
+   ],
+   "keep": false
+  },
+  {
+   "id": "skip-20",
+   "summary": "Parent-teacher conference",
+   "description": "",
+   "location": "",
+   "minutes": 20,
+   "attendees": [
+    {
+     "name": "Ms. Alvarez",
+     "email": "alvarez@school.example"
+    }
+   ],
+   "keep": false
+  }
+ ]
+}
