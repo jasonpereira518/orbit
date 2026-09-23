@@ -60,6 +60,7 @@ const CLIENT_COMPONENTS: string[] = [
   "find-path.tsx",
   "leads-pipeline.tsx",
   "lead-detail-sheet.tsx",
+  "apollo-search.tsx",
 ];
 
 function main() {
