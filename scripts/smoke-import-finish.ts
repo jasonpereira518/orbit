@@ -8,6 +8,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  countingHeadline,
   finishCopy,
   finishPartFromImport,
   foldPreviews,
@@ -231,6 +232,54 @@ check(
  * running → done transition and sets the sentence into it. A second, pre-filled status node
  * on the card itself would be the old bug back, and a double announcement where it did work.
  */
+/**
+ * The headline counts up as people settle, and the finished sentence is the same function.
+ *
+ * The card draws the count in pieces so the number can tick between words that stay put; if
+ * that ever drifted from `finishCopy`, the card would end on one sentence and the announcer and
+ * the history would say another.
+ */
+console.log("The headline counts, and ends on the same sentence");
+check(
+  "the counted headline at the final number is finishCopy's",
+  countingHeadline(base.added) === finishCopy(base).headline,
+  countingHeadline(base.added),
+);
+check("one person is a person", countingHeadline(1) === "You added 1 person");
+const cardWith = (summary: FinishSummary, arrival?: "live" | "settled") =>
+  renderToStaticMarkup(
+    React.createElement(ImportFinishCard, { summary, avatars: [], arrival }),
+  );
+const srOnly = (html: string) =>
+  [...html.matchAll(/<span class="sr-only">([^<]*)<\/span>/g)].map((m) => m[1]);
+const settledCard = cardWith(base);
+check(
+  "a screen reader hears the finished sentence",
+  srOnly(settledCard).includes(finishCopy(base).headline),
+  srOnly(settledCard).join(" | "),
+);
+check(
+  "a card someone comes back to already says the whole number",
+  />19<\/span> <span>people</.test(settledCard),
+);
+const liveCard = cardWith(base, "live");
+check(
+  "a live card starts its count hidden, so it never says 0",
+  /aria-hidden="true"[^>]*style="opacity:0"/.test(liveCard) && />0<\/span>/.test(liveCard),
+);
+check(
+  "…while a screen reader still hears the finished sentence",
+  srOnly(liveCard).includes(finishCopy(base).headline),
+);
+check(
+  "the number's slot is as wide as the final number",
+  liveCard.includes("min-width:2ch"),
+);
+check(
+  "nobody new means no scene, even when people were matched",
+  !cardWith({ ...base, added: 0, existing: 6 }).includes("<canvas"),
+);
+
 console.log("The card leaves the announcement to the region that outlives it");
 check("the card carries no status region of its own", !cardHtml(base).includes('role="status"'));
 check(

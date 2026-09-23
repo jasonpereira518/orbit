@@ -555,6 +555,7 @@ export function ImportHub({
       {finishToShow ? (
         <ImportFinishCard
           summary={finishToShow}
+          arrival="settled"
           avatars={finishToShow.avatars}
           onDismiss={() => dismissFinish(finishToShow.importIds)}
           onShowDetail={() =>

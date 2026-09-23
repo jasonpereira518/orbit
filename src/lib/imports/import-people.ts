@@ -18,6 +18,12 @@ export type ImportedPerson = {
    * `importContactIds`'s comment below describes for `created_at`).
    */
   profileImageUrl: string | null;
+  /**
+   * Whether `/api/avatars/{id}` has something to look a photo up from (a LinkedIn URL or an
+   * email) when none is stored yet. The done card asks it on demand; without one it would only
+   * ever answer 404.
+   */
+  canResolvePhoto: boolean;
 };
 
 export type ImportPeoplePage = { people: ImportedPerson[]; hasMore: boolean };
@@ -107,6 +113,7 @@ export async function listImportPeople(
     title: string | null;
     company: string | null;
     profile_image_url: string | null;
+    can_resolve_photo: boolean;
   }>(
     await db.execute(sql`
       SELECT c.id, c.full_name, c.title, c.company,
@@ -116,7 +123,9 @@ export async function listImportPeople(
                WHEN c.profile_image_url LIKE '%unavatar.io%'
                  OR c.profile_image_url LIKE '%static.licdn.com/aero%' THEN NULL
                ELSE btrim(c.profile_image_url)
-             END AS profile_image_url
+             END AS profile_image_url,
+             (coalesce(btrim(c.linkedin_url), '') <> ''
+               OR coalesce(btrim(c.email), '') <> '') AS can_resolve_photo
       FROM contacts c
       WHERE c.user_id = ${userId}
         AND ${createdFilter}
@@ -135,6 +144,7 @@ export async function listImportPeople(
           ? `${r.title} at ${r.company}`
           : r.title || r.company || null,
       profileImageUrl: r.profile_image_url,
+      canResolvePhoto: Boolean(r.can_resolve_photo),
     })),
     hasMore: rows.length > IMPORT_PEOPLE_PAGE,
   };

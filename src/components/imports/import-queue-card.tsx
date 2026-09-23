@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Check, ChevronDown, CircleSlash, FileWarning, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ImportFinishCard } from "@/components/imports/import-finish-card";
+import type { FinishArrival } from "@/components/imports/import-finish-scene";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { ImportProgress } from "@/components/imports/import-utils";
 import { useImportJob } from "@/lib/import-job-runner";
@@ -29,6 +30,15 @@ import {
 import { finishCopy, mergeFinishSummaries } from "@/lib/imports/import-finish";
 import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
 import type { LatestFinishedImport } from "@/actions/imports";
+
+/**
+ * Runs whose arrival has already played in this tab, by their import ids.
+ *
+ * The queue outlives the page: leave `/imports` mid-celebration and come back, and the same
+ * done card is drawn again from the same run. The fall-in is for the moment the import
+ * finishes, so a second showing starts settled. Module scope, so it survives the remount.
+ */
+const playedFinishes = new Set<string>();
 
 /**
  * Everything one drop staged, reviewed together and then run without further prompting.
@@ -68,6 +78,15 @@ export function ImportQueueCard({
   /** The ids this run actually wrote — the whole basis for the card below. */
   const runImportIds = finishedImportIds(queue.items);
   const runKey = runImportIds.join(",");
+  // Decided once per run and held: a later re-render must not flip a playing scene to settled.
+  const arrival = useMemo<FinishArrival>(
+    () => (playedFinishes.has(runKey) ? "settled" : "live"),
+    [runKey],
+  );
+  const showingFinish = queue.phase === "done" && parts !== null;
+  useEffect(() => {
+    if (showingFinish && runKey) playedFinishes.add(runKey);
+  }, [showingFinish, runKey]);
 
   /**
    * The finish's numbers come from the server, for the imports THIS run produced.
@@ -149,6 +168,7 @@ export function ImportQueueCard({
         {announcer}
         <ImportFinishCard
           summary={summary}
+          arrival={arrival}
           avatars={parts.flatMap((p) => p.avatars).slice(0, MAX_FACES)}
           onDismiss={() => {
             onFinishDismiss?.(summary.importIds);
