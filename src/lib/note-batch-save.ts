@@ -35,6 +35,7 @@ import {
   syncContactOpportunityMirrors,
 } from "@/lib/contact-opportunities";
 import type { ExtractedOpportunity } from "@/lib/opportunity-extract";
+import { syncMemoryChunkMentions } from "@/lib/memory-chunks";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
@@ -396,6 +397,15 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     }
     if (mentionRows.length) {
       await db.insert(interactionMentions).values(mentionRows).onConflictDoNothing({ target: [interactionMentions.interactionId, interactionMentions.contactId] });
+      // The passages of these interactions, if any exist yet, were chunked before these rows
+      // existed and so name only the person the note was filed under. Batch writes set
+      // `skipEmbedding`, so usually there are none and the sweep picks the mentions up itself
+      // — this is for the re-paste onto an interaction that has already been indexed, which
+      // the sweep will never revisit (it claims only interactions with no passages at all).
+      // Never fatal: failing to widen the index must not fail saving the batch.
+      await syncMemoryChunkMentions(userId, mentionRows.map((m) => m.interactionId)).catch(
+        (err) => console.warn("[memory-chunks] could not apply mentions", err)
+      );
     }
 
     // 2. Dated commitments → reminder drafts.

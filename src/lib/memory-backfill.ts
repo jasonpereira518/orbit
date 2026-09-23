@@ -83,6 +83,7 @@ export async function backfillMemoryChunks(
       raw_notes: string | null;
       ai_summary: string | null;
       contact_name: string | null;
+      mention_ids: string[] | null;
     }>(
       await db.execute(sql`
         select i.id,
@@ -91,7 +92,16 @@ export async function backfillMemoryChunks(
                i.interaction_date,
                i.raw_notes,
                i.ai_summary,
-               coalesce(c.preferred_name, c.full_name) as contact_name
+               coalesce(c.preferred_name, c.full_name) as contact_name,
+               -- Everyone else the note names. Loaded here, with the row, rather than in a
+               -- query per interaction: the sweep claims hundreds at a time, and a note that
+               -- names four people has to be findable from all four, not just from the one it
+               -- was filed under.
+               coalesce(
+                 (select array_agg(im.contact_id)
+                    from interaction_mentions im
+                   where im.user_id = ${userId} and im.interaction_id = i.id),
+                 '{}') as mention_ids
           from (select i.* ${unindexedInteractions(userId)}) i
           left join contacts c on c.id = i.contact_id and c.user_id = ${userId}
          order by i.interaction_date desc nulls last
@@ -113,7 +123,7 @@ export async function backfillMemoryChunks(
       kindLabel: interactionTypeLabel(row.interaction_type),
       contactId: row.contact_id,
       contactName: row.contact_name,
-      contactIds: [],
+      contactIds: row.mention_ids ?? [],
     });
     if (!drafts.length) continue;
     try {
