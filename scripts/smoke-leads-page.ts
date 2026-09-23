@@ -12,8 +12,12 @@
  * fetches.
  */
 import React from "react";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { WarmPath } from "../src/lib/leads/warm-path";
+import { WarmthChip } from "../src/components/leads/warmth-chip";
+import { PathSummary } from "../src/components/leads/path-summary";
+import { SharingDl } from "../src/components/leads/sharing-dl";
 import { APP_NAV_CORE, APP_NAV_EXTRAS, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
 import { COMING_SOON_KEYS, isHrefComingSoon, surfaceKeyForHref } from "../src/lib/surfaces";
 import { ComingSoon } from "../src/components/coming-soon/coming-soon";
@@ -45,6 +49,12 @@ function text(el: React.ReactElement): string {
 
 /** The sentence `ComingSoon` falls back to when a surface has no `FEATURES` entry. */
 const FALLBACK_TEASER = "We're still building this part of Orbit";
+
+/**
+ * Client components under src/components/leads. Each task that adds one appends its file here,
+ * so a missing file or a lost "use client" is a failed check, not a silent build surprise.
+ */
+const CLIENT_COMPONENTS: string[] = [];
 
 function main() {
   console.log("\nnav and surface registration");
@@ -78,6 +88,44 @@ function main() {
     check("/leads has a feedback area", featureAreaForPath("/leads") === "leads", featureAreaForPath("/leads"));
     check("and so do its children", featureAreaForPath("/leads/anything") === "leads");
     check("with a label for the picker", AREA_LABELS.leads === "Leads", String(AREA_LABELS.leads));
+  }
+
+  console.log("\nwhat the page shows about a path");
+  {
+    const path: WarmPath = {
+      warmth: "hot",
+      direct: [{ teammate: { userId: "u1", name: "Alex Ng", email: "alex@acme.test" }, tier: "inner", matchedOn: "email" }],
+      account: [{ teammate: { userId: "u2", name: "Priya Nair", email: "priya@acme.test" }, count: 2, bestTier: "mid" }],
+    };
+    const full = text(React.createElement(PathSummary, { path, companyName: "Northwind" }));
+    check("names the teammate and the orbit", full.includes("Alex Ng") && full.includes("Inner orbit"), full);
+    check("says how they matched", full.includes("via email"), full);
+    check("says how many others they know at the company", full.includes("knows 2 others at Northwind"), full);
+    check("never shows a teammate's email", !full.includes("@acme.test"), full);
+    const compact = text(React.createElement(PathSummary, { path, companyName: "Northwind", compact: true }));
+    check("the compact line fits a row", compact.includes("Alex (inner)") && compact.includes("Northwind via Priya"), compact);
+    check("and hides emails too", !compact.includes("@acme.test"), compact);
+    const nobody = text(React.createElement(PathSummary, { path: { warmth: "cold", direct: [], account: [] }, companyName: null }));
+    check("an empty path says so", /nobody on your team/i.test(nobody), nobody);
+    for (const warmth of ["hot", "warm", "cool", "cold"] as const) {
+      check(`a ${warmth} chip has a label`, text(React.createElement(WarmthChip, { warmth })).length > 3);
+    }
+    const dl = text(React.createElement(SharingDl));
+    check("the sharing list names both sides", dl.includes("Shared while you share") && dl.includes("Never shared"), dl);
+  }
+
+  console.log("\nthe leads components stay client-safe");
+  {
+    const dir = "src/components/leads";
+    const serverOnly =
+      /import\s+(?!type\b)[^;]*from\s+["'](@\/db(\/[^"']*)?|@\/lib\/teams|@\/lib\/leads\/(store|pipeline|warm-path-query)|@\/lib\/apollo)["']/;
+    for (const file of readdirSync(dir).filter((f) => /\.(tsx?)$/.test(f))) {
+      check(`${file} never value-imports a server module`, !serverOnly.test(code(`${dir}/${file}`)));
+    }
+    for (const file of CLIENT_COMPONENTS) {
+      const path = `${dir}/${file}`;
+      check(`${file} exists and is a client component`, existsSync(path) && /^\s*"use client";/.test(readFileSync(path, "utf8")));
+    }
   }
 
   console.log("\nstructure");
