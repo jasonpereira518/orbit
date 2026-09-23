@@ -507,7 +507,7 @@ export function ContactsList({
                             "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
                             // New from the import the list was opened from: a light yellow
                             // that fades out once the row is hovered, focused or opened.
-                            marked && "bg-amber-100/80 dark:bg-amber-300/15",
+                            marked && "bg-amber-100/45 dark:bg-amber-300/10",
                             exiting && "-translate-x-8"
                           )}
                         >
