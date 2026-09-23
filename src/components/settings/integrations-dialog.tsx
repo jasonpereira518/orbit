@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
 import { DecisionModelSettings } from "@/components/settings/decision-model-settings";
 import { AiUsageCard } from "@/components/settings/ai-usage-card";
+import { SpeechUsageCard, type SpeechAllowances } from "@/components/settings/speech-usage-card";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { ApiSettings } from "@/components/settings/api-settings";
@@ -196,6 +197,7 @@ export function IntegrationsDialog({
   statuses,
   initialSettings,
   canUseRecruiters,
+  speechAllowances,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -206,6 +208,7 @@ export function IntegrationsDialog({
   statuses: IntegrationStatuses | null;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  speechAllowances: SpeechAllowances;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -223,6 +226,7 @@ export function IntegrationsDialog({
           statuses={statuses}
           initialSettings={initialSettings}
           canUseRecruiters={canUseRecruiters}
+          speechAllowances={speechAllowances}
         />
       </DialogContent>
     </Dialog>
@@ -237,6 +241,7 @@ function DialogBody({
   statuses,
   initialSettings,
   canUseRecruiters,
+  speechAllowances,
 }: {
   /**
    * False from the moment the dialog starts closing. Base UI only unmounts the body once
@@ -250,6 +255,7 @@ function DialogBody({
   statuses: IntegrationStatuses | null;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  speechAllowances: SpeechAllowances;
 }) {
   const wide = useIsWide();
   const job = useImportJob();
@@ -402,6 +408,7 @@ function DialogBody({
                   active={active}
                   initialSettings={initialSettings}
                   canUseRecruiters={canUseRecruiters}
+                  speechAllowances={speechAllowances}
                 />
               </div>
             ) : null
@@ -417,11 +424,13 @@ function Panel({
   active,
   initialSettings,
   canUseRecruiters,
+  speechAllowances,
 }: {
   id: IntegrationTabId;
   active: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  speechAllowances: SpeechAllowances;
 }) {
   switch (id) {
     case "ai":
@@ -429,6 +438,7 @@ function Panel({
         <div className="space-y-5">
           <AiSettings initialSettings={initialSettings} />
           <DecisionModelSettings initialSettings={initialSettings} />
+          <SpeechUsageCard speech={speechAllowances} />
           <AiUsageCard />
         </div>
       );

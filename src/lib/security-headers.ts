@@ -71,7 +71,10 @@ export function buildSecurityHeaders(options: {
       // Google Picker for Drive imports
       "https://www.googleapis.com",
       // Google Identity Services (host-wide, as Google advises for connect-src)
-      "https://accounts.google.com"
+      "https://accounts.google.com",
+      // Live meeting/mic transcription: the browser streams audio straight to Deepgram over a
+      // 30-second token our server mints (src/lib/deepgram-live.ts).
+      "wss://api.deepgram.com"
     )}`,
     // Avatars redirect to Blob, LinkedIn's CDN, unavatar and Clerk; the set is open by design.
     `img-src 'self' data: blob: https:`,

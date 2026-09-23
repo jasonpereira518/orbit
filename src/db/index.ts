@@ -47,7 +47,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
   typesafe_api_key_encrypted text,
-  wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
   writing_instructions text,
@@ -83,6 +82,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
+  speech_tag_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1005,6 +1005,7 @@ CREATE TABLE IF NOT EXISTS data_purge_runs (
 CREATE INDEX IF NOT EXISTS data_purge_runs_status_attempt_idx ON data_purge_runs(status, last_attempt_at);
 CREATE INDEX IF NOT EXISTS data_purge_runs_target_idx ON data_purge_runs(target_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_stripe_customer_uidx ON user_settings(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS user_settings_speech_tag_uidx ON user_settings(speech_tag_id) WHERE speech_tag_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS error_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -1361,6 +1362,7 @@ CREATE TABLE IF NOT EXISTS meeting_sessions (
   started_at timestamptz NOT NULL DEFAULT now(),
   ended_at timestamptz,
   duration_ms integer NOT NULL DEFAULT 0,
+  off_deepgram_ms integer NOT NULL DEFAULT 0,
   last_seq integer NOT NULL DEFAULT -1,
   digest jsonb,
   digest_error text,
@@ -1377,6 +1379,16 @@ CREATE TABLE IF NOT EXISTS meeting_transcript_segments (
   end_ms integer NOT NULL,
   text text NOT NULL,
   engine text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS speech_usage (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  seconds integer NOT NULL DEFAULT 0,
+  source text NOT NULL,
+  session_id uuid,
+  request_id text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status);
@@ -1768,6 +1780,7 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // was still in review. Rescanned against every remote branch and every local worktree on
 // Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
 // the highest found anywhere and is still free.
+//
 // 88 = memory_chunks.source_hash — what the passage index was built from, so an edited note
 // can be told from an unindexed one. The sweep's claim was a pure anti-join ("has no
 // passages"), so an interaction was indexed once and never revisited: editing a note left its
@@ -1779,7 +1792,36 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // (claude/orbit-integrations-strategy-0b8be6), which took it for its own main merge. Scanned
 // every remote branch and every local worktree on Sep 22 2026: 87 was the highest found
 // anywhere, so this takes 88.
-export const SCHEMA_VERSION = 88;
+//
+// 89 = speech_usage, meeting_transcript_segments.speaker, and the Deepgram engine value;
+// also drops user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept
+// until now so the removal and its migration were one version, not two. 87 and 88 were
+// already claimed (integrations-strategy, and the re-chunk fix in #263). Rescanned against
+// every remote branch and every local worktree on Sep 22 2026.
+//
+// 95 = the review fixes on the same Deepgram branch: meeting_sessions.off_deepgram_ms (the
+// audio a meeting did not spend on Orbit's key, so a fallback stretch is not charged to the
+// user's meeting cap) and user_settings.speech_tag_id plus its partial unique index (the
+// opaque per-account identifier that replaced the raw Clerk user id in the `shortform:` tag
+// Deepgram keeps in its usage records). 90 through 93 were already claimed while this branch
+// was in review — leads-p2-teams, calendar-connections-apple, leads-p3-pipeline and
+// onboarding-flow-revision-b7be62.
+//
+// NOT 94 anymore. This branch wrote 94 and so, thirteen minutes earlier the same morning, did
+// `claude/leads-p4-hubspot` (63f2e17e) — the same silent collision 53, 54 and 73 above record,
+// and for the same reason: both sides scanned, both sides were right at the time, and neither
+// line would have conflicted on merge. Rescanned against every remote ref, every local branch
+// and every worktree's working file on Sep 23 2026 immediately before committing: 94 is the
+// highest claimed anywhere, and 95 is free.
+//
+// 96 = no new DDL of its own. This branch merged main (then at 88, carrying
+// memory_chunks.source_hash) after preview builds had already stamped databases with 95, and
+// `reconcileSchema` only runs when the stored version differs — so those databases would have
+// matched 95, skipped the merged-in column, and 500'd on it, which is exactly what PR #143 hit
+// in September. The merge itself is what needs the new number. Rescanned every remote ref,
+// every local branch and every worktree's working file on Sep 23 2026: 95 was this branch's
+// own, 94 the highest elsewhere, so 96 is free.
+export const SCHEMA_VERSION = 96;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2478,7 +2520,6 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "timestamptz NOT NULL DEFAULT now()"
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
-  await ensureColumn(client, "user_settings", "wispr_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -2767,6 +2808,15 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
   await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
 
+  // v89: Deepgram diarization label on a local database built before it existed.
+  await ensureColumn(client, "meeting_transcript_segments", "speaker", "text");
+
+  // v95: the audio a meeting did NOT spend on Deepgram, and the opaque identifier that
+  // replaced the raw user id in a dictation's Deepgram usage tag. Same reasoning as every
+  // block above — the DDL template only helps a database that does not have these tables yet.
+  await ensureColumn(client, "meeting_sessions", "off_deepgram_ms", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "user_settings", "speech_tag_id", "text");
+
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
   // list above via `applySchema` — not here. `ADMIN_V2_STATEMENTS` is spread into that
@@ -3009,7 +3059,6 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
-  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wispr_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
@@ -3333,6 +3382,27 @@ const alters = [
   `ALTER TABLE user_settings ALTER COLUMN ai_model SET DEFAULT 'gemini-3.8-flash'`,
   `UPDATE user_settings SET ai_model_migrated_from = ai_model, ai_model = 'gemini-3.8-flash'
      WHERE ai_model = 'gemini-3.5-flash' AND ai_model_migrated_from IS NULL`,
+  // Schema v89: Deepgram speech-to-text. speech_usage meters seconds against the plan caps;
+  // meeting_transcript_segments.speaker holds Deepgram's diarization label. Also drops
+  // user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept until now so
+  // the removal and its migration were one version, not two.
+  `CREATE TABLE IF NOT EXISTS speech_usage (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, kind text NOT NULL, seconds integer NOT NULL DEFAULT 0, source text NOT NULL, session_id uuid, request_id text, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS speech_usage_user_created_idx ON speech_usage(user_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS speech_usage_session_uidx ON speech_usage(session_id)`,
+  `ALTER TABLE meeting_transcript_segments ADD COLUMN IF NOT EXISTS speaker text`,
+  `ALTER TABLE user_settings DROP COLUMN IF EXISTS wispr_api_key_encrypted`,
+  // Schema v95: the two corrections to how Deepgram spend is attributed.
+  // `meeting_sessions.off_deepgram_ms` records the milliseconds of a meeting that Orbit did
+  // not pay Deepgram for, so a chunk that fell through to the user's own key is subtracted
+  // from what the meeting meter books instead of being charged to their cap. Zero is the
+  // right value for every meeting recorded before this column existed: nothing metered so
+  // far claimed a fallback stretch, so there is nothing to backfill.
+  // `user_settings.speech_tag_id` is the opaque per-account identifier that replaces the raw
+  // Clerk user id in the `shortform:` tag Deepgram keeps in its usage records. Minted lazily
+  // on first use (src/lib/speech-tag-id.ts), hence nullable and no backfill.
+  `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS off_deepgram_ms integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS speech_tag_id text`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_speech_tag_uidx ON user_settings(speech_tag_id) WHERE speech_tag_id IS NOT NULL`,
 ];
 
 /**

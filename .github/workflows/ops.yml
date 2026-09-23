@@ -34,6 +34,9 @@ on:
     # Offset from the :07 import backstop so the two long-running hourly jobs are never in
     # flight together.
     - cron: "23 * * * *"
+    # Once a day: the Deepgram usage reconciliation. An arbitrary quiet hour, offset from
+    # the hourly jobs above so it never runs alongside them.
+    - cron: "41 5 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -147,6 +150,19 @@ jobs:
           curl -sS --fail-with-body --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/jobs/feed/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Deepgram usage reconciliation (daily). Compares what Deepgram billed each meeting
+      # against what the browser self-reported, and alerts on the gap — see
+      # src/app/api/ops/speech-usage/route.ts.
+      - name: Reconcile Deepgram usage (daily)
+        if: github.event.schedule == '41 5 * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 55 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/ops/speech-usage"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
