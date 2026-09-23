@@ -24,3 +24,31 @@ export type CrmPerson = {
   remoteUpdatedAt: Date | null;
   properties: Record<string, CrmScalar>;
 };
+
+/** `connector_connections.account_ref` of the localhost demo's HubSpot: never synced, never revoked. */
+export const DEMO_CRM_ACCOUNT_REF = "orbit-demo";
+
+/** What the CRM card shows about one connection. Dates arrive pre-worded, so SSR and hydration agree. */
+export type CrmConnectionView = {
+  connectorId: "hubspot";
+  label: string | null;
+  status: "active" | "needs_reauth";
+  syncing: boolean;
+  lastSyncedAgo: string | null;
+  error: string | null;
+  demo: boolean;
+};
+
+export type CrmStatus = {
+  entitled: boolean;
+  configured: boolean;
+  connection: CrmConnectionView | null;
+  counts: { workContacts: number; pipeline: number; blocked: number } | null;
+};
+
+export type CrmSyncNowResult = {
+  outcome: "complete" | "partial" | "needs_reauth" | "stopped";
+  pages: number;
+  records: number;
+  message: string | null;
+};

@@ -497,3 +497,14 @@ export async function deleteConnectorConnection(
       )
     );
 }
+
+/** The decrypted refresh token, for the revoke on disconnect. Server code only — never the UI. */
+export async function getConnectorRefreshToken(userId: string, connectorId: string): Promise<string | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ refresh: connectorConnections.refreshTokenEncrypted })
+    .from(connectorConnections)
+    .where(and(eq(connectorConnections.userId, userId), eq(connectorConnections.connectorId, connectorId)))
+    .limit(1);
+  return decryptOrNull(row?.refresh ?? null);
+}
