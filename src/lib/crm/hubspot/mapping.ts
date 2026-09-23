@@ -20,6 +20,12 @@ export const HUBSPOT_SEARCH_PAGE = 100;
 export const HUBSPOT_SEARCH_CEILING = 10_000;
 /** How often a sync re-reads every owned contact, as a net under incremental paging. */
 export const HUBSPOT_FULL_RESYNC_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * How far behind its newest modified time a finished window leaves the next one's `since`.
+ * HubSpot's search index lags writes, and offset paging drifts when records change mid-window;
+ * the upsert is idempotent, so re-reading five minutes costs nothing.
+ */
+export const HUBSPOT_WATERMARK_OVERLAP_MS = 5 * 60 * 1000;
 
 export const HUBSPOT_CONTACT_PROPERTIES = [
   "firstname",
@@ -138,7 +144,7 @@ export type HubspotWindow = {
   since: string | null;
   /** HubSpot's `after` offset within this query; null = its first page. */
   after: string | null;
-  /** Newest `lastmodifieddate` seen in this window (ISO). */
+  /** Newest `lastmodifieddate` seen in this window (ISO). Cleared only when the window completes. */
   windowMax: string | null;
   /** This window began as a full re-read. */
   full: boolean;
@@ -163,7 +169,9 @@ export function windowFromCursor(cursor: ConnectorSyncCursor | null | undefined,
     full: meta.full === "1",
     fullSyncedAt: meta.fullSyncedAt ?? null,
   };
-  if (window.after !== null) return window;
+  // In progress: mid-page, or restarted at the ceiling (`after` is null again then, but
+  // `windowMax` is only cleared when a window completes).
+  if (window.after !== null || window.windowMax !== null) return window;
   const lastFull = window.fullSyncedAt ? Date.parse(window.fullSyncedAt) : Number.NaN;
   if (!Number.isFinite(lastFull) || now.getTime() - lastFull >= HUBSPOT_FULL_RESYNC_MS) {
     return { ...window, since: null, windowMax: null, full: true };
@@ -182,14 +190,15 @@ export function advanceWindow(
       return { window: { ...window, after: page.nextAfter, windowMax }, done: false };
     }
     // The next page would cross HubSpot's ceiling: restart the query from the newest
-    // modified time seen. `>=` re-reads the boundary records; the upsert is idempotent.
+    // modified time seen. `>=` re-reads the boundary records; the upsert is idempotent. The
+    // exact max, never the overlap: a restart must strictly advance `since`.
     if (windowMax !== null && (window.since === null || Date.parse(windowMax) > Date.parse(window.since))) {
       return { window: { ...window, since: windowMax, after: null, windowMax }, done: false };
     }
   }
   return {
     window: {
-      since: windowMax ?? window.since,
+      since: windowMax ? new Date(Date.parse(windowMax) - HUBSPOT_WATERMARK_OVERLAP_MS).toISOString() : window.since,
       after: null,
       windowMax: null,
       full: false,

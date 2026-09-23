@@ -7,6 +7,7 @@ import {
   HUBSPOT_CONTACT_PROPERTIES,
   HUBSPOT_FULL_RESYNC_MS,
   HUBSPOT_SCOPES,
+  HUBSPOT_WATERMARK_OVERLAP_MS,
   advanceWindow,
   buildContactSearchBody,
   cursorFromWindow,
@@ -134,6 +135,13 @@ const stale = windowFromCursor({ syncedThrough: "2026-09-20T08:00:00.000Z", curs
 check("a week-old full sync means a full window again", stale.full && stale.since === null);
 const resumed = windowFromCursor({ syncedThrough: null, cursor: "300", meta: { full: "1", windowMax: "2026-09-10T00:00:00.000Z" } }, NOW);
 check("a window mid-page resumes as it was", resumed.full && resumed.after === "300" && resumed.windowMax === "2026-09-10T00:00:00.000Z");
+// Saved right after a ceiling restart: `after` is null again, but the window is not done.
+const restarted = windowFromCursor({ syncedThrough: "2026-09-10T00:00:00.000Z", cursor: null, meta: { full: "1", windowMax: "2026-09-10T00:00:00.000Z" } }, NOW);
+check(
+  "a window saved right after a ceiling restart resumes there, not as a fresh full read",
+  restarted.since === "2026-09-10T00:00:00.000Z" && restarted.full && restarted.after === null && restarted.windowMax === "2026-09-10T00:00:00.000Z",
+  JSON.stringify(restarted)
+);
 
 const w0: HubspotWindow = { since: null, after: null, windowMax: null, full: true, fullSyncedAt: null };
 const p1 = advanceWindow(w0, { maxModified: "2026-09-01T00:00:00.000Z", nextAfter: "100" }, NOW);
@@ -145,10 +153,16 @@ check("…and stays a full window", p2.window.full);
 const stuck = advanceWindow({ since: "2026-09-05T00:00:00.000Z", after: "9900", windowMax: "2026-09-05T00:00:00.000Z", full: false, fullSyncedAt: null }, { maxModified: "2026-09-05T00:00:00.000Z", nextAfter: "10000" }, NOW);
 check("a ceiling that cannot advance ends instead of looping", stuck.done);
 const last = advanceWindow(p2.window, { maxModified: "2026-09-06T00:00:00.000Z", nextAfter: null }, NOW);
-check("the last page ends the window at its max", last.done && last.window.since === "2026-09-06T00:00:00.000Z" && last.window.after === null && last.window.windowMax === null);
+const overlapped = (max: string) => new Date(Date.parse(max) - HUBSPOT_WATERMARK_OVERLAP_MS).toISOString();
+check("the overlap is five minutes", HUBSPOT_WATERMARK_OVERLAP_MS === 5 * 60 * 1000);
+check(
+  "the last page ends the window five minutes before its max",
+  last.done && last.window.since === overlapped("2026-09-06T00:00:00.000Z") && last.window.after === null && last.window.windowMax === null,
+  String(last.window.since)
+);
 check("a full window stamps fullSyncedAt and clears the flag", last.window.fullSyncedAt === NOW.toISOString() && !last.window.full);
 const empty = advanceWindow({ since: "2026-09-06T00:00:00.000Z", after: null, windowMax: null, full: false, fullSyncedAt: "2026-09-22T00:00:00.000Z" }, { maxModified: null, nextAfter: null }, NOW);
-check("an empty incremental window keeps its since", empty.done && empty.window.since === "2026-09-06T00:00:00.000Z" && empty.window.fullSyncedAt === "2026-09-22T00:00:00.000Z");
+check("an empty incremental window keeps its since (no max, so no overlap)", empty.done && empty.window.since === "2026-09-06T00:00:00.000Z" && empty.window.fullSyncedAt === "2026-09-22T00:00:00.000Z");
 
 console.log("\nthe cursor round trip");
 const cursor = cursorFromWindow(p1.window, { portalId: "4242", ownerId: "77", hubUserId: "9" });

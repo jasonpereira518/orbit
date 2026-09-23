@@ -16,6 +16,7 @@ import {
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
 import { resolveConnectorWithSync } from "../src/lib/connectors/syncs";
+import { HUBSPOT_WATERMARK_OVERLAP_MS } from "../src/lib/crm/hubspot/mapping";
 import { syncHubspot } from "../src/lib/crm/hubspot/sync";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -26,6 +27,9 @@ function check(label: string, ok: boolean, detail = "") {
 }
 
 const USER = "smoke-crm-sync";
+
+/** Where a finished window leaves the next one: five minutes before its newest record. */
+const overlapped = (max: string) => new Date(Date.parse(max) - HUBSPOT_WATERMARK_OVERLAP_MS).toISOString();
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -131,7 +135,11 @@ run(async () => {
   const after1 = await row();
   check("the row is idle and re-armed on the normal cadence", after1?.syncStatus === "idle" && (after1?.nextSyncAt?.getTime() ?? 0) > Date.now() + 20 * 60_000);
   check("the cursor holds the identity", after1?.syncCursor?.meta?.portalId === "4242" && after1?.syncCursor?.meta?.ownerId === "77");
-  check("…and the watermark is the newest modified time", after1?.syncCursor?.syncedThrough === "2026-09-03T00:00:00.000Z", String(after1?.syncCursor?.syncedThrough));
+  check(
+    "…and the watermark is the newest modified time, less the overlap",
+    after1?.syncCursor?.syncedThrough === overlapped("2026-09-03T00:00:00.000Z"),
+    String(after1?.syncCursor?.syncedThrough)
+  );
   check("…and the full read is stamped", Boolean(after1?.syncCursor?.meta?.fullSyncedAt));
 
   console.log("\nthe next run is incremental, and re-uses the identity");
@@ -140,7 +148,7 @@ run(async () => {
   check("complete", r2.outcome === "complete", JSON.stringify(r2));
   check("no second introspection", second.introspections() === 0);
   const filters2 = (second.searches[0]?.filterGroups as Array<{ filters: Array<{ propertyName: string; operator: string; value: string }> }>)[0].filters;
-  check("filtered on lastmodifieddate >= the watermark", filters2[1]?.propertyName === "lastmodifieddate" && filters2[1]?.operator === "GTE" && filters2[1]?.value === String(Date.parse("2026-09-03T00:00:00.000Z")));
+  check("filtered on lastmodifieddate >= the watermark", filters2[1]?.propertyName === "lastmodifieddate" && filters2[1]?.operator === "GTE" && filters2[1]?.value === String(Date.parse(overlapped("2026-09-03T00:00:00.000Z"))), filters2[1]?.value);
   const graceLead = (await db.select().from(leads).where(eq(leads.userId, USER))).find((l) => l.emailNormalized === "grace@beta.test");
   check("a lead that became a customer converted", graceLead?.status === "converted" && graceLead?.contactId !== null);
 
