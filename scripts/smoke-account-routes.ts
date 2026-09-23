@@ -7,7 +7,9 @@
  *
  * Run: npx tsx scripts/smoke-account-routes.ts
  */
+import { existsSync, readFileSync } from "node:fs";
 import { CLERK_ERROR_COPY, clerkErrorMessage } from "../src/lib/clerk-errors";
+import { ACCOUNT_TABS } from "../src/components/account/account-nav";
 
 let failures = 0;
 
@@ -57,6 +59,31 @@ check(
     "fallback"
   ) === CLERK_ERROR_COPY.form_password_pwned
 );
+
+console.log("\nroutes");
+const FILE_FOR_HREF: Readonly<Record<string, string>> = {
+  "/settings/account": "src/app/(clerk)/(app)/settings/account/page.tsx",
+  "/settings/account/devices": "src/app/(clerk)/(app)/settings/account/devices/page.tsx",
+};
+for (const tab of ACCOUNT_TABS) {
+  const file = FILE_FOR_HREF[tab.href];
+  check(`${tab.href} is mapped to a file`, Boolean(file), "add it to FILE_FOR_HREF");
+  if (file) check(`${tab.href} has a page`, existsSync(file), file);
+}
+
+console.log("\ngating");
+const layout = readFileSync("src/app/(clerk)/(app)/settings/account/layout.tsx", "utf8");
+check("the shell requires a user", layout.includes("requireUserId"));
+check("the shell resolves surface visibility", layout.includes("resolveSurfaceVisibility"));
+check(
+  "the shell rides the settings-profile key",
+  layout.includes('surfaceKeyForSettingsId("settings-profile")')
+);
+for (const file of Object.values(FILE_FOR_HREF)) {
+  if (!existsSync(file)) continue;
+  const src = readFileSync(file, "utf8");
+  check(`${file} gates on Clerk being configured`, src.includes("isClerkConfigured"));
+}
 
 if (failures > 0) {
   console.error(`\nsmoke-account-routes: ${failures} failure(s)`);
