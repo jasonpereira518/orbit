@@ -1,6 +1,7 @@
 import { isClerkConfigured } from "@/lib/auth";
 import { AccountDemoPanel } from "@/components/account/account-demo-panel";
 import { AddEmailDialog } from "@/components/account/add-email-dialog";
+import { ConnectedAccounts } from "@/components/account/connected-accounts";
 import { EmailList } from "@/components/account/email-list";
 import { Button } from "@/components/ui/button";
 import { SettingsSection } from "@/components/settings/settings-section";
@@ -42,7 +43,7 @@ export default async function AccountSignInPage() {
         title="Connected accounts"
         description="Providers you can sign in through."
       >
-        <p className="text-sm text-muted-foreground">Connected accounts arrive in the next step</p>
+        <ConnectedAccounts />
       </SettingsSection>
     </>
   );

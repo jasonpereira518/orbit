@@ -48,6 +48,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/settings",
   "/settings/account",
   "/settings/account/sign-in",
+  "/settings/account/sign-in/callback",
   "/settings/account/devices",
   // Product
   "/dashboard",
