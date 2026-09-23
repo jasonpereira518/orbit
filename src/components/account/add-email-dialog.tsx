@@ -40,9 +40,16 @@ import { TOAST_COPY } from "@/lib/toast-copy";
  * controlled `open` prop change from outside is just synced, not echoed back. So every place
  * this file closes the dialog itself also calls `reset()` directly, rather than trusting
  * `onOpenChange` to catch it.
+ *
+ * Cancel is disabled while a request is in flight — the same guard `delete-account-dialog.tsx`
+ * puts on its own Cancel button. Without it, a Cancel click during `sendCode()` ran `close()`
+ * immediately (clearing `address`/`code`/`pendingId`), but the in-flight `createEmailAddress`
+ * call was not cancelled and this component never unmounts (only the Base UI popup portal
+ * does) — so it resolved anyway, silently re-arming `pendingId` and toasting success after
+ * the user believed they had cancelled. Locking Cancel behind `working` closes that window.
  */
 export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
-  const { user } = useUser();
+  const { isLoaded, user } = useUser();
   const [open, setOpen] = useState(false);
   const [address, setAddress] = useState("");
   const [code, setCode] = useState("");
@@ -62,7 +69,7 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
   };
 
   const sendCode = async () => {
-    if (!user || address.trim().length === 0) return;
+    if (!isLoaded || !user || address.trim().length === 0) return;
     setWorking(true);
     try {
       const created = await user.createEmailAddress({ email: address.trim() });
@@ -77,7 +84,7 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
   };
 
   const confirm = async () => {
-    if (!user || !pendingId || code.trim().length === 0) return;
+    if (!isLoaded || !user || !pendingId || code.trim().length === 0) return;
     setWorking(true);
     try {
       const email = user.emailAddresses.find((e) => e.id === pendingId);
@@ -105,7 +112,7 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add an email address</DialogTitle>
-          <DialogDescription>
+          <DialogDescription aria-live="polite">
             {pendingId
               ? "Enter the six-digit code we sent, and the address is yours"
               : "We’ll send a code to make sure it’s really yours"}
@@ -119,6 +126,7 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
               id="add-email-code"
               inputMode="numeric"
               autoComplete="one-time-code"
+              autoFocus
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
@@ -138,14 +146,14 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
         )}
 
         <DialogFooter>
-          <Button type="button" variant="outline" size="sm" onClick={close}>
+          <Button type="button" variant="outline" size="sm" disabled={working} onClick={close}>
             Cancel
           </Button>
           {pendingId ? (
             <Button
               type="button"
               size="sm"
-              disabled={working || code.trim().length === 0}
+              disabled={!isLoaded || working || code.trim().length === 0}
               onClick={() => void confirm()}
             >
               {working ? "Checking…" : "Confirm"}
@@ -154,7 +162,7 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
             <Button
               type="button"
               size="sm"
-              disabled={working || address.trim().length === 0}
+              disabled={!isLoaded || working || address.trim().length === 0}
               onClick={() => void sendCode()}
             >
               {working ? "Sending…" : "Send code"}
