@@ -1,17 +1,22 @@
 /**
- * The account page's contract: the error map's codes and voice, and the fact that every
- * account route gates on Clerk and on the settings-profile surface key.
+ * The account experience's contract: the error map's codes and voice, the fact that the
+ * account dialog's rail still carries all four sections, and the fact that the one account
+ * route that must survive being a dialog — the OAuth return leg — still gates on Clerk.
  *
- * What it guards against is a raw Clerk string reaching a toast, a route that forgets its
- * gate, and the loss of the only way to sign out — none of which fails a type check.
+ * What it guards against is a raw Clerk string reaching a toast, the callback route losing
+ * its gate, a rail section silently dropped, and the loss of the only way to sign out — none
+ * of which fails a type check.
+ *
+ * The account experience moved from routes to a dialog on 2026-09-23 (see the amendment in
+ * docs/superpowers/specs/2026-09-22-account-page-clerk-revision-design.md); this smoke moved
+ * with it. Its old route table and layout-gating checks are gone along with the files they
+ * asserted — `src/components/account/account-dialog.tsx` is the new source of truth.
  *
  * Run: npx tsx scripts/smoke-account-routes.ts
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { CLERK_ERROR_COPY, clerkErrorMessage } from "../src/lib/clerk-errors";
-import { ACCOUNT_TABS } from "../src/components/account/account-nav";
-import { surfaceKeyForSettingsId } from "../src/lib/surfaces";
 
 let failures = 0;
 
@@ -72,20 +77,6 @@ check(
 );
 
 console.log("\nroutes");
-const FILE_FOR_HREF: Readonly<Record<string, string>> = {
-  "/settings/account": "src/app/(clerk)/(app)/settings/account/page.tsx",
-  "/settings/account/sign-in": "src/app/(clerk)/(app)/settings/account/sign-in/page.tsx",
-  "/settings/account/sign-in/callback":
-    "src/app/(clerk)/(app)/settings/account/sign-in/callback/page.tsx",
-  "/settings/account/devices": "src/app/(clerk)/(app)/settings/account/devices/page.tsx",
-};
-for (const tab of ACCOUNT_TABS) {
-  const file = FILE_FOR_HREF[tab.href];
-  check(`${tab.href} is mapped to a file`, Boolean(file), "add it to FILE_FOR_HREF");
-  if (file) check(`${tab.href} has a page`, existsSync(file), file);
-}
-
-console.log("\ngating");
 
 /**
  * Source with comments removed, so a check cannot pass on a line that no longer runs.
@@ -99,34 +90,46 @@ function code(file: string): string {
     .replace(/^[ \t]*\/\/.*$/gm, "");
 }
 
-const layout = code("src/app/(clerk)/(app)/settings/account/layout.tsx");
-// Call shapes, not bare identifiers: `layout.includes("requireUserId")` also passed when the
-// gate was nothing but an unused import, and both of these gates are the whole reason this
-// file exists.
-check("the shell awaits a user id", /await requireUserId\(\)/.test(layout));
-check(
-  "the shell awaits surface visibility",
-  /await resolveSurfaceVisibility\(/.test(layout)
-);
-check(
-  "the shell rides the settings-profile key",
-  layout.includes('surfaceKeyForSettingsId("settings-profile")')
-);
-check(
-  "a hidden viewer is sent back to /settings",
-  /redirect\("\/settings"\)/.test(layout)
-);
-// The key itself has to resolve: renaming the settings id would leave the line above
-// matching while the predicate compared against nothing.
-check(
-  "settings-profile resolves to a surface key",
-  Boolean(surfaceKeyForSettingsId("settings-profile")),
-  "surfaceKeyForSettingsId returned nothing"
-);
-for (const file of Object.values(FILE_FOR_HREF)) {
-  if (!existsSync(file)) continue;
-  check(`${file} gates on Clerk being configured`, code(file).includes("isClerkConfigured"));
+// The four human-facing routes are gone — the dialog replaced them. What must not come back
+// is a page at any of their paths (a merge conflict or a stray revert is the realistic way
+// one would), and what must not disappear is the one route a browser navigation genuinely
+// has to land on: the OAuth return leg, which a dialog cannot receive.
+const REMOVED_ROUTE_FILES = [
+  "src/app/(clerk)/(app)/settings/account/layout.tsx",
+  "src/app/(clerk)/(app)/settings/account/page.tsx",
+  "src/app/(clerk)/(app)/settings/account/sign-in/page.tsx",
+  "src/app/(clerk)/(app)/settings/account/devices/page.tsx",
+];
+for (const file of REMOVED_ROUTE_FILES) {
+  check(`${file} stays deleted`, !existsSync(file));
 }
+
+const CALLBACK_FILE = "src/app/(clerk)/(app)/settings/account/sign-in/callback/page.tsx";
+check("the callback route still exists", existsSync(CALLBACK_FILE), CALLBACK_FILE);
+if (existsSync(CALLBACK_FILE)) {
+  check(
+    `${CALLBACK_FILE} gates on Clerk being configured`,
+    code(CALLBACK_FILE).includes("isClerkConfigured")
+  );
+}
+
+console.log("\naccount dialog");
+const dialogFile = "src/components/account/account-dialog.tsx";
+const dialog = code(dialogFile);
+check(`${dialogFile} exists`, existsSync(dialogFile));
+// The rail order the spec fixes: Profile, Sign-in, Security, Devices. Checked by position,
+// not just presence, so a reorder — not only a dropped section — fails this.
+const RAIL_LABELS = ["Profile", "Sign-in", "Security", "Devices"];
+const positions = RAIL_LABELS.map((label) => dialog.indexOf(`label: "${label}"`));
+for (const [i, label] of RAIL_LABELS.entries()) {
+  check(`account dialog rail has ${label}`, positions[i] !== -1, "missing from ACCOUNT_SECTIONS");
+}
+check(
+  "the four rail sections are in the required order",
+  positions.every((p) => p !== -1) && positions.every((p, i) => i === 0 || p > positions[i - 1]),
+  positions.join(",")
+);
+check("the dialog gates its sections on clerkOn", dialog.includes("clerkOn"));
 
 /**
  * The sign-out invariant, which is the one failure in this feature nobody could work around:

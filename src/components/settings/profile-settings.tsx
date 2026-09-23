@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import { saveSocialLinks } from "@/actions/settings";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
+import { AccountDialog } from "@/components/account/account-dialog";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -37,6 +37,7 @@ export function ProfileSettings({
 }) {
   const [socials, setSocials] = useState(initialSocialLinks);
   const [pending, start] = useTransition();
+  const [accountOpen, setAccountOpen] = useState(false);
 
   return (
     <SettingsSection
@@ -57,7 +58,12 @@ export function ProfileSettings({
             )}
           </div>
           {clerkEnabled && (
-            <Button type="button" variant="outline" size="sm" render={<Link href="/settings/account" />}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setAccountOpen(true)}
+            >
               Manage account
             </Button>
           )}
@@ -119,6 +125,8 @@ export function ProfileSettings({
           {pending ? "Saving…" : "Save socials"}
         </Button>
       </SettingsRow>
+
+      <AccountDialog open={accountOpen} onOpenChange={setAccountOpen} clerkOn={clerkEnabled} />
     </SettingsSection>
   );
 }

@@ -46,10 +46,11 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/onboarding",
   "/onboarding/wizard",
   "/settings",
-  "/settings/account",
-  "/settings/account/sign-in",
+  // The account experience is a dialog now, opened from /settings, so it has no routes of
+  // its own except the one that a real browser navigation has to land on: the OAuth return
+  // leg. See the 2026-09-23 amendment in
+  // docs/superpowers/specs/2026-09-22-account-page-clerk-revision-design.md.
   "/settings/account/sign-in/callback",
-  "/settings/account/devices",
   // Product
   "/dashboard",
   "/capture",

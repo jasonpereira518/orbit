@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { Plus, Search } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
@@ -21,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AccountMenu, type AccountMenuProfile } from "@/components/account/account-menu";
+import { AccountDialog } from "@/components/account/account-dialog";
 import { useModKeyLabel } from "@/lib/use-mod-key";
 
 function SidebarNavLink({
@@ -119,6 +121,7 @@ export function AppSidebar({
   const captureHidden = hidden.has("page.capture");
   const mod = useModKeyLabel();
   const shortcut = mod === "⌘" ? "⌘K" : "Ctrl K";
+  const [accountOpen, setAccountOpen] = useState(false);
   const tagged = (item: AppNavItem) => {
     const key = surfaceKeyForHref(item.href);
     return key !== null && hiddenForUsers.has(key);
@@ -235,7 +238,7 @@ export function AppSidebar({
       <div className="mx-2 mb-2 mt-auto border-t border-black/[0.06] p-2 dark:border-white/10 lg:mx-3 lg:mb-3 lg:p-3">
         {clerkOn ? (
           <div className="flex items-center justify-center gap-3 lg:justify-start">
-            <AccountMenu profile={profile} />
+            <AccountMenu profile={profile} onOpenAccount={() => setAccountOpen(true)} />
             <span className="hidden text-xs text-muted-foreground lg:inline">
               Account
             </span>
@@ -250,6 +253,7 @@ export function AppSidebar({
           </p>
         )}
       </div>
+      <AccountDialog open={accountOpen} onOpenChange={setAccountOpen} clerkOn={clerkOn} />
     </aside>
   );
 }

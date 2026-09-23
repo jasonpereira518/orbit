@@ -33,9 +33,10 @@ function initial(name: string) {
  * before Clerk JS has loaded; once `useUser()` has a user, Clerk's own values win. That
  * second stage is not a nicety: the prop comes from `getDisplayProfile()`, which answers
  * from the `user_settings` mirror, and the mirror only catches up via the `user.updated`
- * webhook — so without this, changing your name or photo on /settings/account left the nav
- * showing the old one until a webhook landed, which in local development (no tunnel) is
- * never. `ProfileForm` also calls `router.refresh()` so the server prop is re-resolved, but
+ * webhook — so without this, changing your name or photo in the account dialog's Profile
+ * section left the nav showing the old one until a webhook landed, which in local
+ * development (no tunnel) is never. `ProfileForm` also calls `router.refresh()` so the
+ * server prop is re-resolved, but
  * Clerk is the authority here and it is already in the browser.
  *
  * `useUser()` needs a `ClerkProvider` above it — but so does `SignOutButton` below, which
@@ -46,13 +47,20 @@ function initial(name: string) {
  *
  * `onNavigate` is for callers that own something the navigation has to close — the mobile
  * "More" sheet, which nothing else dismisses on a route change. The sidebar passes nothing.
+ *
+ * `onOpenAccount` opens the account dialog. It is called after `onNavigate`, not instead of
+ * it: from the sidebar there is nothing to close first, but from the mobile sheet the two
+ * overlays would otherwise fight (see `MobileNav`'s own comment on `onOpenChangeComplete`
+ * for how that caller sequences them).
  */
 export function AccountMenu({
   profile,
   onNavigate,
+  onOpenAccount,
 }: {
   profile: AccountMenuProfile | null;
   onNavigate?: () => void;
+  onOpenAccount: () => void;
 }) {
   const { isLoaded, user } = useUser();
 
@@ -98,7 +106,12 @@ export function AccountMenu({
           )}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem render={<Link href="/settings/account" />} onClick={onNavigate}>
+        <DropdownMenuItem
+          onClick={() => {
+            onNavigate?.();
+            onOpenAccount();
+          }}
+        >
           <UserRound className="size-4" aria-hidden />
           Account
         </DropdownMenuItem>

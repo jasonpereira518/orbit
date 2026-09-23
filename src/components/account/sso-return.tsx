@@ -11,7 +11,7 @@ import { takePendingConnect } from "@/lib/pending-connect";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-const SIGN_IN = "/settings/account/sign-in";
+const SETTINGS = "/settings";
 
 /**
  * The return leg of connecting a provider: refresh the user, say what happened, go back.
@@ -45,9 +45,9 @@ const SIGN_IN = "/settings/account/sign-in";
  * (`:21`), so the nonce-less path passes nothing rather than an empty object.
  *
  * A refused consent does NOT reject anything here — Clerk records it on the external account
- * as `verification.error`, which is what the outcome below reads and what the Sign-in screen
- * renders as a failed row. The reload rejecting is a different thing entirely (the refresh
- * itself failed, outcome unknown) and says so.
+ * as `verification.error`, which is what the outcome below reads and what the Sign-in section
+ * of the account dialog renders as a failed row. The reload rejecting is a different thing
+ * entirely (the refresh itself failed, outcome unknown) and says so.
  *
  * The effect is guarded by a ref rather than the dependency array: Strict Mode double-invokes
  * effects in development, and `useUser()`'s resource gets a new identity on every Clerk
@@ -62,10 +62,10 @@ export function SsoReturn() {
     if (!isLoaded || ran.current) return;
     ran.current = true;
 
-    // Signed out by the time we got back: nothing to reload, and the Sign-in screen's own
-    // gate is the right place to land.
+    // Signed out by the time we got back: nothing to reload, and /settings is the right
+    // place to land — the dialog's own gate handles a viewer with no session.
     if (!user) {
-      router.replace(SIGN_IN);
+      router.replace(SETTINGS);
       return;
     }
 
@@ -89,7 +89,7 @@ export function SsoReturn() {
             friendlyError(err, "Couldn’t refresh your account — reload the page to check")
           )
         );
-        router.replace(SIGN_IN);
+        router.replace(SETTINGS);
         return;
       }
 
@@ -115,15 +115,15 @@ export function SsoReturn() {
         // nothing is said about it.
       }
 
-      router.replace(SIGN_IN);
+      router.replace(SETTINGS);
     })();
   }, [isLoaded, user, router]);
 
   return (
     <div className="space-y-2 p-6">
       <p className="text-sm text-muted-foreground">Finishing up…</p>
-      <Link href={SIGN_IN} className="text-sm underline underline-offset-4">
-        Back to sign-in
+      <Link href={SETTINGS} className="text-sm underline underline-offset-4">
+        Back to settings
       </Link>
     </div>
   );

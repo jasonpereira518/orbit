@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { AccountMenu, type AccountMenuProfile } from "@/components/account/account-menu";
+import { AccountDialog } from "@/components/account/account-dialog";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { FEEDBACK_SURFACE_KEY, isHrefComingSoon, isHrefHidden } from "@/lib/surfaces";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
@@ -50,6 +51,14 @@ export function MobileNav({
   const pathname = usePathname();
   const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  /**
+   * Set when the Account item is tapped, so the account dialog opens only once the sheet's
+   * own close animation has actually finished — see the Sheet's `onOpenChangeComplete`
+   * below. Opening a second Base UI dialog immediately would stack it under the closing
+   * sheet's still-active focus trap, so the sheet is what tells us when it is safe.
+   */
+  const [pendingAccountOpen, setPendingAccountOpen] = useState(false);
   /**
    * Where focus lands when the More panel opens.
    *
@@ -528,7 +537,16 @@ export function MobileNav({
         </div>
       </nav>
 
-      <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+      <Sheet
+        open={moreOpen}
+        onOpenChange={setMoreOpen}
+        onOpenChangeComplete={(open) => {
+          if (!open && pendingAccountOpen) {
+            setPendingAccountOpen(false);
+            setAccountOpen(true);
+          }
+        }}
+      >
         <SheetContent
           ref={morePanelRef}
           side="bottom"
@@ -619,11 +637,18 @@ export function MobileNav({
               {clerkOn ? (
                 <>
                   {/* Every other destination in this sheet closes it on click, and nothing
-                      closes it on a pathname change — so without this the account links
-                      navigate underneath a sheet that is still covering the page they
-                      land on. Clerk's `UserButton` never had the problem: it opened a
+                      closes it on a pathname change — so without `onNavigate` the menu's
+                      Settings link would navigate underneath a sheet that is still covering
+                      the page it lands on. Account no longer navigates at all: it opens the
+                      account dialog, sequenced through the Sheet's `onOpenChangeComplete`
+                      above so the dialog never opens on top of the sheet's own closing
+                      animation. Clerk's `UserButton` never had either problem: it opened a
                       modal instead of navigating. */}
-                  <AccountMenu profile={profile} onNavigate={() => setMoreOpen(false)} />
+                  <AccountMenu
+                    profile={profile}
+                    onNavigate={() => setMoreOpen(false)}
+                    onOpenAccount={() => setPendingAccountOpen(true)}
+                  />
                   <span className="text-sm text-muted-foreground">Account</span>
                 </>
               ) : demoMode ? (
@@ -638,6 +663,8 @@ export function MobileNav({
           </div>
         </SheetContent>
       </Sheet>
+
+      <AccountDialog open={accountOpen} onOpenChange={setAccountOpen} clerkOn={clerkOn} />
     </>
   );
 }
