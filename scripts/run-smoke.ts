@@ -195,6 +195,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-schedules": "pure",
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
+  "smoke-waitlist-host": "pure",
   "smoke-speech-limits": "pure",
   "smoke-speech-usage-tag": "pure",
   "smoke-stripe-ordering": "pure",
@@ -311,6 +312,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-interest-list-join": "pglite",
   "smoke-interest-list-page": "pglite",
   "smoke-interest-ticket-image": "pglite",
+  "smoke-waitlist-copy": "pglite",
+  "smoke-waitlist-position": "pglite",
   "smoke-internal-auth": "pglite", // imports route handlers that reach @/db
   "smoke-launch-p2-schema": "pglite",
   "smoke-polish-migrations": "pglite",

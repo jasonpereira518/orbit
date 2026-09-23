@@ -1,9 +1,15 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { PUBLIC_ROUTES } from "@/lib/public-routes";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { API_SIGNED_OUT_BODY, API_SIGNED_OUT_STATUS, isApiPath } from "@/lib/api-signed-out";
 import { isLocalhost } from "@/lib/demo-account";
+import {
+  STEALTH_CLOSED_PAGES,
+  STEALTH_HIDDEN_API,
+  isStealth,
+  isWaitlistHostHeader,
+} from "@/lib/waitlist-host";
 import {
   ATTRIBUTION_COOKIE,
   ATTRIBUTION_MAX_AGE_S,
@@ -15,6 +21,12 @@ import {
 // The list lives in `@/lib/public-routes` so a smoke test can assert it against the
 // filesystem — a marketing page missing from it 404s for exactly the people it is for.
 const isPublicRoute = createRouteMatcher([...PUBLIC_ROUTES]);
+
+// Stealth mode takes the marketing pages out of the public list, so a signed-out visitor to
+// any of them meets the same sign-in redirect as the rest of the app. See waitlist-host.ts.
+const stealth = isStealth();
+const closedInStealth: ReadonlySet<string> = new Set(STEALTH_CLOSED_PAGES);
+const hiddenApiInStealth: ReadonlySet<string> = new Set(STEALTH_HIDDEN_API);
 
 const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -71,10 +83,14 @@ function withFirstTouch(req: Request, url: URL, res: NextResponse) {
   if (req.headers.get("cookie")?.includes(`${ATTRIBUTION_COOKIE}=`)) return res;
 
   const referer = req.headers.get("referer");
+  // The Host header too, not only the request URL's: behind a proxy or on a second domain
+  // (the waitlist's) the URL can carry the server's own host while the visitor's browser —
+  // and so its referer — used the public one.
+  const ownHosts = new Set([url.host, req.headers.get("host") ?? url.host]);
   let external: string | null = null;
   if (referer) {
     try {
-      if (new URL(referer).host !== url.host) external = referer;
+      if (!ownHosts.has(new URL(referer).host)) external = referer;
     } catch {
       // Unparseable referer — treat as absent rather than guessing.
     }
@@ -93,11 +109,29 @@ function withFirstTouch(req: Request, url: URL, res: NextResponse) {
   return res;
 }
 
-export default configured
+/**
+ * Stealth's session-independent rules for the app host. The closed marketing pages are
+ * handled where the session is read; `noindex` and the `/sign-up` and `/interest`
+ * redirects are config-level (`next.config.ts`), since they must also cover static files.
+ */
+function stealthResponse(req: Request, pathname: string): NextResponse | null {
+  if (!stealth) return null;
+  if (hiddenApiInStealth.has(pathname)) return new NextResponse(null, { status: 404 });
+  // The landing page is closed; the app's front door is the dashboard, which sends a
+  // signed-out visitor on to sign-in by itself.
+  if (pathname === "/") return NextResponse.redirect(new URL("/dashboard", req.url));
+  return null;
+}
+
+const appProxy = configured
   ? clerkMiddleware(
       async (auth, req) => {
-        if (!isPublicRoute(req)) {
-          if (isApiPath(new URL(req.url).pathname)) {
+        const { pathname } = new URL(req.url);
+        const shortCircuit = stealthResponse(req, pathname);
+        if (shortCircuit) return shortCircuit;
+        const closed = stealth && closedInStealth.has(pathname);
+        if (closed || !isPublicRoute(req)) {
+          if (isApiPath(pathname)) {
             // API callers get JSON, never a redirect: a followed 307 hands them the sign-in
             // page as a 200 they cannot tell from success. `auth.protect()` is skipped here
             // because it treats every request inside the proxy as a page navigation.
@@ -131,6 +165,8 @@ export default configured
       // `/api/admin` is listed separately rather than caught by the same prefix: the export
       // handler lives under /api and would otherwise fall through this branch entirely.
       const { pathname } = new URL(req.url);
+      const shortCircuit = stealthResponse(req, pathname);
+      if (shortCircuit) return shortCircuit;
       if (
         !isLocalhost() &&
         (pathname.startsWith("/admin") || pathname.startsWith("/api/admin"))
@@ -139,6 +175,17 @@ export default configured
       }
       return withPathname(req);
     };
+
+/**
+ * The waitlist host never reaches Clerk. Its every path is already allowlisted by the
+ * config redirects (src/lib/waitlist-host.ts), none of its pages or routes need a session,
+ * and Clerk's handshake would bounce a first visit through the app's own Clerk domain —
+ * naming it in the address bar of someone who must never see it.
+ */
+export default function proxy(req: NextRequest, event: NextFetchEvent) {
+  if (isWaitlistHostHeader(req.headers.get("host"))) return withPathname(req);
+  return appProxy(req, event);
+}
 
 export const config = {
   matcher: [

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { AdminForbiddenError, requireAdminUserId } from "@/lib/admin";
 import {
   asWelcomePlanet,
-  buildInterestListFollowUpEmail,
+  buildFrontWaveEmail,
   buildInterestListWelcomeEmail,
 } from "@/lib/interest-list-email";
 import { buildBroadcastEmail, loadBroadcast } from "@/lib/broadcasts";
@@ -26,7 +26,7 @@ export const runtime = "nodejs";
  * it to the list.
  */
 
-const TEMPLATES = ["welcome", "follow-up", "broadcast"] as const;
+const TEMPLATES = ["welcome", "front-wave", "broadcast"] as const;
 type Template = (typeof TEMPLATES)[number];
 
 function isTemplate(value: string | null): value is Template {
@@ -36,8 +36,8 @@ function isTemplate(value: string | null): value is Template {
 /** Obviously fake, so a preview can never be mistaken for a real subscriber's link. */
 const SAMPLE_UNSUBSCRIBE = "https://example.invalid/unsubscribe?token=preview";
 const SAMPLE_LINKS = {
-  ticketUrl: "https://orbit.example/interest?me=sample-token",
-  shareUrl: "https://orbit.example/interest?ref=sample-token",
+  ticketUrl: "https://waitlist.example/?me=sample-token",
+  shareUrl: "https://waitlist.example/?ref=sample-token",
 };
 
 export async function GET(request: NextRequest) {
@@ -66,11 +66,11 @@ export async function GET(request: NextRequest) {
       subject: draft?.subject ?? "A sample subject line",
       body:
         draft?.body ??
-        "This is what a broadcast looks like.\n\nThe first paragraph is set larger, as the opening line. Everything after it is body copy.\n\nWrite plain prose — the shell, the logo and the unsubscribe footer are added for you.",
+        "This is what a broadcast looks like.\n\nThe first paragraph is set larger, as the opening line. Everything after it is body copy.\n\nWrite plain prose — the shell, the planet and the leave-the-waitlist footer are added for you.",
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
     });
-  } else if (template === "follow-up") {
-    message = buildInterestListFollowUpEmail({
+  } else if (template === "front-wave") {
+    message = buildFrontWaveEmail({
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
       planet,
       links: SAMPLE_LINKS,
@@ -80,6 +80,7 @@ export async function GET(request: NextRequest) {
       unsubscribeUrl: SAMPLE_UNSUBSCRIBE,
       planet,
       links: SAMPLE_LINKS,
+      position: 1285,
     });
   }
 

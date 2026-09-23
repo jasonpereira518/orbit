@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
 import { buildSecurityHeaders } from "./src/lib/security-headers";
+import {
+  STEALTH_ROBOTS,
+  hostMatchValue,
+  isStealth,
+  stealthRedirects,
+  waitlistHost,
+  waitlistRedirects,
+  waitlistRewrites,
+} from "./src/lib/waitlist-host";
 import { CAPTURE_BODY_SIZE_LIMIT } from "./src/lib/capture-limits";
 
 const nextConfig: NextConfig = {
@@ -15,17 +24,40 @@ const nextConfig: NextConfig = {
   ],
   // HSTS, nosniff, referrer and frame policies, and a Content-Security-Policy that starts
   // report-only (CSP_ENFORCE=1 to enforce). See src/lib/security-headers.ts.
+  //
+  // The waitlist's own domain (WAITLIST_HOST) gets a policy of its own that names no
+  // other origin, and in stealth mode (SITE_STEALTH=1) everything else is `noindex`.
+  // See src/lib/waitlist-host.ts.
   async headers() {
+    const base = {
+      dev: process.env.NODE_ENV !== "production",
+      enforce: process.env.CSP_ENFORCE === "1",
+      clerkPublishableKey: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+    };
+    const appHeaders = [
+      ...buildSecurityHeaders(base),
+      ...(isStealth() ? [{ key: "X-Robots-Tag", value: STEALTH_ROBOTS }] : []),
+    ];
+    const host = waitlistHost();
+    if (!host) return [{ source: "/(.*)", headers: appHeaders }];
+    const match = [{ type: "host" as const, value: hostMatchValue(host) }];
     return [
       {
         source: "/(.*)",
-        headers: buildSecurityHeaders({
-          dev: process.env.NODE_ENV !== "production",
-          enforce: process.env.CSP_ENFORCE === "1",
-          clerkPublishableKey: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
-        }),
+        has: match,
+        headers: buildSecurityHeaders({ ...base, surface: "waitlist" }),
       },
+      { source: "/(.*)", missing: match, headers: appHeaders },
     ];
+  },
+  // The waitlist host serves the waitlist and nothing else; stealth closes sign-up and moves
+  // old /interest links to it. Redirects run before the proxy and before public/ is served,
+  // which is why the allowlist lives here rather than in src/proxy.ts.
+  async redirects() {
+    return [...waitlistRedirects(), ...stealthRedirects()];
+  },
+  async rewrites() {
+    return { beforeFiles: waitlistRewrites(), afterFiles: [], fallback: [] };
   },
   env: {
     // Inlined at build time; /api/health reports it so "which build is this" has an answer
@@ -137,4 +169,9 @@ export default withSentryConfig(nextConfig, {
   telemetry: false,
   widenClientFileUpload: true,
   sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+  // Off: the manifest is every dynamic route in the app (`/contacts/:id`, `/capture/:batchId`,
+  // `/admin/users/:userId`…), inlined into the client bundle every page loads — the
+  // waitlist's own domain included, where the app's page names must not appear. Its only
+  // job is grouping browser transactions by route pattern.
+  routeManifestInjection: false,
 });

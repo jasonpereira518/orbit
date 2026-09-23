@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
-import { isTrackedPath } from "@/lib/analytics-routes";
+import { isTrackedPath } from "@/lib/analytics-redact";
 import { readNavStart, waitForContent } from "@/lib/nav-timing";
 
 /**
@@ -12,7 +12,8 @@ import { readNavStart, waitForContent } from "@/lib/nav-timing";
  * Mounted in the ROOT layout, so it covers marketing, auth, checkout and the product with
  * one instance. It must never import anything that reaches `@/db` — a client component
  * that does fails the build with a `node:fs` chunking error naming neither file.
- * `analytics-routes` is pure by construction for exactly this reason.
+ * `analytics-redact` is pure by construction for exactly this reason — and knows no routes,
+ * because this ships to every page, the waitlist's own domain included.
  *
  * The session id lives in `sessionStorage`, NOT a cookie. It is per-tab, it dies when the
  * tab closes, it is never sent to another origin, and it exists only so the server can
@@ -23,7 +24,8 @@ import { readNavStart, waitForContent } from "@/lib/nav-timing";
  * no analytics.
  */
 
-const SESSION_KEY = "orbit_sid";
+/** Neutral on purpose: storage keys are visible to anyone who opens devtools on the waitlist. */
+const SESSION_KEY = "pv_sid";
 
 /**
  * A session ends after this long with no page view — the conventional 30 minutes.

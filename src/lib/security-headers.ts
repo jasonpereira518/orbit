@@ -41,7 +41,16 @@ export function buildSecurityHeaders(options: {
   dev: boolean;
   enforce: boolean;
   clerkPublishableKey: string | undefined;
+  /**
+   * `"waitlist"` is the policy for the waitlist's own domain (src/lib/waitlist-host.ts).
+   * Response headers are readable by anyone, and the app's policy names the app's Clerk
+   * domain and, origin by origin, what the product does (Deepgram, Google Drive, camera and
+   * microphone). The waitlist page needs none of it, so its policy names none of it.
+   */
+  surface?: "app" | "waitlist";
 }): SecurityHeader[] {
+  if (options.surface === "waitlist") return waitlistHeaders(options);
+
   const clerkHost = clerkFrontendApiHost(options.clerkPublishableKey);
   const clerk = clerkHost ? `https://${clerkHost}` : null;
 
@@ -118,6 +127,47 @@ export function buildSecurityHeaders(options: {
   ];
   if (!options.dev) {
     // Two years, subdomains included. `preload` deliberately not yet: it is irreversible.
+    headers.unshift({
+      key: "Strict-Transport-Security",
+      value: "max-age=63072000; includeSubDomains",
+    });
+  }
+  return headers;
+}
+
+const VERCEL_ANALYTICS = ["https://va.vercel-scripts.com", "https://vitals.vercel-insights.com"];
+const SENTRY_INGEST = ["https://*.ingest.sentry.io", "https://*.ingest.us.sentry.io"];
+
+/** The waitlist domain's headers: the same protections, and no origin beyond its own. */
+function waitlistHeaders(options: { dev: boolean; enforce: boolean }): SecurityHeader[] {
+  const directives = [
+    `default-src 'self'`,
+    `script-src ${join("'self'", "'unsafe-inline'", options.dev && "'unsafe-eval'", VERCEL_ANALYTICS[0])}`,
+    `connect-src ${join("'self'", ...SENTRY_INGEST, ...VERCEL_ANALYTICS)}`,
+    `img-src 'self' data: blob:`,
+    `style-src 'self' 'unsafe-inline'`,
+    `font-src 'self' data:`,
+    `frame-src 'none'`,
+    `object-src 'none'`,
+    `base-uri 'self'`,
+    `form-action 'self'`,
+    `frame-ancestors 'none'`,
+    `report-uri /api/csp-report`,
+  ];
+  const headers: SecurityHeader[] = [
+    { key: "X-Content-Type-Options", value: "nosniff" },
+    { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+    { key: "X-Frame-Options", value: "DENY" },
+    {
+      key: "Permissions-Policy",
+      value: "camera=(), microphone=(), display-capture=(), geolocation=(), payment=()",
+    },
+    {
+      key: options.enforce ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only",
+      value: directives.join("; "),
+    },
+  ];
+  if (!options.dev) {
     headers.unshift({
       key: "Strict-Transport-Security",
       value: "max-age=63072000; includeSubDomains",

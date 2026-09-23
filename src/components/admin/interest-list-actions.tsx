@@ -45,12 +45,12 @@ export function InterestListRowActions({
               Restore
             </span>
           }
-          title="Put them back on the list?"
+          title="Put them back on the waitlist?"
           description={
             <>
-              <span className="font-medium text-ink">{email}</span> becomes mailable again
-              and is re-armed for the day-3 follow-up. Use this if the wrong row was
-              removed — not to override someone who unsubscribed themselves.
+              <span className="font-medium text-ink">{email}</span> goes back to their old
+              place in line and becomes mailable again. Use this if the wrong row was
+              removed — not to override someone who left themselves.
             </>
           }
           confirmLabel="Restore"
@@ -63,18 +63,18 @@ export function InterestListRowActions({
               className={`${BUTTON} text-muted-foreground hover:border-border hover:text-foreground`}
             >
               <MailX className="size-3" aria-hidden />
-              Unsubscribe
+              Remove
             </span>
           }
-          title="Stop mailing this address?"
+          title="Take this address off the waitlist?"
           description={
             <>
-              <span className="font-medium text-ink">{email}</span> stops receiving anything
-              immediately, including the day-3 follow-up. The row stays, so you keep their
-              signup date and source — and you can undo this from the same table.
+              <span className="font-medium text-ink">{email}</span> leaves the line and stops
+              receiving anything immediately. The row stays, so you keep their signup date
+              and source — and you can undo this from the same table.
             </>
           }
-          confirmLabel="Unsubscribe"
+          confirmLabel="Remove from line"
           onConfirm={(reason) => unsubscribeInterestListAction({ id, reason })}
         />
       )}

@@ -2,6 +2,11 @@
  * The route vocabulary for traffic analytics — every path the beacon may record, as a
  * PATTERN rather than a pathname.
  *
+ * SERVER-ONLY BY CONVENTION: never import this from a client component. It is the app's
+ * whole page list, and anything a client component imports ships in every page's bundle —
+ * the waitlist's own domain included. The browser's half (`isTrackedPath`, the vendor
+ * redaction) lives in `analytics-redact.ts`, which knows no routes.
+ *
  * Two jobs, and the second one matters more than the first.
  *
  * CARDINALITY: `/contacts/<uuid>` is a different string for every contact in every
@@ -29,6 +34,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/",
   "/pricing",
   "/interest",
+  "/interest/privacy",
   "/connect",
   "/privacy",
   "/terms",
@@ -69,6 +75,8 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/recruiters/[id]",
   "/reminders",
 ] as const;
+
+export { isTrackedPath } from "@/lib/analytics-redact";
 
 /** What an unrecognised path becomes. One bucket, so cardinality stays bounded even here. */
 export const UNKNOWN_ROUTE = "/unknown";
@@ -130,58 +138,4 @@ export function normalizeRoute(pathname: string): string {
     }
   }
   return best ?? UNKNOWN_ROUTE;
-}
-
-/**
- * Whether a path should be recorded at all.
- *
- * `/admin` is excluded because the operator reading these numbers is the person generating
- * them — counting his own console visits would make the traffic graph a picture of how
- * often he checked the traffic graph. API routes and Next's internals are not pages.
- */
-export function isTrackedPath(pathname: string): boolean {
-  const clean = (pathname.split("?")[0] ?? "").split("#")[0] ?? "";
-  if (!clean.startsWith("/")) return false;
-  if (clean === "/admin" || clean.startsWith("/admin/")) return false;
-  if (clean.startsWith("/api/")) return false;
-  if (clean.startsWith("/_next/") || clean.startsWith("/__clerk/")) return false;
-  return true;
-}
-
-/** Query parameters worth keeping when a URL leaves for a third party: campaign tags only. */
-const VENDOR_KEPT_PARAMS = ["utm_source", "utm_medium", "utm_campaign"] as const;
-
-/**
- * The address Vercel's analytics scripts are allowed to see, or null to drop the event.
- *
- * Both `<Analytics />` and `<SpeedInsights />` report the page's FULL URL by default — for
- * client-side transitions too. Orbit's own pipeline stores patterns, never paths, and that
- * was worth little while the same raw addresses went to Vercel: `/scan/<one-time token>`,
- * `/admin/users/<Clerk user id>`, every `/contacts/<uuid>`. This is the one place both
- * scripts pass through.
- *
- * - Untracked paths (the admin console, API routes) are dropped, not rewritten: the
- *   operator's own browsing is not traffic, and admin URLs carry other people's ids.
- * - The path becomes its `ROUTE_PATTERNS` entry, so an id or token never leaves.
- * - Every query parameter except the campaign tags is removed — sign-in redirects and
- *   one-off links carry ids and tickets in the query string, not just the path.
- *
- * Pure and dependency-free, like the rest of this module, because it runs in the browser.
- */
-export function redactUrlForVendor(url: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (!isTrackedPath(parsed.pathname)) return null;
-
-  const kept = new URLSearchParams();
-  for (const key of VENDOR_KEPT_PARAMS) {
-    const value = parsed.searchParams.get(key);
-    if (value) kept.set(key, value);
-  }
-  const query = kept.toString();
-  return `${parsed.origin}${normalizeRoute(parsed.pathname)}${query ? `?${query}` : ""}`;
 }

@@ -34,7 +34,7 @@ export default function GlobalError({
       >
         <main style={{ maxWidth: 480, padding: 24, textAlign: "center" }}>
           <p style={{ fontSize: 14, opacity: 0.8, margin: 0 }}>Something went wrong</p>
-          <h1 style={{ fontSize: 28, margin: "8px 0 12px" }}>Orbit hit a snag</h1>
+          <h1 style={{ fontSize: 28, margin: "8px 0 12px" }}>We hit a snag</h1>
           <p style={{ opacity: 0.8, margin: "0 0 16px" }}>
             The page could not be shown. Trying again usually works.
           </p>

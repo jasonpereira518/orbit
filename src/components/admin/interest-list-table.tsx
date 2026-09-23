@@ -27,7 +27,10 @@ export type InterestListTableRow = {
   createdAtLabel: string;
   source: string;
   status: "active" | "converted" | "unsubscribed";
-  followUpSentAtIso: string | null;
+  /** Place in line; null once they have left. */
+  position: number | null;
+  referrals: number;
+  frontWave: boolean;
   planet: string | null;
 };
 
@@ -77,12 +80,12 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                   )}
                 >
                   <MailX className="size-3" aria-hidden />
-                  Unsubscribe {ids.length}
+                  Remove {ids.length}
                 </span>
               }
-              title={`Stop mailing ${ids.length} ${ids.length === 1 ? "address" : "addresses"}?`}
-              description="They stop receiving anything immediately. The rows stay, so you keep their signup dates and sources, and each can be restored individually."
-              confirmLabel="Unsubscribe"
+              title={`Take ${ids.length} ${ids.length === 1 ? "address" : "addresses"} off the waitlist?`}
+              description="They leave the line and stop receiving anything immediately. The rows stay, so you keep their signup dates and sources, and each can be restored to its old place."
+              confirmLabel="Remove from line"
               onConfirm={async (reason) => {
                 await bulkUnsubscribeInterestListAction({ ids, reason });
                 setSelected(new Set());
@@ -101,7 +104,7 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 </span>
               }
               title={`Delete ${ids.length} ${ids.length === 1 ? "signup" : "signups"} entirely?`}
-              description="The rows are erased. Their signup dates and sources are lost, and those addresses can rejoin later as brand-new signups. To simply stop mailing them, use Unsubscribe."
+              description="The rows are erased. Their signup dates and sources are lost, and those addresses can rejoin later as brand-new signups. To take them out of line but keep the record, use Remove."
               confirmLabel="Delete permanently"
               danger
               typedConfirmation={String(ids.length)}
@@ -131,11 +134,12 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 className="size-3.5 accent-current"
               />
             </Th>
+            <Th numeric>In line</Th>
             <Th>Email</Th>
+            <Th numeric>Referrals</Th>
             <Th>Signed up</Th>
             <Th>Source</Th>
             <Th>Status</Th>
-            <Th>Follow-up</Th>
             <Th>Planet</Th>
             <Th className="text-right">Actions</Th>
           </>
@@ -158,7 +162,13 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
                 className="size-3.5 accent-current"
               />
             </Td>
+            <Td numeric className="tabular-nums">
+              {row.position !== null ? `#${row.position.toLocaleString("en-US")}` : "—"}
+            </Td>
             <Td className="font-medium text-ink">{row.email}</Td>
+            <Td numeric className={row.referrals === 0 ? "text-muted-foreground/50" : undefined}>
+              {row.referrals}
+            </Td>
             <Td>
               {/* Absolute first — "when did they join" is the question, and a relative
                   label alone stops being an answer after a month. */}
@@ -170,15 +180,14 @@ export function InterestListTable({ rows }: { rows: InterestListTableRow[] }) {
             <Td className="text-muted-foreground">{row.source}</Td>
             <Td>
               {row.status === "unsubscribed" ? (
-                <span className="text-destructive">Unsubscribed</span>
+                <span className="text-destructive">Left</span>
               ) : row.status === "converted" ? (
                 <span className="text-accent-foreground">Converted</span>
+              ) : row.frontWave ? (
+                <span className="font-medium text-accent-foreground">Front wave</span>
               ) : (
-                <span className="text-muted-foreground">Active</span>
+                <span className="text-muted-foreground">Waiting</span>
               )}
-            </Td>
-            <Td className="text-muted-foreground">
-              {row.followUpSentAtIso ? <RelativeTime date={row.followUpSentAtIso} /> : "—"}
             </Td>
             <Td className="capitalize text-muted-foreground">{row.planet ?? "—"}</Td>
             <Td>
