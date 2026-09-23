@@ -6,9 +6,9 @@ import {
   connectAppleAccount,
   disconnectAppleAccount,
   readAppleConnectionStatus,
+  setAppleCalendarEnabledForUser,
   type AppleConnectionStatus,
 } from "@/lib/apple";
-import { setSourceEnabled } from "@/lib/calendar-sources";
 import { asActionResult, type ActionResult } from "@/lib/errors";
 
 export async function getAppleConnectionStatus(): Promise<AppleConnectionStatus> {
@@ -41,7 +41,7 @@ export async function setAppleCalendarEnabled(input: {
 }): Promise<ActionResult<null>> {
   return asActionResult(async () => {
     const userId = await requireUserId();
-    await setSourceEnabled(userId, input.sourceId, input.enabled);
+    await setAppleCalendarEnabledForUser(userId, input.sourceId, input.enabled);
     revalidatePath("/settings");
     return null;
   });
