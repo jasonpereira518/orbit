@@ -5,11 +5,16 @@ import "./smoke/_env";
  * The migration is the risky half: every existing Google and Outlook connection must come out
  * with exactly ONE source row carrying the cursor it already had. A missed cursor means a full
  * resync for that user; a doubled row means the same calendar synced twice.
+ *
+ * Disconnect/reconnect is the other risky half: `calendar_sources` has no FK to any connection
+ * table, and its unique index is keyed on (connection_id, calendar_id) — a fresh connection id
+ * from a reconnect dedupes against nothing unless the disconnect path cleaned up the source row
+ * itself. See `deleteCalendarSourcesForProvider`.
  */
 import { getDb, reconcileSchema } from "../src/db";
-import { appleConnections, calendarSources, gmailConnections } from "../src/db/schema";
-import { eq } from "drizzle-orm";
-import { seedCalendarSources } from "../src/lib/calendar-sources";
+import { appleConnections, calendarSources, gmailConnections, outlookConnections } from "../src/db/schema";
+import { and, eq } from "drizzle-orm";
+import { deleteCalendarSourcesForProvider, seedCalendarSources } from "../src/lib/calendar-sources";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -32,17 +37,39 @@ async function main() {
     syncCursor: { calendar: { syncToken: "tok-123", pageToken: null } },
     nextSyncAt: new Date(),
   });
+  // An Outlook connection alongside it, so one seed call has to insert both — the multi-row
+  // `values(rows)` path, not just the single-row one.
+  await db.insert(outlookConnections).values({
+    userId: USER,
+    emailAddress: "someone@outlook.com",
+    accessTokenEncrypted: "x",
+    scopes: "Calendars.Read",
+    syncCursor: { calendar: { syncToken: "outlook-tok-456", pageToken: null } },
+    nextSyncAt: new Date(),
+  });
 
   await seedCalendarSources(USER);
   const seeded = await db.select().from(calendarSources).where(eq(calendarSources.userId, USER));
-  check("one source per existing connection", seeded.length === 1, `got ${seeded.length}`);
-  check("the connection's cursor moved onto it", seeded[0]?.syncCursor?.syncToken === "tok-123");
-  check("it is enabled", seeded[0]?.enabled === 1);
+  check("one source per existing connection", seeded.length === 2, `got ${seeded.length}`);
+
+  const google = seeded.find((s) => s.provider === "google");
+  const outlook = seeded.find((s) => s.provider === "microsoft");
+  // "primary" and "default" are load-bearing: the Google connector requests
+  // `calendars/primary/events`, so a seeder that wrote the connection id, or any other
+  // placeholder, here would break sync while still passing every idempotency check below.
+  check("google source is provider google", google?.provider === "google");
+  check("google source's calendarId is primary", google?.calendarId === "primary", `got ${google?.calendarId}`);
+  check("the google connection's cursor moved onto it", google?.syncCursor?.syncToken === "tok-123");
+  check("it is enabled", google?.enabled === 1);
+  check("outlook source is provider microsoft", outlook?.provider === "microsoft");
+  check("outlook source's calendarId is default", outlook?.calendarId === "default", `got ${outlook?.calendarId}`);
+  check("the outlook connection's cursor moved onto it", outlook?.syncCursor?.syncToken === "outlook-tok-456");
+  check("it is enabled", outlook?.enabled === 1);
 
   // Running twice must not double it — the scheduler calls this on every pass.
   await seedCalendarSources(USER);
   const again = await db.select().from(calendarSources).where(eq(calendarSources.userId, USER));
-  check("seeding is idempotent", again.length === 1, `got ${again.length}`);
+  check("seeding is idempotent", again.length === 2, `got ${again.length}`);
 
   // An Apple connection stores a password, not tokens.
   await db.insert(appleConnections).values({
@@ -57,6 +84,50 @@ async function main() {
   });
   check("apple connection stores its home url", Boolean(apple?.calendarHomeUrl));
   check("apple connection defaults to active", apple?.status === "active");
+
+  // --- Disconnect must not orphan the source row, or a reconnect doubles the calendar ---
+  //
+  // `disconnectGmail`/`disconnectOutlook` delete the connection row and, right alongside it,
+  // call `deleteCalendarSourcesForProvider`. Without that second delete, the orphaned source
+  // row (still `enabled = 1`, still carrying its old cursor) has nothing to dedupe a
+  // reconnect's fresh connection uuid against, and `seedCalendarSources` inserts a second
+  // `primary` row every cycle.
+  await db.delete(gmailConnections).where(eq(gmailConnections.userId, USER));
+  await deleteCalendarSourcesForProvider(USER, "google");
+  const afterDisconnect = await db
+    .select()
+    .from(calendarSources)
+    .where(and(eq(calendarSources.userId, USER), eq(calendarSources.provider, "google")));
+  check("disconnect leaves no orphaned google source", afterDisconnect.length === 0, `got ${afterDisconnect.length}`);
+  const outlookStillThere = await db
+    .select()
+    .from(calendarSources)
+    .where(and(eq(calendarSources.userId, USER), eq(calendarSources.provider, "microsoft")));
+  check(
+    "disconnecting google leaves the outlook source alone",
+    outlookStillThere.length === 1,
+    `got ${outlookStillThere.length}`
+  );
+
+  // Reconnect: a brand new connection row, a brand new connection id. Only the disconnect's
+  // cleanup above stands between this and a doubled `primary` row.
+  await db.insert(gmailConnections).values({
+    userId: USER,
+    emailAddress: "someone@example.com",
+    accessTokenEncrypted: "y",
+    scopes: "https://www.googleapis.com/auth/calendar.readonly",
+    nextSyncAt: new Date(),
+  });
+  await seedCalendarSources(USER);
+  const afterReconnect = await db
+    .select()
+    .from(calendarSources)
+    .where(and(eq(calendarSources.userId, USER), eq(calendarSources.provider, "google")));
+  check(
+    "reconnect produces exactly one primary row, not two",
+    afterReconnect.length === 1,
+    `got ${afterReconnect.length}`
+  );
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

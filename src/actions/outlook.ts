@@ -9,6 +9,7 @@ import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { getDb } from "@/db";
 import { outlookConnections, imports } from "@/db/schema";
+import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
 import { requireUserId } from "@/lib/auth";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
 import { requireSyncUser } from "@/lib/plan-guards";
@@ -149,6 +150,11 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   const userId = await requireUserId();
   const db = await getDb();
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+  // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
+  // deliberately separate — see provider-connections.ts), so a reconnect's fresh connection
+  // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
+  // double the calendar.
+  await deleteCalendarSourcesForProvider(userId, "microsoft");
   const extra = DISCONNECT_DELETE_CATEGORIES.outlook;
   if (opts.alsoDelete === true && extra.length > 0) {
     await purgeUserData(userId, { only: extra });

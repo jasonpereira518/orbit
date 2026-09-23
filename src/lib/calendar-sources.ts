@@ -6,12 +6,13 @@
  * first time it is claimed — and carries its existing cursor across, so nobody pays for a
  * full resync.
  */
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { calendarSources, gmailConnections, outlookConnections } from "@/db/schema";
 import type { CalendarSyncCursor } from "@/db/schema";
 
 export type CalendarSourceRow = typeof calendarSources.$inferSelect;
+export type CalendarSourceProvider = CalendarSourceRow["provider"];
 
 /**
  * Seeds one `calendar_sources` row per existing Google/Outlook connection this user has,
@@ -62,7 +63,32 @@ export async function seedCalendarSources(userId: string): Promise<void> {
 
 export async function listCalendarSources(userId: string): Promise<CalendarSourceRow[]> {
   const db = await getDb();
-  return db.select().from(calendarSources).where(eq(calendarSources.userId, userId));
+  return db
+    .select()
+    .from(calendarSources)
+    .where(eq(calendarSources.userId, userId))
+    .orderBy(asc(calendarSources.createdAt));
+}
+
+/**
+ * Deletes every `calendar_sources` row this user has for one provider.
+ *
+ * Called from `disconnectGmail`/`disconnectOutlook` (and, once it exists, Apple's own
+ * disconnect) right alongside the connection-row delete. Explicit and provider-scoped because
+ * there is no FK to cascade from — the three connection tables are deliberately separate (see
+ * `provider-connections.ts`) — and `calendar_sources_conn_cal_uidx` is keyed on
+ * `(connection_id, calendar_id)`, not `(user_id, calendar_id)`, so a connection row that is
+ * gone leaves its source row behind with nothing to dedupe a reconnect's fresh uuid against.
+ * Left uncleaned, a disconnect/reconnect cycle would double the calendar in every source list.
+ */
+export async function deleteCalendarSourcesForProvider(
+  userId: string,
+  provider: CalendarSourceProvider
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .delete(calendarSources)
+    .where(and(eq(calendarSources.userId, userId), eq(calendarSources.provider, provider)));
 }
 
 export async function enabledSourcesFor(connectionId: string): Promise<CalendarSourceRow[]> {
