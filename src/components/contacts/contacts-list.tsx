@@ -154,6 +154,7 @@ export type ContactsListFilters = {
   minScore?: number;
   followUp?: "due";
   sort?: ContactSort;
+  work?: true;
   letter?: string;
 };
 
@@ -361,6 +362,7 @@ export function ContactsList({
     if (filters.minScore) params.set("minScore", String(filters.minScore));
     if (filters.followUp) params.set("followUp", filters.followUp);
     if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
+    if (filters.work) params.set("view", "work");
     params.set("letter", letter);
     router.replace(`/contacts?${params.toString()}`);
   }
@@ -407,6 +409,26 @@ export function ContactsList({
         }
       });
     }, DUR_MS.slow);
+  }
+
+  if (contacts.length === 0 && filters.work) {
+    // Filters narrowing the Work view to nothing is not the same as having no work contacts.
+    if (filters.q || filters.company || filters.minScore || filters.followUp) {
+      return (
+        <div className="p-10 text-center text-muted-foreground">
+          No work contacts match these filters. Clear search to see all of them.
+        </div>
+      );
+    }
+    return (
+      <div className="p-10 text-center text-muted-foreground">
+        No work contacts yet. Connect HubSpot on the{" "}
+        <Link href="/leads" className="text-primary underline">
+          Leads page
+        </Link>{" "}
+        and your customers show up here.
+      </div>
+    );
   }
 
   if (contacts.length === 0) {

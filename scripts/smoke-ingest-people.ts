@@ -1,0 +1,213 @@
+/**
+ * The people stream: the contact analogue of `ingestEvents`.
+ *
+ * The three behaviours that matter are matching (a second pass over the same person updates
+ * rather than duplicates), enrichment (a record with more fields fills blanks without
+ * overwriting what the user typed), and the contact cap (the free plan's limit is enforced
+ * here, not at the connector). A fourth is folded in below: two records for the SAME person
+ * inside one batch must land on one contact, not two — the in-batch duplicate-index update
+ * this module owns. A fifth checks that `notes` (needed for P1's iCloud CardDAV sync, which
+ * carries a per-contact NOTE field) reaches the row on create, and documents what happens
+ * to it on the merge path.
+ */
+import "./smoke/_env";
+import { run } from "./smoke/_env";
+import { eq } from "drizzle-orm";
+import { getDb } from "../src/db";
+import { contacts } from "../src/db/schema";
+import { openIngestContext, finalizeIngest } from "../src/lib/ingest/events";
+import { ingestPeople } from "../src/lib/ingest/people";
+
+let failures = 0;
+function check(label: string, ok: boolean, detail = "") {
+  console.log(`  ${ok ? "ok  " : "FAIL"}  ${label}${detail ? ` — ${detail}` : ""}`);
+  if (!ok) failures++;
+}
+
+const USER = "smoke-ingest-people";
+
+run(async () => {
+  const db = await getDb();
+  await db.delete(contacts).where(eq(contacts.userId, USER));
+
+  const ctx = await openIngestContext(USER, { source: "smoke", createsContacts: true });
+
+  console.log("first pass creates");
+  const first = await ingestPeople(ctx, [
+    { fullName: "Ada Lovelace", email: "ada@example.com", company: "Analytical" },
+    { fullName: "Grace Hopper", email: "grace@example.com" },
+  ]);
+  check("two people created", first.created === 2, JSON.stringify(first));
+  check("nothing matched on an empty workspace", first.matched === 0);
+
+  console.log("\nsecond pass matches and enriches");
+  const second = await ingestPeople(ctx, [
+    { fullName: "Ada Lovelace", email: "ada@example.com", title: "Mathematician" },
+  ]);
+  check("the same person matched", second.matched === 1, JSON.stringify(second));
+  check("no duplicate was created", second.created === 0);
+
+  const [ada] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  check("the blank field was filled", ada?.title === "Mathematician");
+  check("the existing field was kept", ada?.company === "Analytical");
+
+  const all = await db.select().from(contacts).where(eq(contacts.userId, USER));
+  check("still two contacts in total", all.length === 2, String(all.length));
+
+  console.log("\nthird pass: two records for the same NEW person in one batch");
+  const third = await ingestPeople(ctx, [
+    { fullName: "Alan Turing", email: "alan@example.com", company: "Bletchley" },
+    { fullName: "Alan Turing", email: "alan@example.com", title: "Cryptanalyst" },
+  ]);
+  check(
+    "only one contact created for the repeated person",
+    third.created === 1,
+    JSON.stringify(third)
+  );
+  check(
+    "the repeat folded in-batch rather than matching an existing contact",
+    third.matched === 0,
+    JSON.stringify(third)
+  );
+
+  const alanRows = await db
+    .select()
+    .from(contacts)
+    .where(eq(contacts.email, "alan@example.com"));
+  check("exactly one Alan Turing contact exists", alanRows.length === 1, String(alanRows.length));
+  check(
+    "the two in-batch rows folded into one another (company from the first, title from the second)",
+    alanRows[0]?.company === "Bletchley" && alanRows[0]?.title === "Cryptanalyst",
+    JSON.stringify(alanRows[0])
+  );
+
+  console.log("\nfourth pass: the plan's contact cap is enforced here");
+  const capped = await openIngestContext(USER, { source: "smoke", createsContacts: true });
+  capped.headroom = 0;
+  const fourth = await ingestPeople(capped, [
+    { fullName: "Brand New Person", email: "brandnew@example.com" },
+  ]);
+  check("blocked by the plan cap rather than created", fourth.created === 0 && fourth.blockedByPlan === 1, JSON.stringify(fourth));
+  const blockedRows = await db
+    .select()
+    .from(contacts)
+    .where(eq(contacts.email, "brandnew@example.com"));
+  check("the capped person was not written", blockedRows.length === 0);
+
+  console.log("\nfifth pass: the cap can bite part-way through a single batch");
+  const partial = await openIngestContext(USER, { source: "smoke", createsContacts: true });
+  partial.headroom = 1;
+  const fifth = await ingestPeople(partial, [
+    { fullName: "Partial One", email: "partial1@example.com" },
+    { fullName: "Partial Two", email: "partial2@example.com" },
+  ]);
+  check(
+    "exactly one created, one blocked, when the cap bites mid-batch",
+    fifth.created === 1 && fifth.blockedByPlan === 1,
+    JSON.stringify(fifth)
+  );
+
+  console.log("\nsixth pass: notes are carried through on create");
+  const sixth = await ingestPeople(ctx, [
+    {
+      fullName: "Marie Curie",
+      email: "marie@example.com",
+      notes: "Met at a conference in Paris.",
+    },
+  ]);
+  check("the person with notes was created", sixth.created === 1, JSON.stringify(sixth));
+  const [marie] = await db.select().from(contacts).where(eq(contacts.email, "marie@example.com"));
+  check(
+    "the note was written to the new contact",
+    marie?.notes === "Met at a conference in Paris.",
+    JSON.stringify(marie?.notes)
+  );
+
+  console.log("\nseventh pass: a note on a MATCHED (merged) record — bulkMergeContactsForUser");
+  console.log("does not include `notes` in its UPDATE column list, so this is a documented no-op,");
+  console.log("not an overwrite and not a clear — the pre-existing note must survive unchanged.");
+  const seventh = await ingestPeople(ctx, [
+    {
+      fullName: "Marie Curie",
+      email: "marie@example.com",
+      notes: "A different note that should NOT land.",
+      title: "Physicist",
+    },
+  ]);
+  check("the second record matched rather than created a duplicate", seventh.matched === 1);
+  const [marieAgain] = await db
+    .select()
+    .from(contacts)
+    .where(eq(contacts.email, "marie@example.com"));
+  check(
+    "an ordinary blank field (title) still fills on merge",
+    marieAgain?.title === "Physicist",
+    String(marieAgain?.title)
+  );
+  check(
+    "the original note survived untouched — merge does not write notes at all",
+    marieAgain?.notes === "Met at a conference in Paris.",
+    JSON.stringify(marieAgain?.notes)
+  );
+
+  console.log("\neighth pass: resolutions, by input index");
+  // A CRM sync links each of ITS records to a contact, and a batch can name one person
+  // twice — so the answer has to be per input index, not per created contact.
+  const reporting = await openIngestContext(USER, {
+    source: "smoke",
+    createsContacts: true,
+    reportResolutions: true,
+  });
+  reporting.headroom = 1;
+  const eighth = await ingestPeople(reporting, [
+    { fullName: "Ada Lovelace", email: "ada@example.com" }, // 0: matches the existing Ada
+    { fullName: "Hedy Lamarr", email: "hedy@example.com" }, // 1: created (uses the headroom)
+    { fullName: "Hedy Lamarr", email: "hedy@example.com", title: "Inventor" }, // 2: folds into 1
+    { fullName: "   " }, // 3: no name, skipped
+    { fullName: "Over The Cap", email: "cap@example.com" }, // 4: refused by the cap
+  ]);
+  const [adaNow] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  const [hedy] = await db.select().from(contacts).where(eq(contacts.email, "hedy@example.com"));
+  const byIndex = new Map((eighth.resolutions ?? []).map((r) => [r.index, r.contactId]));
+  check("resolutions are reported when asked for", Array.isArray(eighth.resolutions), JSON.stringify(eighth));
+  check("a match resolves to the existing contact", byIndex.get(0) === adaNow?.id, JSON.stringify([...byIndex]));
+  check("a create resolves to the new contact", byIndex.get(1) === hedy?.id);
+  check("an in-batch repeat resolves to the same new contact", byIndex.get(2) === hedy?.id);
+  check("a nameless input has no resolution", !byIndex.has(3));
+  check("a capped input has no resolution", !byIndex.has(4));
+  check(
+    "they come back in input order",
+    (eighth.resolutions ?? []).map((r) => r.index).join(",") === "0,1,2",
+    JSON.stringify(eighth.resolutions)
+  );
+  const silent = await ingestPeople(ctx, [{ fullName: "Ada Lovelace", email: "ada@example.com" }]);
+  check("and are not reported unless asked for", silent.resolutions === undefined);
+
+  console.log("\nninth pass: a provider that disagrees with what the user typed never overwrites it");
+  // A CRM whose record for Ada carries a different title and company — and its own source.
+  const [adaBefore] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  const crm = await openIngestContext(USER, { source: "hubspot", createsContacts: true });
+  const ninth = await ingestPeople(crm, [
+    { fullName: "Ada Lovelace", email: "ada@example.com", title: "Engineer", company: "Babbage & Co", phone: "+1 415 555 0199" },
+  ]);
+  check("the record matched", ninth.matched === 1 && ninth.created === 0, JSON.stringify(ninth));
+  const [adaAfter] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  check("the stored title was kept", adaAfter?.title === "Mathematician", String(adaAfter?.title));
+  check(
+    "the stored company (and its company id) was kept",
+    adaAfter?.company === "Analytical" && adaAfter?.companyId === adaBefore?.companyId,
+    `${adaAfter?.company} / ${adaAfter?.companyId} (was ${adaBefore?.companyId})`
+  );
+  check("the source was not relabelled", adaAfter?.source === adaBefore?.source && adaAfter?.source !== "hubspot", String(adaAfter?.source));
+  check("a blank field still filled", adaAfter?.phone === "+1 415 555 0199", String(adaAfter?.phone));
+  await finalizeIngest(crm);
+
+  await finalizeIngest(ctx);
+  await db.delete(contacts).where(eq(contacts.userId, USER));
+
+  if (failures > 0) {
+    console.error(`\n${failures} check(s) failed.`);
+    process.exit(1);
+  }
+  console.log("\nAll people ingest checks passed.");
+});

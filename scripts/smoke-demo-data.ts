@@ -15,9 +15,11 @@ import {
   chatThreads,
   closenessCohorts,
   companies,
+  connectorConnections,
   contactBriefs,
   contactExperiences,
   contacts,
+  crmRecords,
   events,
   imports,
   interactions,
@@ -38,8 +40,10 @@ import {
   userSettings,
 } from "../src/db/schema";
 import { ensureLocalDemoData } from "../src/lib/demo-data/ensure";
+import { DEMO_CRM_PEOPLE } from "../src/lib/demo-data/crm";
 import { DEMO_PEOPLE } from "../src/lib/demo-data/network";
 import { DEMO_LEADS, DEMO_TEAM_DOMAIN, DEMO_TEAMMATE_CONTACTS, DEMO_TEAMMATES, demoTeamAllowed } from "../src/lib/demo-data/team";
+import { workContactsCondition } from "../src/lib/crm/work-contacts";
 import { loadPipeline } from "../src/lib/leads/pipeline";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { resolveRecruiterPii } from "../src/lib/recruiters";
@@ -79,7 +83,7 @@ async function cleanup() {
   const db = await getDb();
   const users = [FRESH, REMOTE_USER, EXISTING, SECOND, ...DEMO_TEAMMATES.map((m) => m.userId)];
   for (const table of [
-    leads, teamMembers,
+    crmRecords, connectorConnections, leads, teamMembers,
     suggestedReminders, reminders, reminderLists, outreachCampaigns, events, chatThreads,
     recruiterMessages, userRecruiterLinks, imports, userGoals, contacts, companies, tags,
     closenessCohorts, userSettings,
@@ -148,13 +152,32 @@ async function main() {
     );
     const pipeline = await loadPipeline(FRESH);
     check("the demo account is on a sharing team", pipeline.team === "ok", pipeline.team);
-    check(`the demo leads are seeded (${DEMO_LEADS.length})`, pipeline.rows.length === DEMO_LEADS.length, String(pipeline.rows.length));
-    const warmthOf = new Map(pipeline.rows.map((r) => [r.lead.displayName, r.path?.warmth ?? "none"]));
+    const handLeads = pipeline.rows.filter((r) => r.lead.source !== "crm");
+    check(`the demo leads are seeded (${DEMO_LEADS.length})`, handLeads.length === DEMO_LEADS.length, String(handLeads.length));
+    const warmthOf = new Map(handLeads.map((r) => [r.lead.displayName, r.path?.warmth ?? "none"]));
     check(
       "the leads land on every rung of the ladder",
       DEMO_LEADS.every((l) => warmthOf.get(l.displayName) === l.expected),
       JSON.stringify([...warmthOf])
     );
+
+    console.log("\nthe demo HubSpot");
+    const [crmConn] = await db.select().from(connectorConnections).where(and(eq(connectorConnections.userId, FRESH), eq(connectorConnections.connectorId, "hubspot")));
+    check("a demo HubSpot connection exists", crmConn?.accountRef === "orbit-demo" && crmConn?.label === "orbit-demo.hubspot.com");
+    check("it is never armed for the scheduler", crmConn?.nextSyncAt === null);
+    check("it holds no token", crmConn?.accessTokenEncrypted === null && crmConn?.refreshTokenEncrypted === null);
+    const customers = DEMO_CRM_PEOPLE.filter((p) => p.lifecycle === "customer");
+    const work = await db.select({ id: contacts.id }).from(contacts).where(and(eq(contacts.userId, FRESH), workContactsCondition(FRESH)));
+    check(`the ${customers.length} customers are work contacts`, work.length === customers.length, String(work.length));
+    for (const p of customers) {
+      const matches = await db.select().from(contacts).where(and(eq(contacts.userId, FRESH), eq(contacts.email, p.email)));
+      check(`${p.displayName} is one contact, not two`, matches.length === 1, String(matches.length));
+    }
+    const crmLeads = pipeline.rows.filter((r) => r.lead.source === "crm");
+    check("the CRM leads joined the pipeline", crmLeads.length === DEMO_CRM_PEOPLE.length - customers.length, String(crmLeads.length));
+    check("one of them has a warm path through the team", crmLeads.some((r) => r.path?.warmth === "cool" || r.path?.warmth === "warm" || r.path?.warmth === "hot"));
+    check("each CRM lead links to its HubSpot record", crmLeads.every((r) => r.crm?.label === "HubSpot" && r.crm.url.startsWith("https://app.hubspot.com/")));
+    check("the demo HubSpot is never seeded into a shared database", !demoTeamAllowed({ DATABASE_URL: "postgres://shared.example/orbit" }));
 
     // Demo data must never be picked up by a sender: a `scheduled` or `queued` row is.
     const campaignIds = (

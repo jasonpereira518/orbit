@@ -82,7 +82,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "connections",
     label: "Connected accounts",
     description:
-      "Gmail, Outlook, calendar subscriptions and event-provider tokens. Orbit stops syncing and you would reconnect from scratch.",
+      "Gmail, Outlook, calendar subscriptions, event-provider tokens and connected CRMs, with the record of what each CRM synced. Orbit stops syncing and you would reconnect from scratch.",
   },
   {
     id: "events",

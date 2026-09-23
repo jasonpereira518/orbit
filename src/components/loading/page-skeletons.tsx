@@ -1023,6 +1023,11 @@ export function TeamPanelSkeleton() {
   return <Skeleton className="h-36 w-full rounded-2xl" />;
 }
 
+/** Mirrors the /leads CRM card: icon, heading, a line, a button. */
+export function CrmCardSkeleton() {
+  return <Skeleton className="h-32 w-full rounded-2xl" />;
+}
+
 /** Mirrors the /leads pipeline: a heading with the status filter, then rows. */
 export function LeadsPipelineSkeleton() {
   return (

@@ -42,7 +42,7 @@ import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
 import { getViewerTeam } from "@/lib/teams";
-import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+import { isSurfaceReleased } from "@/lib/surface-visibility";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 export default async function ContactDetailPage({
@@ -108,12 +108,8 @@ export default async function ContactDetailPage({
   // its neighbours: started before the first await.
   const teamPillPromise = userIdPromise
     .then(async (u) => {
-      const [membership, visibility] = await Promise.all([getViewerTeam(u), resolveSurfaceVisibility(u)]);
-      return (
-        membership !== null &&
-        !visibility.hidden.has("page.leads") &&
-        !visibility.comingSoon.has("page.leads")
-      );
+      const [membership, released] = await Promise.all([getViewerTeam(u), isSurfaceReleased(u, "page.leads")]);
+      return membership !== null && released;
     })
     .catch(() => false);
 

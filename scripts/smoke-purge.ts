@@ -525,6 +525,44 @@ async function seed() {
     authKind: "api_key",
     apiKeyEncrypted: "ciphertext-luma-key",
   });
+  // Same class of secret as the rows above, for a connector that is not Gmail or Outlook.
+  await db.insert(schema.connectorConnections).values({
+    userId: USER,
+    connectorId: "hubspot",
+    authKind: "oauth2",
+    accessTokenEncrypted: "ciphertext-hubspot-access",
+    refreshTokenEncrypted: "ciphertext-hubspot-refresh",
+  });
+  // A synced CRM person: connection-derived, so it goes with `connections`.
+  const [crmRecord] = await db
+    .insert(schema.crmRecords)
+    .values({
+      userId: USER,
+      connectorId: "hubspot",
+      remoteType: "contact",
+      remoteId: "hs-1",
+      lifecycle: "customer",
+      displayName: "Katherine Johnson",
+      emailNormalized: "katherine@nasa.test",
+    })
+    .returning();
+  // Maps this user's rows into someone else's system; must not outlive the connection.
+  await db.insert(schema.externalLinks).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    entityType: "reminder",
+    entityId: "rem-1",
+    remoteId: "remote-1",
+  });
+  // A pending write, possibly still carrying an unsent payload.
+  await db.insert(schema.connectorOutbox).values({
+    userId: USER,
+    connectorId: "apple_reminders",
+    action: "writeTask",
+    entityType: "reminder",
+    entityId: "rem-1",
+    payload: { title: "Follow up" },
+  });
 
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
@@ -653,6 +691,7 @@ async function seed() {
     source: "manual",
     displayName: "Grace Hopper",
     emailNormalized: "grace@navy.test",
+    crmRecordId: crmRecord.id,
   });
 
   return { recruiterId: recruiter.id, soleRecruiterId: soleRecruiter.id };

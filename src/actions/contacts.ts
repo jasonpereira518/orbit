@@ -18,6 +18,8 @@ import {
   tags,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { isSurfaceReleased } from "@/lib/surface-visibility";
+import { workContactsCondition } from "@/lib/crm/work-contacts";
 import { getRankedContacts } from "@/actions/search";
 import type { RankedContact } from "@/lib/hybrid-search";
 import {
@@ -165,6 +167,12 @@ export async function listContactsPage(
     conditions.push(
       sql`${contacts.nextFollowUpAt} is not null and ${contacts.nextFollowUpAt} <= now()`
     );
+  }
+
+  // Work contacts are a Leads feature: while Leads is closed to this viewer the flag reads as
+  // the plain list, the same as the pill that would have set it.
+  if (filters?.work && (await isSurfaceReleased(userId, "page.leads"))) {
+    conditions.push(workContactsCondition(userId));
   }
 
   // The A–Z rail is a seek, not a scroll. Asking for "S" starts the page at the first

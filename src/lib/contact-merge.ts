@@ -83,6 +83,9 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   // leads.contact_id is ON DELETE SET NULL: without this line a merge would silently unlink a
   // converted lead from the contact it became. No unique index on leads includes contact_id.
   { table: "leads", column: "contact_id", scoped: true },
+  // crm_records.contact_id is ON DELETE SET NULL as well: a merge would otherwise silently turn
+  // a work contact back into an unlinked record. Its unique index does not include contact_id.
+  { table: "crm_records", column: "contact_id", scoped: true },
 ];
 
 /** Fold a statement's moved ids into the archive row, additively. */

@@ -45,6 +45,14 @@ import {
   oldestDueAgeMs,
   type ClaimedConnection,
 } from "@/lib/provider-connections";
+import {
+  claimDueConnectorConnections,
+  disarmConnectorSync,
+  markConnectorSyncResult,
+  markConnectorSyncSucceeded,
+} from "@/lib/connectors/connections";
+import type { ConnectorManifest } from "@/lib/connectors/registry";
+import { resolveConnectorWithSync } from "@/lib/connectors/syncs";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import {
   claimDueCalendarSubscriptions,
@@ -128,6 +136,17 @@ export type SyncDeps = {
    * the fixture named. A test suite that quietly fetches lu.ma is both slow and rude.
    */
   eventPageFetch?: typeof fetch;
+  /**
+   * How a claimed connection's `connector_id` becomes a manifest with its sync attached.
+   *
+   * Injectable because no manifest in the registry has a `sync` yet — P0 ships the dispatch
+   * and none of the connectors it dispatches to — so without this seam the only branch of
+   * this family reachable from a test is the "unregistered connector" one, and the whole
+   * point of dispatching by manifest (a sync runs, a throwing sync costs one failure and
+   * nothing more, a clean return is recorded) would ship unexercised. Production passes
+   * nothing and gets the registry.
+   */
+  resolveConnector?: (id: string) => ConnectorManifest | null;
 };
 
 const DEFAULT_DEPS: SyncDeps = {
@@ -135,6 +154,7 @@ const DEFAULT_DEPS: SyncDeps = {
   fetchPage: fetchGoogleCalendarPage,
   getMicrosoftAccessToken: getValidOutlookAccessToken,
   fetchMicrosoftPage: fetchMicrosoftCalendarPage,
+  resolveConnector: resolveConnectorWithSync,
 };
 
 export type SyncRunStats = {
@@ -156,6 +176,10 @@ export type SyncRunStats = {
   eventConnectionsSynced: number;
   eventConnectionsFailed: number;
   eventRostersFetched: number;
+  /** Connections claimed from `connector_connections` — every connector but Google/Outlook. */
+  connectorClaimed: number;
+  connectorSynced: number;
+  connectorFailed: number;
   /** Events found in a calendar or feed rather than added by hand. */
   discoveryCreated: number;
   discoveryAttached: number;
@@ -187,6 +211,9 @@ function emptyRunStats(): SyncRunStats {
     eventConnectionsSynced: 0,
     eventConnectionsFailed: 0,
     eventRostersFetched: 0,
+    connectorClaimed: 0,
+    connectorSynced: 0,
+    connectorFailed: 0,
     discoveryCreated: 0,
     discoveryAttached: 0,
     discoverySuppressed: 0,
@@ -554,6 +581,70 @@ export async function runSyncPass(
       stats.eventConnectionsFailed++;
       reportError(err, { where: "job.sync.event-connections" });
     }
+  } else {
+    stats.budgetExhausted = true;
+  }
+
+  /**
+   * Family four: every connector that is not Google, Outlook, an ICS feed or an event
+   * provider. Dispatch is by manifest rather than by a `switch`, so adding a connector never
+   * means editing the scheduler.
+   */
+  if (!deadlineReached(deadline)) {
+    const connections = await claimDueConnectorConnections(CONNECTIONS_PER_RUN, now).catch(
+      reportAndContinue(
+        { where: "job.sync.connector-claim" },
+        [] as Awaited<ReturnType<typeof claimDueConnectorConnections>>
+      )
+    );
+    stats.connectorClaimed = connections.length;
+    await runSettledPool(connections, SYNC_CONCURRENCY, async (conn) => {
+      if (deadlineReached(deadline - PER_CONNECTION_BUDGET_MS)) {
+        stats.budgetExhausted = true;
+        await markConnectorSyncResult(conn.id, {
+          ok: true,
+          cursor: conn.cursor,
+          nextSyncAt: now,
+        }).catch(() => null);
+        return;
+      }
+      const manifest = (deps.resolveConnector ?? resolveConnectorWithSync)(conn.connectorId);
+      if (!manifest?.sync) {
+        // A row can outlive the code that made it — a connector removed from the registry,
+        // or one whose row was written before its sync landed. Unschedule it and say so,
+        // rather than counting a failure the user cannot act on.
+        await disarmConnectorSync(
+          conn.id,
+          "This connector is no longer available — reconnect it from Settings.",
+          now
+        ).catch(() => null);
+        return;
+      }
+      try {
+        await manifest.sync(conn);
+        // The success half of the contract documented on `ConnectorManifest.sync`: a sync
+        // that recorded its own result (it had a cursor, or its own cadence) has already
+        // left the row `idle`, and this no-ops against the `syncing` guard. One that just
+        // returned gets closed out here rather than staying leased and instantly due again.
+        await markConnectorSyncSucceeded(conn.id, now).catch(
+          reportAndContinue({ where: "job.sync.connector-mark" }, null)
+        );
+        stats.connectorSynced++;
+      } catch (err) {
+        stats.connectorFailed++;
+        reportError(err, {
+          where: "job.sync.connector",
+          userId: conn.userId,
+          level: "warning",
+          extra: { connectionId: conn.id, connectorId: conn.connectorId },
+        });
+        await markConnectorSyncResult(conn.id, {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          retryable: true,
+        }).catch(reportAndContinue({ where: "job.sync.connector-mark" }, null));
+      }
+    });
   } else {
     stats.budgetExhausted = true;
   }

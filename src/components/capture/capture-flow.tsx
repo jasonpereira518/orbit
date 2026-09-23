@@ -60,6 +60,9 @@ const SOURCE_LABEL: Record<CaptureJobSource, string> = {
   meeting: "a meeting",
   scan: "a scan",
   phone: "your phone",
+  // A job the public API enqueued (POST /v1/notes) — shown on resume, since one of these
+  // can now sit in `ready`/`reviewing` waiting for the person to open /capture themselves.
+  api: "a note you sent in",
 };
 
 export function CaptureFlow({

@@ -20,6 +20,8 @@ const GATE_LABELS: Record<string, string> = {
   recruiters: "Recruiter tools",
   sync: "Calendar / mail sync",
   extension: "Browser extension",
+  api: "API and webhooks",
+  crm: "CRM (Salesforce / HubSpot)",
 };
 
 /**
