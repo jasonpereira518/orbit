@@ -104,14 +104,46 @@ above. Vercel Pro crons remove the rule entirely.
 
 **Currently off.** `MANAGED_AI_ENABLED = false` in `src/lib/managed-ai-policy.ts`: AI is bring-your-own-key on every deployed plan, Lifetime included, and no `ORBIT_MANAGED_*` variable is read anywhere. Setting one does nothing. Turning managed AI on is that flag plus the public copy (pricing, `/privacy`, `/terms`, which bumps `TERMS_VERSION`). The rest of this section describes the dormant path.
 
-**The one exception is `next dev`**, which runs AI on the bare `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `WISPR_API_KEY` names in the developer's `.env.local` (`localDevAiEnabled` in `ai-access.ts`: managed AI off, `VERCEL` unset, `NODE_ENV=development` — a deployment is none of these). A key saved in Settings still wins, and `ORBIT_DEMO_MANAGED_AI=off` turns it off to see the production BYOK states.
+**The one exception is `next dev`**, which runs AI on the bare `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` names in the developer's `.env.local` (`localDevAiEnabled` in `ai-access.ts`: managed AI off, `VERCEL` unset, `NODE_ENV=development` — a deployment is none of these). A key saved in Settings still wins, and `ORBIT_DEMO_MANAGED_AI=off` turns it off to see the production BYOK states.
 
 AI is bring-your-own-key on every plan except Lifetime. A Lifetime account with no key of its own runs on Orbit's managed keys, and only `src/lib/ai-access.ts` can issue one (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client).
 
-- **Keys:** `ORBIT_MANAGED_GEMINI_API_KEY` (cheapest, preferred), `ORBIT_MANAGED_OPENAI_API_KEY`, `ORBIT_MANAGED_ANTHROPIC_API_KEY`, `ORBIT_MANAGED_WISPR_API_KEY`. Production only reads these names; the bare `GEMINI_API_KEY`-style names work off Vercel only.
+- **Keys:** `ORBIT_MANAGED_GEMINI_API_KEY` (cheapest, preferred), `ORBIT_MANAGED_OPENAI_API_KEY`, `ORBIT_MANAGED_ANTHROPIC_API_KEY`. Production only reads these names; the bare `GEMINI_API_KEY`-style names work off Vercel only.
 - **Kill switch:** `ORBIT_MANAGED_AI=off`. Every Lifetime account falls back to BYOK, with the notice "Orbit’s AI isn’t available right now — add your own API key".
 - **Cap:** `MANAGED_AI_BUDGET` in `src/lib/managed-ai-policy.ts`, per account per calendar month (UTC), metered from `usage_events` where `key_owner = 'orbit'`. Bulk background work stops at half.
 - **Revocation:** anything that takes Lifetime away takes managed AI away on the account's next AI call — there is no cache to clear. Today that is removing a comp in `/admin`; a full refund or a lost dispute does it once the launch plan's P0 revocation (`revokeLifetimePurchase`) lands. Until then, refund a Lifetime purchase AND clear `lifetime_purchased_at` by hand.
+
+## Deepgram (speech-to-text)
+
+Deepgram is Orbit's own speech-to-text key — the first engine for voice notes, the chat
+microphone and meetings, on every plan. `src/lib/deepgram.ts` is the only file that reads
+`DEEPGRAM_API_KEY` / `DEEPGRAM_PROJECT_ID`, enforced by `scripts/smoke-ai-access.ts`. It is not
+part of the BYOK/managed-AI gate above — Orbit pays for it on every plan, like hosted Apollo
+enrichment.
+
+- **Key:** `DEEPGRAM_API_KEY` in Vercel (Production and Preview). `DEEPGRAM_PROJECT_ID` is only
+  needed for the nightly reconciliation job below, not for transcription itself.
+- **Kill switch:** `ORBIT_DEEPGRAM=off` reverts every surface to the Whisper/Gemini chain
+  (`deepgramEnabled()` in `deepgram.ts`). Use it if Deepgram is down or misbehaving; transcription
+  keeps working, just on a different engine and without keyterm-boosted contact names.
+- **Nightly reconciliation:** `POST /api/ops/speech-usage`, run daily by the GitHub Actions
+  scheduler (`.github/workflows/ops.yml`). Meetings stream straight from the browser to Deepgram
+  on Orbit's key and the browser self-reports its seconds into `speech_usage`, so this job
+  compares Deepgram's own billed seconds per meeting (tag `meeting:<sessionId>`) against what was
+  recorded and posts a `:warning:` to Slack (`ops-notify.ts`) for any meeting Deepgram reports
+  more than 110% of. It never suspends anyone — a single divergent meeting could be a legitimate
+  reconnect, not abuse — so treat an alert as "go look," not "go block." A run with
+  `requestsSeen: 0` means the page-index assumption in `fetchDeepgramUsage` is wrong, not that
+  nobody met; see the comment there before trusting a clean run again.
+- **The two caps**, both in `src/lib/speech-limits.ts` (`SPEECH_LIMITS`), metered in audio
+  seconds per calendar month (UTC) and enforced through `speechAllowance` in
+  `src/lib/speech-quota.ts`:
+  - `meeting` — Free: none: Pro: 5 hours (18,000 s); Lifetime: 10 hours (36,000 s). Paid-only by
+    design; free accounts get `limit: 0` and never reach Deepgram for a meeting.
+  - `shortform` (voice notes + chat mic) — Free: 1 hour (3,600 s); Pro and Lifetime: 5 hours
+    (18,000 s) each. Generous on purpose: an abuse ceiling, not a meter anyone should watch.
+  - Raising either is a one-line change to `SPEECH_LIMITS`; there is no `ORBIT_MANAGED_*`-style
+    env var for it.
 
 ## Refund or chargeback
 

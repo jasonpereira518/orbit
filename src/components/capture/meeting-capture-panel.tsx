@@ -1122,8 +1122,8 @@ export function MeetingCapturePanel({
           )}
           <p className="text-xs text-muted-foreground">
             Let everyone on the call know you&apos;re taking notes — some places require everyone&apos;s
-            consent. Orbit keeps the transcript, never the audio. Transcription runs on your own key
-            (about $0.36 an hour with OpenAI).
+            consent. Orbit keeps the transcript, never the audio. Transcription runs on Orbit&apos;s
+            own key, within your plan&apos;s monthly meeting hours.
           </p>
         </div>
       </div>
