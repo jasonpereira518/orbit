@@ -389,6 +389,7 @@ export const companies = pgTable(
   (t) => [
     index("companies_user_idx").on(t.userId),
     uniqueIndex("companies_user_name_uidx").on(t.userId, t.nameNormalized),
+    index("companies_name_normalized_idx").on(t.nameNormalized),
   ]
 );
 
@@ -445,6 +446,14 @@ export const contacts = pgTable(
      * member of the network everywhere else: `/contacts`, search, chat and the timeline.
      */
     constellationPin: text("constellation_pin").$type<"in" | "out">(),
+    /**
+     * Whether teammates may learn that this person is in the user's network (name and
+     * closeness tier only — see `src/lib/leads/warm-path-sql.ts`). Integer per house
+     * convention. Defaults to shared but is inert until `team_members.share_network` is 1:
+     * the per-team switch is the real gate and this is the per-contact exception, the
+     * `user_recruiter_links.shared_to_pool` shape. Survives leaving and rejoining a team.
+     */
+    teamShared: integer("team_shared").default(1).notNull(),
     metContext: text("met_context"),
     dateMet: timestamp("date_met", { withTimezone: true }),
     howMet: text("how_met"),
@@ -606,6 +615,7 @@ export const contactIdentities = pgTable(
     uniqueIndex("contact_identities_user_kind_value_uidx").on(t.userId, t.kind, t.value),
     /** Without this, deleting a contact scans the table (see `event_attendees_contact_idx`). */
     index("contact_identities_contact_idx").on(t.contactId),
+    index("contact_identities_kind_value_idx").on(t.kind, t.value),
   ]
 );
 
@@ -4533,6 +4543,60 @@ export type EventCompany = typeof eventCompanies.$inferSelect;
 export type TargetCompany = typeof targetCompanies.$inferSelect;
 export type ContactIdentity = typeof contactIdentities.$inferSelect;
 export type NewContactIdentity = typeof contactIdentities.$inferInsert;
+
+/**
+ * A team is a verified email domain. Everyone whose Clerk primary email is verified at
+ * `@acme.com` may join the one `acme.com` team; public mail domains never form one
+ * (`teamDomainForEmail` in `src/lib/team-domain.ts`). The row is shared, not user-scoped:
+ * `created_by` is deliberately NOT named `user_id`, so the purge's derived scan does not
+ * demand a delete — a creator's account can go while the team stays, and their id is
+ * rewritten to `TEAM_DELETED_CREATOR` instead (the `recruiters.created_by_user_id` rule).
+ */
+export const teams = pgTable(
+  "teams",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Lower-cased. The team's identity. */
+    domain: text("domain").notNull(),
+    name: text("name").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("teams_domain_uidx").on(t.domain)]
+);
+
+export type Team = typeof teams.$inferSelect;
+
+/**
+ * One row per member. `share_network` is the reciprocal opt-in: 0 contributes nothing
+ * to the who-knows-whom lookups and sees nothing from them. Starts at 0 for everyone,
+ * like `user_settings.recruiter_sharing`, and is read live by every query — never
+ * cached — so switching it off withdraws a person's contacts immediately.
+ */
+export const teamMembers = pgTable(
+  "team_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    /** Unique: one team per user, because a user has one verified primary email. */
+    userId: text("user_id").notNull(),
+    shareNetwork: integer("share_network").default(0).notNull(),
+    /** The domain proven at join time, kept so a later re-verification can compare. */
+    emailDomain: text("email_domain").notNull(),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("team_members_user_uidx").on(t.userId),
+    index("team_members_team_sharing_idx").on(t.teamId, t.shareNetwork),
+  ]
+);
+
+export type TeamMember = typeof teamMembers.$inferSelect;
+
 export type ContactMerge = typeof contactMerges.$inferSelect;
 export type NewContactMerge = typeof contactMerges.$inferInsert;
 export type DuplicateSuggestion = typeof duplicateSuggestions.$inferSelect;
