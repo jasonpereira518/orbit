@@ -76,6 +76,9 @@ run(async () => {
   check("the recruiters page shows the pill the same way", code("src/app/(clerk)/(app)/(main)/recruiters/page.tsx").includes("showWork"));
   check("the filters keep view=work", /params\.set\("view", "work"\)/.test(code("src/components/contacts/contacts-filters.tsx")));
   check("the A–Z seek keeps view=work", /params\.set\("view", "work"\)/.test(code("src/components/contacts/contacts-list.tsx")));
+  const list = code("src/components/contacts/contacts-list.tsx");
+  check("an empty, filtered Work view says the filters hide them", list.includes("No work contacts match these filters. Clear search to see all of them."));
+  check("an empty, unfiltered Work view points at HubSpot", list.includes("No work contacts yet. Connect HubSpot on the"));
   const action = code("src/actions/contacts.ts");
   check("the list query re-checks the release before filtering", action.includes("workContactsCondition(") && action.includes('isSurfaceReleased(userId, "page.leads")'));
 
