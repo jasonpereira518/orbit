@@ -52,6 +52,7 @@ export function FindPath() {
     event.preventDefault();
     const value = raw.trim();
     if (!value) return;
+    setFound(null);
     startSearch(async () => {
       try {
         const { parsed, lookup } = await lookupWarmLead(value);
@@ -103,7 +104,10 @@ export function FindPath() {
       <form onSubmit={search} className="flex flex-col gap-2 sm:flex-row">
         <Input
           value={raw}
-          onChange={(event) => setRaw(event.target.value)}
+          onChange={(event) => {
+            setRaw(event.target.value);
+            setFound(null);
+          }}
           placeholder="jane@northwind.com"
           aria-label="Who do you want to reach?"
           maxLength={300}
@@ -114,6 +118,12 @@ export function FindPath() {
           {searching ? "Looking…" : "Find a path"}
         </Button>
       </form>
+
+      {found && found.parsed.kind === "empty" && (
+        <p className="text-sm text-muted-foreground" aria-live="polite">
+          That doesn’t look like an email, a LinkedIn profile, a phone number or “Name, Company”.
+        </p>
+      )}
 
       {found && found.parsed.kind !== "empty" && (
         <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4" aria-live="polite">
@@ -142,7 +152,7 @@ export function FindPath() {
               <Label htmlFor="lead-company">Company</Label>
               <Input id="lead-company" value={company} onChange={(event) => setCompany(event.target.value)} maxLength={200} />
             </div>
-            <Button type="submit" variant="outline" disabled={saving || !name.trim()}>
+            <Button type="submit" variant="outline" disabled={saving || searching || !name.trim()}>
               {saving ? "Saving…" : "Save as a lead"}
             </Button>
           </form>
