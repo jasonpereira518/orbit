@@ -118,6 +118,17 @@ function main() {
     check("account paths group per teammate", /group by t\.target_key, m\.user_id/.test(account.sql));
   }
 
+  console.log("\nthe actions in front of it");
+  {
+    const source = code("src/actions/teams.ts");
+    check("is a server module", /^\s*"use server";/m.test(readFileSync("src/actions/teams.ts", "utf8")));
+    const exports = [...source.matchAll(/^export\s+(async\s+)?function\s+(\w+)/gm)];
+    check("every export is an async function", exports.length >= 7 && exports.every((m) => !!m[1]), String(exports.length));
+    check("no type re-exports (they break a use-server module)", !/^export\s+type\s*\{/m.test(source));
+    const bodies = source.split(/^export\s+async\s+function\s+/m).slice(1);
+    check("every action gates on requireLeadsUser first", bodies.every((b) => /^[^{]*\{\s*const userId = await requireLeadsUser\(\);/.test(b)));
+  }
+
   console.log("\nclient-bundle safety");
   {
     for (const file of ["src/lib/deleted-account.ts", "src/lib/team-domain.ts", "src/lib/leads/warm-path.ts", "src/lib/leads/target-input.ts", "src/lib/leads/warm-path-sql.ts"]) {
