@@ -24,6 +24,8 @@ export type ContactsPageFilters = {
   minScore?: number;
   followUp?: "due";
   sort?: ContactSort;
+  /** Only contacts a connected CRM synced ("work contacts"). Ignored while Leads is not released. */
+  work?: true;
   /** Jump the A–Z rail to a letter. "#" means everything sorting before "a". */
   letter?: string;
   cursor?: string;

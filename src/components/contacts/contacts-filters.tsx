@@ -40,12 +40,14 @@ export function ContactsFilters({
   initialCompany,
   initialMinScore,
   initialFollowUp,
+  view,
   children,
 }: {
   initialQ: string;
   initialCompany: string;
   initialMinScore: string;
   initialFollowUp?: string;
+  view?: "work";
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -73,6 +75,7 @@ export function ContactsFilters({
     if (cc) params.set("company", cc);
     if (ms && ms !== "any") params.set("minScore", ms);
     if (fu === "due") params.set("followUp", "due");
+    if (view === "work") params.set("view", "work");
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";
     router.replace(href);

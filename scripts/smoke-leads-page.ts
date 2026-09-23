@@ -162,7 +162,7 @@ function main() {
     check("the stat pills render it only when given a team", /team\s*&&\s*\(?\s*<TeamShareButton/.test(code("src/components/contacts/contact-stat-pills.tsx")));
     const contactPage = code("src/app/(clerk)/(app)/(main)/contacts/[id]/page.tsx");
     // A control for a closed feature is worse than none: the pill follows Leads' release.
-    check("the contact page shows it only while Leads is released", contactPage.includes('comingSoon.has("page.leads")') && contactPage.includes('hidden.has("page.leads")'));
+    check("the contact page shows it only while Leads is released", contactPage.includes('isSurfaceReleased(u, "page.leads")'));
     check("and only to a team member", contactPage.includes("getViewerTeam("));
   }
 
