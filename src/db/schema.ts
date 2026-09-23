@@ -4597,6 +4597,62 @@ export const teamMembers = pgTable(
 
 export type TeamMember = typeof teamMembers.$inferSelect;
 
+export type LeadSource = "manual" | "apollo" | "crm";
+export type LeadStatus = "open" | "intro_requested" | "converted" | "dismissed";
+
+/**
+ * A person the user wants to reach, before (or instead of) they become a contact. Kept apart
+ * from `contacts` on purpose: a pipeline of cold targets must not flood the network, the
+ * constellation, or the free plan's contact cap. "Add to contacts" sets `contact_id` and the
+ * row stays as history.
+ *
+ * The identity columns are written only by `normalizeLeadInput` (src/lib/leads/lead-identity.ts),
+ * which uses the same `identityKeysFor` that writes `contact_identities` — so the warm-path SQL
+ * matches a lead to a teammate's contact by plain equality. `source = 'crm'` and a
+ * `crm_record_id` column arrive with the CRM sync (P4).
+ */
+export const leads = pgTable(
+  "leads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    source: text("source").$type<LeadSource>().notNull(),
+    /** Set by "Add to contacts". The lead stays, as history. */
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    displayName: text("display_name").notNull(),
+    email: text("email"),
+    /** `identityKeysFor`'s email value; null for a role mailbox or no address. */
+    emailNormalized: text("email_normalized"),
+    linkedinUrl: text("linkedin_url"),
+    linkedinSlug: text("linkedin_slug"),
+    phone: text("phone"),
+    phoneE164: text("phone_e164"),
+    companyName: text("company_name"),
+    /** `companies.name_normalized` form, for "who knows anyone at this company". */
+    companyNormalized: text("company_normalized"),
+    title: text("title"),
+    /** Apollo's person id, so a repeated search never saves the same person twice. */
+    apolloId: text("apollo_id"),
+    status: text("status").$type<LeadStatus>().default("open").notNull(),
+    /** The user's own note on the target. Never shared. */
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("leads_user_status_idx").on(t.userId, t.status, t.updatedAt.desc()),
+    index("leads_user_email_idx").on(t.userId, t.emailNormalized),
+    index("leads_user_linkedin_idx").on(t.userId, t.linkedinSlug),
+    /** Without this, deleting a contact scans the table (see `contact_identities_contact_idx`). */
+    index("leads_contact_idx").on(t.contactId),
+    uniqueIndex("leads_user_apollo_uidx")
+      .on(t.userId, t.apolloId)
+      .where(sql`apollo_id is not null`),
+  ]
+);
+
+export type Lead = typeof leads.$inferSelect;
+
 export type ContactMerge = typeof contactMerges.$inferSelect;
 export type NewContactMerge = typeof contactMerges.$inferInsert;
 export type DuplicateSuggestion = typeof duplicateSuggestions.$inferSelect;
