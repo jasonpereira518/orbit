@@ -9,6 +9,7 @@ import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-pr
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
+import { LinkedInExportNudge } from "@/components/dashboard/linkedin-export-nudge";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
@@ -20,6 +21,8 @@ import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { getLinkedInNudgeVisible } from "@/lib/linkedin-reminder";
+import { ensureUserSettings } from "@/lib/user-settings";
 
 /**
  * Async server sections for the streamed dashboard. Every bundle section
@@ -73,6 +76,18 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
  */
 const revealDelay = (ms: number) =>
   ({ "--reveal-delay": `${ms}ms` }) as React.CSSProperties;
+
+/**
+ * The dashboard card that follows the full-screen LinkedIn reminder. Renders nothing for
+ * almost everyone: the settings row alone rules it out unless the reminder has been shown or
+ * the export requested, the account is under 30 days old, and no LinkedIn import exists yet.
+ */
+export async function LinkedInExportNudgeSection() {
+  const userId = await requireUserId();
+  const settings = await ensureUserSettings(userId);
+  if (!(await getLinkedInNudgeVisible(userId, settings))) return null;
+  return <LinkedInExportNudge email={settings.email ?? null} />;
+}
 
 export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
   const { data } = await bundle;

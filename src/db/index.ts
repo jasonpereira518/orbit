@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS user_settings (
   ai_model_migrated_from text,
   writing_instructions text,
   onboarding_completed_at timestamptz,
+  onboarding_path text,
+  tour_started_at timestamptz,
+  tour_stop text,
+  tour_exited_at timestamptz,
+  tour_completed_at timestamptz,
+  linkedin_export_requested_at timestamptz,
+  linkedin_reminder_shown_at timestamptz,
   first_name text,
   last_name text,
   profile_image_url text,
@@ -1759,7 +1766,17 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // was still in review. Rescanned against every remote branch and every local worktree on
 // Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
 // the highest found anywhere and is still free.
-export const SCHEMA_VERSION = 86;
+//
+// 93 = the onboarding revision (quick setup + guided tour over the real pages):
+// user_settings.onboarding_path, tour_started_at, tour_stop, tour_exited_at,
+// tour_completed_at, plus linkedin_export_requested_at and linkedin_reminder_shown_at
+// (lifted from the unmerged Sep 17 onboarding-flow-revision branch, which had built them as
+// 63 — a number main passed long ago). NOT 87–92: those are claimed by integrations-strategy
+// (87), memory-chunk-restale (88), deepgram-speech (89), leads-p2-teams (90),
+// calendar-connections-apple (91) and leads-p3-pipeline (92 — visible only in that worktree's
+// working file at first, which is why the scan must read `.claude/worktrees/*/src/db/index.ts`
+// as well as every ref). Rescanned both on Sep 23 2026; 93 is the lowest free number.
+export const SCHEMA_VERSION = 93;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2519,6 +2536,13 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "wizard_offered_at", "timestamptz");
   await ensureColumn(client, "user_settings", "wizard_step", "text");
   await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "onboarding_path", "text");
+  await ensureColumn(client, "user_settings", "tour_started_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "tour_stop", "text");
+  await ensureColumn(client, "user_settings", "tour_exited_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "tour_completed_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "linkedin_export_requested_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "linkedin_reminder_shown_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email", "text");
   await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
   await ensureColumn(
@@ -3115,6 +3139,13 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_path text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_started_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_stop text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_exited_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS tour_completed_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_export_requested_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_reminder_shown_at timestamptz`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS slot uuid`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`,

@@ -11,6 +11,7 @@ import {
   BusyHint,
   ImportFilePicker,
   ImportWarningBanner,
+  readCsvOrZipConnections,
 } from "@/components/imports/import-utils";
 
 const LARGE_FILE_WARNING_BYTES = 15 * 1024 * 1024;
@@ -83,14 +84,15 @@ export function LinkedInConnectionsImport() {
             <LinkedInExportGuide variant="connections" />
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Upload your Connections CSV, review everyone, then import into
-            your orbit. Imports keep running if you leave this page.
+            Upload LinkedIn&apos;s ZIP or the Connections.csv inside it, review
+            everyone, then import into your orbit. Imports keep running if you
+            leave this page.
           </p>
         </div>
       </div>
 
       <ImportFilePicker
-        accept=".csv,text/csv"
+        accept=".csv,.zip,text/csv,application/zip"
         disabled={busy}
         fileName={fileName}
         onFile={(file) => {
@@ -101,8 +103,8 @@ export function LinkedInConnectionsImport() {
           }
           start(async () => {
             try {
-              setFileName(file.name);
-              const text = await file.text();
+              const { text, fileName: name } = await readCsvOrZipConnections(file);
+              setFileName(name);
               setCsvText(text);
               const res = await previewLinkedInCsv(text);
               // `UserFacingError`, not `Error`: these messages were written to be read
@@ -123,7 +125,7 @@ export function LinkedInConnectionsImport() {
         }}
       />
 
-      {pending ? <BusyHint>Reading CSV…</BusyHint> : null}
+      {pending ? <BusyHint>Reading file…</BusyHint> : null}
 
       <div className="flex flex-wrap gap-2">
         <Button

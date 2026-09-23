@@ -5,6 +5,7 @@ import { AgentDraftsCard } from "@/components/dashboard/agent-drafts-card";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
+  LinkedInExportNudgeSection,
   OutreachPerformanceSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
@@ -51,6 +52,11 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-8">
       <DashboardHeader />
+
+      {/* Streams in on its own and renders nothing unless a LinkedIn export is outstanding. */}
+      <Suspense fallback={null}>
+        <LinkedInExportNudgeSection />
+      </Suspense>
 
       {/* Above every other card, and outside the surface-visibility switches: a message
           waiting to go out is the only thing on this page that needs a decision rather

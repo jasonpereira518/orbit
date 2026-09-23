@@ -29,6 +29,7 @@ type Tier = "pure" | "pglite" | "manual";
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-friendly-error": "pure",
+  "smoke-inbox-search": "pure",
   "smoke-oauth-refresh-rejection": "pure",
   "smoke-oauth-return": "pure",
   "smoke-report-error": "pure",
@@ -237,6 +238,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-resolve": "pglite",
   "smoke-demo-signin-message": "pure",
   "smoke-demo-data": "pglite",
+  "smoke-linkedin-reminder": "pglite",
   "smoke-duplicate-review": "pglite",
   "smoke-event-companies": "pglite",
   "smoke-event-discovery-store": "pglite",

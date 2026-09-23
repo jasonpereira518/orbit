@@ -19,6 +19,7 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { getLinkedInReminderState } from "@/lib/linkedin-reminder";
 import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { resolveThemePreference } from "@/lib/theme";
@@ -116,9 +117,14 @@ export default async function AppLayout({
   // layout that wraps the whole product, because the nav lives in client components that
   // cannot read the database themselves. `hiddenForUsers` rides along so an exempt operator
   // can be shown a "Hidden" tag on items their users are not getting — see `AppSidebar`.
-  const [{ plan }, visibility] = await Promise.all([
+  //
+  // `linkedinReminder` arms the once-per-account "Is your LinkedIn export ready?" screen.
+  // It is free on nearly every request: the settings row above answers it unless the
+  // account is 24h–14d old and has not been shown it yet — only then is `imports` read.
+  const [{ plan }, visibility, linkedinReminder] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
+    getLinkedInReminderState(userId, settings),
   ]);
 
   // Whether "Lifetime includes AI" is true on this deployment — see LifetimeAiOfferProvider.
@@ -138,6 +144,7 @@ export default async function AppLayout({
       hiddenForUsers={[...visibility.hiddenForUsers]}
       viewingAsUser={visibility.viewingAsUser}
       previewingUnreleased={visibility.previewingUnreleased}
+      linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
     >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}

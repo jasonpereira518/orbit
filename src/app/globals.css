@@ -1420,6 +1420,28 @@
   animation: coming-soon-marquee 28s linear infinite;
 }
 
+/* ── Onboarding (/onboarding) and the LinkedIn reminder ──
+ * A soft ring that breathes out from a highlighted spot on a LinkedIn screenshot. The
+ * static ring beside it carries the meaning; this only draws the eye, so the global
+ * reduced-motion clamp leaving it at rest (invisible) loses nothing. Opacity and
+ * transform only. */
+@keyframes onboarding-target-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+.onboarding-target-ping {
+  opacity: 0;
+  animation: onboarding-target-ping 1.8s var(--ease-house) infinite;
+}
+
 /* ── Interest list (/interest) ──
  * Two ambient loops. Linear, not the house curve: these are orbits, and an
  * orbit that eases would read as a wobble. The global reduced-motion clamp at
