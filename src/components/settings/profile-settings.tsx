@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { SignOutButton, UserButton } from "@clerk/nextjs";
-import { clerkAppearance } from "@/lib/clerk-appearance";
+import Link from "next/link";
 import { saveSocialLinks } from "@/actions/settings";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,21 +11,6 @@ import { SettingsRow, SettingsSection } from "@/components/settings/settings-sec
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
-
-/**
- * Sized per-instance rather than in `clerkAppearance`: the same object dresses
- * the UserButton in the sidebar and mobile nav, where the avatar is meant to
- * stay small. Only here does it stand in as the profile portrait.
- */
-const profileAvatarAppearance = {
-  ...clerkAppearance,
-  elements: {
-    ...clerkAppearance.elements,
-    userButtonAvatarBox: "size-12",
-    userButtonTrigger:
-      "rounded-full ring-1 ring-border/60 focus-visible:ring-2 focus-visible:ring-ring",
-  },
-};
 
 type ProfileData = {
   id: string;
@@ -61,23 +46,10 @@ export function ProfileSettings({
 
       {profile ? (
         <div className="flex flex-wrap items-center gap-4">
-          {/* One face, and it is also the account menu. Clerk's UserButton
-              renders the user's own picture, so standing it beside a second
-              image of the same picture put the avatar on screen twice. */}
-          {clerkEnabled ? (
-            <UserButton appearance={profileAvatarAppearance} showName={false} />
-          ) : profile.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={profile.imageUrl}
-              alt=""
-              className="h-12 w-12 rounded-full border border-border/60 object-cover"
-            />
-          ) : (
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border/60 bg-muted text-sm font-medium text-ink">
-              {profile.name.slice(0, 1).toUpperCase()}
-            </div>
-          )}
+          <Avatar size="lg">
+            {profile.imageUrl && <AvatarImage src={profile.imageUrl} alt="" />}
+            <AvatarFallback>{profile.name.slice(0, 1).toUpperCase()}</AvatarFallback>
+          </Avatar>
           <div className="min-w-0 flex-1">
             <p className="font-medium text-ink">{profile.name}</p>
             {profile.email && (
@@ -85,11 +57,9 @@ export function ProfileSettings({
             )}
           </div>
           {clerkEnabled && (
-            <SignOutButton>
-              <Button type="button" variant="outline" size="sm">
-                Sign out
-              </Button>
-            </SignOutButton>
+            <Button type="button" variant="outline" size="sm" render={<Link href="/settings/account" />}>
+              Manage account
+            </Button>
           )}
         </div>
       ) : (
@@ -99,13 +69,6 @@ export function ProfileSettings({
               ? "Sign in to manage your profile."
               : "Running in local demo mode without Clerk."}
           </p>
-          {clerkEnabled && (
-            <SignOutButton>
-              <Button type="button" variant="outline" size="sm">
-                Sign out
-              </Button>
-            </SignOutButton>
-          )}
         </div>
       )}
 

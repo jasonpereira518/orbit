@@ -64,7 +64,8 @@ export function AppShell({
   plan: Plan;
   /**
    * The viewer's own name, email and picture, resolved on the server so the sidebar paints
-   * a face without waiting on Clerk JS. Null in demo mode and when nobody is signed in.
+   * a face without waiting on Clerk JS. Null only when nobody is signed in; demo mode
+   * still populates it with a demo profile.
    */
   profile: AccountMenuProfile | null;
   /** Surface keys hidden from THIS viewer. Empty for an exempt operator. */
