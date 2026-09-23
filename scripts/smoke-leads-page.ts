@@ -164,7 +164,7 @@ function main() {
     }
     check("the page renders the four parts", ["<TeamSection", "<FindPath", "<PipelineSection", "<ApolloSearch"].every((part) => page.includes(part)));
     const loading = code("src/app/(clerk)/(app)/(main)/leads/loading.tsx");
-    check("loading.tsx mirrors the page", loading.includes("TeamPanelSkeleton") && loading.includes("LeadsPipelineSkeleton"));
+    check("loading.tsx mirrors the page", ["TeamPanelSkeleton", "FindPath", "LeadsPipelineSkeleton", "ApolloSearch"].every((part) => loading.includes(part)));
   }
 
   if (failures > 0) {
