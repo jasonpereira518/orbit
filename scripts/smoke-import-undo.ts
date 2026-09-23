@@ -370,17 +370,51 @@ async function main() {
   check("…while the counts stay exact", crowdPreview!.removable === MAX_UNDO_CANDIDATES + 3 && crowdPreview!.keeping === 2, JSON.stringify({ removable: crowdPreview!.removable, keeping: crowdPreview!.keeping }));
   check("…and the kept survive the cap", crowdPreview!.candidates.slice(0, 2).every((c) => !c.removable));
 
-  // The contacts list can be narrowed to one import's people.
+  // The contacts list can be narrowed to one import's people — the people it ADDED, because
+  // that is the number the done card's button says ("Meet your 2 new people"). A filter that
+  // also returned the people the import merged into turned "Meet your 100 new people" into a
+  // list of 3,000 on a LinkedIn re-import.
   const { importId: filterImport, ids: filterIds } = await seedImport(USER, [
     { name: "Filter One", created: true },
     { name: "Filter Two", created: true },
+    // Matched to someone already here: the import touched them, but did not add them.
+    { name: "Filter Matched", created: false, createdAt: new Date("2026-09-10T12:00:00Z") },
+    // Stamped as merged although the contact row is no older than the import — someone
+    // created elsewhere mid-run and then matched by it. The engine's own stamp wins over
+    // the timestamp guess.
+    { name: "Filter Matched Midrun", created: false },
   ]);
+  const filterAdded = filterIds.slice(0, 2);
+  const filterMerged = filterIds.slice(2);
   await db.insert(contacts).values({ userId: USER, fullName: "Not From An Import" });
   const listed = await listContactsPage(USER, { importId: filterImport });
-  check("the filter returns only that import's people", listed.items.length === 2, String(listed.items.length));
-  check("…and they are the right two", listed.items.every((c) => filterIds.includes(c.id)));
+  check("the filter returns only the people that import added", listed.items.length === 2, String(listed.items.length));
+  check("…and they are the right two", listed.items.every((c) => filterAdded.includes(c.id)));
+  check(
+    "…never someone it merged into",
+    !listed.items.some((c) => filterMerged.includes(c.id)),
+    listed.items.map((c) => c.fullName).join(", "),
+  );
+  check("…and the total agrees with the button", listed.total === 2, String(listed.total));
   const unfiltered = await listContactsPage(USER, {});
   check("without the filter everyone is listed", unfiltered.items.length > 2);
+
+  // Rows from before the provenance stamp fall back to the same rule the People list and the
+  // undo use: created at or after the import.
+  const legacyFilter = await seedImport(USER, [
+    { name: "Legacy Added", created: true },
+    { name: "Legacy Already Here", created: true, createdAt: new Date("2026-09-10T12:00:00Z") },
+  ]);
+  await db
+    .update(importJobRows)
+    .set({ payload: { kind: "linkedin_connection" } as never })
+    .where(eq(importJobRows.importId, legacyFilter.importId));
+  const legacyListed = await listContactsPage(USER, { importId: legacyFilter.importId });
+  check(
+    "an unstamped import lists the people created with it",
+    legacyListed.items.length === 1 && legacyListed.items[0]?.id === legacyFilter.ids[0],
+    legacyListed.items.map((c) => c.fullName).join(", "),
+  );
 
   // …and to a whole run's, because one drop is one done card and its button promises
   // everyone the run added, across every file in it.
@@ -397,7 +431,7 @@ async function main() {
   );
   check(
     "…and they are exactly those three",
-    bothListed.items.every((c) => [...filterIds, ...secondIds].includes(c.id)),
+    bothListed.items.every((c) => [...filterAdded, ...secondIds].includes(c.id)),
   );
   // A hand-typed id would fail the uuid cast and take the whole page down with it.
   const junk = await listContactsPage(USER, { importId: "not-an-id" });

@@ -123,19 +123,36 @@ export async function listContactsPage(
     conditions.push(sql`false`);
   }
   if (importIds.length) {
-    // Narrowed to those imports' people — the same set the People list reads
-    // (`importContactIds` in `src/lib/imports/import-people.ts`). Scoped by both the imports
-    // and the user, so a foreign or forged id simply matches nothing rather than leaking
-    // another account's contacts. A literal table name, not an interpolated column
-    // reference: `import_job_rows` isn't part of this query's FROM clause.
+    // Narrowed to the people those imports ADDED — the number the done card's button says
+    // ("Meet your 19 new people"). Every done row carries a contact id, merged ones included,
+    // so reading `contact_id` alone opened a list of everyone the import touched: a LinkedIn
+    // re-import that added 100 people and matched 2,900 promised 100 and showed 3,000.
+    //
+    // The engine's own stamp decides where it exists (`importedBy.created`, written per row
+    // by `markRowsDone`); rows staged before the stamp fall back to "created at or after the
+    // import", the rule the People list and `import-undo.ts`'s `candidateRows` use. A stamped
+    // merge never falls through to the date: someone created elsewhere mid-run and then
+    // matched is not one of this import's people, whatever the timestamps say.
+    //
+    // Scoped by both the imports and the user, so a foreign or forged id simply matches
+    // nothing rather than leaking another account's contacts. Literal table names and aliases
+    // throughout: `import_job_rows` and `imports` are not in this query's FROM clause, and the
+    // inner `contacts` gets its own alias because it and `imports` both have a `created_at`
+    // that an interpolated drizzle column would leave unqualified.
     conditions.push(
       sql`${contacts.id} IN (
         SELECT r.contact_id FROM import_job_rows r
+        JOIN imports i ON i.id = r.import_id AND i.user_id = ${userId}
+        JOIN contacts rc ON rc.id = r.contact_id AND rc.user_id = ${userId}
         WHERE r.import_id IN (${sql.join(
           importIds.map((id) => sql`${id}::uuid`),
           sql`, `,
         )}) AND r.user_id = ${userId}
           AND r.status = 'done' AND r.contact_id IS NOT NULL
+          AND (
+            (r.payload->'importedBy'->>'created') = 'true'
+            OR (NOT jsonb_exists(r.payload, 'importedBy') AND rc.created_at >= i.created_at)
+          )
       )`
     );
   }

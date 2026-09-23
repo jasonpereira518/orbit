@@ -102,7 +102,9 @@ export function finishCopy(summary: FinishSummary): FinishCopy {
   const action =
     added > 0
       ? {
-          label: `Meet your ${people(added)}`,
+          // "new", as the spec wrote it: the list this opens holds exactly the people the
+          // run added, never the ones it matched (`contacts-page-query.ts`).
+          label: `Meet your ${added} new ${added === 1 ? "person" : "people"}`,
           // Comma-separated, and `contacts-page-query.ts` splits it back apart: the label
           // promises every person the run added, so the list it opens has to hold them all.
           href: `/contacts?importId=${importIds.join(",")}`,

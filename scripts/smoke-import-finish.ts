@@ -36,10 +36,14 @@ check("counts the new people", normal.headline.includes("19"));
 check("names the ones already here", (normal.detail ?? "").includes("6"));
 check("the button goes to this import's people", "href" in normal.action && normal.action.href === "/contacts?importId=i1");
 check("the button names the number", normal.action.label.includes("19"));
+// The list the button opens holds the people the run ADDED and nobody it matched, so the label
+// says "new" — the spec's own word, and the one that keeps the promise the right size.
+check("…and says they are new", normal.action.label === "Meet your 19 new people", normal.action.label);
 
 const one = finishCopy({ ...base, added: 1, existing: 0 });
 check("one person reads as a person", one.headline.includes("1 person") && !one.headline.includes("1 people"));
 check("nobody already here means no second line", one.detail === null);
+check("one new person reads as one", one.action.label === "Meet your 1 new person", one.action.label);
 
 const nobodyNew = finishCopy({ ...base, added: 0, existing: 25 });
 check("nobody new is not a lie", !nobodyNew.headline.includes("0 people"));
