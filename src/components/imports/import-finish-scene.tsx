@@ -39,12 +39,13 @@ const GOLD = "#fcd34d";
  * paints the settled frame once. The preference is read with `matchMedia` at effect time rather
  * than through a hook that reports the wrong value on its first render.
  *
- * Sizing reads the DOM rather than recomputing a breakpoint: the canvas's own CSS height
- * switches between `SCENE_HEIGHT.phone` and `SCENE_HEIGHT.desktop` (Tailwind classes below), and
- * a `ResizeObserver` just measures whatever that turns out to be — width and height agree by
- * construction instead of by two copies of the same breakpoint staying in sync. The observer
- * also covers a card that changes width without unmounting (a sidebar toggle, a window resize),
- * which a one-time `clientWidth` read at mount would miss.
+ * Height comes from `SCENE_HEIGHT` itself, not a restated literal: a `matchMedia` query decides
+ * phone vs desktop and `resize()` writes `canvas.style.height` from the constant, so the CSS box
+ * and the backing store both trace back to the one source instead of a Tailwind class quietly
+ * drifting from it. Width is simpler — nothing bounds it, so `clientWidth` is read straight off
+ * the DOM. A `ResizeObserver` on the canvas covers a card that changes width without unmounting
+ * (a sidebar toggle, a window resize); the breakpoint query's own `change` event covers a height
+ * flip that does not happen to touch the canvas's width.
  */
 export function ImportFinishScene({
   people,
@@ -63,6 +64,9 @@ export function ImportFinishScene({
 
     let disposed = false;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Tailwind's own `sm` breakpoint — the one place that number lives now, instead of once
+    // here and once in a Tailwind class.
+    const desktopQuery = window.matchMedia("(min-width: 640px)");
 
     const primaryRaw = getComputedStyle(document.documentElement).getPropertyValue("--primary").trim();
     const teal = primaryRaw.startsWith("#") ? primaryRaw : TEAL_FALLBACK;
@@ -165,10 +169,17 @@ export function ImportFinishScene({
     }
 
     function resize() {
+      // The CSS box's height is driven from here, not read back from it — SCENE_HEIGHT is the
+      // only place `180` / `120` are written. Guarded so a resize this triggers by changing the
+      // canvas's own height doesn't bounce the ResizeObserver forever: once it matches, the
+      // style write is skipped and nothing fires again.
+      const h = desktopQuery.matches ? SCENE_HEIGHT.desktop : SCENE_HEIGHT.phone;
+      const heightPx = `${h}px`;
+      if (canvas!.style.height !== heightPx) canvas!.style.height = heightPx;
+
       const w = canvas!.clientWidth;
-      const h = canvas!.clientHeight;
       // A ResizeObserver can fire before layout has given the element a size.
-      if (w < 2 || h < 2) return;
+      if (w < 2) return;
       width = w;
       height = h;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -194,11 +205,13 @@ export function ImportFinishScene({
     resize();
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(canvas);
+    desktopQuery.addEventListener("change", resize);
 
     if (reduced) {
       return () => {
         disposed = true;
         resizeObserver.disconnect();
+        desktopQuery.removeEventListener("change", resize);
       };
     }
 
@@ -227,6 +240,7 @@ export function ImportFinishScene({
       disposed = true;
       stop();
       resizeObserver.disconnect();
+      desktopQuery.removeEventListener("change", resize);
       intersectionObserver.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
     };
@@ -236,7 +250,8 @@ export function ImportFinishScene({
     <canvas
       ref={canvasRef}
       aria-hidden
-      className="block h-[120px] w-full sm:h-[180px]"
+      className="block w-full"
+      style={{ height: SCENE_HEIGHT.desktop }}
     />
   );
 }
