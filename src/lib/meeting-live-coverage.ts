@@ -49,6 +49,27 @@ export type ChunkDisposition =
   | "drop";
 
 /**
+ * How much of this chunk the live path never confirmed — the audio only an upload can
+ * rescue. Zero when the whole chunk is already stored.
+ */
+export function uncoveredMs(live: LiveCoverage | null, chunk: ChunkSpan): number {
+  if (!live) return chunk.endMs - chunk.startMs;
+  return Math.max(0, chunk.endMs - Math.max(live.coveredMs, chunk.startMs));
+}
+
+/**
+ * Uncovered audio shorter than this is not worth a chunk upload.
+ *
+ * An upload is all-or-nothing: the smallest unit either path can rescue is a whole ~60 s
+ * chunk. So rescuing the last second of one costs a duplicate minute — stored again under a
+ * higher seq, so the transcript shows it twice and out of order, the digest reads it twice,
+ * and Deepgram is billed for it twice. Three seconds is about one short sentence: below it,
+ * what would be lost is a fragment, and paying a duplicate minute for a fragment is the
+ * worse trade in both directions.
+ */
+export const MIN_UNCOVERED_MS = 3_000;
+
+/**
  * The whole decision. `live` is null when no connection covers this chunk at all — before
  * the first socket opens, after one drops, and whenever Deepgram is off — and then every
  * chunk uploads, which is exactly how meeting capture behaved before live transcription
@@ -56,9 +77,11 @@ export type ChunkDisposition =
  */
 export function chunkDisposition(live: LiveCoverage | null, chunk: ChunkSpan): ChunkDisposition {
   if (!live) return "upload";
-  // Reaches back before this connection: part of it was never streamed to Deepgram (or was
-  // streamed to a socket that died before returning it), so only this chunk can carry it.
-  if (chunk.startMs < live.fromMs) return "upload";
+  // Reaches back before this connection by a material amount: that head was never streamed
+  // to Deepgram (or went to a socket that died before returning it), so only this chunk can
+  // carry it. A reconnect that lands a fraction of a second into a chunk is NOT that case —
+  // uploading the whole minute to rescue half a second duplicates everything after it.
+  if (live.fromMs - chunk.startMs >= MIN_UNCOVERED_MS) return "upload";
   if (chunk.endMs <= live.coveredMs) return "drop";
   // Inside the live stretch but ahead of the last confirmed sentence. Deepgram is simply
   // behind; holding costs one chunk of memory and saves a duplicate upload every minute.
@@ -107,7 +130,10 @@ export class LiveCoverageGate<T extends ChunkSpan> {
   advance(coveredMs: number): void {
     if (!this.live) return;
     if (coveredMs > this.live.coveredMs) this.live.coveredMs = coveredMs;
-    this.sweep();
+    // Only ever bins. A held chunk cannot turn into an upload here: the one route to
+    // "upload" is the `fromMs` head test, and `fromMs` does not move within a connection.
+    // So unlike `arm`, there is nothing to hand back.
+    this.held = this.held.filter((chunk) => chunkDisposition(this.live, chunk) !== "drop");
   }
 
   /** The recorder cut a chunk. Returns it when it has to be uploaded now, else nothing. */
@@ -123,8 +149,10 @@ export class LiveCoverageGate<T extends ChunkSpan> {
    * everything the live path never confirmed, oldest first — the gap, for the chunk route.
    */
   release(): T[] {
-    const covered = this.live?.coveredMs ?? Number.NEGATIVE_INFINITY;
-    const out = this.held.filter((chunk) => chunk.endMs > covered);
+    // Not "anything the watermark did not reach" — a socket that dies a second before a
+    // chunk boundary leaves a second uncovered, and uploading the whole minute to rescue it
+    // duplicates fifty-nine seconds of transcript and bills for them again.
+    const out = this.held.filter((chunk) => uncoveredMs(this.live, chunk) >= MIN_UNCOVERED_MS);
     this.held = [];
     this.live = null;
     return out;
@@ -136,7 +164,11 @@ export class LiveCoverageGate<T extends ChunkSpan> {
     this.live = null;
   }
 
-  /** Drop what is now covered; return what now has to be uploaded. */
+  /**
+   * Re-judge everything held against a NEW connection. Unlike `advance`, this can turn a
+   * held chunk into an upload: the new connection's `fromMs` may sit well inside it, making
+   * its head a gap only the chunk route can fill.
+   */
   private sweep(): T[] {
     const out: T[] = [];
     const keep: T[] = [];

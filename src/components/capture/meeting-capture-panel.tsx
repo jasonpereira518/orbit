@@ -93,6 +93,19 @@ const DRAIN_TIMEOUT_MS = 120_000;
 /** The timeline nothing has written to yet — the recorder handle arrives a render later. */
 const NO_LOUDNESS = { micDominantShare: () => null };
 
+/**
+ * Live sentences stop numbering here, leaving the top of the range for chunk uploads.
+ *
+ * The server refuses any seq over `MAX_SEQ` (10,000) with a 400, and the upload queue treats
+ * a 400 as "this chunk is bad" and parks it as failed rather than retrying — so a meeting
+ * that spent every number on sentences would leave the recovery route with nowhere to
+ * write, and BOTH paths would stop storing for the rest of the call. A normal three-hour
+ * meeting runs to roughly 1,900 sentences and a very chatty one to about 7,500, against at
+ * most ~180 chunks, so a thousand reserved numbers is far more than the chunks can ever
+ * need and the live path gives up first, loudly, with the fallback intact.
+ */
+const LIVE_SEQ_CEILING = 9_000;
+
 const ERROR_COPY: Record<MeetingRecorderErrorCode, { title: string; detail: string }> = {
   cancelled: {
     title: "Nothing was shared",
@@ -353,7 +366,7 @@ export function MeetingCapturePanel({
   );
 
   const live = useMeetingLive({
-    nextSeq: () => seqRef.current++,
+    nextSeq: () => (seqRef.current >= LIVE_SEQ_CEILING ? null : seqRef.current++),
     offsetMs: () => offsetRef.current,
     loudness: () => recorderRef.current?.loudness ?? NO_LOUDNESS,
     recorderId: () => recorderIdRef.current,
@@ -641,7 +654,8 @@ export function MeetingCapturePanel({
         recorder.stop();
       }
       // Nothing from here on is stored, so the socket has no reason to stay open — and an
-      // open Deepgram stream bills for as long as it lives.
+      // open Deepgram stream bills for as long as it lives. `close()` also empties the
+      // coverage gate: a discarded meeting's held chunks have nowhere to go.
       liveClose();
       queueRef.current?.dispose();
       queueRef.current = null;
@@ -709,10 +723,18 @@ export function MeetingCapturePanel({
               onItemsChange={setItems}
               sessionId={sessionId}
             />
+            {/*
+              Deliberately counted in "parts", not minutes. A gap in the numbering used to
+              mean one uploaded chunk — about a minute — but on the live path a number is a
+              single sentence, so calling either one a minute is wrong by up to sixty times.
+              And it no longer promises the words are gone: when the socket drops, the chunk
+              route usually carries that stretch and the text IS here, just stored under a
+              different number than the one the live path had already spoken for.
+            */}
             {analysis.missingSeqs.length > 0 && (
               <p className="text-xs text-amber-700 dark:text-amber-400">
-                {analysis.missingSeqs.length} minute{analysis.missingSeqs.length === 1 ? "" : "s"} of this
-                meeting never reached Orbit, so they are not in the summary.
+                {analysis.missingSeqs.length} part{analysis.missingSeqs.length === 1 ? "" : "s"} of the
+                transcript didn’t reach Orbit — anything said then may be missing from the summary.
               </p>
             )}
             <div className="flex flex-wrap gap-2">
@@ -1229,7 +1251,17 @@ function TranscriptList({
             </p>
           </div>
         ))}
-        {interim && <p className="leading-relaxed text-muted-foreground/70">{interim}</p>}
+        {/*
+          `aria-hidden`, inside an `aria-live` region on purpose. Deepgram revises the
+          in-progress sentence several times a second, and every revision would otherwise be
+          re-announced from the top — the same aria-live pile-up this repo has been bitten
+          by before. The sentence is announced once, when it lands as a real segment above.
+        */}
+        {interim && (
+          <p aria-hidden className="leading-relaxed text-muted-foreground/70">
+            {interim}
+          </p>
+        )}
         <div ref={endRef} />
       </div>
     </div>

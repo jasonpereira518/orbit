@@ -10,7 +10,9 @@
  */
 import {
   LiveCoverageGate,
+  MIN_UNCOVERED_MS,
   chunkDisposition,
+  uncoveredMs,
   type ChunkSpan,
 } from "../src/lib/meeting-live-coverage";
 
@@ -75,6 +77,44 @@ console.log("\nchunkDisposition");
     "a chunk starting exactly at the reconnect point is held, not uploaded",
     chunkDisposition(reconnected, { startMs: 400_000, endMs: 460_000 }) === "hold",
   );
+
+  // THE MATERIALITY LINE, reconnect side. Uploading a whole minute to rescue half a second
+  // duplicates everything after it, at a higher seq, and bills for it twice.
+  check(
+    "a reconnect landing half a second into a chunk holds it — the head is not worth a duplicate minute",
+    chunkDisposition({ fromMs: 400_500, coveredMs: 400_500 }, { startMs: 400_000, endMs: 460_000 }) === "hold",
+  );
+  check(
+    "just under the threshold still holds",
+    chunkDisposition(
+      { fromMs: 400_000 + MIN_UNCOVERED_MS - 1, coveredMs: 400_000 + MIN_UNCOVERED_MS - 1 },
+      { startMs: 400_000, endMs: 460_000 },
+    ) === "hold",
+  );
+  check(
+    "exactly at the threshold uploads",
+    chunkDisposition(
+      { fromMs: 400_000 + MIN_UNCOVERED_MS, coveredMs: 400_000 + MIN_UNCOVERED_MS },
+      { startMs: 400_000, endMs: 460_000 },
+    ) === "upload",
+  );
+}
+
+console.log("\nuncoveredMs");
+{
+  check("nothing confirmed, nothing covering — the whole chunk", uncoveredMs(null, chunk(0)) === 60_000);
+  check(
+    "the watermark inside the chunk leaves the tail",
+    uncoveredMs({ fromMs: 0, coveredMs: 59_000 }, chunk(0)) === 1_000,
+  );
+  check(
+    "a watermark past the end leaves nothing",
+    uncoveredMs({ fromMs: 0, coveredMs: 90_000 }, chunk(0)) === 0,
+  );
+  check(
+    "a watermark before the chunk starts leaves the whole chunk",
+    uncoveredMs({ fromMs: 0, coveredMs: 10_000 }, chunk(3)) === 60_000,
+  );
 }
 
 // ── The gate: a meeting's worth of events in order ────────────────────────────────────
@@ -107,9 +147,9 @@ console.log("\nLiveCoverageGate — a drop, a reconnect, and a second drop");
   gate.offer(chunk(0));
   gate.advance(60_400);
   gate.offer(chunk(1));
-  gate.advance(119_000); // mid-chunk-1 when the socket dies
+  gate.advance(80_000); // mid-chunk-1 when the socket dies: 40 s of it never came back
 
-  // FIRST DROP. Chunk 1 is half-covered; the half after 119 s exists only in the chunk.
+  // FIRST DROP. Chunk 1 is part-covered; the 40 s after 80 s exists only in the chunk.
   const gap1 = gate.release();
   check("the drop hands back exactly the chunk the live path never finished", gap1.length === 1 && gap1[0].seq === 1);
   check("the drop stops the live path", gate.isLive === false);
@@ -134,6 +174,35 @@ console.log("\nLiveCoverageGate — a drop, a reconnect, and a second drop");
   const gap2 = gate.release();
   check("a second drop opens a second gap, handed back the same way", gap2.length === 1 && gap2[0].seq === 6);
   check("after the second drop everything uploads again", gate.offer(chunk(7)).length === 1);
+}
+
+console.log("\nLiveCoverageGate — the release threshold");
+{
+  // THE MATERIALITY LINE, drop side. A socket that dies a second before a chunk boundary
+  // must not re-upload that whole minute.
+  const tight = new LiveCoverageGate<ReturnType<typeof chunk>>();
+  tight.arm(0);
+  tight.offer(chunk(0));
+  tight.advance(59_000); // one second short of the chunk's end when the socket dies
+  check("a drop one second short of the boundary bins the chunk", tight.release().length === 0);
+
+  const justUnder = new LiveCoverageGate<ReturnType<typeof chunk>>();
+  justUnder.arm(0);
+  justUnder.offer(chunk(0));
+  justUnder.advance(60_000 - MIN_UNCOVERED_MS + 1);
+  check("just under the threshold is still binned", justUnder.release().length === 0);
+
+  const justOver = new LiveCoverageGate<ReturnType<typeof chunk>>();
+  justOver.arm(0);
+  justOver.offer(chunk(0));
+  justOver.advance(60_000 - MIN_UNCOVERED_MS);
+  check("exactly at the threshold is uploaded", justOver.release().length === 1);
+
+  const wide = new LiveCoverageGate<ReturnType<typeof chunk>>();
+  wide.arm(0);
+  wide.offer(chunk(0));
+  wide.advance(20_000); // Deepgram went quiet forty seconds before the socket closed
+  check("a real gap is still rescued", wide.release().length === 1);
 }
 
 console.log("\nLiveCoverageGate — edges");
@@ -164,6 +233,21 @@ console.log("\nLiveCoverageGate — edges");
   gate4.offer(chunk(0));
   gate4.clear();
   check("a discarded meeting releases nothing and holds nothing", gate4.release().length === 0 && !gate4.isLive);
+
+  // `arm` can hand chunks back where `advance` never can — a new connection's `fromMs` can
+  // land inside something already held. Unreachable through the panel today (the drop
+  // releases first), so pinned here rather than left to trust.
+  const gate5 = new LiveCoverageGate<ReturnType<typeof chunk>>();
+  gate5.arm(0);
+  gate5.offer(chunk(0));
+  const rearmed = gate5.arm(300_000);
+  check("re-arming far ahead hands back a chunk it can no longer account for", rearmed.length === 1 && rearmed[0].seq === 0);
+  check("…and stops holding it", gate5.heldCount === 0);
+
+  const gate6 = new LiveCoverageGate<ReturnType<typeof chunk>>();
+  gate6.arm(0);
+  gate6.offer(chunk(0));
+  check("re-arming within the threshold keeps holding it", gate6.arm(1_000).length === 0 && gate6.heldCount === 1);
 }
 
 // ── The fallback must be untouched ────────────────────────────────────────────────────

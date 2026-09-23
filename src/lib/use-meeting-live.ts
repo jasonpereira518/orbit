@@ -70,8 +70,12 @@ export type LiveUnavailable =
   | "quota";
 
 export type UseMeetingLiveOptions = {
-  /** The next transcript seq, from the counter the chunk queue also draws from. */
-  nextSeq: () => number;
+  /**
+   * The next transcript seq, from the counter the chunk queue also draws from. Null once
+   * the live band is spent — the top of the range is reserved for chunk recovery, and the
+   * live path steps aside rather than eat it.
+   */
+  nextSeq: () => number | null;
   /** Where this recorder sits on the meeting's timeline. A resumed meeting starts above 0. */
   offsetMs: () => number;
   /** The recorder's raw per-source loudness — how "you" is told from everyone else. */
@@ -123,6 +127,13 @@ const MAX_RECONNECTS = 6;
  * own 10 s handshake timeout; past that the connection is not coming.
  */
 const MAX_PREBUFFER_SAMPLES = TARGET_SAMPLE_RATE * 20;
+/**
+ * Stream-token refusals that will still be refusals in two minutes: not on a meetings plan
+ * (403), the meeting is not this user's (404), another tab owns it (409), it is already
+ * finished or discarded (410), Deepgram is switched off (503). 402 is handled separately —
+ * it stops the meeting rather than falling back.
+ */
+const TERMINAL_TOKEN_STATUS = new Set([403, 404, 409, 410, 503]);
 
 export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandle {
   const cb = useRef(options);
@@ -200,6 +211,11 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
       }
     }
     preRef.current = null;
+    // Nothing is holding chunks any more. Callers that WANT them (`finish`, the unmount
+    // cleanup, the fall back to chunks) release first; every other caller — Discard, a
+    // fatal upload error, a recorder that never started — is a meeting whose held audio has
+    // nowhere to go.
+    gateRef.current.clear();
     setInterim("");
     setStatus("off");
   }, [clearTimers]);
@@ -227,15 +243,21 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
    * is what lets the gate bin the chunks underneath them — so it advances only once the
    * text is actually stored, never merely because Deepgram said it.
    *
+   * The watermark comes from THIS batch's own last sentence, not from `lastFinalMsRef`:
+   * sentences Deepgram has returned but we have not posted yet are already past that ref,
+   * and advancing to them would bin a chunk covering text nothing has stored.
+   *
    * Returns false when the route has refused twice, which means the live path cannot store
-   * anything and the meeting has to go back to chunks.
+   * anything and the meeting has to go back to chunks. The segments are kept either way —
+   * their seqs are already allocated, and dropping them leaves permanent holes in the
+   * transcript for text that was never even attempted twice.
    */
-  const flushBatch = useCallback(async (): Promise<boolean> => {
+  const postBatch = useCallback(async (): Promise<boolean> => {
     const sessionId = sessionRef.current;
     const segments = batchRef.current;
     if (!sessionId || segments.length === 0) return true;
     batchRef.current = [];
-    const coveredMs = meetingMs(baseMsRef.current + lastFinalMsRef.current);
+    const coveredMs = segments.reduce((max, s) => Math.max(max, s.endMs), 0);
     try {
       const res = await fetch(`/api/capture/meetings/${encodeURIComponent(sessionId)}/segments`, {
         method: "POST",
@@ -244,23 +266,55 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
       });
       if (!res.ok) throw new Error(`segments-${res.status}`);
     } catch {
+      // Back at the front of the queue, oldest first, whatever happens next: a reconnect
+      // will try them again, and Stop flushes twice before giving up on them.
+      batchRef.current = [...segments, ...batchRef.current];
       batchFailuresRef.current += 1;
       // One blip is worth a retry with the next batch. A second means the route is not
       // going to take this meeting's text, and holding chunks against a watermark that will
       // never move would quietly lose the recording — so fall back to chunks instead.
-      if (batchFailuresRef.current >= 2) return false;
-      batchRef.current = [...segments, ...batchRef.current];
-      return true;
+      return batchFailuresRef.current < 2;
     }
     batchFailuresRef.current = 0;
     gateRef.current.advance(coveredMs);
     return true;
-  }, [meetingMs]);
+  }, []);
+
+  /**
+   * One post at a time, in order.
+   *
+   * The 10 s timer, every chunk boundary, the drop handler and Stop can all ask to flush,
+   * and two of those overlapping is not a rare race: the drop handler used to start a
+   * SECOND flush, find `batchRef` already emptied by the first, return instantly, and
+   * release the gate — so the in-flight post's `advance()` then landed on a gate that was
+   * already null and the chunks underneath it were judged on a stale watermark. Chaining
+   * means "await a flush" really does mean "await the text being stored".
+   */
+  const flushChainRef = useRef<Promise<boolean>>(Promise.resolve(true));
+  const flushBatch = useCallback((): Promise<boolean> => {
+    const next = flushChainRef.current.then(postBatch, postBatch);
+    // The chain itself must never reject or it would wedge every later flush.
+    flushChainRef.current = next.then(
+      () => true,
+      () => true,
+    );
+    return next;
+  }, [postBatch]);
 
   // `connect` retries itself, and the drop handler redials — both are cycles through
   // `connect`, so the backward edges go through refs.
   const dropRef = useRef<() => void>(() => {});
   const connectRef = useRef<(reconnect: boolean) => void>(() => {});
+
+  /**
+   * Stop trying to transcribe live and let the chunk route carry the rest of the meeting.
+   * Releases first, so whatever the gate was holding is uploaded rather than binned.
+   */
+  const fallBackToChunks = useCallback(() => {
+    needChunks(gateRef.current.release());
+    close();
+    cb.current.onUnavailable("unavailable");
+  }, [close, needChunks]);
 
   const pumpBatch = useCallback(() => {
     void flushBatch().then((ok) => {
@@ -289,10 +343,18 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
         labelsRef.current = labelSpeakers(wordsRef.current, cb.current.loudness());
       }
 
+      const seq = cb.current.nextSeq();
+      if (seq === null) {
+        // The live band is spent. Every number left belongs to the chunk route, which is
+        // now the only thing that can store the rest of this meeting.
+        fallBackToChunks();
+        return;
+      }
+
       const speakerId = dominantSpeaker(result.words);
       const speaker = speakerId === null ? null : (labelsRef.current.get(speakerId) ?? null);
       const segment: LiveSegment = {
-        seq: cb.current.nextSeq(),
+        seq,
         startMs: Math.round(meetingMs(base + result.startMs)),
         endMs: Math.round(meetingMs(base + result.endMs)),
         speaker,
@@ -305,7 +367,7 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
       boundaryRef.current = false;
       cb.current.onSegment(segment, { reconnected });
     },
-    [meetingMs],
+    [fallBackToChunks, meetingMs],
   );
 
   /**
@@ -325,17 +387,21 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
 
       setStatus(reconnect ? "reconnecting" : "connecting");
 
-      const retry = () => {
+      /**
+       * `terminal` is a refusal no amount of waiting fixes: the plan, Deepgram being off,
+       * another tab having taken the meeting, the meeting being gone or already finished.
+       * Redialing six times over two minutes for one of those spends tokens and tells the
+       * user nothing they can act on.
+       */
+      const retry = (terminal = false) => {
         if (gone()) return;
-        if (!reconnect) {
-          close();
-          cb.current.onUnavailable("unavailable");
+        if (!reconnect || terminal) {
+          fallBackToChunks();
           return;
         }
         const attempt = ++attemptRef.current;
         if (attempt > MAX_RECONNECTS) {
-          close();
-          cb.current.onUnavailable("unavailable");
+          fallBackToChunks();
           return;
         }
         setStatus("reconnecting");
@@ -359,6 +425,10 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
           // which flushes and ends it properly rather than leaving it half-recorded.
           close();
           cb.current.onUnavailable("quota");
+          return;
+        }
+        if (TERMINAL_TOKEN_STATUS.has(res.status)) {
+          retry(true);
           return;
         }
         if (!res.ok) throw new Error(`stream-token-${res.status}`);
@@ -444,7 +514,7 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
       if (batchTimerRef.current) clearInterval(batchTimerRef.current);
       batchTimerRef.current = setInterval(pumpBatch, BATCH_EVERY_MS);
     },
-    [close, handleResult, meetingMs, needChunks, pumpBatch],
+    [fallBackToChunks, close, handleResult, meetingMs, needChunks, pumpBatch],
   );
 
   /**
@@ -481,6 +551,7 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
         cb.current.onUnavailable("unavailable");
         return;
       }
+
       const wait = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** (attempt - 1));
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       retryTimerRef.current = setTimeout(() => {
@@ -580,6 +651,13 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
       }
     }
     await flushBatch();
+    if (batchRef.current.length) {
+      // A transient failure here would otherwise lose the meeting's last sentences for
+      // good: nothing runs after Stop to try them again, and their seqs are already spoken
+      // for. Reset the counter so this really is a second attempt, not a no-op.
+      batchFailuresRef.current = 0;
+      await flushBatch();
+    }
     needChunks(gateRef.current.release());
     close();
   }, [clearTimers, close, flushBatch, needChunks]);
