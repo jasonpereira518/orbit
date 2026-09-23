@@ -45,7 +45,11 @@ export function ProfileForm() {
   const save = async () => {
     setSaving(true);
     try {
-      await user.update({ firstName: first.trim(), lastName: last.trim() });
+      const trimmedFirst = first.trim();
+      const trimmedLast = last.trim();
+      await user.update({ firstName: trimmedFirst, lastName: trimmedLast });
+      setFirst(trimmedFirst);
+      setLast(trimmedLast);
       toast.success("Name saved");
     } catch (err) {
       toast.error(clerkErrorMessage(err, friendlyError(err, TOAST_COPY.saveFailed)));
