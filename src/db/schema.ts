@@ -2529,6 +2529,83 @@ export const outlookConnections = pgTable(
   ]
 );
 
+/**
+ * An iCloud CalDAV connection.
+ *
+ * Shaped like `gmail_connections` / `outlook_connections` — same status column, same
+ * `syncStateColumns()` — so `provider-connections.ts` can treat all three alike. The
+ * difference is the credential: Apple has no OAuth for CalDAV, so this holds an
+ * app-specific password the user generated at appleid.apple.com, encrypted at rest.
+ * It is long-lived and revocable only by the user, at Apple.
+ */
+export const appleConnections = pgTable(
+  "apple_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull().unique(),
+    /** The Apple ID itself, which is also the calendar owner's address for self-detection. */
+    emailAddress: text("email_address").notNull(),
+    appPasswordEncrypted: text("app_password_encrypted").notNull(),
+    /** Resolved once at connect time; re-resolved only on a reconnect. */
+    principalUrl: text("principal_url"),
+    calendarHomeUrl: text("calendar_home_url"),
+    /**
+     * Always null. Apple grants no scopes for a CalDAV app-specific password — this column
+     * exists only so the shared claim SQL in `provider-connections.ts` (which does
+     * `RETURNING id, user_id, email_address, scopes, sync_cursor, sync_failures` for every
+     * provider, and whose header explicitly rejects per-provider branching) can stay
+     * provider-agnostic. A dead column costs less than a special case.
+     */
+    scopes: text("scopes"),
+    /** Same two values, same reasoning, as the other connection tables. */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("apple_connections_user_idx").on(t.userId),
+    index("apple_connections_due_idx").on(t.nextSyncAt).where(sql`next_sync_at is not null`),
+  ]
+);
+
+/**
+ * One row per calendar Orbit could read, for every provider.
+ *
+ * Before this, the cursor lived on the connection and each provider synced exactly one
+ * calendar — Google's `primary`, Graph's default. iCloud accounts routinely hold several with
+ * no obvious primary, so the choice becomes the user's and the cursor moves down here.
+ *
+ * `provider` + `connectionId` rather than a foreign key: the three connection tables are
+ * separate by design (see `provider-connections.ts`), so there is no single parent to
+ * reference. Deletes are handled explicitly in `user-data.ts`.
+ */
+export const calendarSources = pgTable(
+  "calendar_sources",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"google" | "microsoft" | "apple">().notNull(),
+    connectionId: uuid("connection_id").notNull(),
+    /** The provider's own id: `primary`, a Graph calendar id, or a CalDAV collection path. */
+    calendarId: text("calendar_id").notNull(),
+    displayName: text("display_name"),
+    color: text("color"),
+    /** True for subscribed and other people's calendars. Sub-project 2 must not write to these. */
+    readOnly: integer("read_only").notNull().default(0),
+    enabled: integer("enabled").notNull().default(1),
+    syncCursor: jsonb("sync_cursor").$type<CalendarSyncCursor>(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("calendar_sources_user_idx").on(t.userId),
+    uniqueIndex("calendar_sources_conn_cal_uidx").on(t.connectionId, t.calendarId),
+  ]
+);
+
 export type ChatRecommendation = {
   contact_id?: string | null;
   recruiter_id?: string | null;

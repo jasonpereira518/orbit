@@ -7,6 +7,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { gmailConnections, imports, userSettings } from "@/db/schema";
+import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { requireSyncUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
@@ -178,6 +179,11 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   });
   // Row first: the disconnect is done even if Google never answers.
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
+  // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
+  // deliberately separate — see provider-connections.ts), so a reconnect's fresh connection
+  // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
+  // double the calendar.
+  await deleteCalendarSourcesForProvider(userId, "google");
   if (grant) await revokeGoogleGrant(grant);
   if (opts.alsoDelete === true) {
     await purgeUserData(userId, { only: DISCONNECT_DELETE_CATEGORIES.gmail });

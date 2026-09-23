@@ -22,7 +22,7 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import type { ProviderSyncCursor } from "@/db/schema";
 
-export type SyncProvider = "google" | "microsoft";
+export type SyncProvider = "google" | "microsoft" | "apple";
 
 /**
  * Table name per provider. A plain string map rather than Drizzle table objects because
@@ -36,6 +36,7 @@ export type SyncProvider = "google" | "microsoft";
 const PROVIDER_TABLES: Record<SyncProvider, string> = {
   google: "gmail_connections",
   microsoft: "outlook_connections",
+  apple: "apple_connections",
 };
 
 /**
@@ -275,6 +276,12 @@ export async function loadCoverageSources(
       ) OR EXISTS (
         SELECT 1 FROM calendar_subscriptions
          WHERE user_id = ${userId} AND enabled = 1 AND last_sync_status = 'ok'
+      ) OR EXISTS (
+        -- Apple grants no scopes to check (see apple_connections.scopes's own comment) — the
+        -- bar is the same "has actually synced" one the other two providers hold, just without
+        -- a scope clause, since there is no scope for a CalDAV app-specific password to carry.
+        SELECT 1 FROM apple_connections
+         WHERE user_id = ${userId} AND status = 'active' AND last_synced_at IS NOT NULL
       ) AS calendar_connected
   `);
   const row = rowsOf<{ mail_connected: boolean; calendar_connected: boolean }>(result)[0];

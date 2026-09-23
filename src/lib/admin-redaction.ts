@@ -48,6 +48,7 @@ export const NEVER_REVEALABLE: readonly string[] = [
   "gmail_connections.refresh_token_encrypted",
   "outlook_connections.access_token_encrypted",
   "outlook_connections.refresh_token_encrypted",
+  "apple_connections.app_password_encrypted",
   "event_provider_connections.api_key_encrypted",
   "event_provider_connections.access_token_encrypted",
   "event_provider_connections.refresh_token_encrypted",

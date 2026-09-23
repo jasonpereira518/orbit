@@ -726,6 +726,44 @@ CREATE TABLE IF NOT EXISTS outlook_connections (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS outlook_connections_user_idx ON outlook_connections(user_id);
+CREATE TABLE IF NOT EXISTS apple_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  email_address text NOT NULL,
+  app_password_encrypted text NOT NULL,
+  principal_url text,
+  calendar_home_url text,
+  scopes text,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS apple_connections_user_idx ON apple_connections(user_id);
+CREATE INDEX IF NOT EXISTS apple_connections_due_idx ON apple_connections(next_sync_at) WHERE next_sync_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS calendar_sources (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  connection_id uuid NOT NULL,
+  calendar_id text NOT NULL,
+  display_name text,
+  color text,
+  read_only integer NOT NULL DEFAULT 0,
+  enabled integer NOT NULL DEFAULT 1,
+  sync_cursor jsonb,
+  last_synced_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS calendar_sources_user_idx ON calendar_sources(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS calendar_sources_conn_cal_uidx ON calendar_sources(connection_id, calendar_id);
 CREATE TABLE IF NOT EXISTS usage_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1929,7 +1967,24 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // landed before either merged. Rescanned every remote ref, every local branch and every
 // worktree's working file on Sep 23 2026: 97 is the connector foundation's own merge below
 // this one, so 98 is free.
-export const SCHEMA_VERSION = 98;
+//
+// 99 = apple_connections (an iCloud CalDAV connection — an app-specific password rather than
+// OAuth tokens) and calendar_sources (one row per calendar Orbit can read, for all three
+// providers; the sync cursor moves down from the connection to the calendar, since iCloud
+// accounts routinely hold several calendars with no obvious primary).
+//
+// NOT 91, which is what this branch carried through its whole review, and NOT 98, which it
+// carried for the last hour of it. Both were the same failure. `isSchemaCurrent` returns true
+// for any recorded version ABOVE the running one (the never-downgrade rule), so a build
+// declaring a number main had already passed would have skipped its own DDL in silence and
+// created neither table, with nothing failing anywhere to say so. Main was at 96 when 91 was
+// corrected to 98; then the connector foundation (#262, #272) and the BCC logging address
+// (#275) all merged within a minute of each other at 14:59-15:00 on Sep 23 2026, and #275
+// took 98 — the sixth silent collision this log records, and again only visible because both
+// branches declared it before either merged. Rescanned every remote ref, every local branch
+// and every worktree's working file on Sep 23 2026 immediately before committing: 98 is the
+// highest claimed anywhere, so 99 is free.
+export const SCHEMA_VERSION = 99;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3369,7 +3424,11 @@ const alters = [
   //
   // `sync_failures` is the only NOT NULL column here, and it carries a DEFAULT, so the
   // ALTER is safe on a populated table.
-  ...["gmail_connections", "outlook_connections"].flatMap((table) => [
+  //
+  // Schema v99 added `apple_connections` to this list: its own CREATE TABLE already carries
+  // these columns, so the ALTERs are no-ops there, but the shared list is what also gets it
+  // the partial due index below without a fourth copy of that statement.
+  ...["gmail_connections", "outlook_connections", "apple_connections"].flatMap((table) => [
     `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_cursor jsonb`,
     `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS next_sync_at timestamptz`,
     `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_status text`,
@@ -3541,6 +3600,15 @@ const alters = [
   `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS off_deepgram_ms integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS speech_tag_id text`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_speech_tag_uidx ON user_settings(speech_tag_id) WHERE speech_tag_id IS NOT NULL`,
+  // Schema v99: apple_connections (an iCloud CalDAV connection) and calendar_sources (one row
+  // per calendar Orbit can read, for all three providers — the cursor moves down from the
+  // connection to the calendar). The CREATE TABLEs above land on a fresh database; these
+  // repair an existing one, which is why every index appears in both places.
+  `CREATE TABLE IF NOT EXISTS apple_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL UNIQUE, email_address text NOT NULL, app_password_encrypted text NOT NULL, principal_url text, calendar_home_url text, scopes text, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS apple_connections_user_idx ON apple_connections(user_id)`,
+  `CREATE TABLE IF NOT EXISTS calendar_sources (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, provider text NOT NULL, connection_id uuid NOT NULL, calendar_id text NOT NULL, display_name text, color text, read_only integer NOT NULL DEFAULT 0, enabled integer NOT NULL DEFAULT 1, sync_cursor jsonb, last_synced_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS calendar_sources_user_idx ON calendar_sources(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS calendar_sources_conn_cal_uidx ON calendar_sources(connection_id, calendar_id)`,
 ];
 
 /**

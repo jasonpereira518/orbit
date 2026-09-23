@@ -56,6 +56,20 @@ async function readCursor(id: string): Promise<Cursor | null> {
   return typeof raw === "string" ? (JSON.parse(raw) as Cursor) : raw;
 }
 
+/**
+ * The calendar cursor's home since per-calendar sync: the connection's `calendar_sources` row,
+ * not its `sync_cursor` column. The connection column keeps only what the connection itself
+ * still owns — here, the contacts key.
+ */
+async function readSourceCursor(connectionId: string): Promise<Cursor["calendar"]> {
+  const db = await getDb();
+  const row = rowsOf<{ sync_cursor: NonNullable<Cursor["calendar"]> | string | null }>(
+    await db.execute(sql`SELECT sync_cursor FROM calendar_sources WHERE connection_id = ${connectionId}`)
+  )[0];
+  const raw = row?.sync_cursor ?? null;
+  return typeof raw === "string" ? (JSON.parse(raw) as NonNullable<Cursor["calendar"]>) : raw;
+}
+
 async function readRow(id: string) {
   const db = await getDb();
   return rowsOf<{ next_sync_at: string | null; sync_error: string | null; status: string }>(
@@ -105,9 +119,18 @@ run(async () => {
     const stats = await runSyncPass({ deps });
     check("the connection synced", stats.synced === 1, JSON.stringify({ synced: stats.synced }));
 
+    // Neither position is erased, but they no longer share a column: the calendar cursor is on
+    // the source row and the contacts cursor is the connection's own. What this check pins is
+    // that writing one did not cost the other its place.
     const cursor = await readCursor(id);
-    check("the calendar cursor was written", cursor?.calendar?.syncToken === "cal-fresh", JSON.stringify(cursor));
+    const calendar = await readSourceCursor(id);
+    check("the calendar cursor was written to its source row", calendar?.syncToken === "cal-fresh", JSON.stringify(calendar));
     check("the contacts cursor was written", cursor?.contacts?.syncToken === "contacts-fresh", JSON.stringify(cursor));
+    check(
+      "the contacts cursor is not what the calendar phase overwrote it with",
+      cursor?.contacts?.syncToken !== "cal-fresh",
+      JSON.stringify(cursor)
+    );
   }
 
   console.log("\nan unrelated key on the cursor survives the run");

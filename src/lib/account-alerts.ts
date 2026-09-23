@@ -75,6 +75,8 @@ export type HealthCode =
   | "connection.gmail"
   | "connection.outlook"
   | "connection.google_calendar"
+  | "connection.microsoft_calendar"
+  | "connection.apple_calendar"
   | "calendar.sync_error"
   | "import.failed"
   | "import.stalled"
@@ -119,6 +121,23 @@ export type HealthInput = {
    * for being parked is not something to alert about.
    */
   googleCalendar: { paused: boolean; reason: string | null } | null;
+  /**
+   * Outlook Calendar sync, shaped and gated exactly like `googleCalendar` above — only when
+   * the grant includes the calendar scope, null for no connection, no OAuth app, or a grant
+   * without calendar.
+   */
+  microsoftCalendar: { paused: boolean; reason: string | null } | null;
+  /**
+   * iCloud calendar sync. Shaped like the other two, but NOT gated on scope — Apple grants no
+   * scopes for a CalDAV app-specific password (see `apple_connections.scopes`'s own comment),
+   * so calendar access is inherent to the connection existing at all. Null only for no
+   * connection. `paused` covers both a sync that gave up after repeated failures AND a
+   * revoked app-specific password — the connector maps that 401 to the same non-retryable
+   * failure that disarms sync, so both read as the same "disarmed" state here. There is no
+   * separate `connection.apple` alert the way `connection.gmail`/`connection.outlook` exist,
+   * because Apple's connection has no other feature riding on it — this alert IS the signal.
+   */
+  appleCalendar: { paused: boolean; reason: string | null } | null;
 
   calendarErrorCount: number;
   calendarErrorLabel: string | null;
@@ -254,6 +273,30 @@ export function evaluateAccountHealth(
     });
   }
 
+  // --- Outlook Calendar sync -----------------------------------------------------------
+  // Same reasoning as Google's, above: only on a healthy grant, so a dead one raises
+  // `connection.outlook` alone rather than that plus this.
+  if (input.microsoftCalendar?.paused && input.outlook?.status === "active") {
+    findings.push({
+      code: "connection.microsoft_calendar",
+      severity: "warn",
+      data: { reason: truncate(input.microsoftCalendar.reason) },
+    });
+  }
+
+  // --- iCloud Calendar sync -------------------------------------------------------------
+  // NOT gated on a sibling connection the way Google's and Microsoft's are — Apple has no
+  // `connection.apple` mailbox alert to defer to, since the connection exists only for
+  // calendar sync. This finding is the only signal that connection ever raises, so it fires
+  // whenever `appleCalendar.paused` is true, full stop.
+  if (input.appleCalendar?.paused) {
+    findings.push({
+      code: "connection.apple_calendar",
+      severity: "warn",
+      data: { reason: truncate(input.appleCalendar.reason) },
+    });
+  }
+
   // --- Calendar feeds -----------------------------------------------------------------
   // `warn`, not `error` as the admin inspector has it. `lastSyncStatus` is sticky until the
   // next SUCCESSFUL sync, so one transient ICS 503 would otherwise pin a red dot on the
@@ -374,8 +417,9 @@ const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
 /**
  * Non-dismissible, and why each one has to be:
  *   `ai.no_key` / `ai.no_embedding_key` — every AI feature is dark until a key exists.
- *   `connection.gmail` / `connection.outlook` / `connection.google_calendar` — sync and
- *     mailbox scans stay paused.
+ *   `connection.gmail` / `connection.outlook` / `connection.google_calendar` /
+ *     `connection.microsoft_calendar` / `connection.apple_calendar` — sync and mailbox
+ *     scans stay paused.
  *   `plan.contact_cap_reached` — no new contacts can be created at all.
  *   `billing.past_due` — see the note above.
  */
@@ -389,6 +433,8 @@ const KIND_BY_CODE: Record<HealthCode, AccountAlertKind> = {
   "connection.gmail": "connection",
   "connection.outlook": "connection",
   "connection.google_calendar": "connection",
+  "connection.microsoft_calendar": "connection",
+  "connection.apple_calendar": "connection",
   "calendar.sync_error": "calendar",
   "import.failed": "import",
   "import.stalled": "import",
@@ -418,6 +464,8 @@ const CODE_RANK: HealthCode[] = [
   "connection.gmail",
   "connection.outlook",
   "connection.google_calendar",
+  "connection.microsoft_calendar",
+  "connection.apple_calendar",
   "billing.past_due",
   "plan.contact_cap_reached",
   "plan.contact_cap_near",
@@ -517,6 +565,32 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
             external: false,
           },
           surfaceKey: "page.imports",
+        });
+        break;
+      }
+
+      case "connection.microsoft_calendar": {
+        alerts.push({
+          ...base,
+          title: "Calendar sync is paused",
+          body: "New meetings aren’t reaching Orbit. Reconnect Outlook to start calendar sync again.",
+          cta: { label: "Reconnect", href: "/imports#import-outlook-contacts", external: false },
+          surfaceKey: "page.imports",
+        });
+        break;
+      }
+
+      case "connection.apple_calendar": {
+        alerts.push({
+          ...base,
+          title: "Calendar sync is paused",
+          body: "New meetings aren’t reaching Orbit. Your app-specific password may have been revoked at Apple — generate a new one in Settings to reconnect.",
+          // Points at Settings, not /imports: there is no OAuth flow to send someone through
+          // for Apple, and unlike Google and Microsoft, no Apple card exists on the imports
+          // page to land on yet. `surfaceKey` is null for the same reason — there is no
+          // registered surface to gate this on.
+          cta: { label: "Open settings", href: "/settings", external: false },
+          surfaceKey: null,
         });
         break;
       }
