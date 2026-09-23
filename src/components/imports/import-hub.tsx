@@ -40,7 +40,7 @@ import {
 } from "@/lib/imports/calendar-sources";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import type { DroppedFile } from "@/lib/capture/file-drop";
-import type { ImportHistoryItem } from "@/actions/imports";
+import type { ImportHistoryItem, LatestFinishedImport } from "@/actions/imports";
 
 /**
  * Everything on /imports.
@@ -185,6 +185,13 @@ export function ImportHub({
   canUseSync?: boolean;
   google?: ProviderCalendarInput | null;
   outlook?: ProviderCalendarInput | null;
+  /**
+   * The most recent completed import, for the done card — not yet rendered here; wiring it
+   * through now (as a type-only prop) is what lets `getLatestFinishedImport` reach this
+   * component without a "use server" export mistake going unnoticed until the route loads.
+   * The card itself is a later task.
+   */
+  latestFinish?: LatestFinishedImport | null;
 }) {
   const job = useImportJob();
   const queue = useImportQueue();

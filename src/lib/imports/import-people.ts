@@ -10,6 +10,14 @@ export type ImportedPerson = {
   name: string;
   /** "Title at Company", or whichever half exists. */
   detail: string | null;
+  /**
+   * Browser-safe avatar URL, never the raw `profile_image_url` column — that can carry up
+   * to 120 KB of base64 per contact (see `clientAvatarUrlSql` in `contact-avatar-sql.ts`).
+   * Written by hand rather than by interpolating that helper: a drizzle column reference
+   * loses its table qualifier once mixed into this file's aliased raw SQL (the same trap
+   * `importContactIds`'s comment below describes for `created_at`).
+   */
+  profileImageUrl: string | null;
 };
 
 export type ImportPeoplePage = { people: ImportedPerson[]; hasMore: boolean };
@@ -88,9 +96,17 @@ export async function listImportPeople(
     full_name: string;
     title: string | null;
     company: string | null;
+    profile_image_url: string | null;
   }>(
     await db.execute(sql`
-      SELECT c.id, c.full_name, c.title, c.company
+      SELECT c.id, c.full_name, c.title, c.company,
+             CASE
+               WHEN c.profile_image_url IS NULL OR btrim(c.profile_image_url) = '' THEN NULL
+               WHEN c.profile_image_url LIKE 'data:image/%' THEN '/api/avatars/' || c.id
+               WHEN c.profile_image_url LIKE '%unavatar.io%'
+                 OR c.profile_image_url LIKE '%static.licdn.com/aero%' THEN NULL
+               ELSE btrim(c.profile_image_url)
+             END AS profile_image_url
       FROM contacts c
       WHERE c.user_id = ${userId}
         AND ${createdFilter}
@@ -108,6 +124,7 @@ export async function listImportPeople(
         r.title && r.company
           ? `${r.title} at ${r.company}`
           : r.title || r.company || null,
+      profileImageUrl: r.profile_image_url,
     })),
     hasMore: rows.length > IMPORT_PEOPLE_PAGE,
   };

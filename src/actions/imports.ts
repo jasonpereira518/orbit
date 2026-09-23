@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
@@ -12,6 +12,15 @@ import {
   type ImportPeoplePage,
   type ImportPersonOutcome,
 } from "@/lib/imports/import-people";
+import type { FinishSummary } from "@/lib/imports/import-finish";
+import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
+import { importSourceLabel } from "@/lib/imports/import-sources";
+import {
+  performUndo,
+  previewUndo,
+  type UndoPreview,
+  type UndoResult,
+} from "@/lib/imports/import-undo";
 import {
   contacts,
   gmailConnections,
@@ -455,6 +464,56 @@ export async function getImportPeople(
 ): Promise<ImportPeoplePage> {
   const userId = await requireUserId();
   return listImportPeople(userId, importId, outcome, offset);
+}
+
+/** What the done card shows for the most recent completed import. See `finishCopy` in
+ *  `import-finish.ts` for how these numbers become words. */
+export type LatestFinishedImport = FinishSummary & {
+  /** Set once this import's undo has run — Task 9 checks this before rendering the card. */
+  undoneAt: string | null;
+  /** Up to `MAX_FACES` of the people it added, for the swarm scene. */
+  avatars: { contactId: string; name: string; photo: string | null }[];
+};
+
+/** The most recent completed import, shaped for the done card. Null once there isn't one. */
+export async function getLatestFinishedImport(): Promise<LatestFinishedImport | null> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const row = await db.query.imports.findFirst({
+    where: and(eq(imports.userId, userId), eq(imports.status, "completed")),
+    orderBy: [desc(imports.createdAt)],
+  });
+  if (!row) return null;
+
+  const people = await listImportPeople(userId, row.id, "added", 0);
+
+  return {
+    importId: row.id,
+    added: row.contactsCreated ?? 0,
+    existing: row.contactsUpdated ?? 0,
+    meetingsLogged: row.stats?.interactionsLogged ?? 0,
+    sources: [row.fileName ? row.fileName : importSourceLabel(row.importType)],
+    undoneAt: row.stats?.undoneAt ?? null,
+    avatars: people.people.slice(0, MAX_FACES).map((p) => ({
+      contactId: p.id,
+      name: p.name,
+      photo: p.profileImageUrl,
+    })),
+  };
+}
+
+/** Preview of what undoing this import would remove — see `previewUndo` in `import-undo.ts`. */
+export async function previewImportUndo(importId: string): Promise<UndoPreview | null> {
+  const userId = await requireUserId();
+  return previewUndo(userId, importId);
+}
+
+/** Undo an import: remove the people it created, if nobody has touched them since. */
+export async function undoImport(importId: string): Promise<UndoResult> {
+  const userId = await requireUserId();
+  const result = await performUndo(userId, importId);
+  revalidatePath("/imports");
+  return result;
 }
 
 /** A person's name out of whichever row payload this import type stages. */

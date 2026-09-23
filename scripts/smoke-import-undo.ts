@@ -35,6 +35,7 @@ import {
   previewUndo,
   UNDO_WINDOW_DAYS,
 } from "../src/lib/imports/import-undo";
+import { listContactsPage } from "../src/lib/contacts-page-query";
 
 const USER = "smoke-import-undo-user";
 const OTHER = "smoke-import-undo-other";
@@ -343,6 +344,18 @@ async function main() {
   );
   check("…while the counts stay exact", crowdPreview!.removable === MAX_UNDO_CANDIDATES + 3 && crowdPreview!.keeping === 2, JSON.stringify({ removable: crowdPreview!.removable, keeping: crowdPreview!.keeping }));
   check("…and the kept survive the cap", crowdPreview!.candidates.slice(0, 2).every((c) => !c.removable));
+
+  // The contacts list can be narrowed to one import's people.
+  const { importId: filterImport, ids: filterIds } = await seedImport(USER, [
+    { name: "Filter One", created: true },
+    { name: "Filter Two", created: true },
+  ]);
+  await db.insert(contacts).values({ userId: USER, fullName: "Not From An Import" });
+  const listed = await listContactsPage(USER, { importId: filterImport });
+  check("the filter returns only that import's people", listed.items.length === 2, String(listed.items.length));
+  check("…and they are the right two", listed.items.every((c) => filterIds.includes(c.id)));
+  const unfiltered = await listContactsPage(USER, {});
+  check("without the filter everyone is listed", unfiltered.items.length > 2);
 
   await reset();
   console.log("smoke-import-undo: all checks passed");
