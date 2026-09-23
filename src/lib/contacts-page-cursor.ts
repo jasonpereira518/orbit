@@ -53,7 +53,8 @@ export function decodeContactsCursor(raw: string | undefined, sort: ContactSort,
  * relying on that default holding.
  */
 function relevanceRank(rankedIds: readonly string[]): SQL {
-  if (rankedIds.length === 0) return sql`0`;
+  // A cast, not a bare `0`: Postgres reads a bare integer in ORDER BY as a select-list position.
+  if (rankedIds.length === 0) return sql`0::int`;
   return sql`array_position(array[${sql.join(
     rankedIds.map((id) => sql`${id}::uuid`),
     sql`, `
