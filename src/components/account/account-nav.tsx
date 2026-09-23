@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
  */
 export const ACCOUNT_TABS = [
   { href: "/settings/account", label: "Profile" },
+  { href: "/settings/account/sign-in", label: "Sign-in" },
   { href: "/settings/account/devices", label: "Devices" },
 ] as const satisfies ReadonlyArray<{ href: string; label: string }>;
 
