@@ -1,6 +1,6 @@
 import { requireUserId } from "@/lib/auth";
 import { requireEntitlement } from "@/lib/entitlements";
-import { requireVisibleSurface } from "@/lib/surface-visibility";
+import { requireReleasedSurface, requireVisibleSurface } from "@/lib/surface-visibility";
 
 /**
  * Auth + plan + surface visibility in one call, so gated server actions keep the same
@@ -55,5 +55,15 @@ export async function requireSyncUser() {
 export async function requireUserForSurface(surfaceKey: string) {
   const userId = await requireUserId();
   await requireVisibleSurface(userId, surfaceKey);
+  return userId;
+}
+
+/**
+ * Auth plus "Leads is switched on and released". No plan gate: joining a team and looking
+ * up warm paths are free (the CRM connection is the paid part, gated separately later).
+ */
+export async function requireLeadsUser() {
+  const userId = await requireUserId();
+  await requireReleasedSurface(userId, "page.leads");
   return userId;
 }

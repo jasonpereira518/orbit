@@ -68,6 +68,8 @@ import {
   suggestedReminders,
   tags,
   targetCompanies,
+  teamMembers,
+  teams,
   type DataPurgeRunRow,
   usageEvents,
   userGoals,
@@ -80,6 +82,7 @@ import { recomputeRecruiterRating,
   RECRUITER_DELETED_CREATOR,
   rederiveSharedRecruiterPii,
 } from "@/lib/recruiters";
+import { TEAM_DELETED_CREATOR } from "@/lib/team-domain";
 import {
   DATA_CATEGORY_IDS,
   DATA_CATEGORY_META,
@@ -267,6 +270,35 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     counts: [imports],
     run: async (db, userId) => {
       await db.delete(imports).where(eq(imports.userId, userId));
+    },
+  },
+  leads: {
+    exports: [own(teamMembers)],
+    counts: [teamMembers],
+    run: async (db, userId) => {
+      const memberships = await db
+        .select({ teamId: teamMembers.teamId })
+        .from(teamMembers)
+        .where(eq(teamMembers.userId, userId));
+      await db.delete(teamMembers).where(eq(teamMembers.userId, userId));
+      // The team row is shared: a creator's account can go while the team stays. Same
+      // sentinel as recruiters, for the same reason — never null, never a dangling id.
+      await db
+        .update(teams)
+        .set({ createdBy: TEAM_DELETED_CREATOR, updatedAt: new Date() })
+        .where(eq(teams.createdBy, userId));
+      // A team nobody is on any more is not a team. Literal identifiers on purpose: a
+      // column interpolated into sql`` here would render unqualified.
+      for (const { teamId } of memberships) {
+        await db
+          .delete(teams)
+          .where(
+            and(
+              eq(teams.id, teamId),
+              sql`not exists (select 1 from team_members tm where tm.team_id = teams.id)`
+            )
+          );
+      }
     },
   },
   connections: {

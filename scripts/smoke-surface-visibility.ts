@@ -17,6 +17,7 @@ import { getDb } from "../src/db";
 import { adminAuditLog, appSurfaceFlags } from "../src/db/schema";
 import {
   isSurfaceHiddenError,
+  requireReleasedSurface,
   requireVisibleSurface,
   resolveSurfaceVisibility,
   setSurfaceHidden,
@@ -193,6 +194,32 @@ async function main() {
     }
     check("an always-visible surface is never refused", dashboardOk);
 
+    console.log("\ncoming-soon closes actions, not just pages");
+    {
+      let thrown: unknown = null;
+      try {
+        await requireReleasedSurface(USER, "page.leads");
+      } catch (err) {
+        thrown = err;
+      }
+      check("a coming-soon surface refuses its actions", isSurfaceHiddenError(thrown));
+      // The older guard deliberately ignores comingSoon; pinned so the difference is a fact.
+      let older: unknown = null;
+      try {
+        await requireVisibleSurface(USER, "page.leads");
+      } catch (err) {
+        older = err;
+      }
+      check("while requireVisibleSurface still lets them through", older === null);
+      let always: unknown = null;
+      try {
+        await requireReleasedSurface(USER, "page.dashboard");
+      } catch (err) {
+        always = err;
+      }
+      check("an always-visible surface is never refused", always === null);
+    }
+
     // The admin exemption. ADMIN_USER_IDS is read at call time, not module scope, which is
     // what makes this settable here at all. No request context exists, so `isViewingAsUser`
     // resolves false and the operator is exempt — the normal case.
@@ -208,6 +235,20 @@ async function main() {
         adminOk = false;
       }
       check("an operator is exempt from hiding", adminOk);
+
+      // `requireReleasedSurface` still refuses an admin on a coming-soon page: outside a
+      // request there is no preview cookie to read, so `isPreviewingUnreleased` resolves
+      // false and the admin gets the same default-closed answer as everyone else.
+      let adminReleased: unknown = null;
+      try {
+        await requireReleasedSurface(ADMIN, "page.leads");
+      } catch (err) {
+        adminReleased = err;
+      }
+      check(
+        "requireReleasedSurface refuses an admin too, with no preview cookie outside a request",
+        isSurfaceHiddenError(adminReleased)
+      );
 
       // Coming-soon pages do NOT ride that exemption — they default closed for admins too,
       // so an unreleased feature cannot ship early just because whoever built it is an
