@@ -52,18 +52,3 @@ export function calendarPauseLine(syncError: string | null, provider: "Google" |
 export function calendarOffLine(provider: "Google" | "Microsoft" = "Google"): string {
   return `Meetings are switched off — turn them on in Settings → Integrations → ${provider}`;
 }
-
-/** One line for the Integrations card and nav, which truncate — so the short forms. */
-export function connectionSummary(c: {
-  configured: boolean;
-  connected: boolean;
-  status: ConnectionHealth | null;
-}): { state: "on" | "partial" | "off"; detail: string } {
-  if (!c.configured) return { state: "off", detail: "Unavailable" };
-  if (c.status === "needs_reauth") return { state: "partial", detail: SESSION_EXPIRED_LINE };
-  if (c.status === "disarmed") return { state: "partial", detail: CALENDAR_PAUSED_SHORT };
-  // A paused calendar is the person's own choice, not a broken account — reads as connected.
-  if (c.status === "paused" && c.connected) return { state: "on", detail: "Connected" };
-  if (c.connected) return { state: "on", detail: "Connected" };
-  return { state: "off", detail: "Not connected" };
-}

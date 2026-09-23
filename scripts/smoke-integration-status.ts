@@ -108,6 +108,32 @@ check(
   accountPageStatus(googleAccountStatus(google({ status: "paused" }), pro)).state === "on"
 );
 
+console.log("\na plan that never arrived costs only the inbox");
+// `getSettings` is read for one thing here — whether the plan includes the recruiter scan —
+// and it has timed out in production. Losing it used to take the whole account down to
+// "unknown": no page status, no card, and no sign-in warning for an account that had signed
+// Orbit out. Everything below comes from the connection row, which arrived.
+const planless = googleAccountStatus(google({ canRead: true }), "unknown");
+check("the account still reads connected", planless.state === "connected");
+check("contacts still answer for themselves", planless.capabilities.contacts?.state === "available");
+check("meetings still answer for themselves", planless.capabilities.meetings?.state === "on");
+check("only the inbox goes quiet", planless.capabilities.inbox === undefined);
+check(
+  "and the page still says who it is connected as",
+  accountPageStatus(planless).detail === "Connected as jo@gmail.com"
+);
+const planlessMicrosoft = microsoftAccountStatus(microsoft({ hasMailScope: true }), "unknown");
+check("Microsoft's inbox goes quiet the same way", planlessMicrosoft.capabilities.inbox === undefined);
+check("and Microsoft still reads connected", planlessMicrosoft.state === "connected");
+const planlessOut = googleAccountStatus(google({ connected: false, status: "needs_reauth" }), "unknown");
+check("an expired grant is still an expired grant", planlessOut.state === "needs_reauth");
+check(
+  "and still raises its attention item",
+  attentionItems({ accounts: { google: planlessOut }, ai: "unknown" })
+    .map((i) => i.id)
+    .join(",") === "google-reauth"
+);
+
 console.log("\nmicrosoftAccountStatus");
 const m = microsoftAccountStatus(microsoft(), pro);
 check("connected, with the account's email", m.state === "connected" && m.email === "jo@outlook.com");
@@ -159,6 +185,20 @@ check(
   items.map((i) => i.id).join(",")
 );
 check("every item opens a page", items.every((i) => ["google", "microsoft", "ai"].includes(i.tab)));
+// Each button opens a page; none of them fixes anything where it stands. A screen reader
+// announces these on their own, so "Fix" — which said neither what it would do nor what it
+// would do it to — is not among them.
+check(
+  "each button says where it goes",
+  items.map((i) => i.action).join(" | ") === "Sign in again | See what happened | Turn on AI",
+  items.map((i) => i.action).join(" | ")
+);
+for (const item of items) {
+  check(
+    `"${item.action}" is in the house voice`,
+    !item.action.includes("'") && !item.action.endsWith(".") && !/fix|failed/i.test(item.action)
+  );
+}
 check("unknown lookups add nothing", attentionItems({ accounts: { google: "unknown" }, ai: "unknown" }).length === 0);
 check("healthy accounts and AI on add nothing", attentionItems({ accounts: { google: g, microsoft: m }, ai: { ready: true } }).length === 0);
 

@@ -74,7 +74,13 @@ export type MicrosoftConnectionInput = {
   hasMailScope: boolean;
 };
 
-type Plan = { canUseRecruiters: boolean };
+/**
+ * `"unknown"` is the plan lookup having failed or timed out. It is the only thing the plan
+ * decides here — whether the inbox scan is included — so it costs that one capability its
+ * certainty and nothing else: the account still says whether it is connected, what contacts
+ * and meetings it allows, and whether it signed Orbit out.
+ */
+type Plan = { canUseRecruiters: boolean } | "unknown";
 type ProviderName = "Google" | "Microsoft";
 
 function accountState(c: { configured: boolean; connected: boolean; status: ConnectionHealth | null }): AccountState {
@@ -101,9 +107,18 @@ function meetingsStatus(
   };
 }
 
-function inboxStatus(granted: boolean, plan: Plan): CapabilityStatus {
-  if (!plan.canUseRecruiters) return { state: "locked", detail: "Part of Orbit Pro and Lifetime" };
-  return { state: granted ? "available" : "not_allowed" };
+/**
+ * Spread into `capabilities`, because without the plan there is no honest state to give it:
+ * `locked` would sell an upgrade to someone who has already paid, and `available` would offer
+ * a scan the plan may not include. The account simply doesn't mention its inbox, and every
+ * other feature answers as usual.
+ */
+function inboxCapability(granted: boolean, plan: Plan): { inbox?: CapabilityStatus } {
+  if (plan === "unknown") return {};
+  if (!plan.canUseRecruiters) {
+    return { inbox: { state: "locked", detail: "Part of Orbit Pro and Lifetime" } };
+  }
+  return { inbox: { state: granted ? "available" : "not_allowed" } };
 }
 
 export function googleAccountStatus(c: GoogleConnectionInput, plan: Plan): AccountStatus {
@@ -115,7 +130,7 @@ export function googleAccountStatus(c: GoogleConnectionInput, plan: Plan): Accou
     capabilities: {
       contacts: { state: c.canImportContacts ? "available" : "not_allowed" },
       meetings: meetingsStatus(c.hasCalendarScope, c.status, c.syncError, "Google"),
-      inbox: inboxStatus(c.canRead, plan),
+      ...inboxCapability(c.canRead, plan),
       send: { state: c.canSend ? "on" : "not_allowed" },
     },
   };
@@ -130,7 +145,7 @@ export function microsoftAccountStatus(c: MicrosoftConnectionInput, plan: Plan):
     capabilities: {
       contacts: { state: c.hasContactsScope ? "available" : "not_allowed" },
       meetings: meetingsStatus(c.hasCalendarScope, c.status, c.syncError, "Microsoft"),
-      inbox: inboxStatus(c.hasMailScope, plan),
+      ...inboxCapability(c.hasMailScope, plan),
     },
   };
 }
@@ -251,7 +266,11 @@ export function attentionItems(input: {
         id: `${provider}-meetings`,
         tab: provider,
         message: meetings.detail ?? `Meetings from ${name} stopped coming in.`,
-        action: "Fix",
+        // Not "Fix": the button opens that account's page, where the Meetings row explains
+        // itself and offers the repair. A bare "Fix" beside a message promised something this
+        // button doesn't do, and read as nothing at all when a screen reader announced it on
+        // its own.
+        action: "See what happened",
       });
     }
   }

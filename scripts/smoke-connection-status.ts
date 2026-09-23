@@ -5,11 +5,9 @@
  * Run: npx tsx scripts/smoke-connection-status.ts
  */
 import {
-  CALENDAR_PAUSED_SHORT,
   SESSION_EXPIRED_LINE,
   calendarOffLine,
   calendarPauseLine,
-  connectionSummary,
   deriveConnectionHealth,
 } from "../src/lib/connection-status";
 
@@ -35,7 +33,6 @@ check("a connection the person paused reads paused", deriveConnectionHealth(row(
 check("paused wins over a stale error", deriveConnectionHealth(row({ syncStatus: "paused", nextSyncAt: null, syncError: "old" })) === "paused");
 check("a failure is still disarmed", deriveConnectionHealth(row({ nextSyncAt: null, syncError: "Google Calendar 403" })) === "disarmed");
 check("needs_reauth still wins over everything", deriveConnectionHealth(row({ status: "needs_reauth", syncStatus: "paused", nextSyncAt: null })) === "needs_reauth");
-check("a paused connection is not a problem on the card", connectionSummary({ configured: true, connected: true, status: "paused" }).state === "on");
 
 console.log("calendarPauseLine");
 check("scope trouble asks for calendar access", calendarPauseLine("Google Calendar 403: insufficient scope") === "Calendar sync paused — reconnect Google and allow calendar access");
@@ -59,14 +56,6 @@ check(
   calendarOffLine("Microsoft") === "Meetings are switched off — turn them on in Settings → Integrations → Microsoft",
   calendarOffLine("Microsoft"),
 );
-
-console.log("connectionSummary");
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-check("unconfigured", same(connectionSummary({ configured: false, connected: false, status: null }), { state: "off", detail: "Unavailable" }));
-check("expired", same(connectionSummary({ configured: true, connected: false, status: "needs_reauth" }), { state: "partial", detail: SESSION_EXPIRED_LINE }));
-check("paused", same(connectionSummary({ configured: true, connected: true, status: "disarmed" }), { state: "partial", detail: CALENDAR_PAUSED_SHORT }));
-check("connected", connectionSummary({ configured: true, connected: true, status: "active" }).detail === "Connected");
-check("no row", connectionSummary({ configured: true, connected: false, status: null }).detail === "Not connected");
 
 console.log("house voice");
 for (const line of [

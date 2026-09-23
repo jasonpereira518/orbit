@@ -22,7 +22,14 @@ export const SETTINGS_GROUPS = [
 export type SettingsGroupKey = (typeof SETTINGS_GROUPS)[number]["key"];
 export type SettingsGroupId = (typeof SETTINGS_GROUPS)[number]["id"];
 
-/** Labels are what the admin console lists these surfaces as. */
+/**
+ * Labels are what the admin console, the command palette and the operator hide-list call
+ * these surfaces, so a section that now opens one dialog page is named after that page. The
+ * ids never follow: they are the keys a stored hide-list matches on.
+ *
+ * `settings-api` keeps a name of its own because it backs two pages — API keys and Claude and
+ * ChatGPT — and either page's name would hide the other half of what hiding it hides.
+ */
 export const SETTINGS_SECTIONS = [
   { id: "settings-profile", label: "Profile", group: "account" },
   { id: "settings-plan", label: "Pricing Plan", group: "account" },
@@ -32,7 +39,7 @@ export const SETTINGS_SECTIONS = [
   { id: "settings-targets", label: "Targets", group: "preferences" },
   { id: "settings-ai", label: "AI provider", group: "integrations" },
   { id: "settings-outreach", label: "Outreach", group: "integrations" },
-  { id: "settings-calendar", label: "Calendar feed", group: "integrations" },
+  { id: "settings-calendar", label: "Reminders in calendar", group: "integrations" },
   { id: "settings-api", label: "API and connectors", group: "integrations" },
   { id: "settings-webhooks", label: "Webhooks", group: "integrations" },
   { id: "settings-knowledge", label: "Knowledge", group: "resources" },
@@ -130,6 +137,15 @@ export function integrationHref(target: IntegrationLinkTarget) {
 
 export function isIntegrationTabId(value: string | null | undefined): value is IntegrationTabId {
   return INTEGRATION_TABS.some((tab) => tab.id === value);
+}
+
+/**
+ * Whether a view is one of the Advanced pages — the ones the dialog folds into a disclosure
+ * and the Overview gives no card. Selecting one from outside the nav has to open that
+ * disclosure, which is why this is shared rather than private to the dialog.
+ */
+export function isAdvancedIntegrationTab(view: IntegrationView): boolean {
+  return INTEGRATION_TABS.some((tab) => tab.id === view && tab.group === "advanced");
 }
 
 function ownKey<T extends object>(record: T, key: string): key is Extract<keyof T, string> {

@@ -106,10 +106,6 @@ const LinkedInMessagesImport = dynamic(
   { loading: () => <PanelSkeleton /> }
 );
 
-function isAdvanced(view: IntegrationView): boolean {
-  return INTEGRATION_TABS.some((tab) => tab.id === view && tab.group === "advanced");
-}
-
 /**
  * Settings → Integrations: the accounts Orbit works with, one page each, with the developer
  * tools folded into Advanced.
@@ -125,6 +121,8 @@ export function IntegrationsDialog({
   onOpenChange,
   view,
   onViewChange,
+  advancedOpen,
+  onAdvancedOpenChange,
   focus,
   tabs,
   statuses,
@@ -136,6 +134,14 @@ export function IntegrationsDialog({
   onOpenChange: (open: boolean) => void;
   view: IntegrationView;
   onViewChange: (view: IntegrationView) => void;
+  /**
+   * The Advanced disclosure in the side nav, owned by the caller: arriving at an Advanced
+   * page from a link has to open it, and the link is read out there. Collapsing it is the
+   * person's own choice and nothing in here undoes that — the selected page stays open behind
+   * it, and the main list's first row keeps the nav reachable.
+   */
+  advancedOpen: boolean;
+  onAdvancedOpenChange: (open: boolean) => void;
   /** Where inside `view` to land — set by links like `?integration=gmail`. */
   focus: IntegrationFocus | null;
   /** The pages this viewer may see, in order — already filtered for hidden surfaces. */
@@ -158,6 +164,8 @@ export function IntegrationsDialog({
           active={open}
           view={view}
           onViewChange={onViewChange}
+          advancedOpen={advancedOpen}
+          onAdvancedOpenChange={onAdvancedOpenChange}
           focus={focus}
           tabs={tabs}
           statuses={statuses}
@@ -174,6 +182,8 @@ function DialogBody({
   active,
   view,
   onViewChange,
+  advancedOpen,
+  onAdvancedOpenChange,
   focus,
   tabs,
   statuses,
@@ -189,6 +199,14 @@ function DialogBody({
   active: boolean;
   view: IntegrationView;
   onViewChange: (view: IntegrationView) => void;
+  /**
+   * The Advanced disclosure in the side nav, owned by the caller: arriving at an Advanced
+   * page from a link has to open it, and the link is read out there. Collapsing it is the
+   * person's own choice and nothing in here undoes that — the selected page stays open behind
+   * it, and the main list's first row keeps the nav reachable.
+   */
+  advancedOpen: boolean;
+  onAdvancedOpenChange: (open: boolean) => void;
   focus: IntegrationFocus | null;
   tabs: IntegrationTabId[];
   statuses: IntegrationStatuses | null;
@@ -217,7 +235,6 @@ function DialogBody({
       ? "microsoft"
       : null;
   const [visited, setVisited] = useState<ReadonlySet<IntegrationView>>(() => new Set([view]));
-  const [advancedOpen, setAdvancedOpen] = useState(() => isAdvanced(view));
   const tabRefs = useRef(new Map<IntegrationView, HTMLButtonElement>());
   const panelScroller = useRef<HTMLDivElement>(null);
   // Where focus goes after the next view change, set only by changes that hide or remove the
@@ -232,7 +249,6 @@ function DialogBody({
   // link, the card) must be mounted — and its nav row shown — in the same paint it is
   // selected in.
   if (!visited.has(view)) setVisited(new Set(visited).add(view));
-  if (isAdvanced(view) && !advancedOpen) setAdvancedOpen(true);
 
   // Each page starts at its own top (or at the spot a link asked for) rather than wherever
   // the last one was scrolled to, and its nav row is brought into view.
@@ -357,7 +373,13 @@ function DialogBody({
   const views: IntegrationView[] = [OVERVIEW, ...visibleTabs.map((tab) => tab.id)];
 
   function onTabKeyDown(event: React.KeyboardEvent<HTMLDivElement>, ids: IntegrationView[]) {
-    const index = ids.indexOf(view);
+    // Taken from the row that has focus, not from the selected view. A tablist the selection
+    // isn't in makes its first row tabbable (see `tabRow`), and reading the index off `view`
+    // there gave -1 — so ArrowDown landed back on that same first row instead of moving past
+    // it, and the list looked stuck. Falls back to the selection for a key that arrives from
+    // somewhere other than a row.
+    const focused = ids.findIndex((id) => tabRefs.current.get(id) === event.target);
+    const index = focused >= 0 ? focused : ids.indexOf(view);
     let next: number;
     switch (event.key) {
       case "ArrowDown":
@@ -483,7 +505,7 @@ function DialogBody({
                 type="button"
                 aria-expanded={advancedOpen}
                 aria-controls="integration-advanced-tabs"
-                onClick={() => setAdvancedOpen((wasOpen) => !wasOpen)}
+                onClick={() => onAdvancedOpenChange(!advancedOpen)}
                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-muted-foreground outline-none hover:bg-card/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70"
               >
                 <ChevronRight
@@ -495,17 +517,19 @@ function DialogBody({
                 />
                 Advanced
               </button>
-              {advancedOpen ? (
-                <div
-                  id="integration-advanced-tabs"
-                  role="tablist"
-                  aria-label="Advanced"
-                  aria-orientation="vertical"
-                  onKeyDown={(event) => onTabKeyDown(event, advancedIds)}
-                >
-                  {advancedTabs.map((tab) => tabRow(tab.id, tab.label, advancedIds))}
-                </div>
-              ) : null}
+              {/* `hidden` rather than unmounted, the same way the Overview's phone-only
+                  Advanced block does it: the button's `aria-controls` names this list, and a
+                  list that isn't in the document is a reference to nothing. */}
+              <div
+                id="integration-advanced-tabs"
+                role="tablist"
+                aria-label="Advanced"
+                aria-orientation="vertical"
+                hidden={!advancedOpen}
+                onKeyDown={(event) => onTabKeyDown(event, advancedIds)}
+              >
+                {advancedTabs.map((tab) => tabRow(tab.id, tab.label, advancedIds))}
+              </div>
             </div>
           ) : null}
         </nav>
@@ -528,6 +552,7 @@ function DialogBody({
                   <IntegrationsOverview
                     tabs={tabs}
                     statuses={statuses}
+                    runningTab={runningTab}
                     onOpen={openPage}
                     onConnect={(provider) =>
                       (provider === "google" ? googleConnect : microsoftConnect).connect()

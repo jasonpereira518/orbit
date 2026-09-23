@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import type { getSettings } from "@/actions/settings";
@@ -12,6 +12,7 @@ import {
   OVERVIEW,
   OVERVIEW_TABS,
   integrationLabel,
+  isAdvancedIntegrationTab,
   legacyHashTab,
   resolveIntegrationParam,
   type IntegrationFocus,
@@ -58,6 +59,11 @@ export function IntegrationsSettings({
   const [view, setView] = useState<IntegrationView>(OVERVIEW);
   const [focus, setFocus] = useState<IntegrationFocus | null>(null);
   const [statuses, setStatuses] = useState<IntegrationStatuses | null>(null);
+  // The dialog's Advanced disclosure. It lives out here because opening it is part of
+  // arriving at an Advanced page from a link, and links are read here — `selectView` below is
+  // the one door every page goes through that isn't the dialog's own nav. Inside the dialog
+  // nothing re-opens it, so a collapse made there stays made.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const refreshStatuses = useCallback(() => {
     let settled = false;
@@ -84,15 +90,24 @@ export function IntegrationsSettings({
 
   const rows = OVERVIEW_TABS.filter((id) => tabs.includes(id));
 
+  /**
+   * Selecting a page: an Advanced one opens the Advanced block on its way in, so the page the
+   * dialog lands on has a row in the nav rather than one folded away out of sight.
+   */
+  const selectView = useCallback((next: IntegrationView) => {
+    setView(next);
+    if (isAdvancedIntegrationTab(next)) setAdvancedOpen(true);
+  }, []);
+
   /** Opens on `next` when this viewer can see it; otherwise on the Overview. */
   const show = useCallback(
     (next: IntegrationView, nextFocus: IntegrationFocus | null = null) => {
       const visible = next === OVERVIEW || tabs.includes(next);
-      setView(visible ? next : OVERVIEW);
+      selectView(visible ? next : OVERVIEW);
       setFocus(visible ? nextFocus : null);
       setOpen(true);
     },
-    [tabs]
+    [tabs, selectView]
   );
 
   const openOn = useCallback(
@@ -115,16 +130,24 @@ export function IntegrationsSettings({
     setHandled(requested);
     const resolved = resolveIntegrationParam(requested);
     if (resolved && (resolved.view === OVERVIEW || tabs.includes(resolved.view))) {
-      setView(resolved.view);
+      selectView(resolved.view);
       setFocus(resolved.focus);
       setOpen(true);
     }
   }
 
-  // The old per-card anchors.
+  // The old per-card anchors. Each hash is acted on once, which the ref — not the effect's
+  // deps — is what guarantees: `tabs` is a fresh array after every `router.refresh()`, and
+  // `show` is rebuilt with it, so a save that refreshes the server data re-runs this effect.
+  // Without the ref that re-run re-read the hash still sitting in the URL and threw the person
+  // back to the page it names, in the middle of whatever they had moved on to.
+  const handledHash = useRef<string | null>(null);
   useEffect(() => {
     function openForHash() {
-      const target = legacyHashTab(window.location.hash);
+      const hash = window.location.hash;
+      if (hash === handledHash.current) return;
+      handledHash.current = hash;
+      const target = legacyHashTab(hash);
       if (target && tabs.includes(target)) show(target);
     }
     openForHash();
@@ -154,6 +177,10 @@ export function IntegrationsSettings({
       "",
       `${window.location.pathname}${rest ? `?${rest}` : ""}${legacyHash ? "" : window.location.hash}`
     );
+    // `replaceState` fires no `hashchange`, so the guard above has to be told the hash is
+    // gone. Left holding a hash the URL no longer has, it would ignore the same anchor the
+    // next time someone clicked it.
+    handledHash.current = window.location.hash;
   }
 
   if (tabs.length === 0) return null;
@@ -228,11 +255,13 @@ export function IntegrationsSettings({
           refreshStatuses();
         }}
         view={view}
+        advancedOpen={advancedOpen}
+        onAdvancedOpenChange={setAdvancedOpen}
         onViewChange={(next) => {
           // Back on the Overview after a page: show what was just turned on or connected
           // there, not what was true when the dialog opened.
           if (next === OVERVIEW && view !== OVERVIEW) refreshStatuses();
-          setView(next);
+          selectView(next);
           setFocus(null);
         }}
         focus={focus}

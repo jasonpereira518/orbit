@@ -43,6 +43,7 @@ const DESCRIPTIONS: Partial<Record<IntegrationTabId, string>> = {
 export function IntegrationsOverview({
   tabs,
   statuses,
+  runningTab,
   onOpen,
   onConnect,
   connecting,
@@ -50,6 +51,12 @@ export function IntegrationsOverview({
   /** Visible pages — hidden surfaces already filtered out. */
   tabs: IntegrationTabId[];
   statuses: IntegrationStatuses | null;
+  /**
+   * The page an import job is running on, or null. The nav row for it carries the same
+   * marker, but the nav is hidden on phones — where this is the only thing on screen that
+   * can say an import is under way.
+   */
+  runningTab: IntegrationTabId | null;
   onOpen: (tab: IntegrationTabId) => void;
   /** Starts that account's consent screen, for the cards whose action `connects`. */
   onConnect: (provider: AccountProvider) => void;
@@ -100,7 +107,12 @@ export function IntegrationsOverview({
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/70">
                   <IntegrationIcon id={id} className="size-4" />
                 </span>
-                <h4 className="text-sm font-medium text-ink">{integrationLabel(id)}</h4>
+                <h4 id={`integration-card-name-${id}`} className="text-sm font-medium text-ink">
+                  {integrationLabel(id)}
+                  {runningTab === id ? (
+                    <span className="font-normal text-muted-foreground"> · running</span>
+                  ) : null}
+                </h4>
               </div>
               <p className="text-sm text-muted-foreground">{DESCRIPTIONS[id]}</p>
               {showStatus ? (
@@ -114,6 +126,9 @@ export function IntegrationsOverview({
                   size="sm"
                   variant={action.primary ? "default" : "outline"}
                   data-integration-card={id}
+                  // Sighted readers get the card around it; a screen reader announcing the
+                  // buttons on their own would otherwise hear "Manage" four times over.
+                  aria-describedby={`integration-card-name-${id}`}
                   disabled={action.connects ? connecting === action.connects : undefined}
                   onClick={() =>
                     action.connects ? onConnect(action.connects) : onOpen(id)
