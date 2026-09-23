@@ -148,6 +148,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-progress-card": "pure",
   "smoke-import-provenance": "pure",
   "smoke-import-finish": "pure",
+  "smoke-finish-scene-geometry": "pure",
   "smoke-linkedin-slug-guard": "pglite",
   "smoke-legal-pages": "pure",
   "smoke-landing-anchors": "pure",
