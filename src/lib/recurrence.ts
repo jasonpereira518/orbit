@@ -341,7 +341,7 @@ export function expandEvent(
   event: ParsedCalendarEvent,
   rule: RecurrenceRule | null,
   window: { from: Date; to: Date },
-  opts: { exDates?: Date[]; cap?: number } = {}
+  opts: { exDates?: Date[]; cap?: number; overrides?: ParsedCalendarEvent[] } = {}
 ): ParsedCalendarEvent[] {
   // No rule, or no start: the event stands alone, uid untouched.
   if (!rule || !event.start) return [event];
@@ -372,6 +372,16 @@ export function expandEvent(
   // the time a Date reaches here it is already the correct instant in the event's own zone —
   // no zone math needed at this end.
   const exDateTimes = new Set((opts.exDates ?? []).map((d) => d.getTime()));
+
+  // Overrides: a VEVENT sharing this series' uid, carrying its own RECURRENCE-ID (the ORIGINAL
+  // scheduled instant it replaces, not its own possibly-moved start) and no RRULE of its own.
+  // Keyed by that original instant so the loop below can substitute one in place, by identity,
+  // as it reaches the candidate it replaces — never emitted as an independent event, and never
+  // duplicating the occurrence it overrides.
+  const overrideByInstant = new Map<number, ParsedCalendarEvent>();
+  for (const override of opts.overrides ?? []) {
+    if (override.recurrenceId) overrideByInstant.set(override.recurrenceId.getTime(), override);
+  }
 
   const results: ParsedCalendarEvent[] = [];
   // RFC 5545's COUNT tallies every candidate from DTSTART onward, regardless of the window —
@@ -405,13 +415,90 @@ export function expandEvent(
     if (instant.getTime() < window.from.getTime()) continue;
     if (exDateTimes.has(instant.getTime())) continue;
 
+    // The id is always keyed to the ORIGINAL scheduled instant — the slot in the series this
+    // occurrence occupies — regardless of whether an override moved its actual time. That is
+    // what "keeping the id of the occurrence it replaces" means: a rescheduled instance must
+    // dedupe against, and only against, the row already ingested for the slot it replaced.
+    const uid = instant.getTime() === masterMs ? event.uid : occurrenceUid(event.uid, instant);
+    const override = overrideByInstant.get(instant.getTime());
+
+    if (override) {
+      // Substitute the override's own time/summary/attendees wholesale, but keep the id the
+      // occurrence it replaces would have had. `rrule`/`exDates`/`recurrenceId` are cleared: the
+      // emitted row is a plain occurrence now, not a rule-bearer.
+      results.push({ ...override, uid, rrule: null, exDates: null, recurrenceId: null });
+      continue;
+    }
+
     results.push({
       ...event,
       start: instant,
       end: durationMs !== null ? new Date(instant.getTime() + durationMs) : event.end,
-      uid: instant.getTime() === masterMs ? event.uid : occurrenceUid(event.uid, instant),
+      uid,
     });
   }
 
   return results;
+}
+
+/**
+ * Expand every event a parsed ICS document/feed produced, honouring RECURRENCE-ID overrides.
+ *
+ * `parseIcsEvents` returns one `ParsedCalendarEvent` per VEVENT block, and a recurring series
+ * with a rescheduled instance is TWO such blocks sharing one `uid`: a master (RRULE, no
+ * RECURRENCE-ID) and an override (RECURRENCE-ID, no RRULE — the moved time, and usually a
+ * changed summary/attendees). Calling `expandEvent` on each block independently is wrong: the
+ * override would surface as its own extra event at the moved time, while the master's expansion
+ * still emits an untouched occurrence at the slot the override replaces — two rows for one
+ * meeting, one of them stale, and (worse) both wanting the SAME id when the override happens to
+ * fall on the series' own DTSTART.
+ *
+ * So events are grouped by uid first. The one event per uid that carries no `recurrenceId` is
+ * that series' master (a plain, non-recurring event is simply a series of one — `expandEvent`
+ * already returns that unchanged); every other event sharing the uid is handed to `expandEvent`
+ * as an override, which substitutes it in place of the occurrence it replaces rather than
+ * emitting it a second time. An override whose uid matches no master in this batch — the master
+ * fell outside whatever page or CalDAV resource produced this batch — has nothing to attach to;
+ * it is still a real meeting that happened, so it is emitted standalone rather than dropped.
+ */
+export function expandIcsEvents(
+  parsedEvents: ParsedCalendarEvent[],
+  window: { from: Date; to: Date },
+  opts: { cap?: number } = {}
+): ParsedCalendarEvent[] {
+  const masters = new Map<string, ParsedCalendarEvent>();
+  const overridesByUid = new Map<string, ParsedCalendarEvent[]>();
+  // Two non-override blocks sharing a uid is a malformed feed (real ICS never does this) — the
+  // first is kept as the series' master and any later one stands alone rather than being
+  // silently dropped.
+  const standalone: ParsedCalendarEvent[] = [];
+
+  for (const event of parsedEvents) {
+    if (event.recurrenceId) {
+      const list = overridesByUid.get(event.uid);
+      if (list) list.push(event);
+      else overridesByUid.set(event.uid, [event]);
+      continue;
+    }
+    if (!masters.has(event.uid)) masters.set(event.uid, event);
+    else standalone.push(event);
+  }
+
+  const out: ParsedCalendarEvent[] = [...standalone];
+  for (const [uid, master] of masters) {
+    const overrides = overridesByUid.get(uid) ?? [];
+    overridesByUid.delete(uid);
+    const rule = master.rrule ? parseRRule(`RRULE:${master.rrule}`) : null;
+    out.push(
+      ...expandEvent(master, rule, window, {
+        exDates: master.exDates ?? undefined,
+        overrides,
+        cap: opts.cap,
+      })
+    );
+  }
+  // Real overrides whose uid matched no master in this batch — see the function's own comment.
+  for (const leftover of overridesByUid.values()) out.push(...leftover);
+
+  return out;
 }

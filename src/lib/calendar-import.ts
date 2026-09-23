@@ -47,6 +47,17 @@ export type ParsedCalendarEvent = {
   rrule?: string | null;
   /** EXDATE instants, already resolved against the event's TZID. */
   exDates?: Date[] | null;
+  /**
+   * The `RECURRENCE-ID` instant, when this VEVENT is an OVERRIDE of one occurrence of a
+   * recurring series sharing its `uid` — the original (pre-override) scheduled instant of the
+   * occurrence being replaced, not this VEVENT's own (possibly moved) `start`. Resolved against
+   * its own `TZID`, falling back to the `DTSTART` zone when the line carries none — exactly as
+   * `exDates` already does.
+   *
+   * `null`/absent means this VEVENT is a plain event or a recurring master, never an override.
+   * `recurrence.ts`'s `expandEvent`/`expandIcsEvents` are what actually consume this.
+   */
+  recurrenceId?: Date | null;
 };
 
 /**
@@ -248,6 +259,16 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       })
       .filter((d): d is Date => d !== null);
 
+    // RECURRENCE-ID marks this VEVENT as an override of one occurrence of a series sharing its
+    // UID — resolved the same TZID-aware way as EXDATE, falling back to DTSTART's zone.
+    const recurrenceIdLine = block.split(/\r?\n/).find((l) => /^RECURRENCE-ID[;:]/i.test(l));
+    const recurrenceId = recurrenceIdLine
+      ? parseIcsDate(
+          recurrenceIdLine.slice(recurrenceIdLine.indexOf(":") + 1).trim(),
+          tzidOfLine(recurrenceIdLine) ?? timezone
+        )
+      : null;
+
     if (!summary && !attendees.length && !start) continue;
 
     events.push({
@@ -268,6 +289,7 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
       selfResponse,
       rrule,
       exDates: exDates.length > 0 ? exDates : null,
+      recurrenceId,
     });
   }
 

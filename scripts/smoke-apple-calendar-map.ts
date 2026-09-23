@@ -142,6 +142,52 @@ const EMPTY_SYNC_RESPONSE = `<?xml version="1.0" encoding="utf-8"?>
   <D:sync-token>https://caldav.icloud.com/1234567/calendars/home/sync/100</D:sync-token>
 </D:multistatus>`;
 
+/** A recurring master plus a RECURRENCE-ID override sharing one uid, IN THE SAME calendar-data
+ *  blob — the shape a real CalDAV calendar-object resource takes (RFC 4791: every VEVENT for one
+ *  uid lives in one resource). Regression coverage for the bug where the override arrived as a
+ *  second, independent event with the SAME bare uid as the master's own DTSTART occurrence and
+ *  last-one-wins overwrote it. */
+const RECURRING_WITH_OVERRIDE_ICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Orbit Test Fixture//EN
+BEGIN:VEVENT
+UID:recurring-override-1
+DTSTAMP:20260301T120000Z
+DTSTART:20260310T150000Z
+DTEND:20260310T160000Z
+SUMMARY:Coffee with Ada
+ORGANIZER;CN=Me:mailto:me@icloud.com
+ATTENDEE;CN=Ada Lovelace:mailto:ada@example.com
+RRULE:FREQ=WEEKLY;COUNT=4
+END:VEVENT
+BEGIN:VEVENT
+UID:recurring-override-1
+RECURRENCE-ID:20260317T150000Z
+DTSTAMP:20260301T120000Z
+DTSTART:20260318T180000Z
+DTEND:20260318T190000Z
+SUMMARY:Coffee with Ada (rescheduled)
+ORGANIZER;CN=Me:mailto:me@icloud.com
+ATTENDEE;CN=Ada Lovelace:mailto:ada@example.com
+END:VEVENT
+END:VCALENDAR
+`;
+
+const SYNC_RESPONSE_WITH_OVERRIDE = `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/1234567/calendars/home/recurring-override-1.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"1-rec-override"</D:getetag>
+        <C:calendar-data>${RECURRING_WITH_OVERRIDE_ICS}</C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:sync-token>https://caldav.icloud.com/1234567/calendars/home/sync/3</D:sync-token>
+</D:multistatus>`;
+
 /** `now` pinned so the 90-day-back/60-day-forward expansion window deterministically covers all
  *  four COUNT=4 weekly occurrences starting 2026-03-10. */
 const NOW = new Date("2026-03-01T00:00:00Z");
@@ -186,6 +232,54 @@ async function main() {
   );
   check("a deleted href counts as a tombstone", page.tombstones === 1, String(page.tombstones));
   check("selfEmails is the owner address, lowercased", page.selfEmails[0] === OWNER, page.selfEmails.join(","));
+
+  // --- REGRESSION 1, through the CalDAV connector: a RECURRENCE-ID override replaces the
+  //     occurrence it moved rather than colliding with the master's own DTSTART occurrence on
+  //     the same bare uid. `apple-calendar.ts` inherits this from `expandIcsEvents` since it
+  //     parses and expands each CalDAV calendar-object resource the same way the ICS
+  //     subscription path does. -------------------------------------------------------------
+  {
+    const { impl } = stubFetch([xml(SYNC_RESPONSE_WITH_OVERRIDE)]);
+    const overridePage = await fetchCalendarPage({
+      creds: CREDS,
+      calendarUrl: CALENDAR_URL,
+      cursor: null,
+      ownerEmail: OWNER,
+      now: NOW,
+      fetchImpl: impl,
+    });
+    const overrideFamily = overridePage.events.filter(
+      (e) => e.uid === "recurring-override-1" || e.uid.startsWith("recurring-override-1_")
+    );
+    check(
+      "a rescheduled instance produces exactly one row per occurrence, not a duplicate bare uid",
+      overrideFamily.length === 4,
+      overrideFamily.map((e) => e.uid).join(", ")
+    );
+    check(
+      "every occurrence's uid is distinct",
+      new Set(overrideFamily.map((e) => e.uid)).size === 4,
+      overrideFamily.map((e) => e.uid).join(", ")
+    );
+    const untouchedMaster = overrideFamily.find((e) => e.uid === "recurring-override-1");
+    check(
+      "the master's own DTSTART occurrence survives, untouched by the override",
+      untouchedMaster?.summary === "Coffee with Ada",
+      untouchedMaster?.summary
+    );
+    const overriddenSlot = overrideFamily.find((e) => e.uid === "recurring-override-1_2026-03-17T15:00:00.000Z");
+    check(
+      "the overridden slot keeps the id of the occurrence it replaces",
+      !!overriddenSlot,
+      overrideFamily.map((e) => e.uid).join(", ")
+    );
+    check(
+      "...but carries the override's own moved time and summary",
+      overriddenSlot?.start?.toISOString() === "2026-03-18T18:00:00.000Z" &&
+        overriddenSlot?.summary === "Coffee with Ada (rescheduled)",
+      `${overriddenSlot?.start?.toISOString()} / ${overriddenSlot?.summary}`
+    );
+  }
 
   // --- The frozen `cal:<uid>` formula, proven through the connector's OWN output (page.events),
   //     not a bare parseIcsEvents call — an id prefix introduced inside fetchCalendarPage's own

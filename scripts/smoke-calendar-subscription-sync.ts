@@ -218,6 +218,135 @@ run(async () => {
     }
   }
 
+  // --- REGRESSION 1: a RECURRENCE-ID override replaces the occurrence it moved, not the
+  //     whole series.
+  //
+  // A real feed for a recurring meeting with one moved instance carries two VEVENTs sharing a
+  // UID: the master (RRULE) and an override (RECURRENCE-ID — the ORIGINAL slot it replaces —
+  // no RRULE, its own moved time/summary). Before the fix, `parseIcsEvents` dropped
+  // RECURRENCE-ID, so the override arrived as a second independent event with the SAME bare
+  // uid as the master's own DTSTART occurrence; ingest's last-one-wins `onConflictDoUpdate`
+  // then overwrote that row with the override's (wrong) data, and the occurrence the override
+  // actually replaced was left untouched under its own suffixed id — one interaction row lost,
+  // one row corrupted.
+  {
+    await reset();
+
+    const overrideWeeklyStart = new Date(now.getTime() - 21 * 86400000);
+    overrideWeeklyStart.setUTCHours(15, 0, 0, 0);
+    const overrideWeeklyEnd = new Date(overrideWeeklyStart.getTime() + 30 * 60000);
+
+    // The master's own second occurrence — the exact slot the override replaces.
+    const secondOccurrence = new Date(overrideWeeklyStart.getTime() + 7 * 86400000);
+
+    // Moved two days later, at a different hour, with a different summary.
+    const movedStart = new Date(secondOccurrence.getTime() + 2 * 86400000);
+    movedStart.setUTCHours(18, 0, 0, 0);
+    const movedEnd = new Date(movedStart.getTime() + 30 * 60000);
+
+    const overrideIcs = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:override-sub-uid",
+      "SUMMARY:1:1 with Nia",
+      `DTSTART:${icsUtc(overrideWeeklyStart)}`,
+      `DTEND:${icsUtc(overrideWeeklyEnd)}`,
+      "RRULE:FREQ=WEEKLY;COUNT=4",
+      "ATTENDEE;CN=Nia:mailto:nia@example.com",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:override-sub-uid",
+      `RECURRENCE-ID:${icsUtc(secondOccurrence)}`,
+      "SUMMARY:1:1 with Nia (rescheduled)",
+      `DTSTART:${icsUtc(movedStart)}`,
+      `DTEND:${icsUtc(movedEnd)}`,
+      "ATTENDEE;CN=Nia:mailto:nia@example.com",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    globalThis.fetch = (async () =>
+      new Response(overrideIcs, { status: 200, headers: { "Content-Type": "text/calendar" } })) as typeof fetch;
+
+    try {
+      const [overrideSub] = await db
+        .insert(calendarSubscriptions)
+        .values({ userId: USER, icsUrl: "https://example.test/override-feed.ics", enabled: 1 })
+        .returning();
+
+      await syncCalendarSubscription(USER, overrideSub!.id);
+
+      const rows = rowsOf<{ external_id: string; interaction_date: string; ai_summary: string | null }>(
+        await db.execute(sql`
+          SELECT external_id, interaction_date, ai_summary FROM interactions
+          WHERE user_id = ${USER} AND external_id LIKE 'cal:override-sub-uid%'
+          ORDER BY external_id
+        `)
+      );
+
+      check(
+        "a rescheduled instance produces exactly one row per occurrence, not a duplicate/overwritten bare id",
+        rows.length === 4,
+        rows.map((r) => r.external_id).join(", ")
+      );
+
+      const bareRow = rows.find((r) => /^cal:override-sub-uid:[0-9a-f-]{36}$/.test(r.external_id));
+      check(
+        "the original DTSTART occurrence survives, untouched by the override",
+        bareRow?.ai_summary === "1:1 with Nia",
+        bareRow?.ai_summary ?? "(missing)"
+      );
+      check(
+        "...at its own original time, not the override's",
+        !!bareRow && new Date(bareRow.interaction_date).getTime() === overrideWeeklyStart.getTime(),
+        bareRow?.interaction_date
+      );
+
+      const secondSuffix = `cal:override-sub-uid_${secondOccurrence.toISOString()}`;
+      const replacedRow = rows.find((r) => r.external_id.startsWith(secondSuffix));
+      check(
+        "the overridden slot keeps the id of the occurrence it replaces",
+        !!replacedRow,
+        rows.map((r) => r.external_id).join(", ")
+      );
+      check(
+        "...but carries the override's own summary",
+        replacedRow?.ai_summary === "1:1 with Nia (rescheduled)",
+        replacedRow?.ai_summary ?? "(missing)"
+      );
+      check(
+        "...and its own moved time, not the slot's original time",
+        !!replacedRow && new Date(replacedRow.interaction_date).getTime() === movedStart.getTime(),
+        replacedRow?.interaction_date
+      );
+
+      const untouchedSuffixes = rows.filter(
+        (r) => r.external_id.includes("_") && !r.external_id.startsWith(secondSuffix)
+      );
+      check(
+        "the two un-overridden later occurrences are untouched",
+        untouchedSuffixes.length === 2 && untouchedSuffixes.every((r) => r.ai_summary === "1:1 with Nia"),
+        untouchedSuffixes.map((r) => `${r.external_id}=${r.ai_summary}`).join(", ")
+      );
+
+      // --- re-sync: still idempotent with an override in play ---
+      await syncCalendarSubscription(USER, overrideSub!.id);
+      const rowsAfter = rowsOf<{ external_id: string }>(
+        await db.execute(sql`
+          SELECT external_id FROM interactions
+          WHERE user_id = ${USER} AND external_id LIKE 'cal:override-sub-uid%'
+        `)
+      );
+      check(
+        "re-syncing a feed with an override creates no duplicates",
+        rowsAfter.length === rows.length,
+        `${rows.length} -> ${rowsAfter.length}`
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
   await reset();
 
   if (failures > 0) {

@@ -36,7 +36,7 @@
  *    connection that can never succeed again.
  */
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
-import { expandEvent, parseRRule } from "@/lib/recurrence";
+import { expandIcsEvents } from "@/lib/recurrence";
 import {
   CalDavAuthError,
   CalDavStaleSyncTokenError,
@@ -113,12 +113,13 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
 
   const events: ParsedCalendarEvent[] = [];
   for (const icsDocument of changes.icsDocuments) {
-    for (const parsed of parseIcsEvents(icsDocument)) {
-      const rule = parsed.rrule ? parseRRule(parsed.rrule) : null;
-      // A null/unsupported rule, or a master with no start, comes back unchanged (see
-      // `expandEvent`'s own doc comment) — so this is safe to call unconditionally.
-      events.push(...expandEvent(parsed, rule, window, { exDates: parsed.exDates ?? undefined }));
-    }
+    // A CalDAV calendar-object resource carries every VEVENT for one uid together — a master
+    // plus any RECURRENCE-ID overrides — so grouping per document is exactly what
+    // `expandIcsEvents` needs to replace an overridden occurrence in place rather than
+    // expanding the master and the override as two independent events. A null/unsupported rule,
+    // or a master with no start, comes back unchanged (see `expandEvent`'s own doc comment) —
+    // so this is safe to call unconditionally.
+    events.push(...expandIcsEvents(parseIcsEvents(icsDocument), window));
   }
 
   return {

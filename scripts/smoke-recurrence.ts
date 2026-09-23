@@ -6,7 +6,14 @@
  * property that protects stored data: a NON-recurring event's uid must come out byte-identical,
  * because `cal:<uid>` is already written on every interaction Orbit has ever ingested.
  */
-import { expandEvent, isOccurrenceUid, occurrenceUid, parseRRule, MAX_OCCURRENCES } from "../src/lib/recurrence";
+import {
+  expandEvent,
+  expandIcsEvents,
+  isOccurrenceUid,
+  occurrenceUid,
+  parseRRule,
+  MAX_OCCURRENCES,
+} from "../src/lib/recurrence";
 import { parseIcsEvents, type ParsedCalendarEvent } from "../src/lib/calendar-import";
 
 let failures = 0;
@@ -267,6 +274,144 @@ async function main() {
     exDates: parsed[0]!.exDates ?? [],
   });
   check("a weekly feed event yields its occurrences minus EXDATE", fromFeed.length === 2, `got ${fromFeed.length}`);
+
+  // --- REGRESSION 1: RECURRENCE-ID overrides ---
+  //
+  // A real feed for a recurring meeting with one moved instance sends two VEVENTs sharing a
+  // UID: the master (RRULE) and an override (RECURRENCE-ID — the ORIGINAL slot it replaces —
+  // and no RRULE, carrying the moved time/summary/attendees). Before this fix `parseIcsEvents`
+  // dropped RECURRENCE-ID entirely, so the override arrived as a second independent event with
+  // the same uid and rrule=null: `expandEvent` returned it unchanged, and because ITS start
+  // also happened to be a series occurrence, both it and the master's own expansion could
+  // collide on the same bare `cal:<uid>` — last-one-wins, silently dropping the original
+  // meeting. These checks pin `expandEvent`'s own `overrides` option first, then the same thing
+  // end to end through `expandIcsEvents` and the real ICS parser.
+  const overrideOfLater: ParsedCalendarEvent = {
+    ...evt("2026-03-11T18:00:00Z", {
+      summary: "Rescheduled 1:1 with Priya",
+      attendees: [{ name: "Priya", email: "priya@example.com" }],
+    }),
+    recurrenceId: new Date("2026-03-10T13:00:00Z"), // the DST-correct instant `every[1]` sits at
+  };
+  const withOverride = expandEvent(evt("2026-03-03T14:00:00Z"), parseRRule("RRULE:FREQ=WEEKLY"), WINDOW, {
+    overrides: [overrideOfLater],
+  });
+  check(
+    "an override does not add an extra occurrence to the series",
+    withOverride.length === 5,
+    `got ${withOverride.length}`
+  );
+  const replacedLater = withOverride.find(
+    (e) => e.uid === occurrenceUid("u1", new Date("2026-03-10T13:00:00Z"))
+  );
+  check(
+    "the overridden occurrence keeps the id of the slot it replaces",
+    !!replacedLater,
+    withOverride.map((e) => e.uid).join(", ")
+  );
+  check(
+    "and carries the override's own moved time",
+    replacedLater?.start?.toISOString() === "2026-03-11T18:00:00.000Z",
+    replacedLater?.start?.toISOString()
+  );
+  check("and the override's own summary", replacedLater?.summary === "Rescheduled 1:1 with Priya");
+  check(
+    "no separate event exists at the override's moved time under any other id",
+    withOverride.filter((e) => e.start?.toISOString() === "2026-03-11T18:00:00.000Z").length === 1
+  );
+
+  // An override of the occurrence AT the master's own DTSTART — the exact collision the bug
+  // report measured (a duplicate bare `cal:<uid>`) — must still keep the bare uid, not gain a
+  // second bare-uid row.
+  const overrideOfFirst: ParsedCalendarEvent = {
+    ...evt("2026-03-04T09:00:00Z", { summary: "Moved first 1:1" }),
+    recurrenceId: new Date("2026-03-03T14:00:00Z"),
+  };
+  const withFirstOverride = expandEvent(evt("2026-03-03T14:00:00Z"), parseRRule("RRULE:FREQ=WEEKLY"), WINDOW, {
+    overrides: [overrideOfFirst],
+  });
+  check(
+    "withFirstOverride still has 5 occurrences total, not a duplicate",
+    withFirstOverride.length === 5,
+    `got ${withFirstOverride.length}`
+  );
+  const bareRows = withFirstOverride.filter((e) => e.uid === "u1");
+  check("an override of the DTSTART occurrence keeps exactly one bare-uid row", bareRows.length === 1);
+  check(
+    "and it carries the override's own moved time",
+    bareRows[0]?.start?.toISOString() === "2026-03-04T09:00:00.000Z",
+    bareRows[0]?.start?.toISOString()
+  );
+
+  // --- expandIcsEvents: grouping by uid, end to end through the real ICS parser ---
+  const overrideIcs = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VEVENT",
+    "UID:series-1",
+    "SUMMARY:Weekly Sync",
+    "DTSTART:20260901T090000Z",
+    "DTEND:20260901T093000Z",
+    "RRULE:FREQ=WEEKLY;COUNT=4",
+    "ATTENDEE;CN=Priya:mailto:priya@example.com",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:series-1",
+    "RECURRENCE-ID:20260908T090000Z",
+    "SUMMARY:Weekly Sync (moved)",
+    "DTSTART:20260909T140000Z",
+    "DTEND:20260909T143000Z",
+    "ATTENDEE;CN=Priya:mailto:priya@example.com",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const overrideParsed = parseIcsEvents(overrideIcs);
+  check("parser keeps RECURRENCE-ID on the override", overrideParsed.length === 2 && overrideParsed[1]?.recurrenceId?.toISOString() === "2026-09-08T09:00:00.000Z", String(overrideParsed[1]?.recurrenceId));
+  check("the override carries no RRULE of its own", overrideParsed[1]?.rrule === null);
+  check("the master carries no RECURRENCE-ID", overrideParsed[0]?.recurrenceId == null);
+
+  const SEPT_WINDOW = { from: new Date("2026-08-01T00:00:00Z"), to: new Date("2026-10-01T00:00:00Z") };
+  const overrideExpanded = expandIcsEvents(overrideParsed, SEPT_WINDOW);
+  check(
+    "a rescheduled instance produces exactly one row per occurrence, not a duplicate bare uid",
+    overrideExpanded.length === 4,
+    overrideExpanded.map((e) => e.uid).join(", ")
+  );
+  check(
+    "every occurrence's id is distinct",
+    new Set(overrideExpanded.map((e) => e.uid)).size === 4,
+    overrideExpanded.map((e) => e.uid).join(", ")
+  );
+  const overriddenSlot = overrideExpanded.find((e) => e.uid === "series-1_2026-09-08T09:00:00.000Z");
+  check(
+    "the overridden slot keeps the id of the occurrence it replaces",
+    !!overriddenSlot,
+    overrideExpanded.map((e) => e.uid).join(", ")
+  );
+  check(
+    "the overridden slot carries the override's own moved time",
+    overriddenSlot?.start?.toISOString() === "2026-09-09T14:00:00.000Z",
+    overriddenSlot?.start?.toISOString()
+  );
+  check("the overridden slot carries the override's own summary", overriddenSlot?.summary === "Weekly Sync (moved)");
+  check(
+    "the master's DTSTART occurrence keeps its bare uid, undisturbed",
+    overrideExpanded.some((e) => e.uid === "series-1")
+  );
+
+  // An override whose master fell outside this batch (a page boundary, or a document that only
+  // carries the override) has nothing to attach to — it must still surface, standalone, rather
+  // than being silently dropped.
+  const orphanOverride: ParsedCalendarEvent = {
+    ...evt("2026-03-11T18:00:00Z", { uid: "orphan-1", summary: "Orphan override" }),
+    recurrenceId: new Date("2026-03-10T13:00:00Z"),
+  };
+  const orphanResult = expandIcsEvents([orphanOverride], WINDOW);
+  check(
+    "an override with no master in the batch is emitted standalone rather than dropped",
+    orphanResult.length === 1 && orphanResult[0]?.uid === "orphan-1",
+    orphanResult.map((e) => e.uid).join(", ")
+  );
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

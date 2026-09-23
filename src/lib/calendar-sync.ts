@@ -3,7 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
 import { counterpartsOf } from "@/lib/calendar-classify";
-import { expandEvent, isOccurrenceUid, parseRRule } from "@/lib/recurrence";
+import { expandIcsEvents, isOccurrenceUid } from "@/lib/recurrence";
 import { decideCalendarEvents } from "@/lib/decisions/calendar";
 import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
 import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
@@ -252,11 +252,10 @@ export async function syncCalendarSubscription(
       from: new Date(now - SYNC_WINDOW_PAST_MS),
       to: new Date(now + SYNC_WINDOW_FUTURE_MS),
     };
-    const events = parsed.flatMap((event) =>
-      expandEvent(event, event.rrule ? parseRRule(`RRULE:${event.rrule}`) : null, window, {
-        exDates: event.exDates ?? [],
-      })
-    );
+    // Groups by uid first, so a RECURRENCE-ID override VEVENT replaces the occurrence it
+    // overrides in place rather than surfacing as a second, independent event — see
+    // `expandIcsEvents`'s own comment.
+    const events = expandIcsEvents(parsed, window);
     const stats = await applyNetworkingEvents(userId, events, {
       selfEmails: sub.selfEmail ? [sub.selfEmail] : [],
       createFollowUps: true,
