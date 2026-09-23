@@ -84,8 +84,12 @@ CREATE TABLE IF NOT EXISTS user_settings (
   suspended_by text,
   speech_tag_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  inbound_log_token text,
+  inbound_log_token_created_at timestamptz,
+  inbound_log_last_received_at timestamptz
 );
+CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1915,7 +1919,17 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // columns, and main's are stamped 96 without 74-76, so only a number above both makes every
 // database pick up both halves. Scanned every remote ref, every local branch and every
 // worktree's working file on Sep 23 2026: 96 was the highest found anywhere.
-export const SCHEMA_VERSION = 97;
+// 98 = user_settings.inbound_log_token (+ created/last-received) and its partial unique
+// index: the BCC logging address, `log-<token>@<domain>`. The column holds the token's
+// SHA-256, never the token — same rule as calendar_feed_token, and a sharper one, because
+// this address is a WRITE path into the account rather than a read of it.
+//
+// NOT 96 anymore. This branch wrote 96 and so did the Deepgram branch's own main merge, two
+// entries up — the fifth silent collision this log records, and caught only because both
+// landed before either merged. Rescanned every remote ref, every local branch and every
+// worktree's working file on Sep 23 2026: 97 is the connector foundation's own merge below
+// this one, so 98 is free.
+export const SCHEMA_VERSION = 98;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2676,6 +2690,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email", "text");
   await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
+  await ensureColumn(client, "user_settings", "inbound_log_token", "text");
+  await ensureColumn(client, "user_settings", "inbound_log_token_created_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "inbound_log_last_received_at", "timestamptz");
   await ensureColumn(
     client,
     "user_settings",
@@ -3248,6 +3265,11 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
+  // Schema v96: the BCC logging address. The token column holds a SHA-256, never the token.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS inbound_log_token text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS inbound_log_token_created_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS inbound_log_last_received_at timestamptz`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
   // Added a version after the table itself. A preview deployment of the branch that
   // introduced `interest_list_signups` already created it without these, and

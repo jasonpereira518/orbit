@@ -43,6 +43,7 @@ export const NEVER_REVEALABLE: readonly string[] = [
   "user_settings.twilio_account_sid_encrypted",
   "user_settings.twilio_auth_token_encrypted",
   "user_settings.calendar_feed_token",
+  "user_settings.inbound_log_token",
   "gmail_connections.access_token_encrypted",
   "gmail_connections.refresh_token_encrypted",
   "outlook_connections.access_token_encrypted",

@@ -223,6 +223,27 @@ export const userSettings = pgTable("user_settings", {
     withTimezone: true,
   }),
   /**
+   * SHA-256 of the BCC logging address's token, hex — never the token itself.
+   *
+   * Same rule as `calendar_feed_token` two lines up, and for a sharper reason: that one is a
+   * read credential, this one is a WRITE path. Anyone holding the plaintext can put
+   * interactions in this account, so a copy of this table must not hand that over.
+   */
+  /*
+   * Its UNIQUE index (`user_settings_inbound_log_token_uidx`, partial on NOT NULL) is
+   * declared in `src/db/index.ts` rather than here, because this table is the two-argument
+   * `pgTable` form with no index array. Uniqueness is load-bearing, not decorative: a
+   * collision would route one person's mail into another's account.
+   */
+  inboundLogToken: text("inbound_log_token"),
+  inboundLogTokenCreatedAt: timestamp("inbound_log_token_created_at", {
+    withTimezone: true,
+  }),
+  /** Last message accepted at that address, for the "is this working?" line in settings. */
+  inboundLogLastReceivedAt: timestamp("inbound_log_last_received_at", {
+    withTimezone: true,
+  }),
+  /**
    * The opaque per-account identifier that rides on Deepgram's usage records for dictation
    * and voice notes, as `shortform:<speechTagId>` (see `src/lib/speech-tag-id.ts`).
    *
