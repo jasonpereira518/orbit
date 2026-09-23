@@ -51,7 +51,7 @@ export function CrmCardView({
 
   if (connection.status === "needs_reauth") {
     return (
-      <Shell title="HubSpot needs you to reconnect" body={connection.error ?? "HubSpot stopped accepting Orbit’s sign-in."}>
+      <Shell title="HubSpot needs you to reconnect" body="HubSpot stopped accepting Orbit’s sign-in — reconnect to keep syncing">
         <div className="flex flex-wrap gap-2">
           {canConnect ? (
             <Button type="button" disabled={pending !== null} onClick={onConnect}>

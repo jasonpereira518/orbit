@@ -204,8 +204,10 @@ function main() {
     );
     const erred = view({ ...base, connection: { ...conn, error: "HubSpot is rate-limiting this account — the next sync picks up where this one stopped" }, counts: { workContacts: 1, pipeline: 0, blocked: 2 } });
     check("an error and the cap are shown", erred.includes("rate-limiting") && erred.includes("2 customers didn’t fit your plan’s contact limit"), erred);
-    const reauth = view({ ...base, connection: { ...conn, status: "needs_reauth", error: "HubSpot refused the access token" }, counts: null });
+    const reauth = view({ ...base, connection: { ...conn, status: "needs_reauth", error: "Token endpoint returned 400" }, counts: null });
     check("needs reauth: reconnect, not sync", reauth.includes("HubSpot needs you to reconnect") && reauth.includes("Reconnect HubSpot") && !reauth.includes("Sync now"), reauth);
+    check("needs reauth: the fixed body", reauth.includes("HubSpot stopped accepting Orbit’s sign-in — reconnect to keep syncing"), reauth);
+    check("needs reauth: never the stored error", !reauth.includes("Token endpoint returned 400"), reauth);
     const demo = view({ ...base, connection: { ...conn, demo: true }, counts: { workContacts: 4, pipeline: 2, blocked: 0 } });
     check("demo: sample data, no sync", demo.includes("Sample data") && !demo.includes("Sync now"), demo);
     check("one work contact is singular", view({ ...base, connection: conn, counts: { workContacts: 1, pipeline: 1, blocked: 0 } }).includes("1 work contact ·"));

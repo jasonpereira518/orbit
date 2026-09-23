@@ -28,6 +28,18 @@ export type CrmPerson = {
 /** `connector_connections.account_ref` of the localhost demo's HubSpot: never synced, never revoked. */
 export const DEMO_CRM_ACCOUNT_REF = "orbit-demo";
 
+/**
+ * The line the CRM card shows for a stored `sync_error`. Every message Orbit's own HubSpot code
+ * writes on purpose starts with "HubSpot " (the API errors, the not-entitled and no-owner
+ * stops) and passes through; anything else — a database constraint, a missing server setting,
+ * a token endpoint's status — never reaches the page.
+ */
+export function crmErrorLine(error: string | null): string | null {
+  if (!error) return null;
+  if (error.startsWith("HubSpot ")) return error;
+  return "The last sync hit a problem — the next automatic sync will try again";
+}
+
 /** What the CRM card shows about one connection. Dates arrive pre-worded, so SSR and hydration agree. */
 export type CrmConnectionView = {
   connectorId: "hubspot";

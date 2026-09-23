@@ -75,6 +75,17 @@ run(async () => {
   check("an expired lease does not", (await crmStatusFor(USER)).connection?.syncing === false);
   await db.update(connectorConnections).set({ syncStatus: "idle" }).where(eq(connectorConnections.userId, USER));
 
+  console.log("\nthe error the card shows never carries raw text");
+  await db.update(connectorConnections).set({ syncError: 'duplicate key value violates unique constraint "x"' }).where(eq(connectorConnections.userId, USER));
+  const rawError = (await crmStatusFor(USER)).connection?.error;
+  check("a database error reads as the generic line", rawError === "The last sync hit a problem — the next automatic sync will try again", String(rawError));
+  const rateLimited = "HubSpot is rate-limiting this account — the next sync picks up where this one stopped";
+  await db.update(connectorConnections).set({ syncError: rateLimited }).where(eq(connectorConnections.userId, USER));
+  const ownError = (await crmStatusFor(USER)).connection?.error;
+  check("Orbit’s own HubSpot message passes through", ownError === rateLimited, String(ownError));
+  await db.update(connectorConnections).set({ syncError: null }).where(eq(connectorConnections.userId, USER));
+  check("no error is no line", (await crmStatusFor(USER)).connection?.error === null);
+
   console.log("\nsync now");
   const calls: string[] = [];
   const okSync = async (conn: { id: string; accessToken: string | null }, opts: { budgetMs: number }) => {
@@ -99,7 +110,11 @@ run(async () => {
   const failed = await message(runCrmSyncNow(USER, "hubspot", { sync: broken, consume: async () => {} }));
   check("a provider failure is said plainly", failed === "HubSpot didn’t answer — the next automatic sync will try again", String(failed));
   const [afterFail] = await db.select().from(connectorConnections).where(eq(connectorConnections.userId, USER));
-  check("and recorded as retryable", afterFail?.syncStatus === "error" && afterFail?.nextSyncAt !== null && (afterFail?.syncError ?? "").includes("socket hang up"));
+  check(
+    "and recorded as retryable, in words — the raw error goes to the report, not the row",
+    afterFail?.syncStatus === "error" && afterFail?.nextSyncAt !== null && afterFail?.syncError === "HubSpot didn’t answer — the next automatic sync will try again",
+    String(afterFail?.syncError)
+  );
 
   const stopped = await runCrmSyncNow(USER, "hubspot", { sync: async () => ({ outcome: "stopped", pages: 0, records: 0, contactsCreated: 0, leadsCreated: 0, blocked: 0, message: "HubSpot says no" }), consume: async () => {} });
   check("a stop comes back with its reason", stopped.outcome === "stopped" && stopped.message === "HubSpot says no");

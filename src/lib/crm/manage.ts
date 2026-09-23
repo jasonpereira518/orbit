@@ -17,11 +17,14 @@ import type { CrmConnectorId } from "@/lib/crm/connect";
 import { revokeHubspotToken } from "@/lib/crm/hubspot/api";
 import { syncHubspot, type HubspotSyncResult } from "@/lib/crm/hubspot/sync";
 import { crmCounts, deleteCrmRecordsForConnector } from "@/lib/crm/records";
-import { DEMO_CRM_ACCOUNT_REF, type CrmStatus, type CrmSyncNowResult } from "@/lib/crm/types";
+import { DEMO_CRM_ACCOUNT_REF, crmErrorLine, type CrmStatus, type CrmSyncNowResult } from "@/lib/crm/types";
 import { getEntitlements } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { SYNC_LEASE_MS } from "@/lib/provider-connections";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { reportError } from "@/lib/report-error";
+
+const DIDNT_ANSWER = "HubSpot didn’t answer — the next automatic sync will try again";
 
 /** A person is waiting on the button: shorter than the scheduler's share, and resumable. */
 export const SYNC_NOW_BUDGET_MS = 40_000;
@@ -43,7 +46,7 @@ export async function crmStatusFor(userId: string): Promise<CrmStatus> {
           status: connection.status,
           syncing: connection.syncStatus === "syncing" && (connection.syncStartedAt?.getTime() ?? 0) > leaseCutoff,
           lastSyncedAgo: connection.lastSyncedAt ? formatDistanceToNow(connection.lastSyncedAt, { addSuffix: true }) : null,
-          error: connection.syncError,
+          error: crmErrorLine(connection.syncError),
           demo: connection.accountRef === DEMO_CRM_ACCOUNT_REF,
         }
       : null,
@@ -83,13 +86,11 @@ export async function runCrmSyncNow(
   try {
     result = await sync(conn, { budgetMs: SYNC_NOW_BUDGET_MS });
   } catch (err) {
-    // What the scheduler does with a throw: retryable, backed off, the error kept for the card.
-    await markConnectorSyncResult(conn.id, {
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-      retryable: true,
-    });
-    throw new UserFacingError("HubSpot didn’t answer — the next automatic sync will try again");
+    // What the scheduler does with a throw: retryable, backed off. The card gets words; the
+    // raw error goes to the report, never the row.
+    reportError(err, { where: "crm.sync-now", userId, level: "warning", extra: { connectorId } });
+    await markConnectorSyncResult(conn.id, { ok: false, error: DIDNT_ANSWER, retryable: true });
+    throw new UserFacingError(DIDNT_ANSWER);
   }
   // The backstop: a no-op when the sync recorded its own outcome, which HubSpot's always does.
   await markConnectorSyncSucceeded(conn.id);
