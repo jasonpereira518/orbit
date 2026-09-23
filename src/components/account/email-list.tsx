@@ -53,12 +53,19 @@ export function EmailList() {
     primaryEmailId: user.primaryEmailAddressId,
   };
 
-  const act = async (emailId: string, run: () => Promise<unknown>, done: string) => {
+  /**
+   * `run` reports whether it actually changed anything — `removeEmail` returns `false` when
+   * the address was already gone (the TOCTOU window below can reach that). A `false` still
+   * reloads, because the stale row that prompted the click needs to disappear from the list
+   * either way, but it does not get a success toast: nothing happened on THIS call, and a
+   * toast that says otherwise is a lie regardless of what some other call already did.
+   */
+  const act = async (emailId: string, run: () => Promise<boolean>, done: string) => {
     setBusy(emailId);
     try {
-      await run();
+      const changed = await run();
       await user.reload();
-      toast.success(done);
+      if (changed) toast.success(done);
     } catch (err) {
       // A person who backs out of Clerk's "confirm it's you" prompt chose to stop; that is
       // not a failure and gets no toast.
@@ -80,6 +87,14 @@ export function EmailList() {
         const isPrimary = user.primaryEmailAddressId === email.id;
         const removal = canRemoveEmail(methods, email.id);
         const working = busy === email.id;
+        // Any mutation in flight disables every row, not just its own — the same guard
+        // `devices-list.tsx` uses (`disabled={busy !== null}`). A single shared `busy`
+        // scalar means a second row read as idle while the first is still in flight, which
+        // let a click fire a concurrent second mutation on the busy row, and let two rows'
+        // clicks each evaluate `canRemoveEmail` against the same un-reloaded snapshot — the
+        // TOCTOU window that could drop the account to zero verified emails.
+        const anyBusy = busy !== null;
+        const reasonId = `email-remove-reason-${email.id}`;
 
         return (
           <li key={email.id} className="flex flex-wrap items-center gap-3 py-3">
@@ -95,10 +110,14 @@ export function EmailList() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                disabled={working}
+                disabled={anyBusy}
                 aria-label={`Make ${email.emailAddress} primary`}
                 onClick={() =>
-                  void act(email.id, () => setPrimary(email.id), "Primary address changed")
+                  void act(
+                    email.id,
+                    () => setPrimary(email.id).then(() => true),
+                    "Primary address changed"
+                  )
                 }
               >
                 {working ? "Working…" : "Make primary"}
@@ -108,15 +127,18 @@ export function EmailList() {
               type="button"
               variant="outline"
               size="sm"
-              disabled={working || !removal.allowed}
+              disabled={anyBusy || !removal.allowed}
               title={removal.allowed ? undefined : removal.reason}
               aria-label={`Remove ${email.emailAddress}`}
+              aria-describedby={removal.allowed ? undefined : reasonId}
               onClick={() => void act(email.id, () => removeEmail(email.id), "Address removed")}
             >
               {working ? "Working…" : "Remove"}
             </Button>
             {!removal.allowed && (
-              <p className="w-full text-xs text-muted-foreground">{removal.reason}</p>
+              <p id={reasonId} className="w-full text-xs text-muted-foreground">
+                {removal.reason}
+              </p>
             )}
           </li>
         );
