@@ -1,5 +1,8 @@
 "use client";
 
+import { ExampleTag } from "@/components/onboarding/example-tag";
+import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
+
 import {
   useEffect,
   useRef,
@@ -220,11 +223,14 @@ export function ContactProfileHero({
   linkedinUrl,
   channels,
   formInitial,
+  source,
 }: {
   contactId: string;
   displayName: string;
   fullName: string;
   preferredName?: string | null;
+  /** `contacts.source`; only read for the guided tour's "Example" chip. */
+  source?: string | null;
   firstName?: string | null;
   title?: string | null;
   company?: string | null;
@@ -399,8 +405,9 @@ export function ContactProfileHero({
           <div className="min-w-0 flex-1">
             {/* Sentinel: when this leaves the viewport top, show the mini-bar */}
             <div ref={sentinelRef} className="h-px w-px" aria-hidden />
-            <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink sm:text-4xl">
+            <h1 className="flex flex-wrap items-center gap-x-2 font-[family-name:var(--font-display)] text-3xl text-ink sm:text-4xl">
               {displayName}
+              {isTourExampleSource(source) && <ExampleTag className="align-middle" />}
             </h1>
             {preferredName && preferredName !== fullName ? (
               <p className="mt-0.5 text-sm text-muted-foreground">{fullName}</p>

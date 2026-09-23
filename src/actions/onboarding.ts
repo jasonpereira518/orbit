@@ -7,6 +7,7 @@ import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { TERMS_VERSION } from "@/lib/legal";
 import { persistOnboardingComplete } from "@/lib/onboarding";
+import { removeTourExamples } from "@/lib/onboarding-examples/remove";
 import { isOnboardingPath, isOnboardingStep, type OnboardingPath } from "@/lib/onboarding-steps";
 import { ensureUserSettings, recordTermsAcceptance } from "@/lib/user-settings";
 
@@ -93,7 +94,9 @@ export async function completeOnboarding(opts: { finished?: boolean } = {}) {
 export async function resetOnboarding(opts: { path?: OnboardingPath } = {}) {
   const userId = await requireUserId();
   const db = await getDb();
-  await ensureUserSettings(userId);
+  const settings = await ensureUserSettings(userId);
+  // A replayed tour seeds afresh; anything left from an earlier one goes first.
+  await removeTourExamples(userId, { since: settings.tourStartedAt });
   await db
     .update(userSettings)
     .set({

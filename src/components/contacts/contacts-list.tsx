@@ -49,6 +49,8 @@ import {
   closenessTierChipClass,
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
+import { ExampleTag } from "@/components/onboarding/example-tag";
+import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { cn } from "@/lib/utils";
 import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 import {
@@ -73,6 +75,8 @@ export type ContactListItem = {
   relationshipScore: number;
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
+  /** `contacts.source`; only read for the guided tour's "Example" chip. */
+  source?: string | null;
   priorityLevel: number;
   nextFollowUpAt?: string | Date | null;
   lastInteractionAt?: string | Date | null;
@@ -504,6 +508,9 @@ export function ContactsList({
                           <div className="min-w-0 flex-1">
                             <p className="truncate font-medium text-ink">
                               {c.preferredName || c.fullName}
+                              {isTourExampleSource(c.source) && (
+                                <ExampleTag className="ml-1.5 align-[2px]" />
+                              )}
                             </p>
                             <div className="mt-0.5 flex min-w-0 items-center gap-2">
                               <p className="min-w-0 truncate text-sm">

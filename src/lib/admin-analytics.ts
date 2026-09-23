@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { series, type Grain } from "@/lib/admin-trends";
 import { num, toDate } from "@/lib/admin-metrics";
@@ -485,7 +486,7 @@ export async function acquisitionFunnel(
       count(*)::int AS signups,
       count(*) FILTER (
         WHERE s.onboarding_completed_at IS NOT NULL
-           OR EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id)
+           OR EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE})
            OR EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id)
       )::int AS activated,
       count(*) FILTER (

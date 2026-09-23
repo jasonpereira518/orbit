@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { resolvePlan, type Plan, type PlanSource } from "@/lib/entitlements";
 import type { AdminUserRow } from "@/lib/admin-metrics";
@@ -331,7 +332,7 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
                0::bigint AS in_tokens, 0::bigint AS out_tokens, 0::bigint AS cost_micros,
                NULL::timestamptz AS first_interaction_at,
                min(created_at) AS first_contact_at, max(created_at) AS last_write_at
-        FROM contacts GROUP BY user_id
+        FROM contacts WHERE source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE} GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, count(*)::int, 0, 0, 0, 0::bigint, 0::bigint, 0::bigint,
                0::bigint, min(created_at), NULL::timestamptz, max(created_at)

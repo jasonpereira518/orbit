@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { seedTourExamples } from "@/lib/onboarding-examples/seed";
 import { ensureUserSettings } from "@/lib/user-settings";
 
 const TOURED_PATHS = [
@@ -47,6 +48,9 @@ export async function startInAppTour() {
       updatedAt: now,
     })
     .where(eq(userSettings.userId, userId));
+  // After the flag, never before: a failure here leaves the person past the gate with an
+  // empty orbit and a retry button, not stuck on the stage.
+  await seedTourExamples(userId);
   revalidateToured();
   return { ok: true as const, redirectTo: "/dashboard" as const };
 }

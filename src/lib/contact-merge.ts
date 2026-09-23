@@ -32,6 +32,7 @@
  */
 
 import { and, eq, sql } from "drizzle-orm";
+import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
 import { contactMerges, contacts, duplicateSuggestions } from "@/db/schema";
 import { deleteAvatarBlobs, isAvatarBlobUrl } from "@/lib/avatar-blob";
@@ -207,7 +208,14 @@ export async function mergeContacts(
                last_name            = COALESCE(w.last_name, l.last_name),
                preferred_name       = COALESCE(w.preferred_name, l.preferred_name),
                profile_image_url    = COALESCE(w.profile_image_url, l.profile_image_url),
-               source               = COALESCE(w.source, l.source),
+               -- A merge must never turn a real person into a tour example (removal would
+               -- then delete them) nor keep an example label on a winner that now holds
+               -- real data. Only when neither side is an example does the usual fill apply.
+               source               = CASE
+                                        WHEN l.source = ${TOUR_EXAMPLE_SOURCE} THEN w.source
+                                        WHEN w.source = ${TOUR_EXAMPLE_SOURCE} THEN l.source
+                                        ELSE COALESCE(w.source, l.source)
+                                      END,
                how_met              = COALESCE(w.how_met, l.how_met),
                met_context          = COALESCE(w.met_context, l.met_context),
                date_met             = COALESCE(w.date_met, l.date_met),

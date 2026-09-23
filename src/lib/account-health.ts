@@ -1,5 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { notTourExample } from "@/lib/onboarding-examples/sql";
 import {
   calendarSubscriptions,
   contacts,
@@ -237,7 +238,8 @@ export async function loadAccountHealthInput(
       contactCount: needContacts
         ? sql<number>`(
             SELECT count(*)::int FROM ${contacts}
-            WHERE ${contacts.userId} = ${userId})`
+            WHERE ${contacts.userId} = ${userId}
+              AND ${notTourExample(contacts.source)})`
         : sql<number>`0`,
     })
     .from(userSettings)
