@@ -6,6 +6,7 @@ import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { shouldShowTermsNotice } from "@/lib/legal";
 import { AppShell } from "@/components/layout/app-shell";
+import type { AccountMenuProfile } from "@/components/account/account-menu";
 import { LifetimeAiOfferProvider } from "@/components/lifetime-ai-offer";
 import { managedKeysConfigured } from "@/lib/ai-access";
 import { MANAGED_AI_ENABLED } from "@/lib/managed-ai-policy";
@@ -15,9 +16,11 @@ import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
+  displayProfileFromSettings,
   getDisplayProfile,
   isClerkConfigured,
   isDemoMode,
+  type UserProfile,
 } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
@@ -33,6 +36,13 @@ import { resolveThemePreference } from "@/lib/theme";
  * plan. Same reason `(admin)` and `(checkout)` set it.
  */
 export const dynamic = "force-dynamic";
+
+/** The three fields the account menu needs, from whichever resolver answered. */
+function toMenuProfile(profile: UserProfile | null): AccountMenuProfile | null {
+  return profile
+    ? { name: profile.name, email: profile.email, imageUrl: profile.imageUrl }
+    : null;
+}
 
 export default async function AppLayout({
   children,
@@ -123,7 +133,25 @@ export default async function AppLayout({
   ]);
 
   // The viewer's own name, email and picture, for the account menu in the nav.
-  const displayProfile = await getDisplayProfile();
+  //
+  // Built from the `settings` row this layout is already holding, not from
+  // `getDisplayProfile()`. Same values whenever the mirror is complete — but when the mirror
+  // has no name, `getDisplayProfile()` falls through to `getCurrentUserProfile()`, and that
+  // is a Clerk Backend API round trip plus an identity write. This layout wraps every
+  // authenticated route, so on an account created without name collection (Clerk has no
+  // name either, so the backfill cannot fix it) that fall-through would sit on the critical
+  // path of every single navigation, for the life of the account.
+  //
+  // A mirrored row with no name is perfectly serviceable here: the menu's own fallback
+  // label covers it, the address is shown underneath either way, and `AccountMenu` prefers
+  // Clerk's live values as soon as Clerk JS has loaded. Clerk is asked only when the mirror
+  // holds no email at all — a row the `getDisplayProfile()` call then backfills, and the
+  // one case demo mode takes, which has no Clerk to call anyway.
+  const displayProfile: AccountMenuProfile | null =
+    toMenuProfile(displayProfileFromSettings(userId, settings)) ??
+    (settings.email
+      ? { name: "", email: settings.email, imageUrl: settings.profileImageUrl ?? undefined }
+      : toMenuProfile(await getDisplayProfile()));
 
   // Whether "Lifetime includes AI" is true on this deployment — see LifetimeAiOfferProvider.
   // False while managed AI is off, even on a dev server holding its own local keys: those
@@ -138,15 +166,7 @@ export default async function AppLayout({
       demoMode={demoMode}
       theme={theme}
       plan={plan}
-      profile={
-        displayProfile
-          ? {
-              name: displayProfile.name,
-              email: displayProfile.email,
-              imageUrl: displayProfile.imageUrl,
-            }
-          : null
-      }
+      profile={displayProfile}
       hidden={[...visibility.hidden]}
       hiddenForUsers={[...visibility.hiddenForUsers]}
       viewingAsUser={visibility.viewingAsUser}
