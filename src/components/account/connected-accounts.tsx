@@ -113,6 +113,9 @@ export function ConnectedAccounts() {
     try {
       const account = await user.createExternalAccount({ strategy, redirectUrl: CALLBACK });
       const next = account.verification?.externalVerificationRedirectURL;
+      // Defensive only — Clerk always returns a redirect URL for a strategy it accepted, so
+      // this should never actually throw; it exists so a future change that breaks that
+      // assumption fails loudly here rather than silently doing nothing.
       if (!next) throw new Error("no redirect");
       navigateAway(next.toString());
     } catch (err) {
