@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Check, ChevronDown, CircleSlash, FileWarning, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { ImportProgress } from "@/components/imports/import-utils";
 import { useImportJob } from "@/lib/import-job-runner";
+import { getLatestFinishedImport } from "@/actions/imports";
 import {
   clearImportQueue,
   runQueue,
@@ -18,7 +20,12 @@ import {
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-import type { QueuedImport } from "@/lib/imports/import-queue";
+import {
+  TARGET_LABEL_INLINE,
+  type QueuedImport,
+} from "@/lib/imports/import-queue";
+import type { ImportTarget } from "@/lib/imports/detect-import-file";
+import type { LatestFinishedImport } from "@/actions/imports";
 
 /**
  * Everything one drop staged, reviewed together and then run without further prompting.
@@ -27,13 +34,101 @@ import type { QueuedImport } from "@/lib/imports/import-queue";
  * the opposite of what dropping a folder is for. So every file is previewed up front, the
  * person confirms once, and the rest happens unattended.
  */
-export function ImportQueueCard() {
+export function ImportQueueCard({
+  onFinishDismiss,
+  onShowFinishDetail,
+}: {
+  /**
+   * Told which import the person just dismissed. The hub renders the same finish from the
+   * server once the queue is cleared, so without this the X would put the card straight
+   * back on screen.
+   */
+  onFinishDismiss?: (importId: string) => void;
+  /**
+   * Opens that import's history sheet — the finish with nobody new to link to says "See what
+   * changed" instead, and the sheet lives in the hub, not here.
+   */
+  onShowFinishDetail?: (importId: string) => void;
+} = {}) {
   const queue = useImportQueue();
   const job = useImportJob();
   const [open, setOpen] = useState<string | null>(null);
   const [running, start] = useTransition();
+  const [finish, setFinish] = useState<LatestFinishedImport | null>(null);
+  // One ask per run: the effect's other dependencies change while a queue is being cleared,
+  // and re-asking each time would flash a new scene over a settled one.
+  const asked = useRef(false);
+
+  /**
+   * The finish's numbers come from the server, not from the queue.
+   *
+   * The queue knows which files ran and which of them didn't finish; it does not know how
+   * many people each one actually brought in — the runner's snapshot carries a progress bar
+   * and a completion line, not counters. Asking the server for the import it just wrote is
+   * also what makes the card's sentence and the history chips below it agree by construction
+   * rather than by two implementations of the same arithmetic.
+   */
+  useEffect(() => {
+    if (queue.phase !== "done" || asked.current) return;
+    asked.current = true;
+    let alive = true;
+    void (async () => {
+      try {
+        const latest = await getLatestFinishedImport();
+        // An import that has already been undone has nothing to celebrate.
+        if (alive && latest && !latest.undoneAt) setFinish(latest);
+      } catch {
+        // The rows below already say what happened, per file. A finish card is the nicer
+        // version of that, not the only one.
+      }
+    })();
+    // Cleanup, not the effect body: leaving the done phase is what makes this finish stale,
+    // and clearing it here means the next run cannot flash the previous one's card in the
+    // moment between its own last step and the server answering.
+    return () => {
+      alive = false;
+      asked.current = false;
+      setFinish(null);
+    };
+  }, [queue.phase]);
 
   if (!queue.items.length && !queue.ignored.length) return null;
+
+  const unfinishedSteps = queue.items.filter((i) => i.status === "failed");
+
+  if (queue.phase === "done" && finish) {
+    return (
+      <div className="space-y-3">
+        <ImportFinishCard
+          summary={{
+            ...finish,
+            unfinished: unfinishedLine(unfinishedSteps),
+          }}
+          avatars={finish.avatars}
+          onDismiss={() => {
+            onFinishDismiss?.(finish.importId);
+            clearImportQueue();
+          }}
+          onShowDetail={() => onShowFinishDetail?.(finish.importId)}
+        />
+        {unfinishedSteps.length ? (
+          <ul className="space-y-1">
+            {unfinishedSteps.map((item) => (
+              <li key={item.id} className="text-xs text-destructive">
+                {item.fileName} — {item.error ?? IMPORT_COPY.importFailed}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {queue.ignored.length ? <IgnoredList ignored={queue.ignored} /> : null}
+        {queue.truncated ? (
+          <p className="text-xs text-muted-foreground">
+            {IMPORT_COPY.truncated}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
 
   const reviewable = queue.items.filter(
     (i) => i.status === "needs_review" && (i.ids?.length ?? 0) > 0,
@@ -109,25 +204,7 @@ export function ImportQueueCard() {
         </p>
       ) : null}
 
-      {queue.ignored.length ? (
-        <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
-          <p className="text-xs font-medium text-muted-foreground">
-            {IMPORT_COPY.notImported}
-          </p>
-          <ul className="mt-1.5 space-y-1">
-            {groupIgnored(queue.ignored).map((group) => (
-              <li
-                key={group.reason}
-                className="truncate text-xs text-muted-foreground"
-              >
-                {group.names.length > 3
-                  ? `${group.names.length} files — ${group.reason}`
-                  : `${group.names.join(", ")} — ${group.reason}`}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      {queue.ignored.length ? <IgnoredList ignored={queue.ignored} /> : null}
 
       {!queue.items.length && queue.ignored.length ? (
         <p className="text-sm text-muted-foreground">
@@ -170,6 +247,54 @@ export function ImportQueueCard() {
         </Button>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * The one line a done card leads with when a step didn't land.
+ *
+ * `finishCopy` puts this where the celebration would go, so it has to be the whole story in a
+ * sentence — the per-file detail is right underneath it. Named with the inline labels, which
+ * keep LinkedIn a proper noun inside a sentence.
+ */
+function unfinishedLine(steps: QueuedImport[]): string | undefined {
+  if (!steps.length) return undefined;
+  const labels = steps.map(
+    (i) =>
+      TARGET_LABEL_INLINE[i.target as Exclude<ImportTarget, "unknown">] ??
+      i.label,
+  );
+  const named =
+    labels.length === 1
+      ? labels[0]
+      : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+  return `Your ${named} didn’t finish`;
+}
+
+/** Files the drop could not use, grouped by reason. */
+function IgnoredList({
+  ignored,
+}: {
+  ignored: { name: string; reason: string }[];
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
+      <p className="text-xs font-medium text-muted-foreground">
+        {IMPORT_COPY.notImported}
+      </p>
+      <ul className="mt-1.5 space-y-1">
+        {groupIgnored(ignored).map((group) => (
+          <li
+            key={group.reason}
+            className="truncate text-xs text-muted-foreground"
+          >
+            {group.names.length > 3
+              ? `${group.names.length} files — ${group.reason}`
+              : `${group.names.join(", ")} — ${group.reason}`}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

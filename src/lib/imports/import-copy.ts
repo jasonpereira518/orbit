@@ -23,6 +23,33 @@ export const IMPORT_COPY = {
   truncated:
     "That folder had more files than Orbit reads in one go — drop the rest after this",
   stopped: "Import stopped",
+
+  // --- Undoing an import ---------------------------------------------------------------
+  // Every line a person reads on the way back out of an import. The counts and the names are
+  // built at the call site (they are numbers, and numbers cannot live in a flat table the
+  // guard reads out of source), but everything that is only words lives here.
+  undoAction: "Undo this import",
+  undoChecking: "Working out who can still go…",
+  undoRemoving: "Taking them back out…",
+  undoConfirm: "Remove them",
+  undoCancel: "Keep them",
+  undoFailed: "Couldn’t undo that import — try again in a moment",
+  undoGone: "That import isn’t here any more",
+  undoAlreadyDone: "This import has already been undone",
+  undoWindowClosed: "The 7-day window for undoing this import has closed",
+  undoNobodyLeft:
+    "Everyone this import brought in has a note, a tag or a reminder now, so there is nobody left to take back",
+  undoInexact:
+    "This import ran before Orbit started tracking edits, so it can’t tell which of these you’ve changed",
+  undoStillGoing:
+    "That import had a lot of people in it — undo it again to take out the rest",
+  /** Why one person is staying. Read as "Ada Lovelace — you’ve tagged them". */
+  undoKeptTagged: "you’ve tagged them",
+  undoKeptNoted: "you’ve written a note",
+  undoKeptReminded: "you’ve set a reminder",
+  undoKeptInteracted: "you’ve logged something with them",
+  undoKeptMerged: "you’ve merged someone into them",
+  undoKeptEdited: "you’ve edited their details",
 } as const;
 
 export type ImportCopyKey = keyof typeof IMPORT_COPY;

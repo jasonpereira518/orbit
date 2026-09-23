@@ -157,6 +157,31 @@ check(
 check("...separately from skipped ones", refused.includes("5 skipped"));
 check("...and never with the word “failed”", !/\bfailed\b/i.test(refused), "");
 
+console.log("An undone import says so");
+const undone = render([
+  item({
+    contactsCreated: 19,
+    contactsUpdated: 6,
+    duplicatesFound: 6,
+    stats: {
+      undoneAt: "2026-09-22T12:00:00Z",
+      undoneRemoved: 17,
+      undoneKept: 2,
+    },
+  }),
+]);
+check("the row says it was undone", undone.includes("Undone"));
+// Not a bare `includes("17")`: lucide's own SVG path data carries "17", so that check passes
+// on a row that says nothing at all.
+check("…and how many went", undone.includes("17 people removed"));
+check("…and never with the word “failed”", !/\bfailed\b/i.test(undone));
+// The chips describe what the import brought in. Once it has been undone they describe
+// people who are no longer here, so the row must not go on claiming them.
+check(
+  "…and stops claiming the people it brought in",
+  !undone.includes("19 added"),
+);
+
 console.log("Every import type still renders");
 const TYPES = [
   "linkedin_connections",

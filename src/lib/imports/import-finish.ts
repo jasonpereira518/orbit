@@ -7,6 +7,22 @@
  * as "2 updated · 2 already here" for two people. The counts arrive here already reconciled;
  * this module only chooses the words.
  */
+/**
+ * How long an import can be undone for.
+ *
+ * It lives here, in the finish's pure module, rather than beside the undo itself: the history
+ * sheet has to decide whether to offer the button or explain that the window has closed, and
+ * it is a client component — `import-undo.ts` reaches `@/db`, so importing anything runtime
+ * from it there fails the build with a `node:fs` chunk error. `import-undo.ts` re-exports this
+ * so the server side keeps its own name for it and there is still only one 7.
+ */
+export const UNDO_WINDOW_DAYS = 7;
+
+/** True while `createdAt` is still inside the undo window. */
+export function withinUndoWindow(createdAt: Date, now: Date = new Date()): boolean {
+  return now.getTime() - createdAt.getTime() <= UNDO_WINDOW_DAYS * 86_400_000;
+}
+
 export type FinishSummary = {
   importId: string;
   /** People the import brought into Orbit. */

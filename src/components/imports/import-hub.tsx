@@ -1,7 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   BookUser,
   Calendar as CalendarIcon,
@@ -10,9 +16,13 @@ import {
   FileSpreadsheet,
   MessageSquare,
 } from "lucide-react";
-import { ImportHistory } from "@/components/imports/import-history";
+import {
+  ImportHistory,
+  type ImportHistoryHandle,
+} from "@/components/imports/import-history";
 import { ImportDropOverlay } from "@/components/imports/import-drop-overlay";
 import { ImportDropzone } from "@/components/imports/import-dropzone";
+import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import { ImportQueueCard } from "@/components/imports/import-queue-card";
 import { ImportSourceRow } from "@/components/imports/import-source-row";
 import { CalendarConnectionsCard } from "@/components/imports/calendar-connections-card";
@@ -54,6 +64,77 @@ import type { ImportHistoryItem, LatestFinishedImport } from "@/actions/imports"
  * capture tray's; the queue surfaces `truncated` when even that is not enough.
  */
 const IMPORT_DROP_LIMITS = { maxFiles: 200, maxDepth: MAX_DROP_DEPTH };
+
+/**
+ * Which finishes this browser has already been shown and told to put away.
+ *
+ * Per-device rather than per-account on purpose: dismissing the card is "I have read this",
+ * not a fact about the import, and it must not cost a write or a round trip. Every read and
+ * write is wrapped — a private window, a full quota or a blocked origin all throw here — and
+ * absent means "show it", so the failure mode is a card that comes back rather than a finish
+ * nobody ever sees.
+ */
+const FINISH_DISMISSED_KEY = "orbit.imports.finishDismissed";
+const MAX_REMEMBERED_DISMISSALS = 20;
+
+function readDismissedFinishes(): string[] {
+  try {
+    const raw = window.localStorage.getItem(FINISH_DISMISSED_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDismissedFinishes(ids: string[]) {
+  try {
+    window.localStorage.setItem(FINISH_DISMISSED_KEY, JSON.stringify(ids));
+  } catch {
+    // Nothing to do, and nothing worth saying: the card reappears next visit.
+  }
+}
+
+/**
+ * Read through `useSyncExternalStore` rather than an effect, so the value has one owner and
+ * the server render has an honest answer. `null` is that answer: "this render does not know
+ * yet", which is what the server and the hydrating client both get. The card therefore never
+ * appears in the server's HTML only to be yanked away a frame later — it arrives once,
+ * already correct, with its own entrance to cover the wait.
+ */
+let dismissedFinishes: string[] | null = null;
+const dismissedListeners = new Set<() => void>();
+
+function subscribeDismissedFinishes(listener: () => void) {
+  dismissedListeners.add(listener);
+  return () => {
+    dismissedListeners.delete(listener);
+  };
+}
+
+function dismissedFinishesSnapshot(): string[] {
+  // Cached: `getSnapshot` must return the same reference until something changes, or React
+  // re-renders for ever.
+  if (dismissedFinishes === null) dismissedFinishes = readDismissedFinishes();
+  return dismissedFinishes;
+}
+
+/** Nothing is known during a server render or the hydration that matches it. */
+function noDismissedFinishesYet(): null {
+  return null;
+}
+
+function dismissFinish(importId: string) {
+  const next = [...dismissedFinishesSnapshot(), importId].slice(
+    -MAX_REMEMBERED_DISMISSALS,
+  );
+  dismissedFinishes = next;
+  writeDismissedFinishes(next);
+  for (const listener of dismissedListeners) listener();
+}
 
 type CalendarSub = {
   id: string;
@@ -175,6 +256,7 @@ export function ImportHub({
   canUseSync = true,
   google,
   outlook,
+  latestFinish,
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
@@ -185,17 +267,18 @@ export function ImportHub({
   canUseSync?: boolean;
   google?: ProviderCalendarInput | null;
   outlook?: ProviderCalendarInput | null;
-  /**
-   * The most recent completed import, for the done card — not yet rendered here; wiring it
-   * through now (as a type-only prop) is what lets `getLatestFinishedImport` reach this
-   * component without a "use server" export mistake going unnoticed until the route loads.
-   * The card itself is a later task.
-   */
+  /** The most recent completed import, drawn as the done card when nothing is running. */
   latestFinish?: LatestFinishedImport | null;
 }) {
   const job = useImportJob();
   const queue = useImportQueue();
   const [open, setOpen] = useState<RowId | null>(null);
+  const dismissed = useSyncExternalStore(
+    subscribeDismissedFinishes,
+    dismissedFinishesSnapshot,
+    noDismissedFinishesYet,
+  );
+  const historyRef = useRef<ImportHistoryHandle>(null);
   useRefreshOnVisible();
 
   const handleFiles = useCallback(async (files: DroppedFile[]) => {
@@ -258,6 +341,19 @@ export function ImportHub({
     (s) => s.state === "needs_reconnect" || s.state === "trouble",
   );
 
+  /**
+   * The finish worth showing: one exists, it hasn't been undone, this browser hasn't put it
+   * away, and the client queue isn't already telling the same story in the card above.
+   */
+  const finishToShow =
+    dismissed &&
+    latestFinish &&
+    !latestFinish.undoneAt &&
+    !queue.items.length &&
+    !dismissed.includes(latestFinish.importId)
+      ? latestFinish
+      : null;
+
   const row = (id: RowId) => ({
     id,
     open: open === id,
@@ -282,7 +378,24 @@ export function ImportHub({
         />
       ) : null}
 
-      <ImportQueueCard />
+      <ImportQueueCard
+        onFinishDismiss={dismissFinish}
+        onShowFinishDetail={(importId) => historyRef.current?.open(importId)}
+      />
+
+      {/*
+        The finish the server knows about, for the visit that comes after the import — a
+        refresh, or coming back to the page. While the client queue still has the run in it,
+        the queue card owns the same card, so only one of the two is ever on screen.
+      */}
+      {finishToShow ? (
+        <ImportFinishCard
+          summary={finishToShow}
+          avatars={finishToShow.avatars}
+          onDismiss={() => dismissFinish(finishToShow.importId)}
+          onShowDetail={() => historyRef.current?.open(finishToShow.importId)}
+        />
+      ) : null}
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">
@@ -409,7 +522,7 @@ export function ImportHub({
         </h2>
         {/* Target for the "import didn't finish" alerts. */}
         <div id="import-history" className="scroll-mt-8">
-          <ImportHistory history={history} />
+          <ImportHistory history={history} ref={historyRef} />
         </div>
       </section>
 

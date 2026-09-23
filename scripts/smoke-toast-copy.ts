@@ -25,6 +25,7 @@
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { finishCopy, type FinishSummary } from "../src/lib/imports/import-finish";
 
 const ROOT = "src";
 const TOAST_CALL = /\btoast\.(error|success|message|warning|info)\(/g;
@@ -156,8 +157,64 @@ for (const table of COPY_TABLES) {
   }
 }
 
+/**
+ * The done card's words, which no amount of source reading would find.
+ *
+ * `finishCopy` builds every line it returns at runtime, out of counts — so the headline, the
+ * detail and the button label are three strings a person reads that this guard had no way to
+ * see. The table above covers `IMPORT_COPY`, including the undo's lines; this covers the
+ * other half of the finish by running the function over the shapes it is actually given: a
+ * plain import, one person, nobody new, a calendar file, several files at once, and a step
+ * that didn't land.
+ */
+const FINISH_SUMMARIES: FinishSummary[] = [
+  { importId: "i1", added: 19, existing: 6, meetingsLogged: 0, sources: ["Connections.csv"] },
+  { importId: "i2", added: 1, existing: 0, meetingsLogged: 0, sources: ["Contacts.vcf"] },
+  { importId: "i3", added: 0, existing: 25, meetingsLogged: 0, sources: ["Connections.csv"] },
+  { importId: "i4", added: 0, existing: 0, meetingsLogged: 38, sources: ["work.ics"] },
+  {
+    importId: "i5",
+    added: 12,
+    existing: 3,
+    meetingsLogged: 0,
+    sources: ["Connections.csv", "messages.csv"],
+  },
+  {
+    importId: "i6",
+    added: 12,
+    existing: 0,
+    meetingsLogged: 0,
+    sources: ["Connections.csv"],
+    unfinished: "Your LinkedIn messages didn’t finish",
+  },
+];
+let finishLines = 0;
+for (const summary of FINISH_SUMMARIES) {
+  const copy = finishCopy(summary);
+  const where = `src/lib/imports/import-finish.ts (finishCopy ${summary.importId})`;
+  for (const line of [copy.headline, copy.detail ?? "", copy.action.label]) {
+    if (!line) continue;
+    finishLines++;
+    checkText(where, line);
+    // Not one of the shared RULES: this one is about the finish's own connector budget, and
+    // `checkText` skips short fragments that a chip is allowed to be.
+    if ((line.match(/ — /g) ?? []).length > 1) {
+      problems.push(`${where}  [two — connectors in one line]  ${line.slice(0, 90)}`);
+    }
+  }
+}
+// A guard on the guard: a `finishCopy` that started returning empty strings would otherwise
+// sail through with nothing checked.
+if (finishLines < 12) {
+  throw new Error(
+    `only ${finishLines} finish lines read — has finishCopy's shape changed?`,
+  );
+}
+
 console.log("Toast copy");
-console.log(`  ${toastCalls} toast calls, ${messagesChecked} messages checked`);
+console.log(
+  `  ${toastCalls} toast calls, ${messagesChecked} messages checked (${finishLines} from the import finish)`,
+);
 if (toastCalls < 250) {
   // A guard on the guard: if the call pattern stopped matching, this would pass vacuously.
   throw new Error(

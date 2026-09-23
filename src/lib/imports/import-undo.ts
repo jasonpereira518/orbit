@@ -4,6 +4,10 @@ import { imports, type ImportJobRowPayload, type ImportStats } from "@/db/schema
 import { deleteContactForUser } from "@/lib/contact-delete";
 import { getAdapter } from "@/lib/import-adapters";
 import { fingerprintContact } from "@/lib/imports/import-provenance";
+import {
+  UNDO_WINDOW_DAYS,
+  withinUndoWindow,
+} from "@/lib/imports/import-finish";
 
 /**
  * Undoing an import.
@@ -25,8 +29,12 @@ import { fingerprintContact } from "@/lib/imports/import-provenance";
  * Rows staged before the provenance stamp existed carry no `importedBy`. They fall back to
  * "created at or after the import", the same rule the People list uses, and the preview
  * reports itself as not exact so the UI can say what it cannot vouch for.
+ *
+ * The window itself is defined in `import-finish.ts` and re-exported here: the history sheet
+ * has to decide whether to offer an undo at all, and it is a client component, so it cannot
+ * import this module (it reaches `@/db`). One 7, two names for it.
  */
-export const UNDO_WINDOW_DAYS = 7;
+export { UNDO_WINDOW_DAYS };
 
 /**
  * How many candidates a preview will describe. The counts stay exact past it — this caps the
@@ -91,9 +99,7 @@ type CandidateRow = {
   merge_count: number;
 };
 
-function withinWindow(createdAt: Date, now: Date): boolean {
-  return now.getTime() - createdAt.getTime() <= UNDO_WINDOW_DAYS * 86_400_000;
-}
+const withinWindow = withinUndoWindow;
 
 /**
  * What the import itself wrote to this contact, so those writes are not mistaken for the

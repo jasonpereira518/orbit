@@ -447,6 +447,12 @@ export async function getImportDetail(
         messagesImported: row.stats?.messagesImported,
         meetingsLogged: row.stats?.meetingsLogged,
         errorCode: row.stats?.errorCode,
+        // Without these the sheet goes on offering an undo for an import that has already
+        // had one — the row beside it, which reads the same fields through `listImports`,
+        // would say "Undone" at the same moment.
+        undoneAt: row.stats?.undoneAt,
+        undoneRemoved: row.stats?.undoneRemoved,
+        undoneKept: row.stats?.undoneKept,
       },
     },
     counts,
@@ -866,6 +872,10 @@ export type ImportHistoryItem = {
     messagesImported?: number;
     meetingsLogged?: number;
     errorCode?: string;
+    /** Set once this import's undo finished — the row then says so instead of its chips. */
+    undoneAt?: string;
+    undoneRemoved?: number;
+    undoneKept?: number;
   };
 };
 
@@ -923,6 +933,9 @@ export async function listImports(
       messagesImported: r.stats?.messagesImported,
       meetingsLogged: r.stats?.meetingsLogged,
       errorCode: r.stats?.errorCode,
+      undoneAt: r.stats?.undoneAt,
+      undoneRemoved: r.stats?.undoneRemoved,
+      undoneKept: r.stats?.undoneKept,
     },
   }));
 }
