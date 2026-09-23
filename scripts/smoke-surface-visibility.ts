@@ -17,6 +17,7 @@ import { getDb } from "../src/db";
 import { adminAuditLog, appSurfaceFlags } from "../src/db/schema";
 import {
   isSurfaceHiddenError,
+  requireReleasedSurface,
   requireVisibleSurface,
   resolveSurfaceVisibility,
   setSurfaceHidden,
@@ -192,6 +193,32 @@ async function main() {
       dashboardOk = false;
     }
     check("an always-visible surface is never refused", dashboardOk);
+
+    console.log("\ncoming-soon closes actions, not just pages");
+    {
+      let thrown: unknown = null;
+      try {
+        await requireReleasedSurface(USER, "page.leads");
+      } catch (err) {
+        thrown = err;
+      }
+      check("a coming-soon surface refuses its actions", isSurfaceHiddenError(thrown));
+      // The older guard deliberately ignores comingSoon; pinned so the difference is a fact.
+      let older: unknown = null;
+      try {
+        await requireVisibleSurface(USER, "page.leads");
+      } catch (err) {
+        older = err;
+      }
+      check("while requireVisibleSurface still lets them through", older === null);
+      let always: unknown = null;
+      try {
+        await requireReleasedSurface(USER, "page.dashboard");
+      } catch (err) {
+        always = err;
+      }
+      check("an always-visible surface is never refused", always === null);
+    }
 
     // The admin exemption. ADMIN_USER_IDS is read at call time, not module scope, which is
     // what makes this settable here at all. No request context exists, so `isViewingAsUser`

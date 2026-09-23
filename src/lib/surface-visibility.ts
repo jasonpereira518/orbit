@@ -203,6 +203,20 @@ export async function requireVisibleSurface(userId: string, surfaceKey: string) 
 }
 
 /**
+ * Throws `SurfaceHiddenError` unless `surfaceKey` is both switched on and released for
+ * this viewer. `requireVisibleSurface` ignores `comingSoon` on purpose — the pages that use
+ * it predate the flag — but a page that ships closed must close its actions too: a Server
+ * Function answers a direct POST whether or not the nav shows the page.
+ */
+export async function requireReleasedSurface(userId: string, surfaceKey: string) {
+  if (isAlwaysVisible(surfaceKey)) return;
+  const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+  if (hidden.has(surfaceKey) || comingSoon.has(surfaceKey)) {
+    throw new SurfaceHiddenError(surfaceKey);
+  }
+}
+
+/**
  * Hide or unhide a surface for everyone.
  *
  * Takes the admin id explicitly and does no auth of its own, matching every other operator
