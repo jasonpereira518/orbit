@@ -20,8 +20,6 @@
  * error that becomes a number in `cron_runs.stats` is visible; one that aborts the loop is a
  * silent outage for every user after it in the queue.
  */
-import { sql } from "drizzle-orm";
-import { getDb, rowsOf } from "@/db";
 import {
   CalendarSyncTokenExpiredError,
   advanceCursor as advanceGoogleCalendarCursor,
@@ -36,7 +34,7 @@ import {
   advanceCursor as advanceAppleCalendarCursor,
   fetchCalendarPage as fetchAppleCalendarPage,
 } from "@/lib/connectors/apple-calendar";
-import type { CalDavCredentials } from "@/lib/caldav/client";
+import { appleCredentials } from "@/lib/apple";
 import {
   hasCalendarScope as hasGoogleCalendarScope,
   getValidAccessToken as getValidGoogleAccessToken,
@@ -63,7 +61,6 @@ import {
   syncCalendarSubscription,
 } from "@/lib/calendar-sync";
 import { ReauthRequiredError } from "@/lib/errors";
-import { decrypt } from "@/lib/crypto";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { runEventSyncPass } from "@/lib/events/sync";
 import { runEnrichmentPass } from "@/lib/events/enrich-queue";
@@ -619,29 +616,6 @@ async function syncAppleCalendar(
     cursor: conn.syncCursor,
     nextSyncAt: exhausted ? now : new Date(now.getTime() + SYNC_INTERVAL_MS),
   });
-}
-
-/**
- * Decrypts one Apple connection's app-specific password into `CalDavCredentials`.
- *
- * Reads `apple_connections` directly rather than through another module's contract — the
- * password is not part of `calendar-sources.ts`'s or `provider-connections.ts`'s job — and
- * decrypts fresh on every sync rather than caching: Apple mints no token to refresh, so the
- * only per-sync cost this pays that Google and Microsoft do not is one AES-GCM decrypt, which
- * is far cheaper than the network round trip they both make for a fresh access token.
- */
-async function appleCredentials(connectionId: string): Promise<CalDavCredentials> {
-  const db = await getDb();
-  const row = rowsOf<{ email_address: string; app_password_encrypted: string }>(
-    await db.execute(sql`
-      SELECT email_address, app_password_encrypted
-        FROM apple_connections WHERE id = ${connectionId}
-    `)
-  )[0];
-  if (!row) {
-    throw new Error(`apple_connections row ${connectionId} not found`);
-  }
-  return { username: row.email_address, password: decrypt(row.app_password_encrypted) };
 }
 
 /**
