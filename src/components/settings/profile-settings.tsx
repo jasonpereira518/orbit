@@ -57,16 +57,20 @@ export function ProfileSettings({
               <p className="text-sm text-muted-foreground">{profile.email}</p>
             )}
           </div>
-          {clerkEnabled && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setAccountOpen(true)}
-            >
-              Manage account
-            </Button>
-          )}
+          {/* Not gated on `clerkEnabled`: the dialog itself handles Clerk being off by
+              falling back to its demo panels, and demo mode still needs a way in — it's
+              the one place `deleteMyAccount` genuinely works, since it has no Clerk
+              dependency and `requireUserId()` resolves a real demo-user id locally. The
+              sidebar and mobile nav stay gated, because their footers are about auth
+              state, not about reaching the dialog. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setAccountOpen(true)}
+          >
+            Manage account
+          </Button>
         </div>
       ) : (
         <div className="space-y-3">
