@@ -25,6 +25,7 @@ import {
   advanceCursor as advanceGoogleCalendarCursor,
   fetchCalendarPage as fetchGoogleCalendarPage,
   toNetworkEventsDecided,
+  type CalendarFetchResult,
 } from "@/lib/connectors/google-calendar";
 import {
   advanceCursor as advanceMicrosoftCalendarCursor,
@@ -222,6 +223,40 @@ function emptyRunStats(): SyncRunStats {
 }
 
 /**
+ * Reads one page of calendar entries for Luma/Partiful/Eventbrite invites, shared by all three
+ * calendar passes so a platform invite sitting in an Outlook or iCloud calendar is found too —
+ * this used to run on the Google pass alone, which meant it was the only one ever found.
+ *
+ * `source` is always `"gcal"` regardless of which provider fetched the page: it is a discovery
+ * SOURCE tag (`DiscoverySource`), not a calendar-provider tag, and its only visible effect is
+ * the badge text `DISCOVERY_LABEL` renders — "Found in your calendar", which already reads as
+ * provider-agnostic. Inventing `"outlook_cal"`/`"apple_cal"` variants would need new copy and a
+ * new `DiscoveryCandidate.sourceRef` prefix for no behavioural gain.
+ *
+ * Never allowed to fail the calendar sync: a discovery error must not cost the user their
+ * meeting history, and the cursor has not advanced yet when this runs.
+ */
+async function recordCalendarEventDiscovery(
+  conn: ClaimedConnection,
+  stats: SyncRunStats,
+  page: Pick<CalendarFetchResult, "events" | "selfEmails">,
+  where: string
+): Promise<void> {
+  try {
+    const discovered = await recordDiscoveryCandidates(
+      conn.userId,
+      calendarEventsToCandidates(page.events, page.selfEmails, "gcal")
+    );
+    stats.discoveryCreated += discovered.created;
+    stats.discoveryAttached += discovered.attached;
+    stats.discoverySuppressed += discovered.suppressed;
+  } catch (err) {
+    // Swallowed deliberately — see above — but reported (throttled), not silent.
+    reportError(err, { where, userId: conn.userId, level: "warning" });
+  }
+}
+
+/**
  * Sync one Google connection's calendar, paging until the provider says it is done or the
  * per-connection budget runs out.
  */
@@ -298,21 +333,7 @@ async function syncGoogleCalendar(
     // The same page, read for a different question: which of these are Luma/Partiful/
     // Eventbrite invites rather than meetings? `classifyCalendarEvent` has already refused
     // those above, so the two readings cannot double-count one entry.
-    //
-    // Never allowed to fail the calendar sync: a discovery error must not cost the user their
-    // meeting history, and the cursor has not advanced yet.
-    try {
-      const discovered = await recordDiscoveryCandidates(
-        conn.userId,
-        calendarEventsToCandidates(page.events, page.selfEmails, "gcal")
-      );
-      stats.discoveryCreated += discovered.created;
-      stats.discoveryAttached += discovered.attached;
-      stats.discoverySuppressed += discovered.suppressed;
-    } catch (err) {
-      // Swallowed deliberately — see above — but reported (throttled), not silent.
-      reportError(err, { where: "job.sync.gcal-discovery", userId: conn.userId, level: "warning" });
-    }
+    await recordCalendarEventDiscovery(conn, stats, page, "job.sync.gcal-discovery");
 
     cursor = advanceGoogleCalendarCursor(cursor, page);
 
@@ -405,6 +426,10 @@ async function syncMicrosoftCalendar(
       stats.contactsCreated += ingested.contactsCreated;
       stats.interactionsLogged += ingested.interactionsLogged;
     }
+
+    // Same discovery pass Google's calendar gets — see `recordCalendarEventDiscovery`'s own
+    // header comment for why a platform invite sitting in Outlook is found this way too.
+    await recordCalendarEventDiscovery(conn, stats, page, "job.sync.outlook-discovery");
 
     cursor = advanceMicrosoftCalendarCursor(cursor, page);
 
@@ -567,6 +592,10 @@ async function syncAppleCalendar(
           stats.contactsCreated += ingested.contactsCreated;
           stats.interactionsLogged += ingested.interactionsLogged;
         }
+
+        // Same discovery pass Google's and Microsoft's calendars get — see
+        // `recordCalendarEventDiscovery`'s own header comment.
+        await recordCalendarEventDiscovery(conn, stats, page, "job.sync.apple-discovery");
 
         cursor = advanceAppleCalendarCursor(cursor, page);
 
