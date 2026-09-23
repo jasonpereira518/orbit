@@ -442,13 +442,31 @@ async function syncMicrosoftCalendar(
  * Oldest-synced calendar first (by `lastSyncedAt`, nulls — never synced — treated as oldest of
  * all), so no calendar can starve behind a busy one forever.
  *
- * A `CalDavRejectedError` (a deleted calendar, a revoked share — see `apple-calendar.ts`'s own
- * header) is deliberately NOT caught here: it propagates out of the per-calendar loop, out of
- * this function, to the claim block's own catch in `runSyncPass`, which counts it as a real
- * failure and puts the whole connection through the normal retry/backoff/disarm ladder — the
- * same thing an uncaught error from Google's or Microsoft's fetch already does. Only
- * `CalendarSyncTokenExpiredError` (the RFC 6578 resync precondition) is handled locally, exactly
- * as it is for the other two providers.
+ * Each calendar's own network round trip is bounded — CalDAV requests go through
+ * `fetchChanges`, whose transport carries a `CALDAV_TIMEOUT_MS` (45s) timeout per hop, so a
+ * hung request cannot itself stall this loop indefinitely. What is NOT bounded is the LOCAL
+ * cost once a response comes back: `expandEvent` caps a single recurring master's blow-up at
+ * `MAX_OCCURRENCES`, but nothing caps how many masters/singletons one calendar's
+ * `sync-collection` answer can contain, or the total events `ingestEvents` then processes in
+ * one call. A calendar with a pathological number of events in the rolling window can still
+ * make this pass's total wall-clock exceed `SYNC_TIME_BUDGET_MS`, in the worst case toward the
+ * 300s function ceiling. Capping that safely — without silently dropping events a shorter pass
+ * would otherwise have delivered — needs its own cursor-aware design (there is no
+ * page-token-shaped way to resume a CalDAV response mid-list); this is a known, documented gap
+ * rather than a guess at one.
+ *
+ * A calendar-level failure (a deleted calendar, a revoked share — `CalDavRejectedError`, see
+ * `apple-calendar.ts`'s own header — or a resync that never stabilizes, below) is caught HERE,
+ * per calendar, and does not abort the fan-out: the oldest-`lastSyncedAt`-first sort exists
+ * precisely so a broken calendar cannot starve its siblings, and a `break` on the first thrown
+ * error would defeat that the moment the broken one sorts first. Its `lastSyncedAt` is bumped
+ * (without touching its cursor) so the next pass rotates past it instead of retrying it ahead
+ * of everything else, and the first error seen is kept. Once every calendar has had its turn
+ * (or the budget ran out), that kept error is rethrown — surfacing to the claim block's own
+ * catch in `runSyncPass`, which still counts it as a real, connection-level failure and puts
+ * the connection through the normal retry/backoff/disarm ladder. That is how a permanently
+ * broken calendar still eventually disarms the connection, while the healthy calendars keep
+ * syncing on every pass in between.
  */
 async function syncAppleCalendar(
   conn: ClaimedConnection,
@@ -486,6 +504,9 @@ async function syncAppleCalendar(
   const clockNow = deps.budgetClock ?? Date.now;
   const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS, clockNow);
   let exhausted = false;
+  // The first calendar-level failure this pass, if any — kept, not thrown immediately, so the
+  // rest of the fan-out still gets its turn. See the function's own header comment.
+  let firstError: unknown = null;
 
   for (const source of sources) {
     if (deadlineReached(deadline, clockNow)) {
@@ -496,57 +517,103 @@ async function syncAppleCalendar(
 
     let cursor = source.syncCursor ?? null;
     let calendarExhausted = false;
+    // Bounds the `CalendarSyncTokenExpiredError` retry below to ONE reset per calendar per
+    // pass — see the catch block's own comment for why an unbounded retry here is reachable
+    // and dangerous in a way it is not for Google or Microsoft.
+    let resyncAttempts = 0;
 
-    for (;;) {
-      let page;
-      try {
-        page = await (deps.fetchApplePage ?? fetchAppleCalendarPage)({
-          creds,
-          calendarUrl: source.calendarId,
-          cursor,
-          ownerEmail: conn.emailAddress,
-          now,
-        });
-      } catch (err) {
-        if (err instanceof CalendarSyncTokenExpiredError) {
-          // Expected lifecycle event, not a fault — see the connector's own header comment.
-          cursor = null;
-          continue;
+    try {
+      for (;;) {
+        let page;
+        try {
+          page = await (deps.fetchApplePage ?? fetchAppleCalendarPage)({
+            creds,
+            calendarUrl: source.calendarId,
+            cursor,
+            ownerEmail: conn.emailAddress,
+            now,
+          });
+        } catch (err) {
+          if (err instanceof CalendarSyncTokenExpiredError) {
+            // Expected lifecycle event, not a fault — see the connector's own header comment.
+            // UNLIKE Google and Microsoft, this can be raised here with `cursor` ALREADY null:
+            // `apple-calendar.ts` translates a stale-token precondition from its cursor-less
+            // fallback path (the ctag probe / time-range query) into this same error. An
+            // unguarded `cursor = null; continue;` would then re-issue the identical
+            // cursor-less request forever at network speed — hanging the whole pass (and the
+            // ICS/event-connection work behind it, since `runSyncPass` awaits this) until the
+            // function ceiling kills the invocation, with nothing counted along the way. A
+            // second occurrence in the same pass, especially with a cursor that is already
+            // null, is not the resync precondition working as intended, so it is left to
+            // propagate as a real, counted failure instead of retried again.
+            if (resyncAttempts >= 1) throw err;
+            resyncAttempts++;
+            cursor = null;
+            if (deadlineReached(deadline, clockNow)) {
+              calendarExhausted = true;
+              exhausted = true;
+              stats.budgetExhausted = true;
+              break;
+            }
+            continue;
+          }
+          throw err;
         }
-        throw err;
+
+        const decided = await toNetworkEventsDecided(ctx.engines, page.events, page.selfEmails);
+        const events = decided.events;
+        stats.calendarSkippedByDecision += decided.skippedByDecision;
+        stats.calendarKeptByDecision += decided.keptByDecision;
+        if (events.length > 0) {
+          const ingested = await ingestEvents(ctx, events);
+          stats.eventsIngested += ingested.eventsSeen;
+          stats.contactsCreated += ingested.contactsCreated;
+          stats.interactionsLogged += ingested.interactionsLogged;
+        }
+
+        cursor = advanceAppleCalendarCursor(cursor, page);
+
+        // CalDAV never paginates (see `fetchCalendarPage`'s own doc comment) — `nextPageToken`
+        // is always null — but the check stays structurally identical to Google's and
+        // Microsoft's so this loop is not a special case to read.
+        if (!page.nextPageToken) break;
+
+        if (deadlineReached(deadline, clockNow)) {
+          calendarExhausted = true;
+          exhausted = true;
+          stats.budgetExhausted = true;
+          break;
+        }
       }
 
-      const decided = await toNetworkEventsDecided(ctx.engines, page.events, page.selfEmails);
-      const events = decided.events;
-      stats.calendarSkippedByDecision += decided.skippedByDecision;
-      stats.calendarKeptByDecision += decided.keptByDecision;
-      if (events.length > 0) {
-        const ingested = await ingestEvents(ctx, events);
-        stats.eventsIngested += ingested.eventsSeen;
-        stats.contactsCreated += ingested.contactsCreated;
-        stats.interactionsLogged += ingested.interactionsLogged;
-      }
-
-      cursor = advanceAppleCalendarCursor(cursor, page);
-
-      // CalDAV never paginates (see `fetchCalendarPage`'s own doc comment) — `nextPageToken` is
-      // always null — but the check stays structurally identical to Google's and Microsoft's so
-      // this loop is not a special case to read.
-      if (!page.nextPageToken) break;
-
-      if (deadlineReached(deadline, clockNow)) {
-        calendarExhausted = true;
-        exhausted = true;
-        stats.budgetExhausted = true;
-        break;
-      }
+      await saveSourceCursor(source.id, cursor, now);
+    } catch (err) {
+      // This calendar failed (a real rejection, or a resync that would not stabilize). Record
+      // it, bump `lastSyncedAt` to `now` WITHOUT touching its stored cursor — so it still
+      // reads as "oldest" no more than any other un-synced calendar next pass, rather than
+      // sorting first again and re-failing ahead of its siblings every single time — and keep
+      // going. See the function's own header comment for why this does not swallow the
+      // failure: it is rethrown once the whole fan-out is done.
+      if (firstError === null) firstError = err;
+      await saveSourceCursor(source.id, source.syncCursor, now).catch(() => undefined);
     }
 
-    await saveSourceCursor(source.id, cursor, now);
     if (calendarExhausted) break;
   }
 
+  // Always reached now — including when a calendar failed — so contacts touched by whichever
+  // calendars DID complete this pass still get their cohort/embedding follow-up, rather than
+  // that follow-up being silently skipped forever because the cursor that would have re-surfaced
+  // them already advanced.
   await finalizeIngest(ctx);
+
+  if (firstError !== null) {
+    // Surfaces to the claim block's own catch in `runSyncPass`, which records the connection's
+    // counted failure and runs it through the normal retry/backoff/disarm ladder — the healthy
+    // calendars above have already had their progress saved regardless.
+    throw firstError;
+  }
+
   await markSyncResult(conn.provider, conn.id, {
     ok: true,
     cursor: conn.syncCursor,

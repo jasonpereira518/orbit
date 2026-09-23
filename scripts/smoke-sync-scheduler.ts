@@ -18,6 +18,7 @@ import { encrypt } from "../src/lib/crypto";
 import type { CalendarFetchResult } from "../src/lib/connectors/google-calendar";
 import { CalendarSyncTokenExpiredError } from "../src/lib/connectors/google-calendar";
 import { MAX_SYNC_FAILURES } from "../src/lib/provider-connections";
+import { CalDavRejectedError } from "../src/lib/caldav/client";
 
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 
@@ -179,6 +180,19 @@ async function readSource(id: string): Promise<SourceRow> {
   )[0];
 }
 
+/** Unlike `readSource`, keyed by the connection rather than the source row's own id — for a
+ * migration check that does not yet know the row's id, because `seedCalendarSources` creates
+ * it during the very sync pass under test. */
+async function readSourceByConnection(connectionId: string): Promise<SourceRow | undefined> {
+  const db = await getDb();
+  return rowsOf<SourceRow>(
+    await db.execute(sql`
+      SELECT id, calendar_id, enabled, sync_cursor, last_synced_at
+      FROM calendar_sources WHERE connection_id = ${connectionId}
+    `)
+  )[0];
+}
+
 /**
  * Reset to a state where this script is the scheduler's only tenant.
  *
@@ -196,6 +210,10 @@ async function clearAll() {
   await db.execute(sql`DELETE FROM gmail_connections WHERE user_id LIKE 'sched-%'`);
   await db.execute(sql`
     UPDATE gmail_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-%'
+  `);
+  await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-%'`);
+  await db.execute(sql`
+    UPDATE outlook_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-%'
   `);
   await db.execute(sql`DELETE FROM apple_connections WHERE user_id LIKE 'sched-%'`);
   await db.execute(sql`
@@ -473,6 +491,58 @@ run(async () => {
     check("an unarmed connection is not claimed", stats.claimed === 0, JSON.stringify(stats));
   }
 
+  // --- Google: a pre-existing connection-level cursor threads through the migration ---------
+  //
+  // `smoke-calendar-sources.ts` proves the seeder itself moves a cursor onto a fresh row, but
+  // never runs it through the scheduler; the checks above never read `calendar_sources` back
+  // for Google or Microsoft at all. So a `syncGoogleCalendar` that read the wrong field, or
+  // never called `saveSourceCursor`, would pass every other check in this file. This one seeds
+  // a connection carrying a pre-migration cursor exactly like a real pre-existing user, runs a
+  // real `runSyncPass`, and asserts both ends: the OLD cursor is what reaches `fetchPage` (the
+  // migration did not silently restart from scratch), and the NEW cursor lands on
+  // `calendar_sources` (the write moved, not just the read).
+  await clearAll();
+  {
+    const db = await getDb();
+    const userId = "sched-migrate-google";
+    await db.execute(sql`DELETE FROM gmail_connections WHERE user_id = ${userId}`);
+    await db.execute(sql`DELETE FROM calendar_sources WHERE user_id = ${userId}`);
+    const inserted = await db.execute(sql`
+      INSERT INTO gmail_connections
+        (user_id, email_address, access_token_encrypted, status, scopes, sync_cursor, next_sync_at, sync_failures)
+      VALUES (
+        ${userId}, ${userId + "@example.com"}, 'enc', 'active', ${CALENDAR_SCOPE},
+        ${JSON.stringify({ calendar: { syncToken: "pre-migration-tok", pageToken: null } })}::jsonb,
+        ${new Date(Date.now() - 60_000)}, 0
+      )
+      RETURNING id
+    `);
+    const connId = rowsOf<{ id: string }>(inserted)[0].id;
+
+    let cursorSeen: unknown = "not called";
+    const deps: SyncDeps = {
+      getAccessToken: async () => `stub-token:${userId}`,
+      fetchPage: async ({ cursor }) => {
+        cursorSeen = cursor;
+        return emptyPage({ nextSyncToken: "post-migration-tok" });
+      },
+    };
+    await runSyncPass({ deps });
+    check(
+      "the pre-existing connection-level cursor is what reaches fetchPage on the migrating pass",
+      (cursorSeen as { syncToken?: string | null } | null)?.syncToken === "pre-migration-tok",
+      JSON.stringify(cursorSeen)
+    );
+    const source = await readSourceByConnection(connId);
+    check(
+      "the resulting cursor lands on calendar_sources, not just the connection",
+      sourceCursorOf(source)?.syncToken === "post-migration-tok",
+      JSON.stringify(source?.sync_cursor)
+    );
+    await db.execute(sql`DELETE FROM gmail_connections WHERE user_id = ${userId}`);
+    await db.execute(sql`DELETE FROM calendar_sources WHERE user_id = ${userId}`);
+  }
+
   // --- Apple: several calendars on one connection, each with its own cursor -----------------
   await clearAll();
   {
@@ -522,6 +592,89 @@ run(async () => {
       "a revoked app password disarms rather than retrying",
       afterRevoke.next_sync_at === null && Number(afterRevoke.sync_failures) < MAX_SYNC_FAILURES,
       JSON.stringify(afterRevoke)
+    );
+  }
+
+  // --- Apple: a stale-token resync is bounded to one retry per calendar per pass ------------
+  //
+  // Unlike Google/Microsoft, `apple-calendar.ts` can raise `CalendarSyncTokenExpiredError` from
+  // its cursor-LESS fallback path — so an unguarded `cursor = null; continue;` would re-issue
+  // the identical request forever, hanging the whole pass. This pins that it does not: a
+  // provider that NEVER stops answering "stale" gets called at most twice (the real attempt,
+  // then one resync retry) before the calendar's failure is counted and the pass moves on.
+  await clearAll();
+  {
+    const connId = await seedApple("sched-apple-stale-loop");
+    await seedCalendarSource(connId, "cal-a");
+    let calls = 0;
+    const deps: SyncDeps = {
+      getAccessToken: async () => "unused",
+      fetchPage: async () => emptyPage(),
+      fetchApplePage: async () => {
+        calls++;
+        throw new CalendarSyncTokenExpiredError();
+      },
+    };
+    const stats = await runSyncPass({ deps });
+    check("a resync that never stabilizes is bounded, not retried forever", calls <= 2, `calls=${calls}`);
+    check("it still counts as a failure", stats.failed === 1, JSON.stringify(stats));
+    const conn = await readAppleConn(connId);
+    check(
+      "a bounded resync failure backs off rather than disarming outright",
+      conn.next_sync_at !== null && Number(conn.sync_failures) === 1,
+      JSON.stringify(conn)
+    );
+  }
+
+  // --- Apple: one rejected calendar does not starve or take down its siblings --------------
+  //
+  // `CalDavRejectedError` (a deleted calendar, a revoked share) on the OLDEST-sorted calendar
+  // must not abort the fan-out before the others get a turn, and must not be swallowed either
+  // — the connection still needs its counted failure so a permanently broken calendar
+  // eventually disarms.
+  await clearAll();
+  {
+    const connId = await seedApple("sched-apple-partial-fail");
+    const oldest = new Date(Date.now() - 3 * 60_000);
+    const middle = new Date(Date.now() - 2 * 60_000);
+    const newest = new Date(Date.now() - 60_000);
+    const sourceFailId = await seedCalendarSource(connId, "cal-fail", { lastSyncedAt: oldest });
+    const sourceBId = await seedCalendarSource(connId, "cal-b", { lastSyncedAt: middle });
+    const sourceCId = await seedCalendarSource(connId, "cal-c", { lastSyncedAt: newest });
+    const fetched: string[] = [];
+    const deps: SyncDeps = {
+      getAccessToken: async () => "unused",
+      fetchPage: async () => emptyPage(),
+      fetchApplePage: async ({ calendarUrl }) => {
+        fetched.push(calendarUrl);
+        if (calendarUrl === "cal-fail") throw new CalDavRejectedError(403, "calendar revoked");
+        return emptyPage({ nextSyncToken: `${calendarUrl}-tok` });
+      },
+    };
+    const before = Date.now();
+    const stats = await runSyncPass({ deps });
+    check("the rejected calendar is counted as a connection-level failure", stats.failed === 1, JSON.stringify(stats));
+    check("it is not ALSO counted as synced", stats.synced === 0, JSON.stringify(stats));
+    check(
+      "the other two calendars are still fetched, not starved behind the failing one",
+      fetched.includes("cal-b") && fetched.includes("cal-c"),
+      JSON.stringify(fetched)
+    );
+    const sourceFail = await readSource(sourceFailId);
+    const sourceB = await readSource(sourceBId);
+    const sourceC = await readSource(sourceCId);
+    check("the healthy calendars' cursors advanced", sourceCursorOf(sourceB)?.syncToken === "cal-b-tok" && sourceCursorOf(sourceC)?.syncToken === "cal-c-tok", `b=${JSON.stringify(sourceB?.sync_cursor)} c=${JSON.stringify(sourceC?.sync_cursor)}`);
+    check("the failing calendar's cursor is untouched", sourceCursorOf(sourceFail) === null, JSON.stringify(sourceFail?.sync_cursor));
+    check(
+      "the failing calendar's lastSyncedAt still advances, so it rotates out of first place next pass",
+      sourceFail.last_synced_at !== null && new Date(sourceFail.last_synced_at).getTime() >= before,
+      String(sourceFail.last_synced_at)
+    );
+    const conn = await readAppleConn(connId);
+    check(
+      "the connection backs off rather than disarming on a single rejection",
+      conn.next_sync_at !== null && Number(conn.sync_failures) === 1,
+      JSON.stringify(conn)
     );
   }
 

@@ -96,7 +96,12 @@ export async function enabledSourcesFor(connectionId: string): Promise<CalendarS
   return db
     .select()
     .from(calendarSources)
-    .where(and(eq(calendarSources.connectionId, connectionId), eq(calendarSources.enabled, 1)));
+    .where(and(eq(calendarSources.connectionId, connectionId), eq(calendarSources.enabled, 1)))
+    // Deterministic, matching `listCalendarSources`'s own order — a caller that takes `[0]`
+    // (Google and Microsoft, which hold exactly one row per connection today) or fans out over
+    // the whole list (Apple, which re-sorts by `lastSyncedAt` itself) both get a stable answer
+    // rather than depending on whatever order the database happens to return unordered rows in.
+    .orderBy(asc(calendarSources.createdAt));
 }
 
 export async function saveSourceCursor(
