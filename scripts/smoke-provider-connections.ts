@@ -33,6 +33,7 @@ import {
 } from "../src/lib/provider-connections";
 import { GOOGLE_SCOPES } from "../src/lib/google-scopes";
 import { MICROSOFT_SCOPES } from "../src/lib/microsoft-scopes";
+import type { ActionResult } from "../src/lib/errors";
 import { setCalendarSync as setGoogleCalendarSync } from "../src/actions/gmail";
 import { setCalendarSync as setOutlookCalendarSync } from "../src/actions/outlook";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -280,15 +281,17 @@ run(async () => {
   await ensureUserSettings(DEMO);
 
   /**
-   * The refusal message, or null when the switch went through. `revalidatePath` has no router
-   * cache to invalidate outside a real Next.js request, so a successful call ends in that
-   * invariant — after every write it makes has landed. The same swallow smoke-disconnect-cleanup
-   * uses; a refusal throws before it and is reported.
+   * The refusal message, or null when the switch went through. The action answers with an
+   * `ActionResult` rather than throwing — a thrown Server Action message reaches the browser
+   * as a digest, and the Meetings switch shows this refusal verbatim — so a refusal arrives
+   * as `ok: false`. A call that went through still ends in `revalidatePath`'s invariant,
+   * since there is no router cache to invalidate outside a real Next.js request, after every
+   * write it makes has landed. The same swallow smoke-disconnect-cleanup uses.
    */
-  async function switchOn(turnOn: () => Promise<void>): Promise<string | null> {
+  async function switchOn(turnOn: () => Promise<ActionResult<void>>): Promise<string | null> {
     try {
-      await turnOn();
-      return null;
+      const result = await turnOn();
+      return result.ok ? null : result.error;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return message.startsWith("Invariant: static generation store missing") ? null : message;

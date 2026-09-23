@@ -51,6 +51,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-connection-status": "pure",
   "smoke-connect-gates": "pure",
   "smoke-integration-status": "pure",
+  "smoke-account-rows": "pure",
   "smoke-capture-body-limits": "pure",
   "smoke-capture-planets": "pure",
   "smoke-capture-review-reducer": "pure",

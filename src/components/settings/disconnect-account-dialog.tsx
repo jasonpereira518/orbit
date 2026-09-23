@@ -20,17 +20,34 @@ import {
 
 const NAMES: Record<DisconnectProvider, string> = { gmail: "Google", outlook: "Outlook" };
 
-/** One confirmation for every Gmail/Outlook Disconnect button. DB-free imports only. */
+/**
+ * One confirmation for every Gmail/Outlook Disconnect button. DB-free imports only.
+ *
+ * Opens itself from its own outline button, unless a caller passes `open` — the account
+ * pages reach Disconnect through the header's ⋯ menu, which is the trigger, so there the
+ * button would be a second one nobody asked for.
+ */
 export function DisconnectAccountDialog({
   provider,
   disabled,
   onConfirm,
+  open: openProp,
+  onOpenChange,
 }: {
   provider: DisconnectProvider;
   disabled?: boolean;
   onConfirm: (opts: { alsoDelete: boolean }) => void;
+  /** Controlled: the caller owns the open state, and no trigger button is rendered. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : uncontrolledOpen;
+  function setOpen(next: boolean) {
+    if (controlled) onOpenChange?.(next);
+    else setUncontrolledOpen(next);
+  }
   const [alsoDelete, setAlsoDelete] = useState(false);
   const name = NAMES[provider];
   const extra = DATA_CATEGORY_META.filter((c) =>
@@ -39,9 +56,11 @@ export function DisconnectAccountDialog({
 
   return (
     <>
-      <Button variant="outline" disabled={disabled} onClick={() => setOpen(true)}>
-        Disconnect
-      </Button>
+      {controlled ? null : (
+        <Button variant="outline" disabled={disabled} onClick={() => setOpen(true)}>
+          Disconnect
+        </Button>
+      )}
       <Dialog
         open={open}
         onOpenChange={(next) => {

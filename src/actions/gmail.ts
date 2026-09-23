@@ -165,30 +165,40 @@ export async function startGmailOAuth(input: {
   return { url: buildGmailAuthUrl(state, purposes) };
 }
 
-/** The Meetings switch on the Google account page. Off leaves the grant alone. */
-export async function setCalendarSync(enabled: boolean): Promise<void> {
-  const userId = await requireUserId();
-  if (enabled) {
-    // `resumeSync` arms the row whatever the grant covers, and the upsert deliberately never
-    // arms a grant without calendar: the scheduler would claim it, disarm it for the missing
-    // scope, and leave the account page saying calendar sync is paused to someone who never
-    // asked for calendar — the defect this phase removes. A server action takes a direct POST,
-    // so the check belongs here and not only in front of the switch.
-    const db = await getDb();
-    const conn = await db.query.gmailConnections.findFirst({
-      where: eq(gmailConnections.userId, userId),
-      columns: { scopes: true },
-    });
-    if (!hasCalendarScope(conn?.scopes)) {
-      throw new UserFacingError(
-        "Allow Orbit to see your calendar first — reconnect Google and tick calendar access"
-      );
+/**
+ * The Meetings switch on the Google account page. Off leaves the grant alone.
+ *
+ * Answers rather than throws, because the switch shows the refusal below verbatim and a
+ * thrown Server Action message is replaced by a digest in production — the person would read
+ * a paragraph about Server Components instead of the one sentence that says what to do.
+ * `asActionResult` rescues the `UserFacingError` as data; a genuine fault still throws, and
+ * still reaches the caller's friendly fallback.
+ */
+export async function setCalendarSync(enabled: boolean): Promise<ActionResult<void>> {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    if (enabled) {
+      // `resumeSync` arms the row whatever the grant covers, and the upsert deliberately never
+      // arms a grant without calendar: the scheduler would claim it, disarm it for the missing
+      // scope, and leave the account page saying calendar sync is paused to someone who never
+      // asked for calendar — the defect this phase removes. A server action takes a direct POST,
+      // so the check belongs here and not only in front of the switch.
+      const db = await getDb();
+      const conn = await db.query.gmailConnections.findFirst({
+        where: eq(gmailConnections.userId, userId),
+        columns: { scopes: true },
+      });
+      if (!hasCalendarScope(conn?.scopes)) {
+        throw new UserFacingError(
+          "Allow Orbit to see your calendar first — reconnect Google and tick calendar access"
+        );
+      }
+      await resumeSync("google", userId);
+    } else {
+      await pauseSync("google", userId);
     }
-    await resumeSync("google", userId);
-  } else {
-    await pauseSync("google", userId);
-  }
-  revalidatePath("/settings");
+    revalidatePath("/settings");
+  });
 }
 
 export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {

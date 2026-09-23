@@ -135,6 +135,54 @@ export function microsoftAccountStatus(c: MicrosoftConnectionInput, plan: Plan):
   };
 }
 
+/**
+ * What a feature row offers on the right, given the state of the capability it stands for.
+ *
+ * The rule lives here rather than in the row so the Google and Microsoft pages cannot answer
+ * the same state two different ways, and so `scripts/smoke-account-rows.ts` can pin every
+ * pair without a React harness. `none` is a row with nothing to press: sending is already
+ * allowed, or the account isn't connected and the header's Connect is the only thing to do.
+ *
+ * `Allow` and `Upgrade` come first because they are true of every capability: a grant that
+ * doesn't cover the feature asks for itself, whatever the feature is, and a plan that doesn't
+ * include it sells itself rather than pretending to run. Mail access can't be given back per
+ * feature — Google revokes everything, Microsoft nothing — so no row ever offers to turn one
+ * off; that lives in the account header's menu.
+ */
+export type RowControl =
+  /** Import contacts / Check for new / Scan inbox / Allow / Fix / Add. */
+  | { kind: "action"; label: string }
+  /** Meetings, the one capability that runs continuously and can be switched off. */
+  | { kind: "switch"; on: boolean }
+  /** A paid feature on a plan that doesn't include it. */
+  | { kind: "locked"; label: string }
+  /** Nothing to do: already allowed, or nothing to run yet. */
+  | { kind: "none" };
+
+export function rowControl(
+  capability: AccountCapability,
+  status: CapabilityStatus | undefined
+): RowControl {
+  if (!status) return { kind: "none" };
+  if (status.state === "locked") return { kind: "locked", label: "Upgrade" };
+  if (status.state === "not_allowed") return { kind: "action", label: "Allow" };
+  switch (capability) {
+    case "contacts":
+      // `on` means this account has brought contacts in before, so the run is a top-up.
+      return { kind: "action", label: status.state === "on" ? "Check for new" : "Import contacts" };
+    case "meetings":
+      // `paused` is the sync having given up, which a switch can't undo — only signing in
+      // again can. The person's own `off` stays a switch, because flipping it is the fix.
+      if (status.state === "paused") return { kind: "action", label: "Fix" };
+      return { kind: "switch", on: status.state === "on" };
+    case "inbox":
+      return { kind: "action", label: "Scan inbox" };
+    case "send":
+      // Sending is allowed or it isn't; there is no run to start from a row.
+      return { kind: "none" };
+  }
+}
+
 export function accountPageStatus(a: AccountStatus): PageStatus {
   switch (a.state) {
     case "not_configured":
