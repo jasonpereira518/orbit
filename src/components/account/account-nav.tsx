@@ -9,11 +9,12 @@ import { cn } from "@/lib/utils";
  * `scripts/smoke-account-routes.ts` cannot drift: the smoke asserts a page file exists for
  * every entry here.
  *
- * `/settings/account/devices` and `/settings/account/security` arrive in later tasks;
- * their entries are added with their pages, not before, so the rail never offers a 404.
+ * `/settings/account/security` arrives in a later task; its entry is added with its page,
+ * not before, so the rail never offers a 404.
  */
 export const ACCOUNT_TABS = [
   { href: "/settings/account", label: "Profile" },
+  { href: "/settings/account/devices", label: "Devices" },
 ] as const satisfies ReadonlyArray<{ href: string; label: string }>;
 
 export function AccountNav({ pathname }: { pathname: string }) {
