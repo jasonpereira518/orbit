@@ -326,6 +326,31 @@ async function main() {
   const bigAfter = await db.query.imports.findFirst({ where: eq(imports.id, big.importId) });
   check("…and the count carries across both runs", bigAfter?.stats?.undoneRemoved === 2, JSON.stringify(bigAfter?.stats));
 
+  // `undoImport` (src/actions/imports.ts) loops on `performUndo` while `done` is false,
+  // accumulating `removed` across calls — it can't be exercised here itself, since it opens
+  // with `requireUserId()`, so this proves the same loop shape directly against `performUndo`:
+  // a first call that exhausts its budget instantly (`budgetMs: 0`, so `done` is false and
+  // nothing is removed) followed by calls that keep going until `done` — mirrors a real
+  // import too large for one internal budget, but resolved in more than one round trip.
+  const loopy = await seedImport(USER, [
+    { name: "Loop One", created: true },
+    { name: "Loop Two", created: true },
+    { name: "Loop Three", created: true },
+  ]);
+  let loopRemoved = 0;
+  let loopResult = await performUndo(USER, loopy.importId, NOW, { budgetMs: 0 });
+  let loopIterations = 1;
+  check("the first call makes no progress", loopResult.removed === 0 && !loopResult.done, JSON.stringify(loopResult));
+  while (!loopResult.done) {
+    loopRemoved += loopResult.removed;
+    loopResult = await performUndo(USER, loopy.importId, NOW);
+    loopIterations += 1;
+  }
+  loopRemoved += loopResult.removed;
+  check("looping on `done` removes everyone", loopRemoved === 3, String(loopRemoved));
+  check("…finishes with nobody left", loopResult.done && loopResult.remaining === 0, JSON.stringify(loopResult));
+  check("…having actually looped, not just called once", loopIterations > 1, String(loopIterations));
+
   // The candidate list is capped; the counts are not.
   const many: Person[] = Array.from({ length: MAX_UNDO_CANDIDATES + 5 }, (_, i) => ({
     name: `Crowd ${i}`,

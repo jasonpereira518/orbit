@@ -121,6 +121,7 @@ export default async function ContactsPage({
           initialCompany={params.company || ""}
           initialMinScore={params.minScore || ""}
           initialFollowUp={params.followUp || ""}
+          importId={params.importId}
         >
           {/*
             Keyed on the filters so a new query starts from a clean list rather than appending

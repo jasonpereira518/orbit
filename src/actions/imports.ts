@@ -508,12 +508,35 @@ export async function previewImportUndo(importId: string): Promise<UndoPreview |
   return previewUndo(userId, importId);
 }
 
-/** Undo an import: remove the people it created, if nobody has touched them since. */
+/**
+ * Wall-clock ceiling on the whole undo, across every `performUndo` call this action makes —
+ * well inside the route's own 300s `maxDuration`. `performUndo`'s own budget
+ * (`UNDO_BUDGET_MS`, ~20s) bounds ONE invocation so a single call can't blow past a request's
+ * time limit on its own; this bounds how long THIS action spends draining the whole job
+ * before handing back to the caller. Both exist because a large enough import still needs
+ * more than one round trip, and neither layer alone can promise "finished" in one request —
+ * this loop drains what it can inside its ceiling, and a caller that gets back `done: false`
+ * is expected to call `undoImport` again (see `UndoResult.done`'s own doc comment).
+ */
+const UNDO_ACTION_BUDGET_MS = 120_000;
+
+/**
+ * Undo an import: remove the people it created, if nobody has touched them since. Loops on
+ * `performUndo` while it reports `done: false` (a budget-exhausted single call, not a
+ * finished one — see `UNDO_ACTION_BUDGET_MS` above), accumulating `removed` across calls, so
+ * a caller only needs to retry when even 120s wasn't enough to finish a very large import.
+ */
 export async function undoImport(importId: string): Promise<UndoResult> {
   const userId = await requireUserId();
-  const result = await performUndo(userId, importId);
+  const startedAt = Date.now();
+  let removed = 0;
+  let result: UndoResult = { removed: 0, kept: 0, done: true, remaining: 0 };
+  do {
+    result = await performUndo(userId, importId);
+    removed += result.removed;
+  } while (!result.done && Date.now() - startedAt < UNDO_ACTION_BUDGET_MS);
   revalidatePath("/imports");
-  return result;
+  return { ...result, removed };
 }
 
 /** A person's name out of whichever row payload this import type stages. */
