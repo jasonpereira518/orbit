@@ -148,6 +148,12 @@ run(async () => {
   check("a CRM-tied lead stays, untied", keptLead !== undefined && keptLead.crmRecordId === null);
   check("disconnecting nothing is fine", (await message(disconnectCrm(USER, "hubspot", { revoke: async () => true }))) === null);
 
+  await upsertConnectorConnection({ userId: USER, connectorId: "hubspot", authKind: "oauth2", accountRef: "4242", accessToken: "a2", refreshToken: "r2", nextSyncAt: null });
+  const rejectedRevokes: string[] = [];
+  const rejected = await message(disconnectCrm(USER, "hubspot", { revoke: async (t) => { rejectedRevokes.push(t); return false; } }));
+  check("a revoke HubSpot refuses is tried, and the disconnect still completes", rejected === null && rejectedRevokes.join(",") === "r2", String(rejected));
+  check("…the connection is gone", (await db.select().from(connectorConnections).where(eq(connectorConnections.userId, USER))).length === 0);
+
   await upsertConnectorConnection({ userId: USER, connectorId: "hubspot", authKind: "oauth2", accountRef: DEMO_CRM_ACCOUNT_REF, nextSyncAt: null });
   const demoRevokes: string[] = [];
   await disconnectCrm(USER, "hubspot", { revoke: async (t) => { demoRevokes.push(t); return true; } });

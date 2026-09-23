@@ -130,7 +130,16 @@ export async function disconnectCrm(
   if (summary && summary.accountRef !== DEMO_CRM_ACCOUNT_REF) {
     const refresh = await getConnectorRefreshToken(userId, connectorId);
     const revoke = deps.revoke ?? ((token: string) => (isOAuthConfigured(connectorId) ? revokeHubspotToken(token) : Promise.resolve(false)));
-    if (refresh) await revoke(refresh);
+    // Best effort: a refused revoke still disconnects, but leaves a trace — the grant may live
+    // on at HubSpot until the person removes the app there.
+    if (refresh && !(await revoke(refresh))) {
+      reportError(new Error("HubSpot did not accept the token revoke"), {
+        where: "crm.disconnect.revoke",
+        userId,
+        level: "warning",
+        extra: { connectorId },
+      });
+    }
   }
   await deleteConnectorConnection(userId, connectorId);
   await deleteCrmRecordsForConnector(userId, connectorId);
