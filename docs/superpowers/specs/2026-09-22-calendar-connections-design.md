@@ -87,7 +87,12 @@ Because it holds a password rather than a revocable token:
 - No read path returns the plaintext. Actions return the Apple ID and a status, nothing else.
 - It is decrypted in exactly one place, the CalDAV client, at request time.
 - `purgeUserData` gains the table (`smoke-purge.ts` enforces this for every user-scoped table).
-- Account export carries the metadata and never the secret.
+- Account export carries the row as stored, including the encrypted secret — `own(appleConnections)`
+  exports `app_password_encrypted` ciphertext exactly as Gmail's and Outlook's export rows already
+  carry their own encrypted OAuth tokens. That is the repo's existing convention for this table
+  category (raw export means raw columns; "no read path returns the plaintext," above, is what
+  actually protects the password — decryption happens in exactly one place, and export isn't it),
+  and it is deliberately unchanged here rather than special-cased for Apple's connection alone.
 
 ### `calendar_sources`
 
