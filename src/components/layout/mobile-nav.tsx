@@ -539,7 +539,12 @@ export function MobileNav({
 
       <Sheet
         open={moreOpen}
-        onOpenChange={setMoreOpen}
+        onOpenChange={(next) => {
+          setMoreOpen(next);
+          // Reopening before the previous close finished animating would otherwise leave
+          // the flag armed for a later, unrelated close to pop the account dialog open.
+          if (next) setPendingAccountOpen(false);
+        }}
         onOpenChangeComplete={(open) => {
           if (!open && pendingAccountOpen) {
             setPendingAccountOpen(false);
