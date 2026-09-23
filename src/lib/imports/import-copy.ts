@@ -54,6 +54,17 @@ export const IMPORT_COPY = {
    */
   undoKeepsMatched:
     "People it matched to contacts you already had stay, and the details it filled in on them stay too",
+  /**
+   * What undo does not look at, said before it runs.
+   *
+   * "Touched" is tags, notes, reminders, logged interactions, merges, and ten fields the import
+   * wrote (name, company, title, email, LinkedIn, location, school, phone, website, X handle).
+   * Anything else a person can change — a photo, a closeness rating, how they met — is not
+   * checked, because the systems that also write those (the avatar backfill, the scorer) would
+   * make every imported person read "touched". So someone changed only that way still goes.
+   */
+  undoUnchecked:
+    "A new photo, a closeness rating or how you met doesn’t count as a change, so people you’ve only changed that way still go",
   undoInexact:
     "This import ran before Orbit started tracking edits, so it can’t tell which of these you’ve changed",
   undoStillGoing:

@@ -69,6 +69,13 @@ type Person = {
   notes?: string;
   /** The contact row's `created_at`. Defaults to the import's, like a real created row. */
   createdAt?: Date;
+  /** Further columns the import wrote, for the fingerprint's round trip. */
+  fields?: Partial<
+    Pick<
+      typeof contacts.$inferInsert,
+      "title" | "email" | "linkedinUrl" | "location" | "school" | "phone" | "website" | "xHandle"
+    >
+  >;
 };
 
 /** A payload the real adapter for this import type can actually read. */
@@ -132,6 +139,7 @@ async function seedImport(
         fullName: p.name,
         company: p.company ?? null,
         notes: p.notes ?? null,
+        ...p.fields,
         createdAt: p.createdAt ?? createdAt,
       })
       .returning();
@@ -257,6 +265,67 @@ async function main() {
   const undonePreview = await previewUndo(USER, importId, NOW);
   check("an undone import says so", undonePreview!.alreadyUndone === true);
   check("…and offers no second undo", undonePreview!.withinWindow === false);
+
+  // Every field the fingerprint covers, filled in, and each one edited on its own. A person
+  // whose only change was a new city or phone number used to hash as untouched — the
+  // fingerprint covered five fields — and undo deleted them with the edit. And the untouched
+  // one guards the other direction: if `decide()` forgot to read back a field the engine
+  // hashed, every person carrying one would read "edited" and undo would remove nobody.
+  const WIDE = {
+    title: "Engineer",
+    email: "wide@example.com",
+    linkedinUrl: "https://www.linkedin.com/in/wide",
+    location: "Toronto, Canada",
+    school: "University of Waterloo",
+    phone: "+1 416 555 0100",
+    website: "https://wide.example",
+    xHandle: "wide",
+  };
+  const EDITS = {
+    location: "Montreal, Canada",
+    school: "McGill University",
+    phone: "+1 514 555 0199",
+    website: "https://moved.example",
+    xHandle: "moved",
+  } as const;
+  const wide = await seedImport(
+    USER,
+    [
+      { name: "Wide Untouched", created: true, fields: WIDE },
+      ...Object.keys(EDITS).map((field) => ({
+        name: `Wide ${field}`,
+        created: true,
+        fields: { ...WIDE, email: `${field}@example.com` },
+      })),
+    ],
+    { runEndedAt: RUN_END },
+  );
+  const [wideUntouched, ...wideEdited] = wide.ids;
+  for (const [i, [field, value]] of Object.entries(EDITS).entries()) {
+    await db.update(contacts).set({ [field]: value }).where(eq(contacts.id, wideEdited[i]));
+  }
+  const widePreview = await previewUndo(USER, wide.importId, NOW);
+  const wideCandidate = (id: string) => widePreview!.candidates.find((c) => c.contactId === id);
+  check(
+    "a person carrying every fingerprinted field, untouched, is removable",
+    wideCandidate(wideUntouched)?.removable === true,
+    String(wideCandidate(wideUntouched)?.reason),
+  );
+  for (const [i, field] of Object.keys(EDITS).entries()) {
+    check(
+      `a person whose only edit was their ${field} is kept as edited`,
+      wideCandidate(wideEdited[i])?.removable === false &&
+        wideCandidate(wideEdited[i])?.reason === "edited",
+      JSON.stringify(wideCandidate(wideEdited[i])),
+    );
+  }
+  const wideDone = await performUndo(USER, wide.importId, NOW);
+  check("undo removes only the untouched one", wideDone.removed === 1, JSON.stringify(wideDone));
+  const wideLeft = new Set(
+    (await db.query.contacts.findMany({ where: inArray(contacts.id, wide.ids) })).map((c) => c.id),
+  );
+  check("…and every edited person is still here", wideEdited.every((id) => wideLeft.has(id)));
+  check("…and the untouched one is not", !wideLeft.has(wideUntouched));
 
   // An address-book import writes `notes` from the source file on create. Those are the
   // import's words, not the user's.

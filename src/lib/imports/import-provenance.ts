@@ -14,24 +14,54 @@ import { createHash } from "node:crypto";
  */
 export type ImportedContactProvenance = { created: boolean; fp?: string };
 
+/**
+ * The fields a fingerprint covers: the identifying ones, and the scalar profile fields a person
+ * edits by hand. Named as the `contacts` columns are (camelCase), so the engine can hash the
+ * persisted row it got back from the insert without a mapping that could drift.
+ *
+ * Every field here must be one that NO system process rewrites after an import — a field the
+ * avatar backfill or an enrichment job touched would make its people read "edited" and undo
+ * would quietly remove nobody. That is why `profileImageUrl` (the avatar backfill writes it),
+ * the closeness/priority scores (materialised by the scorer) and `aiSummary`/`keyFacts` (the
+ * brief and message-enrichment writers) are absent. Checked for these five when they were
+ * added (Sep 2026): every writer of `location`, `school`, `phone`, `website` and `x_handle`
+ * after an import is a person acting — the contact form, capture, the extension's save, the
+ * MCP `update_contact` tool, the "Refresh from LinkedIn" button, a merge, or a later import
+ * the person ran — never a background job.
+ */
 export type FingerprintInput = {
   fullName?: string | null;
   company?: string | null;
   title?: string | null;
   email?: string | null;
   linkedinUrl?: string | null;
+  location?: string | null;
+  school?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  xHandle?: string | null;
 };
 
 /** The payload key a staged row carries its provenance under. */
 export const PROVENANCE_KEY = "importedBy";
 
-/** Order is part of the hash: changing it invalidates every stored fingerprint. */
+/**
+ * Order is part of the hash, and so is membership: changing either invalidates every stored
+ * fingerprint, and a person whose stamp no longer matches reads "edited" — kept, so the failure
+ * is safe, but it makes every import stamped before the change un-undoable. Widened from five
+ * fields to ten before anything shipped, which is the only moment that costs nothing.
+ */
 const FIELDS: (keyof FingerprintInput)[] = [
   "fullName",
   "company",
   "title",
   "email",
   "linkedinUrl",
+  "location",
+  "school",
+  "phone",
+  "website",
+  "xHandle",
 ];
 
 function normalize(value: string | null | undefined): string {

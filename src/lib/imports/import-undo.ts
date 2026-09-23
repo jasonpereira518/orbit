@@ -89,6 +89,11 @@ type CandidateRow = {
   title: string | null;
   email: string | null;
   linkedin_url: string | null;
+  location: string | null;
+  school: string | null;
+  phone: string | null;
+  website: string | null;
+  x_handle: string | null;
   notes: string | null;
   payload: ImportJobRowPayload | null;
   fp: string | null;
@@ -161,7 +166,8 @@ async function candidateRows(
   const runEndedIso = runEndedAt.toISOString();
   return rowsOf<CandidateRow>(
     await db.execute(sql`
-      SELECT c.id AS contact_id, c.full_name, c.company, c.title, c.email, c.linkedin_url, c.notes,
+      SELECT c.id AS contact_id, c.full_name, c.company, c.title, c.email, c.linkedin_url,
+             c.location, c.school, c.phone, c.website, c.x_handle, c.notes,
              r.payload AS payload,
              r.payload->'importedBy'->>'fp' AS fp,
              jsonb_exists(r.payload, 'importedBy') AS stamped,
@@ -206,12 +212,20 @@ function decide(row: CandidateRow, importType: string): UndoCandidate {
   if (row.interaction_count > 0) return { ...base, removable: false, reason: "interacted" };
   if (row.merge_count > 0) return { ...base, removable: false, reason: "merged" };
   if (row.fp) {
+    // Every field `FingerprintInput` names, read back from the row. One left out here hashes
+    // as empty against a stamp that held a value, so everyone carrying it reads "edited" and
+    // undo removes nobody — `smoke-import-undo.ts` seeds a person with all of them to catch it.
     const current = fingerprintContact({
       fullName: row.full_name,
       company: row.company,
       title: row.title,
       email: row.email,
       linkedinUrl: row.linkedin_url,
+      location: row.location,
+      school: row.school,
+      phone: row.phone,
+      website: row.website,
+      xHandle: row.x_handle,
     });
     if (current !== row.fp) return { ...base, removable: false, reason: "edited" };
   }

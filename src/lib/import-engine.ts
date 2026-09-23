@@ -696,7 +696,10 @@ export async function runImportJob(importId: string): Promise<void> {
                   // Hashing the input would store a fingerprint the row can never match
                   // again, and undo would read every such person as edited — permanently
                   // un-undoable. Undo re-hashes the contact row, so the contact row is what
-                  // has to be hashed here.
+                  // has to be hashed here. The whole row, not a hand-picked subset: every
+                  // field `FingerprintInput` names (identifying fields plus location, school,
+                  // phone, website and X handle) is a `contacts` column of the same name, so
+                  // widening the fingerprint cannot leave this call site behind.
                   fp: fingerprintContact(contact),
                 });
                 touchedContactIds.push(contact.id);

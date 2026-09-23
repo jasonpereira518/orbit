@@ -45,7 +45,9 @@ One `<canvas>`, one rAF loop, Orbit's teal with gold accents, drawn at device pi
 ## 3. Undo
 
 ### Whose people
-- **Going forward:** when the engine marks a row done it records whether that contact was **created** or **merged**, and for a created one a **fingerprint** — a hash of the identifying fields it wrote (name, company, title, email, LinkedIn URL). Both ride `import_job_rows.payload` (jsonb) — no DDL, `SCHEMA_VERSION` stays 73.
+- **Going forward:** when the engine marks a row done it records whether that contact was **created** or **merged**, and for a created one a **fingerprint** — a hash of the fields it wrote that a person edits by hand: name, company, title, email, LinkedIn URL, location, school, phone, website and X handle. The engine hashes the contact row as persisted, and undo re-hashes the same ten columns. Both ride `import_job_rows.payload` (jsonb) — no DDL, `SCHEMA_VERSION` unchanged.
+  - *Why these ten and no others:* a fingerprinted field must be one no background process rewrites after an import, or its people read "edited" and undo quietly removes nobody. Every writer of location, school, phone, website and X handle after an import is a person acting (the contact form, capture, the extension's save, the MCP `update_contact` tool, the "Refresh from LinkedIn" button, a merge, a later import). `profile_image_url` (the avatar backfill writes it), the closeness and priority scores (the scorer materialises them), and `ai_summary` / `key_facts` (the brief and message-enrichment writers) are excluded for that reason.
+  - *Widened before shipping, on purpose.* Changing the field list changes every fingerprint, and a stamp that no longer matches reads "edited" — safe, but it makes every import stamped before the change un-undoable. The five-field version never reached production, so widening it then cost nothing.
 - **For older imports:** fall back to the rule `import-people.ts` already uses — the contact was created at or after the import's `created_at`. Those rows have no fingerprint, so the field test below is skipped for them and the spec's limitation applies.
 
 ### Untouched
@@ -56,9 +58,12 @@ One `<canvas>`, one rAF loop, Orbit's teal with gold accents, drawn at device pi
 - no `reminders`
 - no `interactions` beyond those carrying this import's own external ids
 - not the winner of a later `contact_merges` row
-- the fingerprint still matches — the identifying fields hold exactly what the import wrote
+- the fingerprint still matches — the ten fingerprinted fields hold exactly what the import wrote
 
-**Limitation, stated plainly:** for an import that ran before the fingerprint shipped, a person edited by hand but carrying no tags, notes, reminders or interactions is indistinguishable from an untouched one and would be removed. The confirmation for a pre-fingerprint import says which people it cannot vouch for, and offers the same 7-day window with that caveat visible.
+**Limitation, stated plainly:**
+
+- **What undo does not check, for any import.** A change outside the ten fingerprinted fields and the five kinds of trace does not count: a new photo, a closeness or priority rating, a preferred name, how or when you met, industry, key facts, shared interests, work history. A person whose only change was one of those reads untouched and is removed with the import. These are left out deliberately — the avatar backfill, the scorer and the brief writer write several of them on their own, and counting them would make nearly every imported person read "touched". The confirmation says so before anything is deleted: *"A new photo, a closeness rating or how you met doesn’t count as a change, so people you’ve only changed that way still go"*.
+- **For an import that ran before the fingerprint shipped,** there is no fingerprint at all, so a person edited by hand but carrying no tags, notes, reminders or interactions is indistinguishable from an untouched one and would be removed. The confirmation for a pre-fingerprint import says it cannot tell which people have been changed, and offers the same 7-day window with that caveat visible.
 
 ### What it does
 - Deletes the untouched created people via `deleteContactForUser` (`src/lib/contact-delete.ts`), which already handles the non-cascading references and the stored photos.
@@ -66,7 +71,7 @@ One `<canvas>`, one rAF loop, Orbit's teal with gold accents, drawn at device pi
 - Is idempotent: a second undo removes nothing and reports that.
 
 ### What the person sees
-- Confirmation counts first and names the exceptions: "Remove 17 people? 2 of the 19 have notes or tags now, so they'll stay."
+- Confirmation counts first and names the exceptions: "Remove 17 people? 2 of the 19 have notes or tags now, so they'll stay." Then two lines on what it leaves alone: merged people and the details filled in on them stay, and the changes undo does not count (above).
 - Offered in the done card and, for 7 days, in the history detail sheet. After that the sheet says the window has closed.
 - Recorded as an import-level fact in `imports.stats` (undone-at, how many removed, how many kept), so the history row reads "Undone · 17 people removed" instead of silently changing its numbers.
 

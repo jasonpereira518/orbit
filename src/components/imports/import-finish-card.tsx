@@ -260,7 +260,7 @@ function foldPreviews(parts: UndoPreview[]): UndoPreview {
   };
 }
 
-function UndoDialogBody({
+export function UndoDialogBody({
   preview,
   phase,
   removedSoFar,
@@ -347,6 +347,16 @@ function UndoDialogBody({
       */}
       <p className="text-xs text-muted-foreground">
         {IMPORT_COPY.undoKeepsMatched}
+      </p>
+
+      {/*
+        And what it does not check. The rule above keeps anyone with a user-authored trace or
+        an edited detail, but a new photo or a closeness rating is neither — the backfill and
+        the scorer write those too — so a person changed only that way is removed. Said now,
+        while there is still a button that keeps them.
+      */}
+      <p className="text-xs text-muted-foreground">
+        {IMPORT_COPY.undoUnchecked}
       </p>
 
       {!preview.exact ? (

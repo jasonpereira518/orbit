@@ -44,6 +44,7 @@ import {
 } from "../src/lib/import-job-processor";
 import { runImportJobById } from "../src/lib/import-job-dispatch";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { previewUndo } from "../src/lib/imports/import-undo";
 
 const USER = "smoke-import-engine-user";
 
@@ -175,6 +176,25 @@ async function main() {
   check("50 fresh rows all created", out.created === 50, JSON.stringify(out));
   check("50 fresh rows none merged", out.updated === 0, JSON.stringify(out));
   check("50 fresh rows none blocked", out.blockedByPlan === 0, JSON.stringify(out));
+
+  // The engine's stamp and undo's recomputation agree, end to end. They are two call sites of
+  // one fingerprint — the engine hashes the persisted row, `decide()` re-hashes the columns it
+  // reads back — and if they ever disagree (a field one of them forgets, a write that
+  // canonicalises a value after it was hashed) every person an import created reads "edited"
+  // and undo quietly removes nobody. A fresh import nobody has touched must be fully removable.
+  {
+    const preview = await previewUndo(USER, id, new Date());
+    check("a fresh engine import is exact", preview?.exact === true, JSON.stringify(preview?.exact));
+    check(
+      "…and everyone it created reads untouched",
+      preview?.removable === 50 && preview?.keeping === 0,
+      JSON.stringify({
+        removable: preview?.removable,
+        keeping: preview?.keeping,
+        reasons: [...new Set(preview?.candidates.map((c) => c.reason))],
+      }),
+    );
+  }
 
   // --- created contacts are flagged for the backfill, not embedded inline ---
   // Embeddings moved off the critical path in Task 9: the bulk create path sets

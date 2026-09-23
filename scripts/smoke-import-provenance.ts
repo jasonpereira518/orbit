@@ -24,6 +24,11 @@ const base = {
   title: "Engineer",
   email: "priya@example.com",
   linkedinUrl: "https://www.linkedin.com/in/priya-raman",
+  location: "Toronto, Canada",
+  school: "University of Waterloo",
+  phone: "+1 416 555 0100",
+  website: "https://priya.example",
+  xHandle: "priyar",
 };
 
 check("same fields, same hash", fingerprintContact(base) === fingerprintContact({ ...base }));
@@ -32,6 +37,15 @@ check("a changed company changes it", fingerprintContact(base) !== fingerprintCo
 check("a changed title changes it", fingerprintContact(base) !== fingerprintContact({ ...base, title: "Staff Engineer" }));
 check("a changed email changes it", fingerprintContact(base) !== fingerprintContact({ ...base, email: "p@example.com" }));
 check("a changed LinkedIn changes it", fingerprintContact(base) !== fingerprintContact({ ...base, linkedinUrl: "https://www.linkedin.com/in/other" }));
+// The scalar profile fields a person edits by hand and no background job rewrites. Without them
+// a contact whose only edit was a new city or phone number read as untouched, and undo deleted
+// them along with the edit.
+check("a changed location changes it", fingerprintContact(base) !== fingerprintContact({ ...base, location: "Montreal, Canada" }));
+check("a changed school changes it", fingerprintContact(base) !== fingerprintContact({ ...base, school: "McGill University" }));
+check("a changed phone changes it", fingerprintContact(base) !== fingerprintContact({ ...base, phone: "+1 514 555 0199" }));
+check("a changed website changes it", fingerprintContact(base) !== fingerprintContact({ ...base, website: "https://moved.example" }));
+check("a changed X handle changes it", fingerprintContact(base) !== fingerprintContact({ ...base, xHandle: "priya" }));
+check("a field added where there was none changes it", fingerprintContact({ fullName: "A" }) !== fingerprintContact({ fullName: "A", location: "Paris" }));
 
 // Absent and empty mean the same thing: the import wrote nothing there.
 check("null and undefined agree", fingerprintContact({ fullName: "A", company: null }) === fingerprintContact({ fullName: "A" }));

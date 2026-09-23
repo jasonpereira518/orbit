@@ -14,7 +14,11 @@ import {
   type FinishSummary,
 } from "../src/lib/imports/import-finish";
 import { IMPORT_COPY } from "../src/lib/imports/import-copy";
-import { ImportFinishCard } from "../src/components/imports/import-finish-card";
+import {
+  ImportFinishCard,
+  UndoDialogBody,
+} from "../src/components/imports/import-finish-card";
+import { Dialog } from "../src/components/ui/dialog";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -231,6 +235,50 @@ check(
 check("before confirming, it is still the way out", undoDismissLabel("ready", true) === IMPORT_COPY.undoCancel);
 check("with nothing to remove, it only closes", undoDismissLabel("ready", false) === IMPORT_COPY.undoClose);
 check("while checking, it only closes", undoDismissLabel("checking", false) === IMPORT_COPY.undoClose);
+
+/**
+ * The confirmation, rendered.
+ *
+ * Inside a Dialog root (the title and description read its context) but without the portal,
+ * which renders nothing on the server — so this is the dialog's body exactly as a person reads
+ * it before the button that deletes people.
+ */
+type Preview = React.ComponentProps<typeof UndoDialogBody>["preview"];
+const confirmation = (
+  preview: Preview,
+  phase: "checking" | "ready" | "removing" = "ready",
+  removedSoFar = 0,
+) =>
+  renderToStaticMarkup(
+    React.createElement(
+      Dialog,
+      { open: true },
+      React.createElement(UndoDialogBody, { preview, phase, removedSoFar }),
+    ),
+  );
+const ready: NonNullable<Preview> = {
+  importId: "a",
+  withinWindow: true,
+  alreadyUndone: false,
+  exact: true,
+  candidates: [
+    { contactId: "k1", name: "Ada Lovelace", removable: false, reason: "edited" },
+    { contactId: "r1", name: "Grace Hopper", removable: true },
+  ],
+  removable: 1,
+  keeping: 1,
+};
+console.log("The confirmation says what undo does not check");
+const readyHtml = confirmation(ready);
+check("it asks before removing", readyHtml.includes("Remove 1 person?"));
+check("it says matched people stay", readyHtml.includes(IMPORT_COPY.undoKeepsMatched));
+// The fingerprint covers ten fields and the trace test five kinds of trace. What neither sees —
+// a new photo, a closeness rating, how you met — does not keep anyone, and the person is told
+// before they choose rather than finding out afterwards.
+check(
+  "it says what undo does not count as a change",
+  readyHtml.includes(IMPORT_COPY.undoUnchecked),
+);
 
 if (failures) {
   console.error(`smoke-import-finish: ${failures} failed`);
