@@ -57,6 +57,24 @@ check("…and does not claim people", !calendar.headline.includes("0"));
 
 const several = finishCopy({ ...base, sources: ["Connections.csv", "messages.csv"] });
 check("several files are named", (several.detail ?? "").includes("Connections.csv") && (several.detail ?? "").includes("messages.csv"));
+const three = finishCopy({ ...base, sources: ["a.csv", "b.csv", "c.vcf"] });
+check(
+  "three files read as a list",
+  (three.detail ?? "").endsWith("From a.csv, b.csv and c.vcf"),
+  String(three.detail),
+);
+
+const oneAlreadyHere = finishCopy({ ...base, added: 4, existing: 1 });
+check(
+  "one person already here takes a singular verb",
+  (oneAlreadyHere.detail ?? "").startsWith("1 person was already in your orbit"),
+  String(oneAlreadyHere.detail),
+);
+check(
+  "…and several still take the plural",
+  (normal.detail ?? "").startsWith("6 people were already in your orbit"),
+  String(normal.detail),
+);
 
 /**
  * One drop is one card.

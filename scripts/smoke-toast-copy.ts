@@ -198,6 +198,8 @@ if (UNFINISHED_LINES.length !== 3) {
 
 const FINISH_SUMMARIES: FinishSummary[] = [
   { importIds: ["i1"], added: 19, existing: 6, meetingsLogged: 0, sources: ["Connections.csv"] },
+  // One person already here: the verb has to agree ("1 person was", never "1 person were").
+  { importIds: ["i1b"], added: 4, existing: 1, meetingsLogged: 0, sources: ["Connections.csv"] },
   { importIds: ["i2"], added: 1, existing: 0, meetingsLogged: 0, sources: ["Contacts.vcf"] },
   { importIds: ["i3"], added: 0, existing: 25, meetingsLogged: 0, sources: ["Connections.csv"] },
   { importIds: ["i4"], added: 0, existing: 0, meetingsLogged: 38, sources: ["work.ics"] },
@@ -215,6 +217,14 @@ const FINISH_SUMMARIES: FinishSummary[] = [
     meetingsLogged: 0,
     sources: ["Connections.csv"],
     unfinished: "Your LinkedIn messages didn’t finish",
+  },
+  // Three files: a list, not "a.csv and b.csv and c.csv".
+  {
+    importIds: ["i7"],
+    added: 30,
+    existing: 2,
+    meetingsLogged: 0,
+    sources: ["Connections.csv", "messages.csv", "contacts.vcf"],
   },
   // What the run could not bring in: the plan cap and the rows the database refused.
   {
@@ -253,6 +263,15 @@ for (const summary of FINISH_SUMMARIES) {
     // `checkText` skips short fragments that a chip is allowed to be.
     if ((line.match(/ — /g) ?? []).length > 1) {
       problems.push(`${where}  [two — connectors in one line]  ${line.slice(0, 90)}`);
+    }
+    // Also the finish's own: a count of one takes a singular verb. `people(n)` pluralises the
+    // noun, and the verb after it was once written for the plural only.
+    if (/\b1 (person|row|meeting) (were|are|have)\b/.test(line)) {
+      problems.push(`${where}  [one takes a singular verb]  ${line.slice(0, 90)}`);
+    }
+    // And a list of three reads "A, B and C".
+    if (/ and [^,]+ and /.test(line)) {
+      problems.push(`${where}  [a list joined with “and” twice]  ${line.slice(0, 90)}`);
     }
   }
 }

@@ -8,6 +8,7 @@
  * this module only chooses the words.
  */
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
+import { joinList } from "@/lib/imports/join-list";
 
 /**
  * How long an import can be undone for.
@@ -121,9 +122,10 @@ export function finishCopy(summary: FinishSummary): FinishCopy {
           : "Nothing new this time";
 
   const parts: string[] = [];
-  if (existing > 0 && added > 0) parts.push(`${people(existing)} were already in your orbit`);
-  else if (existing > 0) parts.push(`${people(existing)} matched someone you already had`);
-  if (sources.length > 1) parts.push(`From ${sources.join(" and ")}`);
+  if (existing > 0 && added > 0) {
+    parts.push(`${people(existing)} ${existing === 1 ? "was" : "were"} already in your orbit`);
+  } else if (existing > 0) parts.push(`${people(existing)} matched someone you already had`);
+  if (sources.length > 1) parts.push(`From ${joinList(sources)}`);
   const detail = parts.length ? parts.join(" — ") : null;
 
   const action =
