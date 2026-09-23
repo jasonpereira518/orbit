@@ -155,6 +155,16 @@ function main() {
     // the layout-level check, and any fetch before the gate runs for a closed page.
     check("the page gates before it does anything else", gateAt > 0 && page.indexOf("await ", gateAt - 6) === firstAwait);
     check("loading.tsx renders the same header", code("src/app/(clerk)/(app)/(main)/leads/loading.tsx").includes("LeadsHeader"));
+
+    const exportAt = page.indexOf("export default async function LeadsPage");
+    for (const section of ["TeamSection", "PipelineSection"]) {
+      const at = page.indexOf(`async function ${section}`);
+      // A section above the export would put its `await` before the gate's in the file.
+      check(`${section} is declared below the page`, at > exportAt && exportAt >= 0);
+    }
+    check("the page renders the four parts", ["<TeamSection", "<FindPath", "<PipelineSection", "<ApolloSearch"].every((part) => page.includes(part)));
+    const loading = code("src/app/(clerk)/(app)/(main)/leads/loading.tsx");
+    check("loading.tsx mirrors the page", loading.includes("TeamPanelSkeleton") && loading.includes("LeadsPipelineSkeleton"));
   }
 
   if (failures > 0) {

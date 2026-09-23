@@ -1018,6 +1018,31 @@ export function EventsListSkeleton() {
   );
 }
 
+/** Mirrors the /leads team card. */
+export function TeamPanelSkeleton() {
+  return <Skeleton className="h-36 w-full rounded-2xl" />;
+}
+
+/** Mirrors the /leads pipeline: a heading with the status filter, then rows. */
+export function LeadsPipelineSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-end justify-between gap-3">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-8 w-64 rounded-lg" />
+      </div>
+      <div className="divide-y divide-border/60 rounded-2xl border border-border/70 bg-card">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="space-y-2 px-5 py-4">
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-3 w-64" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Mirrors the event detail shell: themed hero, then the roster. */
 export function EventDetailSkeleton() {
   return (
