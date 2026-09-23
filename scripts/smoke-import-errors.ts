@@ -12,6 +12,8 @@
 import {
   IMPORT_FAILURE_COPY,
   classifyImportError,
+  classifyImportFailure,
+  importRowProblemLine,
   describeImportFailure,
   icsFailureLine,
   importFailureLine,
@@ -20,6 +22,9 @@ import {
 } from "../src/lib/import-errors";
 import { IMPORT_COPY } from "../src/lib/imports/import-copy";
 import { withReference } from "../src/lib/errors";
+import { DRIVE_ROW_COPY } from "../src/lib/imports/drive-row-copy";
+import { AI_ACCESS_COPY, MANAGED_PROVIDER_FAILURE_MESSAGE } from "../src/lib/ai-access-copy";
+import { AiAccessError } from "../src/lib/ai-access";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -60,6 +65,27 @@ const SAMPLES: { raw: string; code: ImportFailureCode }[] = [
   { raw: "connect ECONNRESET 10.0.0.1:5432", code: "provider_unavailable" },
   { raw: "Unable to auto-detect delimiting character", code: "bad_file" },
   { raw: "Something nobody has ever seen before", code: "unknown" },
+  {
+    raw: "Your AI provider didn’t accept your API key — check it in Settings, then try again",
+    code: "ai_key",
+  },
+  {
+    raw: "Your AI provider says your account is out of credit — top up with them, then try again",
+    code: "ai_key",
+  },
+  {
+    raw: "Your AI model isn’t available — pick another in Settings, then try again",
+    code: "ai_key",
+  },
+  {
+    raw: "Add an AI key in Settings so Orbit can read your Drive files",
+    code: "ai_key",
+  },
+  // The AI gate's own refusals, as `failImport` stores them (I1).
+  { raw: AI_ACCESS_COPY.key_required, code: "ai_key" },
+  { raw: AI_ACCESS_COPY.managed_limit, code: "ai_key" },
+  { raw: AI_ACCESS_COPY.managed_unavailable, code: "ai_key" },
+  { raw: MANAGED_PROVIDER_FAILURE_MESSAGE, code: "ai_key" },
 ];
 
 console.log("Classification");
@@ -76,6 +102,41 @@ check(
   classifyImportError("") === "unknown",
 );
 check("null is unknown", classifyImportError(null) === "unknown");
+
+console.log("Classification from the error instance");
+for (const reason of Object.keys(AI_ACCESS_COPY) as (keyof typeof AI_ACCESS_COPY)[]) {
+  check(
+    `an AiAccessError (${reason}) is ai_key`,
+    classifyImportFailure(new AiAccessError(reason)) === "ai_key",
+    classifyImportFailure(new AiAccessError(reason)),
+  );
+}
+check(
+  "an AiAccessError is ai_key by name alone (a second module instance)",
+  classifyImportFailure(Object.assign(new Error("anything"), { name: "AiAccessError" })) === "ai_key",
+);
+
+console.log("A detail-sheet row's reason");
+for (const [key, copy] of Object.entries(DRIVE_ROW_COPY)) {
+  check(
+    `Drive row copy "${key}" passes through as written`,
+    importRowProblemLine("skipped", copy) === copy,
+    importRowProblemLine("skipped", copy),
+  );
+}
+check(
+  "driver text on a row is still classified, not shown raw",
+  importRowProblemLine("failed", 'duplicate key value violates unique constraint "x"') ===
+    importFailureLine('duplicate key value violates unique constraint "x"'),
+);
+check(
+  "a skipped row with no reason keeps its fallback",
+  importRowProblemLine("skipped", null) === "Nothing in this row to attach to anyone",
+);
+check(
+  "a failed row with no reason keeps its fallback",
+  importRowProblemLine("failed", "") === "Orbit couldn’t save this row",
+);
 
 console.log("References");
 const withRef = withReference(
@@ -102,6 +163,7 @@ const allOutputs = [
   ...SAMPLES.map((s) => icsFailureLine(s.raw)),
   ...Object.values(IMPORT_FAILURE_COPY).flatMap((c) => [c.cause, c.next]),
   ...Object.values(IMPORT_COPY),
+  ...Object.values(DRIVE_ROW_COPY),
   importFailureLine(withRef),
 ];
 const LEAKS: { label: string; test: RegExp }[] = [
@@ -159,6 +221,7 @@ const CODES: ImportFailureCode[] = [
   "row_conflict",
   "database",
   "stalled",
+  "ai_key",
   "unknown",
 ];
 check(

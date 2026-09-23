@@ -11,6 +11,7 @@ import {
   finishCopy,
   finishPartFromImport,
   foldPreviews,
+  importUndoable,
   mergeFinishSummaries,
   undoDismissLabel,
   type FinishSummary,
@@ -477,6 +478,33 @@ check(
   importIdsFrom([` ${uuid} `, "nope", uuid, "1; drop table imports"]).join() === uuid,
   importIdsFrom([` ${uuid} `, "nope", uuid, "1; drop table imports"]).join(),
 );
+
+/**
+ * A Drive import is not undoable.
+ *
+ * It saves each doc the way Capture saves a note, so none of its rows carry the provenance
+ * stamp undo reads, and a doc naming several people keeps only the first on its row. Offering
+ * undo would show the wrong people with a caveat that isn't true.
+ */
+console.log("Undo is only offered where it can act");
+check("a Drive import can't be undone", !importUndoable("drive_docs"));
+check("…a LinkedIn one can", importUndoable("linkedin_connections"));
+const drivePart = row({ id: "d1", importType: "drive_docs", fileName: null, contactsCreated: 3 });
+const linkedinPart = row({ id: "l1", importType: "linkedin_connections", contactsCreated: 3 });
+check("a Drive import's card says so", drivePart.notUndoable === true);
+check("…and a LinkedIn one's doesn't", linkedinPart.notUndoable === undefined);
+check(
+  "a run of only Drive imports offers no undo",
+  mergeFinishSummaries([drivePart])?.notUndoable === true,
+);
+check(
+  "a mixed run keeps its undo",
+  mergeFinishSummaries([drivePart, linkedinPart])?.notUndoable === undefined,
+);
+// The rendered card, not just the flag: the button is the thing that must be gone.
+const undoLink = />Undo</;
+check("the LinkedIn card draws Undo", undoLink.test(cardHtml(mergeFinishSummaries([linkedinPart])!)));
+check("the Drive card doesn't", !undoLink.test(cardHtml(mergeFinishSummaries([drivePart])!)));
 
 if (failures) {
   console.error(`smoke-import-finish: ${failures} failed`);

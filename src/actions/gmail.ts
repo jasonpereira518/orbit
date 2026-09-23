@@ -23,7 +23,7 @@ import {
   hasGmailReadScope,
   hasSendScope,
 } from "@/lib/gmail";
-import { isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
+import { grantCovers, isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
 import {
   deriveConnectionHealth,
   type ConnectionHealth,
@@ -63,6 +63,8 @@ export type GmailConnectionStatus = {
    * Named to match `OutlookConnectionStatus.hasCalendarScope` so one adapter reads both.
    */
   hasCalendarScope: boolean;
+  /** The grant covers drive.file, so the Drive picker can open. */
+  canImportDrive: boolean;
   /** Safe: configured redirect URI only (no secrets). */
   redirectUri: string | null;
 };
@@ -83,6 +85,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       canRead: false,
       canImportContacts: false,
       hasCalendarScope: false,
+      canImportDrive: false,
       redirectUri: summary.redirectUri,
     };
   }
@@ -118,6 +121,9 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     ),
     hasCalendarScope: Boolean(
       conn && conn.status === "active" && hasCalendarScope(conn.scopes),
+    ),
+    canImportDrive: Boolean(
+      conn && conn.status === "active" && grantCovers("drive", conn.scopes),
     ),
     redirectUri: summary.redirectUri,
   };

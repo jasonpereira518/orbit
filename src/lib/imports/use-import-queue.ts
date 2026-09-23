@@ -7,7 +7,7 @@ import {
   previewLinkedInCsv,
   previewLinkedInMessagesCsv,
 } from "@/actions/imports";
-import { friendlyError, UserFacingError } from "@/lib/errors";
+import { failureText, friendlyError, UserFacingError } from "@/lib/errors";
 import {
   awaitImportJob,
   markQueuedImportJob,
@@ -414,9 +414,11 @@ export async function runQueue(): Promise<RunResult> {
         setState({
           items: advance(state.items, item.id, {
             status: "failed",
-            error: final.error
-              ? friendlyError(new Error(final.error), IMPORT_COPY.importFailed)
-              : IMPORT_COPY.importFailed,
+            error: failureText(
+              final.error,
+              final.userFacingError,
+              IMPORT_COPY.importFailed,
+            ),
           }),
         });
       }

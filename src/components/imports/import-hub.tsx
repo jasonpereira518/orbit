@@ -15,6 +15,8 @@ import {
   CalendarPlus,
   Contact,
   FileSpreadsheet,
+  HardDrive,
+  Loader2,
   MessageSquare,
 } from "lucide-react";
 import {
@@ -25,9 +27,11 @@ import { ImportDropOverlay } from "@/components/imports/import-drop-overlay";
 import { ImportDropzone } from "@/components/imports/import-dropzone";
 import { ImportFinishCard } from "@/components/imports/import-finish-card";
 import { ImportQueueCard } from "@/components/imports/import-queue-card";
+import { DriveImportCard } from "@/components/imports/drive-import-card";
 import { ImportSourceRow } from "@/components/imports/import-source-row";
 import { CalendarConnectionsCard } from "@/components/imports/calendar-connections-card";
 import { ImportProgress } from "@/components/imports/import-utils";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LockedFeature } from "@/components/locked-feature";
 import {
@@ -43,6 +47,16 @@ import {
 import { detectImportFiles } from "@/lib/imports/detect-import-file";
 import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
+import {
+  openDrivePicker,
+  requestPickerToken,
+  warmDrivePicker,
+} from "@/lib/imports/google-picker";
+import type { PickedDriveFile } from "@/lib/imports/drive-triage";
+import { checkDriveReadiness } from "@/actions/drive";
+import { startGmailOAuth } from "@/actions/gmail";
+import { friendlyError } from "@/lib/errors";
+import { toast } from "@/lib/toast";
 import { MAX_CONTACTS_FILE_BYTES } from "@/lib/contacts-file";
 import { MAX_DROP_DEPTH } from "@/lib/capture/file-drop";
 import {
@@ -52,6 +66,17 @@ import {
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import type { DroppedFile } from "@/lib/capture/file-drop";
 import type { ImportHistoryItem, LatestFinishedImport } from "@/actions/imports";
+
+export type DriveImportInput = {
+  apiKey: string | null;
+  appId: string | null;
+  /** The server's `GOOGLE_CLIENT_ID` — the browser's Picker token must come from it. */
+  clientId: string | null;
+};
+
+type DriveReadiness = Awaited<ReturnType<typeof checkDriveReadiness>>;
+/** A readiness answer fetched on hover is trusted for this long when the press comes. */
+const READINESS_FRESH_MS = 60_000;
 
 /**
  * Everything on /imports.
@@ -229,8 +254,13 @@ const ROW_FOR_ANCHOR: Record<string, RowId | undefined> = {
   "import-panel-calendar": "import-panel-calendar",
 };
 
-/** Which row a running job belongs to, so returning mid-import lands on it. */
-function rowForImportJobKind(kind: ImportJobKind): RowId {
+/**
+ * Which row a running job belongs to, so returning mid-import lands on it.
+ *
+ * `drive_docs` has no row here yet — its own Picker card is a later addition — so it
+ * resolves to `null` rather than a made-up row id.
+ */
+function rowForImportJobKind(kind: ImportJobKind): RowId | null {
   switch (kind) {
     case "connections":
       return "import-panel-connections";
@@ -244,6 +274,8 @@ function rowForImportJobKind(kind: ImportJobKind): RowId {
       return "import-outlook-contacts";
     case "calendar":
       return "import-calendar-file";
+    case "drive_docs":
+      return null;
   }
 }
 
@@ -257,6 +289,7 @@ export function ImportHub({
   canUseSync = true,
   google,
   outlook,
+  drive,
   latestFinish,
 }: {
   history: ImportHistoryItem[];
@@ -268,12 +301,89 @@ export function ImportHub({
   canUseSync?: boolean;
   google?: ProviderCalendarInput | null;
   outlook?: ProviderCalendarInput | null;
+  drive?: DriveImportInput;
   /** The most recent completed import, drawn as the done card when nothing is running. */
   latestFinish?: LatestFinishedImport | null;
 }) {
   const job = useImportJob();
   const queue = useImportQueue();
   const [open, setOpen] = useState<RowId | null>(null);
+  const [drivePicks, setDrivePicks] = useState<PickedDriveFile[] | null>(null);
+  // Covers the whole click→token→Picker round trip: a slow token fetch or a Picker that
+  // takes a moment to load would otherwise leave the button clickable again mid-flight.
+  const [drivePickerBusy, setDrivePickerBusy] = useState(false);
+  useRefreshOnVisible();
+
+  // The Drive card takes the queue card's slot, so it must never open over a queue that is
+  // still running or showing results — the queue would vanish mid-import.
+  const queueBusy = queue.items.length > 0;
+  const driveConfigured = Boolean(drive?.apiKey && drive.appId && drive.clientId);
+  // Asked on hover/focus so the press can open Google's token window straight away: browsers
+  // only allow a popup close to the gesture, and a server round trip after the click spends it.
+  const readinessRef = useRef<{ at: number; promise: Promise<DriveReadiness> } | null>(null);
+
+  function warmDrive() {
+    if (!driveConfigured || !canUseSync) return;
+    warmDrivePicker();
+    const cached = readinessRef.current;
+    if (cached && Date.now() - cached.at < READINESS_FRESH_MS) return;
+    const promise = checkDriveReadiness();
+    promise.catch(() => {
+      if (readinessRef.current?.promise === promise) readinessRef.current = null;
+    });
+    readinessRef.current = { at: Date.now(), promise };
+  }
+
+  async function pickFromDrive() {
+    if (!drive?.apiKey || !drive.appId || !drive.clientId || drivePickerBusy || queueBusy) return;
+    setDrivePickerBusy(true);
+    try {
+      const cached = readinessRef.current;
+      readinessRef.current = null;
+      const ready =
+        cached && Date.now() - cached.at < READINESS_FRESH_MS
+          ? await cached.promise
+          : await checkDriveReadiness();
+      if (!ready.ok) {
+        if (
+          ready.reason === "needs_consent" ||
+          ready.reason === "needs_reconnect" ||
+          ready.reason === "not_connected"
+        ) {
+          try {
+            const { url } = await startGmailOAuth({ purpose: "drive", returnTo: "/imports" });
+            window.location.assign(url);
+          } catch (err) {
+            toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+          }
+          return;
+        }
+        toast.error(ready.error ?? IMPORT_COPY.driveUnavailable);
+        return;
+      }
+      try {
+        // Browser-only, drive.file-only, never sent to Orbit or kept past this call.
+        const accessToken = await requestPickerToken({
+          clientId: drive.clientId,
+          loginHint: google?.emailAddress ?? null,
+        });
+        if (!accessToken) return; // closed Google's window: a cancel
+        const picked = await openDrivePicker({
+          accessToken,
+          apiKey: drive.apiKey,
+          appId: drive.appId,
+        });
+        if (picked.length) setDrivePicks(picked);
+      } catch (err) {
+        toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+      }
+    } catch (err) {
+      toast.error(friendlyError(err, IMPORT_COPY.driveUnavailable));
+    } finally {
+      setDrivePickerBusy(false);
+    }
+  }
+
   const dismissed = useSyncExternalStore(
     subscribeDismissedFinishes,
     dismissedFinishesSnapshot,
@@ -281,7 +391,6 @@ export function ImportHub({
   );
   const historyRef = useRef<ImportHistoryHandle>(null);
   const router = useRouter();
-  useRefreshOnVisible();
 
   /**
    * Re-read the page after an undo. Held here rather than inside the undo button so that the
@@ -359,6 +468,9 @@ export function ImportHub({
    * zero items but some `ignored` — passed here AND inside the queue card, and the same card
    * was drawn twice. While any drop is in play the queue card owns this space, finished or
    * not; this is only the card a person comes back to.
+   *
+   * A Drive pick takes the same slot, so the finish steps aside while its card is open rather
+   * than sitting under a list of documents it has nothing to do with.
    */
   const finishToShow =
     dismissed &&
@@ -366,6 +478,7 @@ export function ImportHub({
     !latestFinish.undoneAt &&
     !queue.items.length &&
     !queue.ignored.length &&
+    !drivePicks &&
     !latestFinish.importIds.some((id) => dismissed.includes(id))
       ? latestFinish
       : null;
@@ -383,6 +496,36 @@ export function ImportHub({
       <ImportDropzone
         onFiles={(files) => void handleFiles(files)}
         busy={reading}
+        extraAction={
+          driveConfigured ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!canUseSync || drivePickerBusy || queueBusy}
+              title={
+                !canUseSync
+                  ? IMPORT_COPY.drivePaywalled
+                  : queueBusy
+                    ? IMPORT_COPY.driveWaitForQueue
+                    : undefined
+              }
+              onPointerEnter={warmDrive}
+              onFocus={warmDrive}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!canUseSync || queueBusy) return;
+                void pickFromDrive();
+              }}
+            >
+              {drivePickerBusy ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <HardDrive className="size-4" />
+              )}
+              Choose from Google Drive
+            </Button>
+          ) : undefined
+        }
       />
 
       {showStandaloneProgress ? (
@@ -394,11 +537,15 @@ export function ImportHub({
         />
       ) : null}
 
-      <ImportQueueCard
-        onFinishDismiss={dismissFinish}
-        onShowFinishDetail={(importId) => historyRef.current?.open(importId)}
-        onFinishUndone={refreshAfterUndo}
-      />
+      {drivePicks ? (
+        <DriveImportCard files={drivePicks} onDone={() => setDrivePicks(null)} />
+      ) : (
+        <ImportQueueCard
+          onFinishDismiss={dismissFinish}
+          onShowFinishDetail={(importId) => historyRef.current?.open(importId)}
+          onFinishUndone={refreshAfterUndo}
+        />
+      )}
 
       {/*
         The finish the server knows about, for the visit that comes after the import — a

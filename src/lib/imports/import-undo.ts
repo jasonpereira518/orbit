@@ -6,6 +6,7 @@ import { getAdapter } from "@/lib/import-adapters";
 import { fingerprintContact } from "@/lib/imports/import-provenance";
 import {
   UNDO_WINDOW_DAYS,
+  importUndoable,
   withinUndoWindow,
 } from "@/lib/imports/import-finish";
 
@@ -252,6 +253,9 @@ async function assess(
     columns: { id: true, importType: true, createdAt: true, updatedAt: true, stats: true },
   });
   if (!imp) return null;
+  // Neither card offers undo for these, and this is what makes that more than a hidden button:
+  // their rows carry no provenance, so the candidates below would be the wrong people.
+  if (!importUndoable(imp.importType)) return null;
 
   const stats = imp.stats ?? {};
   // The frozen end of the run, written by the engine when it marked the import completed or

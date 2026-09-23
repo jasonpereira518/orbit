@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
 import { getDb, rowsOf } from "@/db";
-import { importFailureLine } from "@/lib/import-errors";
+import { importRowProblemLine } from "@/lib/import-errors";
 import {
   countImportPeople,
   listImportPeople,
@@ -32,6 +32,7 @@ import {
   outlookConnections,
   userSettings,
   type CalendarEventRowPayload,
+  type ImportStats,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
@@ -325,6 +326,8 @@ export type ImportJobStatus = {
    * job, and a "completed" toast that never mentions them hides the loss.
    */
   failedRows: number;
+  /** Drive imports: docs actually read (skipped and unchanged ones excluded). */
+  docsRead: number;
 };
 
 /** One row's worth of trouble, named for the person rather than for the database. */
@@ -420,11 +423,11 @@ export async function getImportDetail(
     status: r.status === "failed" ? "failed" : "skipped",
     who: nameFromRowPayload(r.payload),
     // Mapped here rather than in the client so a raw driver string never crosses the wire.
-    reason: r.errorMessage
-      ? importFailureLine(r.errorMessage)
-      : r.status === "skipped"
-        ? "Nothing in this row to attach to anyone"
-        : "Orbit couldn’t save this row",
+    // Orbit's own row copy (a Drive doc's skip reason) passes through as written.
+    reason: importRowProblemLine(
+      r.status === "failed" ? "failed" : "skipped",
+      r.errorMessage,
+    ),
   }));
 
   const totalProblems = counts.failed + counts.skipped;
@@ -452,6 +455,9 @@ export async function getImportDetail(
         messagesImported: row.stats?.messagesImported,
         meetingsLogged: row.stats?.meetingsLogged,
         errorCode: row.stats?.errorCode,
+        docsRead: row.stats?.docsRead,
+        docsAlreadyImported: row.stats?.docsAlreadyImported,
+        flaggedCommitments: row.stats?.flaggedCommitments,
         // Without these the sheet goes on offering an undo for an import that has already
         // had one — the row beside it, which reads the same fields through `listImports`,
         // would say "Undone" at the same moment.
@@ -658,6 +664,7 @@ export async function getImportJobStatus(
     interactionsLogged: row.stats?.interactionsLogged ?? 0,
     remindersCreated: row.stats?.remindersCreated ?? 0,
     failedRows: row.stats?.failedRows ?? 0,
+    docsRead: row.stats?.docsRead ?? 0,
   };
 }
 
@@ -941,6 +948,9 @@ export type ImportHistoryItem = {
     messagesImported?: number;
     meetingsLogged?: number;
     errorCode?: string;
+    docsRead?: number;
+    docsAlreadyImported?: number;
+    flaggedCommitments?: NonNullable<ImportStats["flaggedCommitments"]>;
     /** Set once this import's undo finished — the row then says so instead of its chips. */
     undoneAt?: string;
     undoneRemoved?: number;
@@ -1002,6 +1012,9 @@ export async function listImports(
       messagesImported: r.stats?.messagesImported,
       meetingsLogged: r.stats?.meetingsLogged,
       errorCode: r.stats?.errorCode,
+      docsRead: r.stats?.docsRead,
+      docsAlreadyImported: r.stats?.docsAlreadyImported,
+      flaggedCommitments: r.stats?.flaggedCommitments,
       undoneAt: r.stats?.undoneAt,
       undoneRemoved: r.stats?.undoneRemoved,
       undoneKept: r.stats?.undoneKept,

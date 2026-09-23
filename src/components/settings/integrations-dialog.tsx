@@ -75,6 +75,7 @@ export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
       return "outlook";
     case "contacts_file":
     case "calendar":
+    case "drive_docs":
       return null;
   }
 }

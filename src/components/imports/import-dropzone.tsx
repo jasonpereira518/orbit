@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { FolderOpen, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
@@ -19,10 +19,13 @@ export function ImportDropzone({
   onFiles,
   busy = false,
   disabled = false,
+  extraAction,
 }: {
   onFiles: (files: DroppedFile[]) => void;
   busy?: boolean;
   disabled?: boolean;
+  /** A third button alongside "Choose files" / "Choose a folder" — currently just Drive. */
+  extraAction?: ReactNode;
 }) {
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -94,6 +97,7 @@ export function ImportDropzone({
             <FolderOpen className="size-4" />
             Choose a folder
           </Button>
+          {extraAction}
         </div>
       </div>
 

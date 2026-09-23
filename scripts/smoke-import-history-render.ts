@@ -20,6 +20,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   ImportDetailBody,
   ImportHistory,
+  formatFlagDue,
 } from "../src/components/imports/import-history";
 import { Sheet } from "../src/components/ui/sheet";
 import type { ImportDetail, ImportHistoryItem } from "../src/actions/imports";
@@ -236,6 +237,12 @@ const doneSheet = sheet(
 );
 check("a finished undo is not offered again", !doneSheet.includes("Undo this import"));
 check("…and says it is done", doneSheet.includes("Undone · 17 people removed"));
+// A Drive import's rows carry no provenance for undo to read, so its sheet never offers one.
+const driveSheet = sheet({
+  ...detailFor({}),
+  item: { ...detailFor({}).item, importType: "drive_docs" },
+});
+check("a Drive import's sheet offers no undo", !driveSheet.includes("Undo this import"));
 
 console.log("Every import type still renders");
 const TYPES = [
@@ -248,6 +255,7 @@ const TYPES = [
   "outlook_recruiter_scan",
   "calendar_ics",
   "calendar_csv",
+  "drive_docs",
 ];
 for (const t of TYPES) {
   const html = render([item({ importType: t, fileName: null })]);
@@ -255,6 +263,50 @@ for (const t of TYPES) {
   // anywhere means the label table does not know this type.
   check(`${t} has a name, not its raw type`, !html.includes(t), t);
 }
+
+console.log("A Drive import");
+const drive = render([
+  item({
+    id: "d1",
+    importType: "drive_docs",
+    fileName: "3 Google Drive files",
+    contactsCreated: 2,
+    contactsUpdated: 1,
+    duplicatesFound: 0,
+    stats: {
+      docsRead: 3,
+      remindersCreated: 1,
+      flaggedCommitments: [
+        {
+          id: "f1:commit",
+          key: "commit",
+          title: "Send the follow-up doc",
+          personName: "Jamie Rivera",
+          contactId: null,
+          dueDateIso: "2026-09-10",
+          sourceExcerpt: "I'll send the doc by Friday",
+          actionKind: "follow_up",
+          docName: "1:1 with Jamie.gdoc",
+        },
+      ],
+    },
+  }),
+]);
+check("names docs read", drive.includes("3 docs read"));
+check("counts people added", drive.includes("2 added"));
+check("counts people updated", drive.includes("1 updated"));
+check(
+  "counts the reminder, singular",
+  drive.includes("1 reminder") && !drive.includes("1 reminders"),
+);
+check("flags what's worth a look", drive.includes("1 to look at"));
+check("...and never with the word “failed”", !/\bfailed\b/i.test(drive), "");
+
+console.log("Worth a look dates");
+const SEP_21 = new Date("2026-09-21T12:00:00Z");
+check("a due date reads as a day, not an ISO string", formatFlagDue("2026-09-01", SEP_21) === "Sep 1", formatFlagDue("2026-09-01", SEP_21));
+check("…read as a calendar day in any timezone", formatFlagDue("2026-09-30", SEP_21) === "Sep 30", formatFlagDue("2026-09-30", SEP_21));
+check("…with the year only when it isn't this one", formatFlagDue("2025-12-28", SEP_21) === "Dec 28, 2025", formatFlagDue("2025-12-28", SEP_21));
 
 console.log("Empty state");
 const empty = render([]);

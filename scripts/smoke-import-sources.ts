@@ -33,6 +33,7 @@ const SOURCES = [
     .map((f) => join("src/lib/import-adapters", f)),
   "src/lib/gmail-scan-type.ts",
   "src/lib/outlook-scan-type.ts",
+  "src/lib/drive-import-type.ts",
 ];
 
 const declared = new Map<string, string>();

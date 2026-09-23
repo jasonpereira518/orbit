@@ -5,7 +5,8 @@
  * The split is derived, not stored — `contacts.created_at` against `imports.created_at` — so
  * this pins the edges that derivation has to get right: one person behind many rows counts
  * once, skipped/failed rows and deleted contacts are not listed, another user's contact
- * behind a forged row never leaks, and paging stops exactly at the end.
+ * behind a forged row never leaks, people carried in `payload.contactIds` (a Drive doc's
+ * extra names) are listed, and paging stops exactly at the end.
  *
  * Run: npx tsx scripts/smoke-import-people.ts
  */
@@ -59,13 +60,15 @@ async function main() {
   const skippedOne = await mk(USER, "Sam Skipped", after);
   const gone = await mk(USER, "Gina Gone", after);
   const foreign = await mk(OTHER, "Oscar Other", after);
+  const carried = await mk(USER, "Cara Carried", after);
+  const carriedSkipped = await mk(USER, "Carl Skipped", after);
 
   let i = 0;
-  const row = (contactId: string | null, status = "done") => ({
+  const row = (contactId: string | null, status = "done", payload: object = {}) => ({
     importId: imp.id,
     userId: USER,
     rowIndex: i++,
-    payload: {} as never,
+    payload: payload as never,
     status,
     contactId,
   });
@@ -77,16 +80,23 @@ async function main() {
     row(null, "failed"),
     row(gone),
     row(foreign), // forged: points at another user's contact
+    row(null, "done", { contactIds: [carried] }), // a Drive doc: people ride the payload
+    row(null, "skipped", { contactIds: [carriedSkipped] }), // not done, so not listed
   ]);
   await db.delete(contacts).where(eq(contacts.id, gone));
 
   const counts = await countImportPeople(USER, imp.id, importAt);
-  check("counts one added, one already here", counts.added === 1 && counts.existing === 1, JSON.stringify(counts));
+  check("counts two added, one already here", counts.added === 2 && counts.existing === 1, JSON.stringify(counts));
 
   const added = await listImportPeople(USER, imp.id, "added");
-  check("added lists the new person once", added.people.length === 1 && added.people[0].id === fresh, JSON.stringify(added));
-  check("company alone is the detail", added.people[0].detail === "Globex");
-  check("no more after one", added.hasMore === false);
+  const addedIds = added.people.map((p) => p.id).sort();
+  check(
+    "added lists the new person once, plus the one carried in a payload",
+    added.people.length === 2 && JSON.stringify(addedIds) === JSON.stringify([fresh, carried].sort()),
+    JSON.stringify(added),
+  );
+  check("company alone is the detail", added.people.find((p) => p.id === fresh)?.detail === "Globex");
+  check("no more after two", added.hasMore === false);
 
   const existing = await listImportPeople(USER, imp.id, "existing");
   check("already-here lists the matched person", existing.people.length === 1 && existing.people[0].id === old);
@@ -105,9 +115,9 @@ async function main() {
   const page1 = await listImportPeople(USER, imp.id, "added");
   check("first page is full and offers more", page1.people.length === IMPORT_PEOPLE_PAGE && page1.hasMore);
   const page2 = await listImportPeople(USER, imp.id, "added", page1.people.length);
-  check("second page holds the rest and stops", page2.people.length === 2 && !page2.hasMore, JSON.stringify(page2.people.map((p) => p.name)));
+  check("second page holds the rest and stops", page2.people.length === 3 && !page2.hasMore, JSON.stringify(page2.people.map((p) => p.name)));
   const seen = new Set([...page1.people, ...page2.people].map((p) => p.id));
-  check("pages don't overlap", seen.size === IMPORT_PEOPLE_PAGE + 2);
+  check("pages don't overlap", seen.size === IMPORT_PEOPLE_PAGE + 3);
 
   await reset();
   console.log("smoke-import-people: all checks passed");
