@@ -188,9 +188,12 @@ export async function applyNetworkingEvents(
 }
 
 /**
- * Which occurrence of each series is allowed to produce a post-meeting follow-up: the
- * `externalIdBase` of its most recent PAST occurrence (ties broken by whichever is seen last),
- * subject to `postMeetingReminder`'s own 21-day rule.
+ * Which occurrence of each series is allowed to PRODUCE a post-meeting follow-up in THIS batch:
+ * the `externalIdBase` of its most recent PAST occurrence (ties broken by whichever is seen
+ * last), subject to `postMeetingReminder`'s own 21-day rule. This governs which occurrence is
+ * even considered within one sync; `makePostMeetingReminder`'s series-keyed description is what
+ * additionally makes the series get at most one follow-up EVER, across every sync that follows —
+ * see that function's own comment.
  *
  * `isOccurrenceUid` alone (skip every synthesized occurrence, keep only the series' bare-uid
  * master) is not sufficient: the ICS expansion window is 90 days back, so a series whose
@@ -222,15 +225,19 @@ function seriesFollowUpEligibility(events: NetworkEvent[]): Set<string> {
 /**
  * A nudge two days after a meeting that has already happened.
  *
- * The description embeds the event uid on purpose: ingest dedupes reminders on
- * `(contactId, description)`, so this is what makes a re-sync of the same calendar reproduce
- * a byte-identical candidate that gets filtered out rather than inserted again. That dedupe
- * is exactly why recurrence expansion can't be allowed to reach this function unfiltered — see
- * `seriesFollowUpEligibility`'s own comment for the full shape of the fix: `eligible` names the
- * one occurrence per series allowed through, computed once per batch over every event in it,
- * because deciding that from a single event in isolation (the previous approach) can't tell "a
- * suffixed uid because the master fell outside the window" apart from "a suffixed uid because
- * this genuinely isn't the series' most recent occurrence."
+ * The description embeds the SERIES uid, not the occurrence uid, and that is what makes this
+ * one follow-up per series EVER, not just within one sync batch. Ingest dedupes reminders on
+ * `(contactId, description)` against every row already in the table, so a byte-identical
+ * description is what lets a later sync's candidate be filtered out rather than inserted again.
+ * An ICS subscription resyncs every 30 minutes, and `seriesFollowUpEligibility` picks a new
+ * "most recent past occurrence" each time one advances — so keying the description on the
+ * OCCURRENCE uid (the previous shape of this function) meant every sync where that eligible
+ * occurrence changed minted a byte-DIFFERENT description, and nothing ever pruned the old one:
+ * a daily standup accrued a new live reminder every day (up to ~21 at once), a weekly 1:1 one a
+ * week forever — the exact pile the eligibility set exists to prevent, just accrued across
+ * syncs instead of within one. Keying on `seriesUidOf(uid)` instead makes the SAME series
+ * produce the SAME description on every sync, so only the first ever gets past the dedupe check,
+ * regardless of which occurrence within the series happens to be eligible when it runs.
  */
 function makePostMeetingReminder(eligible: Set<string>) {
   return function postMeetingReminder(
@@ -240,7 +247,7 @@ function makePostMeetingReminder(eligible: Set<string>) {
   ): ReminderInsert[] {
     if (!eligible.has(event.externalIdBase)) return [];
 
-    // `externalIdBase` is `cal:<uid>`; the uid is what the old writer put in the description.
+    // `externalIdBase` is `cal:<uid>`.
     const uid = event.externalIdBase.replace(/^cal:/, "");
     const now = Date.now();
     const eventAt = event.timestamp.getTime();
@@ -256,7 +263,7 @@ function makePostMeetingReminder(eligible: Set<string>) {
         userId,
         contactId,
         title: `Follow up after ${event.summary || "meeting"}`,
-        description: `You met with them. Event ${uid}`,
+        description: `You met with them. Event ${seriesUidOf(uid)}`,
         dueDate: due,
         status: "pending",
         reminderType: "post_meeting",

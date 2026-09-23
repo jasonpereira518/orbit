@@ -402,7 +402,14 @@ async function main() {
 
   // An override whose master fell outside this batch (a page boundary, or a document that only
   // carries the override) has nothing to attach to — it must still surface, standalone, rather
-  // than being silently dropped.
+  // than being silently dropped. REVIEW FINDING 1: it must NOT surface under its own bare uid
+  // either — that's the SAME id the series' DTSTART occurrence would carry, so an in-range
+  // orphan override sharing a batch with an out-of-window master would silently overwrite an
+  // already-ingested DTSTART row (ingest.ts's last-one-wins onConflictDoUpdate). It is keyed on
+  // `occurrenceUid(uid, recurrenceId)` instead — recurrenceId never moves across a reschedule,
+  // so the id stays stable across syncs, and it only collides with a real DTSTART row in the
+  // rare case where recurrenceId itself equals DTSTART, producing a visible duplicate rather
+  // than a silent overwrite.
   const orphanOverride: ParsedCalendarEvent = {
     ...evt("2026-03-11T18:00:00Z", { uid: "orphan-1", summary: "Orphan override" }),
     recurrenceId: new Date("2026-03-10T13:00:00Z"),
@@ -410,8 +417,31 @@ async function main() {
   const orphanResult = expandIcsEvents([orphanOverride], WINDOW);
   check(
     "an override with no master in the batch is emitted standalone rather than dropped",
-    orphanResult.length === 1 && orphanResult[0]?.uid === "orphan-1",
+    orphanResult.length === 1,
     orphanResult.map((e) => e.uid).join(", ")
+  );
+  check(
+    "...under a SUFFIXED id keyed on its own recurrenceId, not its bare (series-colliding) uid",
+    orphanResult[0]?.uid === occurrenceUid("orphan-1", new Date("2026-03-10T13:00:00Z")),
+    orphanResult[0]?.uid
+  );
+
+  // Two orphan overrides of the SAME series in one batch (e.g. two rescheduled instances of a
+  // recurring meeting whose master fell outside this page/window) must produce two DISTINCT
+  // rows, not collide with each other the way they would under a shared bare uid.
+  const orphanOverrideA: ParsedCalendarEvent = {
+    ...evt("2026-03-11T18:00:00Z", { uid: "orphan-2", summary: "First reschedule" }),
+    recurrenceId: new Date("2026-03-10T13:00:00Z"),
+  };
+  const orphanOverrideB: ParsedCalendarEvent = {
+    ...evt("2026-03-19T18:00:00Z", { uid: "orphan-2", summary: "Second reschedule" }),
+    recurrenceId: new Date("2026-03-17T13:00:00Z"),
+  };
+  const twoOrphansResult = expandIcsEvents([orphanOverrideA, orphanOverrideB], WINDOW);
+  check(
+    "two orphan overrides of one series produce two distinct rows, not one overwriting the other",
+    twoOrphansResult.length === 2 && new Set(twoOrphansResult.map((e) => e.uid)).size === 2,
+    twoOrphansResult.map((e) => e.uid).join(", ")
   );
 
   // --- seriesUidOf: the helper `postMeetingReminder`'s series-eligibility fix (REGRESSION 2)

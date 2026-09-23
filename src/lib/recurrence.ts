@@ -130,10 +130,15 @@ export function occurrenceUid(uid: string, start: Date): string {
  * Whether `uid` carries the `_<instant>` suffix `occurrenceUid` produces — i.e. whether it
  * names an occurrence that was DERIVED by expansion, as opposed to a plain event's own uid or
  * a recurring series' master occurrence (which keeps its bare uid; see `expandEvent`'s own
- * comment on that ruling). Callers use this to single out the synthetic, expansion-only
- * occurrences — for example a post-meeting follow-up should fire at most once per series
- * rather than once per occurrence, and this is what lets it skip every occurrence but the one
- * that already existed before expansion did.
+ * comment on that ruling).
+ *
+ * NOT what a caller wants for "has this series already gotten its one post-meeting follow-up" —
+ * that used to be `!isOccurrenceUid(uid)` (keep only the bare-uid master), which silently
+ * suppressed every follow-up for a series whose DTSTART falls outside the sync window, since
+ * such a series never emits a bare-uid occurrence at all. `seriesUidOf`, below, is what that
+ * needs instead. This predicate is now just the plain id-shape check its own name says it is —
+ * "was this specific uid synthesized by expansion" — kept for that (see the smoke suite) and
+ * available to any future caller who genuinely needs exactly that, not series membership.
  */
 const OCCURRENCE_SUFFIX = /_\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -378,9 +383,12 @@ export function expandEvent(
   // recurring ones did too until RRULE was expanded. Ruling: the occurrence whose start
   // equals the master's own DTSTART keeps that bare id; only LATER occurrences (which never
   // had a stored row before expansion) get the `_<instant>` suffix. That preserves dedupe
-  // against everything already ingested, and — via `isOccurrenceUid` — is what lets a
-  // downstream consumer like a post-meeting reminder tell a series' one pre-existing
-  // occurrence apart from the ones expansion synthesized.
+  // against everything already ingested. A downstream consumer that needs to group these back
+  // into series — e.g. a post-meeting reminder, which wants at most one per series rather than
+  // one per occurrence — uses `seriesUidOf`, not the bare/suffixed distinction alone: a series
+  // whose DTSTART falls outside the window never emits a bare-uid occurrence at all, so
+  // `seriesUidOf` is what lets that consumer still recognize every occurrence it DOES see as
+  // belonging to one series.
   const masterMs = event.start.getTime();
 
   // EXDATE matches by exact instant, per RFC 5545. Task 3 builds these by parsing a real
@@ -475,7 +483,15 @@ export function expandEvent(
  * as an override, which substitutes it in place of the occurrence it replaces rather than
  * emitting it a second time. An override whose uid matches no master in this batch — the master
  * fell outside whatever page or CalDAV resource produced this batch — has nothing to attach to;
- * it is still a real meeting that happened, so it is emitted standalone rather than dropped.
+ * it is still a real meeting that happened, so it is emitted standalone rather than dropped, but
+ * NOT under its own literal (bare) uid: that is the same id the series' DTSTART occurrence would
+ * carry, and a feed whose window catches an in-range override while its master's DTSTART sits
+ * outside it would otherwise silently overwrite that already-ingested DTSTART row (or, with two
+ * orphan overrides of one series in the same batch, have the second overwrite the first) rather
+ * than merely lose the override's series context. So an orphan override is keyed on
+ * `occurrenceUid(uid, recurrenceId)` instead — `recurrenceId` is the stable anchor a reschedule
+ * never moves, and the rare case where that happens to equal the master's own DTSTART produces a
+ * visible, fixable duplicate rather than a silent overwrite.
  */
 export function expandIcsEvents(
   parsedEvents: ParsedCalendarEvent[],
@@ -513,8 +529,16 @@ export function expandIcsEvents(
       })
     );
   }
-  // Real overrides whose uid matched no master in this batch — see the function's own comment.
-  for (const leftover of overridesByUid.values()) out.push(...leftover);
+  // Real overrides whose uid matched no master in this batch — see the function's own comment
+  // for why each is re-keyed on `occurrenceUid(uid, recurrenceId)` rather than kept bare.
+  for (const leftover of overridesByUid.values()) {
+    for (const override of leftover) {
+      out.push({
+        ...override,
+        uid: override.recurrenceId ? occurrenceUid(override.uid, override.recurrenceId) : override.uid,
+      });
+    }
+  }
 
   return out;
 }

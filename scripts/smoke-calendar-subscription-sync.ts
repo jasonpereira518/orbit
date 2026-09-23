@@ -193,9 +193,9 @@ run(async () => {
         `got ${dailyIds.length}`
       );
 
-      const reminderRows = rowsOf<{ description: string }>(
+      const reminderRows = rowsOf<{ description: string; due_date: string }>(
         await db.execute(sql`
-          SELECT description FROM reminders
+          SELECT description, due_date FROM reminders
           WHERE user_id = ${USER} AND description LIKE '%daily-followup-uid%'
         `)
       );
@@ -208,12 +208,21 @@ run(async () => {
         reminderRows.length === 1,
         `got ${reminderRows.length}`
       );
+      // REVIEW FINDING 2's ruling: the description is keyed on the SERIES uid (so a follow-up
+      // dedupes across syncs, not just within one batch — see `makePostMeetingReminder`'s own
+      // comment), not on whichever occurrence happened to be eligible this run.
+      check(
+        "that one reminder's description carries the SERIES uid, with no occurrence suffix",
+        reminderRows[0]?.description === "You met with them. Event daily-followup-uid",
+        reminderRows[0]?.description
+      );
+      // The due date still proves the MOST RECENT (tenth) occurrence was the one picked, not
+      // DTSTART (the first) — due_date = that occurrence's time + 2 days.
       const mostRecentDailyOccurrence = new Date(dailyStart.getTime() + 9 * 86400000);
       check(
-        "that one reminder's description carries the MOST RECENT occurrence's uid, not DTSTART's",
-        reminderRows[0]?.description ===
-          `You met with them. Event daily-followup-uid_${mostRecentDailyOccurrence.toISOString()}`,
-        reminderRows[0]?.description
+        "and its due date is anchored to the MOST RECENT occurrence, not DTSTART's",
+        new Date(reminderRows[0]!.due_date).getTime() === mostRecentDailyOccurrence.getTime() + 2 * 86400000,
+        reminderRows[0]?.due_date
       );
     } finally {
       globalThis.fetch = realFetch;
@@ -458,6 +467,91 @@ run(async () => {
         `got ${multiReminders.length}`
       );
     } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  // --- REVIEW FINDING 2: a series' follow-up must dedupe ACROSS syncs, not just within one.
+  //
+  // `seriesFollowUpEligibility` picks the most recent past occurrence FRESH on every sync, and
+  // an ICS subscription resyncs every 30 minutes. Keying the reminder description on the
+  // occurrence uid (rather than the series uid) meant that every time a new occurrence became
+  // the eligible one, the description changed too — a byte-different candidate that dedupe
+  // could not recognize as "the same series' follow-up, already sent" — so a daily standup
+  // accrued a new live reminder every day and a weekly 1:1 accrued one every week, forever.
+  // Every other case in this file syncs the same feed at one instant (or twice at the SAME
+  // instant, for the idempotency checks), so none of them can see this: this one drives
+  // `syncCalendarSubscription` twice with `Date.now` mocked to two different clock positions a
+  // week apart, so the eligible occurrence genuinely advances between the two syncs.
+  {
+    await db.execute(sql`DELETE FROM reminders WHERE user_id = ${USER}`);
+    await db.execute(sql`DELETE FROM interactions WHERE user_id = ${USER} AND external_id LIKE 'cal:clock-advance-uid%'`);
+
+    // A fixed reference instant, not real wall-clock time: both syncs below run under a
+    // fully mocked `Date.now`, so nothing here needs to relate to when the suite actually runs.
+    const T0 = new Date("2027-01-01T12:00:00Z").getTime();
+    const T1 = T0 + 8 * 86400000; // a week-plus later: the weekly series' eligible occurrence
+    // is guaranteed to have advanced by at least one full period between T0 and T1.
+
+    const clockStart = new Date(T0 - 40 * 86400000);
+    clockStart.setUTCHours(9, 0, 0, 0);
+    const clockEnd = new Date(clockStart.getTime() + 30 * 60000);
+
+    const clockIcs = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:clock-advance-uid",
+      "SUMMARY:1:1 with Priya",
+      `DTSTART:${icsUtc(clockStart)}`,
+      `DTEND:${icsUtc(clockEnd)}`,
+      "RRULE:FREQ=WEEKLY",
+      "ATTENDEE;CN=Priya:mailto:priya-clock@example.com",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    globalThis.fetch = (async () =>
+      new Response(clockIcs, { status: 200, headers: { "Content-Type": "text/calendar" } })) as typeof fetch;
+
+    const realDateNow = Date.now;
+    try {
+      const [clockSub] = await db
+        .insert(calendarSubscriptions)
+        .values({ userId: USER, icsUrl: "https://example.test/clock-advance-feed.ics", enabled: 1 })
+        .returning();
+
+      Date.now = () => T0;
+      await syncCalendarSubscription(USER, clockSub!.id);
+      const idsAfterFirst = (await externalIds(db)).filter((id) => id.startsWith("cal:clock-advance-uid"));
+
+      Date.now = () => T1;
+      await syncCalendarSubscription(USER, clockSub!.id);
+      const idsAfterSecond = (await externalIds(db)).filter((id) => id.startsWith("cal:clock-advance-uid"));
+
+      check(
+        "the eligible occurrence actually advanced between the two syncs (test sanity)",
+        idsAfterSecond.some((id) => !idsAfterFirst.includes(id)),
+        `first: ${idsAfterFirst.join(", ")} | second: ${idsAfterSecond.join(", ")}`
+      );
+
+      const clockReminders = rowsOf<{ description: string }>(
+        await db.execute(sql`
+          SELECT description FROM reminders
+          WHERE user_id = ${USER} AND description LIKE '%clock-advance-uid%'
+        `)
+      );
+      check(
+        "two syncs with the eligible occurrence advancing between them still produce ONE reminder",
+        clockReminders.length === 1,
+        `got ${clockReminders.length}: ${clockReminders.map((r) => r.description).join(" | ")}`
+      );
+      check(
+        "and its description is keyed on the SERIES uid, not whichever occurrence happened to be eligible",
+        clockReminders[0]?.description === "You met with them. Event clock-advance-uid",
+        clockReminders[0]?.description
+      );
+    } finally {
+      Date.now = realDateNow;
       globalThis.fetch = realFetch;
     }
   }
