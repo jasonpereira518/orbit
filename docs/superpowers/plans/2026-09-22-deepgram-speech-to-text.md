@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Branch:** `claude/deepgram-speech`, cut from `main` at `5e892e2d`. Commit after every task.
-- **Schema version:** bump `SCHEMA_VERSION` in `src/db/index.ts` from `86` to **87** exactly once (Task 4). Before bumping, re-scan every remote branch and local worktree for a rival claim: `for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin); do git show "$b:src/db/index.ts" 2>/dev/null | grep -m1 -E '^export const SCHEMA_VERSION' ; done | sort -u`. If 87 is taken, use the next free integer and say so in the changelog comment.
+- **Schema version:** bump `SCHEMA_VERSION` in `src/db/index.ts` from `86` to **89** exactly once (Task 4). 87 and 88 were claimed by other branches on 2026-09-22 (integrations-strategy and the memory-chunk fix in PR #263), so 89 is the first free integer. Before bumping, re-scan every remote branch and local worktree for a rival claim: `for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin); do git show "$b:src/db/index.ts" 2>/dev/null | grep -m1 -E '^export const SCHEMA_VERSION' ; done | sort -u`. If 89 has also been taken by then, use the next free integer and say so in the changelog comment.
 - **New DB columns must appear in BOTH** `ensureColumn(...)` in `migratePglite` and the `alters` array. `scripts/smoke-schema-ddl.ts` enforces this. Entries in `alters` must be single-statement, single-line backticked strings.
 - **No backticks and no semicolons inside comments** in the `CREATE TABLE` template literal in `src/db/index.ts` — it is split on `;` by a quote-unaware splitter.
 - **Every new smoke script must be registered** in the `MANIFEST` in `scripts/run-smoke.ts` with tier `"pure"`, `"pglite"` or `"manual"`, or `npm run test:check` fails. Any `pglite`-tier script must begin with `import "./smoke/_env";` as its first import.
@@ -475,7 +475,7 @@ git commit -m "feat: Deepgram client, key gating and source guard"
 
 ---
 
-## Task 4: Schema 87 — usage table, speaker column, Wispr column dropped
+## Task 4: Schema 89 — usage table, speaker column, Wispr column dropped
 
 **Files:**
 - Modify: `src/db/schema.ts`, `src/db/index.ts`, `src/lib/user-data.ts`
@@ -485,7 +485,7 @@ git commit -m "feat: Deepgram client, key gating and source guard"
 
 - [ ] **Step 1: Re-check the version claim**
 
-Run the branch scan from Global Constraints. Confirm 87 is unclaimed; if not, use the next free integer everywhere below.
+Run the branch scan from Global Constraints. Confirm 89 is still unclaimed (87 and 88 were taken on 2026-09-22); if not, use the next free integer everywhere below.
 
 - [ ] **Step 2: Add the Drizzle definitions**
 
@@ -562,13 +562,14 @@ Remove the three surviving Wispr DDL sites: the `wispr_api_key_encrypted text` l
 Immediately above `export const SCHEMA_VERSION = 86;`, in the established format:
 
 ```ts
-// 87 = speech_usage, meeting_transcript_segments.speaker, and the Deepgram engine value;
+// 89 = speech_usage, meeting_transcript_segments.speaker, and the Deepgram engine value;
 // also drops user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept
-// until now so the removal and its migration were one version, not two. Rescanned against
-// every remote branch and every local worktree on 2026-09-22: 87 was unclaimed.
+// until now so the removal and its migration were one version, not two. 87 and 88 were
+// already claimed (integrations-strategy, and the re-chunk fix in #263). Rescanned against
+// every remote branch and every local worktree on <the day you run this>.
 ```
 
-Then `export const SCHEMA_VERSION = 87;`.
+Then `export const SCHEMA_VERSION = 89;`.
 
 - [ ] **Step 5: Register the table for deletion**
 
@@ -588,7 +589,7 @@ Run: `npx tsc --noEmit`.
 
 ```bash
 git add src/db/schema.ts src/db/index.ts src/lib/user-data.ts
-git commit -m "feat(db): schema 87 — speech_usage, segment speakers, drop the Wispr column"
+git commit -m "feat(db): schema 89 — speech_usage, segment speakers, drop the Wispr column"
 ```
 
 ---
