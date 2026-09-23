@@ -27,6 +27,7 @@ import {
 } from "@/components/settings/integrations-dialog";
 import { useImportJob } from "@/lib/import-job-runner";
 import { cn } from "@/lib/utils";
+import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
@@ -46,11 +47,13 @@ export function IntegrationsSettings({
   tabs,
   initialSettings,
   canUseRecruiters,
+  speechAllowances,
 }: {
   /** Visible tabs, in order — hidden surfaces already filtered out by the page. */
   tabs: IntegrationTabId[];
   initialSettings: Settings;
   canUseRecruiters: boolean;
+  speechAllowances: SpeechAllowances;
 }) {
   const searchParams = useSearchParams();
   const job = useImportJob();
@@ -229,6 +232,7 @@ export function IntegrationsSettings({
         statuses={statuses}
         initialSettings={initialSettings}
         canUseRecruiters={canUseRecruiters}
+        speechAllowances={speechAllowances}
       />
     </SettingsSection>
   );

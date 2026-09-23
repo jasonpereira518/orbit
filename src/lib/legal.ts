@@ -8,7 +8,7 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
  * LEGAL_LAST_UPDATED) in the same commit as any material change to /terms or /privacy.
  */
 export const TERMS_VERSION = "2026-09-19";
-export const LEGAL_LAST_UPDATED = "September 19, 2026";
+export const LEGAL_LAST_UPDATED = "September 23, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -93,6 +93,12 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
     permission: "See your calendar events (calendar.readonly)",
     use: "Reads recent and upcoming events on your primary calendar and adds meetings with people in your network to their timelines.",
     askedWhen: "Connect Google Calendar on Events",
+  },
+  {
+    scope: GOOGLE_SCOPES.drive,
+    permission: "See and open only the Google Docs and Slides you pick (drive.file)",
+    use: "Lets you pick Google Docs and Slides from the Google Picker to import. Orbit only ever sees files you explicitly select.",
+    askedWhen: "Connect Google on Imports → Google Drive",
   },
 ];
 

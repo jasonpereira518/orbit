@@ -39,6 +39,8 @@ const BILLABLE = [
   "ORBIT_MANAGED_ANTHROPIC_API_KEY",
   "APOLLO_API_KEY",
   "RESEND_API_KEY",
+  "DEEPGRAM_API_KEY",
+  "ORBIT_DEEPGRAM",
 ];
 
 function check(label: string, cond: boolean, detail?: string) {

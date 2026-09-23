@@ -12,6 +12,9 @@ import {
   startLinkedInMessagesImport,
   type ImportJobStatus,
 } from "@/actions/imports";
+import { startDriveImport } from "@/actions/drive";
+import { UserFacingError, isUserFacingError } from "@/lib/errors";
+import type { PickedDriveFile } from "@/lib/imports/drive-triage";
 import { type ImportProgressState } from "@/components/imports/import-utils";
 import {
   finishBackgroundJob,
@@ -32,15 +35,34 @@ export type ImportJobKind =
   | "google_contacts"
   | "outlook_contacts"
   | "contacts_file"
-  | "calendar";
+  | "calendar"
+  | "drive_docs";
 
 export type ImportJobSnapshot = {
   id: string;
   kind: ImportJobKind;
   status: "running" | "completed" | "failed" | "cancelled";
+  /**
+   * The `imports.id` this job is driving, once the server has created it.
+   *
+   * `id` above is a client-side job id and never was a database key, so a caller that wanted
+   * to know which row a finished step actually wrote had nothing to go on. The import queue
+   * needs exactly that: a done card speaks for the imports its own run produced, and without
+   * this it had to guess by asking for "the newest completed import on the account".
+   */
+  importId?: string;
   progress: ImportProgressState | null;
+  /** Which step of a queued run this is, when a drop staged more than one file. */
+  step?: { index: number; total: number };
   cancelling?: boolean;
   error?: string;
+  /**
+   * Set only when `error` came from an `isUserFacingError` catch — a message written on
+   * purpose to be read, not raw driver/server text. `failureText` (see `src/lib/errors.ts`)
+   * is what actually branches on it; this field just carries that fact forward past the
+   * point where `error` became a plain string and lost it.
+   */
+  userFacingError?: boolean;
   resultMessage?: string;
   enrichmentMessage?: string;
 };
@@ -57,7 +79,8 @@ export type ImportJobInput =
       text: string;
       fileName: string;
       createFollowUps: boolean;
-    };
+    }
+  | { kind: "drive_docs"; files: PickedDriveFile[] };
 
 type Listener = () => void;
 
@@ -82,7 +105,10 @@ function importedLabelFor(kind: ServerOwnedKind): string {
 
 function importedFigure(
   kind: ServerOwnedKind,
-  status: Pick<ImportJobStatus, "contactsCreated" | "contactsUpdated" | "interactionsLogged">
+  status: Pick<
+    ImportJobStatus,
+    "contactsCreated" | "contactsUpdated" | "interactionsLogged"
+  >,
 ): { imported: number; importedLabel: string } {
   return {
     imported:
@@ -107,6 +133,8 @@ function importJobLabel(kind: ImportJobKind) {
       return "Importing address book";
     case "calendar":
       return "Importing calendar";
+    case "drive_docs":
+      return "Reading Google Drive files";
   }
 }
 
@@ -126,7 +154,9 @@ function mirrorToBackgroundJobs(next: ImportJobSnapshot | null) {
       startBackgroundJob({
         id: backgroundJobId,
         kind: `${next.kind}-import`,
-        label: importJobLabel(next.kind),
+        label: next.step
+          ? `${importJobLabel(next.kind)} (step ${next.step.index} of ${next.step.total})`
+          : importJobLabel(next.kind),
         done,
         total,
         startedAt,
@@ -154,9 +184,69 @@ function mirrorToBackgroundJobs(next: ImportJobSnapshot | null) {
   });
 }
 
+type JobWaiter = {
+  jobId: string;
+  resolve: (snapshot: ImportJobSnapshot) => void;
+};
+const waiters = new Set<JobWaiter>();
+
+/**
+ * Job ids the import queue owns.
+ *
+ * `ImportJobWatcher` reads this to stay quiet for a queued step: three files dropped at once
+ * would otherwise fire three success toasts and three `router.refresh()` calls, and each
+ * refresh remounts the dynamic panels underneath someone who is still mid-import. The queue
+ * emits one summary instead.
+ *
+ * Ids are never removed on completion — the watcher reads this *after* the queue has already
+ * been resumed by its waiter, so unregistering eagerly would race. It is bounded instead.
+ */
+const queuedJobIds = new Set<string>();
+const MAX_REMEMBERED_QUEUED_JOBS = 50;
+
+export function markQueuedImportJob(jobId: string) {
+  queuedJobIds.add(jobId);
+  while (queuedJobIds.size > MAX_REMEMBERED_QUEUED_JOBS) {
+    const oldest = queuedJobIds.values().next().value;
+    if (oldest === undefined) break;
+    queuedJobIds.delete(oldest);
+  }
+}
+
+export function isQueuedImportJob(jobId: string) {
+  return queuedJobIds.has(jobId);
+}
+
+/**
+ * Resolve when `jobId` reaches a terminal state.
+ *
+ * Settled from inside `setSnapshot` rather than by polling `getImportJobSnapshot`, and that is
+ * the whole point: `ImportJobWatcher` calls `clearImportJob()` on a 50ms timer once a job
+ * finishes, so a poller on any interval can miss the terminal snapshot entirely and leave the
+ * queue waiting on a step that ended long ago.
+ */
+export function awaitImportJob(jobId: string): Promise<ImportJobSnapshot> {
+  if (snapshot && snapshot.id === jobId && snapshot.status !== "running") {
+    return Promise.resolve(snapshot);
+  }
+  return new Promise<ImportJobSnapshot>((resolve) => {
+    waiters.add({ jobId, resolve });
+  });
+}
+
+function settleWaiters(next: ImportJobSnapshot | null) {
+  if (!next || next.status === "running") return;
+  for (const waiter of [...waiters]) {
+    if (waiter.jobId !== next.id) continue;
+    waiters.delete(waiter);
+    waiter.resolve(next);
+  }
+}
+
 function setSnapshot(next: ImportJobSnapshot | null) {
   snapshot = next;
   mirrorToBackgroundJobs(next);
+  settleWaiters(next);
   emit();
 }
 
@@ -187,7 +277,7 @@ export function useImportJob() {
   return useSyncExternalStore(
     subscribeImportJob,
     getImportJobSnapshot,
-    () => null
+    () => null,
   );
 }
 
@@ -217,7 +307,8 @@ type ServerOwnedKind =
   | "google_contacts"
   | "outlook_contacts"
   | "contacts_file"
-  | "calendar";
+  | "calendar"
+  | "drive_docs";
 
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
 async function pollServerOwnedImportJob(
@@ -225,7 +316,7 @@ async function pollServerOwnedImportJob(
   kind: ServerOwnedKind,
   importId: string,
   label: string,
-  startedAt: number
+  startedAt: number,
 ): Promise<PollOutcome> {
   while (true) {
     if (snapshot?.id !== jobId) return { outcome: "stale" };
@@ -247,6 +338,7 @@ async function pollServerOwnedImportJob(
     setSnapshot({
       id: jobId,
       kind,
+      importId,
       status: "running",
       cancelling: isCancelRequested(jobId),
       progress: {
@@ -277,19 +369,42 @@ async function pollServerOwnedImportJob(
  * `src/db/schema.ts`) via `getImportJobStatus`, and are appended only when nonzero so a
  * plain contacts import's message is unchanged.
  */
-function completionMessage(status: ImportJobStatus): string {
-  const parts = [
-    `${status.contactsCreated} created`,
-    `${status.contactsUpdated} updated`,
-  ];
+/**
+ * What a finished job says it did.
+ *
+ * Kind-aware, because a calendar import runs with `createsContacts: false` by design and
+ * would otherwise always announce itself as "0 created, 0 updated" — a true sentence about
+ * the wrong thing. What it actually did is log meetings.
+ */
+function completionMessage(
+  status: ImportJobStatus,
+  kind?: ImportJobKind,
+): string {
+  const logsMeetings = kind === "calendar";
+  const readsFiles = kind === "drive_docs";
+  const parts = logsMeetings
+    ? []
+    : readsFiles
+      ? [
+          // Docs actually read, not rows processed: a skipped or unchanged doc wasn't.
+          `${status.docsRead} file${status.docsRead === 1 ? "" : "s"} read`,
+          `${status.contactsCreated} created`,
+          `${status.contactsUpdated} updated`,
+        ]
+      : [
+          `${status.contactsCreated} created`,
+          `${status.contactsUpdated} updated`,
+        ];
   if (status.interactionsLogged > 0) {
     parts.push(
-      `${status.interactionsLogged} interaction${status.interactionsLogged === 1 ? "" : "s"} logged`
+      logsMeetings
+        ? `${status.interactionsLogged} meeting${status.interactionsLogged === 1 ? "" : "s"} logged`
+        : `${status.interactionsLogged} interaction${status.interactionsLogged === 1 ? "" : "s"} logged`,
     );
   }
   if (status.remindersCreated > 0) {
     parts.push(
-      `${status.remindersCreated} reminder${status.remindersCreated === 1 ? "" : "s"} created`
+      `${status.remindersCreated} reminder${status.remindersCreated === 1 ? "" : "s"} created`,
     );
   }
   // Appended last and only when nonzero, so an ordinary import's message is unchanged. This
@@ -297,7 +412,14 @@ function completionMessage(status: ImportJobStatus): string {
   // narrowing drops those rows to keep the rest of the import, and without this the job
   // still reports "completed" with the failures nowhere in the UI.
   if (status.failedRows > 0) {
-    parts.push(`${status.failedRows} row${status.failedRows === 1 ? "" : "s"} failed`);
+    parts.push(
+      `${status.failedRows} row${status.failedRows === 1 ? "" : "s"} Orbit couldn\u2019t save`,
+    );
+  }
+  if (!parts.length) {
+    return logsMeetings
+      ? "Nothing new to log \u2014 those meetings were already in your orbit"
+      : "Nothing new to import \u2014 everyone was already in your orbit";
   }
   return `Imported: ${parts.join(", ")}`;
 }
@@ -328,13 +450,15 @@ async function runServerOwnedImportJob(
   kind: ServerOwnedKind,
   label: string,
   total: number,
-  start: () => Promise<{ importId: string; totalRows: number }>
+  start: () => Promise<{ importId: string; totalRows: number }>,
+  step?: { index: number; total: number },
 ): Promise<void> {
   const startedAt = Date.now();
   const importedLabel = importedLabelFor(kind);
   setSnapshot({
     id: jobId,
     kind,
+    step,
     status: "running",
     progress: { done: 0, total, label, startedAt, imported: 0, importedLabel },
   });
@@ -345,11 +469,26 @@ async function runServerOwnedImportJob(
   setSnapshot({
     id: jobId,
     kind,
+    importId,
+    step,
     status: "running",
-    progress: { done: 0, total: totalRows, label, startedAt, imported: 0, importedLabel },
+    progress: {
+      done: 0,
+      total: totalRows,
+      label,
+      startedAt,
+      imported: 0,
+      importedLabel,
+    },
   });
 
-  const result = await pollServerOwnedImportJob(jobId, kind, importId, label, startedAt);
+  const result = await pollServerOwnedImportJob(
+    jobId,
+    kind,
+    importId,
+    label,
+    startedAt,
+  );
   if (result.outcome === "stale") return;
 
   if (result.outcome === "cancelled") {
@@ -357,6 +496,8 @@ async function runServerOwnedImportJob(
     setSnapshot({
       id: jobId,
       kind,
+      importId,
+      step,
       status: "cancelled",
       progress: null,
       resultMessage: `Import stopped.`,
@@ -369,6 +510,8 @@ async function runServerOwnedImportJob(
     setSnapshot({
       id: jobId,
       kind,
+      importId,
+      step,
       status: "failed",
       progress: null,
       error: status.errorMessage || "Import failed",
@@ -380,6 +523,8 @@ async function runServerOwnedImportJob(
     setSnapshot({
       id: jobId,
       kind,
+      importId,
+      step,
       status: "cancelled",
       progress: null,
       resultMessage: `Import stopped. ${status.rowsProcessed} of ${status.totalRows} ${label} kept.`,
@@ -390,9 +535,11 @@ async function runServerOwnedImportJob(
   setSnapshot({
     id: jobId,
     kind,
+    importId,
+    step,
     status: "completed",
     progress: null,
-    resultMessage: completionMessage(status),
+    resultMessage: completionMessage(status, kind),
   });
 }
 
@@ -400,7 +547,18 @@ async function runServerOwnedImportJob(
  * Starts a background LinkedIn import that continues even if the Imports
  * page unmounts (SPA navigation). Completes with a toast via ImportJobWatcher.
  */
-export function startImportJob(input: ImportJobInput) {
+export type StartImportJobOptions = {
+  /**
+   * Which step of a queued run this is. Passed as an option rather than added to every member
+   * of `ImportJobInput`, so the five existing call sites stay untouched.
+   */
+  step?: { index: number; total: number };
+};
+
+export function startImportJob(
+  input: ImportJobInput,
+  { step }: StartImportJobOptions = {},
+) {
   if (snapshot?.status === "running") {
     throw new Error("An import is already running. Wait for it to finish.");
   }
@@ -417,55 +575,119 @@ export function startImportJob(input: ImportJobInput) {
   // other kind's label already makes (no live re-pluralization as `total` changes) — the
   // singular ("1 attendee") only shows for the placeholder tick before the real total lands.
   const label =
-    input.kind === "calendar" ? "attendees" : input.ids.length === 1 ? "person" : "people";
-  const total = input.kind === "calendar" ? 1 : input.ids.length;
+    input.kind === "calendar"
+      ? "attendees"
+      : input.kind === "drive_docs"
+        ? "files"
+        : input.ids.length === 1
+          ? "person"
+          : "people";
+  const total =
+    input.kind === "calendar"
+      ? 1
+      : input.kind === "drive_docs"
+        ? input.files.length
+        : input.ids.length;
 
   // Fire-and-forget — callers should not await completion for navigation safety.
   void (async () => {
     try {
       if (input.kind === "connections") {
-        await runServerOwnedImportJob(jobId, "connections", label, total, () =>
-          startLinkedInImport(input.csvText, input.fileName, input.ids)
+        await runServerOwnedImportJob(
+          jobId,
+          "connections",
+          label,
+          total,
+          () => startLinkedInImport(input.csvText, input.fileName, input.ids),
+          step,
         );
         return;
       }
 
       if (input.kind === "google_contacts") {
-        await runServerOwnedImportJob(jobId, "google_contacts", label, total, () =>
-          confirmGoogleContactsImport(input.ids)
+        await runServerOwnedImportJob(
+          jobId,
+          "google_contacts",
+          label,
+          total,
+          () => confirmGoogleContactsImport(input.ids),
+          step,
         );
         return;
       }
 
       if (input.kind === "outlook_contacts") {
-        await runServerOwnedImportJob(jobId, "outlook_contacts", label, total, () =>
-          confirmOutlookContactsImport(input.ids)
+        await runServerOwnedImportJob(
+          jobId,
+          "outlook_contacts",
+          label,
+          total,
+          () => confirmOutlookContactsImport(input.ids),
+          step,
         );
         return;
       }
 
       if (input.kind === "contacts_file") {
-        await runServerOwnedImportJob(jobId, "contacts_file", label, total, () =>
-          confirmContactsFileImport(input.text, input.fileName, input.ids)
+        await runServerOwnedImportJob(
+          jobId,
+          "contacts_file",
+          label,
+          total,
+          () =>
+            confirmContactsFileImport(input.text, input.fileName, input.ids),
+          step,
         );
         return;
       }
 
       if (input.kind === "messages") {
-        await runServerOwnedImportJob(jobId, "messages", label, total, () =>
-          startLinkedInMessagesImport(input.csvText, input.fileName, input.ids)
+        await runServerOwnedImportJob(
+          jobId,
+          "messages",
+          label,
+          total,
+          () =>
+            startLinkedInMessagesImport(
+              input.csvText,
+              input.fileName,
+              input.ids,
+            ),
+          step,
         );
         return;
       }
 
       if (input.kind === "calendar") {
-        await runServerOwnedImportJob(jobId, "calendar", label, total, () =>
-          confirmCalendarImport({
-            kind: input.calendarKind,
-            text: input.text,
-            fileName: input.fileName,
-            createFollowUps: input.createFollowUps,
-          })
+        await runServerOwnedImportJob(
+          jobId,
+          "calendar",
+          label,
+          total,
+          () =>
+            confirmCalendarImport({
+              kind: input.calendarKind,
+              text: input.text,
+              fileName: input.fileName,
+              createFollowUps: input.createFollowUps,
+            }),
+          step,
+        );
+        return;
+      }
+
+      if (input.kind === "drive_docs") {
+        await runServerOwnedImportJob(
+          jobId,
+          "drive_docs",
+          label,
+          total,
+          () =>
+            startDriveImport(input.files).then((r) => {
+              if (!r.ok) throw new UserFacingError(r.error);
+              return r.value;
+            }),
+          step,
         );
         return;
       }
@@ -475,9 +697,11 @@ export function startImportJob(input: ImportJobInput) {
       setSnapshot({
         id: jobId,
         kind: input.kind,
+        step,
         status: "failed",
         progress: null,
         error: err instanceof Error ? err.message : "Import failed",
+        userFacingError: isUserFacingError(err),
       });
     }
   })();
