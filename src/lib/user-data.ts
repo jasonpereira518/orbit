@@ -52,6 +52,7 @@ import {
   imports,
   interactionMentions,
   interactions,
+  leads,
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
@@ -273,9 +274,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   leads: {
-    exports: [own(teamMembers)],
-    counts: [teamMembers],
+    exports: [own(teamMembers), own(leads)],
+    counts: [teamMembers, leads],
     run: async (db, userId) => {
+      await db.delete(leads).where(eq(leads.userId, userId));
       const memberships = await db
         .select({ teamId: teamMembers.teamId })
         .from(teamMembers)

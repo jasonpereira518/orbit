@@ -1338,6 +1338,32 @@ CREATE TABLE IF NOT EXISTS team_members (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS team_members_user_uidx ON team_members(user_id);
 CREATE INDEX IF NOT EXISTS team_members_team_sharing_idx ON team_members(team_id, share_network);
+CREATE TABLE IF NOT EXISTS leads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  display_name text NOT NULL,
+  email text,
+  email_normalized text,
+  linkedin_url text,
+  linkedin_slug text,
+  phone text,
+  phone_e164 text,
+  company_name text,
+  company_normalized text,
+  title text,
+  apollo_id text,
+  status text NOT NULL DEFAULT 'open',
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS leads_user_status_idx ON leads(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS leads_user_email_idx ON leads(user_id, email_normalized);
+CREATE INDEX IF NOT EXISTS leads_user_linkedin_idx ON leads(user_id, linkedin_slug);
+CREATE INDEX IF NOT EXISTS leads_contact_idx ON leads(contact_id);
+CREATE UNIQUE INDEX IF NOT EXISTS leads_user_apollo_uidx ON leads(user_id, apollo_id) WHERE apollo_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS contact_merges (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1790,7 +1816,14 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // companies(name_normalized): the Leads team model and the who-knows-whom index — P2 of
 // docs/superpowers/specs/2026-09-22-leads-design.md. Rescanned every remote ref and every
 // local worktree on Sep 22 2026; 90 was free. Whichever of 87–90 lands later renumbers.
-export const SCHEMA_VERSION = 90;
+//
+// 91 (claude/calendar-connections-apple) is claimed on a branch that had not merged when
+// this was written.
+//
+// 92 = leads: the Leads pipeline — manual and Apollo targets, ranked by who on the team
+// knows them. P3 of docs/superpowers/specs/2026-09-22-leads-design.md. Rescanned every
+// remote ref and every local worktree on Sep 23 2026; 92 was free.
+export const SCHEMA_VERSION = 92;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the

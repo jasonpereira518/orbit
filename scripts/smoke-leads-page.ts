@@ -12,8 +12,12 @@
  * fetches.
  */
 import React from "react";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { WarmPath } from "../src/lib/leads/warm-path";
+import { WarmthChip } from "../src/components/leads/warmth-chip";
+import { PathSummary } from "../src/components/leads/path-summary";
+import { SharingDl } from "../src/components/leads/sharing-dl";
 import { APP_NAV_CORE, APP_NAV_EXTRAS, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
 import { COMING_SOON_KEYS, isHrefComingSoon, surfaceKeyForHref } from "../src/lib/surfaces";
 import { ComingSoon } from "../src/components/coming-soon/coming-soon";
@@ -45,6 +49,19 @@ function text(el: React.ReactElement): string {
 
 /** The sentence `ComingSoon` falls back to when a surface has no `FEATURES` entry. */
 const FALLBACK_TEASER = "We're still building this part of Orbit";
+
+/**
+ * Client components under src/components/leads. Each task that adds one appends its file here,
+ * so a missing file or a lost "use client" is a failed check, not a silent build surprise.
+ */
+const CLIENT_COMPONENTS: string[] = [
+  "join-team-card.tsx",
+  "team-card.tsx",
+  "find-path.tsx",
+  "leads-pipeline.tsx",
+  "lead-detail-sheet.tsx",
+  "apollo-search.tsx",
+];
 
 function main() {
   console.log("\nnav and surface registration");
@@ -80,6 +97,65 @@ function main() {
     check("with a label for the picker", AREA_LABELS.leads === "Leads", String(AREA_LABELS.leads));
   }
 
+  console.log("\nwhat the page shows about a path");
+  {
+    const path: WarmPath = {
+      warmth: "hot",
+      direct: [{ teammate: { userId: "u1", name: "Alex Ng", email: "alex@acme.test" }, tier: "inner", matchedOn: "email" }],
+      account: [{ teammate: { userId: "u2", name: "Priya Nair", email: "priya@acme.test" }, count: 2, bestTier: "mid" }],
+    };
+    const full = text(React.createElement(PathSummary, { path, companyName: "Northwind" }));
+    check("names the teammate and the orbit", full.includes("Alex Ng") && full.includes("Inner orbit"), full);
+    check("says how they matched", full.includes("via email"), full);
+    check("says how many others they know at the company", full.includes("knows 2 others at Northwind"), full);
+    check("never shows a teammate's email", !full.includes("@acme.test"), full);
+    const compact = text(React.createElement(PathSummary, { path, companyName: "Northwind", compact: true }));
+    check("the compact line fits a row", compact.includes("Alex (inner)") && compact.includes("Northwind via Priya"), compact);
+    check("and hides emails too", !compact.includes("@acme.test"), compact);
+    const nobody = text(React.createElement(PathSummary, { path: { warmth: "cold", direct: [], account: [] }, companyName: null }));
+    check("an empty path says so", /nobody on your team/i.test(nobody), nobody);
+    for (const warmth of ["hot", "warm", "cool", "cold"] as const) {
+      check(`a ${warmth} chip has a label`, text(React.createElement(WarmthChip, { warmth })).length > 3);
+    }
+    const dl = text(React.createElement(SharingDl));
+    check("the sharing list names both sides", dl.includes("Shared while you share") && dl.includes("Never shared"), dl);
+    check("it names every fact a lookup reveals", dl.includes("by email, LinkedIn, phone or X") && dl.includes("how close the closest of them is"), dl);
+  }
+
+  console.log("\nthe leads components stay client-safe");
+  {
+    const dir = "src/components/leads";
+    const serverOnly =
+      /import\s+(?!type\b)[^;]*from\s+["'](@\/db(\/[^"']*)?|@\/lib\/teams|@\/lib\/leads\/(store|pipeline|warm-path-query)|@\/lib\/apollo)["']/;
+    for (const file of readdirSync(dir).filter((f) => /\.(tsx?)$/.test(f))) {
+      check(`${file} never value-imports a server module`, !serverOnly.test(code(`${dir}/${file}`)));
+      const bytes = readFileSync(`${dir}/${file}`);
+      check(`${file} has no mis-encoded characters`, !/\xc3\xa2\xc2[\x80-\xbf]|\xc2[\x80-\x9f]/.test(bytes.toString("latin1")));
+      check(`${file} uses curly apostrophes`, !/[A-Za-z]'[A-Za-z]/.test(code(`${dir}/${file}`)));
+    }
+    for (const file of CLIENT_COMPONENTS) {
+      const path = `${dir}/${file}`;
+      check(`${file} exists and is a client component`, existsSync(path) && /^\s*"use client";/.test(readFileSync(path, "utf8")));
+    }
+  }
+
+  console.log("\nthe contact page's team pill");
+  {
+    const button = "src/components/contacts/team-share-button.tsx";
+    check("the pill is a client component", existsSync(button) && /^\s*"use client";/.test(readFileSync(button, "utf8")));
+    const buttonBytes = readFileSync(button);
+    check(
+      "team-share-button.tsx has no mis-encoded characters",
+      !/\xc3\xa2\xc2[\x80-\xbf]|\xc2[\x80-\x9f]/.test(buttonBytes.toString("latin1"))
+    );
+    check("team-share-button.tsx uses curly apostrophes", !/[A-Za-z]'[A-Za-z]/.test(code(button)));
+    check("the stat pills render it only when given a team", /team\s*&&\s*\(?\s*<TeamShareButton/.test(code("src/components/contacts/contact-stat-pills.tsx")));
+    const contactPage = code("src/app/(clerk)/(app)/(main)/contacts/[id]/page.tsx");
+    // A control for a closed feature is worse than none: the pill follows Leads' release.
+    check("the contact page shows it only while Leads is released", contactPage.includes('comingSoon.has("page.leads")') && contactPage.includes('hidden.has("page.leads")'));
+    check("and only to a team member", contactPage.includes("getViewerTeam("));
+  }
+
   console.log("\nstructure");
   {
     const headerSource = code("src/components/leads/leads-header.tsx");
@@ -96,6 +172,16 @@ function main() {
     // the layout-level check, and any fetch before the gate runs for a closed page.
     check("the page gates before it does anything else", gateAt > 0 && page.indexOf("await ", gateAt - 6) === firstAwait);
     check("loading.tsx renders the same header", code("src/app/(clerk)/(app)/(main)/leads/loading.tsx").includes("LeadsHeader"));
+
+    const exportAt = page.indexOf("export default async function LeadsPage");
+    for (const section of ["TeamSection", "PipelineSection"]) {
+      const at = page.indexOf(`async function ${section}`);
+      // A section above the export would put its `await` before the gate's in the file.
+      check(`${section} is declared below the page`, at > exportAt && exportAt >= 0);
+    }
+    check("the page renders the four parts", ["<TeamSection", "<FindPath", "<PipelineSection", "<ApolloSearch"].every((part) => page.includes(part)));
+    const loading = code("src/app/(clerk)/(app)/(main)/leads/loading.tsx");
+    check("loading.tsx mirrors the page", ["TeamPanelSkeleton", "FindPath", "LeadsPipelineSkeleton", "ApolloSearch"].every((part) => loading.includes(part)));
   }
 
   if (failures > 0) {

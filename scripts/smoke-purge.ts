@@ -648,6 +648,12 @@ async function seed() {
     shareNetwork: 1,
     emailDomain: "smoke-purge.test",
   });
+  await db.insert(schema.leads).values({
+    userId: USER,
+    source: "manual",
+    displayName: "Grace Hopper",
+    emailNormalized: "grace@navy.test",
+  });
 
   return { recruiterId: recruiter.id, soleRecruiterId: soleRecruiter.id };
 }
