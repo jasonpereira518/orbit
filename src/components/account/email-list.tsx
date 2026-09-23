@@ -5,7 +5,8 @@ import { useUser, useReverification } from "@clerk/nextjs";
 import { isReverificationCancelledError } from "@clerk/nextjs/errors";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { canRemoveEmail, type SignInMethods } from "@/lib/sign-in-methods";
+import { signInMethodsFromUser } from "@/lib/clerk-sign-in-methods";
+import { canRemoveEmail } from "@/lib/sign-in-methods";
 import { clerkErrorMessage } from "@/lib/clerk-errors";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
@@ -16,11 +17,14 @@ import { TOAST_COPY } from "@/lib/toast-copy";
  *
  * Reads Clerk's user resource directly — no local copy of the list, so `user.reload()` after
  * a mutation is the whole refresh story. The lockout rules live in `@/lib/sign-in-methods` so
- * they can be tested without a browser; this file only renders their verdicts.
+ * they can be tested without a browser; this file only renders their verdicts, and reads the
+ * resource through the one adapter in `@/lib/clerk-sign-in-methods` rather than mapping it
+ * here. The hand-written map this replaces had a twin in `connected-accounts.tsx` and the two
+ * had already drifted.
  *
- * `EmailAddressResource.verification` (`@clerk/shared/dist/types/emailAddress.d.mts`) is a
+ * `EmailAddressResource.verification` (`@clerk/shared/dist/types/emailAddress.d.mts:20`) is a
  * required `VerificationResource`, not an optional field — but its `status` is typed
- * `VerificationStatus | null` (`@clerk/shared/dist/types/verification.d.mts`), so the check
+ * `VerificationStatus | null` (`@clerk/shared/dist/types/verification.d.mts:15`), so the check
  * below still needs a null-safe comparison. `"verified"` is one of the five literal values of
  * `VerificationStatus`.
  */
@@ -43,15 +47,7 @@ export function EmailList() {
   }
   if (!user) return null;
 
-  const methods: SignInMethods = {
-    emails: user.emailAddresses.map((e) => ({
-      id: e.id,
-      verified: e.verification.status === "verified",
-    })),
-    externalAccountIds: user.externalAccounts.map((a) => a.identificationId),
-    hasPassword: user.passwordEnabled,
-    primaryEmailId: user.primaryEmailAddressId,
-  };
+  const methods = signInMethodsFromUser(user);
 
   /**
    * `run` reports whether it actually changed anything — `removeEmail` returns `false` when
@@ -128,7 +124,10 @@ export function EmailList() {
               variant="outline"
               size="sm"
               disabled={anyBusy || !removal.allowed}
-              title={removal.allowed ? undefined : removal.reason}
+              // No `title`: a disabled button's native tooltip does not reliably appear (and
+              // never on touch), and it would only repeat the reason already rendered below
+              // and already pointed at by `aria-describedby`. `connected-accounts.tsx` uses
+              // the describedby form alone; these two now agree.
               aria-label={`Remove ${email.emailAddress}`}
               aria-describedby={removal.allowed ? undefined : reasonId}
               onClick={() => void act(email.id, () => removeEmail(email.id), "Address removed")}
