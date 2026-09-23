@@ -17,11 +17,13 @@ export type TargetIdentity = {
 
 export type Teammate = { userId: string; name: string; email: string | null };
 
-/** A teammate knows the target directly. Deliberately no contact id: it is another tenant's. */
+/**
+ * A teammate knows the target directly. Deliberately no contact id: it is another tenant's.
+ * Name, tier, and matched identity kind only — no closeness score (the locked decision).
+ */
 export type DirectPath = {
   teammate: Teammate;
   tier: ClosenessTier;
-  closeness: number | null;
   matchedOn: IdentityKind;
 };
 

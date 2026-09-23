@@ -101,6 +101,14 @@ async function main() {
     await person(B, "Jane Doe", { email: "jane@target.test", tier: "inner", closeness: 99 });
     await person(O, "Jane Doe", { email: "jane@target.test", tier: "inner", closeness: 99 });
     await person(V, "Jane Doe", { email: "jane@target.test", tier: "inner", closeness: 99 });
+    // Account-path predicates get their own data coverage, independent of the direct-path
+    // rows above: one Acme contact each for Bee (not sharing), the outsider (another team),
+    // and the viewer (never a path onto themselves), plus one Alex Acme contact marked
+    // private. None of these four may ever surface in Alex's Acme account path.
+    await person(B, "Bee Acme", { email: "bee-acme@target.test", company: "Acme", tier: "inner" });
+    await person(O, "Otis Acme", { email: "otis-acme@target.test", company: "Acme", tier: "inner" });
+    await person(V, "Val Acme", { email: "val-acme@target.test", company: "Acme", tier: "inner" });
+    await person(A, "Priv Acme", { email: "priv-acme@target.test", company: "Acme", tier: "inner", shared: false });
 
     console.log("\nreciprocity is decided before any query");
     check("no team → no_team", (await findWarmPaths(N, { email: "jane@target.test" })).status === "no_team");
@@ -116,13 +124,18 @@ async function main() {
       check("Jane is hot", jane.path.warmth === "hot", jane.path.warmth);
       check("Alex (inner) then Chris (mid)", ids.join(",") === `${A},${C}`, ids.join(","));
       check("named from the mirror, with the mailbox fallback", jane.path.direct[0].teammate.name === "Alex Ng" && jane.path.direct[1].teammate.name === "chris");
-      check("tier and score are carried", jane.path.direct[0].tier === "inner" && jane.path.direct[0].closeness === 80);
+      check("tier is carried, no score", jane.path.direct[0].tier === "inner" && !("closeness" in jane.path.direct[0]));
       check("matched on the email", jane.path.direct[0].matchedOn === "email");
       check("the non-sharing teammate is absent", !ids.includes(B));
       check("the other team is absent", !ids.includes(O));
       check("the viewer's own contact is not a path", !ids.includes(V));
+      // Jane herself is excluded from her own company's count: Bob (outer) and Carol (mid)
+      // are the two OTHER people Alex knows at Acme, so best tier is mid, not Jane's inner.
       const acme = jane.path.account.find((a) => a.teammate.userId === A);
-      check("Alex knows 3 people at Acme, best inner", acme?.count === 3 && acme.bestTier === "inner", JSON.stringify(acme));
+      check("Alex knows 2 others at Acme, best mid", acme?.count === 2 && acme.bestTier === "mid", JSON.stringify(acme));
+      // The predicate coverage seeded above (Bee not sharing, the outsider's other team, the
+      // viewer's own contact, Alex's private one) must not leak into this count or add a
+      // second account path.
       check("nobody else has an Acme path", jane.path.account.length === 1);
     }
 
@@ -137,6 +150,13 @@ async function main() {
 
     const onlyCompany = await findWarmPaths(V, { companyNormalized: "acme" });
     check("a company alone is cool, with the account path", onlyCompany.status === "ok" && onlyCompany.path.warmth === "cool" && onlyCompany.path.account.length === 1);
+    if (onlyCompany.status === "ok") {
+      // No identified person to exclude here, so Jane counts too: the exclusion in
+      // `accountPathsStatement` only ever applies to the identified target, never to a
+      // bare company lookup.
+      const acmeOnly = onlyCompany.path.account.find((a) => a.teammate.userId === A);
+      check("Alex knows 3 at Acme, best inner, with no one excluded", acmeOnly?.count === 3 && acmeOnly.bestTier === "inner", JSON.stringify(acmeOnly));
+    }
 
     const nothing = await findWarmPaths(V, { email: "nobody@nowhere.test" });
     check("an unknown person is cold", nothing.status === "ok" && nothing.path.warmth === "cold");

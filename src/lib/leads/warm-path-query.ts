@@ -24,7 +24,6 @@ type MateRow = { user_id: string; first_name: string | null; last_name: string |
 type DirectRow = MateRow & {
   target_key: string;
   tier: ClosenessTier;
-  closeness: number | null;
   matched_on: IdentityKind;
 };
 type AccountRow = MateRow & { target_key: string; count: number; best_rank: number };
@@ -66,14 +65,18 @@ export async function warmPathsForTargets(
       paths.get(r.target_key)?.direct.push({
         teammate: teammate(r),
         tier: r.tier,
-        closeness: r.closeness === null ? null : Number(r.closeness),
         matchedOn: r.matched_on,
       });
     }
   }
   if (companyTargets.length) {
+    // The target's own identities are excluded in SQL by an anti-join in
+    // `accountPathsStatement`, so `count` and `bestTier` describe other people at the
+    // company, not the direct match too.
     const rows = rowsOf<AccountRow>(
-      await db.execute(accountPathsStatement(membership.teamId, viewerUserId, companyTargets))
+      await db.execute(
+        accountPathsStatement(membership.teamId, viewerUserId, companyTargets, identityTargets)
+      )
     );
     for (const r of rows) {
       paths.get(r.target_key)?.account.push({
@@ -84,8 +87,10 @@ export async function warmPathsForTargets(
     }
   }
   for (const path of paths.values()) {
+    // Best tier first (rows already arrive best-contact-first per teammate from `distinct
+    // on`), then teammate name so the order is deterministic without a score to break ties.
     path.direct.sort(
-      (a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || (b.closeness ?? -1) - (a.closeness ?? -1)
+      (a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || a.teammate.name.localeCompare(b.teammate.name)
     );
     path.account.sort((a, b) => b.count - a.count || TIER_RANK[a.bestTier] - TIER_RANK[b.bestTier]);
     path.warmth = rankWarmth(path.direct, path.account);

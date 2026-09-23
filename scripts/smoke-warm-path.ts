@@ -101,8 +101,17 @@ function main() {
       ])
     );
     const account = dialect.sqlToQuery(
-      accountPathsStatement("team-1", "viewer-1", [{ key: "k1", company: "acme" }])
+      accountPathsStatement(
+        "team-1",
+        "viewer-1",
+        [{ key: "k1", company: "acme" }],
+        [{ key: "k1", kind: "email", value: "ada@x.io" }]
+      )
     );
+    // The exact bind count for the inputs each call above passes: 2 targets * 3 values + the
+    // mate CTE's (team, viewer) for direct; 1 company target * 2 + the mate CTE's 2 + 1
+    // excluded identity * 3 for account.
+    const expectedParams: Record<string, number> = { direct: 8, account: 7 };
     for (const [label, q] of [["direct", direct], ["account", account]] as const) {
       const text = q.sql;
       check(`${label}: only sharing teammates`, /share_network\s*=\s*1/.test(text));
@@ -112,10 +121,51 @@ function main() {
       check(`${label}: no correlated exists`, !/exists\s*\(/i.test(text));
       const forbidden = /\bnotes\b|ai_summary|key_facts|\bc\.email\b|\bc\.phone\b|linkedin_url|\bc\.full_name\b/;
       check(`${label}: names no private column`, !forbidden.test(text), text.match(forbidden)?.[0]);
-      check(`${label}: binds its inputs`, q.params.length >= 3);
+      check(
+        `${label}: binds exactly its inputs`,
+        q.params.length === expectedParams[label],
+        String(q.params.length)
+      );
+
+      // Every CTE-internal `from` in this file is written indented (`    from team_members
+      // tm`, `  from contact_identities x`); only the outer query's own FROM starts a line
+      // with no leading space, so `\nfrom ` finds it uniquely. That is the real SELECT/FROM
+      // boundary — a naive "first ` from `" substring match lands inside the `mate` CTE
+      // instead (it comes first in the text) and would never see the outer projection at
+      // all, making the check below vacuous.
+      const fromAt = text.indexOf("\nfrom ");
+      check(`${label}: has an outer FROM to split the projection on`, fromAt !== -1);
+      const head = text.slice(0, fromAt);
+      const strayColumn = /\bc\.(?!closeness_tier\b)\w+/;
+      check(
+        `${label}: projects no c. column but closeness_tier`,
+        !strayColumn.test(head),
+        head.match(strayColumn)?.[0]
+      );
+      check(`${label}: projects no teammate contact id`, !/\bci\.contact_id\b|\bc\.id\b/.test(head));
     }
     check("direct paths collapse to one row per teammate", /distinct on \(t\.target_key, m\.user_id\)/.test(direct.sql));
     check("account paths group per teammate", /group by t\.target_key, m\.user_id/.test(account.sql));
+    check("account paths anti-join the target's own identities via a hit CTE", /\bhit\s+as\s*\(/.test(account.sql));
+    check("...excluding a contact once it has matched, not per non-matching identity", /h\.contact_id is null/.test(account.sql));
+    check("...still no correlated exists", !/exists\s*\(/i.test(account.sql));
+
+    const throwsOnEmpty = (fn: () => unknown) => {
+      try {
+        fn();
+        return false;
+      } catch (e) {
+        return e instanceof Error && e.message === "warm-path: empty target list";
+      }
+    };
+    check(
+      "directPathsStatement refuses an empty target list",
+      throwsOnEmpty(() => directPathsStatement("team-1", "viewer-1", []))
+    );
+    check(
+      "accountPathsStatement refuses an empty target list",
+      throwsOnEmpty(() => accountPathsStatement("team-1", "viewer-1", [], []))
+    );
   }
 
   console.log("\nthe actions in front of it");

@@ -236,6 +236,20 @@ async function main() {
       }
       check("an operator is exempt from hiding", adminOk);
 
+      // `requireReleasedSurface` still refuses an admin on a coming-soon page: outside a
+      // request there is no preview cookie to read, so `isPreviewingUnreleased` resolves
+      // false and the admin gets the same default-closed answer as everyone else.
+      let adminReleased: unknown = null;
+      try {
+        await requireReleasedSurface(ADMIN, "page.leads");
+      } catch (err) {
+        adminReleased = err;
+      }
+      check(
+        "requireReleasedSurface refuses an admin too, with no preview cookie outside a request",
+        isSurfaceHiddenError(adminReleased)
+      );
+
       // Coming-soon pages do NOT ride that exemption — they default closed for admins too,
       // so an unreleased feature cannot ship early just because whoever built it is an
       // admin. `isPreviewingUnreleased` reads a separate opt-in cookie; outside a request

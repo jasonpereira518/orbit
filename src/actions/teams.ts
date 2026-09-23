@@ -24,6 +24,13 @@ import {
  * `UserFacingError`s come back as data through `asActionResult`; a throw would digest.
  */
 
+// Same pattern as `isUuid` in `src/lib/chat-send.ts:20`, copied rather than imported: that
+// module pulls in `outreach-quality` and `chat-draft`, unrelated to a team action's bundle.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID.test(value);
+}
+
 type JoinTeamInput = { shareNetwork: boolean };
 type JoinTeamResult = { teamId: string; memberCount: number };
 type LeaveTeamResult = { left: true };
@@ -39,7 +46,10 @@ export async function getTeamEligibility(): Promise<TeamEligibility> {
 export async function joinTeamAction(input: JoinTeamInput): Promise<ActionResult<JoinTeamResult>> {
   const userId = await requireLeadsUser();
   return asActionResult(async () => {
-    const joined = await joinTeam(userId, { shareNetwork: input.shareNetwork === true });
+    // A Server Function answers a direct POST, so `input` is whatever the caller sent, not
+    // necessarily the typed shape — `input?.` rather than `input.` so a missing or malformed
+    // body is "sharing off" instead of a thrown TypeError.
+    const joined = await joinTeam(userId, { shareNetwork: input?.shareNetwork === true });
     revalidatePath("/leads");
     return joined;
   });
@@ -67,7 +77,11 @@ export async function setTeamSharingAction(on: boolean): Promise<ActionResult<Te
 export async function setContactTeamSharedAction(contactId: string, shared: boolean): Promise<ActionResult<ContactTeamSharedResult>> {
   const userId = await requireLeadsUser();
   return asActionResult(async () => {
-    const changed = await setContactTeamShared(userId, String(contactId), shared === true);
+    // A forged `contactId` (not even a UUID) must not reach the DB or `revalidatePath`
+    // before it is refused — same message either way, so a caller can't use it to probe
+    // which ids exist.
+    if (!isUuid(contactId)) throw new UserFacingError("That contact isn't yours to change.");
+    const changed = await setContactTeamShared(userId, contactId, shared === true);
     if (!changed) throw new UserFacingError("That contact isn't yours to change.");
     revalidatePath(`/contacts/${contactId}`);
     revalidatePath("/leads");

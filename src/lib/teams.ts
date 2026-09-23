@@ -27,7 +27,15 @@ export type TeamMembership = {
   joinedAt: Date;
 };
 
-/** The viewer's team, or null. Request-cached: every warm-path query starts here. */
+/**
+ * The viewer's team, or null. Request-cached: every warm-path query starts here.
+ *
+ * React's `cache()` spans the whole request — an action's own call AND the re-render that
+ * follows its `revalidatePath`, since both run inside the same request. An action that reads
+ * this before it writes `team_members` (join, leave, the sharing switches) will render the
+ * stale membership it read at the top, not the one it just wrote. Read it only before a
+ * write decides whether to proceed, never to report what the write just did.
+ */
 export const getViewerTeam = cache(async (userId: string): Promise<TeamMembership | null> => {
   const db = await getDb();
   const [row] = await db
@@ -135,7 +143,7 @@ export async function joinTeamWithDomain(
     .values({ teamId: team.id, userId, shareNetwork, emailDomain: domain })
     .onConflictDoUpdate({
       target: teamMembers.userId,
-      set: { shareNetwork, emailDomain: domain, updatedAt: new Date() },
+      set: { teamId: team.id, shareNetwork, emailDomain: domain, updatedAt: new Date() },
     });
   return { teamId: team.id, memberCount: await memberCountOf(team.id) };
 }
@@ -155,7 +163,16 @@ export async function joinTeam(
   return joinTeamWithDomain(userId, domain, opts);
 }
 
-/** Leave; a team nobody is on any more is deleted. Per-contact `team_shared` values stay. */
+/**
+ * Leave; a team nobody is on any more is deleted. Per-contact `team_shared` values stay.
+ *
+ * Narrow race, self-healing, no transaction (this repo's `Db` is neon-http, which doesn't
+ * offer one): the last member's delete and a concurrent joiner's `joinTeamWithDomain` insert
+ * can interleave so the delete's "is it empty" check runs against a team that just gained a
+ * fresh member. Worst case the team survives with one member when it "should" have been
+ * deleted and recreated — the next person to join that domain just joins the surviving row
+ * instead of creating a new one, so nothing is lost and there is no orphan to clean up.
+ */
 export async function leaveTeam(userId: string): Promise<void> {
   const db = await getDb();
   // Bare `.returning()` — see the note in `joinTeamWithDomain` above.
@@ -211,6 +228,20 @@ export type TeamMemberRow = {
   joinedAt: Date;
 };
 
+/**
+ * Callers resolve the viewer's own team first (see `listTeamMembersAction`); this function
+ * does not check the viewer.
+ *
+ * The `leftJoin` to `user_settings` below is belt-and-braces, not a sign that a member can
+ * really be missing a settings row: `ensureUserSettings` runs on every authenticated request,
+ * so in practice every `team_members` row has a match. `warm-path-sql.ts`'s `mate` CTE uses
+ * an inner join for the same relationship instead, deliberately — there the join is also
+ * what keeps `m.first_name`/`m.last_name`/`m.email` in the SELECT list honest (a left join
+ * would let a row through with those columns null, which is a shape the warm-path result
+ * type doesn't otherwise have to handle). A list of members can afford to be defensive about
+ * a row it will just render as a name; a lookup that feeds a projection the privacy boundary
+ * depends on shouldn't invent a way for that projection to go quietly absent.
+ */
 export async function listTeamMembers(teamId: string): Promise<TeamMemberRow[]> {
   const db = await getDb();
   const rows = await db
