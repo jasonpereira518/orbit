@@ -76,6 +76,7 @@ import {
   findAvatarBackfillCandidates,
   runAvatarBackfillBatch,
 } from "@/lib/avatar-backfill";
+import { reindexInteractionPassages } from "@/lib/memory-backfill";
 import { traced } from "@/lib/perf-trace";
 import {
   findRelatedContacts,
@@ -844,6 +845,14 @@ export async function updateInteraction(
   }
 
   await scheduleEmbeddingRebuild(userId, existing.contactId);
+  // The passages were built from the old text. The sweep would notice on its own (the source
+  // hash is what makes an edited note claimable again), but not until the daily cron — and
+  // "I just fixed that note" is exactly when someone asks about it.
+  if (input.rawNotes !== undefined || input.aiSummary !== undefined || when) {
+    await reindexInteractionPassages(userId, interactionId).catch((err) => {
+      console.warn("[memory-chunks] could not re-index interaction", interactionId, err);
+    });
+  }
   void generateAndStoreContactBrief(userId, existing.contactId).catch(
     () => null
   );
@@ -1742,6 +1751,11 @@ export async function resummarizeInteraction(interactionId: string) {
 
   await syncActionItems(userId, interactionId, existing.contactId, items);
   await scheduleEmbeddingRebuild(userId, existing.contactId);
+  // A rewritten summary is a rewritten note as far as passage search is concerned: for a row
+  // with no `raw_notes`, `ai_summary` IS what was indexed.
+  await reindexInteractionPassages(userId, interactionId).catch((err) => {
+    console.warn("[memory-chunks] could not re-index interaction", interactionId, err);
+  });
   void generateAndStoreContactBrief(userId, existing.contactId).catch(() => null);
 
   revalidatePath(`/contacts/${existing.contactId}`);

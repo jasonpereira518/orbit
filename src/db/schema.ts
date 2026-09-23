@@ -1899,6 +1899,13 @@ export const memoryChunks = pgTable(
     content: text("content").notNull(),
     contentHash: text("content_hash").notNull(),
     /**
+     * md5 of the source this chunk set was built from — the same value on every chunk of one
+     * source. The sweep claims an interaction that has no chunk carrying the hash of its
+     * CURRENT text, which covers "never indexed" and "indexed, then edited" in one predicate.
+     * Nullable because v79 rows predate it; they read as stale once and are re-chunked.
+     */
+    sourceHash: text("source_hash"),
+    /**
      * The hash that was embedded, which is the staleness predicate: a chunk is pending when
      * `embedded_hash IS DISTINCT FROM content_hash`. Per chunk, so editing paragraph three
      * of a note does not re-embed paragraphs one and two, and so it never contends with the

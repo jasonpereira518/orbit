@@ -13,12 +13,24 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { interactionTypeLabel } from "@/lib/interaction-types";
-import { buildMemoryChunks, syncMemoryChunks } from "@/lib/memory-chunks";
+import {
+  buildMemoryChunks,
+  memorySourceHash,
+  memorySourceHashSql,
+  syncMemoryChunks,
+} from "@/lib/memory-chunks";
 
 /**
- * The one predicate for "an interaction with text that has no passages yet". Shared by the
- * claim and the count, so `remaining` can never report a row the claim will not return —
- * the drain's re-kick loop spins on exactly that disagreement.
+ * The one predicate for "an interaction whose passages are not what its text says they should
+ * be". Shared by the claim and the count, so `remaining` can never report a row the claim
+ * will not return — the drain's re-kick loop spins on exactly that disagreement.
+ *
+ * It reads as one NOT EXISTS and covers two cases: an interaction with no passages at all,
+ * and one whose passages were built from text it no longer holds. Both are "no chunk of this
+ * source carries the hash of the source as it stands now". That second case is why the column
+ * exists — the claim used to be a bare anti-join, so a note was indexed once and never looked
+ * at again, and an edit left its original passages quotable forever. Rows written before
+ * v88 have a NULL `source_hash`, never match, and are re-chunked once.
  *
  * With a `userId`, the tenant is bound as a LITERAL inside the subquery as well as outside
  * it, and that is not decoration. A NOT EXISTS correlated only on `m.user_id = i.user_id`
@@ -27,7 +39,7 @@ import { buildMemoryChunks, syncMemoryChunks } from "@/lib/memory-chunks";
  * trap `experienceExists` in `@/lib/hybrid-search` documents. Without a `userId` (the
  * cross-user cron query) correlation is all there is, and that query runs once a day.
  */
-function unindexedInteractions(userId?: string) {
+function staleInteractions(userId?: string) {
   const outer = userId ? sql`and i.user_id = ${userId}` : sql``;
   const inner = userId ? sql`m.user_id = ${userId}` : sql`m.user_id = i.user_id`;
   return sql`
@@ -39,6 +51,7 @@ function unindexedInteractions(userId?: string) {
          where ${inner}
            and m.source_kind = 'interaction'
            and m.source_id = i.id
+           and m.source_hash = ${memorySourceHashSql("i")}
       )
   `;
 }
@@ -57,8 +70,96 @@ export type MemoryBackfillResult = {
   remaining: number;
 };
 
+/** Everything indexing one interaction needs, in the shape the claim query returns it. */
+type IndexableInteraction = {
+  id: string;
+  contact_id: string | null;
+  interaction_type: string;
+  interaction_date: string | null;
+  raw_notes: string | null;
+  ai_summary: string | null;
+  contact_name: string | null;
+  mention_ids: string[] | null;
+};
+
+/** The columns the claim selects, reused verbatim by the single-row re-index below. */
+const INDEXABLE_COLUMNS = (userId: string) => sql`
+  i.id,
+  i.contact_id,
+  i.interaction_type,
+  i.interaction_date,
+  i.raw_notes,
+  i.ai_summary,
+  coalesce(c.preferred_name, c.full_name) as contact_name,
+  -- Everyone else the note names. Loaded here, with the row, rather than in a query per
+  -- interaction: the sweep claims hundreds at a time, and a note that names four people has
+  -- to be findable from all four, not just from the one it was filed under.
+  coalesce(
+    (select array_agg(im.contact_id)
+       from interaction_mentions im
+      where im.user_id = ${userId} and im.interaction_id = i.id),
+    '{}') as mention_ids
+`;
+
 /**
- * Index interactions that have no chunks yet.
+ * Turn one claimed row into passages. The chunker is pure; this is the part that knows how an
+ * `interactions` row maps onto it, and it lives in one place so the sweep and the write-path
+ * re-index cannot drift into indexing the same note two different ways.
+ *
+ * Returns the number of chunks written, or 0 for a row with nothing to index.
+ */
+async function indexClaimedInteraction(userId: string, row: IndexableInteraction): Promise<number> {
+  const occurredAt = row.interaction_date ? new Date(row.interaction_date) : null;
+  const text = row.raw_notes || row.ai_summary;
+  const drafts = buildMemoryChunks({
+    text,
+    occurredAt,
+    kindLabel: interactionTypeLabel(row.interaction_type),
+    contactId: row.contact_id,
+    contactName: row.contact_name,
+    contactIds: row.mention_ids ?? [],
+  });
+  if (!drafts.length) return 0;
+  const result = await syncMemoryChunks(userId, {
+    sourceKind: "interaction",
+    sourceId: row.id,
+    drafts,
+    sourceHash: memorySourceHash({
+      text,
+      occurredAt,
+      interactionType: row.interaction_type,
+      contactId: row.contact_id,
+    }),
+  });
+  return result.written;
+}
+
+/**
+ * Re-index one interaction right now, for the paths a person is waiting on.
+ *
+ * The sweep would get to it on its own — that is what the source hash is for — but not until
+ * the daily cron runs, and "I fixed that note an hour ago" is exactly when someone asks about
+ * it. Bulk paths deliberately do NOT call this; they leave their rows to the sweep.
+ */
+export async function reindexInteractionPassages(
+  userId: string,
+  interactionId: string
+): Promise<number> {
+  const db = await getDb();
+  const [row] = rowsOf<IndexableInteraction>(
+    await db.execute(sql`
+      select ${INDEXABLE_COLUMNS(userId)}
+        from interactions i
+        left join contacts c on c.id = i.contact_id and c.user_id = ${userId}
+       where i.id = ${interactionId}::uuid and i.user_id = ${userId}
+    `)
+  );
+  if (!row) return 0;
+  return indexClaimedInteraction(userId, row);
+}
+
+/**
+ * Index interactions whose passages are missing or out of date.
  *
  * The claim is a NOT EXISTS against `memory_chunks`, not a flag on `interactions`: a flag
  * would need its own column, its own migration and its own reconciliation when a chunk row
@@ -75,34 +176,10 @@ export async function backfillMemoryChunks(
   const limit = options.limit ?? CLAIM_SIZE;
 
   const claim = async (take: number) =>
-    rowsOf<{
-      id: string;
-      contact_id: string | null;
-      interaction_type: string;
-      interaction_date: string | null;
-      raw_notes: string | null;
-      ai_summary: string | null;
-      contact_name: string | null;
-      mention_ids: string[] | null;
-    }>(
+    rowsOf<IndexableInteraction>(
       await db.execute(sql`
-        select i.id,
-               i.contact_id,
-               i.interaction_type,
-               i.interaction_date,
-               i.raw_notes,
-               i.ai_summary,
-               coalesce(c.preferred_name, c.full_name) as contact_name,
-               -- Everyone else the note names. Loaded here, with the row, rather than in a
-               -- query per interaction: the sweep claims hundreds at a time, and a note that
-               -- names four people has to be findable from all four, not just from the one it
-               -- was filed under.
-               coalesce(
-                 (select array_agg(im.contact_id)
-                    from interaction_mentions im
-                   where im.user_id = ${userId} and im.interaction_id = i.id),
-                 '{}') as mention_ids
-          from (select i.* ${unindexedInteractions(userId)}) i
+        select ${INDEXABLE_COLUMNS(userId)}
+          from (select i.* ${staleInteractions(userId)}) i
           left join contacts c on c.id = i.contact_id and c.user_id = ${userId}
          order by i.interaction_date desc nulls last
          limit ${take}
@@ -117,23 +194,11 @@ export async function backfillMemoryChunks(
   for (const row of rows) {
     if (Date.now() - started > budget) break;
     scanned++;
-    const drafts = buildMemoryChunks({
-      text: row.raw_notes || row.ai_summary,
-      occurredAt: row.interaction_date ? new Date(row.interaction_date) : null,
-      kindLabel: interactionTypeLabel(row.interaction_type),
-      contactId: row.contact_id,
-      contactName: row.contact_name,
-      contactIds: row.mention_ids ?? [],
-    });
-    if (!drafts.length) continue;
     try {
-      const result = await syncMemoryChunks(userId, {
-        sourceKind: "interaction",
-        sourceId: row.id,
-        drafts,
-      });
+      const written = await indexClaimedInteraction(userId, row);
+      if (!written) continue;
       indexed++;
-      chunks += result.written;
+      chunks += written;
     } catch (err) {
       // One bad row must not stop the sweep — the next pass will try it again, and a row
       // that fails forever is one unindexed note rather than an unindexed account.
@@ -148,7 +213,7 @@ export async function backfillMemoryChunks(
 export async function pendingMemorySourceCount(userId: string): Promise<number> {
   const db = await getDb();
   const [row] = rowsOf<{ n: number }>(
-    await db.execute(sql`select count(*)::int as n ${unindexedInteractions(userId)}`)
+    await db.execute(sql`select count(*)::int as n ${staleInteractions(userId)}`)
   );
   return Number(row?.n ?? 0);
 }
@@ -160,7 +225,7 @@ export async function pendingMemorySourceCount(userId: string): Promise<number> 
  * only pending work was passages — every existing account, on the day this ships — would
  * never have been swept unless it happened to import something. Two sources, both bounded:
  * chunks awaiting an embedding (served by the partial pending index, cheap), and
- * interactions with no chunks at all (an anti-join over interactions; this one scans, and
+ * interactions whose passages are missing or stale (an anti-join over interactions; this one scans, and
  * once history is indexed it scans to find nothing, which at Orbit's size is a fraction of a
  * second a day and is the price of not needing a flag column to keep in sync).
  */
@@ -170,7 +235,7 @@ export async function usersWithPendingMemoryWork(
 ): Promise<string[]> {
   const db = await getDb();
   const [unindexed, unembedded] = await Promise.all([
-    db.execute(sql`select distinct i.user_id ${unindexedInteractions()} limit ${limit}`),
+    db.execute(sql`select distinct i.user_id ${staleInteractions()} limit ${limit}`),
     // Over-fetched, because some of these will be filtered out below.
     db.execute(sql`
       select distinct m.user_id from memory_chunks m
