@@ -26,8 +26,14 @@ export const dynamic = "force-dynamic";
  * signed in or not on a meetings plan, 404 the meeting isn't this user's, 410 it's already
  * analyzed/saved/discarded (same `ACCEPTS_CHUNKS` list `ingestMeetingChunk` and
  * `recordLiveSegments` check, so a stale tab can't keep buying tokens for audio nothing
- * will ever store), 409 another tab is recording it, 402 this month's meeting allowance is
- * gone, 429 with Retry-After, 503 Deepgram itself is off, 502 the grant call failed.
+ * will ever store), 409 another tab is recording it, 402 the meeting allowance did not let
+ * this through — `code: "quota-spent"` when this month's hours are gone, `code:
+ * "quota-unreadable"` when the quota could not be read at all — 429 with Retry-After, 503
+ * Deepgram itself is off, 502 the grant call failed.
+ *
+ * Both 402s are terminal for the MEETING, not just for live transcription: a meeting whose
+ * allowance cannot be established must not quietly carry on up the chunk route, which spends
+ * the same key.
  */
 type Params = { params: Promise<{ id: string }> };
 
@@ -78,10 +84,29 @@ export async function POST(request: Request, ctx: Params) {
     return NextResponse.json({ error: "Live transcription is unavailable right now" }, { status: 503 });
   }
 
-  const allowance = await speechAllowance(userId, "meeting");
+  // MEETINGS FAIL CLOSED. This read used to sit outside a try, so a quota lookup that threw
+  // became a 500 — which the recorder treats as "live is having a moment", falling back to
+  // chunk uploads and recording the whole meeting on Orbit's key with nothing checked. A
+  // quota we cannot read is not a quota we may spend, so it is a 402 like a spent one, with
+  // its own code so the client can say something true and stop the meeting rather than
+  // claim the hours are gone.
+  let allowance: Awaited<ReturnType<typeof speechAllowance>>;
+  try {
+    allowance = await speechAllowance(userId, "meeting");
+  } catch (err) {
+    const failure = reportedFailure(err, "Couldn’t check your meeting hours", {
+      where: "route.meeting-stream-token.allowance",
+      userId,
+      extra: { sessionId: id },
+    });
+    return NextResponse.json(
+      { error: failure.error, ref: failure.ref, code: "quota-unreadable" },
+      { status: 402 },
+    );
+  }
   if (allowance.exhausted) {
     return NextResponse.json(
-      { error: "You’ve used this month’s meeting transcription minutes" },
+      { error: "You’ve used this month’s meeting transcription minutes", code: "quota-spent" },
       { status: 402 },
     );
   }

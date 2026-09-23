@@ -7,9 +7,10 @@ import "./smoke/_env";
 import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { userSettings } from "../src/db/schema";
+import { meetingSessions, speechUsage, userSettings } from "../src/db/schema";
 import { entitlementsForPlan, FEATURE_DENIAL, isPaywallError, requireEntitlement } from "../src/lib/entitlements";
 import { createMeetingSession } from "../src/actions/meetings";
+import { monthWindow } from "../src/lib/speech-limits";
 
 const USER = "demo-user";
 let failures = 0;
@@ -87,6 +88,21 @@ function sourceGuard() {
       `requireMeetingsUser=${callsGuard} requireUserId=${callsBareAuth}`
     );
   }
+
+  // The entitlement says this plan MAY record; the allowance says whether there is anything
+  // left to record with. `createMeetingSession` checked only the first, so an account at 100%
+  // got a share picker, a started recording, an instant "Recording stopped" and an empty
+  // session row — instead of being told, before any of that, when its hours come back.
+  const createBody = extractFunction(code, "createMeetingSession");
+  check(
+    "createMeetingSession also checks the meeting allowance, not just the entitlement",
+    /\bspeechAllowance\s*\(/.test(createBody) && /\bexhausted\b/.test(createBody),
+    createBody.slice(0, 200)
+  );
+  check(
+    "…and names the reset date when it refuses",
+    /resetLabel\s*\(\s*allowance\.resetsAt\s*\)/.test(createBody)
+  );
 
   for (const name of UNGATED_ACTIONS) {
     const body = extractFunction(code, name);
@@ -171,6 +187,33 @@ async function main() {
   (process.env as Record<string, string>).NODE_ENV = "development";
   const allowed = await createMeetingSession({ includesMic: true, recorderId: "r2" });
   check("the action still works end to end when authenticated", allowed.ok === true, JSON.stringify(allowed));
+
+  // A spent month is refused BEFORE a session row exists — no share picker, no recording that
+  // stops a second later, nothing to clean up. This one does distinguish real states: the
+  // allowance is read from `speech_usage`, which demo mode does not bypass.
+  console.log("\ncreateMeetingSession — a spent month is refused up front, with the reset date");
+  {
+    const db = await getDb();
+    await db.delete(meetingSessions).where(eq(meetingSessions.userId, USER));
+    await db.delete(speechUsage).where(eq(speechUsage.userId, USER));
+    // Above both caps (Pro 18,000 s, Lifetime 36,000 s), so this holds whichever plan demo
+    // mode resolves for the synthetic user.
+    await db.insert(speechUsage).values({ userId: USER, kind: "meeting", seconds: 40_000, source: "stream" });
+
+    const refused = await createMeetingSession({ includesMic: true, recorderId: "r3" });
+    check("a spent month is refused", refused.ok === false, JSON.stringify(refused));
+    const resetDay = monthWindow(new Date()).resetsAt.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+    check(
+      `…with copy naming the reset date (${resetDay})`,
+      refused.ok === false && refused.error.includes(resetDay),
+      refused.ok === false ? refused.error : ""
+    );
+    const rows = await db.select().from(meetingSessions).where(eq(meetingSessions.userId, USER));
+    check("…and no session row is left behind", rows.length === 0, `${rows.length} rows`);
+
+    await db.delete(speechUsage).where(eq(speechUsage.userId, USER));
+    await db.delete(meetingSessions).where(eq(meetingSessions.userId, USER));
+  }
 
   if (failures) { console.error(`\n${failures} check(s) failed`); process.exit(1); }
   console.log("\nAll meeting gate checks passed");

@@ -26,6 +26,21 @@ export function limitFor(kind: SpeechKind, plan: Plan): number {
   return SPEECH_LIMITS[kind][plan];
 }
 
+/**
+ * Which meter a transcription call spends from, decided by WHAT is being transcribed rather
+ * than by which call site asked.
+ *
+ * This is the rule that keeps meeting audio off the voice-note meter. Meeting chunk recovery
+ * — the fallback that carries the meeting whenever the live socket cannot open, e.g. behind a
+ * firewall that blocks `wss://` — goes through the same file-transcription function a voice
+ * note does. Metered by call site, three hours of recovered meeting would spend Orbit's key
+ * while the `meeting` cap read zero and the user's short-form allowance quietly drained until
+ * voice notes stopped working. Metered by operation, it spends the meter it belongs to.
+ */
+export function speechKindForOperation(operation: string): SpeechKind {
+  return operation.startsWith("meeting.") ? "meeting" : "shortform";
+}
+
 export function quotaState(used: number, limit: number) {
   const remaining = Math.max(0, limit - used);
   const fraction = limit <= 0 ? 1 : Math.min(1, used / limit);

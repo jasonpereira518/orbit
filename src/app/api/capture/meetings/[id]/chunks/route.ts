@@ -27,10 +27,11 @@ export const maxDuration = 120;
  * The custom header is also the CSRF guard: a cross-site form cannot set it, and a
  * cross-site `fetch` that does is preflighted and refused.
  *
- * Responses the recorder acts on: 200 stored (possibly a repeat), 409 another tab owns the
+ * Responses the recorder acts on: 200 stored (possibly a repeat), 402 this month's meeting
+ * hours are gone so recovery is refused too (stop retrying), 409 another tab owns the
  * session, 410 the meeting was saved or discarded, 413 too big, 422 no usable
- * transcription key — missing, rejected, out of credit or unknown model (stop retrying)
- * (stop retrying), 429 with Retry-After, 502 transcription failed (retry).
+ * transcription key — missing, rejected, out of credit or unknown model (stop retrying),
+ * 429 with Retry-After, 502 transcription failed (retry).
  */
 type Params = { params: Promise<{ id: string }> };
 

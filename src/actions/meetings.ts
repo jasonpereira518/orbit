@@ -22,6 +22,7 @@ import {
   type MeetingAttendee,
 } from "@/lib/meeting-sessions";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
+import { speechAllowance } from "@/lib/speech-quota";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { actionFailure } from "@/lib/action-failure";
 
@@ -37,6 +38,17 @@ import { actionFailure } from "@/lib/action-failure";
 
 type Fail = { ok: false; error: string };
 
+/**
+ * "October 1" — the day the meeting allowance comes back.
+ *
+ * Fixed to `en-US` deliberately: this runs on a server whose locale is the deployment's, not
+ * the reader's, so leaving it to the default would render a US user's date in whatever
+ * locale Vercel's runtime happens to carry.
+ */
+function resetLabel(resetsAt: Date): string {
+  return resetsAt.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+}
+
 export async function createMeetingSession(input: {
   title?: string | null;
   attendees?: MeetingAttendee[];
@@ -46,6 +58,18 @@ export async function createMeetingSession(input: {
 }): Promise<{ ok: true; id: string; startedAtIso: string } | Fail> {
   try {
     const userId = await requireMeetingsUser();
+    // The entitlement says this plan MAY record; the allowance says whether there is
+    // anything left to record with. Without this, an account at 100% got the whole ceremony
+    // — a share picker, a started recording — and then an instant "Recording stopped" from
+    // the first stream-token 402, leaving an empty session row behind. Refuse up front, and
+    // name the day it comes back, which is the only thing the user can act on.
+    //
+    // A quota that cannot be READ throws, and the catch below turns that into `ok: false`:
+    // meetings fail closed here too.
+    const allowance = await speechAllowance(userId, "meeting");
+    if (allowance.exhausted) {
+      return { ok: false, error: `You’ve used this month’s meeting hours — they reset on ${resetLabel(allowance.resetsAt)}` };
+    }
     const row = await createMeetingSessionRow(userId, input);
     return { ok: true, id: row.id, startedAtIso: row.startedAt.toISOString() };
   } catch (err) {

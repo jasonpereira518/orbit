@@ -31,13 +31,45 @@ export function keytermsFor(terms: readonly string[]): string[] {
   return out;
 }
 
+/**
+ * Deepgram's usage records echo back whatever `tag` a request carried, and the nightly
+ * reconciliation job (`/api/ops/speech-usage`) matches on exactly these strings. An untagged
+ * request is one that job cannot see at all, so every request Orbit's key pays for carries
+ * one: a meeting by session, everything short-form by user.
+ *
+ * Built here — client-safe, beside the params they ride on — because both the browser (the
+ * live sockets) and the server (file transcription) set them, and `speech-usage-tag.ts`,
+ * which parses them back, reaches the database and so cannot be imported by a client
+ * component. It imports these prefixes from here instead, so the two halves cannot drift.
+ */
+export const MEETING_TAG_PREFIX = "meeting:";
+export const SHORTFORM_TAG_PREFIX = "shortform:";
+
+/**
+ * Ids are validated, never sanitized: a tag whose id was quietly rewritten to fit would
+ * reconcile against a row that does not exist, which is worse than no tag at all.
+ */
+const TAG_ID = /^[A-Za-z0-9_-]{1,96}$/;
+
+export function meetingTag(sessionId: string): string | null {
+  return TAG_ID.test(sessionId) ? `${MEETING_TAG_PREFIX}${sessionId}` : null;
+}
+
+export function shortformTag(userId: string): string | null {
+  return TAG_ID.test(userId) ? `${SHORTFORM_TAG_PREFIX}${userId}` : null;
+}
+
 export type ListenOptions = {
   /** A websocket request; a file request otherwise. */
   live: boolean;
   diarize?: boolean;
   keyterms?: readonly string[];
-  /** Rides into Deepgram's usage records, so a nightly job can reconcile one meeting. */
-  tag?: string;
+  /**
+   * Rides into Deepgram's usage records, so the nightly job can reconcile what was billed.
+   * Built by `meetingTag`/`shortformTag` above, which return null for an id that does not fit
+   * a tag — hence `null` here rather than only `undefined`.
+   */
+  tag?: string | null;
 };
 
 export function listenParams(opts: ListenOptions): URLSearchParams {

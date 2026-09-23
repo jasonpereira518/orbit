@@ -3,7 +3,7 @@ import { requireUserForSurface } from "@/lib/plan-guards";
 import { isPaywallError } from "@/lib/entitlements";
 import { friendlyError } from "@/lib/errors";
 import { deepgramEnabled, mintStreamToken } from "@/lib/deepgram";
-import { keytermsFor } from "@/lib/deepgram-params";
+import { keytermsFor, shortformTag } from "@/lib/deepgram-params";
 import { loadNetworkVocabulary } from "@/lib/transcription-vocabulary";
 import { speechAllowance } from "@/lib/speech-quota";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
@@ -17,9 +17,16 @@ export const dynamic = "force-dynamic";
  *
  *   POST /api/speech/token
  *
- * Responses: 200 {accessToken, expiresIn, keyterms, remainingSeconds}, 401/403 not signed
- * in or the surface is off, 402 this month's shortform allowance is gone, 429 with
+ * Responses: 200 {accessToken, expiresIn, keyterms, remainingSeconds, tag}, 401/403 not
+ * signed in or the surface is off, 402 this month's shortform allowance is gone, 429 with
  * Retry-After, 503 Deepgram itself is off, 502 the grant call failed.
+ *
+ * `tag` is `shortform:<userId>`, which the browser puts on its Deepgram connection. Dictation
+ * seconds reach `speech_usage` only as a best-effort `sendBeacon` from a closing tab, so
+ * without the tag a blocked beacon is spend nothing can even notice; with it, the nightly
+ * reconciliation job (`/api/ops/speech-usage`) compares Deepgram's own per-user total against
+ * what was recorded. The browser is not trusted to invent it — it is minted here, beside the
+ * token it belongs to.
  */
 export async function POST(request: Request) {
   let userId: string;
@@ -69,7 +76,13 @@ export async function POST(request: Request) {
       loadNetworkVocabulary(userId),
     ]);
     return NextResponse.json(
-      { accessToken, expiresIn, keyterms: keytermsFor(vocabulary), remainingSeconds: allowance.remaining },
+      {
+        accessToken,
+        expiresIn,
+        keyterms: keytermsFor(vocabulary),
+        remainingSeconds: allowance.remaining,
+        tag: shortformTag(userId),
+      },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {

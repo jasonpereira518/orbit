@@ -183,6 +183,21 @@ const DEEPGRAM_LIVE_CLIENT = "src/lib/deepgram-live.ts";
  * host-check exemption as the two files above.
  */
 const SECURITY_HEADERS = "src/lib/security-headers.ts";
+/**
+ * The eval harness, exempted from the ENV-KEY rule only (task 17). It is a developer tool
+ * that never ships and is never imported by the app, and holding provider keys is its whole
+ * job — it already carries Gemini/OpenAI/Anthropic/TypeSafe keys, which only escape this
+ * regex because it reads them under `ORBIT_EVAL_*` names. Deepgram is the one that cannot be
+ * hidden that way: it is not an `AiProvider`, so it cannot ride the encrypted-`userSettings`
+ * BYOK path `setUpUser` uses for the other four, and `src/lib/deepgram.ts` reads it straight
+ * off `process.env` — so `setDeepgramKey` has to write `process.env.DEEPGRAM_API_KEY` by that
+ * literal name for a `--task transcribe` run to reach Deepgram at all.
+ *
+ * Narrow on purpose: this file is still held to the SDK-import, client-construction,
+ * TypeSafe-transport and provider-host rules below, and every other file — including every
+ * other script — is still held to the env-key rule.
+ */
+const EVAL_HARNESS = "scripts/eval-ai.ts";
 
 function sourceGuard() {
   console.log("\nOnly the gate can reach a provider");
@@ -206,7 +221,12 @@ function sourceGuard() {
     if (!probe && (valueImport.test(code) || dynamicImport.test(code))) offenders.push(`${file}: imports an AI SDK`);
     if (!probe && construct.test(code)) offenders.push(`${file}: constructs an AI client`);
     if (!probe && file !== TYPESAFE_TRANSPORT_TEST && transportImport.test(code)) offenders.push(`${file}: imports TypeSafe's raw-key transport`);
-    if (envKey.test(code) && file !== "scripts/smoke-contact-brief.ts" && file !== DEEPGRAM_CLIENT)
+    if (
+      envKey.test(code) &&
+      file !== "scripts/smoke-contact-brief.ts" &&
+      file !== DEEPGRAM_CLIENT &&
+      file !== EVAL_HARNESS
+    )
       offenders.push(`${file}: reads an AI key from the environment`);
     if (
       providerHost.test(code) &&
@@ -226,6 +246,10 @@ function sourceGuard() {
   check("the transport-import rule catches a stray import", transportImport.test(`import { systemOneRequest } from "@/lib/typesafe-api";`) && transportImport.test(`import { x } from "../src/lib/typesafe-api";`));
   check("…but not a type-only one", !transportImport.test(`import type { SystemOneRequest } from "@/lib/typesafe-api";`));
   check("the env rule catches TYPESAFE_API_KEY", envKey.test("process.env.TYPESAFE_API_KEY"));
+  // The exemption above is by exact path, so the rule it exempts must still bite everywhere
+  // else — otherwise a weakened regex and a working guard look identical on a clean tree.
+  check("the env rule catches DEEPGRAM_API_KEY", envKey.test(`const k = process.env.DEEPGRAM_API_KEY;`) && envKey.test(`process.env["DEEPGRAM_API_KEY"]`));
+  check("…and the eval harness is the only script exempted from it", EVAL_HARNESS === "scripts/eval-ai.ts" && envKey.test(readFileSync(EVAL_HARNESS, "utf8")));
   check("the host rule catches TypeSafe's host", providerHost.test("https://api.typesafe.ai/v1/systemone"));
   const ai = readFileSync("src/lib/ai.ts", "utf8");
   check("ai.ts imports the SDKs for types only", !valueImport.test(ai) && /import type OpenAI/.test(ai));

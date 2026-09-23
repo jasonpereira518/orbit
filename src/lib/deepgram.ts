@@ -70,9 +70,12 @@ export type DeepgramFileResult = { text: string; seconds: number; requestId: str
 
 export async function transcribeFile(
   audio: { bytes: Uint8Array; mimeType: string },
-  opts: { keyterms?: readonly string[] } = {},
+  opts: { keyterms?: readonly string[]; tag?: string | null } = {},
 ): Promise<DeepgramFileResult> {
-  const params = listenParams({ live: false, keyterms: opts.keyterms });
+  // The tag is what makes this request visible to the nightly reconciliation job. A meeting
+  // chunk recovered through this path bills exactly like a live one, so an untagged file
+  // request is spend that job would never even look at.
+  const params = listenParams({ live: false, keyterms: opts.keyterms, tag: opts.tag });
   const res = await fetch(`${LISTEN_URL}?${params.toString()}`, {
     method: "POST",
     headers: { Authorization: `Token ${requireKey()}`, "content-type": audio.mimeType || "audio/wav" },

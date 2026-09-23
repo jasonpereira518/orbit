@@ -38,7 +38,7 @@ import { listenParams } from "@/lib/deepgram-params";
 import { TARGET_SAMPLE_RATE, createDownsampler } from "@/lib/voice-recording";
 
 /** What `POST /api/speech/token` hands back on success. See Task 7's route. */
-type SpeechToken = { accessToken: string; keyterms?: string[] };
+type SpeechToken = { accessToken: string; keyterms?: string[]; tag?: string | null };
 
 const DEEPGRAM_WORKLET_URL = "/orbit-pcm-worklet.js";
 const DEEPGRAM_WORKLET_NAME = "orbit-pcm-recorder";
@@ -68,11 +68,17 @@ function canCaptureForDeepgram(): boolean {
  * `sendBeacon` because this runs from `stop-recognition`/`abort-recognition`, which can
  * fire as the user navigates away — the same reasoning as the traffic beacon in
  * `pageview-beacon.tsx`. A dropped beacon under-counts one session, which is the right way
- * for this to fail.
+ * for this to fail — and the connection is tagged `shortform:<userId>`, so the nightly
+ * reconciliation job sees the seconds Deepgram billed even when no beacon arrives.
+ *
+ * Takes the whole session's billed milliseconds, NOT one socket's open time: a session that
+ * reconnected after a drop has streamed under two or three sockets, and reporting only the
+ * last one's lifetime under-counted every dropped stretch. `dgBilledMsRef` banks the earlier
+ * ones (see `bankSpeechUsage`).
  */
-function reportSpeechUsage(openedAt: number) {
+function reportSpeechUsage(billedMs: number) {
   if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") return;
-  const seconds = Math.max(0, Math.round((Date.now() - openedAt) / 1000));
+  const seconds = Math.max(0, Math.round(billedMs / 1000));
   if (!seconds) return;
   try {
     navigator.sendBeacon(
@@ -280,6 +286,13 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
    * `sessionId`; `sessionId` alone can't tell two connections in the SAME session apart.
    */
   const dgGenerationRef = useRef(0);
+  /**
+   * Milliseconds already streamed by EARLIER sockets in this session — banked when a dropped
+   * connection is replaced, zeroed by a full teardown (which is what ends a session). Without
+   * it, a session that dropped and reconnected reported only the last socket's open time and
+   * Orbit paid for the rest unmetered.
+   */
+  const dgBilledMsRef = useRef(0);
 
   /** The one place that sets `engineRef` — keeps the render-visible `engine` state in sync. */
   const setEngine = useCallback((next: "deepgram" | "browser" | null) => {
@@ -401,12 +414,37 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
     teardownDeepgramCapture();
   }, [teardownDeepgramCapture]);
 
-  /** Full Deepgram teardown: the socket, the mic graph, and this session's fold state. */
+  /**
+   * Full Deepgram teardown: the socket, the mic graph, this session's fold state — and the
+   * billed-milliseconds bank, because a full teardown is what ends a session. Every path that
+   * calls this reports usage FIRST (see `flushSpeechUsage`); a reconnect deliberately uses
+   * `teardownDeepgramConnection` instead, so the bank survives it.
+   */
   const teardownDeepgram = useCallback(() => {
     teardownDeepgramConnection();
     dgFoldRef.current = EMPTY_FOLD;
     dgSuppressCloseRef.current = false;
+    dgBilledMsRef.current = 0;
   }, [teardownDeepgramConnection]);
+
+  /** A connection is being replaced: keep the seconds it streamed. */
+  const bankSpeechUsage = useCallback(() => {
+    const handle = dgHandleRef.current;
+    if (handle) dgBilledMsRef.current += Math.max(0, Date.now() - handle.openedAt);
+  }, []);
+
+  /**
+   * Report everything this session streamed and empty the bank, so a second call on another
+   * exit path cannot send the same seconds twice. Takes the handle rather than reading the
+   * ref, because a caller that awaited `handle.finish()` may find the ref already cleared —
+   * and is called with `null` on purpose when only banked time is left.
+   */
+  const flushSpeechUsage = useCallback((handle: LiveHandle | null) => {
+    const open = handle ? Math.max(0, Date.now() - handle.openedAt) : 0;
+    const total = dgBilledMsRef.current + open;
+    dgBilledMsRef.current = 0;
+    reportSpeechUsage(total);
+  }, []);
 
   const buildRecognition = useCallback(
     (sessionId: number): SpeechRecognitionLike | null => {
@@ -665,7 +703,9 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
       const stale = () => sessionIdRef.current !== sessionId || dgGenerationRef.current !== generation;
       const handle = await openDeepgramLive({
         token: token.accessToken,
-        params: listenParams({ live: true, keyterms: token.keyterms }),
+        // Tagged, so the nightly reconciliation job can see this connection at all: the
+        // seconds below are self-reported by a beacon that a crashed tab never sends.
+        params: listenParams({ live: true, keyterms: token.keyterms, tag: token.tag }),
         onResult: (result) => {
           if (stale()) return;
           handleDeepgramResult(result);
@@ -838,6 +878,10 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
               // dangling interim, the same as the browser branch folds its own finals
               // forward instead of discarding them.
               dgFoldRef.current = { committed: dgFoldRef.current.committed, interim: "" };
+              // The dropped socket's own seconds, before its handle goes: they were streamed
+              // and billed, and the beacon at the end of the session only knows about the
+              // socket that is open when it fires.
+              bankSpeechUsage();
               teardownDeepgramConnection();
               void startDeepgramEngine(sessionId).catch(() => {
                 // The reconnect itself failed — no token, no mic, no socket. Treat it
@@ -877,7 +921,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
                 // will unwind whatever it managed to acquire and dispatch `end` themselves.
                 break;
               }
-              const openedAt = handle.openedAt;
+
               // Set BEFORE finish() — it triggers the socket's own onclose (Metadata after
               // Finalize/CloseStream, or the 5s fallback), which must not read a deliberate
               // stop as a dropped connection. `teardownDeepgram` below closes the socket
@@ -889,7 +933,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
                 } catch {
                   /* best effort — still close and report what we have below */
                 }
-                reportSpeechUsage(openedAt);
+                flushSpeechUsage(handle);
                 teardownDeepgram();
                 if (sessionIdRef.current === sessionId) {
                   dispatchRef.current({ t: "end", now: Date.now() });
@@ -912,7 +956,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
             if (engineRef.current === "deepgram") {
               const handle = dgHandleRef.current;
               dgSuppressCloseRef.current = true;
-              if (handle) reportSpeechUsage(handle.openedAt);
+              flushSpeechUsage(handle);
               teardownDeepgram();
               break;
             }
@@ -935,8 +979,10 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
     },
     [
       armSegmentPause,
+      bankSpeechUsage,
       buildRecognition,
       clearTimers,
+      flushSpeechUsage,
       setEngine,
       startAbandoned,
       startDeepgramEngine,
@@ -974,7 +1020,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
         // graph and any still-open handle are not. Report what this (possibly reconnected)
         // session streamed before closing it; `teardownDeepgram` is idempotent, so this is
         // a no-op on every path that already cleaned up for itself.
-        if (dgHandleRef.current) reportSpeechUsage(dgHandleRef.current.openedAt);
+        flushSpeechUsage(dgHandleRef.current);
         teardownDeepgram();
         const reason: DictationEndReason =
           next.state === "error"
@@ -985,7 +1031,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
         cb.current.onSessionEnd?.(reason);
       }
     },
-    [clearTimers, runEffects, stopEnergyLoop, teardownDeepgram, teardownRecognition],
+    [clearTimers, flushSpeechUsage, runEffects, stopEnergyLoop, teardownDeepgram, teardownRecognition],
   );
   // Layout, not passive: `audiostart` can land ~5ms after `start()`, and a passive effect
   // may not have run by then — leaving the engine talking to the no-op default.
@@ -1060,13 +1106,11 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
       // A route change with no pagehide/visibilitychange must still drop the socket and
       // release the mic — otherwise a live Deepgram session outlives the component that
       // opened it.
-      if (dgHandleRef.current) {
-        dgSuppressCloseRef.current = true;
-        reportSpeechUsage(dgHandleRef.current.openedAt);
-      }
+      if (dgHandleRef.current) dgSuppressCloseRef.current = true;
+      flushSpeechUsage(dgHandleRef.current);
       teardownDeepgram();
     },
-    [teardownDeepgram],
+    [flushSpeechUsage, teardownDeepgram],
   );
 
   return useMemo(

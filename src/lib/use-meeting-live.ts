@@ -67,7 +67,14 @@ export type LiveUnavailable =
   /** Wrong plan, Deepgram off, a refused grant — the chunk route carries the meeting. */
   | "unavailable"
   /** This month's meeting minutes are gone. The meeting has to stop. */
-  | "quota";
+  | "quota"
+  /**
+   * The allowance could not be READ at all. The meeting has to stop too, and for a stronger
+   * reason: falling back to chunks would record the whole thing on Orbit's key with nothing
+   * checked, which is exactly the fail-open the spec forbids. Separate from `quota` only so
+   * the panel can say something true rather than claim hours that may well be there.
+   */
+  | "quota-unknown";
 
 export type UseMeetingLiveOptions = {
   /**
@@ -421,10 +428,13 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
         });
         if (gone()) return;
         if (res.status === 402) {
-          // The month's minutes are gone. The meeting stops through the panel's quota path,
-          // which flushes and ends it properly rather than leaving it half-recorded.
+          // The allowance gate refused: the month's minutes are gone, or the quota could not
+          // be read. Either way the meeting stops through the panel's quota path, which
+          // flushes and ends it properly rather than leaving it half-recorded — it must NOT
+          // fall back to chunks, which spend the same key this refusal was protecting.
+          const body = (await res.json().catch(() => null)) as { code?: string } | null;
           close();
-          cb.current.onUnavailable("quota");
+          cb.current.onUnavailable(body?.code === "quota-unreadable" ? "quota-unknown" : "quota");
           return;
         }
         if (TERMINAL_TOKEN_STATUS.has(res.status)) {

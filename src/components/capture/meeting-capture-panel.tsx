@@ -136,6 +136,8 @@ const FATAL_COPY: Record<QueueFatal, string> = {
   "transcription-refused": "This meeting is kept and can be resumed once that’s sorted.",
   "taken-over": "This meeting is being recorded in another tab now, so this one stopped.",
   gone: "This meeting was saved or discarded somewhere else.",
+  "meeting-quota-spent":
+    "You’ve used this month’s meeting hours. This meeting is kept and can be resumed once they reset.",
   "signed-out": "You were signed out. Sign in again — the meeting is kept and can be resumed.",
 };
 
@@ -347,11 +349,17 @@ export function MeetingCapturePanel({
 
   const handleLiveUnavailable = useCallback(
     (reason: LiveUnavailable) => {
-      if (reason === "quota") {
+      if (reason === "quota" || reason === "quota-unknown") {
         if (quotaStoppedRef.current) return;
         quotaStoppedRef.current = true;
+        // Meetings fail CLOSED: an allowance we could not read stops the recording too,
+        // because carrying on up the chunk route spends the very key the check guards. The
+        // copy differs because the facts do — saying the hours are gone when we never got to
+        // look would be a lie the user cannot act on.
         toast.info(
-          `Recording stopped — you’ve used this month’s meeting hours, which reset on ${quotaResetLabel}`
+          reason === "quota"
+            ? `Recording stopped — you’ve used this month’s meeting hours, which reset on ${quotaResetLabel}`
+            : "Recording stopped — Orbit couldn’t check your meeting hours, so it didn’t keep recording — try again in a moment"
         );
         // Stop is the honest end: the recorder flushes its last chunk, the live socket
         // flushes its last sentence, and the meeting is summarized like any other.

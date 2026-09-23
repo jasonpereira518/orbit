@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { speechUsage } from "@/db/schema";
 import { fetchDeepgramUsage } from "@/lib/deepgram";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { notifySlack } from "@/lib/ops-notify";
-import { parseMeetingTag } from "@/lib/speech-usage-tag";
+import { parseMeetingTag, parseShortformTag } from "@/lib/speech-usage-tag";
 import { reportError } from "@/lib/report-error";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +13,13 @@ export const maxDuration = 60;
 
 /** Deepgram reporting more than this fraction of what we recorded is worth a look. */
 const OVERREPORT_THRESHOLD = 1.1;
+/**
+ * …and, for short-form, more than this many seconds of it. A meeting is metered once, as one
+ * row, so a percentage alone is a fair test there. Dictation is dozens of tiny sessions a day,
+ * each rounded to a whole second at both ends, so a percentage alone would fire on rounding.
+ * Two minutes a day is the smallest gap worth a human's attention.
+ */
+const MIN_SHORTFORM_GAP_SECONDS = 120;
 
 /**
  * Nightly reconciliation between what Deepgram billed and what the browser told us it used.
@@ -26,9 +33,18 @@ const OVERREPORT_THRESHOLD = 1.1;
  * meeting could be a legitimate reconnect or retry, not proof of abuse, so this only raises
  * the alert a human looks at.
  *
- * Returns `{checked, overreported, pagesRead, requestsSeen, invalidTags}`. The last three
- * exist so a run that silently checked nothing is distinguishable from an actually quiet
- * night — see the comment above the `requestsSeen === 0` check below.
+ * Dictation (the chat mic) is reconciled the same way but in AGGREGATE PER USER, not per
+ * session. Its seconds reach `speech_usage` only through a best-effort `navigator.sendBeacon`
+ * from a closing tab — a crashed tab or a blocked beacon bills Orbit and moves the meter by
+ * zero, repeatably — so its connections are tagged `shortform:<userId>` and this job compares
+ * Deepgram's per-user total for the window against the short-form seconds recorded in it.
+ * Per user rather than per session because a dictation session has no id to key on: the
+ * connection is opened by the browser and lives and dies inside one tab.
+ *
+ * Returns `{checked, overreported, shortformChecked, shortformOverreported, pagesRead,
+ * requestsSeen, invalidTags}`. The last three exist so a run that silently checked nothing is
+ * distinguishable from an actually quiet night — see the comment above the `requestsSeen === 0`
+ * check below.
  *
  * Called daily by the GitHub Actions scheduler (`.github/workflows/ops.yml`), same
  * shared-secret gate and shape as `/api/ops/sweep`.
@@ -51,7 +67,7 @@ export async function POST(request: Request) {
       // rather than throwing the way the outer catch below would treat as a 503.
       const ref = reportError(err, { where: "job.speech-usage.fetch" });
       return NextResponse.json(
-        { checked: 0, overreported: 0, pagesRead: 0, requestsSeen: 0, invalidTags: 0, ref },
+        { checked: 0, overreported: 0, shortformChecked: 0, shortformOverreported: 0, pagesRead: 0, requestsSeen: 0, invalidTags: 0, ref },
         { headers: { "Cache-Control": "no-store" } },
       );
     }
@@ -74,8 +90,52 @@ export async function POST(request: Request) {
     let checked = 0;
     let overreported = 0;
     let invalidTags = 0;
+    let shortformChecked = 0;
+    let shortformOverreported = 0;
 
     for (const { tag, seconds: deepgramSeconds } of usage.totals) {
+      const shortform = parseShortformTag(tag);
+      if (shortform.kind === "malformed") {
+        invalidTags += 1;
+        reportError(new Error("Deepgram usage: malformed shortform tag"), {
+          where: "job.speech-usage.malformed-tag",
+          level: "warning",
+          extra: { tag },
+        });
+        continue;
+      }
+      if (shortform.kind === "ok") {
+        shortformChecked += 1;
+        // Summed over the window, not read from one row: short-form usage is one row per
+        // voice note and one per dictation session, unlike a meeting's single growing row.
+        const [row] = await db
+          .select({ seconds: sql<number>`coalesce(sum(${speechUsage.seconds}), 0)` })
+          .from(speechUsage)
+          .where(
+            and(
+              eq(speechUsage.userId, shortform.userId),
+              eq(speechUsage.kind, "shortform"),
+              gte(speechUsage.createdAt, since),
+              lt(speechUsage.createdAt, until),
+            ),
+          );
+        const recordedSeconds = Number(row?.seconds ?? 0);
+        const gap = deepgramSeconds - recordedSeconds;
+        if (gap <= MIN_SHORTFORM_GAP_SECONDS) continue;
+        if (deepgramSeconds <= recordedSeconds * OVERREPORT_THRESHOLD) continue;
+
+        shortformOverreported += 1;
+        const text =
+          `:warning: *Deepgram dictation usage exceeds what was recorded* for user \`${shortform.userId}\`\n` +
+          `Deepgram reports ${deepgramSeconds}s in the last 24h; Orbit recorded ${recordedSeconds}s ` +
+          `(a ${gap}s gap). Usually a beacon that never arrived — a crashed tab, an ad blocker — ` +
+          `rather than abuse; go look before acting.`;
+        await notifySlack(text).catch((err) => {
+          reportError(err, { where: "job.speech-usage.alert", extra: { userId: shortform.userId } });
+        });
+        continue;
+      }
+
       const parsed = parseMeetingTag(tag);
       if (parsed.kind === "not-a-meeting-tag") continue;
       if (parsed.kind === "malformed") {
@@ -114,7 +174,15 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(
-      { checked, overreported, pagesRead: usage.pagesRead, requestsSeen: usage.requestsSeen, invalidTags },
+      {
+        checked,
+        overreported,
+        shortformChecked,
+        shortformOverreported,
+        pagesRead: usage.pagesRead,
+        requestsSeen: usage.requestsSeen,
+        invalidTags,
+      },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {

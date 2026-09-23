@@ -10,7 +10,8 @@
  *
  * Pure — no database, no network. Run: npx tsx scripts/smoke-speech-usage-tag.ts
  */
-import { meetingSessionIdFromTag, parseMeetingTag } from "../src/lib/speech-usage-tag";
+import { meetingTag, shortformTag } from "../src/lib/deepgram-params";
+import { meetingSessionIdFromTag, parseMeetingTag, parseShortformTag } from "../src/lib/speech-usage-tag";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra?: unknown) {
@@ -54,6 +55,22 @@ check("good tag -> the session id", meetingSessionIdFromTag(`meeting:${GOOD_UUID
 check("malformed uuid -> null, not thrown", meetingSessionIdFromTag("meeting:not-a-uuid") === null);
 check("wrong prefix -> null", meetingSessionIdFromTag(`voicenote:${GOOD_UUID}`) === null);
 check("null tag -> null", meetingSessionIdFromTag(null) === null);
+
+console.log("\nparseShortformTag (dictation and voice notes, keyed by user)");
+const sf = parseShortformTag("shortform:user_2abcDEF-123");
+check("a well-formed shortform tag parses to its user id", sf.kind === "ok" && sf.userId === "user_2abcDEF-123", sf);
+check("a meeting tag is NOT a shortform tag", parseShortformTag(`meeting:${GOOD_UUID}`).kind === "not-a-shortform-tag");
+check("null is NOT a shortform tag", parseShortformTag(null).kind === "not-a-shortform-tag");
+check("an empty id after the prefix is MALFORMED", parseShortformTag("shortform:").kind === "malformed");
+check("an id with a character Orbit would never build is MALFORMED", parseShortformTag("shortform:a b/c").kind === "malformed");
+
+console.log("\nthe builders and the parsers agree");
+// They live in different files — the builders are client-safe, the parsers reach the
+// database — so a round trip is what proves the prefixes have not drifted apart.
+check("meetingTag -> parseMeetingTag", meetingSessionIdFromTag(meetingTag(GOOD_UUID)) === GOOD_UUID);
+const roundTrip = parseShortformTag(shortformTag("user_2abcDEF"));
+check("shortformTag -> parseShortformTag", roundTrip.kind === "ok" && roundTrip.userId === "user_2abcDEF", roundTrip);
+check("an id that cannot be tagged is refused rather than rewritten", meetingTag("nope/../etc") === null && shortformTag("") === null);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

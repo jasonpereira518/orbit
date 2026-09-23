@@ -375,7 +375,7 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
   const who = input.userName ? `${input.userName} (called "the user" below)` : "the user";
   return [
     `You are reading the transcript of a video call (Zoom or Google Meet) that ${who} recorded for their personal networking CRM.`,
-    `How the transcript was made — this matters: it is machine speech-to-text of the meeting's audio. Lines may be prefixed with a speaker: "You:" is the user; "Speaker 2:", "Speaker 3:" and so on are other people, identified by voice, and the same person may be renumbered after a line saying the recording reconnected. Unprefixed lines come from a stretch where speakers were not identified. Names may be misspelled.`,
+    `How the transcript was made — this matters: it is machine speech-to-text of the meeting's audio. Lines may be prefixed with a speaker: "You:" is the user; "Speaker 1:", "Speaker 2:" and so on are other people, identified by voice, and the same person may be renumbered after a line saying the recording reconnected. Unprefixed lines come from a stretch where speakers were not identified. Names may be misspelled.`,
     part
       ? `This is part ${part.index} of ${part.total} of the transcript. Extract only what is in this part.`
       : "",

@@ -4,9 +4,11 @@
  */
 import "./smoke/_env";
 
+import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { speechUsage, userSettings } from "../src/db/schema";
+import { speechKindForOperation } from "../src/lib/speech-limits";
 import { recordSpeechSeconds, speechAllowance } from "../src/lib/speech-quota";
 
 const USER = "demo-user";
@@ -16,8 +18,32 @@ function check(label: string, ok: boolean, detail?: string) {
   else { failures++; console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`); }
 }
 
+/**
+ * Which meter a transcription spends from is decided by the OPERATION, not the call site.
+ *
+ * Pinned in source as well as in behaviour: `transcribeAudioWithAI` is the one place both
+ * meeting chunk recovery and voice notes pass through, and it used to check and record
+ * `"shortform"` unconditionally — so a meeting recovered chunk by chunk (a firewall blocking
+ * `wss://`, say) spent Orbit's key against the wrong cap and the meeting cap never tripped.
+ * A literal `"shortform"` reappearing in that block is exactly how the bug would come back.
+ */
+function meterFollowsTheOperation() {
+  console.log("\nthe meter follows the operation");
+  check("a meeting transcription meters as a meeting", speechKindForOperation("meeting.transcribe") === "meeting");
+  check("a capture transcription meters as short-form", speechKindForOperation("capture.transcribe.audio") === "shortform");
+  check("…as does anything else", speechKindForOperation("chat.answer") === "shortform");
+
+  const ai = readFileSync("src/lib/ai.ts", "utf8");
+  const start = ai.indexOf("if (deepgramEnabled())");
+  const block = start === -1 ? "" : ai.slice(start, start + 2_500).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  check("ai.ts has a Deepgram transcription block to check", block.length > 0);
+  check("…which derives the meter from the operation", /speechKindForOperation\(operation\)/.test(block));
+  check("…and never hardcodes a kind", !/kind:\s*["']shortform["']/.test(block) && !/speechAllowance\([^)]*["']shortform["']/.test(block));
+}
+
 async function main() {
   const db = await getDb();
+  meterFollowsTheOperation();
   await db.delete(speechUsage).where(eq(speechUsage.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   await db.insert(userSettings).values({ userId: USER });

@@ -134,11 +134,16 @@ enrichment.
   more than 110% of. It never suspends anyone — a single divergent meeting could be a legitimate
   reconnect, not abuse — so treat an alert as "go look," not "go block." A run with
   `requestsSeen: 0` means the page-index assumption in `fetchDeepgramUsage` is wrong, not that
-  nobody met; see the comment there before trusting a clean run again.
+  nobody met; see the comment there before trusting a clean run again. The same run also
+  reconciles the **chat mic**, in aggregate per user rather than per session (tag
+  `shortform:<userId>`): those seconds arrive only as a best-effort `sendBeacon` from a closing
+  tab, so a crashed tab or a blocking extension is spend the meter never saw. It alerts only on
+  a gap over both 110% and two minutes a day (`MIN_SHORTFORM_GAP_SECONDS`), because dictation is
+  many tiny rounded sessions; a gap is usually a lost beacon, not abuse.
 - **The two caps**, both in `src/lib/speech-limits.ts` (`SPEECH_LIMITS`), metered in audio
   seconds per calendar month (UTC) and enforced through `speechAllowance` in
   `src/lib/speech-quota.ts`:
-  - `meeting` — Free: none: Pro: 5 hours (18,000 s); Lifetime: 10 hours (36,000 s). Paid-only by
+  - `meeting` — Free: none; Pro: 5 hours (18,000 s); Lifetime: 10 hours (36,000 s). Paid-only by
     design; free accounts get `limit: 0` and never reach Deepgram for a meeting.
   - `shortform` (voice notes + chat mic) — Free: 1 hour (3,600 s); Pro and Lifetime: 5 hours
     (18,000 s) each. Generous on purpose: an abuse ceiling, not a meter anyone should watch.

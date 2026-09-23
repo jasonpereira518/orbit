@@ -28,7 +28,7 @@ import {
   type NoteBatchMeeting,
 } from "@/db/schema";
 import type { TranscribeOptions, TranscriptionResult } from "@/lib/ai";
-import { recordSpeechSeconds } from "@/lib/speech-quota";
+import { recordSpeechSeconds, speechAllowance } from "@/lib/speech-quota";
 
 export type MeetingAttendee = { name: string; email?: string | null };
 
@@ -358,7 +358,7 @@ export type IngestChunkResult =
       /** True when this seq was already stored and nothing was transcribed. */
       duplicate: boolean;
     }
-  | { ok: false; status: 400 | 404 | 409 | 410; error: string };
+  | { ok: false; status: 400 | 402 | 404 | 409 | 410; error: string };
 
 /** A chunk this far past the start is not a real recording. Three hours plus slack. */
 const MAX_CHUNK_OFFSET_MS = 4 * 60 * 60_000;
@@ -411,6 +411,16 @@ export async function ingestMeetingChunk(
   let text = "";
   let engine: MeetingSegmentEngine = "silent";
   if (wav && wav.byteLength > 0) {
+    // Recovery is not free: this chunk goes to Deepgram on Orbit's key, exactly like a live
+    // one, so it is refused once the month's meeting hours are gone. Checked here rather
+    // than only inside the transcriber so it is a clean 402 the recorder can act on — and so
+    // a meeting whose live socket never opened cannot run past the cap chunk by chunk.
+    // A quota that cannot be READ throws out of here, which is a 502 the recorder retries:
+    // meetings fail closed.
+    const allowance = await speechAllowance(userId, "meeting");
+    if (allowance.exhausted) {
+      return { ok: false, status: 402, error: "You’ve used this month’s meeting transcription minutes" };
+    }
     const previous = await findSegment(session.id, meta.seq - 1);
     const result = await transcribe(
       userId,
@@ -419,7 +429,12 @@ export async function ingestMeetingChunk(
         base64: Buffer.from(wav.buffer, wav.byteOffset, wav.byteLength).toString("base64"),
         filename: `meeting-${meta.seq}.wav`,
       },
-      { contextText: previous?.text ?? null, allowEmpty: true, operation: "meeting.transcribe" },
+      {
+        contextText: previous?.text ?? null,
+        allowEmpty: true,
+        operation: "meeting.transcribe",
+        sessionId: session.id,
+      },
     );
     text = result.text.trim();
     engine = result.engine;
@@ -449,14 +464,35 @@ export async function ingestMeetingChunk(
     }
   }
 
-  await db
+  const [updated] = await db
     .update(meetingSessions)
     .set({
       lastSeq: sql`greatest(${meetingSessions.lastSeq}, ${meta.seq})`,
       durationMs: sql`greatest(${meetingSessions.durationMs}, ${Math.round(meta.endMs)})`,
       updatedAt: new Date(),
     })
-    .where(eq(meetingSessions.id, session.id));
+    .where(eq(meetingSessions.id, session.id))
+    .returning(); // bare: a field selector breaks over the Db union (see recordLiveSegments)
+
+  // METERED AS A POSITION ON THE MEETING'S CLOCK, not as this chunk's own duration — the
+  // same number `recordLiveSegments` books, into the same session-keyed row, so the two
+  // paths converge on one high-water mark instead of each adding their own. That is what
+  // stops a recovery chunk during a healthy live stretch from being charged twice: it books
+  // a total the live path has already booked, and `greatest(...)` keeps the larger.
+  //
+  // Only when DEEPGRAM ran: if this chunk fell through to the user's own Whisper or Gemini
+  // key, Orbit paid nothing and this meter — which exists to count Orbit's Deepgram spend —
+  // must not move. A silent chunk costs nothing either, and is skipped for the same reason;
+  // the next chunk that does transcribe carries the timeline past it anyway.
+  if (engine === "deepgram") {
+    await recordSpeechSeconds({
+      userId,
+      kind: "meeting",
+      source: "file",
+      sessionId: session.id,
+      seconds: Math.ceil((updated?.durationMs ?? Math.round(meta.endMs)) / 1000),
+    });
+  }
 
   return { ok: true, seq: meta.seq, text, engine, duplicate: false };
 }

@@ -21,8 +21,9 @@ import {
   WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
 import { deepgramEnabled, transcribeFile } from "@/lib/deepgram";
-import { DEEPGRAM_MODEL } from "@/lib/deepgram-params";
+import { DEEPGRAM_MODEL, meetingTag, shortformTag } from "@/lib/deepgram-params";
 import { speechAllowance, recordSpeechSeconds } from "@/lib/speech-quota";
+import { speechKindForOperation } from "@/lib/speech-limits";
 import { z } from "zod";
 import {
   impliedStepListSchema,
@@ -45,6 +46,7 @@ import {
   aiProviderLabel,
   classifyAiError,
   friendlyError,
+  UserFacingError,
 } from "@/lib/errors";
 import {
   RECOMMENDATIONS_MARKER,
@@ -827,6 +829,12 @@ export type TranscribeOptions = {
   allowEmpty?: boolean;
   /** `usage_events.operation`. Defaults to `capture.transcribe.audio`. */
   operation?: AiOperationId;
+  /**
+   * The meeting this audio belongs to, when the operation is a meeting one. It tags the
+   * Deepgram request `meeting:<id>` so the nightly reconciliation job can see it — see
+   * `speechKindForOperation` below for why the meter itself follows the operation.
+   */
+  sessionId?: string | null;
 };
 
 /** How much of `contextText` to carry over. About two sentences. */
@@ -869,12 +877,30 @@ export async function transcribeAudioWithAI(
   // Deepgram first, on Orbit's key, while the account has short-form seconds left. It is the
   // only engine most accounts can reach: Whisper and Gemini below need a key the user pasted.
   if (deepgramEnabled()) {
-    const allowance = await speechAllowance(userId, "shortform");
+    // The METER FOLLOWS THE OPERATION, not the call site. `meeting.transcribe` is meeting
+    // chunk recovery — the fallback that carries a whole meeting whenever the live socket
+    // cannot open — and it bills Orbit's key exactly like a live meeting does, so it must
+    // check and spend the `meeting` cap. Before this, it checked and spent `shortform`: a
+    // three-hour meeting behind a firewall cost Orbit three hours, left the 5 h meeting cap
+    // reading zero, and ate the user's voice-note allowance until voice notes stopped.
+    const kind = speechKindForOperation(operation);
+    const allowance = await speechAllowance(userId, kind);
+    if (kind === "meeting" && allowance.exhausted) {
+      // Not a fall-through to the user's own key, unlike short-form below: a meeting's cap is
+      // the product promise ("5 hours a month"), and `ingestMeetingChunk` has already refused
+      // this chunk with a 402 by the time we could get here. This is the backstop.
+      throw new UserFacingError("You’ve used this month’s meeting transcription minutes");
+    }
     if (!allowance.exhausted) {
       try {
         const result = await transcribeFile(
           { bytes: Buffer.from(input.base64, "base64"), mimeType: input.mimeType || "audio/wav" },
-          { keyterms: vocabulary },
+          {
+            keyterms: vocabulary,
+            tag: kind === "meeting"
+              ? (opts.sessionId ? meetingTag(opts.sessionId) : null)
+              : shortformTag(userId),
+          },
         );
         // No token counts: Deepgram bills per audio-second, not per token, and a fabricated
         // token count would get summed into admin-facing "input tokens" totals alongside
@@ -885,10 +911,19 @@ export async function transcribeAudioWithAI(
           userId, operation, provider: "deepgram", model: DEEPGRAM_MODEL,
           kind: "transcription", keyOwner: "orbit", success: true, errorKind: null,
         });
-        await recordSpeechSeconds({
-          userId, kind: "shortform", seconds: result.seconds, source: "file",
-          requestId: result.requestId,
-        });
+        // Short-form only. A MEETING's seconds are booked by `ingestMeetingChunk`, against
+        // the session's own high-water mark — the same number `recordLiveSegments` books —
+        // because a meeting is one growing row keyed by session, not a sum of requests.
+        // Booking this chunk's own duration here instead would be wrong twice over: a
+        // 60-second chunk would lose to the session's running total in the `greatest(...)`
+        // upsert and vanish, and on a meeting that never got a live segment at all the row
+        // would never rise above one chunk. See `speech-quota.ts`.
+        if (kind === "shortform") {
+          await recordSpeechSeconds({
+            userId, kind, seconds: result.seconds, source: "file",
+            requestId: result.requestId,
+          });
+        }
         if (!result.text) return empty("deepgram");
         return { text: result.text, engine: "deepgram" };
       } catch (err) {
