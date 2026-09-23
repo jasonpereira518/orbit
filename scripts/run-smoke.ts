@@ -59,6 +59,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-capture-file-date": "pure",
   "smoke-capture-fanout": "pure",
   "smoke-capture-bins": "pure",
+  "smoke-calendar-sources": "pure",
   "smoke-capture-file-drop": "pure",
   "smoke-cadence": "pure",
   "smoke-chat-history-groups": "pure",
@@ -139,7 +140,15 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-icon-button-names": "pure",
+  "smoke-import-detect": "pure",
+  "smoke-import-errors": "pure",
+  "smoke-import-history-render": "pure",
+  "smoke-import-sources": "pure",
+  "smoke-import-queue": "pure",
   "smoke-import-progress-card": "pure",
+  "smoke-import-provenance": "pure",
+  "smoke-import-finish": "pure",
+  "smoke-finish-scene-geometry": "pure",
   "smoke-linkedin-slug-guard": "pglite",
   "smoke-legal-pages": "pure",
   "smoke-landing-anchors": "pure",
@@ -264,7 +273,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-health": "pglite",
   "smoke-hybrid-search": "pglite",
   "smoke-import-engine": "pglite",
+  "smoke-import-people": "pglite",
   "smoke-import-stall": "pglite",
+  "smoke-import-undo": "pglite",
   "smoke-ingest-events": "pglite",
   "smoke-import-resumption-auth": "pglite",
   "smoke-instrumentation": "pglite",
@@ -367,6 +378,7 @@ const MANIFEST: Record<string, Tier> = {
 const TIMEOUT_MS: Partial<Record<string, number>> = {
   "smoke-page-budgets": 5 * 60_000,
   "smoke-import-engine": 5 * 60_000,
+  "smoke-import-undo": 3 * 60_000,
 };
 const DEFAULT_TIMEOUT_MS = 3 * 60_000;
 

@@ -25,6 +25,8 @@ export default async function ContactsPage({
     followUp?: string;
     sort?: string;
     letter?: string;
+    /** Narrows the list to one import's people — see the banner below. */
+    importId?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -44,6 +46,7 @@ export default async function ContactsPage({
     followUp: params.followUp === "due" ? ("due" as const) : undefined,
     sort,
     letter: params.letter,
+    importId: params.importId,
   };
 
   // The duplicates button streams in behind the list (`DuplicatesButton` below): its count
@@ -100,11 +103,29 @@ export default async function ContactsPage({
           used={planOverview.usage.used}
           limit={planOverview.usage.limit}
         />
+        {params.importId ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/40 p-3 text-sm">
+            <p className="text-muted-foreground">
+              {/* A dropped LinkedIn archive is two imports and one done card, and its button
+                  sends both ids — so this line has to be able to say "that drop" too. */}
+              {params.importId.includes(",")
+                ? "Showing the people that drop brought in"
+                : "Showing people from one import"}
+            </p>
+            <Link
+              href="/contacts"
+              className="shrink-0 font-medium text-primary underline underline-offset-4 hover:opacity-80"
+            >
+              From one import — show everyone
+            </Link>
+          </div>
+        ) : null}
         <ContactsFilters
           initialQ={params.q || ""}
           initialCompany={params.company || ""}
           initialMinScore={params.minScore || ""}
           initialFollowUp={params.followUp || ""}
+          importId={params.importId}
         >
           {/*
             Keyed on the filters so a new query starts from a clean list rather than appending
@@ -113,7 +134,7 @@ export default async function ContactsPage({
             down and rebuilt the whole subtree.
           */}
           <ContactsList
-            key={[params.q, params.company, params.minScore, params.followUp, sort].join("|")}
+            key={[params.q, params.company, params.minScore, params.followUp, sort, params.importId].join("|")}
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}

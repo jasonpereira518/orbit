@@ -46,9 +46,15 @@ export function GenericPageSkeleton() {
  */
 export function RemindersStageSkeleton() {
   return (
-    <div data-fill-route data-clear-floating-controls className="flex min-h-0 flex-1 flex-col gap-4">
+    <div
+      data-fill-route
+      data-clear-floating-controls
+      className="flex min-h-0 flex-1 flex-col gap-4"
+    >
       <div className="flex shrink-0 items-center justify-between">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Reminders</h1>
+        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
+          Reminders
+        </h1>
       </div>
       <div className="flex min-h-0 flex-1 gap-4 xl:gap-5">
         <div className="hidden w-52 shrink-0 space-y-1 lg:block">
@@ -72,7 +78,10 @@ export function RemindersStageSkeleton() {
           <div className="min-h-10 shrink-0 border-b border-border/60" />
           <div className="min-h-0 flex-1 basis-0 overflow-hidden">
             {Array.from({ length: 7 }).map((_, i) => (
-              <div key={i} className="flex items-start gap-2.5 border-b border-border/40 px-3 py-2.5 sm:px-4">
+              <div
+                key={i}
+                className="flex items-start gap-2.5 border-b border-border/40 px-3 py-2.5 sm:px-4"
+              >
                 <div className="size-4" />
                 <Skeleton className="mt-0.5 size-5 rounded-full" />
                 <div className="flex-1 space-y-1.5 py-0.5">
@@ -241,7 +250,13 @@ export function FormPageSkeleton({ wide = false }: { wide?: boolean }) {
   );
 }
 
-function SettingsCardSkeleton({ rows = 1, tall = false }: { rows?: number; tall?: boolean }) {
+function SettingsCardSkeleton({
+  rows = 1,
+  tall = false,
+}: {
+  rows?: number;
+  tall?: boolean;
+}) {
   return (
     <div className="space-y-4 rounded-2xl border border-border/70 p-6">
       <div className="space-y-2">
@@ -251,7 +266,9 @@ function SettingsCardSkeleton({ rows = 1, tall = false }: { rows?: number; tall?
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="space-y-2 border-t border-border/60 pt-4">
           <Skeleton className="h-4 w-28" />
-          <Skeleton className={cn("w-full rounded-lg", tall ? "h-24" : "h-9")} />
+          <Skeleton
+            className={cn("w-full rounded-lg", tall ? "h-24" : "h-9")}
+          />
         </div>
       ))}
     </div>
@@ -333,7 +350,7 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
     <div
       className={cn(
         "flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/70",
-        className
+        className,
       )}
     >
       <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-3">
@@ -460,9 +477,18 @@ export function ImportsPageSkeleton() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <PageHeaderSkeleton />
-      <Skeleton className="h-11 w-full rounded-xl" />
-      <Skeleton className="h-56 w-full rounded-2xl" />
-      <Skeleton className="h-48 w-full rounded-2xl" />
+      <Skeleton className="h-44 w-full rounded-2xl" />
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-14 w-full rounded-xl" />
+        <Skeleton className="h-14 w-full rounded-xl" />
+        <Skeleton className="h-14 w-full rounded-xl" />
+      </div>
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-28" />
+        <Skeleton className="h-14 w-full rounded-xl" />
+        <Skeleton className="h-14 w-full rounded-xl" />
+      </div>
     </div>
   );
 }
@@ -578,7 +604,10 @@ export function DocPageSkeleton() {
         <Skeleton className="h-3 w-32 bg-white/5" />
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+            <div
+              key={i}
+              className="rounded-2xl border border-white/10 bg-white/[0.03] p-5"
+            >
               <Skeleton className="size-9 rounded-xl bg-white/10" />
               <Skeleton className="mt-4 h-4 w-3/4 bg-white/10" />
               <Skeleton className="mt-2 h-3.5 w-full bg-white/5" />
@@ -664,7 +693,10 @@ export function ContactPageSkeleton() {
         <Skeleton className="h-3 w-40 bg-white/5" />
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="rounded-3xl border border-white/10 bg-white/[0.02] p-6 sm:p-7">
+            <div
+              key={i}
+              className="rounded-3xl border border-white/10 bg-white/[0.02] p-6 sm:p-7"
+            >
               <div className="flex items-start justify-between gap-4">
                 <Skeleton className="size-10 rounded-xl bg-white/10" />
                 <Skeleton className="h-3 w-16 bg-white/5" />
@@ -682,7 +714,10 @@ export function ContactPageSkeleton() {
         <Skeleton className="mt-3 h-8 w-full max-w-sm bg-white/10" />
         <div className="mt-8 grid gap-3 lg:grid-cols-2">
           {Array.from({ length: 7 }).map((_, i) => (
-            <Skeleton key={i} className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.03]" />
+            <Skeleton
+              key={i}
+              className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.03]"
+            />
           ))}
         </div>
       </section>
@@ -870,7 +905,10 @@ export function PricingPageSkeleton() {
                 <Skeleton className="h-3.5 w-40 bg-white/5" />
                 <div className="ml-auto flex gap-8">
                   {Array.from({ length: 3 }).map((__, j) => (
-                    <Skeleton key={j} className="size-4 rounded-full bg-white/5" />
+                    <Skeleton
+                      key={j}
+                      className="size-4 rounded-full bg-white/5"
+                    />
                   ))}
                 </div>
               </div>
@@ -882,7 +920,10 @@ export function PricingPageSkeleton() {
           <Skeleton className="mx-auto h-8 w-64 bg-white/10" />
           <div className="mx-auto mt-10 max-w-3xl divide-y divide-white/[0.08] border-y border-white/[0.08]">
             {Array.from({ length: 7 }).map((_, i) => (
-              <div key={i} className="flex items-center justify-between gap-6 py-5">
+              <div
+                key={i}
+                className="flex items-center justify-between gap-6 py-5"
+              >
                 <Skeleton className="h-4 w-2/3 max-w-sm bg-white/10" />
                 <Skeleton className="size-4 shrink-0 rounded-full bg-white/5" />
               </div>

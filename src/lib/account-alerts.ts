@@ -29,6 +29,7 @@ import { integrationHref } from "@/components/settings/sections";
  * has to respect: anything derived from a HISTORICAL row must be windowed, or a single bad
  * day becomes a permanent badge. See `IMPORT_ALERT_WINDOW_MS`.
  */
+import { icsFailureLine, importFailureLine } from "@/lib/import-errors";
 
 /** How many alerts the server will ever return. A pathological account cannot balloon the payload. */
 export const MAX_ACCOUNT_ALERTS = 6;
@@ -149,12 +150,7 @@ export type HealthFinding = {
 };
 
 export type AccountAlertKind =
-  | "ai_key"
-  | "connection"
-  | "calendar"
-  | "import"
-  | "billing"
-  | "plan_limit";
+  "ai_key" | "connection" | "calendar" | "import" | "billing" | "plan_limit";
 
 export type AccountAlert = {
   /**
@@ -201,7 +197,7 @@ function providerLabel(provider: AiProvider) {
  */
 export function evaluateAccountHealth(
   input: HealthInput,
-  now: Date = new Date()
+  now: Date = new Date(),
 ): HealthFinding[] {
   const findings: HealthFinding[] = [];
   const nowMs = now.getTime();
@@ -214,7 +210,10 @@ export function evaluateAccountHealth(
     findings.push({
       code: "ai.no_key",
       severity: "error",
-      data: { provider: input.aiProvider, providerLabel: providerLabel(input.aiProvider) },
+      data: {
+        provider: input.aiProvider,
+        providerLabel: providerLabel(input.aiProvider),
+      },
     });
   }
 
@@ -457,9 +456,12 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: `Add your ${str(f.data.providerLabel) ?? "AI"} API key`,
-          body:
-            "Capture, chat, suggestions and search stay switched off until Orbit has a key. Orbit never charges you for AI — you bring your own.",
-          cta: { label: "Open AI settings", href: integrationHref("ai"), external: false },
+          body: "Capture, chat, suggestions and search stay switched off until Orbit has a key. Orbit never charges you for AI — you bring your own.",
+          cta: {
+            label: "Open AI settings",
+            href: integrationHref("ai"),
+            external: false,
+          },
           surfaceKey: "settings.ai",
         });
         break;
@@ -470,9 +472,12 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: "Semantic search needs an OpenAI or Gemini key",
-          body:
-            "Anthropic has no embeddings API, so search falls back to keywords until you add a second key.",
-          cta: { label: "Open AI settings", href: integrationHref("ai"), external: false },
+          body: "Anthropic has no embeddings API, so search falls back to keywords until you add a second key.",
+          cta: {
+            label: "Open AI settings",
+            href: integrationHref("ai"),
+            external: false,
+          },
           surfaceKey: "settings.ai",
         });
         break;
@@ -506,7 +511,11 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           ...base,
           title: "Calendar sync is paused",
           body: "New meetings aren’t reaching Orbit. Reconnect Google to start calendar sync again.",
-          cta: { label: "Reconnect", href: "/imports#import-google-contacts", external: false },
+          cta: {
+            label: "Reconnect",
+            href: "/imports#import-google-contacts",
+            external: false,
+          },
           surfaceKey: "page.imports",
         });
         break;
@@ -521,7 +530,9 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
             n === 1
               ? `${label ?? "Calendar feed"} isn't syncing`
               : `${n} calendar feeds aren't syncing`,
-          body: str(f.data.detail) ?? "Orbit couldn't read the feed on its last try.",
+          // `detail` is `calendar_subscriptions.last_sync_error` — provider prose, written for
+          // whoever wrote the fetcher. Mapped rather than shown.
+          body: icsFailureLine(str(f.data.detail)),
           cta: {
             label: "Check calendar feeds",
             // Settings → Integrations → Calendar feed is Orbit's OUTBOUND ICS feed. This alert is
@@ -543,9 +554,13 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           ...base,
           title:
             n === 1 ? "An import didn't finish" : `${n} imports didn't finish`,
+          // `detail` is `imports.error_message` — raw Postgres and OAuth text. This is the
+          // second place it reaches a person, and it is the one nobody was looking at.
           body:
             n === 1
-              ? [label, detail].filter(Boolean).join(" — ") || null
+              ? [label, detail ? importFailureLine(detail) : null]
+                  .filter(Boolean)
+                  .join(" — ") || null
               : "Open imports to see which ones and try again.",
           cta: {
             label: "Open imports",
@@ -584,8 +599,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: `You've reached the ${limit}-contact limit`,
-          body:
-            "Orbit won't add new people until you upgrade. Everything already in your orbit stays fully available — reads, edits and interaction logging are never gated.",
+          body: "Orbit won't add new people until you upgrade. Everything already in your orbit stays fully available — reads, edits and interaction logging are never gated.",
           cta: { label: "See plans", href: "/pricing", external: true },
           surfaceKey: null,
         });
@@ -611,7 +625,10 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         const until = periodEnd ? new Date(periodEnd) : null;
         const readable =
           until && !Number.isNaN(until.getTime())
-            ? until.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+            ? until.toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              })
             : null;
         alerts.push({
           ...base,
