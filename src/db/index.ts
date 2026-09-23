@@ -47,7 +47,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
   typesafe_api_key_encrypted text,
-  wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
   writing_instructions text,
@@ -1370,6 +1369,16 @@ CREATE TABLE IF NOT EXISTS meeting_transcript_segments (
   engine text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS speech_usage (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  seconds integer NOT NULL DEFAULT 0,
+  source text NOT NULL,
+  session_id uuid,
+  request_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq);
 CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id);
@@ -1759,7 +1768,13 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // was still in review. Rescanned against every remote branch and every local worktree on
 // Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
 // the highest found anywhere and is still free.
-export const SCHEMA_VERSION = 86;
+//
+// 89 = speech_usage, meeting_transcript_segments.speaker, and the Deepgram engine value;
+// also drops user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept
+// until now so the removal and its migration were one version, not two. 87 and 88 were
+// already claimed (integrations-strategy, and the re-chunk fix in #263). Rescanned against
+// every remote branch and every local worktree on Sep 22 2026.
+export const SCHEMA_VERSION = 89;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2458,7 +2473,6 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "timestamptz NOT NULL DEFAULT now()"
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
-  await ensureColumn(client, "user_settings", "wispr_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -2747,6 +2761,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
   await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
 
+  // v89: Deepgram diarization label on a local database built before it existed.
+  await ensureColumn(client, "meeting_transcript_segments", "speaker", "text");
+
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
   // list above via `applySchema` — not here. `ADMIN_V2_STATEMENTS` is spread into that
@@ -2984,7 +3001,6 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
-  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wispr_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
@@ -3308,6 +3324,15 @@ const alters = [
   `ALTER TABLE user_settings ALTER COLUMN ai_model SET DEFAULT 'gemini-3.8-flash'`,
   `UPDATE user_settings SET ai_model_migrated_from = ai_model, ai_model = 'gemini-3.8-flash'
      WHERE ai_model = 'gemini-3.5-flash' AND ai_model_migrated_from IS NULL`,
+  // Schema v89: Deepgram speech-to-text. speech_usage meters seconds against the plan caps;
+  // meeting_transcript_segments.speaker holds Deepgram's diarization label. Also drops
+  // user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept until now so
+  // the removal and its migration were one version, not two.
+  `CREATE TABLE IF NOT EXISTS speech_usage (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, kind text NOT NULL, seconds integer NOT NULL DEFAULT 0, source text NOT NULL, session_id uuid, request_id text, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS speech_usage_user_created_idx ON speech_usage(user_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS speech_usage_session_uidx ON speech_usage(session_id)`,
+  `ALTER TABLE meeting_transcript_segments ADD COLUMN IF NOT EXISTS speaker text`,
+  `ALTER TABLE user_settings DROP COLUMN IF EXISTS wispr_api_key_encrypted`,
 ];
 
 /**

@@ -1215,7 +1215,7 @@ export const contactOpportunities = pgTable(
 );
 
 export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
-export type MeetingSegmentEngine = "whisper" | "gemini" | "silent";
+export type MeetingSegmentEngine = "deepgram" | "whisper" | "gemini" | "silent";
 
 /**
  * One recorded call on `/capture?mode=meeting`. Holds the text of the meeting while it is
@@ -1268,6 +1268,8 @@ export const meetingTranscriptSegments = pgTable(
     endMs: integer("end_ms").notNull(),
     text: text("text").notNull(),
     engine: text("engine").$type<MeetingSegmentEngine>().notNull(),
+    /** Deepgram diarization label ("0", "1", ...), null for engines that don't diarize. */
+    speaker: text("speaker"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -1275,6 +1277,31 @@ export const meetingTranscriptSegments = pgTable(
     index("meeting_segments_user_idx").on(t.userId),
   ]
 );
+
+/**
+ * Metered speech-to-text on Orbit's key. One row per meeting session (updated as segments
+ * land) or per short-form recording. Seconds, not requests: Deepgram bills per second and
+ * the plan caps are hours.
+ */
+export const speechUsage = pgTable(
+  "speech_usage",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    kind: text("kind").$type<"meeting" | "shortform">().notNull(),
+    seconds: integer("seconds").default(0).notNull(),
+    source: text("source").$type<"stream" | "file">().notNull(),
+    sessionId: uuid("session_id"),
+    requestId: text("request_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("speech_usage_user_created_idx").on(t.userId, t.createdAt),
+    uniqueIndex("speech_usage_session_uidx").on(t.sessionId),
+  ]
+);
+
+export type SpeechUsageRow = typeof speechUsage.$inferSelect;
 
 /** The stored analysis of a meeting. Mirrors `meetingDigestSchema` in `src/lib/meeting-digest.ts`. */
 export type MeetingDigest = {
@@ -2458,7 +2485,7 @@ export const usageEvents = pgTable(
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
     /** "typesafe" is the decision model (Jev), which is not a selectable chat provider. */
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "typesafe">().notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "typesafe" | "deepgram">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
       .$type<"completion" | "multimodal" | "embedding" | "transcription" | "decision">()
