@@ -10,7 +10,9 @@
  * both people and meetings builds the duplicate index once.
  *
  * Enrichment is fill-blanks-only, deliberately: a provider's stale title must never
- * overwrite what the user typed. `bulkMergeContactsForUser` already implements that rule.
+ * overwrite what the user typed, nor its source relabel a contact it merely matched. The merge
+ * asks `bulkMergeContactsForUser` for exactly that with `fillBlanksOnly` — its default is the
+ * opposite (the incoming value wins), which the file importers rely on.
  */
 import {
   addToDuplicateIndex,
@@ -74,7 +76,7 @@ function personIdentityKey(p: PersonRecord): string | null {
   return null;
 }
 
-/** First-non-empty wins — enrichment fills blanks, matching `bulkMergeContactsForUser`'s COALESCE. */
+/** First-non-empty wins — enrichment fills blanks, matching the `fillBlanksOnly` merge. */
 function foldPersonInput(
   into: Partial<ContactInput>,
   extra: Partial<ContactInput>
@@ -229,7 +231,8 @@ export async function ingestPeople(
     await bulkMergeContactsForUser(
       ctx.userId,
       [...mergeByContactId.entries()].map(([contactId, input]) => ({ contactId, input })),
-      ctx.companyResolve
+      ctx.companyResolve,
+      { fillBlanksOnly: true }
     );
   }
 

@@ -700,11 +700,20 @@ export async function createContactsBulkForUser(
  * `LEAST`/`GREATEST` ignore NULL operands and return the non-null one — verified against
  * this project's own PGlite, not assumed — so an input that supplies neither leaves both
  * columns untouched, and one that supplies only a later date advances only that side.
+ *
+ * `fillBlanksOnly` flips who wins: every set-or-leave-alone column becomes
+ * `COALESCE(existing, incoming)`, so a sync only fills what the contact lacks and never
+ * overwrites what the person typed — `source` included, so a provider cannot relabel a
+ * contact it merely matched. `company` and `company_id` move as a pair: both fill only when
+ * the contact has neither, so an id is never stitched onto someone else's company name. The
+ * two interaction-timestamp columns keep widening either way: `LEAST`/`GREATEST` never
+ * discards a stored value, which is the whole point of the flag.
  */
 export async function bulkMergeContactsForUser(
   userId: string,
   merges: Array<{ contactId: string; input: Partial<ContactInput> }>,
-  companyResolve: CompanyResolver
+  companyResolve: CompanyResolver,
+  options?: { fillBlanksOnly?: boolean }
 ) {
   if (merges.length === 0) return;
   const db = await getDb();
@@ -744,21 +753,31 @@ export async function bulkMergeContactsForUser(
     )`;
   });
 
+  // Set-or-leave-alone, from a fixed list of column names (never input). By default the
+  // incoming value wins; with `fillBlanksOnly` the stored one does.
+  const fillBlanksOnly = options?.fillBlanksOnly === true;
+  const merged = (column: string) =>
+    sql.raw(fillBlanksOnly ? `COALESCE(c.${column}, v.${column})` : `COALESCE(v.${column}, c.${column})`);
+  const companyColumn = (column: "company" | "company_id") =>
+    fillBlanksOnly
+      ? sql.raw(`CASE WHEN c.company IS NULL AND c.company_id IS NULL THEN v.${column} ELSE c.${column} END`)
+      : merged(column);
+
   await db.execute(sql`
     UPDATE contacts AS c
-    SET company           = COALESCE(v.company, c.company),
-        company_id        = COALESCE(v.company_id, c.company_id),
-        title             = COALESCE(v.title, c.title),
-        email             = COALESCE(v.email, c.email),
-        phone             = COALESCE(v.phone, c.phone),
-        linkedin_url      = COALESCE(v.linkedin_url, c.linkedin_url),
-        first_name        = COALESCE(v.first_name, c.first_name),
-        last_name         = COALESCE(v.last_name, c.last_name),
-        profile_image_url = COALESCE(v.profile_image_url, c.profile_image_url),
-        source            = COALESCE(v.source, c.source),
-        how_met           = COALESCE(v.how_met, c.how_met),
-        met_context       = COALESCE(v.met_context, c.met_context),
-        date_met          = COALESCE(v.date_met, c.date_met),
+    SET company           = ${companyColumn("company")},
+        company_id        = ${companyColumn("company_id")},
+        title             = ${merged("title")},
+        email             = ${merged("email")},
+        phone             = ${merged("phone")},
+        linkedin_url      = ${merged("linkedin_url")},
+        first_name        = ${merged("first_name")},
+        last_name         = ${merged("last_name")},
+        profile_image_url = ${merged("profile_image_url")},
+        source            = ${merged("source")},
+        how_met           = ${merged("how_met")},
+        met_context       = ${merged("met_context")},
+        date_met          = ${merged("date_met")},
         -- WIDEN, not set-or-leave-alone — see this function's doc comment. A re-import
         -- can only push the known interaction window outward, never narrow it.
         first_interaction_at = LEAST(c.first_interaction_at, v.first_interaction_at),

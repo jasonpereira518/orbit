@@ -183,6 +183,25 @@ run(async () => {
   const silent = await ingestPeople(ctx, [{ fullName: "Ada Lovelace", email: "ada@example.com" }]);
   check("and are not reported unless asked for", silent.resolutions === undefined);
 
+  console.log("\nninth pass: a provider that disagrees with what the user typed never overwrites it");
+  // A CRM whose record for Ada carries a different title and company — and its own source.
+  const [adaBefore] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  const crm = await openIngestContext(USER, { source: "hubspot", createsContacts: true });
+  const ninth = await ingestPeople(crm, [
+    { fullName: "Ada Lovelace", email: "ada@example.com", title: "Engineer", company: "Babbage & Co", phone: "+1 415 555 0199" },
+  ]);
+  check("the record matched", ninth.matched === 1 && ninth.created === 0, JSON.stringify(ninth));
+  const [adaAfter] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  check("the stored title was kept", adaAfter?.title === "Mathematician", String(adaAfter?.title));
+  check(
+    "the stored company (and its company id) was kept",
+    adaAfter?.company === "Analytical" && adaAfter?.companyId === adaBefore?.companyId,
+    `${adaAfter?.company} / ${adaAfter?.companyId} (was ${adaBefore?.companyId})`
+  );
+  check("the source was not relabelled", adaAfter?.source === adaBefore?.source && adaAfter?.source !== "hubspot", String(adaAfter?.source));
+  check("a blank field still filled", adaAfter?.phone === "+1 415 555 0199", String(adaAfter?.phone));
+  await finalizeIngest(crm);
+
   await finalizeIngest(ctx);
   await db.delete(contacts).where(eq(contacts.userId, USER));
 
