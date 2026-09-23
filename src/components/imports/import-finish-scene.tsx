@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import {
   dotCount,
+  FACE_RADIUS,
   layoutDots,
   settle,
   SCENE_HEIGHT,
@@ -39,13 +40,14 @@ const GOLD = "#fcd34d";
  * paints the settled frame once. The preference is read with `matchMedia` at effect time rather
  * than through a hook that reports the wrong value on its first render.
  *
- * Height comes from `SCENE_HEIGHT` itself, not a restated literal: a `matchMedia` query decides
- * phone vs desktop and `resize()` writes `canvas.style.height` from the constant, so the CSS box
- * and the backing store both trace back to the one source instead of a Tailwind class quietly
- * drifting from it. Width is simpler — nothing bounds it, so `clientWidth` is read straight off
- * the DOM. A `ResizeObserver` on the canvas covers a card that changes width without unmounting
- * (a sidebar toggle, a window resize); the breakpoint query's own `change` event covers a height
- * flip that does not happen to touch the canvas's width.
+ * Height comes from `SCENE_HEIGHT` itself, not a restated literal. Both values reach CSS as
+ * custom properties on the canvas and a breakpoint class picks between them, so the very first
+ * paint — before any effect has run — is already the right height at every width. (It used to
+ * be an inline desktop height corrected by the effect, so a phone painted 180px and then
+ * jumped.) The effect never decides the height: it reads the box CSS laid out, so the drawing
+ * and the box cannot disagree, whatever the breakpoint resolves to. A `ResizeObserver` on the
+ * canvas covers every change to that box — a width change, and the height flip at the
+ * breakpoint alike.
  */
 export function ImportFinishScene({
   people,
@@ -64,9 +66,6 @@ export function ImportFinishScene({
 
     let disposed = false;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    // Tailwind's own `sm` breakpoint — the one place that number lives now, instead of once
-    // here and once in a Tailwind class.
-    const desktopQuery = window.matchMedia("(min-width: 640px)");
 
     const primaryRaw = getComputedStyle(document.documentElement).getPropertyValue("--primary").trim();
     const teal = primaryRaw.startsWith("#") ? primaryRaw : TEAL_FALLBACK;
@@ -77,8 +76,10 @@ export function ImportFinishScene({
     for (let i = 0; i < Math.min(MAX_FACES, count); i++) {
       const photo = faces[i]?.photo;
       if (!photo) continue;
+      // No `crossOrigin`: the canvas is only drawn to, never read back, so a tainted canvas
+      // costs nothing — while asking for CORS made every avatar host that doesn't send the
+      // header fail to load, and its face fell back to a dot.
       const img = new Image();
-      img.crossOrigin = "anonymous";
       img.onload = () => {
         if (disposed) return;
         images.set(i, img);
@@ -90,7 +91,7 @@ export function ImportFinishScene({
     }
 
     let width = 0;
-    let height: number = SCENE_HEIGHT.desktop;
+    let height = 0;
     let dpr = 1;
     let dots: Dot[] = [];
     let cx = 0;
@@ -133,13 +134,20 @@ export function ImportFinishScene({
         if (img) {
           ctx!.save();
           ctx!.beginPath();
-          ctx!.arc(x, y, 11, 0, Math.PI * 2);
+          ctx!.arc(x, y, FACE_RADIUS, 0, Math.PI * 2);
           ctx!.clip();
-          ctx!.drawImage(img, x - 11, y - 11, 22, 22);
+          ctx!.drawImage(
+            img,
+            x - FACE_RADIUS,
+            y - FACE_RADIUS,
+            FACE_RADIUS * 2,
+            FACE_RADIUS * 2,
+          );
           ctx!.restore();
           ctx!.beginPath();
           ctx!.strokeStyle = GOLD;
-          ctx!.arc(x, y, 11, 0, Math.PI * 2);
+          ctx!.lineWidth = 1;
+          ctx!.arc(x, y, FACE_RADIUS, 0, Math.PI * 2);
           ctx!.stroke();
         } else {
           ctx!.beginPath();
@@ -169,17 +177,13 @@ export function ImportFinishScene({
     }
 
     function resize() {
-      // The CSS box's height is driven from here, not read back from it — SCENE_HEIGHT is the
-      // only place `180` / `120` are written. Guarded so a resize this triggers by changing the
-      // canvas's own height doesn't bounce the ResizeObserver forever: once it matches, the
-      // style write is skipped and nothing fires again.
-      const h = desktopQuery.matches ? SCENE_HEIGHT.desktop : SCENE_HEIGHT.phone;
-      const heightPx = `${h}px`;
-      if (canvas!.style.height !== heightPx) canvas!.style.height = heightPx;
-
+      // Both dimensions are read off the box CSS laid out: the height is SCENE_HEIGHT's, chosen
+      // by the breakpoint class below, and nothing here writes it back — so there is no style
+      // write for the ResizeObserver to bounce on.
       const w = canvas!.clientWidth;
+      const h = canvas!.clientHeight;
       // A ResizeObserver can fire before layout has given the element a size.
-      if (w < 2) return;
+      if (w < 2 || h < 2) return;
       width = w;
       height = h;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -205,13 +209,11 @@ export function ImportFinishScene({
     resize();
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(canvas);
-    desktopQuery.addEventListener("change", resize);
 
     if (reduced) {
       return () => {
         disposed = true;
         resizeObserver.disconnect();
-        desktopQuery.removeEventListener("change", resize);
       };
     }
 
@@ -240,7 +242,6 @@ export function ImportFinishScene({
       disposed = true;
       stop();
       resizeObserver.disconnect();
-      desktopQuery.removeEventListener("change", resize);
       intersectionObserver.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
     };
@@ -250,8 +251,16 @@ export function ImportFinishScene({
     <canvas
       ref={canvasRef}
       aria-hidden
-      className="block w-full"
-      style={{ height: SCENE_HEIGHT.desktop }}
+      // Tailwind's `sm` is the phone/desktop line, as everywhere else in the app. The class names
+      // the variables; `SCENE_HEIGHT` fills them in below, so the numbers are written once.
+      className="block w-full h-[var(--finish-scene-phone)] sm:h-[var(--finish-scene-desktop)]"
+      style={SCENE_HEIGHT_VARS}
     />
   );
 }
+
+/** `SCENE_HEIGHT`, as the custom properties the canvas's height classes read. */
+const SCENE_HEIGHT_VARS = {
+  "--finish-scene-phone": `${SCENE_HEIGHT.phone}px`,
+  "--finish-scene-desktop": `${SCENE_HEIGHT.desktop}px`,
+} as CSSProperties;

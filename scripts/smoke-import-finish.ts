@@ -21,6 +21,7 @@ import {
   UndoDialogBody,
 } from "../src/components/imports/import-finish-card";
 import { Dialog } from "../src/components/ui/dialog";
+import { SCENE_HEIGHT } from "../src/lib/imports/finish-scene-geometry";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -190,6 +191,24 @@ const cardHtml = (summary: FinishSummary) =>
     React.createElement(ImportFinishCard, { summary, avatars: [] }),
   );
 check("a clean finish draws the swarm", cardHtml(base).includes("<canvas"));
+// The canvas's first paint, before any effect runs. A fixed inline desktop height meant a phone
+// painted 180px and then jumped to 120px once the effect measured; the height now comes from
+// SCENE_HEIGHT through CSS variables and a breakpoint class, so the first paint is right at
+// every width and the numbers still live in one place.
+const canvasTag = cardHtml(base).match(/<canvas[^>]*>/)?.[0] ?? "";
+check(
+  "the scene's first paint takes both heights from SCENE_HEIGHT",
+  canvasTag.includes(`--finish-scene-phone:${SCENE_HEIGHT.phone}px`) &&
+    canvasTag.includes(`--finish-scene-desktop:${SCENE_HEIGHT.desktop}px`),
+  canvasTag,
+);
+check(
+  "…and lets the breakpoint pick, rather than fixing the desktop height inline",
+  !/[;"]height:/.test(canvasTag) &&
+    canvasTag.includes("h-[var(--finish-scene-phone)]") &&
+    canvasTag.includes("sm:h-[var(--finish-scene-desktop)]"),
+  canvasTag,
+);
 check(
   "a step that didn’t finish does not",
   !cardHtml({ ...base, unfinished: "Your LinkedIn messages didn’t finish" }).includes("<canvas"),

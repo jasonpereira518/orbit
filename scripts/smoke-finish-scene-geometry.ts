@@ -5,8 +5,10 @@
  * Run: npx tsx scripts/smoke-finish-scene-geometry.ts
  */
 import {
+  FACE_RADIUS,
   MAX_DOTS,
   MAX_FACES,
+  SCENE_HEIGHT,
   dotCount,
   layoutDots,
   settle,
@@ -44,8 +46,40 @@ check("settle ends at the end", settle(1) === 1);
 check("settle is monotonic", [0.1, 0.3, 0.5, 0.7, 0.9].every((t, i, a) => i === 0 || settle(t) > settle(a[i - 1])));
 check("settle eases out, not linear", settle(0.5) > 0.5);
 
-const phone = layoutDots(3000, 340, 120);
+const phone = layoutDots(3000, 340, SCENE_HEIGHT.phone);
 check("a phone canvas keeps dots inside it", phone.every((d) => d.radiusX <= 170 && d.radiusY <= 60));
+
+/**
+ * A face is a circle, not a point.
+ *
+ * The dot's position is its centre, and a face draws a FACE_RADIUS circle (plus a one-pixel
+ * ring) around it — so a centre that fits can still put half the photo off the canvas. At a
+ * phone's 120px the outer ring's centre sat at 51.6 of a 60px half-height and the face ran
+ * past the bottom edge. Small runs are where it shows: with few people, faces spread across
+ * all three rings instead of filling the inner one.
+ */
+const fits = (dots: ReturnType<typeof layoutDots>, width: number, height: number) =>
+  dots
+    .filter((d) => d.face)
+    .every(
+      (d) =>
+        d.radiusX + FACE_RADIUS + 1 <= width / 2 &&
+        d.radiusY + FACE_RADIUS + 1 <= height / 2,
+    );
+for (const people of [3, 5, 12, 40, 3000]) {
+  check(
+    `${people} people: every face fits a 340×${SCENE_HEIGHT.phone} phone canvas`,
+    fits(layoutDots(people, 340, SCENE_HEIGHT.phone), 340, SCENE_HEIGHT.phone),
+  );
+  check(
+    `${people} people: every face fits a 600×${SCENE_HEIGHT.desktop} desktop canvas`,
+    fits(layoutDots(people, 600, SCENE_HEIGHT.desktop), 600, SCENE_HEIGHT.desktop),
+  );
+}
+check(
+  "…and the faces still use more than one ring",
+  new Set(layoutDots(12, 340, SCENE_HEIGHT.phone).filter((d) => d.face).map((d) => d.radiusY)).size > 1,
+);
 
 if (failures) {
   console.error(`smoke-finish-scene-geometry: ${failures} failed`);

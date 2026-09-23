@@ -8,6 +8,10 @@
 export const MAX_DOTS = 300;
 export const MAX_FACES = 12;
 export const SCENE_HEIGHT = { desktop: 180, phone: 120 } as const;
+/** A face's drawn radius. The scene draws it; the layout keeps room for it. */
+export const FACE_RADIUS = 11;
+/** How far a face reaches past its centre: its radius plus the one-pixel ring stroked round it. */
+const FACE_REACH = FACE_RADIUS + 1;
 
 /** Ring radii as a fraction of the canvas half-width / half-height. */
 const RINGS = [
@@ -50,14 +54,20 @@ export function layoutDots(people: number, width: number, height: number): Dot[]
         break;
       }
     }
+    const face = i < Math.min(MAX_FACES, count);
+    // A dot is a point, but a face is a circle around one: its centre has to sit a whole face
+    // inside the edge. On a phone's 120px the outer ring's centre was 51.6 of a 60px half-height,
+    // so a face there ran off the bottom. Pulled in only as far as needed, and only for faces —
+    // they stay on their own ring, just no further out than the canvas allows.
+    const reach = face ? FACE_REACH : 0;
     dots.push({
       ring,
       angle: (i * GOLDEN) % (Math.PI * 2),
-      radiusX: halfW * RINGS[ring].rx,
-      radiusY: halfH * RINGS[ring].ry,
+      radiusX: Math.min(halfW * RINGS[ring].rx, Math.max(0, halfW - reach)),
+      radiusY: Math.min(halfH * RINGS[ring].ry, Math.max(0, halfH - reach)),
       // Faces arrive first so the recognisable part of the scene lands early.
       delay: (i / Math.max(1, count)) * 1.2,
-      face: i < Math.min(MAX_FACES, count),
+      face,
     });
   }
   return dots;
