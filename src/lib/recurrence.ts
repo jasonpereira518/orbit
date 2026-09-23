@@ -352,9 +352,23 @@ export function expandEvent(
   const exDateTimes = new Set((opts.exDates ?? []).map((d) => d.getTime()));
 
   const results: ParsedCalendarEvent[] = [];
-  let n = 0;
+  // RFC 5545's COUNT tallies every candidate from DTSTART onward, regardless of the window —
+  // it must NOT share a counter with the emit cap below. Coupling them used to mean a daily
+  // standup that started well before `window.from` burned its cap on candidates the window
+  // would drop anyway, leaving nothing (or nothing FUTURE) by the time the series reached
+  // `window.from` at all.
+  let count = 0;
+  // A candidate earlier than `window.from` is skipped (`continue`, not counted against the
+  // cap), so nothing bounds how many such candidates a runaway-old DTSTART produces on its
+  // own — `dailySeries`/`weeklySimpleSeries`/`weeklyByDaySeries` are unconditional `while
+  // (true)` generators with no bail-out of their own. This is that bound: independent of the
+  // emit cap, so a 1970 DTSTART can't spin `fromWallClockInput` tens of thousands of times
+  // before either the cap or `window.to` ever gets a chance to stop it.
+  const MAX_CANDIDATE_ITERATIONS = 50_000;
+  let iterations = 0;
   for (const civil of civilDateSeries(rule, start)) {
-    if (n >= cap) break;
+    if (results.length >= cap) break;
+    if (++iterations > MAX_CANDIDATE_ITERATIONS) break;
 
     const wall = `${civilKey(civil)}T${pad2(hh)}:${pad2(mm)}`;
     const instant = fromWallClockInput(wall, timezone);
@@ -363,8 +377,8 @@ export function expandEvent(
     if (rule.until && instant.getTime() > rule.until.getTime()) break;
     if (instant.getTime() >= window.to.getTime()) break; // dates only increase from here on
 
-    n++;
-    if (rule.count !== null && n > rule.count) break;
+    count++;
+    if (rule.count !== null && count > rule.count) break;
 
     if (instant.getTime() < window.from.getTime()) continue;
     if (exDateTimes.has(instant.getTime())) continue;

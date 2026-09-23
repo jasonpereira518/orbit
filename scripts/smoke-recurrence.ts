@@ -89,6 +89,71 @@ async function main() {
   });
   check("caps runaway rules", capped.length === MAX_OCCURRENCES, `got ${capped.length}`);
 
+  // --- the occurrence cap must not be consumed by candidates before the window ---
+  //
+  // Regression pin for the bug where `n` was both the COUNT tally and the emit cap, and
+  // incremented for every candidate EARLIER than `window.from` too — so a rolling
+  // 90-days-back/60-forward window plus a DTSTART well in the past silently produced fewer
+  // occurrences than the window should hold, or none at all, with no fallback (`expandEvent`
+  // returns `[]` rather than the master). Anchored to a fixed "now" so the suite stays
+  // deterministic.
+  const ROLLING_NOW = new Date("2026-09-23T00:00:00Z");
+  const ROLLING_WINDOW = {
+    from: new Date(ROLLING_NOW.getTime() - 90 * 86400000),
+    to: new Date(ROLLING_NOW.getTime() + 60 * 86400000),
+  };
+  function daysAgo(n: number): string {
+    return new Date(ROLLING_NOW.getTime() - n * 86400000).toISOString();
+  }
+  function assertFillsWindow(label: string, occurrences: ParsedCalendarEvent[]) {
+    const futureCount = occurrences.filter((e) => (e.start?.getTime() ?? 0) >= ROLLING_NOW.getTime()).length;
+    check(`${label}: produces occurrences`, occurrences.length > 0, `got ${occurrences.length}`);
+    check(
+      `${label}: includes at least one FUTURE occurrence`,
+      futureCount > 0,
+      `${futureCount} of ${occurrences.length} are future`
+    );
+  }
+
+  // A daily standup that started 400 days ago used to have zero future occurrences (the cap
+  // was exhausted by the ~400 skipped-but-counted candidates before window.from).
+  assertFillsWindow(
+    "daily series, DTSTART 400 days back",
+    expandEvent(evt(daysAgo(400)), parseRRule("RRULE:FREQ=DAILY"), ROLLING_WINDOW)
+  );
+
+  // A daily standup that started 500 days ago used to produce NOTHING at all.
+  assertFillsWindow(
+    "daily series, DTSTART 500 days back",
+    expandEvent(evt(daysAgo(500)), parseRRule("RRULE:FREQ=DAILY"), ROLLING_WINDOW)
+  );
+
+  // A three-year-old MWF series used to vanish entirely too.
+  assertFillsWindow(
+    "weekly MWF series, DTSTART 3 years back",
+    expandEvent(evt(daysAgo(3 * 365)), parseRRule("RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR"), ROLLING_WINDOW)
+  );
+
+  // An eight-year-old weekly series, same failure.
+  assertFillsWindow(
+    "weekly series, DTSTART 8 years back",
+    expandEvent(evt(daysAgo(8 * 365)), parseRRule("RRULE:FREQ=WEEKLY"), ROLLING_WINDOW)
+  );
+
+  // A runaway-old DTSTART (well before any realistic calendar) must still terminate quickly —
+  // the independent iteration bound, not just the emit cap, is what stops it.
+  {
+    const t0 = Date.now();
+    const ancient = expandEvent(
+      evt("1970-01-05T14:00:00Z"),
+      parseRRule("RRULE:FREQ=DAILY"),
+      ROLLING_WINDOW
+    );
+    const elapsedMs = Date.now() - t0;
+    assertFillsWindow("daily series, DTSTART in 1970", ancient);
+    check("a 1970 DTSTART expands in well under a second", elapsedMs < 5000, `${elapsedMs}ms`);
+  }
+
   // --- MONTHLY ---
   const SIX_MONTH_WINDOW = { from: new Date("2026-01-01T00:00:00Z"), to: new Date("2026-07-01T00:00:00Z") };
 
