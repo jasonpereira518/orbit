@@ -197,6 +197,19 @@ async function seed() {
   // Another user's link: the shared row must survive a link delete and its counters come down.
   await db.insert(schema.userRecruiterLinks).values({ userId: "smoke-purge-selective-other", recruiterId: recruiter.id });
   await recomputeRecruiterRating(recruiter.id);
+
+  const [team] = await db
+    .insert(schema.teams)
+    .values({ domain: "smoke-purge-selective.test", name: "Smoke Purge Selective", createdBy: USER })
+    .onConflictDoUpdate({ target: schema.teams.domain, set: { domain: sql`excluded.domain` } })
+    .returning();
+  await db.insert(schema.teamMembers).values({
+    teamId: team.id,
+    userId: USER,
+    shareNetwork: 1,
+    emailDomain: "smoke-purge-selective.test",
+  });
+
   return recruiter.id;
 }
 
@@ -206,6 +219,7 @@ const WITNESS: Record<DataCategory, string | null> = {
   notes: "interactions",
   reminders: "reminders",
   imports: "imports",
+  leads: "team_members",
   connections: "gmail_connections",
   events: "events",
   goals: "user_goals",

@@ -637,6 +637,18 @@ async function seed() {
     .returning();
   await db.insert(schema.userRecruiterLinks).values({ userId: USER, recruiterId: soleRecruiter.id, email: "solo@example.test" });
 
+  const [team] = await db
+    .insert(schema.teams)
+    .values({ domain: "smoke-purge.test", name: "Smoke Purge", createdBy: USER })
+    .onConflictDoUpdate({ target: schema.teams.domain, set: { domain: sql`excluded.domain` } })
+    .returning();
+  await db.insert(schema.teamMembers).values({
+    teamId: team.id,
+    userId: USER,
+    shareNetwork: 1,
+    emailDomain: "smoke-purge.test",
+  });
+
   return { recruiterId: recruiter.id, soleRecruiterId: soleRecruiter.id };
 }
 
@@ -684,6 +696,12 @@ async function main() {
     }
   }
   check("no user-scoped table retains rows", leaked === 0, `${leaked} table(s) leaked`);
+
+  const teamsLeft = await (await getDb())
+    .select({ id: schema.teams.id })
+    .from(schema.teams)
+    .where(eq(schema.teams.domain, "smoke-purge.test"));
+  check("an emptied team is removed with its last member", teamsLeft.length === 0);
 
   // The one table that is anonymised rather than deleted. Asserting the row SURVIVES is
   // as important as asserting the others are gone: if a future edit "tidies" this into a
