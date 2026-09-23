@@ -1,13 +1,6 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import {
-  getOutlookConnectionStatus,
-  startOutlookOAuth,
-  disconnectOutlook,
-  type OutlookConnectionStatus,
-} from "@/actions/outlook";
 import { previewOutlookContacts, type OutlookContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
@@ -18,15 +11,16 @@ import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
 import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
-import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { useMicrosoftConnection } from "@/components/settings/use-provider-connection";
 
 /** `returnTo`: see `GoogleContactsImport`. */
 export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
-  const router = useRouter();
   const job = useImportJob();
   const [pending, start] = useTransition();
-  const [status, setStatus] = useState<OutlookConnectionStatus | null>(null);
+  const connection = useMicrosoftConnection({ returnTo, deletesData: false });
+  const { status } = connection;
   const [people, setPeople] = useState<OutlookContactPerson[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -34,20 +28,12 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
   const outlookJob =
     job?.kind === "outlook_contacts" && job.status === "running" ? job : null;
   const importProgress = outlookJob?.progress ?? null;
-  const busy = pending || job?.status === "running";
+  const busy = connection.busy || pending || job?.status === "running";
   // One handler for every button: each asks Microsoft for that feature's scope and nothing
   // else. "Reconnect" after a session expiry asks as "contacts" (this is the contacts card);
   // a paused calendar sync reconnects as "calendar", which was already granted, so fixing it
   // never asks for anything new.
-  const connect = (purpose: MicrosoftPurpose = "contacts") =>
-    start(async () => {
-      try {
-        const { url } = await startOutlookOAuth({ purpose, returnTo });
-        window.location.href = url;
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-      }
-    });
+  const connect = (purpose: MicrosoftPurpose = "contacts") => connection.connect([purpose]);
 
   const loadContacts = () =>
     start(async () => {
@@ -82,52 +68,6 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
       setLoaded(false);
     });
   }, [job]);
-
-  useEffect(() => {
-    getOutlookConnectionStatus().then(setStatus).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const outlook = params.get("outlook");
-    if (outlook === "connected") {
-      toast.success("Outlook connected");
-      params.delete("outlook");
-      params.delete("reason");
-      params.delete("purpose");
-      params.delete("switched");
-      const next = params.toString();
-      // The current path, not a hardcoded one: this card also lives in Settings.
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
-      );
-      router.refresh();
-      getOutlookConnectionStatus().then(setStatus).catch(() => {});
-    } else if (outlook === "error") {
-      {
-        const oauth = describeOAuthReason(params.get("reason"), "Outlook", params.get("purpose"));
-        if (oauth.cancelled) toast.message(oauth.message);
-        else toast.error(oauth.message);
-      }
-      params.delete("outlook");
-      params.delete("reason");
-      params.delete("purpose");
-      params.delete("switched");
-      const next = params.toString();
-      // The current path, not a hardcoded one: this card also lives in Settings.
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
-      );
-      // Re-read the status: a Next router "restore" (which `replaceState` is) drops any
-      // server action still queued — here, the status fetch this card fired a moment ago
-      // on mount — without settling it, which would leave the card rendering nothing.
-      getOutlookConnectionStatus().then(setStatus).catch(() => {});
-    }
-  }, [router]);
 
   if (!status) {
     return null;
@@ -188,17 +128,11 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
               <DisconnectAccountDialog
                 provider="outlook"
                 disabled={busy}
-                onConfirm={(opts) =>
-                  start(async () => {
-                    await disconnectOutlook(opts);
-                    setPeople([]);
-                    setLoaded(false);
-                    setStatus(null);
-                    toast.success("Outlook disconnected");
-                    router.refresh();
-                    getOutlookConnectionStatus().then(setStatus).catch(() => {});
-                  })
-                }
+                onConfirm={(opts) => {
+                  setPeople([]);
+                  setLoaded(false);
+                  connection.disconnect(opts);
+                }}
               />
             </>
           )}

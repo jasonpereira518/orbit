@@ -1,13 +1,6 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import {
-  getGmailConnectionStatus,
-  startGmailOAuth,
-  disconnectGmail,
-  type GmailConnectionStatus,
-} from "@/actions/gmail";
 import { previewGoogleContacts, type GoogleContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
@@ -17,8 +10,9 @@ import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
-import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { useGoogleConnection } from "@/components/settings/use-provider-connection";
 
 /**
  * `returnTo` is where Google's consent screen sends the user back to. /imports by default;
@@ -26,10 +20,10 @@ import { TOAST_COPY } from "@/lib/toast-copy";
  * back in the dialog, on this tab.
  */
 export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
-  const router = useRouter();
   const job = useImportJob();
   const [pending, start] = useTransition();
-  const [status, setStatus] = useState<GmailConnectionStatus | null>(null);
+  const connection = useGoogleConnection({ returnTo });
+  const { status } = connection;
   const [contactsScopeGranted, setContactsScopeGranted] = useState(true);
   const [people, setPeople] = useState<GoogleContactPerson[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -38,17 +32,9 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
   const googleJob =
     job?.kind === "google_contacts" && job.status === "running" ? job : null;
   const importProgress = googleJob?.progress ?? null;
-  const busy = pending || job?.status === "running";
+  const busy = connection.busy || pending || job?.status === "running";
   // One handler for the header link and the button: both start the same contacts consent.
-  const connect = () =>
-    start(async () => {
-      try {
-        const { url } = await startGmailOAuth({ purpose: "contacts", returnTo });
-        window.location.href = url;
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-      }
-    });
+  const connect = () => connection.connect(["contacts"]);
   // The status knows the stored grant; the preview result can narrow it further.
   const contactsGranted = contactsScopeGranted && (status?.canImportContacts ?? true);
 
@@ -72,54 +58,6 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
       setLoaded(false);
     });
   }, [job]);
-
-  useEffect(() => {
-    getGmailConnectionStatus().then(setStatus).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const google = params.get("google");
-    if (google === "connected") {
-      toast.success("Google connected");
-      params.delete("google");
-      params.delete("gmail");
-      params.delete("reason");
-      params.delete("purpose");
-      params.delete("switched");
-      const next = params.toString();
-      // The current path, not a hardcoded one: this card also lives in Settings.
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
-      );
-      router.refresh();
-      getGmailConnectionStatus().then(setStatus).catch(() => {});
-    } else if (google === "error") {
-      {
-        const oauth = describeOAuthReason(params.get("reason"), "Google", params.get("purpose"));
-        if (oauth.cancelled) toast.message(oauth.message);
-        else toast.error(oauth.message);
-      }
-      params.delete("google");
-      params.delete("gmail");
-      params.delete("reason");
-      params.delete("purpose");
-      params.delete("switched");
-      const next = params.toString();
-      // The current path, not a hardcoded one: this card also lives in Settings.
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
-      );
-      // Re-read the status: a Next router "restore" (which `replaceState` is) drops any
-      // server action still queued — here, the status fetch this card fired a moment ago
-      // on mount — without settling it, which would leave the card rendering nothing.
-      getGmailConnectionStatus().then(setStatus).catch(() => {});
-    }
-  }, [router]);
 
   if (!status) {
     return null;
@@ -203,17 +141,11 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
               <DisconnectAccountDialog
                 provider="gmail"
                 disabled={busy}
-                onConfirm={(opts) =>
-                  start(async () => {
-                    await disconnectGmail(opts);
-                    setPeople([]);
-                    setLoaded(false);
-                    setStatus(null);
-                    toast.success(opts.alsoDelete ? "Google disconnected and its recruiter data deleted" : "Google disconnected");
-                    router.refresh();
-                    getGmailConnectionStatus().then(setStatus).catch(() => {});
-                  })
-                }
+                onConfirm={(opts) => {
+                  setPeople([]);
+                  setLoaded(false);
+                  connection.disconnect(opts);
+                }}
               />
             </>
           )}

@@ -5,9 +5,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import {
   cancelGmailRecruiterScan,
-  disconnectGmail,
   getGmailScanStatus,
-  startGmailOAuth,
   startGmailRecruiterScan,
   type GmailConnectionStatus,
   type GmailScanStatus,
@@ -21,8 +19,8 @@ import { Button } from "@/components/ui/button";
 import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { toast } from "@/lib/toast";
-import { describeOAuthReason, friendlyError } from "@/lib/errors";
-import { TOAST_COPY } from "@/lib/toast-copy";
+import { friendlyError } from "@/lib/errors";
+import { useGoogleConnection } from "@/components/settings/use-provider-connection";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -57,16 +55,10 @@ export function GmailImportPanel({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const conn = useGoogleConnection({ returnTo: returnTo ?? "", enabled: false, label: "Gmail" });
   // One handler for the header link and the button: both start the same mail consent.
-  const connect = () =>
-    start(async () => {
-      try {
-        const { url } = await startGmailOAuth({ purpose: "recruiter_scan", returnTo });
-        window.location.href = url;
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-      }
-    });
+  const connect = () => conn.connect(["recruiter_scan"]);
+  const busy = conn.busy || pending;
   const [scan, setScan] = useState<GmailScanStatus | null>(initialScan);
   const jobIdRef = useRef<string | null>(null);
 
@@ -110,36 +102,6 @@ export function GmailImportPanel({
       jobIdRef.current = null;
     }
   }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const gmail = params.get("gmail");
-    if (!gmail) return;
-    if (gmail === "connected") {
-      toast.success("Gmail connected");
-      router.refresh();
-    } else if (gmail === "error") {
-      {
-        const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
-        if (oauth.cancelled) toast.message(oauth.message);
-        else toast.error(oauth.message);
-      }
-    }
-    params.delete("gmail");
-    // The callback sets both; left behind, the Google Contacts card would toast the same
-    // connect again the next time it mounts (it shares this page in Settings).
-    params.delete("google");
-    params.delete("reason");
-    params.delete("purpose");
-    params.delete("switched");
-    const next = params.toString();
-    // The current path, not a hardcoded one: this panel also lives in Settings.
-    window.history.replaceState(
-      null,
-      "",
-      `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
-    );
-  }, [router]);
 
   useEffect(() => {
     if (!running || !scan) return;
@@ -220,7 +182,7 @@ export function GmailImportPanel({
           {connection.status === "disarmed" ? (
             <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
               <span>{calendarPauseLine(connection.syncError)}</span>
-              <Button variant="link" size="sm" className="h-auto px-0" disabled={pending} onClick={connect}>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={connect}>
                 Reconnect Google
               </Button>
             </p>
@@ -228,7 +190,7 @@ export function GmailImportPanel({
         </div>
         <div className="flex flex-wrap gap-2">
           {!connection.connected || !connection.canRead ? (
-            <Button disabled={pending} onClick={connect}>
+            <Button disabled={busy} onClick={connect}>
               {connection.status === "needs_reauth"
                 ? "Reconnect Google"
                 : connection.connected
@@ -238,7 +200,7 @@ export function GmailImportPanel({
           ) : (
             <>
               <Button
-                disabled={pending || running}
+                disabled={busy || running}
                 onClick={() =>
                   start(async () => {
                     try {
@@ -266,15 +228,11 @@ export function GmailImportPanel({
               </Button>
               <DisconnectAccountDialog
                 provider="gmail"
-                disabled={pending || running}
-                onConfirm={(opts) =>
-                  start(async () => {
-                    await disconnectGmail(opts);
-                    setScan(null);
-                    toast.success(opts.alsoDelete ? "Gmail disconnected and its recruiter data deleted" : "Gmail disconnected");
-                    router.refresh();
-                  })
-                }
+                disabled={busy || running}
+                onConfirm={(opts) => {
+                  setScan(null);
+                  conn.disconnect(opts);
+                }}
               />
             </>
           )}

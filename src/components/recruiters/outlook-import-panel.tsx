@@ -5,9 +5,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import {
   cancelOutlookRecruiterScan,
-  disconnectOutlook,
   getOutlookScanStatus,
-  startOutlookOAuth,
   startOutlookRecruiterScan,
   type OutlookConnectionStatus,
   type OutlookScanStatus,
@@ -22,8 +20,8 @@ import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { toast } from "@/lib/toast";
 import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
-import { describeOAuthReason, friendlyError } from "@/lib/errors";
-import { TOAST_COPY } from "@/lib/toast-copy";
+import { friendlyError } from "@/lib/errors";
+import { useMicrosoftConnection } from "@/components/settings/use-provider-connection";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -58,18 +56,12 @@ export function OutlookImportPanel({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const conn = useMicrosoftConnection({ returnTo: returnTo ?? "", enabled: false });
   // One handler for the header link and the button. The recruiter scan asks for mail access;
   // a paused calendar sync is reconnected as "calendar", which was already granted, so
   // fixing it never asks for mail.
-  const connect = (purpose: MicrosoftPurpose = "recruiter_scan") =>
-    start(async () => {
-      try {
-        const { url } = await startOutlookOAuth({ purpose, returnTo });
-        window.location.href = url;
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-      }
-    });
+  const connect = (purpose: MicrosoftPurpose = "recruiter_scan") => conn.connect([purpose]);
+  const busy = conn.busy || pending;
   const [scan, setScan] = useState<OutlookScanStatus | null>(initialScan);
   const jobIdRef = useRef<string | null>(null);
 
@@ -113,31 +105,6 @@ export function OutlookImportPanel({
       jobIdRef.current = null;
     }
   }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const outlook = params.get("outlook");
-    if (!outlook) return;
-    if (outlook === "connected") {
-      toast.success("Outlook connected");
-      router.refresh();
-    } else if (outlook === "error") {
-      const oauth = describeOAuthReason(params.get("reason"), "Outlook", params.get("purpose"));
-      if (oauth.cancelled) toast.message(oauth.message);
-      else toast.error(oauth.message);
-    }
-    params.delete("outlook");
-    params.delete("reason");
-    params.delete("purpose");
-    params.delete("switched");
-    const next = params.toString();
-    // The current path, not a hardcoded one: the callback returns to wherever it was started.
-    window.history.replaceState(
-      null,
-      "",
-      `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
-    );
-  }, [router]);
 
   useEffect(() => {
     if (!running || !scan) return;
@@ -218,7 +185,7 @@ export function OutlookImportPanel({
           {connection.status === "disarmed" ? (
             <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
               <span>{calendarPauseLine(connection.syncError, "Microsoft")}</span>
-              <Button variant="link" size="sm" className="h-auto px-0" disabled={pending} onClick={() => connect("calendar")}>
+              <Button variant="link" size="sm" className="h-auto px-0" disabled={busy} onClick={() => connect("calendar")}>
                 Reconnect Microsoft
               </Button>
             </p>
@@ -226,7 +193,7 @@ export function OutlookImportPanel({
         </div>
         <div className="flex flex-wrap gap-2">
           {!connection.connected || !connection.hasMailScope ? (
-            <Button disabled={pending} onClick={() => connect()}>
+            <Button disabled={busy} onClick={() => connect()}>
               {connection.status === "needs_reauth"
                 ? "Reconnect Microsoft"
                 : connection.connected
@@ -236,7 +203,7 @@ export function OutlookImportPanel({
           ) : (
             <>
               <Button
-                disabled={pending || running}
+                disabled={busy || running}
                 onClick={() =>
                   start(async () => {
                     try {
@@ -264,15 +231,11 @@ export function OutlookImportPanel({
               </Button>
               <DisconnectAccountDialog
                 provider="outlook"
-                disabled={pending || running}
-                onConfirm={(opts) =>
-                  start(async () => {
-                    await disconnectOutlook(opts);
-                    setScan(null);
-                    toast.success(opts.alsoDelete ? "Outlook disconnected and its recruiter data deleted" : "Outlook disconnected");
-                    router.refresh();
-                  })
-                }
+                disabled={busy || running}
+                onConfirm={(opts) => {
+                  setScan(null);
+                  conn.disconnect(opts);
+                }}
               />
             </>
           )}
