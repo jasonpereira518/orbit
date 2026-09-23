@@ -17,16 +17,19 @@
  *    server-side; CalDAV sends the master VEVENT plus its RRULE and leaves expansion to the
  *    caller. Returning the master alone would record a weekly 1:1 once, at its first
  *    occurrence, and never again.
- * 2. **Confusing a client-side "give up" with a fault.** `fetchChanges` already resyncs once on
- *    its own for a stale sync-token, but the FALLBACK path's own two requests (the ctag probe,
- *    the time-range query) are not wrapped in that recovery and can still raise
- *    `CalDavRejectedError` or `CalDavStaleSyncTokenError` directly — the module doc comment on
- *    `client.ts` warns a 4xx can surface as either one, so both must be caught here. Read as an
- *    ordinary error, either would count as a failure and walk a healthy connection up the
- *    scheduler's backoff ladder; read correctly, they mean the same thing Google's 410 and
- *    Graph's 410 mean — start over — so both are folded into the shared
- *    `CalendarSyncTokenExpiredError`, which the scheduler already knows resets the cursor rather
- *    than counting a failure.
+ * 2. **Confusing a permanent rejection with a stale cursor.** `fetchChanges`'s FALLBACK path
+ *    (the ctag probe, the time-range query) is not wrapped in the client's own sync-collection
+ *    resync handling, and either of its two bare requests can still raise
+ *    `CalDavStaleSyncTokenError` OR `CalDavRejectedError` directly (`client.ts`'s own doc
+ *    comment: "a 4xx can surface as either one"). Only the former is RFC 6578's actual resync
+ *    precondition — the CalDAV equivalent of Google's 410 / Graph's 410, "start over," which
+ *    is why it alone is folded into the shared `CalendarSyncTokenExpiredError`. A bare
+ *    `CalDavRejectedError` reaching this point means the server looked at this exact request to
+ *    this exact calendar and refused it — a deleted calendar, a revoked share — which is not a
+ *    cursor problem and must propagate as a real, counted failure, exactly like Microsoft's
+ *    connector lets every non-410 4xx through as a plain `Error`. Folding both into "reset the
+ *    cursor, no failure counted" would have the scheduler quietly resync forever against a
+ *    calendar it can never actually read.
  * 3. **Losing a revoked app-specific password in the retry ladder.** `CalDavAuthError` (401) is
  *    translated to `ReauthRequiredError` here, which the scheduler treats as non-retryable — so
  *    a revoked password disarms sync immediately instead of burning six retries against a
@@ -36,7 +39,6 @@ import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import"
 import { expandEvent, parseRRule } from "@/lib/recurrence";
 import {
   CalDavAuthError,
-  CalDavRejectedError,
   CalDavStaleSyncTokenError,
   fetchChanges,
   type CalDavCredentials,
@@ -97,11 +99,15 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
       // A revoked app-specific password — see failure mode 3 above.
       throw new ReauthRequiredError(err.message);
     }
-    if (err instanceof CalDavRejectedError || err instanceof CalDavStaleSyncTokenError) {
-      // The client's own one-shot resync already gave up (or never applies — a rejected ctag
-      // probe or time-range query isn't covered by it at all) — see failure mode 2 above.
+    if (err instanceof CalDavStaleSyncTokenError) {
+      // RFC 6578's own resync precondition, escaping from the fallback path's ctag PROPFIND or
+      // time-range REPORT rather than the sync-collection probe (which already retries this
+      // itself) — see failure mode 2 above. Means "start over," not a failure.
       throw new CalendarSyncTokenExpiredError();
     }
+    // A `CalDavRejectedError` here (and everything else — network faults, an oversized body)
+    // is a real fault, not a cursor problem, and propagates as-is so the scheduler counts it
+    // toward its own retry and backoff ladder — see failure mode 2 above.
     throw err;
   }
 
