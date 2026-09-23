@@ -46,6 +46,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-storage": "pure",
   "smoke-avatar-tiers": "pure",
   "smoke-brand-colors": "pure",
+  "smoke-caldav-client": "pure",
   "smoke-backdrop-filter": "pure",
   "smoke-backup-workflow": "pure",
   "smoke-connection-status": "pure",
