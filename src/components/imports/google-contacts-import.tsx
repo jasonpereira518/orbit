@@ -1,18 +1,14 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { previewGoogleContacts, type GoogleContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
-import { startImportJob, useImportJob } from "@/lib/import-job-runner";
-import { toast } from "@/lib/toast";
+import { useImportJob } from "@/lib/import-job-runner";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
-import { friendlyError } from "@/lib/errors";
-import { TOAST_COPY } from "@/lib/toast-copy";
 import { useGoogleConnection } from "@/components/settings/use-provider-connection";
+import { useContactsImport } from "@/components/settings/use-contacts-import";
 
 /**
  * `returnTo` is where Google's consent screen sends the user back to. /imports by default;
@@ -21,48 +17,22 @@ import { useGoogleConnection } from "@/components/settings/use-provider-connecti
  */
 export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
   const job = useImportJob();
-  const [pending, start] = useTransition();
   const connection = useGoogleConnection({ returnTo });
   const { status } = connection;
-  const [contactsScopeGranted, setContactsScopeGranted] = useState(true);
-  const [people, setPeople] = useState<GoogleContactPerson[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loaded, setLoaded] = useState(false);
+  const contacts = useContactsImport("google");
+  const { people, selected, setSelected, loaded } = contacts;
 
-  const googleJob =
-    job?.kind === "google_contacts" && job.status === "running" ? job : null;
-  const importProgress = googleJob?.progress ?? null;
-  const busy = connection.busy || pending || job?.status === "running";
+  const importProgress = contacts.progress;
+  const busy = connection.busy || contacts.loading || job?.status === "running";
   // Connect and disconnect run in the hook's own transition, not this component's — so the
   // "loading contacts" label/hint (below) has to read both, the way `pending` alone used to
   // cover all three when they shared one transition. Not `busy`: that also folds in a
   // running import job, which never used to flip this label.
-  const loadingContacts = pending || connection.busy;
+  const loadingContacts = contacts.loading || connection.busy;
   // One handler for the header link and the button: both start the same contacts consent.
   const connect = () => connection.connect(["contacts"]);
   // The status knows the stored grant; the preview result can narrow it further.
-  const contactsGranted = contactsScopeGranted && (status?.canImportContacts ?? true);
-
-  // Clear local review UI once this job finishes (toast handled globally by
-  // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
-  // deferred a microtask so this reads as reacting to the external job-runner singleton
-  // (react-hooks/set-state-in-effect's own carve-out: "calling setState in a callback
-  // function when external state changes") rather than an unconditional synchronous
-  // setState in the effect body.
-  useEffect(() => {
-    if (!job || job.kind !== "google_contacts") return;
-    if (
-      job.status !== "completed" &&
-      job.status !== "failed" &&
-      job.status !== "cancelled"
-    )
-      return;
-    queueMicrotask(() => {
-      setPeople([]);
-      setSelected(new Set());
-      setLoaded(false);
-    });
-  }, [job]);
+  const contactsGranted = contacts.contactsScopeGranted && (status?.canImportContacts ?? true);
 
   if (!status) {
     return null;
@@ -116,31 +86,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
             </Button>
           ) : (
             <>
-              <Button
-                disabled={busy}
-                onClick={() =>
-                  start(async () => {
-                    try {
-                      const res = await previewGoogleContacts();
-                      setContactsScopeGranted(res.contactsScopeGranted);
-                      if (!res.contactsScopeGranted) {
-                        toast.error("Reconnect Google to allow access to your contacts");
-                        return;
-                      }
-                      setPeople(res.people);
-                      setSelected(
-                        new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
-                      );
-                      setLoaded(true);
-                      toast.success(`Loaded ${res.people.length} contacts`);
-                    } catch (err) {
-                      toast.error(
-                        friendlyError(err, TOAST_COPY.loadContactsFailed)
-                      );
-                    }
-                  })
-                }
-              >
+              <Button disabled={busy} onClick={contacts.load}>
                 {loadingContacts ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
               </Button>
               <DisconnectAccountDialog
@@ -148,8 +94,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
                 disabled={busy}
                 onConfirm={(opts) => {
                   connection.disconnect(opts).then(() => {
-                    setPeople([]);
-                    setLoaded(false);
+                    contacts.reset();
                   });
                 }}
               />
@@ -163,39 +108,17 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
       {people.length > 0 && (
         <>
           <ImportPeopleReview
-            people={people.map((p) => ({
-              id: p.id,
-              name: p.fullName,
-              subtitle: [p.title, p.company].filter(Boolean).join(" · "),
-              isRepeat: p.isRepeat,
-              repeatReason: p.duplicate?.reason,
-            }))}
+            people={people}
             selectedIds={selected}
             onSelectedIdsChange={setSelected}
-            onRemove={(id) => {
-              setPeople((prev) => prev.filter((p) => p.id !== id));
-              setSelected((prev) => {
-                const next = new Set(prev);
-                next.delete(id);
-                return next;
-              });
-            }}
+            onRemove={contacts.remove}
           />
           <Button
             disabled={busy || selected.size === 0}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => {
               if (busy) return;
-              try {
-                const ids = [...selected];
-                startImportJob({ kind: "google_contacts", ids });
-                // Clear the review list immediately; progress lives in the runner.
-                setPeople([]);
-                setSelected(new Set());
-                setLoaded(false);
-              } catch (err) {
-                toast.error(friendlyError(err, TOAST_COPY.importFailed));
-              }
+              contacts.start();
             }}
           >
             {importProgress

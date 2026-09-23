@@ -1,78 +1,36 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { previewOutlookContacts, type OutlookContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
-import { startImportJob, useImportJob } from "@/lib/import-job-runner";
-import { toast } from "@/lib/toast";
+import { useImportJob } from "@/lib/import-job-runner";
 import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
-import { friendlyError } from "@/lib/errors";
-import { TOAST_COPY } from "@/lib/toast-copy";
 import { useMicrosoftConnection } from "@/components/settings/use-provider-connection";
+import { useContactsImport } from "@/components/settings/use-contacts-import";
 
 /** `returnTo`: see `GoogleContactsImport`. */
 export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: string } = {}) {
   const job = useImportJob();
-  const [pending, start] = useTransition();
   const connection = useMicrosoftConnection({ returnTo, deletesData: false });
   const { status } = connection;
-  const [people, setPeople] = useState<OutlookContactPerson[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loaded, setLoaded] = useState(false);
+  const contacts = useContactsImport("microsoft");
+  const { people, selected, setSelected, loaded } = contacts;
 
-  const outlookJob =
-    job?.kind === "outlook_contacts" && job.status === "running" ? job : null;
-  const importProgress = outlookJob?.progress ?? null;
-  const busy = connection.busy || pending || job?.status === "running";
+  const importProgress = contacts.progress;
+  const busy = connection.busy || contacts.loading || job?.status === "running";
   // Connect and disconnect run in the hook's own transition, not this component's — so the
   // "loading contacts" label/hint (below) has to read both, the way `pending` alone used to
   // cover all three when they shared one transition. Not `busy`: that also folds in a
   // running import job, which never used to flip this label.
-  const loadingContacts = pending || connection.busy;
+  const loadingContacts = contacts.loading || connection.busy;
   // One handler for every button: each asks Microsoft for that feature's scope and nothing
   // else. "Reconnect" after a session expiry asks as "contacts" (this is the contacts card);
   // a paused calendar sync reconnects as "calendar", which was already granted, so fixing it
   // never asks for anything new.
   const connect = (purpose: MicrosoftPurpose = "contacts") => connection.connect([purpose]);
-
-  const loadContacts = () =>
-    start(async () => {
-      try {
-        const res = await previewOutlookContacts();
-        setPeople(res.people);
-        setSelected(new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id)));
-        setLoaded(true);
-        toast.success(`Loaded ${res.people.length} contacts`);
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.loadContactsFailed));
-      }
-    });
-
-  // Clear local review UI once this job finishes (toast handled globally by
-  // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
-  // deferred a microtask so this reads as reacting to the external job-runner singleton
-  // (react-hooks/set-state-in-effect's own carve-out: "calling setState in a callback
-  // function when external state changes") rather than an unconditional synchronous
-  // setState in the effect body.
-  useEffect(() => {
-    if (!job || job.kind !== "outlook_contacts") return;
-    if (
-      job.status !== "completed" &&
-      job.status !== "failed" &&
-      job.status !== "cancelled"
-    )
-      return;
-    queueMicrotask(() => {
-      setPeople([]);
-      setSelected(new Set());
-      setLoaded(false);
-    });
-  }, [job]);
 
   if (!status) {
     return null;
@@ -126,7 +84,7 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
                   Allow contacts access
                 </Button>
               ) : (
-                <Button disabled={busy} onClick={loadContacts}>
+                <Button disabled={busy} onClick={contacts.load}>
                   {loadingContacts ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
                 </Button>
               )}
@@ -135,8 +93,7 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
                 disabled={busy}
                 onConfirm={(opts) => {
                   connection.disconnect(opts).then(() => {
-                    setPeople([]);
-                    setLoaded(false);
+                    contacts.reset();
                   });
                 }}
               />
@@ -170,39 +127,17 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
       {people.length > 0 && (
         <>
           <ImportPeopleReview
-            people={people.map((p) => ({
-              id: p.id,
-              name: p.fullName,
-              subtitle: [p.title, p.company].filter(Boolean).join(" · "),
-              isRepeat: p.isRepeat,
-              repeatReason: p.duplicate?.reason,
-            }))}
+            people={people}
             selectedIds={selected}
             onSelectedIdsChange={setSelected}
-            onRemove={(id) => {
-              setPeople((prev) => prev.filter((p) => p.id !== id));
-              setSelected((prev) => {
-                const next = new Set(prev);
-                next.delete(id);
-                return next;
-              });
-            }}
+            onRemove={contacts.remove}
           />
           <Button
             disabled={busy || selected.size === 0}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => {
               if (busy) return;
-              try {
-                const ids = [...selected];
-                startImportJob({ kind: "outlook_contacts", ids });
-                // Clear the review list immediately; progress lives in the runner.
-                setPeople([]);
-                setSelected(new Set());
-                setLoaded(false);
-              } catch (err) {
-                toast.error(friendlyError(err, TOAST_COPY.importFailed));
-              }
+              contacts.start();
             }}
           >
             {importProgress

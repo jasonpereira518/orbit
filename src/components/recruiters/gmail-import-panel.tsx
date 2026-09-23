@@ -1,47 +1,13 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useTransition } from "react";
 import { Loader2 } from "lucide-react";
-import {
-  cancelGmailRecruiterScan,
-  getGmailScanStatus,
-  startGmailRecruiterScan,
-  type GmailConnectionStatus,
-  type GmailScanStatus,
-} from "@/actions/gmail";
-import {
-  finishBackgroundJob,
-  startBackgroundJob,
-  updateBackgroundJob,
-} from "@/lib/background-jobs";
+import { type GmailConnectionStatus, type GmailScanStatus } from "@/actions/gmail";
 import { Button } from "@/components/ui/button";
 import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
-import { toast } from "@/lib/toast";
-import { friendlyError } from "@/lib/errors";
 import { useGoogleConnection } from "@/components/settings/use-provider-connection";
-
-const POLL_INTERVAL_MS = 2000;
-
-function isTerminal(status: string) {
-  return ["completed", "failed", "cancelled"].includes(status);
-}
-
-/**
- * Describes where the job actually is. Discovery has no meaningful denominator — the
- * mailbox size is unknown until the sweep ends — so it reports messages seen and the
- * progress bar stays indeterminate until classification starts.
- */
-function phaseLabel(scan: GmailScanStatus) {
-  if (isTerminal(scan.status)) return null;
-  if (!scan.discoveryComplete) {
-    return scan.messagesScanned > 0
-      ? `Searching your mailbox — ${scan.messagesScanned.toLocaleString()} messages so far`
-      : "Searching your mailbox…";
-  }
-  return `Reading ${scan.processed}/${scan.totalSenders ?? 0} conversations`;
-}
+import { useRecruiterScan } from "@/components/settings/use-recruiter-scan";
 
 export function GmailImportPanel({
   connection,
@@ -53,89 +19,20 @@ export function GmailImportPanel({
   /** Where Google sends the user back to. Omitted, the callback defaults to /recruiters. */
   returnTo?: string;
 }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, startTransition] = useTransition();
   const conn = useGoogleConnection({ returnTo: returnTo ?? "", enabled: false, label: "Gmail" });
   // One handler for the header link and the button: both start the same mail consent.
   const connect = () => conn.connect(["recruiter_scan"]);
   const busy = conn.busy || pending;
-  const [scan, setScan] = useState<GmailScanStatus | null>(initialScan);
-  const jobIdRef = useRef<string | null>(null);
-
-  const running = scan != null && !isTerminal(scan.status);
-
-  /**
-   * Mirror server state into the shared job store so the global progress bar and its
-   * completion toast work exactly as they do for LinkedIn imports. The job is owned by
-   * the server, so this is presentation only — closing the tab does not stop the scan.
-   */
-  const mirror = useCallback((next: GmailScanStatus) => {
-    const total = next.discoveryComplete ? (next.totalSenders ?? 0) : 0;
-    const done = next.discoveryComplete ? next.processed : 0;
-
-    if (!jobIdRef.current && !isTerminal(next.status)) {
-      jobIdRef.current = startBackgroundJob({
-        id: `gmail-scan-${next.importId}`,
-        kind: "gmail-recruiter-scan",
-        label: "Scanning Gmail for recruiters",
-        startedAt: Date.now(),
-        done,
-        total,
-      });
-    } else if (jobIdRef.current && !isTerminal(next.status)) {
-      updateBackgroundJob(jobIdRef.current, { done, total });
-    } else if (jobIdRef.current && isTerminal(next.status)) {
-      finishBackgroundJob(
-        jobIdRef.current,
-        next.status === "completed"
-          ? {
-              status: "completed",
-              resultMessage: `${next.recruitersFound} recruiter${
-                next.recruitersFound === 1 ? "" : "s"
-              } found`,
-            }
-          : {
-              status: next.status === "cancelled" ? "cancelled" : "failed",
-              error: next.errorMessage || undefined,
-            }
-      );
-      jobIdRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!running || !scan) return;
-    let cancelled = false;
-
-    const timer = setInterval(async () => {
-      try {
-        const next = await getGmailScanStatus(scan.importId);
-        if (cancelled || !next) return;
-        setScan(next);
-        mirror(next);
-        if (isTerminal(next.status)) {
-          if (next.status === "completed") {
-            toast.success(
-              next.recruitersFound > 0
-                ? `Found ${next.recruitersFound} recruiter${next.recruitersFound === 1 ? "" : "s"}`
-                : "No recruiters found in your mailbox"
-            );
-          } else if (next.status === "failed") {
-            // The stored scan error can be a raw Gmail API body.
-            toast.error(friendlyError(next.errorMessage, "The scan didn’t finish — try again?"));
-          }
-          router.refresh();
-        }
-      } catch {
-        // Transient — the next tick retries.
-      }
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [running, scan, mirror, router]);
+  const {
+    scan,
+    running,
+    phaseLabel,
+    percent: pct,
+    start: runStart,
+    cancel: runCancel,
+    reset: resetScan,
+  } = useRecruiterScan("google", initialScan);
 
   if (!connection.configured) {
     return (
@@ -157,11 +54,6 @@ export function GmailImportPanel({
       </div>
     );
   }
-
-  const pct =
-    scan && scan.discoveryComplete && scan.totalSenders
-      ? Math.min(100, Math.round((scan.processed / scan.totalSenders) * 100))
-      : null;
 
   return (
     <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
@@ -201,28 +93,7 @@ export function GmailImportPanel({
             <>
               <Button
                 disabled={busy || running}
-                onClick={() =>
-                  start(async () => {
-                    try {
-                      const started = await startGmailRecruiterScan();
-                      if (!started.ok) {
-                        toast.error(started.error);
-                        return;
-                      }
-                      const { importId } = started.value;
-                      const next = await getGmailScanStatus(importId);
-                      if (next) {
-                        setScan(next);
-                        mirror(next);
-                      }
-                      toast.success("Scan started — this can take a few minutes");
-                    } catch (err) {
-                      toast.error(
-                        friendlyError(err, "Couldn’t start the scan — try again?")
-                      );
-                    }
-                  })
-                }
+                onClick={() => startTransition(() => runStart())}
               >
                 {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
               </Button>
@@ -231,7 +102,7 @@ export function GmailImportPanel({
                 disabled={busy || running}
                 onConfirm={(opts) => {
                   conn.disconnect(opts).then(() => {
-                    setScan(null);
+                    resetScan();
                   });
                 }}
               />
@@ -245,22 +116,12 @@ export function GmailImportPanel({
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span className="flex items-center gap-2 text-foreground">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              {phaseLabel(scan)}
+              {phaseLabel}
             </span>
             <Button
               variant="ghost"
               size="sm"
-              onClick={() =>
-                start(async () => {
-                  await cancelGmailRecruiterScan(scan.importId);
-                  toast.success("Scan stopped");
-                  const next = await getGmailScanStatus(scan.importId);
-                  if (next) {
-                    setScan(next);
-                    mirror(next);
-                  }
-                })
-              }
+              onClick={() => startTransition(() => runCancel())}
             >
               Cancel
             </Button>

@@ -1,48 +1,14 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useTransition } from "react";
 import { Loader2 } from "lucide-react";
-import {
-  cancelOutlookRecruiterScan,
-  getOutlookScanStatus,
-  startOutlookRecruiterScan,
-  type OutlookConnectionStatus,
-  type OutlookScanStatus,
-} from "@/actions/outlook";
-import {
-  finishBackgroundJob,
-  startBackgroundJob,
-  updateBackgroundJob,
-} from "@/lib/background-jobs";
+import { type OutlookConnectionStatus, type OutlookScanStatus } from "@/actions/outlook";
 import { Button } from "@/components/ui/button";
 import { SESSION_EXPIRED_LINE, calendarPauseLine } from "@/lib/connection-status";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
-import { toast } from "@/lib/toast";
 import type { MicrosoftPurpose } from "@/lib/microsoft-scopes";
-import { friendlyError } from "@/lib/errors";
 import { useMicrosoftConnection } from "@/components/settings/use-provider-connection";
-
-const POLL_INTERVAL_MS = 2000;
-
-function isTerminal(status: string) {
-  return ["completed", "failed", "cancelled"].includes(status);
-}
-
-/**
- * Describes where the job actually is. Discovery has no meaningful denominator — the
- * mailbox size is unknown until the sweep ends — so it reports messages seen and the
- * progress bar stays indeterminate until classification starts.
- */
-function phaseLabel(scan: OutlookScanStatus) {
-  if (isTerminal(scan.status)) return null;
-  if (!scan.discoveryComplete) {
-    return scan.messagesScanned > 0
-      ? `Searching your mailbox — ${scan.messagesScanned.toLocaleString()} messages so far`
-      : "Searching your mailbox…";
-  }
-  return `Reading ${scan.processed}/${scan.totalSenders ?? 0} conversations`;
-}
+import { useRecruiterScan } from "@/components/settings/use-recruiter-scan";
 
 export function OutlookImportPanel({
   connection,
@@ -54,91 +20,22 @@ export function OutlookImportPanel({
   /** Where Microsoft sends the user back to. Omitted, the callback defaults to /imports. */
   returnTo?: string;
 }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, startTransition] = useTransition();
   const conn = useMicrosoftConnection({ returnTo: returnTo ?? "", enabled: false });
   // One handler for the header link and the button. The recruiter scan asks for mail access;
   // a paused calendar sync is reconnected as "calendar", which was already granted, so
   // fixing it never asks for mail.
   const connect = (purpose: MicrosoftPurpose = "recruiter_scan") => conn.connect([purpose]);
   const busy = conn.busy || pending;
-  const [scan, setScan] = useState<OutlookScanStatus | null>(initialScan);
-  const jobIdRef = useRef<string | null>(null);
-
-  const running = scan != null && !isTerminal(scan.status);
-
-  /**
-   * Mirror server state into the shared job store so the global progress bar and its
-   * completion toast work exactly as they do for the Gmail scan. The job is owned by the
-   * server, so this is presentation only — closing the tab does not stop the scan.
-   */
-  const mirror = useCallback((next: OutlookScanStatus) => {
-    const total = next.discoveryComplete ? (next.totalSenders ?? 0) : 0;
-    const done = next.discoveryComplete ? next.processed : 0;
-
-    if (!jobIdRef.current && !isTerminal(next.status)) {
-      jobIdRef.current = startBackgroundJob({
-        id: `outlook-scan-${next.importId}`,
-        kind: "outlook-recruiter-scan",
-        label: "Scanning Outlook for recruiters",
-        startedAt: Date.now(),
-        done,
-        total,
-      });
-    } else if (jobIdRef.current && !isTerminal(next.status)) {
-      updateBackgroundJob(jobIdRef.current, { done, total });
-    } else if (jobIdRef.current && isTerminal(next.status)) {
-      finishBackgroundJob(
-        jobIdRef.current,
-        next.status === "completed"
-          ? {
-              status: "completed",
-              resultMessage: `${next.recruitersFound} recruiter${
-                next.recruitersFound === 1 ? "" : "s"
-              } found`,
-            }
-          : {
-              status: next.status === "cancelled" ? "cancelled" : "failed",
-              error: next.errorMessage || undefined,
-            }
-      );
-      jobIdRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!running || !scan) return;
-    let cancelled = false;
-
-    const timer = setInterval(async () => {
-      try {
-        const next = await getOutlookScanStatus(scan.importId);
-        if (cancelled || !next) return;
-        setScan(next);
-        mirror(next);
-        if (isTerminal(next.status)) {
-          if (next.status === "completed") {
-            toast.success(
-              next.recruitersFound > 0
-                ? `Found ${next.recruitersFound} recruiter${next.recruitersFound === 1 ? "" : "s"}`
-                : "No recruiters found in your mailbox"
-            );
-          } else if (next.status === "failed") {
-            // The stored scan error can be a raw Graph API body.
-            toast.error(friendlyError(next.errorMessage, "The scan didn’t finish — try again?"));
-          }
-          router.refresh();
-        }
-      } catch {
-        // Transient — the next tick retries.
-      }
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [running, scan, mirror, router]);
+  const {
+    scan,
+    running,
+    phaseLabel,
+    percent: pct,
+    start: runStart,
+    cancel: runCancel,
+    reset: resetScan,
+  } = useRecruiterScan("microsoft", initialScan);
 
   if (!connection.configured) {
     return (
@@ -160,11 +57,6 @@ export function OutlookImportPanel({
       </div>
     );
   }
-
-  const pct =
-    scan && scan.discoveryComplete && scan.totalSenders
-      ? Math.min(100, Math.round((scan.processed / scan.totalSenders) * 100))
-      : null;
 
   return (
     <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
@@ -204,28 +96,7 @@ export function OutlookImportPanel({
             <>
               <Button
                 disabled={busy || running}
-                onClick={() =>
-                  start(async () => {
-                    try {
-                      const started = await startOutlookRecruiterScan();
-                      if (!started.ok) {
-                        toast.error(started.error);
-                        return;
-                      }
-                      const { importId } = started.value;
-                      const next = await getOutlookScanStatus(importId);
-                      if (next) {
-                        setScan(next);
-                        mirror(next);
-                      }
-                      toast.success("Scan started — this can take a few minutes");
-                    } catch (err) {
-                      toast.error(
-                        friendlyError(err, "Couldn’t start the scan — try again?")
-                      );
-                    }
-                  })
-                }
+                onClick={() => startTransition(() => runStart())}
               >
                 {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
               </Button>
@@ -234,7 +105,7 @@ export function OutlookImportPanel({
                 disabled={busy || running}
                 onConfirm={(opts) => {
                   conn.disconnect(opts).then(() => {
-                    setScan(null);
+                    resetScan();
                   });
                 }}
               />
@@ -248,22 +119,12 @@ export function OutlookImportPanel({
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
             <span className="flex items-center gap-2 text-foreground">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              {phaseLabel(scan)}
+              {phaseLabel}
             </span>
             <Button
               variant="ghost"
               size="sm"
-              onClick={() =>
-                start(async () => {
-                  await cancelOutlookRecruiterScan(scan.importId);
-                  toast.success("Scan stopped");
-                  const next = await getOutlookScanStatus(scan.importId);
-                  if (next) {
-                    setScan(next);
-                    mirror(next);
-                  }
-                })
-              }
+              onClick={() => startTransition(() => runCancel())}
             >
               Cancel
             </Button>
