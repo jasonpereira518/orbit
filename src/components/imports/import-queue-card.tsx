@@ -22,12 +22,12 @@ import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import {
   finishedImportIds,
-  TARGET_LABEL_INLINE,
+  unfinishedLine,
+  unfinishedSteps,
   type QueuedImport,
 } from "@/lib/imports/import-queue";
 import { finishCopy, mergeFinishSummaries } from "@/lib/imports/import-finish";
 import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
-import type { ImportTarget } from "@/lib/imports/detect-import-file";
 import type { LatestFinishedImport } from "@/actions/imports";
 
 /**
@@ -110,10 +110,13 @@ export function ImportQueueCard({
 
   if (!queue.items.length && !queue.ignored.length) return null;
 
-  const unfinishedSteps = queue.items.filter((i) => i.status === "failed");
+  // Every step that broke or that Stop ended — not just the failed ones. A stopped step is
+  // `skipped` or (if it was running) `done` with a cancelled import, so a failed-only filter
+  // turned "stopped after the first of five files" into a pure celebration of that one file.
+  const unfinished = unfinishedSteps(queue.items);
   // One drop is one card: the run's imports summed, in the order the steps ran.
   const summary = parts
-    ? mergeFinishSummaries(parts, unfinishedLine(unfinishedSteps))
+    ? mergeFinishSummaries(parts, unfinishedLine(queue.items))
     : null;
 
   /**
@@ -160,12 +163,23 @@ export function ImportQueueCard({
             onFinishUndone?.();
           }}
         />
-        {unfinishedSteps.length ? (
-          <ul className="space-y-1">
-            {unfinishedSteps.map((item) => (
-              <li key={item.id} className="text-xs text-destructive">
-                {item.fileName} — {item.error ?? IMPORT_COPY.importFailed}
-              </li>
+        {/*
+          The steps behind the card's lead line, each still visible as its own locked row: what
+          broke says why, what Stop ended says so, and the one that was running when it did
+          keeps its "rows kept" line. The card leads with one sentence; this is the per-file
+          truth under it.
+        */}
+        {unfinished.length ? (
+          <ul className="space-y-2">
+            {unfinished.map((item) => (
+              <QueueRow
+                key={item.id}
+                item={item}
+                people={[]}
+                expanded={false}
+                onToggle={() => {}}
+                locked
+              />
             ))}
           </ul>
         ) : null}
@@ -202,7 +216,9 @@ export function ImportQueueCard({
               {queue.phase === "previewing"
                 ? "Reading your files…"
                 : queue.phase === "done"
-                  ? "Import finished"
+                  ? queue.items.some((i) => i.stopped)
+                    ? IMPORT_COPY.stopped
+                    : "Import finished"
                   : isRunning
                     ? "Importing"
                     : "Ready to import"}
@@ -302,27 +318,6 @@ export function ImportQueueCard({
   );
 }
 
-/**
- * The one line a done card leads with when a step didn't land.
- *
- * `finishCopy` puts this where the celebration would go, so it has to be the whole story in a
- * sentence — the per-file detail is right underneath it. Named with the inline labels, which
- * keep LinkedIn a proper noun inside a sentence.
- */
-function unfinishedLine(steps: QueuedImport[]): string | undefined {
-  if (!steps.length) return undefined;
-  const labels = steps.map(
-    (i) =>
-      TARGET_LABEL_INLINE[i.target as Exclude<ImportTarget, "unknown">] ??
-      i.label,
-  );
-  const named =
-    labels.length === 1
-      ? labels[0]
-      : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
-  return `Your ${named} didn’t finish`;
-}
-
 /** Files the drop could not use, grouped by reason. */
 function IgnoredList({
   ignored,
@@ -396,6 +391,8 @@ const STATUS_BADGE: Record<
   skipped: { label: "Skipped", variant: "outline" },
 };
 
+const STOPPED_BADGE = { label: "Stopped", variant: "outline" } as const;
+
 function QueueRow({
   item,
   people,
@@ -414,8 +411,13 @@ function QueueRow({
   onToggle: () => void;
   locked: boolean;
 }) {
-  const badge = STATUS_BADGE[item.status];
+  // Stop outranks the status: a stopped step is `skipped` or `done`, and neither "Skipped"
+  // (which is also what a file the person chose not to import says) nor "Imported" is true.
+  const badge = item.stopped ? STOPPED_BADGE : STATUS_BADGE[item.status];
   const reviewable = item.status === "needs_review" && people.length > 0;
+  // The icon follows the same rule: a step stopped mid-run is `done`, but a tick beside it
+  // would say it finished.
+  const look = item.stopped ? "skipped" : item.status;
 
   return (
     <li className="rounded-xl border border-border/60">
@@ -423,18 +425,18 @@ function QueueRow({
         <span
           className={cn(
             "flex size-7 shrink-0 items-center justify-center rounded-full",
-            item.status === "done" && "bg-primary/10 text-primary",
-            item.status === "failed" && "bg-destructive/10 text-destructive",
-            item.status === "skipped" && "bg-muted text-muted-foreground",
-            !["done", "failed", "skipped"].includes(item.status) &&
+            look === "done" && "bg-primary/10 text-primary",
+            look === "failed" && "bg-destructive/10 text-destructive",
+            look === "skipped" && "bg-muted text-muted-foreground",
+            !["done", "failed", "skipped"].includes(look) &&
               "bg-muted text-muted-foreground",
           )}
         >
-          {item.status === "done" ? (
+          {look === "done" ? (
             <Check className="size-3.5" />
-          ) : item.status === "failed" ? (
+          ) : look === "failed" ? (
             <FileWarning className="size-3.5" />
-          ) : item.status === "skipped" ? (
+          ) : look === "skipped" ? (
             <CircleSlash className="size-3.5" />
           ) : (
             <span className="text-[0.65rem] font-medium">

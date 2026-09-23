@@ -498,6 +498,10 @@ async function finishForImport(
     existing: row.contactsUpdated ?? 0,
     meetingsLogged: row.stats?.interactionsLogged ?? 0,
     sources: [row.fileName ? row.fileName : importSourceLabel(row.importType)],
+    // What this import could not bring in. The done card replaced the runner's completion
+    // line, which was the only place refused rows were ever mentioned, so they ride along.
+    blockedByPlan: row.stats?.blockedByPlan ?? 0,
+    failedRows: row.stats?.failedRows ?? 0,
     undoneAt: row.stats?.undoneAt ?? null,
     avatars: people.people.slice(0, MAX_FACES).map((p) => ({
       contactId: p.id,

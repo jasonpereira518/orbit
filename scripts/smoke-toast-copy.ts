@@ -26,6 +26,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { finishCopy, type FinishSummary } from "../src/lib/imports/import-finish";
+import { unfinishedLine, type QueuedImport } from "../src/lib/imports/import-queue";
 
 const ROOT = "src";
 const TOAST_CALL = /\btoast\.(error|success|message|warning|info)\(/g;
@@ -167,6 +168,34 @@ for (const table of COPY_TABLES) {
  * plain import, one person, nobody new, a calendar file, several files at once, and a step
  * that didn't land.
  */
+/**
+ * The lead line a done card shows when a step didn't land, built by `unfinishedLine` from the
+ * queue: a step that broke, a run the person stopped, and both at once.
+ */
+const step = (over: Partial<QueuedImport>): QueuedImport => ({
+  id: "q",
+  target: "linkedin_messages",
+  label: "LinkedIn messages",
+  fileName: "messages.csv",
+  status: "done",
+  ...over,
+});
+const UNFINISHED_LINES = [
+  unfinishedLine([step({ status: "failed", error: "x" })]),
+  unfinishedLine([
+    step({ status: "done", importId: "a", target: "linkedin_connections" }),
+    step({ id: "q2", status: "skipped", stopped: true }),
+    step({ id: "q3", status: "skipped", stopped: true, target: "calendar_ics" }),
+  ]),
+  unfinishedLine([
+    step({ status: "failed", error: "x", target: "contacts_file" }),
+    step({ id: "q2", status: "skipped", stopped: true }),
+  ]),
+].filter((line): line is string => Boolean(line));
+if (UNFINISHED_LINES.length !== 3) {
+  throw new Error("unfinishedLine returned nothing for a run that didn’t finish");
+}
+
 const FINISH_SUMMARIES: FinishSummary[] = [
   { importIds: ["i1"], added: 19, existing: 6, meetingsLogged: 0, sources: ["Connections.csv"] },
   { importIds: ["i2"], added: 1, existing: 0, meetingsLogged: 0, sources: ["Contacts.vcf"] },
@@ -187,12 +216,36 @@ const FINISH_SUMMARIES: FinishSummary[] = [
     sources: ["Connections.csv"],
     unfinished: "Your LinkedIn messages didn’t finish",
   },
+  // What the run could not bring in: the plan cap and the rows the database refused.
+  {
+    importIds: ["i8"],
+    added: 60,
+    existing: 0,
+    meetingsLogged: 0,
+    sources: ["Connections.csv"],
+    blockedByPlan: 40,
+    failedRows: 3,
+  },
+  ...UNFINISHED_LINES.map((unfinished, i) => ({
+    importIds: [`u${i}`],
+    added: 5,
+    existing: 0,
+    meetingsLogged: 0,
+    sources: ["Connections.csv"],
+    unfinished,
+  })),
 ];
 let finishLines = 0;
 for (const summary of FINISH_SUMMARIES) {
   const copy = finishCopy(summary);
   const where = `src/lib/imports/import-finish.ts (finishCopy ${summary.importIds.join("+")})`;
-  for (const line of [copy.headline, copy.detail ?? "", copy.action.label]) {
+  const lines = [
+    copy.headline,
+    copy.detail ?? "",
+    copy.action.label,
+    ...copy.notices.map((n) => n.text),
+  ];
+  for (const line of lines) {
     if (!line) continue;
     finishLines++;
     checkText(where, line);

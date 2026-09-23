@@ -403,6 +403,9 @@ export async function runQueue(): Promise<RunResult> {
               status: "done",
               result: final.resultMessage,
               importId: final.importId,
+              // Done because the rows it wrote before the cancel are kept; stopped because it
+              // did not finish. The done card needs both halves — see `QueuedImport.stopped`.
+              stopped: true,
             }),
           ),
         });

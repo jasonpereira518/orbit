@@ -104,8 +104,50 @@ const partial = finishCopy({ ...base, unfinished: "LinkedIn messages didn’t fi
 check("an unfinished step leads", partial.headline.includes("didn’t finish"));
 check("…and still offers the people that landed", "href" in partial.action);
 
-for (const copy of [normal, one, nobodyNew, calendar, several, partial]) {
-  const lines = [copy.headline, copy.detail ?? "", copy.action.label];
+/**
+ * What the run could not bring in.
+ *
+ * A step can finish and still leave people behind: the plan's contact cap refuses the tail of
+ * a big import (`blockedByPlan`, an upgrade rather than a fault), and chunk narrowing drops rows
+ * the database refused (`failedRows` — the runner's own comment calls its completion line "the
+ * only place a user is told"). The done card replaced that line, so the card has to say both.
+ */
+console.log("What the run could not bring in is on the card");
+const capped = finishCopy({ ...base, blockedByPlan: 40 });
+check(
+  "the plan cap is named, as a way to upgrade",
+  capped.notices.some(
+    (n) =>
+      n.text === "40 more are waiting on your plan" &&
+      n.href === "/settings?section=settings-plan" &&
+      n.tone === "offer",
+  ),
+  JSON.stringify(capped.notices),
+);
+const refusedRows = finishCopy({ ...base, failedRows: 3 });
+check(
+  "rows the database refused are named",
+  refusedRows.notices.some((n) => n.text === "3 rows Orbit couldn’t save" && !n.href),
+  JSON.stringify(refusedRows.notices),
+);
+check(
+  "one of each reads as one",
+  finishCopy({ ...base, blockedByPlan: 1, failedRows: 1 }).notices.map((n) => n.text).join("|") ===
+    "1 more is waiting on your plan|1 row Orbit couldn’t save",
+);
+check("a clean run says neither", normal.notices.length === 0);
+const leftBehind = mergeFinishSummaries([
+  { ...connections, blockedByPlan: 10, failedRows: 1 },
+  { ...messages, failedRows: 2 },
+]);
+check(
+  "they add up across a run",
+  leftBehind?.blockedByPlan === 10 && leftBehind?.failedRows === 3,
+  JSON.stringify(leftBehind),
+);
+
+for (const copy of [normal, one, nobodyNew, calendar, several, partial, capped, refusedRows]) {
+  const lines = [copy.headline, copy.detail ?? "", copy.action.label, ...copy.notices.map((n) => n.text)];
   for (const line of lines) {
     check(`house voice: ${line.slice(0, 40)}`, !/\bfailed\b/i.test(line) && !line.endsWith(".") && !line.includes("'") && (line.match(/ — /g) ?? []).length <= 1, line);
   }
@@ -145,6 +187,15 @@ check(
  */
 console.log("The card leaves the announcement to the region that outlives it");
 check("the card carries no status region of its own", !cardHtml(base).includes('role="status"'));
+check(
+  "the card links the plan cap",
+  cardHtml({ ...base, blockedByPlan: 40 }).includes("/settings?section=settings-plan") &&
+    cardHtml({ ...base, blockedByPlan: 40 }).includes("40 more are waiting on your plan"),
+);
+check(
+  "…and names the refused rows",
+  cardHtml({ ...base, failedRows: 3 }).includes("3 rows Orbit couldn’t save"),
+);
 
 /**
  * The dialog's secondary button while people are being taken out.

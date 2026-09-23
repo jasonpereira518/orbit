@@ -44,13 +44,34 @@ export type FinishSummary = {
   sources: string[];
   /** Set when a step didn't finish — the card leads with this instead of celebrating. */
   unfinished?: string;
+  /** People the plan's contact cap turned away (`imports.stats.blockedByPlan`). */
+  blockedByPlan?: number;
+  /** Rows the database refused and chunk narrowing dropped (`imports.stats.failedRows`). */
+  failedRows?: number;
+};
+
+/** A line under the sentence about what the run could not bring in. */
+export type FinishNotice = {
+  text: string;
+  /** "offer" is an upgrade, not a fault — the history chip draws it the same way. */
+  tone: "offer" | "warn";
+  href?: string;
 };
 
 export type FinishCopy = {
   headline: string;
   detail: string | null;
   action: { label: string; href: string } | { label: string; kind: "detail" };
+  /**
+   * What the run left behind, said on the card because the card replaced the only other place
+   * it was said: the runner's completion line for refused rows, and the history chip for the
+   * plan cap. Empty for a clean run.
+   */
+  notices: FinishNotice[];
 };
+
+/** Where the plan cap's notice sends a person — the same target as the history chip. */
+const PLAN_SETTINGS_HREF = "/settings?section=settings-plan";
 
 const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
 
@@ -72,6 +93,8 @@ export function mergeFinishSummaries(
   unfinished?: string,
 ): FinishSummary | null {
   if (!parts.length) return null;
+  const blockedByPlan = parts.reduce((n, p) => n + (p.blockedByPlan ?? 0), 0);
+  const failedRows = parts.reduce((n, p) => n + (p.failedRows ?? 0), 0);
   return {
     importIds: parts.flatMap((p) => p.importIds),
     added: parts.reduce((n, p) => n + p.added, 0),
@@ -79,6 +102,8 @@ export function mergeFinishSummaries(
     meetingsLogged: parts.reduce((n, p) => n + p.meetingsLogged, 0),
     sources: parts.flatMap((p) => p.sources),
     ...(unfinished ? { unfinished } : {}),
+    ...(blockedByPlan ? { blockedByPlan } : {}),
+    ...(failedRows ? { failedRows } : {}),
   };
 }
 
@@ -113,7 +138,24 @@ export function finishCopy(summary: FinishSummary): FinishCopy {
         }
       : { label: "See what changed", kind: "detail" as const };
 
-  return { headline, detail, action };
+  const notices: FinishNotice[] = [];
+  const capped = summary.blockedByPlan ?? 0;
+  if (capped > 0) {
+    notices.push({
+      text: `${capped} more ${capped === 1 ? "is" : "are"} waiting on your plan`,
+      tone: "offer",
+      href: PLAN_SETTINGS_HREF,
+    });
+  }
+  const refused = summary.failedRows ?? 0;
+  if (refused > 0) {
+    notices.push({
+      text: `${refused} row${refused === 1 ? "" : "s"} Orbit couldn’t save`,
+      tone: "warn",
+    });
+  }
+
+  return { headline, detail, action, notices };
 }
 
 /**

@@ -21,8 +21,11 @@ import {
   summaryMessage,
   TARGET_LABEL,
   TARGET_LABEL_INLINE,
+  unfinishedLine,
+  unfinishedSteps,
   type QueuedImport,
 } from "../src/lib/imports/import-queue";
+import { joinList } from "../src/lib/imports/join-list";
 import {
   RUN_ORDER,
   type Detected,
@@ -301,6 +304,160 @@ check(
     ran({ id: "q4", status: "done", importId: "d" }),
   ]).join(",") === "a,d",
 );
+
+/**
+ * A stopped run leaves a trace.
+ *
+ * Stopping a three-file drop after the first file used to end on a pure celebration of that
+ * file: the step in flight is reported `done` by the runner (its rows were kept), the rest are
+ * `skipped`, the in-flight import is `cancelled` so the server never returns it — and the done
+ * card rendered only failed steps, of which there were none. Every step Stop ended now says so.
+ */
+console.log("A stopped run leaves a trace");
+let halted = reviewed(
+  queueFromDetection([
+    detected("linkedin_connections", "Connections.csv"),
+    detected("linkedin_messages", "messages.csv"),
+    detected("calendar_ics", "work.ics"),
+  ]),
+);
+halted = advance(halted, halted[0].id, { status: "done", importId: "a" });
+halted = advance(halted, halted[1].id, { status: "running" });
+halted = stopAll(halted);
+check(
+  "a step Stop skipped is marked as stopped",
+  halted[2].status === "skipped" && halted[2].stopped === true,
+);
+check("a step that finished is not", !halted[0].stopped);
+check("the step in flight is left for the runner to report", !halted[1].stopped);
+// What `runQueue` writes when the runner comes back `cancelled`: its rows were kept, so the
+// step is done — but it was stopped, and its import is not a finished one.
+halted = advance(halted, halted[1].id, {
+  status: "done",
+  importId: "b",
+  stopped: true,
+});
+check(
+  "a stopped step's import is not the run's to celebrate",
+  finishedImportIds(halted).join(",") === "a",
+  finishedImportIds(halted).join(","),
+);
+check(
+  "both stopped steps are unfinished, the finished one is not",
+  unfinishedSteps(halted).map((i) => i.id).join(",") ===
+    [halted[1].id, halted[2].id].join(","),
+  unfinishedSteps(halted).map((i) => i.id).join(","),
+);
+check(
+  "the card's lead line says the run was stopped",
+  unfinishedLine(halted) ===
+    "You stopped the import before your LinkedIn messages and calendar finished",
+  String(unfinishedLine(halted)),
+);
+
+check(
+  "the toast does not claim the stopped step was imported",
+  summaryMessage(halted) === "Imported your LinkedIn connections — the rest was stopped",
+  summaryMessage(halted),
+);
+
+const stoppedFirst = stopAll(
+  advance(
+    reviewed(queueFromDetection([detected("linkedin_connections", "c.csv")])),
+    "q0-linkedin_connections",
+    { status: "done", importId: "a", stopped: true },
+  ),
+);
+check(
+  "stopped during the first step is not “nothing was imported”",
+  summaryMessage(stoppedFirst) === "Import stopped",
+  summaryMessage(stoppedFirst),
+);
+
+const choseToSkip = advance(
+  reviewed(queueFromDetection([detected("linkedin_connections", "c.csv")])),
+  "q0-linkedin_connections",
+  { status: "skipped" },
+);
+check(
+  "a file the person chose not to import is not unfinished",
+  unfinishedSteps(choseToSkip).length === 0 &&
+    unfinishedLine(choseToSkip) === undefined,
+);
+const oneDoneOneDeclined = advance(
+  advance(
+    reviewed(
+      queueFromDetection([
+        detected("linkedin_connections", "Connections.csv"),
+        detected("calendar_ics", "work.ics"),
+      ]),
+    ),
+    "q0-linkedin_connections",
+    { status: "done", importId: "a" },
+  ),
+  "q1-calendar_ics",
+  { status: "skipped" },
+);
+check(
+  "…and the toast does not call it stopped",
+  summaryMessage(oneDoneOneDeclined) === "Imported your LinkedIn connections",
+  summaryMessage(oneDoneOneDeclined),
+);
+
+let brokeThenStopped = reviewed(
+  queueFromDetection([
+    detected("contacts_file", "contacts.vcf"),
+    detected("linkedin_connections", "Connections.csv"),
+    detected("calendar_ics", "work.ics"),
+  ]),
+);
+brokeThenStopped = advance(brokeThenStopped, brokeThenStopped[0].id, {
+  status: "done",
+  importId: "a",
+});
+brokeThenStopped = advance(brokeThenStopped, brokeThenStopped[1].id, {
+  status: "failed",
+  error: "Couldn’t read that file",
+});
+brokeThenStopped = stopAll(brokeThenStopped);
+check(
+  "a failure and a stop are both said, in one line",
+  unfinishedLine(brokeThenStopped) ===
+    `Your ${TARGET_LABEL_INLINE[brokeThenStopped[1].target as "linkedin_connections"]} didn’t finish — you stopped the rest`,
+  String(unfinishedLine(brokeThenStopped)),
+);
+
+const threeBroke = reviewed(
+  queueFromDetection([
+    detected("linkedin_connections", "Connections.csv"),
+    detected("linkedin_messages", "messages.csv"),
+    detected("calendar_ics", "work.ics"),
+  ]),
+).map((i) => ({ ...i, status: "failed" as const, error: "nope" }));
+check(
+  "three names read as a list, not a chain of “and”",
+  unfinishedLine(threeBroke) ===
+    "Your LinkedIn connections, LinkedIn messages and calendar didn’t finish",
+  String(unfinishedLine(threeBroke)),
+);
+check("nothing unfinished means no line", unfinishedLine(allDone) === undefined);
+for (const line of [unfinishedLine(halted), unfinishedLine(brokeThenStopped), unfinishedLine(threeBroke)]) {
+  check(
+    `house voice: ${String(line).slice(0, 40)}`,
+    Boolean(line) &&
+      !/\bfailed\b/i.test(line!) &&
+      !line!.endsWith(".") &&
+      !line!.includes("'") &&
+      (line!.match(/ — /g) ?? []).length <= 1,
+    String(line),
+  );
+}
+
+console.log("One way to join a list");
+check("one", joinList(["A"]) === "A");
+check("two", joinList(["A", "B"]) === "A and B");
+check("three", joinList(["A", "B", "C"]) === "A, B and C", joinList(["A", "B", "C"]));
+check("none", joinList([]) === "");
 
 if (failures) {
   console.error(`\n${failures} queue check${failures === 1 ? "" : "s"} failed`);

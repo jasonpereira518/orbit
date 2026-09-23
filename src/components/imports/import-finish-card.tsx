@@ -456,6 +456,22 @@ export function ImportFinishCard({
         {copy.detail ? (
           <p className="text-sm text-muted-foreground">{copy.detail}</p>
         ) : null}
+        {copy.notices.map((notice) =>
+          notice.href ? (
+            <p key={notice.text} className="text-sm">
+              <Link
+                href={notice.href}
+                className="text-primary underline underline-offset-2"
+              >
+                {notice.text}
+              </Link>
+            </p>
+          ) : (
+            <p key={notice.text} className="text-sm text-destructive">
+              {notice.text}
+            </p>
+          ),
+        )}
       </div>
 
       <div className="flex justify-center">
