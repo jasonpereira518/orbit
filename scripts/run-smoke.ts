@@ -112,6 +112,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-speaker-map": "pure",
   "smoke-dev-logging": "pure",
   "smoke-dictation": "pure",
+  "smoke-dictation-deepgram": "pure",
   "smoke-duplicate-index": "pure",
   "smoke-earth-camera": "pure",
   "smoke-embedding-cache": "pure",

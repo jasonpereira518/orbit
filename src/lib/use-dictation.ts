@@ -32,6 +32,57 @@ import {
   type DictationState,
   type Machine,
 } from "@/lib/dictation";
+import { EMPTY_FOLD, foldResults, type FoldState } from "@/lib/dictation-fold";
+import { openDeepgramLive, type LiveHandle, type LiveResult } from "@/lib/deepgram-live";
+import { listenParams } from "@/lib/deepgram-params";
+import { TARGET_SAMPLE_RATE, createDownsampler } from "@/lib/voice-recording";
+
+/** What `POST /api/speech/token` hands back on success. See Task 7's route. */
+type SpeechToken = { accessToken: string; keyterms?: string[] };
+
+const DEEPGRAM_WORKLET_URL = "/orbit-pcm-worklet.js";
+const DEEPGRAM_WORKLET_NAME = "orbit-pcm-recorder";
+
+type AudioContextCtor = typeof AudioContext;
+
+function getAudioContextCtor(): AudioContextCtor | null {
+  if (typeof window === "undefined") return null;
+  const w = window as Window & { webkitAudioContext?: AudioContextCtor };
+  return window.AudioContext ?? w.webkitAudioContext ?? null;
+}
+
+/**
+ * Whether this browser can carry mic audio to Deepgram at all. Checked before spending a
+ * token-fetch round trip on a browser that could never open the socket anyway.
+ */
+function canCaptureForDeepgram(): boolean {
+  if (typeof window === "undefined") return false;
+  if (!getAudioContextCtor()) return false;
+  if (typeof AudioWorkletNode === "undefined") return false;
+  return Boolean(navigator.mediaDevices?.getUserMedia);
+}
+
+/**
+ * Best-effort usage report for one Deepgram session, fired as the socket closes.
+ *
+ * `sendBeacon` because this runs from `stop-recognition`/`abort-recognition`, which can
+ * fire as the user navigates away — the same reasoning as the traffic beacon in
+ * `pageview-beacon.tsx`. A dropped beacon under-counts one session, which is the right way
+ * for this to fail.
+ */
+function reportSpeechUsage(openedAt: number) {
+  if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") return;
+  const seconds = Math.max(0, Math.round((Date.now() - openedAt) / 1000));
+  if (!seconds) return;
+  try {
+    navigator.sendBeacon(
+      "/api/speech/usage",
+      new Blob([JSON.stringify({ seconds })], { type: "application/json" }),
+    );
+  } catch {
+    /* best effort — losing one session's usage report is not worth surfacing */
+  }
+}
 
 // ── Types the DOM lib is missing ──────────────────────────────────────────────────────
 // TypeScript 5.9's lib.dom.d.ts ships SpeechRecognitionResult, -ResultList and
@@ -153,6 +204,8 @@ export type DictationHandle = {
   error: DictationErrorCode | null;
   /** 0..1. A MotionValue: 60fps React state here would re-render the whole thread. */
   level: MotionValue<number>;
+  /** Which engine served the current or most recent session. Null before the first start. */
+  engine: "deepgram" | "browser" | null;
   start: () => void;
   stop: () => void;
   cancel: () => void;
@@ -185,9 +238,35 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
   // Kept current by `dispatch` itself, so two dispatches in one tick still compose.
   const machineRef = useRef(machine);
 
+  // Mirrors `engineRef` into a render-visible value for the returned handle. `engineRef`
+  // itself stays the source of truth the effect switch branches on — refs are safe to read
+  // from an event handler or effect, just not during render, which is all `engine` state is
+  // for.
+  const [engine, setEngineState] = useState<"deepgram" | "browser" | null>(null);
+
   const level = useMotionValue(0);
 
   const recRef = useRef<SpeechRecognitionLike | null>(null);
+  /** Which engine is (or was last) driving a session. Null until `start-recognition` decides. */
+  const engineRef = useRef<"deepgram" | "browser" | null>(null);
+  // ── Deepgram-engine state. Parallel to recRef/baseCommittedRef above, but Deepgram never
+  // replays a growing results list the way SpeechRecognition does, so it gets its own
+  // bookkeeping rather than reusing the browser engine's.
+  const dgHandleRef = useRef<LiveHandle | null>(null);
+  const dgFoldRef = useRef<FoldState>(EMPTY_FOLD);
+  const dgStreamRef = useRef<MediaStream | null>(null);
+  const dgCtxRef = useRef<AudioContext | null>(null);
+  const dgNodeRef = useRef<AudioWorkletNode | null>(null);
+  const dgSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  /** Set right before we close the socket ourselves, so our own close isn't read as a drop. */
+  const dgSuppressCloseRef = useRef(false);
+
+  /** The one place that sets `engineRef` — keeps the render-visible `engine` state in sync. */
+  const setEngine = useCallback((next: "deepgram" | "browser" | null) => {
+    engineRef.current = next;
+    setEngineState(next);
+  }, []);
+
   const sessionIdRef = useRef(0);
   /** Finals from PREVIOUS recognition instances, i.e. across internal restarts. */
   const baseCommittedRef = useRef("");
@@ -257,6 +336,44 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
     recRef.current = null;
     return rec;
   }, []);
+
+  /**
+   * Release the mic tap and worklet graph feeding Deepgram. Does NOT touch the socket —
+   * callers that own a live `LiveHandle` close it themselves first, since closing order
+   * matters (the socket's `onclose` reads `dgSuppressCloseRef`, which callers set before
+   * either).
+   */
+  const teardownDeepgramCapture = useCallback(() => {
+    const node = dgNodeRef.current;
+    if (node) {
+      try {
+        node.port.postMessage("stop");
+      } catch {
+        // The worklet is already gone; the disconnect below is what matters.
+      }
+      node.port.onmessage = null;
+      node.disconnect();
+    }
+    dgNodeRef.current = null;
+
+    dgSourceRef.current?.disconnect();
+    dgSourceRef.current = null;
+
+    for (const track of dgStreamRef.current?.getTracks() ?? []) track.stop();
+    dgStreamRef.current = null;
+
+    const ctx = dgCtxRef.current;
+    dgCtxRef.current = null;
+    if (ctx && ctx.state !== "closed") void ctx.close().catch(() => {});
+  }, []);
+
+  /** Full Deepgram teardown: the mic graph, the handle, and this session's fold state. */
+  const teardownDeepgram = useCallback(() => {
+    teardownDeepgramCapture();
+    dgHandleRef.current = null;
+    dgFoldRef.current = EMPTY_FOLD;
+    dgSuppressCloseRef.current = false;
+  }, [teardownDeepgramCapture]);
 
   const buildRecognition = useCallback(
     (sessionId: number): SpeechRecognitionLike | null => {
@@ -360,6 +477,216 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
     [armSegmentPause, lang],
   );
 
+  /**
+   * True once this session should give up trying to start an engine — either a newer
+   * session has begun, or THIS session was told to stop/cancel before it got anywhere.
+   *
+   * The second case matters because `stop-recognition`/`abort-recognition` already ran
+   * (synchronously, at dispatch time) and found no engine to act on yet — `dgHandleRef` and
+   * `recRef` are both still null. Nothing else will ever move the machine out of
+   * "listening"/"requesting", so this dispatches the `end` that finishes it. Safe to call
+   * more than once: dispatching `end` onto an already-idle machine is a no-op in the
+   * reducer.
+   */
+  const startAbandoned = useCallback((sessionId: number): boolean => {
+    if (sessionIdRef.current !== sessionId) return true;
+    if (!machineRef.current.intentionalStop) return false;
+    dispatchRef.current({ t: "end", now: Date.now() });
+    return true;
+  }, []);
+
+  /** The browser `SpeechRecognition` path — used directly, or as Deepgram's fallback. */
+  const startBrowserRecognition = useCallback(
+    (sessionId: number) => {
+      if (startAbandoned(sessionId)) return;
+      setEngine("browser");
+      const rec = buildRecognition(sessionId);
+      if (!rec) return;
+      recRef.current = rec;
+      try {
+        rec.start();
+      } catch {
+        // Chrome throws InvalidStateError if start() races a live instance.
+        return;
+      }
+      startEnergyLoop();
+      armSegmentPause();
+    },
+    [armSegmentPause, buildRecognition, setEngine, startAbandoned, startEnergyLoop],
+  );
+
+  /**
+   * Fold one Deepgram result into the session's running transcript and hand it to the
+   * caller exactly the way the browser engine's `onresult` does: the whole tidied span,
+   * plus where its not-yet-final tail begins.
+   */
+  const handleDeepgramResult = useCallback(
+    (result: LiveResult) => {
+      const next = foldResults(dgFoldRef.current, result);
+      dgFoldRef.current = next;
+
+      const committed = tidyTranscript(next.committed);
+      const span = next.interim
+        ? tidyTranscript(next.committed ? `${next.committed} ${next.interim}` : next.interim)
+        : committed;
+      let interimStart = 0;
+      while (interimStart < committed.length && committed[interimStart] === span[interimStart]) {
+        interimStart++;
+      }
+      lastSpanRef.current = span;
+      const grew = span.length - spanLengthRef.current;
+      spanLengthRef.current = span.length;
+
+      energyRef.current = Math.min(
+        1,
+        energyRef.current +
+          ENERGY_PER_EVENT +
+          Math.min(ENERGY_CHAR_CAP, Math.max(0, grew) * ENERGY_PER_CHAR),
+      );
+
+      armSegmentPause();
+      dispatchRef.current({ t: "result" });
+      cb.current.onTranscript(span, {
+        hasInterim: next.interim.length > 0,
+        interimStart,
+      });
+    },
+    [armSegmentPause],
+  );
+
+  /**
+   * The Deepgram path: mint a token, tap the mic through the same worklet + downsampler
+   * `use-voice-recorder.ts` uses, and open the live socket. Throws on any failure — no
+   * token, no quota, no mic, no socket — so the caller can fall back to the browser engine.
+   */
+  const startDeepgramEngine = useCallback(
+    async (sessionId: number) => {
+      if (!canCaptureForDeepgram()) throw new Error("deepgram-capture-unsupported");
+
+      const res = await fetch("/api/speech/token", { method: "POST" });
+      if (startAbandoned(sessionId)) return;
+      if (!res.ok) throw new Error(`speech-token-${res.status}`);
+      const token = (await res.json()) as SpeechToken;
+      if (startAbandoned(sessionId)) return;
+      if (!token?.accessToken) throw new Error("speech-token-empty");
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      if (startAbandoned(sessionId)) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
+
+      const Ctor = getAudioContextCtor();
+      if (!Ctor) {
+        for (const track of stream.getTracks()) track.stop();
+        throw new Error("deepgram-no-audiocontext");
+      }
+      // Asking for 16 kHz saves the resample when it is honoured — `createDownsampler`
+      // copes either way by reading `ctx.sampleRate` back rather than assuming.
+      const ctx = new Ctor({ sampleRate: TARGET_SAMPLE_RATE });
+      // Autoplay policy can hand back a suspended context even inside a click handler; not
+      // awaited, the same as `use-voice-recorder.ts` — the graph runs once resumed and
+      // frames flow either way.
+      if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+
+      try {
+        await ctx.audioWorklet.addModule(DEEPGRAM_WORKLET_URL);
+      } catch (err) {
+        for (const track of stream.getTracks()) track.stop();
+        void ctx.close().catch(() => {});
+        throw err;
+      }
+      if (startAbandoned(sessionId)) {
+        for (const track of stream.getTracks()) track.stop();
+        void ctx.close().catch(() => {});
+        return;
+      }
+
+      const stale = () => sessionIdRef.current !== sessionId;
+      const handle = await openDeepgramLive({
+        token: token.accessToken,
+        params: listenParams({ live: true, keyterms: token.keyterms }),
+        onResult: (result) => {
+          if (stale()) return;
+          handleDeepgramResult(result);
+        },
+        // A live-session close/error is a dropped connection, not a start-up failure — it
+        // is reported as a `network` error so the reducer's one-retry-then-toast logic
+        // handles it, UNLESS we are the ones who closed it (`stop-recognition` /
+        // `abort-recognition` already set `dgSuppressCloseRef` first).
+        onClose: () => {
+          if (stale() || dgSuppressCloseRef.current) return;
+          dispatchRef.current({ t: "error", code: "network", now: Date.now() });
+        },
+        onError: () => {
+          if (stale() || dgSuppressCloseRef.current) return;
+          dispatchRef.current({ t: "error", code: "network", now: Date.now() });
+        },
+      });
+
+      if (startAbandoned(sessionId)) {
+        handle.close();
+        for (const track of stream.getTracks()) track.stop();
+        void ctx.close().catch(() => {});
+        return;
+      }
+
+      const node = new AudioWorkletNode(ctx, DEEPGRAM_WORKLET_NAME, {
+        numberOfInputs: 1,
+        numberOfOutputs: 0,
+        channelCount: 1,
+      });
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(node);
+      // Deliberately NOT connected to `ctx.destination` — same reasoning as the recorder.
+
+      const downsample = createDownsampler(ctx.sampleRate);
+      node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+        if (stale()) return;
+        const frame = event.data;
+        if (!frame || frame.length === 0) return;
+        const pcm = downsample(frame);
+        if (pcm.length) handle.send(pcm);
+      };
+
+      setEngine("deepgram");
+      dgHandleRef.current = handle;
+      dgStreamRef.current = stream;
+      dgCtxRef.current = ctx;
+      dgNodeRef.current = node;
+      dgSourceRef.current = source;
+
+      dispatchRef.current({ t: "audiostart" });
+      startEnergyLoop();
+      armSegmentPause();
+    },
+    [armSegmentPause, handleDeepgramResult, setEngine, startAbandoned, startEnergyLoop],
+  );
+
+  /** Decide Deepgram vs the browser engine for this session, and start whichever works. */
+  const startEngine = useCallback(
+    async (sessionId: number) => {
+      try {
+        await startDeepgramEngine(sessionId);
+        return;
+      } catch {
+        // Any failure to get Deepgram running — no token, no quota, Deepgram off, no
+        // socket, no mic, no capture APIs — falls back to today's browser engine. Its own
+        // `onerror` already knows how to report a real permission denial or missing mic,
+        // so there is no reason to special-case those here rather than just letting it try.
+      }
+      startBrowserRecognition(sessionId);
+    },
+    [startBrowserRecognition, startDeepgramEngine],
+  );
+
   const runEffects = useCallback(
     (effects: DictationEffect[], sessionId: number) => {
       for (const effect of effects) {
@@ -371,23 +698,21 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
             lastSpanRef.current = "";
             spanLengthRef.current = 0;
             endReasonRef.current = "user";
+            setEngine(null);
+            dgFoldRef.current = EMPTY_FOLD;
             cb.current.onSessionStart?.();
-            const rec = buildRecognition(sessionId);
-            if (!rec) break;
-            recRef.current = rec;
-            try {
-              rec.start();
-            } catch {
-              // Chrome throws InvalidStateError if start() races a live instance.
-              break;
-            }
-            startEnergyLoop();
-            armSegmentPause();
+
             if (maxTimerRef.current) clearTimeout(maxTimerRef.current);
             maxTimerRef.current = setTimeout(() => {
               endReasonRef.current = "timeout";
               dispatchRef.current({ t: "stop" });
             }, MAX_SESSION_MS);
+
+            // Deepgram first, the browser engine as its fallback — see `startEngine`. Both
+            // paths call `armSegmentPause`/`startEnergyLoop` themselves once they actually
+            // have an engine running, which for Deepgram is after an async token fetch and
+            // mic handshake rather than in this same tick.
+            void startEngine(sessionId);
             break;
           }
 
@@ -407,6 +732,18 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
             baseCommittedRef.current = nextBase;
             lastFinalsRef.current = "";
             lastSpanRef.current = nextBase;
+
+            if (engineRef.current === "deepgram") {
+              // Unlike SpeechRecognition, Deepgram never replays old finals — every message
+              // is new — so resetting our own fold state is enough to make the seal stick.
+              // No socket restart needed.
+              dgFoldRef.current = { committed: sealed, interim: "" };
+              cb.current.onTranscript(nextBase, {
+                hasInterim: false,
+                interimStart: nextBase.length,
+              });
+              break;
+            }
 
             // The restart is load-bearing, not incidental: it clears the engine's own
             // results list, which still holds the raw finals we just rewrote. Without it
@@ -430,6 +767,13 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
           }
 
           case "restart-recognition": {
+            if (engineRef.current === "deepgram") {
+              // The reducer only emits this after an unexpected `end`, which the Deepgram
+              // path never dispatches — a dropped or closed socket is reported as a
+              // `network` error instead (see `startDeepgramEngine`'s onClose/onError).
+              // Unreachable in practice; a no-op is the safe response if it ever is.
+              break;
+            }
             // Fold this instance's finals forward; the new one starts an empty list.
             baseCommittedRef.current += lastFinalsRef.current;
             lastFinalsRef.current = "";
@@ -446,7 +790,34 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
             break;
           }
 
-          case "stop-recognition":
+          case "stop-recognition": {
+            if (engineRef.current === "deepgram") {
+              const handle = dgHandleRef.current;
+              if (!handle) {
+                // Stopped before the socket ever opened (still mid token-fetch/mic-handshake
+                // when the user let go). `startDeepgramEngine`'s own `startAbandoned` checks
+                // will unwind whatever it managed to acquire and dispatch `end` themselves.
+                break;
+              }
+              const openedAt = handle.openedAt;
+              // Set BEFORE finish()/close() — those trigger the socket's own onclose, which
+              // must not read a deliberate stop as a dropped connection.
+              dgSuppressCloseRef.current = true;
+              void (async () => {
+                try {
+                  await handle.finish();
+                } catch {
+                  /* best effort — still close and report what we have below */
+                }
+                handle.close();
+                reportSpeechUsage(openedAt);
+                teardownDeepgram();
+                if (sessionIdRef.current === sessionId) {
+                  dispatchRef.current({ t: "end", now: Date.now() });
+                }
+              })();
+              break;
+            }
             // stop(), not abort(): the engine flushes its trailing words on the way out.
             try {
               recRef.current?.stop();
@@ -454,10 +825,21 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
               /* already stopped */
             }
             break;
+          }
 
           case "abort-recognition": {
             clearTimers();
             stopEnergyLoop();
+            if (engineRef.current === "deepgram") {
+              const handle = dgHandleRef.current;
+              dgSuppressCloseRef.current = true;
+              if (handle) {
+                reportSpeechUsage(handle.openedAt);
+                handle.close();
+              }
+              teardownDeepgram();
+              break;
+            }
             const rec = teardownRecognition();
             try {
               rec?.abort();
@@ -475,7 +857,16 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
         }
       }
     },
-    [armSegmentPause, buildRecognition, clearTimers, startEnergyLoop, stopEnergyLoop, teardownRecognition],
+    [
+      armSegmentPause,
+      buildRecognition,
+      clearTimers,
+      setEngine,
+      startEngine,
+      stopEnergyLoop,
+      teardownDeepgram,
+      teardownRecognition,
+    ],
   );
 
   const dispatch = useCallback(
@@ -497,6 +888,13 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
         clearTimers();
         stopEnergyLoop();
         teardownRecognition();
+        // A safety net, not the normal path: a Deepgram `network` error that exhausts its
+        // one retry reaches `state: "error"` straight from the reducer, with no
+        // `abort-recognition`/`stop-recognition` effect for `runEffects` to act on — the
+        // socket is already gone by the time that error was dispatched, but the mic capture
+        // graph and any still-open handle are not. `teardownDeepgram` is idempotent, so
+        // this is a no-op on every path that already cleaned up for itself.
+        teardownDeepgram();
         const reason: DictationEndReason =
           next.state === "error"
             ? "error"
@@ -506,7 +904,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
         cb.current.onSessionEnd?.(reason);
       }
     },
-    [clearTimers, runEffects, stopEnergyLoop, teardownRecognition],
+    [clearTimers, runEffects, stopEnergyLoop, teardownDeepgram, teardownRecognition],
   );
   // Layout, not passive: `audiostart` can land ~5ms after `start()`, and a passive effect
   // may not have run by then — leaving the engine talking to the no-op default.
@@ -578,8 +976,16 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
         }
         recRef.current = null;
       }
+      // A route change with no pagehide/visibilitychange must still drop the socket and
+      // release the mic — otherwise a live Deepgram session outlives the component that
+      // opened it.
+      if (dgHandleRef.current) {
+        dgSuppressCloseRef.current = true;
+        reportSpeechUsage(dgHandleRef.current.openedAt);
+      }
+      teardownDeepgram();
     },
-    [],
+    [teardownDeepgram],
   );
 
   return useMemo(
@@ -589,11 +995,12 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
       listening,
       error: machine.error,
       level,
+      engine,
       start,
       stop,
       cancel,
       toggle,
     }),
-    [cancel, level, listening, machine.error, start, state, stop, toggle],
+    [cancel, engine, level, listening, machine.error, start, state, stop, toggle],
   );
 }
