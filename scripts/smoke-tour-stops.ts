@@ -86,6 +86,14 @@ function main() {
   check("without a key: the URL fallback, no extraction, no chat ask", noKey.some((s) => s.id === "capture.linkedin") && !noKey.some((s) => s.id === "capture.extract") && !noKey.some((s) => s.id === "chat.ask") && noKey.some((s) => s.id === "chat.preview"));
   const hiddenChat = resolveTourStops({ hasApiKey: true, hidden: new Set(["page.chat"]) });
   check("a hidden surface drops its stops", !hiddenChat.some((s) => s.route === "/chat"));
+  for (const stop of TOUR_STOPS) {
+    if (!stop.requiresDone) continue;
+    const at = TOUR_STOPS.findIndex((s) => s.id === stop.requiresDone);
+    check(`${stop.id} depends on an earlier stop`, at >= 0 && at < TOUR_STOPS.indexOf(stop), stop.requiresDone);
+  }
+  const imports = (requested: boolean) =>
+    resolveTourStops({ hasApiKey: true, hidden: new Set(), linkedinRequested: requested }).find((s) => s.id === "imports.linkedin")!;
+  check("the Imports stop talks about the export only when it was requested", imports(true).title !== imports(false).title && imports(false).anchor === imports(true).anchor);
 
   console.log("\nresuming");
   check("an unknown stop resumes at the first", resumeTourStop("dashboard", withKey).id === withKey[0].id);

@@ -115,7 +115,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
       "Ask who can help and get an answer grounded in your own notes, with the source behind every claim.",
     bullets: [
       { label: "Answers quote the note they came from" },
-      { label: "Log it, remind me, follow up: one tap from an answer" },
+      { label: "Log it, remind me, follow up: proposed, saved when you confirm" },
       { label: "An ask bar on every page, ⌘K to jump anywhere" },
       { label: "Runs on the AI key you bring" },
     ],
@@ -129,7 +129,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
     label: "Constellation",
     title: "See your network as a sky",
     blurb:
-      "The Constellation draws who you know by company and closeness. The brightest stars are the people you’re closest to.",
+      "You’re the sun. Companies and schools form constellations around you, each traced by the people you know there.",
     bullets: [
       { label: "A living map of your whole network" },
       { label: "Clustered by company" },
@@ -145,7 +145,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
     label: "Imports",
     title: "Bring in the people you already know",
     blurb:
-      "LinkedIn, Google and Outlook, contact files and calendars all feed one orbit. Drop a file anywhere and Orbit works out what it is.",
+      "LinkedIn, Google and Outlook, contact files and calendars all feed one orbit. Upload a file and review everyone before they land.",
     bullets: [
       { label: "LinkedIn connections and messages, ZIP and all" },
       { label: "Google and Outlook contacts", entitlement: "canUseSync" },

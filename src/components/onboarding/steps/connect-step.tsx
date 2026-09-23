@@ -110,7 +110,8 @@ export function ConnectStep({
   useEffect(() => {
     if (!oauth) return;
     const strip = () => {
-      window.history.replaceState(null, "", window.location.pathname + oauth.nextSearch);
+      // The existing state, not null: it carries the stage's step for the browser's Back.
+      window.history.replaceState(window.history.state, "", window.location.pathname + oauth.nextSearch);
       window.removeEventListener("pointerdown", strip);
       window.removeEventListener("keydown", strip);
     };

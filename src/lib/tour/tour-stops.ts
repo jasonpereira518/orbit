@@ -36,6 +36,16 @@ export type TourStop = {
   doneWhen: TourPredicateId | null;
   /** The word the rail shows while the predicate is unmet, and the tick's label once met. */
   doneLabel?: { pending: string; done: string };
+  /**
+   * What to do when the control is not on screen (a view switched, a search emptied the
+   * list). Shown under the instruction rather than instead of it.
+   */
+  missingHint?: string;
+  /**
+   * A stop that only makes sense after another one completed (the cards to keep exist only
+   * once a note was extracted). Skipped in both directions while that stop is not done.
+   */
+  requiresDone?: TourStopId;
   /** Only shown when the account has (or has not) a working AI key. */
   requires?: "ai_key" | "no_ai_key";
   /** Dropped when an operator has hidden this surface from the viewer. */
@@ -95,7 +105,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     route: "/dashboard",
     anchor: "dashboard.stats",
     title: "Your dashboard",
-    body: `Who to reach out to today, and why. ${maya.firstName} is already overdue for a follow-up, so the due card has something to say.`,
+    body: `What needs you today. ${maya.firstName} is overdue for a follow-up, so Due follow-ups already counts one; the cards further down say who and why.`,
     tryThis: "Glance at the four numbers, then press Next.",
     chip: "Today at a glance",
     doneWhen: null,
@@ -122,7 +132,8 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "contacts.row",
     title: "Open a person",
     body: "The chip on each row is closeness: how well you actually keep in touch, worked out from your notes and meetings.",
-    tryThis: `Open ${maya.firstName}’s profile.`,
+    tryThis: "Open the highlighted person, or anyone else.",
+    missingHint: "Nobody matches the search. Clear it to see everyone.",
     chip: "Open a profile",
     doneWhen: "route:contact-detail",
     doneLabel: { pending: "Done when you open someone", done: "Opened" },
@@ -134,8 +145,9 @@ export const TOUR_STOPS: readonly TourStop[] = [
     route: "/contacts/:id",
     anchor: "contact.log-interaction",
     title: "Log what happened",
-    body: "A profile keeps the brief (where things stand), the timeline, and the follow-up. Logging an interaction is how the timeline grows and the follow-up moves.",
-    tryThis: `Log an interaction: “Coffee — she’s moving to Berlin”.`,
+    body: "A profile keeps where things stand, the timeline and what’s next. Everything you log lands on the timeline.",
+    tryThis: "Press Log interaction, write a line under Notes, then press Log interaction at the bottom.",
+    missingHint: "Scroll to the Timeline card; the button sits in its header.",
     chip: "Log an interaction",
     doneWhen: "interaction.logged",
     doneLabel: { pending: "Done when you log one", done: "Logged, nice" },
@@ -147,8 +159,9 @@ export const TOUR_STOPS: readonly TourStop[] = [
     route: "/capture",
     anchor: "capture.notes",
     title: "Capture from messy notes",
-    body: "Paste anything after a meeting. Orbit works out who you met and what to do next. A note is already in the box.",
-    tryThis: "Press Extract people.",
+    body: `Paste anything after a meeting and Orbit works out who you met and what to do next. A note about ${maya.firstName} is already in the box.`,
+    tryThis: "Press Extract people under the note.",
+    missingHint: "Switch to the Messy Notes tab, or finish the capture on screen first.",
     chip: "Press Extract",
     doneWhen: "capture.extracted",
     doneLabel: { pending: "Done when Orbit extracts", done: "Extracted" },
@@ -164,7 +177,9 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "capture.keep",
     title: "Review, then keep",
     body: "Every person Orbit found is a card you confirm. Keep the ones that matter; the note, the follow-up and the reminder are written for you.",
-    tryThis: "Keep the person on the card.",
+    tryThis: "Press the round tick to keep them. With more than one card, press Save at the end.",
+    missingHint: "The cards appear once Orbit has read the note.",
+    requiresDone: "capture.extract",
     chip: "Keep this person",
     doneWhen: "capture.saved",
     doneLabel: { pending: "Done when you keep someone", done: "Kept" },
@@ -191,8 +206,9 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "reminders.row-done",
     chipAnchor: "reminders.rail-today",
     title: "Clear what’s due",
-    body: `Today, Upcoming and Done. ${daniel.firstName}’s call is due today. Marking it done here also moves his follow-up; “s” snoozes a week.`,
-    tryThis: "Mark a reminder done.",
+    body: `Today holds what’s due and anything overdue: ${maya.firstName}’s deck is late and ${daniel.firstName}’s call is due today. Upcoming, Anytime and Done are one click away.`,
+    tryThis: "Tick the circle beside a reminder to mark it done.",
+    missingHint: "Switch to Today to see what’s due.",
     chip: "Mark done",
     doneWhen: "reminder.done",
     doneLabel: { pending: "Done when you clear one", done: "Done" },
@@ -202,11 +218,11 @@ export const TOUR_STOPS: readonly TourStop[] = [
   {
     id: "chat.ask",
     route: "/chat",
-    anchor: "chat.suggestions",
+    anchor: "chat.composer",
     title: "Ask your network",
-    body: "Answers come from your own notes, with the source behind every claim, and a Log it or Remind me button when there is something to do.",
-    tryThis: `Ask: “Who do I know at ${EXAMPLE_COMPANY}?”`,
-    chip: "Ask a question",
+    body: "Answers come from your own notes, with a numbered source behind each claim. When there’s something to do, Orbit proposes it and waits for you to confirm.",
+    tryThis: `Type “Who do I know at ${EXAMPLE_COMPANY}?” and press Enter.`,
+    chip: "Ask here",
     doneWhen: "chat.answered",
     doneLabel: { pending: "Done when Orbit answers", done: "Answered" },
     requires: "ai_key",
@@ -219,7 +235,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     route: "/chat",
     anchor: "chat.composer",
     title: "Ask your network",
-    body: "With an AI key, this answers questions like “who do I know at a fintech?” from your own notes, quotes the note it came from, and offers to log or remind you in one tap.",
+    body: "With an AI key, this answers questions like “who do I know at a fintech?” from your own notes, with a numbered source behind each claim.",
     tryThis: "Add a key in Settings when you’re ready; this page lights up.",
     chip: "Needs your AI key",
     doneWhen: null,
@@ -233,9 +249,9 @@ export const TOUR_STOPS: readonly TourStop[] = [
     anchor: "graph.stage",
     chipAnchor: "graph.show-all",
     title: "Your network as a sky",
-    body: `People cluster by company and the brightest stars are your closest ties. The three at ${EXAMPLE_COMPANY} sit together.`,
-    tryThis: "Click a star.",
-    chip: "Click a star",
+    body: `You’re the sun. Companies and schools form constellations around you, each traced by its own people; the three at ${EXAMPLE_COMPANY} make one.`,
+    tryThis: "Pick a star to see who it is.",
+    chip: "Pick a star",
     doneWhen: "graph.star-selected",
     doneLabel: { pending: "Done when you pick a star", done: "Found" },
     surfaceKey: "page.graph",
@@ -246,9 +262,9 @@ export const TOUR_STOPS: readonly TourStop[] = [
     route: "/imports",
     anchor: "imports.connections",
     title: "When your LinkedIn export lands",
-    body: "LinkedIn emails a ZIP, usually within a day. Drop it here as it arrived and every connection comes in at once. Google and Outlook contacts live on this page too.",
+    body: "LinkedIn emails a ZIP, usually within a day. Press Choose file and pick it as it arrived, no unzipping needed, and every connection comes in at once. Google and Outlook contacts sit further down this page.",
     tryThis: "Nothing to do yet; come back with the ZIP.",
-    chip: "Drop the ZIP here",
+    chip: "Upload the ZIP here",
     doneWhen: null,
     surfaceKey: "page.imports",
     seconds: 10,
@@ -267,6 +283,15 @@ export const TOUR_STOPS: readonly TourStop[] = [
 export type TourContext = {
   hasApiKey: boolean;
   hidden: ReadonlySet<string>;
+  /** Whether the stage recorded "I've requested it" on the LinkedIn step. */
+  linkedinRequested?: boolean;
+};
+
+/** The Imports stop for someone who never started the export on the LinkedIn step. */
+const IMPORTS_NOT_REQUESTED: Pick<TourStop, "title" | "body" | "tryThis"> = {
+  title: "Bring in everyone you know",
+  body: "LinkedIn packages your connections as a ZIP and emails it within a day. Choose it on this card when it lands. Google and Outlook contacts sit further down this page.",
+  tryThis: "Press How to export on this card whenever you’re ready.",
 };
 
 /** The stops this account walks, in order. Never empty: the finish card is unconditional. */
@@ -276,7 +301,9 @@ export function resolveTourStops(ctx: TourContext): TourStop[] {
     if (stop.requires === "no_ai_key" && ctx.hasApiKey) return false;
     if (stop.surfaceKey && ctx.hidden.has(stop.surfaceKey)) return false;
     return true;
-  });
+  }).map((stop) =>
+    stop.id === "imports.linkedin" && ctx.linkedinRequested === false ? { ...stop, ...IMPORTS_NOT_REQUESTED } : stop,
+  );
 }
 
 /** Where a stored stop resumes: itself when it is still in the list, else the first stop. */
@@ -302,8 +329,9 @@ export function stopPageLabel(stop: TourStop): string {
     case "/dashboard":
       return "Dashboard";
     case "/contacts":
-    case "/contacts/:id":
       return "Contacts";
+    case "/contacts/:id":
+      return "a profile";
     case "/capture":
       return "Capture";
     case "/reminders":

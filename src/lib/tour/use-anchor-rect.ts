@@ -17,6 +17,8 @@ const MEASURING: AnchorState = { rect: null, el: null, status: "measuring" };
 
 /** How long a stop waits for its control to appear (Suspense, a dynamic import, a tab). */
 const DEADLINE_MS = 4000;
+/** How long an anchor must stay gone, once found, before the rail says it is not on screen. */
+const GONE_GRACE_MS = 700;
 
 function firstVisible(id: TourAnchorId): HTMLElement | null {
   const nodes = document.querySelectorAll<HTMLElement>(tourAnchorSelector(id));
@@ -48,13 +50,24 @@ function same(a: AnchorRect | null, b: AnchorRect) {
  * `null` id means "this stop points at nothing".
  */
 export function useAnchorRect(id: TourAnchorId | null, resetKey: string): AnchorState {
-  const [state, setState] = useState<AnchorState>(id ? MEASURING : MISSING);
+  // Keyed, so a new stop starts at `measuring` in the same render that asks for it, rather
+  // than inheriting the last stop's `missing` until something re-measures.
+  const key = `${id ?? ""}|${resetKey}`;
+  const [keyed, setKeyed] = useState<{ key: string; state: AnchorState }>({ key, state: MEASURING });
 
   useEffect(() => {
     if (!id) return;
     let raf = 0;
     let cancelled = false;
     let observed: HTMLElement | null = null;
+    let deadlinePassed = false;
+    let goneTimer = 0;
+    const set = (next: (s: AnchorState) => AnchorState) =>
+      setKeyed((k) => {
+        const current = k.key === key ? k.state : MEASURING;
+        const state = next(current);
+        return k.key === key && state === current ? k : { key, state };
+      });
 
     const ro = new ResizeObserver(() => schedule());
     ro.observe(document.documentElement);
@@ -64,8 +77,20 @@ export function useAnchorRect(id: TourAnchorId | null, resetKey: string): Anchor
       if (cancelled) return;
       const el = firstVisible(id);
       if (!el) {
-        setState((s) => (s.status === "found" ? MEASURING : s));
+        set((s) => (s.status === "found" ? MEASURING : s));
+        // Gone after the deadline (a view switched, a search emptied the list): say so, after
+        // a beat so a swap that remounts the element doesn't flash the hint.
+        if (deadlinePassed && !goneTimer) {
+          goneTimer = window.setTimeout(() => {
+            goneTimer = 0;
+            if (!cancelled && !firstVisible(id)) set(() => MISSING);
+          }, GONE_GRACE_MS);
+        }
         return;
+      }
+      if (goneTimer) {
+        window.clearTimeout(goneTimer);
+        goneTimer = 0;
       }
       if (el !== observed) {
         if (observed) ro.unobserve(observed);
@@ -74,7 +99,7 @@ export function useAnchorRect(id: TourAnchorId | null, resetKey: string): Anchor
       }
       const r = el.getBoundingClientRect();
       const rect = { top: r.top, left: r.left, width: r.width, height: r.height };
-      setState((s) => (s.el === el && same(s.rect, rect) ? s : { rect, el, status: "found" }));
+      set((s) => (s.el === el && same(s.rect, rect) ? s : { rect, el, status: "found" }));
     };
     const schedule = () => {
       if (raf) return;
@@ -82,7 +107,8 @@ export function useAnchorRect(id: TourAnchorId | null, resetKey: string): Anchor
     };
 
     const deadline = window.setTimeout(() => {
-      if (!cancelled) setState((s) => (s.status === "found" ? s : MISSING));
+      deadlinePassed = true;
+      if (!cancelled) set((s) => (s.status === "found" ? s : MISSING));
     }, DEADLINE_MS);
 
     const mo = new MutationObserver(schedule);
@@ -100,6 +126,7 @@ export function useAnchorRect(id: TourAnchorId | null, resetKey: string): Anchor
     return () => {
       cancelled = true;
       window.clearTimeout(deadline);
+      if (goneTimer) window.clearTimeout(goneTimer);
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
       mo.disconnect();
@@ -107,8 +134,10 @@ export function useAnchorRect(id: TourAnchorId | null, resetKey: string): Anchor
       window.removeEventListener("resize", schedule);
       document.removeEventListener("visibilitychange", schedule);
     };
-    // `resetKey` (the stop id) restarts the deadline for a new stop that reuses an anchor id.
-  }, [id, resetKey]);
+    // `key` carries `resetKey` (the stop id): a new stop that reuses an anchor id restarts
+    // the deadline.
+  }, [id, key]);
 
-  return id ? state : MISSING;
+  if (!id) return MISSING;
+  return keyed.key === key ? keyed.state : MEASURING;
 }

@@ -22,7 +22,11 @@ export type CoachRailProps = {
   /** The stop's control is not on this screen; copy stands in. */
   missing: boolean;
   /** The person wandered off the stop's page: offer the way back rather than fight them. */
-  offRoute: { page: string } | null;
+  /**
+   * Off the stop's page. `message` replaces "This stop lives on …" when there is nowhere
+   * specific to send them; `canGo` hides the button when it would go where they already are.
+   */
+  offRoute: { page: string; message?: string; canGo: boolean } | null;
   pending: boolean;
   onBack: (() => void) | null;
   onNext: () => void;
@@ -242,30 +246,41 @@ function RailBody({
           {offRoute ? (
             <div className="rounded-xl border border-border/70 bg-card/70 p-3 text-sm">
               <p className="text-foreground">
-                This stop lives on{" "}
-                <span className="font-medium">{offRoute.page}</span>.
+                {offRoute.message ?? (
+                  <>
+                    This stop lives on{" "}
+                    <span className="font-medium">{offRoute.page}</span>.
+                  </>
+                )}
               </p>
-              <Button
-                type="button"
-                size="sm"
-                className="mt-2"
-                onClick={onGoThere}
-              >
-                Take me there
-                <ArrowRight className="size-3.5" aria-hidden />
-              </Button>
+              {offRoute.canGo && (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-2"
+                  onClick={onGoThere}
+                >
+                  Take me there
+                  <ArrowRight className="size-3.5" aria-hidden />
+                </Button>
+              )}
             </div>
-          ) : missing ? (
-            <p className="text-xs text-muted-foreground">
-              It isn’t on this screen right now.
-            </p>
           ) : (
-            stop.tryThis && (
-              <p className="text-sm text-foreground">
-                <span className="font-medium text-primary">Try this → </span>
-                {stop.tryThis}
-              </p>
-            )
+            <>
+              {stop.tryThis && (
+                <p className="text-sm text-foreground">
+                  <span className="font-medium text-primary">Try this → </span>
+                  {stop.tryThis}
+                </p>
+              )}
+              {/* Under the instruction, not instead of it: the person still needs to know
+                  what to do once they find it. */}
+              {missing && (
+                <p className="text-xs text-muted-foreground">
+                  {stop.missingHint ?? "It isn’t on this screen right now."}
+                </p>
+              )}
+            </>
           )}
           {predicate && stop.doneLabel && (
             <p

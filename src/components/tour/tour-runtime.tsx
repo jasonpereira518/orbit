@@ -43,6 +43,14 @@ const PUSH_RETRY_MS = 1800;
 /** …and one that still has not is replaced by a full page load. */
 const HARD_NAV_MS = 6000;
 const VIEWPORT_LOCKED = new Set(["/chat", "/graph", "/reminders"]);
+const EXTRACTED = new Set(["ready", "reviewing", "saving", "saved"]);
+
+type CaptureSnapshot = { id: string; status: string } | null;
+
+/** A stop whose prerequisite was skipped would wait for something that cannot appear. */
+function reachable(stop: TourStop, completed: ReadonlySet<TourStopId>) {
+  return !stop.requiresDone || completed.has(stop.requiresDone);
+}
 
 function isEditable(target: EventTarget | null) {
   const el = target as HTMLElement | null;
@@ -65,8 +73,8 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
   const [pending, start] = useTransition();
 
   const stops = useMemo(
-    () => resolveTourStops({ hasApiKey: seed.hasApiKey, hidden }),
-    [seed.hasApiKey, hidden],
+    () => resolveTourStops({ hasApiKey: seed.hasApiKey, hidden, linkedinRequested: seed.linkedinRequested }),
+    [seed.hasApiKey, hidden, seed.linkedinRequested],
   );
   const [stopId, setStopId] = useState<TourStopId>(() => resumeTourStop(seed.stop, stops).id);
   const index = Math.max(0, stops.findIndex((s) => s.id === stopId));
@@ -84,6 +92,16 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
 
   const onRoute = stopMatchesPath(stop, pathname);
   const isFinish = stop.id === "finish";
+  // A stop already done once (the person came Back to it) shows its tick and waits for Next.
+  // Re-running its predicate would bounce them straight forward again: on a profile the
+  // "open a person" stop is instantly true, and a ready capture job instantly "extracted".
+  const alreadyDone = completed.has(stop.id);
+
+  // The profile the person last opened, so the log stop can take them back to it after they
+  // wander off (browser Back, the sidebar) instead of dropping them on the list.
+  // Adjusted during render (React's "derive from a changed input" pattern), not an effect.
+  const [lastProfile, setLastProfile] = useState<string | null>(null);
+  if (isContactDetailPath(pathname) && lastProfile !== pathname) setLastProfile(pathname);
 
   // Events count only from the moment a stop is entered: `armedSeq` is set in `go` (an event
   // handler, where a ref may be written) from the latest sequence an effect mirrored.
@@ -94,12 +112,34 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
   }, [events.seq]);
   const armedSeq = useRef(0);
 
+  // The capture job as it stood when the stop was entered. The capture predicates read a
+  // store that outlives stops (and tours), so only a change since arriving counts: an old
+  // job already `saved`, or a Back onto the extract stop with a job `ready`, is not news.
+  const capture = useCaptureJob();
+  const captureStatus = capture.job?.status ?? null;
+  const captureId = capture.job?.id ?? null;
+  const latestCapture = useRef<CaptureSnapshot>(null);
+  useEffect(() => {
+    latestCapture.current = captureId && captureStatus ? { id: captureId, status: captureStatus } : null;
+  }, [captureId, captureStatus]);
+  const captureAtEntry = useRef<CaptureSnapshot | undefined>(undefined);
+  // "Opened a profile" means arriving on one after being somewhere else since the stop began.
+  // Entering a stop while already on a profile (Back pressed twice, or a push still in
+  // flight) must not count as opening it.
+  const offProfileSinceEntry = useRef(!isContactDetailPath(pathname));
+  useEffect(() => {
+    if (!isContactDetailPath(pathname)) offProfileSinceEntry.current = true;
+  }, [pathname]);
+
   // ---- moving between stops -------------------------------------------------------------
   const go = useCallback(
     (next: TourStopId) => {
       armedSeq.current = latestSeq.current;
+      captureAtEntry.current = latestCapture.current;
+      offProfileSinceEntry.current = !isContactDetailPath(window.location.pathname);
       setStopId(next);
       setDone(false);
+      setOffRoute(false);
       setCollapsedChoice(null);
       void saveTourStop(next)
         .then((res) => {
@@ -110,81 +150,110 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
     [],
   );
   const next = useCallback(() => {
-    const following = stops[index + 1];
+    const following = stops.slice(index + 1).find((s) => reachable(s, completed));
     if (following) go(following.id);
-  }, [go, index, stops]);
+  }, [completed, go, index, stops]);
   const back = useCallback(() => {
-    const previous = stops[index - 1];
+    const previous = stops.slice(0, index).reverse().find((s) => reachable(s, completed));
     if (previous) go(previous.id);
-  }, [go, index, stops]);
+  }, [completed, go, index, stops]);
 
   const goThere = useCallback(() => {
     if (stop.route.includes(":")) {
-      router.push("/contacts");
+      router.push(lastProfile ?? "/contacts");
       return;
     }
     if (stop.onEnter === "prefill-capture-note") handOffToCapture(TOUR_EXAMPLE_NOTE);
     router.push(stop.route);
-  }, [router, stop]);
+  }, [lastProfile, router, stop]);
 
-  // On a new stop, navigate to its page once (never for a pattern route: the person's own
-  // click on a contact gets there) and prefetch the one after it.
+  // On a new stop, navigate to its page once and prefetch the one after it. The profile stop
+  // goes back to the profile they last opened; the first time, their own click gets there.
   const navigatedFor = useRef<TourStopId | null>(null);
+  // When the tour last pushed, so the off-route card does not appear over its own
+  // navigation while the next page is still loading.
+  const pushedAt = useRef(0);
   useEffect(() => {
     if (navigatedFor.current === stop.id) return;
     navigatedFor.current = stop.id;
     const following = stops[index + 1];
     if (following && !following.route.includes(":")) router.prefetch(following.route);
-    if (stop.route.includes(":")) return;
-    if (pathname === stop.route) return;
+    if (stopMatchesPath(stop, pathname)) return;
+    // The profile stop is a pattern the tour cannot invent; it can only return to the one
+    // they opened. With none yet, the rail asks them to open someone.
+    const target = stop.route.includes(":") ? lastProfile : stop.route;
+    if (!target) return;
     if (stop.onEnter === "prefill-capture-note") handOffToCapture(TOUR_EXAMPLE_NOTE);
-    router.push(stop.route);
+    pushedAt.current = Date.now();
+    router.push(target);
     // A page that refreshes the router or rewrites its own URL from an effect can make Next
     // drop a navigation still in flight. One more push a moment later usually lands; if even
     // that has not moved the address bar, a full load does — the stop is already saved
     // server-side, so the rail comes back exactly here.
     const retry = window.setTimeout(() => {
-      if (window.location.pathname !== stop.route) router.push(stop.route);
+      if (window.location.pathname !== target) router.push(target);
     }, PUSH_RETRY_MS);
     const hard = window.setTimeout(() => {
-      if (window.location.pathname !== stop.route) window.location.assign(stop.route);
+      if (window.location.pathname !== target) window.location.assign(target);
     }, HARD_NAV_MS);
     return () => {
       window.clearTimeout(retry);
       window.clearTimeout(hard);
     };
-  }, [index, pathname, router, stop, stops]);
+  }, [index, lastProfile, pathname, router, stop, stops]);
 
   // The off-route card waits a moment so the tour's own navigation never flashes it.
   useEffect(() => {
-    const t = window.setTimeout(() => setOffRoute(!onRoute), onRoute ? 0 : OFF_ROUTE_MS);
+    const sincePush = Date.now() - pushedAt.current;
+    const wait = onRoute ? 0 : sincePush < HARD_NAV_MS ? HARD_NAV_MS - sincePush + OFF_ROUTE_MS : OFF_ROUTE_MS;
+    const t = window.setTimeout(() => setOffRoute(!onRoute), wait);
     return () => window.clearTimeout(t);
   }, [onRoute, stop.id]);
 
   // ---- predicates -----------------------------------------------------------------------
-  const capture = useCaptureJob();
-  const captureStatus = capture.job?.status ?? null;
+  useEffect(() => {
+    // The stop the tour resumed at on load was never entered through `go`: its baseline is
+    // the job as the page first saw it.
+    if (captureAtEntry.current === undefined) {
+      captureAtEntry.current = captureId && captureStatus ? { id: captureId, status: captureStatus } : null;
+    }
+  }, [captureId, captureStatus]);
 
   useEffect(() => {
-    if (done || !stop.doneWhen) return;
+    if (done || alreadyDone || !stop.doneWhen) return;
+    const entry = captureAtEntry.current ?? null;
+    const sameJob = entry != null && entry.id === captureId;
     let satisfied = false;
+    // Opening a profile from the search stop skips "open a person" too: it is done, and the
+    // list it would point at is no longer on screen.
+    let skipTo: TourStopId | null = null;
     switch (stop.doneWhen) {
       case "route:contact-detail":
         // The stop itself lives on /contacts; what completes it is arriving on a profile.
-        satisfied = isContactDetailPath(pathname);
+        satisfied = isContactDetailPath(pathname) && offProfileSinceEntry.current;
         break;
       case "capture.extracted":
-        satisfied =
-          captureStatus === "ready" ||
-          captureStatus === "reviewing" ||
-          captureStatus === "saving" ||
-          captureStatus === "saved";
+        satisfied = captureStatus != null && EXTRACTED.has(captureStatus) && !(sameJob && EXTRACTED.has(entry.status));
         break;
       case "capture.saved":
-        satisfied = captureStatus === "saved";
+        satisfied = captureStatus === "saved" && !(sameJob && entry.status === "saved");
         break;
       default:
         satisfied = events.seq > armedSeq.current && events.last?.name === stop.doneWhen;
+        if (!satisfied && stop.id === "contacts.search" && isContactDetailPath(pathname) && offProfileSinceEntry.current) {
+          const open = stops.find((s) => s.id === "contacts.open");
+          const log = stops.find((s) => s.id === "contact.log");
+          if (open && log) skipTo = log.id;
+        }
+    }
+    if (skipTo) {
+      const target = skipTo;
+      const from = stop.id;
+      const t = window.setTimeout(() => {
+        setCompleted((c) => new Set([...c, from, "contacts.open"]));
+        go(target);
+      }, 0);
+      return () => window.clearTimeout(t);
     }
     if (!satisfied) return;
     const id = stop.id;
@@ -197,7 +266,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
       0,
     );
     return () => window.clearTimeout(t);
-  }, [captureStatus, done, events.last?.name, events.seq, pathname, stop]);
+  }, [alreadyDone, captureId, captureStatus, done, events.last?.name, events.seq, go, pathname, stop, stops]);
 
   // Once done, advance after the beat (instantly under reduced motion).
   useEffect(() => {
@@ -373,9 +442,15 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
         stop={stop}
         index={index}
         total={total}
-        done={done || !stop.doneWhen}
+        done={done || alreadyDone || !stop.doneWhen}
         missing={missing}
-        offRoute={offRoute && !isFinish ? { page: stopPageLabel(stop) } : null}
+        offRoute={
+          offRoute && !isFinish
+            ? stop.route.includes(":") && !lastProfile
+              ? { page: stopPageLabel(stop), message: "Open anyone’s profile from Contacts to carry on.", canGo: pathname !== "/contacts" }
+              : { page: stopPageLabel(stop), canGo: true }
+            : null
+        }
         pending={pending}
         onBack={index > 0 ? back : null}
         onNext={isFinish ? finish : next}

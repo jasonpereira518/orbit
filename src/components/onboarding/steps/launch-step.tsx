@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 import { startInAppTour } from "@/actions/tour";
 import { OrbitLogo } from "@/components/orbit-logo";
@@ -16,7 +15,6 @@ import { friendlyError } from "@/lib/errors";
  * failed tour: the retry and the "anyway" button both exist so nobody is stranded here.
  */
 export function LaunchStep() {
-  const router = useRouter();
   const [state, setState] = useState<{ phase: "working" | "failed"; error?: string }>({
     phase: "working",
   });
@@ -35,8 +33,10 @@ export function LaunchStep() {
     startInAppTour()
       .then((res) => {
         if (mine !== attempt.current) return;
-        router.push(res.redirectTo);
-        router.refresh();
+        // A full load that replaces this entry: the action revalidates (its response can
+        // snap a client push back here), and Back from the dashboard should not restore a
+        // cached stage mid-tour. The server sends a stale /onboarding on to the dashboard.
+        window.location.replace(res.redirectTo);
       })
       .catch((err) => {
         if (mine !== attempt.current) return;
@@ -51,7 +51,6 @@ export function LaunchStep() {
   // costs a second no-op write, not a second tour.
   useEffect(() => {
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -82,10 +81,7 @@ export function LaunchStep() {
             <Button
               type="button"
               variant="ghost"
-              onClick={() => {
-                router.push("/dashboard");
-                router.refresh();
-              }}
+              onClick={() => window.location.replace("/dashboard")}
             >
               Start the tour anyway
               <ArrowRight className="size-4" aria-hidden />

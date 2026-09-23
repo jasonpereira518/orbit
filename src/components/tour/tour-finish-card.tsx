@@ -50,7 +50,8 @@ export function TourFinishCard({
     { label: "Google or Microsoft connected", done: connected },
     { label: "Logged an interaction", done: facts.completed.has("contact.log") },
     { label: "Cleared a reminder", done: facts.completed.has("reminders.done") },
-    { label: "Asked your network", done: facts.completed.has("chat.ask") },
+    // Only a tour with a key has the ask stop; without one this row could never tick.
+    ...(facts.hasApiKey ? [{ label: "Asked your network", done: facts.completed.has("chat.ask") }] : []),
   ];
 
   return (
@@ -85,7 +86,8 @@ export function TourFinishCard({
         <p className="flex flex-wrap items-center gap-1.5 font-medium text-foreground">
           What’s ahead <SoonTag />
         </p>
-        <p className="mt-1">Recruiters, Outreach campaigns and Events, plus a Chrome extension.</p>
+        {/* Recruiters is live on Pro, so it is not in this list: "Soon" would be untrue. */}
+        <p className="mt-1">Outreach campaigns and Events, plus a Chrome extension.</p>
       </div>
       <Button type="button" disabled={pending} onClick={onFinish}>
         {pending ? "Finishing…" : "Go to your dashboard"}

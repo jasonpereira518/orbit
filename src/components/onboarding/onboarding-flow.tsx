@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { getTriageCandidates } from "@/actions/contacts";
 import {
@@ -35,6 +34,7 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { connectConfigured, type ConnectAccount, type ConnectProvider } from "@/lib/onboarding-connect";
 import {
   isOnboardingPath,
+  isOnboardingStep,
   mainLine,
   nextStep,
   prevStep,
@@ -63,6 +63,14 @@ export type OnboardingFlowProps = {
   planFlags: PlanFlags;
 };
 
+/**
+ * Each step gets its own history entry (same URL, this key in `history.state`), so the
+ * browser's and the phone's Back gesture step back through setup instead of leaving it.
+ * No URL is passed: Next's patched `pushState` only dispatches a router restore when given
+ * one, and a restore can drop a server action in flight.
+ */
+const HISTORY_KEY = "orbitOnboardingStep";
+
 /** One full screen of the quick path needs at least this many people to be worth asking about. */
 const TRIAGE_MIN = 8;
 
@@ -89,7 +97,6 @@ export function OnboardingFlow({
   connect,
   planFlags,
 }: OnboardingFlowProps) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   const [path, setPath] = useState<OnboardingPath | null>(() =>
     isOnboardingPath(initialPath) ? initialPath : null,
@@ -117,7 +124,20 @@ export function OnboardingFlow({
     [apiKey, connect],
   );
 
-  const goTo = useCallback((next: OnboardingStep) => {
+  // The stage's own entries, mirrored so an on-screen Back can be a real `history.back()`
+  // when the entry behind is that step. Pushing instead would leave the browser's Back
+  // pointing forward, at the step just left.
+  const entries = useRef<{ list: OnboardingStep[]; at: number }>({ list: [step], at: 0 });
+  const pushStepEntry = useCallback((next: OnboardingStep) => {
+    const e = entries.current;
+    if (e.list[e.at] === next) return;
+    e.list = [...e.list.slice(0, e.at + 1), next];
+    e.at = e.list.length - 1;
+    window.history.pushState({ ...window.history.state, [HISTORY_KEY]: next }, "");
+  }, []);
+
+  const goTo = useCallback((next: OnboardingStep, fromHistory = false) => {
+    if (!fromHistory) pushStepEntry(next);
     setPosition(([current]) => [next, stepDirection(current, next)]);
     if (window.scrollY > 0) window.scrollTo({ top: 0 });
     // Fire-and-forget: a failed save only costs resuming at the previous step after a
@@ -127,7 +147,44 @@ export function OnboardingFlow({
         if (!res.ok) console.error(`Onboarding step "${next}" was rejected by the server.`);
       })
       .catch((err) => console.error(`Failed to persist onboarding step "${next}"`, err));
-  }, []);
+  }, [pushStepEntry]);
+
+  /** An on-screen Back: the browser's own when the entry behind is that step. */
+  const backTo = useCallback(
+    (target: OnboardingStep) => {
+      const e = entries.current;
+      if (e.at > 0 && e.list[e.at - 1] === target) window.history.back();
+      else goTo(target);
+    },
+    [goTo],
+  );
+
+  // Stamp the entry the stage loaded on, then follow Back and Forward between steps. An
+  // entry without the key (another page's) is left to the browser.
+  useEffect(() => {
+    if (!isOnboardingStep(window.history.state?.[HISTORY_KEY])) {
+      window.history.replaceState({ ...window.history.state, [HISTORY_KEY]: step }, "");
+    }
+    const onPop = (e: PopStateEvent) => {
+      // The tour is being handed off: the stage is already behind the person server-side,
+      // so stay put and let the launch finish.
+      if (entries.current.list[entries.current.at] === "launch") {
+        window.history.pushState({ ...window.history.state, [HISTORY_KEY]: "launch" }, "");
+        return;
+      }
+      const target = (e.state as Record<string, unknown> | null)?.[HISTORY_KEY];
+      if (typeof target !== "string" || !isOnboardingStep(target)) return;
+      const mirror = entries.current;
+      if (mirror.list[mirror.at - 1] === target) mirror.at -= 1;
+      else if (mirror.list[mirror.at + 1] === target) mirror.at += 1;
+      else entries.current = { list: [target], at: 0 };
+      goTo(target, true);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+    // Mount only: `step` is the starting entry's, and later steps stamp their own entries.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goTo]);
 
   // The control the user pressed has just been unmounted with the old step, which drops
   // focus to <body>. Hand it to the new step so keyboard and screen-reader users land at
@@ -155,10 +212,10 @@ export function OnboardingFlow({
   );
   const retreat = useCallback(
     (from: OnboardingStep) => {
-      if (!path) return goTo("welcome");
-      goTo(prevStep(from, path, facts) ?? "welcome");
+      if (!path) return backTo("welcome");
+      backTo(prevStep(from, path, facts) ?? "welcome");
     },
-    [facts, goTo, path],
+    [backTo, facts, path],
   );
 
   const choosePath = (chosen: OnboardingPath) =>
@@ -169,6 +226,7 @@ export function OnboardingFlow({
       }
       await startOnboardingPath(chosen);
       setPath(chosen);
+      pushStepEntry("linkedin");
       setPosition(() => ["linkedin", 1]);
     });
 
@@ -176,11 +234,12 @@ export function OnboardingFlow({
     (finished: boolean) => {
       start(async () => {
         const res = await completeOnboarding({ finished });
-        router.replace(res.redirectTo);
-        router.refresh();
+        // A full load, not `router.replace` + `refresh`: the action revalidates, and its
+        // response landing after a client navigation can snap the router back here.
+        window.location.replace(res.redirectTo);
       });
     },
-    [router],
+    [],
   );
 
   // After the quick path adds people: rate a screenful if there is one, else the overview.
@@ -278,7 +337,7 @@ export function OnboardingFlow({
               <BranchStep
                 eyebrow="Your people"
                 title="Upload your LinkedIn export"
-                onBack={() => goTo(importFrom === "linkedin" ? "linkedin" : "people")}
+                onBack={() => backTo(importFrom === "linkedin" ? "linkedin" : "people")}
               >
                 <ImportStep
                   onContinue={(started) => {
@@ -330,7 +389,7 @@ export function OnboardingFlow({
                 eyebrow="Your people"
                 title="Capture from notes"
                 description="Paste anything: meeting notes, a list of names, a brain dump after an event."
-                onBack={() => goTo("people")}
+                onBack={() => backTo("people")}
               >
                 <CaptureStep hasApiKey={apiKey} onSaved={afterPeople} />
               </BranchStep>
@@ -340,7 +399,7 @@ export function OnboardingFlow({
               <BranchStep
                 eyebrow="Your people"
                 title="Add someone by hand"
-                onBack={() => goTo("people")}
+                onBack={() => backTo("people")}
               >
                 <ManualStep onCreated={afterPeople} />
               </BranchStep>

@@ -14,7 +14,7 @@ const TOUR_SETS_UP = [
   "Your AI key, checked as you save it",
   "Your LinkedIn export, started now so it’s ready tomorrow",
   "Google or Microsoft contacts, when your plan includes sync",
-  "Every page, with a few example people already in place",
+  "Every page, with six example people already in place",
 ];
 
 /**
@@ -93,7 +93,7 @@ export function WelcomeStep({
             primary
             eyebrow="Recommended"
             title="Guided tour"
-            time="Three setup steps, then a three-minute tour of the real pages."
+            time="A few setup steps, then a three-minute tour of the real pages."
             action="Start the tour"
             disabled={blocked}
             onClick={() => onChoose("tour")}
@@ -118,7 +118,7 @@ export function WelcomeStep({
           >
             <p className="text-sm text-muted-foreground">
               Just the essentials and a quick look at what Orbit can do. The tour is always in
-              Settings if you want it later.
+              Settings → Help if you want it later.
             </p>
           </PathCard>
         </StaggerItem>

@@ -69,11 +69,10 @@ test("the guided tour walks the real pages with example people, then removes the
   await sheet.getByRole("button", { name: "Log interaction", exact: true }).click();
   await expect(rail).toContainText("Logged, nice", { timeout: 60_000 });
 
-  // Stops 5–6: capture needs a real extraction; skip both.
+  // Stop 5: capture needs a real extraction; skip it. "Review, then keep" depends on it, so
+  // the tour goes straight past it rather than waiting for cards that never appear.
   await expect(page).toHaveURL(/\/capture$/, { timeout: 60_000 });
   await expect(rail).toContainText("Capture from messy notes", { timeout: 15_000 });
-  await rail.getByRole("button", { name: "Skip this" }).click();
-  await expect(rail).toContainText("Review, then keep", { timeout: 15_000 });
   await rail.getByRole("button", { name: "Skip this" }).click();
 
   // Stop 7: clear an example reminder.
@@ -92,7 +91,8 @@ test("the guided tour walks the real pages with example people, then removes the
 
   // Stop 10: imports, then the finish card.
   await expect(page).toHaveURL(/\/imports$/, { timeout: 60_000 });
-  await expect(rail).toContainText("When your LinkedIn export lands", { timeout: 15_000 });
+  // "I don't use LinkedIn" on the stage: the stop explains the export instead of waiting for it.
+  await expect(rail).toContainText("Bring in everyone you know", { timeout: 15_000 });
   await rail.getByRole("button", { name: "Next" }).click();
   await expect(rail).toContainText("You’re in orbit", { timeout: 60_000 });
   await rail.getByRole("button", { name: "Go to your dashboard" }).click();
