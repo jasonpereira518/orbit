@@ -105,8 +105,7 @@ export function TeamCard({
           {members.map((member) => (
             <li key={member.userId} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
               <span className="min-w-0 truncate">
-                <span className="font-medium text-ink">{member.name}</span>
-                {member.userId === viewerUserId ? <span className="text-muted-foreground"> (you)</span> : null}
+                <span className="font-medium text-ink">{member.userId === viewerUserId ? "You" : member.name}</span>
               </span>
               <Badge variant="outline" className="text-[10px]">
                 {member.sharing ? "Sharing" : "Private"}
