@@ -31,6 +31,7 @@ import {
   fetchCalendarPage as fetchMicrosoftCalendarPage,
 } from "@/lib/connectors/microsoft-calendar";
 import {
+  hasContactsScope as hasGoogleContactsScope,
   hasCalendarScope as hasGoogleCalendarScope,
   getValidAccessToken as getValidGoogleAccessToken,
 } from "@/lib/gmail";
@@ -53,6 +54,14 @@ import {
 } from "@/lib/connectors/connections";
 import { connectorById } from "@/lib/connectors/registry";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
+import { ingestPeople } from "@/lib/ingest/people";
+import {
+  advanceContactsCursor,
+  fetchContactsPage,
+  PeopleSyncTokenExpiredError,
+  type ContactsSyncCursor,
+} from "@/lib/connectors/google-contacts";
+import type { CalendarSyncCursor, ProviderSyncCursor } from "@/db/schema";
 import {
   claimDueCalendarSubscriptions,
   syncCalendarSubscription,
@@ -120,6 +129,11 @@ export type SyncDeps = {
   getAccessToken: typeof getValidGoogleAccessToken;
   fetchPage: typeof fetchGoogleCalendarPage;
   /**
+   * How a contacts page is read. Optional and defaulted for the same reason the Microsoft
+   * pair is: a test that seeds only a calendar-scoped connection never reaches it.
+   */
+  fetchContactsPage?: typeof fetchContactsPage;
+  /**
    * The Microsoft pair. Optional, defaulting to the real implementations, so a test that only
    * seeds Google connections (every one that predates Outlook calendar sync) need not stub a
    * provider it never claims. The Google pair keeps its original names for the same reason:
@@ -170,6 +184,18 @@ export type SyncRunStats = {
   calendarKeptByDecision: number;
   contactsCreated: number;
   interactionsLogged: number;
+  /**
+   * Google Contacts address-book sync. `contactsCreated` above counts the people this
+   * creates too — it is the run's total across every source — so these are the address
+   * book's own detail, not a second total.
+   */
+  addressBookSeen: number;
+  addressBookMatched: number;
+  addressBookBlockedByPlan: number;
+  /** Deleted in Google, counted and skipped — Orbit does not delete on a provider signal. */
+  addressBookTombstones: number;
+  /** Entries with no usable name, counted and skipped. */
+  addressBookNameless: number;
   /** Luma/Eventbrite. Named apart from the calendar counters so one pass reports both. */
   eventConnectionsClaimed: number;
   eventConnectionsSynced: number;
@@ -206,6 +232,11 @@ function emptyRunStats(): SyncRunStats {
     calendarKeptByDecision: 0,
     contactsCreated: 0,
     interactionsLogged: 0,
+    addressBookSeen: 0,
+    addressBookMatched: 0,
+    addressBookBlockedByPlan: 0,
+    addressBookTombstones: 0,
+    addressBookNameless: 0,
     eventConnectionsClaimed: 0,
     eventConnectionsSynced: 0,
     eventConnectionsFailed: 0,
@@ -231,8 +262,10 @@ async function syncGoogleCalendar(
   conn: ClaimedConnection,
   stats: SyncRunStats,
   now: Date,
-  deps: SyncDeps
-): Promise<void> {
+  deps: SyncDeps,
+  startCursor: CalendarSyncCursor | null,
+  deadline: number
+): Promise<{ cursor: CalendarSyncCursor | null; exhausted: boolean }> {
   const accessToken = await deps.getAccessToken(conn.userId);
   const ctx = await openIngestContext(conn.userId, {
     source: "google_calendar",
@@ -248,8 +281,7 @@ async function syncGoogleCalendar(
     // `calendarAdapter` keeps 0.6 because it only annotates and never creates or merges.
   });
 
-  let cursor = conn.syncCursor?.calendar ?? null;
-  const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS);
+  let cursor = startCursor;
 
   for (;;) {
     let page;
@@ -306,20 +338,124 @@ async function syncGoogleCalendar(
     // immediately due.
     if (deadlineReached(deadline)) {
       await finalizeIngest(ctx);
-      await markSyncResult(conn.provider, conn.id, {
-        ok: true,
-        cursor: { calendar: cursor },
-        nextSyncAt: now,
-      });
-      return;
+      return { cursor, exhausted: true };
     }
   }
 
   await finalizeIngest(ctx);
+  return { cursor, exhausted: false };
+}
+
+/**
+ * Sync one Google connection's contacts, paging until the address book is exhausted or the
+ * per-connection budget runs out.
+ *
+ * Its own ingest context, not the calendar phase's: `IngestOptions.source` is written to the
+ * rows these create, and a contact that arrived from the address book did not arrive from a
+ * meeting. The duplicate index is therefore built twice per connection per run — the honest
+ * price of two truthful provenance labels.
+ */
+async function syncGoogleContacts(
+  conn: ClaimedConnection,
+  stats: SyncRunStats,
+  deps: SyncDeps,
+  startCursor: ContactsSyncCursor | null,
+  deadline: number
+): Promise<{ cursor: ContactsSyncCursor | null; exhausted: boolean }> {
+  const accessToken = await deps.getAccessToken(conn.userId);
+  const ctx = await openIngestContext(conn.userId, {
+    source: "google_contacts",
+    // Someone in the user's own address book is someone they know. Same judgement the
+    // calendar phase makes, and the opposite of the one-shot file import, which is a review
+    // screen precisely because a file is somebody else's list.
+    createsContacts: true,
+  });
+
+  let cursor = startCursor;
+
+  for (;;) {
+    let page;
+    try {
+      page = await (deps.fetchContactsPage ?? fetchContactsPage)({ accessToken, cursor });
+    } catch (err) {
+      if (err instanceof PeopleSyncTokenExpiredError) {
+        // Expected lifecycle event, not a fault — Google expires these on its own schedule.
+        // Drop the cursor and read the book again; explicitly NOT a failure, because counting
+        // it would walk a healthy connection up the backoff ladder and eventually disarm it.
+        cursor = null;
+        continue;
+      }
+      throw err;
+    }
+
+    stats.addressBookTombstones += page.tombstones;
+    stats.addressBookNameless += page.nameless;
+    if (page.people.length > 0) {
+      const ingested = await ingestPeople(ctx, page.people);
+      stats.addressBookSeen += ingested.seen;
+      stats.contactsCreated += ingested.created;
+      stats.addressBookMatched += ingested.matched;
+      stats.addressBookBlockedByPlan += ingested.blockedByPlan;
+    }
+
+    cursor = advanceContactsCursor(cursor, page);
+
+    // No more pages: `cursor` now holds the fresh syncToken and the next run is a delta.
+    if (!page.nextPageToken) break;
+
+    // Out of time mid-book. `advanceContactsCursor` has kept the pageToken, so the next run
+    // resumes here rather than starting the whole address book again.
+    if (deadlineReached(deadline)) {
+      await finalizeIngest(ctx);
+      return { cursor, exhausted: true };
+    }
+  }
+
+  await finalizeIngest(ctx);
+  return { cursor, exhausted: false };
+}
+
+/**
+ * Sync everything one Google connection is entitled to, then record the result ONCE.
+ *
+ * The single write is the point. `sync_cursor` is one jsonb column holding a key per
+ * capability, and the schema's own comment records what happens when two consumers each
+ * write their own key over the whole object: the other one's position is silently erased,
+ * twice an hour, forever. So the phases return their cursors and this function merges them
+ * into the claimed value — anything it does not know about survives untouched.
+ *
+ * Calendar runs first because meetings are the stronger signal and the budget is shared: if
+ * a first sync of a huge address book exhausts it, the user still got their meetings.
+ */
+async function syncGoogleConnection(
+  conn: ClaimedConnection,
+  stats: SyncRunStats,
+  now: Date,
+  deps: SyncDeps,
+  caps: { wantsCalendar: boolean; wantsContacts: boolean }
+): Promise<void> {
+  const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS);
+  let cursor: ProviderSyncCursor = { ...(conn.syncCursor ?? {}) };
+  let exhausted = false;
+
+  if (caps.wantsCalendar) {
+    const result = await syncGoogleCalendar(conn, stats, now, deps, cursor.calendar ?? null, deadline);
+    cursor = { ...cursor, calendar: result.cursor };
+    exhausted = result.exhausted;
+  }
+
+  // Skipped when the calendar phase already spent the budget: its cursor is saved either
+  // way, and `nextSyncAt = now` below makes the next run pick contacts up immediately.
+  if (caps.wantsContacts && !exhausted) {
+    const result = await syncGoogleContacts(conn, stats, deps, cursor.contacts ?? null, deadline);
+    cursor = { ...cursor, contacts: result.cursor };
+    exhausted = result.exhausted;
+  }
+
   await markSyncResult(conn.provider, conn.id, {
     ok: true,
-    cursor: { calendar: cursor },
-    nextSyncAt: new Date(now.getTime() + SYNC_INTERVAL_MS),
+    cursor,
+    nextSyncAt: exhausted ? now : new Date(now.getTime() + SYNC_INTERVAL_MS),
   });
 }
 
@@ -447,23 +583,25 @@ export async function runSyncPass(
       return;
     }
 
-    // A token minted before the calendar scope shipped is still valid for Gmail and Contacts
-    // and will keep working — but every Calendar call it makes returns 403. Disarm rather
-    // than retry: only the user reconnecting can fix it, and retrying forever would bury the
-    // signal under backoff noise.
-    if (!hasGoogleCalendarScope(conn.scopes)) {
+    // A token minted before a scope shipped keeps working for the scopes it does hold, but
+    // every call needing the missing one returns 403. Disarm only when the connection can do
+    // NOTHING for us: a contacts-only grant is still a working connection, and disarming it
+    // for lacking calendar would silently stop a sync that was fine.
+    const wantsCalendar = hasGoogleCalendarScope(conn.scopes);
+    const wantsContacts = hasGoogleContactsScope(conn.scopes);
+    if (!wantsCalendar && !wantsContacts) {
       stats.skippedNoScope++;
       await disarmSync(
         conn.provider,
         conn.id,
-        "Calendar access not granted — reconnect Google to enable calendar sync",
+        "Calendar and contacts access not granted — reconnect Google to enable sync",
         now
       ).catch(() => null);
       return;
     }
 
     try {
-      await syncGoogleCalendar(conn, stats, now, deps);
+      await syncGoogleConnection(conn, stats, now, deps, { wantsCalendar, wantsContacts });
       stats.synced++;
     } catch (err) {
       stats.failed++;
