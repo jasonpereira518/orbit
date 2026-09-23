@@ -4,7 +4,7 @@
  * part with the security properties runs in a smoke.
  */
 import { getAppBaseUrl } from "@/lib/app-url";
-import { getConnectorConnection, upsertConnectorConnection } from "@/lib/connectors/connections";
+import { getConnectorConnection, resetConnectorCursor, upsertConnectorConnection } from "@/lib/connectors/connections";
 import { buildAuthorizeUrl, exchangeCode, type OAuthState } from "@/lib/connectors/oauth";
 import { introspectHubspotToken } from "@/lib/crm/hubspot/api";
 import { HUBSPOT_SCOPES } from "@/lib/crm/hubspot/mapping";
@@ -91,5 +91,9 @@ export async function completeCrmConnect(input: {
     // Armed now: HubSpot's sync ships in this same change (the rule on ConnectorManifest.sync).
     nextSyncAt: new Date(),
   });
+  // Every connect starts a fresh window: the cursor caches the owner of whoever connected
+  // last, and this may be a different HubSpot user in the same portal. The next sync
+  // re-identifies and re-reads everything, which the idempotent upsert makes safe.
+  await resetConnectorCursor(input.sessionUserId, input.connectorId);
   return { label: info.hubDomain, accountRef: info.hubId, switchedAccount };
 }

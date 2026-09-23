@@ -100,8 +100,16 @@ run(async () => {
   await upsertCrmRecords(USER, "hubspot", [
     { remoteType: "contact", remoteId: "1", lifecycle: "lead", stage: null, displayName: "Kept", email: null, phone: null, linkedinUrl: null, companyName: null, companyDomain: null, title: null, remoteOwnerRef: null, remoteUrl: null, lastActivityAt: null, remoteCreatedAt: null, remoteUpdatedAt: null, properties: {} },
   ]);
+  // A window in progress, and the owner of whoever connected last — possibly someone else in
+  // the same portal.
+  await db
+    .update(connectorConnections)
+    .set({ syncCursor: { syncedThrough: "2026-09-01T00:00:00.000Z", cursor: "300", meta: { portalId: "4242", ownerId: "77", windowMax: "2026-09-02T00:00:00.000Z" } } })
+    .where(eq(connectorConnections.userId, USER));
   const same = await completeCrmConnect({ sessionUserId: USER, connectorId: "hubspot", code: "c4", state: state!, fetchImpl: provider(4242) });
   check("the same account keeps its records", !same.switchedAccount && (await db.select().from(crmRecords).where(eq(crmRecords.userId, USER))).length === 1);
+  const [reconnectedRow] = await db.select().from(connectorConnections).where(eq(connectorConnections.userId, USER));
+  check("every reconnect starts a fresh window: the cursor is cleared", reconnectedRow?.syncCursor === null, JSON.stringify(reconnectedRow?.syncCursor));
   const other = await completeCrmConnect({ sessionUserId: USER, connectorId: "hubspot", code: "c5", state: state!, fetchImpl: provider(999) });
   check("another account clears the old account's records", other.switchedAccount && (await db.select().from(crmRecords).where(eq(crmRecords.userId, USER))).length === 0);
   check("still one connection row", (await db.select().from(connectorConnections).where(eq(connectorConnections.userId, USER))).length === 1);

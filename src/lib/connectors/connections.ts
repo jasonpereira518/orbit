@@ -448,6 +448,19 @@ export async function upsertConnectorConnection(
   return { id: row!.id };
 }
 
+/**
+ * Forget a connection's sync progress, so its next run re-identifies and starts a fresh window.
+ * A reconnect calls this: the grant may belong to someone else in the same account, and the
+ * cursor caches who the last one was.
+ */
+export async function resetConnectorCursor(userId: string, connectorId: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(connectorConnections)
+    .set({ syncCursor: null, updatedAt: new Date() })
+    .where(and(eq(connectorConnections.userId, userId), eq(connectorConnections.connectorId, connectorId)));
+}
+
 export type ConnectorConnectionSummary = {
   id: string;
   connectorId: string;
