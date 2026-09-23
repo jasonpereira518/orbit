@@ -320,9 +320,33 @@ account with no keys, and one over-quota run per meter.
 - **P5 — copy and docs.** Privacy page, pricing table, settings display of
   remaining minutes, `.env.example`, runbook.
 
+## Spike findings (2026-09-23, verified against the live API)
+
+Run with a real key; the throwaway probe is not kept.
+
+- **Browser WebSocket auth: `new WebSocket(url, ["bearer", jwt])`.** Measured against
+  every plausible form: `["bearer", jwt]` opens; `["token", jwt]` closes 1006;
+  `?access_token=` and `?token=` close 1006; `["token", rawKey]` opens but must never
+  be used in a browser. The plan's draft used the `["token", …]` form, which does not work.
+- **A grant token authenticates the pre-recorded REST API** (`Authorization: Bearer <jwt>`,
+  HTTP 200). The raw key works there too, which is what the server uses.
+- **`POST /v1/auth/grant` needs a key with Member scope or higher.** A lesser key returns
+  403 `Insufficient permissions`, and scopes cannot be changed after a key is created, so
+  the operator must create a new key rather than edit one. Transcription itself works on a
+  lesser key, so this fails only at the token step — worth saying in the runbook.
+- **Retention: Deepgram keeps audio and transcripts by default.** The Model Improvement
+  Program is opt-OUT ("Participation is the default"), and this account's project reports
+  `mip_opt_out: false`. Sending `mip_opt_out=true` yields, in Deepgram's words, "zero data
+  retention: Deepgram does not store your audio, text, transcripts, or synthesized audio
+  after the response is returned". Request metadata (no audio or text) stays retrievable
+  for 90 days, which is what the nightly reconciliation reads.
+  **Decision: Orbit sends `mip_opt_out=true` on every request, live and file.** Private
+  meeting audio is not ours to donate to a vendor's training set, and the privacy page can
+  then say plainly that Deepgram stores nothing after answering.
+- **File transcription verified end to end through Orbit's own `transcribeFile`:** real
+  speech in, exact text out, with the billed seconds and request id parsed as expected.
+
 ## Open questions
 
-- Exact Deepgram retention default, and whether an account-level
-  zero-retention setting is needed (answered by P0).
 - Whether the 20–50 keyterm slice should prefer recency (as today) or the
   people on the meeting's calendar invite. Recency ships first.
