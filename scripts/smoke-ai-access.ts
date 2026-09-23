@@ -164,6 +164,12 @@ const KEY_PROBE = "src/lib/ai-key-check.ts";
  */
 const TYPESAFE_TRANSPORT = "src/lib/typesafe-api.ts";
 const TYPESAFE_TRANSPORT_TEST = "scripts/smoke-jev-client.ts";
+/**
+ * Deepgram's own client (task 3 of the speech-to-text plan). It is not an LLM provider and
+ * is deliberately outside the gate above, but it still reads exactly one key and names
+ * exactly one host — so it gets the same narrow exemption as the gate and the transport.
+ */
+const DEEPGRAM_CLIENT = "src/lib/deepgram.ts";
 
 function sourceGuard() {
   console.log("\nOnly the gate can reach a provider");
@@ -175,8 +181,8 @@ function sourceGuard() {
   const dynamicImport = new RegExp(String.raw`import\(\s*["'](${SDKS.map((s) => s.replace(/[/@.-]/g, (c) => `\\${c}`)).join("|")})["']\s*\)`);
   const construct = /new\s+(GoogleGenAI|OpenAI|Anthropic)\s*\(/;
   const transportImport = /^\s*import\s+(?!type\b)[^;]*?from\s+["'](?:@\/lib|\.\.?(?:\/[\w.-]+)*)\/typesafe-api["']|import\(\s*["'][^"']*typesafe-api["']\s*\)/m;
-  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|TYPESAFE_API_KEY)\b/;
-  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai/;
+  const envKey = /process\.env(\.|\[\s*["'`])(ORBIT_MANAGED_[A-Z_]*|GEMINI_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY|TYPESAFE_API_KEY|DEEPGRAM_API_KEY)\b/;
+  const providerHost = /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com|api\.typesafe\.ai|api\.deepgram\.com/;
 
   const offenders: string[] = [];
   for (const file of [...walk("src"), ...walk("scripts")]) {
@@ -187,8 +193,10 @@ function sourceGuard() {
     if (!probe && (valueImport.test(code) || dynamicImport.test(code))) offenders.push(`${file}: imports an AI SDK`);
     if (!probe && construct.test(code)) offenders.push(`${file}: constructs an AI client`);
     if (!probe && file !== TYPESAFE_TRANSPORT_TEST && transportImport.test(code)) offenders.push(`${file}: imports TypeSafe's raw-key transport`);
-    if (envKey.test(code) && file !== "scripts/smoke-contact-brief.ts") offenders.push(`${file}: reads an AI key from the environment`);
-    if (providerHost.test(code) && file !== TYPESAFE_TRANSPORT) offenders.push(`${file}: talks to a provider host directly`);
+    if (envKey.test(code) && file !== "scripts/smoke-contact-brief.ts" && file !== DEEPGRAM_CLIENT)
+      offenders.push(`${file}: reads an AI key from the environment`);
+    if (providerHost.test(code) && file !== TYPESAFE_TRANSPORT && file !== DEEPGRAM_CLIENT)
+      offenders.push(`${file}: talks to a provider host directly`);
   }
   check("no file outside the gate imports an SDK, builds a client, reads a key or calls a provider", offenders.length === 0, offenders.join("\n       "));
 
