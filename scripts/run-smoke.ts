@@ -103,6 +103,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-events-page": "pure",
   "smoke-leads-page": "pure",
   "smoke-hubspot-mapping": "pure",
+  "smoke-hubspot-api": "pure",
   "smoke-warm-path": "pure",
   "smoke-closeness-materialized": "pure",
   "smoke-comet-cap": "pure",

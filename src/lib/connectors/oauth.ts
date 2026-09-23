@@ -28,7 +28,8 @@ export type OAuthProviderConfig = {
 export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
   hubspot: {
     authorizeUrl: "https://app.hubspot.com/oauth/authorize",
-    tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+    // HubSpot's dated OAuth API; the undated v1 endpoints stop working on 2027-02-16.
+    tokenUrl: "https://api.hubapi.com/oauth/2026-09/token",
     clientIdEnv: "HUBSPOT_CLIENT_ID",
     clientSecretEnv: "HUBSPOT_CLIENT_SECRET",
   },
@@ -227,6 +228,18 @@ function clientCredentials(provider: OAuthProviderConfig): { id: string; secret:
   return { id, secret };
 }
 
+/** The app's client id and secret, read at call time. Throws when either is missing. */
+export function oauthClientCredentials(connectorId: string): { id: string; secret: string } {
+  return clientCredentials(providerOrThrow(connectorId));
+}
+
+/** Whether this server can run the connector's OAuth flow at all — for the UI, never a throw. */
+export function isOAuthConfigured(connectorId: string): boolean {
+  const provider = OAUTH_PROVIDERS[connectorId];
+  if (!provider) return false;
+  return Boolean(process.env[provider.clientIdEnv]?.trim() && process.env[provider.clientSecretEnv]?.trim());
+}
+
 export function buildAuthorizeUrl(
   connectorId: string,
   opts: { userId: string; redirectUri: string; scopes: string[]; returnTo: string }
@@ -257,16 +270,37 @@ export type OAuthTokens = {
   refreshToken: string | null;
   expiresAt: Date | null;
   scopes: string | null;
+  /**
+   * Every other scalar field of the token response, as strings — HubSpot's `hub_id` is the
+   * one P4 reads. Optional so a hand-built token (a refresh stub in a smoke) need not carry it.
+   */
+  extra?: Record<string, string>;
 };
 
 type TokenResponse = {
   access_token?: string;
   refresh_token?: string;
   expires_in?: number;
+  /** RFC 6749's space-separated string. */
   scope?: string;
+  /** HubSpot's array instead. */
+  scopes?: unknown;
   error?: string;
   error_description?: string;
+  [key: string]: unknown;
 };
+
+const KNOWN_TOKEN_FIELDS = new Set([
+  "access_token",
+  "refresh_token",
+  "expires_in",
+  "scope",
+  "scopes",
+  "token_type",
+  "id_token",
+  "error",
+  "error_description",
+]);
 
 /** Caps how much of a provider's error text we fold into an Error message. */
 function truncateProviderMessage(message: string): string {
@@ -306,11 +340,23 @@ async function postToken(
     const rawMessage = json.error_description ?? json.error ?? `Token endpoint returned ${res.status}`;
     throw new OAuthTokenError(truncateProviderMessage(rawMessage), needsReauth);
   }
+  const extra: Record<string, string> = {};
+  for (const [key, value] of Object.entries(json)) {
+    if (KNOWN_TOKEN_FIELDS.has(key)) continue;
+    if (typeof value === "string" || typeof value === "number") extra[key] = String(value);
+  }
+  const scopes =
+    typeof json.scope === "string"
+      ? json.scope
+      : Array.isArray(json.scopes)
+        ? json.scopes.filter((s): s is string => typeof s === "string").join(" ")
+        : null;
   return {
     accessToken: json.access_token,
     refreshToken: json.refresh_token ?? null,
     expiresAt: json.expires_in ? new Date(Date.now() + json.expires_in * 1000) : null,
-    scopes: json.scope ?? null,
+    scopes: scopes || null,
+    extra,
   };
 }
 
