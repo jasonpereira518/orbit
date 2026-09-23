@@ -17,8 +17,16 @@ import {
 } from "../src/lib/team-domain";
 import { identityPairs, rankWarmth } from "../src/lib/leads/warm-path";
 import { parseTargetInput } from "../src/lib/leads/target-input";
-import { linkedinSlug, normalizePhone } from "../src/lib/duplicates";
+import { linkedinSlug, normalizePhone, identityKeysFor } from "../src/lib/duplicates";
 import { displayCompanyName, normalizeCompanyName } from "../src/lib/company-name";
+import {
+  coerceLeadInput,
+  LEAD_FIELD_MAX,
+  leadTargetIdentity,
+  normalizeLeadInput,
+} from "../src/lib/leads/lead-identity";
+import { introRequestMailto } from "../src/lib/leads/intro-request";
+import { isLeadStatus, isUuid, LEAD_STATUSES } from "../src/lib/leads/validate";
 import { accountPathsStatement, directPathsStatement } from "../src/lib/leads/warm-path-sql";
 
 let failures = 0;
@@ -179,9 +187,78 @@ function main() {
     check("every action gates on requireLeadsUser first", bodies.every((b) => /^[^{]*\{\s*const userId = await requireLeadsUser\(\);/.test(b)));
   }
 
+  console.log("\nleads are written the way contact identities are");
+  {
+    const raw = {
+      email: " Ada@Example.COM ",
+      linkedinUrl: "https://www.linkedin.com/in/Ada-Lovelace/?trk=x",
+      phone: "+1 (415) 555-0123",
+    };
+    const lead = normalizeLeadInput({
+      displayName: "  Ada Lovelace ",
+      ...raw,
+      companyName: "  Analytical   Engines Ltd ",
+      title: "Mathematician",
+    });
+    const keys = identityKeysFor(raw);
+    const key = (kind: string) => keys.find((k) => k.kind === kind)?.value ?? null;
+    check("the name is trimmed", lead.displayName === "Ada Lovelace");
+    check("the email is its identity key", lead.emailNormalized === key("email") && lead.emailNormalized === "ada@example.com");
+    check("the raw email is kept as typed, trimmed", lead.email === "Ada@Example.COM");
+    check("the LinkedIn slug is its identity key", !!lead.linkedinSlug && lead.linkedinSlug === key("linkedin_slug"));
+    check("the phone is its identity key", !!lead.phoneE164 && lead.phoneE164 === key("phone_e164"));
+    check(
+      "the company key is resolveCompany's",
+      lead.companyNormalized === normalizeCompanyName(displayCompanyName("Analytical   Engines Ltd"))
+    );
+    const role = normalizeLeadInput({ displayName: "Sales", email: "sales@acme.test" });
+    check("a role mailbox is kept but never matched", role.email === "sales@acme.test" && role.emailNormalized === null);
+    const bare = normalizeLeadInput({ displayName: "Grace", email: "  ", companyName: "" });
+    check("blanks are null", bare.email === null && bare.companyNormalized === null && bare.linkedinSlug === null);
+    const target = leadTargetIdentity(lead);
+    check(
+      "a lead's target carries its identifiers and company",
+      target.email === lead.emailNormalized &&
+        target.linkedinSlug === lead.linkedinSlug &&
+        target.phoneE164 === lead.phoneE164 &&
+        target.companyNormalized === lead.companyNormalized
+    );
+    check("a long paste is cut to the field limit", normalizeLeadInput({ displayName: "x".repeat(500) }).displayName.length === LEAD_FIELD_MAX);
+    const forged = coerceLeadInput({ displayName: 42, email: ["a@b.c"], title: "CTO" });
+    check("forged input keeps only strings", forged.displayName === "" && forged.email === null && forged.title === "CTO");
+    check("a missing body is an empty lead", coerceLeadInput(null).displayName === "");
+  }
+
+  console.log("\nthe intro ask");
+  {
+    const url = introRequestMailto({
+      teammateName: "Alex Ng",
+      teammateEmail: "alex@acme.test",
+      leadName: "Jane Doe",
+      leadCompany: "Northwind",
+    });
+    check("is a mailto to the teammate", url.startsWith("mailto:alex%40acme.test?"), url);
+    const params = new URLSearchParams(url.slice(url.indexOf("?") + 1));
+    check("asks for the intro by name", params.get("subject") === "Intro to Jane Doe?");
+    check("greets the teammate by first name", (params.get("body") ?? "").startsWith("Hi Alex,"));
+    check("names the company when known", (params.get("body") ?? "").includes("Jane Doe at Northwind"));
+    const noCompany = new URLSearchParams(
+      introRequestMailto({ teammateName: "Priya", teammateEmail: "p@acme.test", leadName: "Sam", leadCompany: null }).split("?")[1]
+    );
+    check("and leaves it out when not", (noCompany.get("body") ?? "").includes("you know Sam."));
+  }
+
+  console.log("\ninput checks");
+  {
+    check("a uuid passes", isUuid("0f8fad5b-d9cb-469f-a165-70867728950e"));
+    check("anything else fails", !isUuid("1; drop table leads") && !isUuid(42) && !isUuid(undefined));
+    check("the four statuses, in order", LEAD_STATUSES.join(",") === "open,intro_requested,converted,dismissed");
+    check("an unknown status fails", !isLeadStatus("won") && isLeadStatus("dismissed"));
+  }
+
   console.log("\nclient-bundle safety");
   {
-    for (const file of ["src/lib/deleted-account.ts", "src/lib/team-domain.ts", "src/lib/leads/warm-path.ts", "src/lib/leads/target-input.ts", "src/lib/leads/warm-path-sql.ts"]) {
+    for (const file of ["src/lib/deleted-account.ts", "src/lib/team-domain.ts", "src/lib/leads/warm-path.ts", "src/lib/leads/target-input.ts", "src/lib/leads/warm-path-sql.ts", "src/lib/leads/lead-identity.ts", "src/lib/leads/intro-request.ts", "src/lib/leads/validate.ts"]) {
       const valueDbImport = /import\s+(?!type\b)[^;]*from\s+["']@\/db/.test(code(file));
       check(`${file} never value-imports @/db`, !valueDbImport);
     }
