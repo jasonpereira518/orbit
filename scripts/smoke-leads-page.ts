@@ -112,6 +112,7 @@ function main() {
     }
     const dl = text(React.createElement(SharingDl));
     check("the sharing list names both sides", dl.includes("Shared while you share") && dl.includes("Never shared"), dl);
+    check("it names every fact a lookup reveals", dl.includes("by email, LinkedIn, phone or X") && dl.includes("how close the closest of them is"), dl);
   }
 
   console.log("\nthe leads components stay client-safe");

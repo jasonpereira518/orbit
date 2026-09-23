@@ -9,9 +9,10 @@ export function SharingDl() {
       <div>
         <dt className="font-medium text-foreground">Shared while you share</dt>
         <dd className="mt-1 text-muted-foreground">
-          Whether you know someone a teammate looks up, and how close you are &mdash; inner, mid or outer
-          orbit &mdash; plus how many other people you know at their company. Your name and work email,
-          so they can ask you for the intro.
+          Whether you know someone a teammate looks up, how close you are &mdash; inner, mid or outer
+          orbit &mdash; and whether you matched them by email, LinkedIn, phone or X. How many other
+          people you know at their company, and how close the closest of them is. Your name and work
+          email, so they can ask you for the intro.
         </dd>
       </div>
       <div>
