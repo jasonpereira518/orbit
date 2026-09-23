@@ -7,7 +7,7 @@ process.env.HUBSPOT_CLIENT_ID = "cid";
 process.env.HUBSPOT_CLIENT_SECRET = "csecret";
 
 import { ConnectorAuthError } from "../src/lib/connectors/auth-errors";
-import { OAUTH_PROVIDERS, exchangeCode, isOAuthConfigured } from "../src/lib/connectors/oauth";
+import { OAUTH_PROVIDERS, OAuthTokenError, exchangeCode, isOAuthConfigured, refreshAccessToken } from "../src/lib/connectors/oauth";
 import {
   HubspotApiError,
   findHubspotOwner,
@@ -150,6 +150,21 @@ async function main() {
     check("not configured without the secret", !isOAuthConfigured("hubspot"));
     check("an unknown connector is not configured", !isOAuthConfigured("nope"));
     process.env.HUBSPOT_CLIENT_SECRET = "csecret";
+  }
+
+  console.log("\na throttled token call is retryable; a dead grant is not");
+  {
+    const token = (status: number, body: unknown) => scripted([[(u) => u.endsWith("/oauth/2026-09/token"), () => json(status, body)]]).impl;
+    const throttled = await caught(refreshAccessToken("hubspot", "r", { fetchImpl: token(429, { status: "error", message: "rate limited" }) }));
+    check(
+      "a 429 is an OAuthTokenError that does not need reauth",
+      throttled instanceof OAuthTokenError && throttled.needsReauth === false,
+      String(throttled instanceof OAuthTokenError ? throttled.needsReauth : throttled)
+    );
+    const timedOut = await caught(refreshAccessToken("hubspot", "r", { fetchImpl: token(408, {}) }));
+    check("a 408 is retryable too", timedOut instanceof OAuthTokenError && timedOut.needsReauth === false);
+    const dead = await caught(refreshAccessToken("hubspot", "r", { fetchImpl: token(400, { error: "invalid_grant", error_description: "missing or invalid refresh token" }) }));
+    check("a 400 invalid_grant still needs reauth", dead instanceof OAuthTokenError && dead.needsReauth === true);
   }
 
   if (failures > 0) {

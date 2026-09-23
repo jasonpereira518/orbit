@@ -335,8 +335,12 @@ async function postToken(
     // retrying, which is exactly the retryable/needs-reauth split the scheduler acts on. A
     // 2xx response with no access_token is neither — it's a provider deliberately sending a
     // malformed success envelope, and retrying that on a backoff ladder would just repeat
-    // it forever, so it is treated as needs-reauth rather than retryable.
-    const needsReauth = res.ok ? true : res.status >= 400 && res.status < 500;
+    // it forever, so it is treated as needs-reauth rather than retryable. 408 and 429 are
+    // the two 4xx that say nothing about the grant — a timeout and throttling — so they
+    // retry like a 5xx instead of costing the person a reconnect.
+    const needsReauth = res.ok
+      ? true
+      : res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
     const rawMessage = json.error_description ?? json.error ?? `Token endpoint returned ${res.status}`;
     throw new OAuthTokenError(truncateProviderMessage(rawMessage), needsReauth);
   }
