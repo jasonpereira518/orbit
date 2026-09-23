@@ -1,0 +1,356 @@
+/**
+ * Expanding recurring calendar events.
+ *
+ * Google and Microsoft expand recurrences server-side (`singleEvents`, `calendarView`), so
+ * nothing needed this until CalDAV — which returns a master VEVENT plus its RRULE. The same
+ * gap has always been live for subscribed ICS feeds: `parseIcsEvents` ignores RRULE, so a
+ * weekly 1:1 was recorded once, at its first occurrence.
+ *
+ * Deliberately a SUBSET of RFC 5545: FREQ/INTERVAL/COUNT/UNTIL/BYDAY/BYMONTHDAY/BYSETPOS,
+ * plus EXDATE. Anything else returns the master alone rather than guessing — being wrong
+ * about when a meeting happened is worse than recording one of them.
+ *
+ * ## Expanding in the event's own zone
+ *
+ * A recurring meeting is a WALL-CLOCK commitment ("Tuesdays at 9am"), not a fixed UTC instant
+ * repeated every N seconds. So each occurrence is built by taking the master's local
+ * wall-clock time-of-day, stepping the CALENDAR date (a pure, DST-free operation — adding days
+ * to a `Date.UTC` anchor never touches a real zone), and re-resolving that wall clock to an
+ * instant with `fromWallClockInput`, the same function `calendar-import.ts` already uses for
+ * `TZID` handling. That is what keeps a 09:00 meeting at 09:00 local across a DST change,
+ * even though its UTC hour moves.
+ */
+import type { ParsedCalendarEvent } from "@/lib/calendar-import";
+import { fromWallClockInput, toWallClockInput } from "@/lib/events/wall-clock";
+
+/** A runaway or malformed rule must not be able to ingest an unbounded number of meetings. */
+export const MAX_OCCURRENCES = 400;
+
+export type RecurrenceRule = {
+  freq: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
+  interval: number;
+  count: number | null;
+  until: Date | null;
+  byDay: string[];
+  byMonthDay: number[];
+  bySetPos: number[];
+};
+
+/** A pure calendar date — no time-of-day, no zone. Used only for stepping between candidates. */
+type Civil = { y: number; mo: number; d: number };
+
+const FREQS = new Set<RecurrenceRule["freq"]>(["DAILY", "WEEKLY", "MONTHLY", "YEARLY"]);
+const WEEKDAY_INDEX: Record<string, number> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+function pad4(n: number): string {
+  return String(n).padStart(4, "0");
+}
+
+function civilKey(c: Civil): string {
+  return `${pad4(c.y)}-${pad2(c.mo)}-${pad2(c.d)}`;
+}
+
+/** `UNTIL`'s value: a bare `YYYYMMDD` date, or the `YYYYMMDDTHHMMSSZ` form ICS actually writes. */
+function parseUntil(raw: string): Date | null {
+  const value = raw.trim();
+  const utc = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(value);
+  if (utc) {
+    return new Date(
+      Date.UTC(
+        Number(utc[1]),
+        Number(utc[2]) - 1,
+        Number(utc[3]),
+        Number(utc[4]),
+        Number(utc[5]),
+        Number(utc[6])
+      )
+    );
+  }
+  const dateOnly = /^(\d{4})(\d{2})(\d{2})$/.exec(value);
+  if (dateOnly) {
+    // A bare DATE for UNTIL is inclusive of the whole day.
+    return new Date(
+      Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 23, 59, 59)
+    );
+  }
+  return null;
+}
+
+export function parseRRule(line: string): RecurrenceRule | null {
+  const colon = line.indexOf(":");
+  const body = colon >= 0 ? line.slice(colon + 1) : line;
+  const fields = new Map<string, string>();
+  for (const part of body.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const key = part.slice(0, eq).trim().toUpperCase();
+    const value = part.slice(eq + 1).trim();
+    if (key) fields.set(key, value);
+  }
+
+  const freq = fields.get("FREQ");
+  if (!freq || !FREQS.has(freq as RecurrenceRule["freq"])) return null;
+
+  const intervalRaw = fields.get("INTERVAL");
+  const parsedInterval = intervalRaw ? Number(intervalRaw) : 1;
+  const interval = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1;
+
+  const countRaw = fields.get("COUNT");
+  const parsedCount = countRaw ? Number(countRaw) : null;
+  const count = parsedCount !== null && Number.isFinite(parsedCount) ? parsedCount : null;
+
+  const untilRaw = fields.get("UNTIL");
+  const until = untilRaw ? parseUntil(untilRaw) : null;
+
+  const byDay = (fields.get("BYDAY") ?? "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  const byMonthDay = (fields.get("BYMONTHDAY") ?? "")
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n !== 0);
+  const bySetPos = (fields.get("BYSETPOS") ?? "")
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n !== 0);
+
+  return { freq: freq as RecurrenceRule["freq"], interval, count, until, byDay, byMonthDay, bySetPos };
+}
+
+/** The occurrence id shape. Non-recurring events never pass through here. */
+export function occurrenceUid(uid: string, start: Date): string {
+  return `${uid}_${start.toISOString()}`;
+}
+
+/**
+ * Whether `rule` is inside the subset this module actually knows how to expand.
+ *
+ * BYSETPOS only means something paired with BYDAY on a MONTHLY rule ("the last Friday").
+ * BYMONTHDAY only means something on a MONTHLY rule, and never alongside BYDAY (two
+ * conflicting ways of picking the day). A bare MONTHLY+BYDAY with no BYSETPOS ("every Friday
+ * of the month", i.e. several occurrences a month) is real RFC 5545 but outside what this
+ * module was asked to support.
+ */
+function isSupportedRule(rule: RecurrenceRule): boolean {
+  const hasByDay = rule.byDay.length > 0;
+  const hasByMonthDay = rule.byMonthDay.length > 0;
+  const hasBySetPos = rule.bySetPos.length > 0;
+
+  if (hasByMonthDay && hasByDay) return false;
+  if (hasByMonthDay && rule.freq !== "MONTHLY") return false;
+  if (hasBySetPos && !(rule.freq === "MONTHLY" && hasByDay && !hasByMonthDay)) return false;
+  if (hasByDay && rule.freq !== "WEEKLY" && rule.freq !== "MONTHLY") return false;
+  if (hasByDay && rule.freq === "MONTHLY" && !hasBySetPos) return false;
+  return true;
+}
+
+function civilToUtcMs(c: Civil): number {
+  return Date.UTC(c.y, c.mo - 1, c.d);
+}
+function utcMsToCivil(ms: number): Civil {
+  const dt = new Date(ms);
+  return { y: dt.getUTCFullYear(), mo: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+}
+function daysInMonth(y: number, mo: number): number {
+  return new Date(Date.UTC(y, mo, 0)).getUTCDate();
+}
+
+const DAY_MS = 86_400_000;
+
+function* dailySeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
+  let anchor = civilToUtcMs(start);
+  while (true) {
+    yield utcMsToCivil(anchor);
+    anchor += rule.interval * DAY_MS;
+  }
+}
+
+function* weeklySimpleSeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
+  let anchor = civilToUtcMs(start);
+  while (true) {
+    yield utcMsToCivil(anchor);
+    anchor += rule.interval * 7 * DAY_MS;
+  }
+}
+
+/** WEEKLY with an explicit BYDAY list: every listed weekday, in each `interval`-week bucket. */
+function* weeklyByDaySeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
+  const indices = [...new Set(rule.byDay.map((d) => WEEKDAY_INDEX[d]))]
+    .filter((n): n is number => n !== undefined)
+    .sort((a, b) => a - b);
+  if (indices.length === 0) return;
+
+  const startMs = civilToUtcMs(start);
+  const startWeekday = new Date(startMs).getUTCDay();
+  const weekStartMs = startMs - startWeekday * DAY_MS;
+
+  let w = 0;
+  while (true) {
+    const bucketStart = weekStartMs + w * rule.interval * 7 * DAY_MS;
+    for (const idx of indices) {
+      const candidateMs = bucketStart + idx * DAY_MS;
+      if (candidateMs < startMs) continue; // never emit before the master's own occurrence
+      yield utcMsToCivil(candidateMs);
+    }
+    w++;
+  }
+}
+
+/** MONTHLY with BYMONTHDAY: those day(s) of the month, every `interval` months. */
+function* monthlyByMonthDaySeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
+  const days = [...new Set(rule.byMonthDay)].sort((a, b) => a - b);
+  const startMs = civilToUtcMs(start);
+  let y = start.y;
+  let mo = start.mo;
+  let first = true;
+  while (true) {
+    for (const day of days) {
+      if (day < 1 || day > daysInMonth(y, mo)) continue;
+      const candidateMs = Date.UTC(y, mo - 1, day);
+      if (first && candidateMs < startMs) continue;
+      yield { y, mo, d: day };
+    }
+    first = false;
+    mo += rule.interval;
+    while (mo > 12) {
+      mo -= 12;
+      y++;
+    }
+  }
+}
+
+/** MONTHLY with BYDAY + BYSETPOS: the Nth (or -1 = last) listed weekday of the month. */
+function* monthlySetPosSeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
+  const weekdayIndices = new Set(rule.byDay.map((d) => WEEKDAY_INDEX[d]).filter((n): n is number => n !== undefined));
+  const startMs = civilToUtcMs(start);
+  let y = start.y;
+  let mo = start.mo;
+  let first = true;
+  while (true) {
+    const matches: number[] = [];
+    const total = daysInMonth(y, mo);
+    for (let d = 1; d <= total; d++) {
+      if (weekdayIndices.has(new Date(Date.UTC(y, mo - 1, d)).getUTCDay())) matches.push(d);
+    }
+    const selected = new Set<number>();
+    for (const pos of rule.bySetPos) {
+      const day = pos > 0 ? matches[pos - 1] : matches[matches.length + pos];
+      if (day !== undefined) selected.add(day);
+    }
+    for (const day of [...selected].sort((a, b) => a - b)) {
+      const candidateMs = Date.UTC(y, mo - 1, day);
+      if (first && candidateMs < startMs) continue;
+      yield { y, mo, d: day };
+    }
+    first = false;
+    mo += rule.interval;
+    while (mo > 12) {
+      mo -= 12;
+      y++;
+    }
+  }
+}
+
+/** MONTHLY with no BY* rule: the same day-of-month as the master, skipping months too short. */
+function* monthlySimpleSeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
+  let y = start.y;
+  let mo = start.mo;
+  while (true) {
+    if (start.d <= daysInMonth(y, mo)) yield { y, mo, d: start.d };
+    mo += rule.interval;
+    while (mo > 12) {
+      mo -= 12;
+      y++;
+    }
+  }
+}
+
+/** YEARLY: the same month/day as the master, skipping years without it (Feb 29). */
+function* yearlySimpleSeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
+  let y = start.y;
+  while (true) {
+    if (start.d <= daysInMonth(y, start.mo)) yield { y, mo: start.mo, d: start.d };
+    y += rule.interval;
+  }
+}
+
+function civilDateSeries(rule: RecurrenceRule, start: Civil): Generator<Civil> {
+  switch (rule.freq) {
+    case "DAILY":
+      return dailySeries(rule, start);
+    case "WEEKLY":
+      return rule.byDay.length > 0 ? weeklyByDaySeries(rule, start) : weeklySimpleSeries(rule, start);
+    case "MONTHLY":
+      if (rule.byMonthDay.length > 0) return monthlyByMonthDaySeries(rule, start);
+      if (rule.byDay.length > 0 && rule.bySetPos.length > 0) return monthlySetPosSeries(rule, start);
+      return monthlySimpleSeries(rule, start);
+    case "YEARLY":
+      return yearlySimpleSeries(rule, start);
+  }
+}
+
+export function expandEvent(
+  event: ParsedCalendarEvent,
+  rule: RecurrenceRule | null,
+  window: { from: Date; to: Date },
+  opts: { exDates?: Date[]; cap?: number } = {}
+): ParsedCalendarEvent[] {
+  // No rule, or no start: the event stands alone, uid untouched.
+  if (!rule || !event.start) return [event];
+  if (!isSupportedRule(rule)) return [event];
+
+  const timezone = event.timezone ?? null;
+  const wallStart = toWallClockInput(event.start, timezone);
+  const startMatch = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(wallStart);
+  if (!startMatch) return [event];
+  const start: Civil = { y: Number(startMatch[1]), mo: Number(startMatch[2]), d: Number(startMatch[3]) };
+  const hh = Number(startMatch[4]);
+  const mm = Number(startMatch[5]);
+
+  const durationMs = event.end ? event.end.getTime() - event.start.getTime() : null;
+  const cap = Math.max(0, Math.min(opts.cap ?? MAX_OCCURRENCES, MAX_OCCURRENCES));
+
+  // EXDATE is matched by local CALENDAR DATE, not exact instant. An ICS producer that writes
+  // EXDATE without recomputing the DST offset for that specific date still means "skip the
+  // occurrence on this day" — and a producer that resolved it correctly (via the same
+  // TZID-aware parsing DTSTART gets) lands on the same day anyway, so this is a superset of
+  // exact-instant matching, not a weaker one.
+  const exDateKeys = new Set(
+    (opts.exDates ?? [])
+      .map((d) => toWallClockInput(d, timezone))
+      .filter((s) => s.length >= 10)
+      .map((s) => s.slice(0, 10))
+  );
+
+  const results: ParsedCalendarEvent[] = [];
+  let n = 0;
+  for (const civil of civilDateSeries(rule, start)) {
+    if (n >= cap) break;
+
+    const wall = `${civilKey(civil)}T${pad2(hh)}:${pad2(mm)}`;
+    const instant = fromWallClockInput(wall, timezone);
+    if (!instant) continue;
+
+    if (rule.until && instant.getTime() > rule.until.getTime()) break;
+    if (instant.getTime() >= window.to.getTime()) break; // dates only increase from here on
+
+    n++;
+    if (rule.count !== null && n > rule.count) break;
+
+    if (instant.getTime() < window.from.getTime()) continue;
+    if (exDateKeys.has(civilKey(civil))) continue;
+
+    results.push({
+      ...event,
+      start: instant,
+      end: durationMs !== null ? new Date(instant.getTime() + durationMs) : event.end,
+      uid: occurrenceUid(event.uid, instant),
+    });
+  }
+
+  return results;
+}

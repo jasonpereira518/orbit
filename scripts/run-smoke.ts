@@ -136,6 +136,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-microsoft-scopes": "pure",
   "smoke-google-calendar-map": "pure",
   "smoke-outlook-calendar-map": "pure",
+  "smoke-recurrence": "pure",
   "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-icon-button-names": "pure",
