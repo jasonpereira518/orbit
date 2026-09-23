@@ -22,7 +22,7 @@ import { openConnectorAuth, type ConnectorAuthDeps } from "@/lib/connectors/toke
 import { persistCrmPage } from "@/lib/crm/persist";
 import type { CrmPerson } from "@/lib/crm/types";
 import { getEntitlements } from "@/lib/entitlements";
-import { finalizeIngest, openIngestContext } from "@/lib/ingest/events";
+import { finalizeIngest, openIngestContext, type IngestContext } from "@/lib/ingest/events";
 import { HubspotApiError, findHubspotOwner, introspectHubspotToken, searchHubspotContacts } from "./api";
 import {
   advanceWindow,
@@ -108,7 +108,9 @@ export async function syncHubspot(
     let window = windowFromCursor(cursor, now());
     await saveConnectorCursor(conn.id, cursorFromWindow(window, who));
 
-    const ctx = await openIngestContext(conn.userId, { source: "hubspot", createsContacts: true, reportResolutions: true });
+    // Opened on the first page that has someone in it: it reads the person's whole contact
+    // list, which a run that finds nothing new has no use for.
+    let ctx: IngestContext | null = null;
     let done = false;
     let lost = false;
     try {
@@ -123,12 +125,15 @@ export async function syncHubspot(
           lost = true;
           break;
         }
-        const stats = await persistCrmPage(ctx, "hubspot", people, now());
+        if (people.length > 0) {
+          ctx ??= await openIngestContext(conn.userId, { source: "hubspot", createsContacts: true, reportResolutions: true });
+          const stats = await persistCrmPage(ctx, "hubspot", people, now());
+          result.records += stats.records;
+          result.contactsCreated += stats.contactsCreated;
+          result.leadsCreated += stats.leadsCreated;
+          result.blocked += stats.blocked;
+        }
         result.pages++;
-        result.records += stats.records;
-        result.contactsCreated += stats.contactsCreated;
-        result.leadsCreated += stats.leadsCreated;
-        result.blocked += stats.blocked;
 
         // From the RAW results: a page of skipped (nameless, archived) records must still move
         // the window, or the next query would read the same page forever.
@@ -147,7 +152,7 @@ export async function syncHubspot(
       }
     } finally {
       // A lost lease writes nothing more — not even the derived-state kick for pages already in.
-      if (!lost) await finalizeIngest(ctx);
+      if (ctx && !lost) await finalizeIngest(ctx);
     }
 
     if (lost || !(await holdsLease())) return leaseLost();

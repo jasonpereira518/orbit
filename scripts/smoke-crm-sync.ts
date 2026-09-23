@@ -211,6 +211,13 @@ run(async () => {
   check("it re-identified", other.introspections() === 1);
   await db.update(connectorConnections).set({ accountRef: "4242", syncStatus: "idle" }).where(eq(connectorConnections.userId, USER));
 
+  console.log("\na run whose only page is empty");
+  const quiet = hubspot([{ results: [], after: null }]);
+  const rQuiet = await syncHubspot(await claim(), { fetchImpl: quiet.impl });
+  check("completes, having read one empty page", rQuiet.outcome === "complete" && rQuiet.pages === 1 && rQuiet.records === 0, JSON.stringify(rQuiet));
+  const afterQuiet = await row();
+  check("and records its end", afterQuiet?.syncStatus === "idle" && afterQuiet?.syncError === null && afterQuiet?.lastSyncedAt !== null);
+
   console.log("\na connection deleted mid-run: the run stops writing");
   await db.update(connectorConnections).set({ syncCursor: null, syncStatus: "idle" }).where(eq(connectorConnections.userId, USER));
   let purgeSearches = 0;
