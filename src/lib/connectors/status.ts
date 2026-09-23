@@ -15,6 +15,7 @@ export const CONNECTOR_STATUS_LOOKUP_IDS = [
   "eventbrite",
   "apollo",
   "zapier",
+  "hubspot",
 ] as const;
 
 export type ConnectorStatusId = (typeof CONNECTOR_STATUS_LOOKUP_IDS)[number];

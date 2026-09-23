@@ -9,6 +9,7 @@ import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { listCalendarSubscriptions } from "@/actions/calendar";
 import { listEventConnections } from "@/lib/events/connections";
+import { getConnectorConnection } from "@/lib/connectors/connections";
 import { requireUserId } from "@/lib/auth";
 import { CONNECTOR_STATUS_LOOKUP_IDS, type ConnectorStatusId } from "@/lib/connectors/status";
 import type { IntegrationTabId } from "@/components/settings/sections";
@@ -36,7 +37,7 @@ export type IntegrationStatuses = Partial<
 
 /**
  * Per-lookup budget. The calendar feed status has hung in production rather than failed
- * (see `calendar-feed-settings.tsx`), and one hung lookup must not hold up the other eight.
+ * (see `calendar-feed-settings.tsx`), and one hung lookup must not hold up the other nine.
  */
 const LOOKUP_TIMEOUT_MS = 8_000;
 
@@ -60,11 +61,11 @@ function plural(n: number, word: string) {
 
 /**
  * One line per integration for the Integrations card and the dialog's side nav: whether it
- * is set up, in a few words. Loaded after the page paints rather than with it, so nine
+ * is set up, in a few words. Loaded after the page paints rather than with it, so ten
  * lookups — two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook, icsSubs, eventConns] =
+  const [settings, feed, keys, webhooks, google, outlook, icsSubs, eventConns, hubspot] =
     await Promise.all([
       settle(getSettings()),
       settle(getCalendarFeedStatus()),
@@ -74,6 +75,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       settle(getOutlookConnectionStatus()),
       settle(listCalendarSubscriptions()),
       settle(requireUserId().then((id) => listEventConnections(id))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "hubspot"))),
     ]);
 
   const statuses: IntegrationStatuses = {};
@@ -180,6 +182,15 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       : keys.length > 0
         ? { state: "on", detail: plural(keys.length, "key") }
         : { state: "off", detail: "No keys" };
+
+  statuses.hubspot =
+    hubspot === "unknown"
+      ? "unknown"
+      : hubspot === null
+        ? { state: "off", detail: "Not connected" }
+        : hubspot.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: hubspot.label ?? "Connected" };
 
   // The registry and this action must answer for the same connectors. The smoke test checks
   // the list against the registry; this checks the implementation against the list.

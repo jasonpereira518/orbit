@@ -343,15 +343,15 @@ const CONNECTOR_MANIFESTS = [
     label: "HubSpot",
     family: "crm",
     auth: "oauth2",
-    availability: "planned",
+    availability: "available",
     entitlement: "crm",
     rateBucket: "providerSync",
     purgeCategory: "connections",
+    // P4 reads people. Engagements and write-back (`logActivity`, `writeContact`) land in P6;
+    // the registry lists what a connector really does. Scopes mirror `HUBSPOT_SCOPES` in
+    // src/lib/crm/hubspot/mapping.ts (smoke-connector-registry compares them).
     capabilities: [
-      read("syncPeople", "Import the contacts you own"),
-      read("syncEvents", "Import logged engagements"),
-      write("logActivity", "Log Orbit interactions on the matching record"),
-      write("writeContact", "Create a HubSpot contact"),
+      read("syncPeople", "Read the contacts you own", ["crm.objects.contacts.read", "crm.objects.owners.read"]),
     ],
   },
   {

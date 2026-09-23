@@ -13,11 +13,16 @@ import {
   type ConnectorId,
   type ConnectorManifest,
 } from "@/lib/connectors/registry";
+import { syncHubspot } from "@/lib/crm/hubspot/sync";
 
 export type ConnectorSync = (conn: ClaimedConnectorConnection) => Promise<void>;
 
 /** Keyed by connector id. A planned connector listed here is still never synced. */
-export const CONNECTOR_SYNCS: Partial<Record<ConnectorId, ConnectorSync>> = {};
+export const CONNECTOR_SYNCS: Partial<Record<ConnectorId, ConnectorSync>> = {
+  hubspot: async (conn) => {
+    await syncHubspot(conn);
+  },
+};
 
 /**
  * The manifest for `id` with its sync attached, when it has one and may run it. `syncs` is
