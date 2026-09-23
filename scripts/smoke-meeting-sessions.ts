@@ -33,6 +33,7 @@ import {
   markMeetingSessionSaved,
   missingSeqs,
   recordLiveSegments,
+  type LiveSegmentInput,
   resumeMeetingSessionRow,
   storeMeetingDigest,
   toNoteBatchMeeting,
@@ -325,6 +326,18 @@ async function main() {
 
     const usage = await db.select().from(speechUsage).where(eq(speechUsage.sessionId, session.id));
     check("usage is metered once, in seconds", usage.length === 1 && usage[0]?.seconds === 9);
+
+    const empty = await recordLiveSegments(USER, session.id, { recorderId: "rec-1", segments: [] });
+    check("an empty batch is a no-op success, not an error", empty.ok && empty.written === 0 && empty.durationMs === 9_000);
+
+    // A route parses JSON and casts it — nothing upstream guarantees a segment actually has
+    // the shape it claims to, so a missing `text` must come back as this function's own 400
+    // rather than throwing a TypeError out of `.length` that the route's catch turns into a 502.
+    const malformed = await recordLiveSegments(USER, session.id, {
+      recorderId: "rec-1",
+      segments: [{ seq: 3, startMs: 12_000, endMs: 13_000, speaker: "you" } as unknown as LiveSegmentInput],
+    });
+    check("a segment missing text is a 400, not a thrown error", !malformed.ok && malformed.status === 400);
 
     await discardMeetingSessionRow(USER, session.id);
   }

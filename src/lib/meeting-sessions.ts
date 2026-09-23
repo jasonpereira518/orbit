@@ -471,13 +471,27 @@ export type RecordLiveSegmentsResult =
 const MAX_LIVE_BATCH = 200;
 const MAX_LIVE_TEXT_LEN = 5_000;
 
+/**
+ * Runtime shape check, not just a static one: `segments` reaches this function through a
+ * route that does `JSON.parse` and an `as LiveSegmentInput[]` cast, so nothing upstream
+ * actually guarantees a field is the type it claims to be. A missing or wrong-typed field
+ * (no `text`, a non-string `speaker`, a numeric field sent as a string) must come back as
+ * this function's ordinary 400, not throw a `TypeError` out of `.length` or `Math.round`
+ * that the caller has to catch as a 502.
+ *
+ * An empty batch is valid here — `recordLiveSegments` turns it into a no-op success rather
+ * than an error; see there for why.
+ */
 function validateLiveSegments(segments: LiveSegmentInput[]): string | null {
-  if (!segments.length || segments.length > MAX_LIVE_BATCH) return "Bad segment batch";
+  if (segments.length > MAX_LIVE_BATCH) return "Too many segments in one batch";
   for (const s of segments) {
+    if (!s || typeof s !== "object") return "Bad segment";
     if (!Number.isInteger(s.seq) || s.seq < 0 || s.seq > MAX_SEQ) return "Bad chunk number";
     if (!Number.isFinite(s.startMs) || !Number.isFinite(s.endMs)) return "Bad chunk timing";
     if (s.startMs < 0 || s.endMs < s.startMs || s.endMs > MAX_CHUNK_OFFSET_MS) return "Bad chunk timing";
+    if (typeof s.text !== "string") return "Segment text is missing";
     if (s.text.length > MAX_LIVE_TEXT_LEN) return "Segment text is too long";
+    if (s.speaker !== null && typeof s.speaker !== "string") return "Bad segment speaker";
   }
   return null;
 }
@@ -509,6 +523,14 @@ export async function recordLiveSegments(
   }
   if (session.status === "recording" && session.recorderId && input.recorderId !== session.recorderId) {
     return { ok: false, status: 409, error: "Another tab is recording this meeting" };
+  }
+
+  // An empty batch (a heartbeat, or a retry that lost its race entirely) is a no-op
+  // success, the same shape of event as a batch that lands but conflicts on every seq —
+  // not an error. Returning here also keeps the two `Math.max(...)` calls below from ever
+  // running on an empty array, which would evaluate to `-Infinity`.
+  if (!input.segments.length) {
+    return { ok: true, written: 0, durationMs: session.durationMs };
   }
 
   const db = await getDb();
