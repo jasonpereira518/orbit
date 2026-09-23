@@ -20,6 +20,9 @@ import {
   vocabularyToWhisperPrompt,
   WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
+import { deepgramEnabled, transcribeFile } from "@/lib/deepgram";
+import { DEEPGRAM_MODEL } from "@/lib/deepgram-params";
+import { speechAllowance, recordSpeechSeconds } from "@/lib/speech-quota";
 import { z } from "zod";
 import {
   impliedStepListSchema,
@@ -28,6 +31,7 @@ import {
 import { closenessLegend } from "@/lib/capture/closeness";
 import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 import {
+  recordUsage,
   withUsage,
   tokensFromGemini,
   tokensFromOpenAi,
@@ -809,7 +813,7 @@ async function completeMultimodalJsonInner(
 }
 
 /** Which engine actually produced a transcript, so the UI can say so when it wasn't the first choice. */
-export type TranscriptionEngine = "whisper" | "gemini";
+export type TranscriptionEngine = "deepgram" | "whisper" | "gemini";
 
 export type TranscriptionResult = { text: string; engine: TranscriptionEngine };
 
@@ -861,6 +865,40 @@ export async function transcribeAudioWithAI(
   // One read, shared by every branch below. Never throws and returns [] on failure — a
   // transcript with misspelled names beats no transcript.
   const vocabulary = await loadNetworkVocabulary(userId);
+
+  // Deepgram first, on Orbit's key, while the account has short-form seconds left. It is the
+  // only engine most accounts can reach: Whisper and Gemini below need a key the user pasted.
+  if (deepgramEnabled()) {
+    const allowance = await speechAllowance(userId, "shortform");
+    if (!allowance.exhausted) {
+      try {
+        const result = await transcribeFile(
+          { bytes: Buffer.from(input.base64, "base64"), mimeType: input.mimeType || "audio/wav" },
+          { keyterms: vocabulary },
+        );
+        // `inputTokens` doubles as the billing unit here: Deepgram has no per-second column
+        // of its own, and `estimateCostMicros` already knows how to price "dollars per 1M
+        // units" — the audio-second price in `ai-pricing.ts` rides on that same math.
+        recordUsage({
+          userId, operation, provider: "deepgram", model: DEEPGRAM_MODEL,
+          kind: "transcription", keyOwner: "orbit", success: true, errorKind: null,
+          inputTokens: result.seconds,
+        });
+        await recordSpeechSeconds({
+          userId, kind: "shortform", seconds: result.seconds, source: "file",
+          requestId: result.requestId,
+        });
+        if (!result.text) return empty("deepgram");
+        return { text: result.text, engine: "deepgram" };
+      } catch (err) {
+        // Never fail a capture over Orbit's own service: fall through to the user's key.
+        recordUsage({
+          userId, operation, provider: "deepgram", model: DEEPGRAM_MODEL,
+          kind: "transcription", keyOwner: "orbit", success: false, errorKind: classifyAiError(err),
+        });
+      }
+    }
+  }
 
   // The gate picks the user's own Whisper, then their own Gemini, then — Lifetime only —
   // Orbit's Gemini before Orbit's Whisper (see `AiAccess.transcription`).

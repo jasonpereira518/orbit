@@ -20,6 +20,8 @@ import {
 } from "@/lib/ai-providers";
 import { AI_ACCESS_COPY, MANAGED_PROVIDER_FAILURE_MESSAGE } from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
+import { deepgramEnabled } from "@/lib/deepgram";
+import { speechAllowance } from "@/lib/speech-quota";
 import {
   systemOneRequest,
   type SystemOneRequest,
@@ -649,7 +651,7 @@ export type AiAccessStatus = {
   hasPersonalKey: boolean;
   /** This deployment holds at least one managed key. */
   managedConfigured: boolean;
-  /** Voice and meeting capture have an engine (see `AiAccess.canTranscribe`). */
+  /** Voice and meeting capture have an engine — Deepgram's quota or `AiAccess.canTranscribe()`. */
   canTranscribe: boolean;
   /** This month's managed allowance — eligible accounts only. */
   allowance: ManagedAllowance | null;
@@ -680,6 +682,11 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
     reason = "managed_limit";
   }
 
+  // Deepgram is per-account quota, not a key someone pasted, so it is resolved here rather
+  // than inside `AiAccess.canTranscribe()` — that method stays the key-presence answer other
+  // callers rely on.
+  const deepgram = deepgramEnabled() ? !(await speechAllowance(userId, "shortform")).exhausted : false;
+
   return {
     ready: reason === null,
     reason,
@@ -691,7 +698,7 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
     eligibility: access.eligibility,
     hasPersonalKey: facts.personal[facts.selectedProvider],
     managedConfigured: Object.values(managedKeysConfigured()).some(Boolean),
-    canTranscribe: access.canTranscribe(),
+    canTranscribe: deepgram || access.canTranscribe(),
     allowance,
   };
 }
