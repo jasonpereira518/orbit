@@ -41,15 +41,24 @@
  *    caller to guess why `status` never arrived.
  * 2. **OAuth return** — reads the provider's outcome param, toasts success or
  *    `describeOAuthReason(reason, provider, purpose)`, then strips it — along with `switched`,
- *    `reason`, `purpose`, and for Google the `gmail` twin — with `history.replaceState`.
+ *    `reason`, `purpose`, and for Google the `gmail` twin — with `history.replaceState`, and
+ *    only then calls `router.refresh()`. That order matters: `router.refresh()` queues a
+ *    request, and `replaceState` produces a Next router "restore" that drops any request still
+ *    queued when it lands — refreshing before stripping risks the restore eating the refresh.
  * 3. **Switched-account toast** — when `switched=1` rode along, the plain "connected" toast is
  *    skipped, and once the status re-read below resolves, "Switched to <email>" fires instead
- *    — so the address named is the one that is actually current, not the one it replaced.
+ *    — so the address named is the one that is actually current, not the one it replaced. That
+ *    re-read is itself exposed to the same restore, so a rejection — or a resolved status with
+ *    no address — still falls back to the plain "connected" toast rather than leaving the
+ *    person with no feedback at all.
  * 4. **Connect** — starts the provider's OAuth with the given purposes (default: that
  *    provider's `*_CONNECT_PURPOSES`) and navigates to the result; a failure toasts
  *    `TOAST_COPY.connectFailed`. `busy` covers the round trip.
  * 5. **Disconnect** — calls the provider's disconnect action, toasts the outcome, refreshes
- *    the server data (`router.refresh()`), and re-reads the status.
+ *    the server data (`router.refresh()`), and re-reads the status. Returns a promise that
+ *    settles only once all of that has happened, so a caller can sequence its own local
+ *    cleanup (a review list, a scan card) in `.then()` and leave it alone on a rejection —
+ *    the account is still connected, so nothing local should look otherwise.
  */
 
 import { useCallback, useEffect, useState, useTransition } from "react";
@@ -79,7 +88,9 @@ type ConnectionBase<Status> = {
   busy: boolean;
   retry: () => void;
   refresh: () => void;
-  disconnect: (opts: { alsoDelete: boolean }) => void;
+  /** Resolves once the toast, `router.refresh()` and re-read are all done; rejects (without
+   *  any of that) if the disconnect action itself failed. */
+  disconnect: (opts: { alsoDelete: boolean }) => Promise<void>;
 };
 
 export type GoogleConnection = ConnectionBase<GmailConnectionStatus> & {
@@ -124,7 +135,9 @@ function useConnection<Status extends { emailAddress: string | null }, Purpose e
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [failed, setFailed] = useState(false);
-  const [busy, startBusyTransition] = useTransition();
+  const [connecting, startConnectTransition] = useTransition();
+  const [disconnecting, setDisconnecting] = useState(false);
+  const busy = connecting || disconnecting;
 
   const refreshStatus = useCallback(() => {
     return getStatus().then(
@@ -171,7 +184,6 @@ function useConnection<Status extends { emailAddress: string | null }, Purpose e
     if (outcome === "connected") {
       // Named once the re-read below resolves, so the toast can say who — never both.
       if (!switched) toast.success(`${label} connected`);
-      router.refresh();
     } else {
       const oauth = describeOAuthReason(reason, label, purpose);
       if (oauth.cancelled) toast.message(oauth.message);
@@ -191,23 +203,35 @@ function useConnection<Status extends { emailAddress: string | null }, Purpose e
       `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
     );
 
+    // After the strip above, not before: `replaceState` produces a Next router "restore", and
+    // a restore that lands while this refresh is still queued drops it without settling it —
+    // the same hazard the comment below documents for the status re-read.
+    if (outcome === "connected") router.refresh();
+
     // Re-read the status: a Next router "restore" (which `replaceState` is) drops any server
     // action still queued — here, the status fetch this hook fired a moment ago on mount —
     // without settling it, which would leave the caller rendering nothing. It is also the
-    // only way to learn the newly-connected address, for the "Switched to" toast above.
-    refreshStatus()
-      .then((fresh) => {
-        if (outcome === "connected" && switched && fresh.emailAddress) {
-          toast.success(`Switched to ${fresh.emailAddress}`);
-        }
-      })
-      .catch(() => {});
+    // only way to learn the newly-connected address, for the "Switched to" toast — and that
+    // re-read is exposed to the very same restore, so a rejection (or a resolved status with
+    // no address) still falls back to the plain "connected" toast rather than leaving the
+    // person with no feedback at all.
+    if (outcome === "connected" && switched) {
+      refreshStatus()
+        .then((fresh) => {
+          toast.success(fresh.emailAddress ? `Switched to ${fresh.emailAddress}` : `${label} connected`);
+        })
+        .catch(() => {
+          toast.success(`${label} connected`);
+        });
+    } else {
+      void refreshStatus().catch(() => {});
+    }
   }, [router, refreshStatus, oauthParam, extraStripKeys, label]);
 
   // 4. Connect.
   const connect = useCallback(
     (purposes?: readonly Purpose[]) => {
-      startBusyTransition(async () => {
+      startConnectTransition(async () => {
         try {
           const { url } = await startOAuth({ purposes: purposes ?? defaultPurposes, returnTo });
           window.location.href = url;
@@ -219,20 +243,24 @@ function useConnection<Status extends { emailAddress: string | null }, Purpose e
     [startOAuth, defaultPurposes, returnTo]
   );
 
-  // 5. Disconnect.
+  // 5. Disconnect. Returns a promise — see `ConnectionBase.disconnect` — so a caller only
+  // clears its own local state (a review list, a scan card) once the action has actually
+  // succeeded, never on a rejection that left the account connected.
   const disconnect = useCallback(
-    (opts: { alsoDelete: boolean }) => {
-      startBusyTransition(async () => {
-        await disconnectAction(opts);
-        setStatus(null);
-        toast.success(
-          opts.alsoDelete && deletedDataSuffix
-            ? `${label} disconnected and ${deletedDataSuffix}`
-            : `${label} disconnected`
-        );
-        router.refresh();
-        void refreshStatus().catch(() => {});
-      });
+    (opts: { alsoDelete: boolean }): Promise<void> => {
+      setDisconnecting(true);
+      return disconnectAction(opts)
+        .then(() => {
+          setStatus(null);
+          toast.success(
+            opts.alsoDelete && deletedDataSuffix
+              ? `${label} disconnected and ${deletedDataSuffix}`
+              : `${label} disconnected`
+          );
+          router.refresh();
+          void refreshStatus().catch(() => {});
+        })
+        .finally(() => setDisconnecting(false));
     },
     [disconnectAction, deletedDataSuffix, label, router, refreshStatus]
   );

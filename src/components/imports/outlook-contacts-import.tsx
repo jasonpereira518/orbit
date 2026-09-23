@@ -29,6 +29,11 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
     job?.kind === "outlook_contacts" && job.status === "running" ? job : null;
   const importProgress = outlookJob?.progress ?? null;
   const busy = connection.busy || pending || job?.status === "running";
+  // Connect and disconnect run in the hook's own transition, not this component's — so the
+  // "loading contacts" label/hint (below) has to read both, the way `pending` alone used to
+  // cover all three when they shared one transition. Not `busy`: that also folds in a
+  // running import job, which never used to flip this label.
+  const loadingContacts = pending || connection.busy;
   // One handler for every button: each asks Microsoft for that feature's scope and nothing
   // else. "Reconnect" after a session expiry asks as "contacts" (this is the contacts card);
   // a paused calendar sync reconnects as "calendar", which was already granted, so fixing it
@@ -122,16 +127,17 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
                 </Button>
               ) : (
                 <Button disabled={busy} onClick={loadContacts}>
-                  {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
+                  {loadingContacts ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
                 </Button>
               )}
               <DisconnectAccountDialog
                 provider="outlook"
                 disabled={busy}
                 onConfirm={(opts) => {
-                  setPeople([]);
-                  setLoaded(false);
-                  connection.disconnect(opts);
+                  connection.disconnect(opts).then(() => {
+                    setPeople([]);
+                    setLoaded(false);
+                  });
                 }}
               />
             </>
@@ -159,7 +165,7 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
         </div>
       ) : null}
 
-      {pending && !loaded ? <BusyHint>Loading contacts…</BusyHint> : null}
+      {loadingContacts && !loaded ? <BusyHint>Loading contacts…</BusyHint> : null}
 
       {people.length > 0 && (
         <>

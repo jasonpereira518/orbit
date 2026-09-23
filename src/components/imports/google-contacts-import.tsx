@@ -33,6 +33,11 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
     job?.kind === "google_contacts" && job.status === "running" ? job : null;
   const importProgress = googleJob?.progress ?? null;
   const busy = connection.busy || pending || job?.status === "running";
+  // Connect and disconnect run in the hook's own transition, not this component's — so the
+  // "loading contacts" label/hint (below) has to read both, the way `pending` alone used to
+  // cover all three when they shared one transition. Not `busy`: that also folds in a
+  // running import job, which never used to flip this label.
+  const loadingContacts = pending || connection.busy;
   // One handler for the header link and the button: both start the same contacts consent.
   const connect = () => connection.connect(["contacts"]);
   // The status knows the stored grant; the preview result can narrow it further.
@@ -136,15 +141,16 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
                   })
                 }
               >
-                {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
+                {loadingContacts ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
               </Button>
               <DisconnectAccountDialog
                 provider="gmail"
                 disabled={busy}
                 onConfirm={(opts) => {
-                  setPeople([]);
-                  setLoaded(false);
-                  connection.disconnect(opts);
+                  connection.disconnect(opts).then(() => {
+                    setPeople([]);
+                    setLoaded(false);
+                  });
                 }}
               />
             </>
@@ -152,7 +158,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
         </div>
       </div>
 
-      {pending && !loaded ? <BusyHint>Loading contacts…</BusyHint> : null}
+      {loadingContacts && !loaded ? <BusyHint>Loading contacts…</BusyHint> : null}
 
       {people.length > 0 && (
         <>
