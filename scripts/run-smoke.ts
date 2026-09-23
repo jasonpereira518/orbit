@@ -231,6 +231,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-connector-registry": "pglite", // imports entitlements + rate-limit, which reach @/db
   "smoke-integration-statuses": "pglite", // drives getIntegrationStatuses against real rows
   "smoke-connector-claim": "pglite",
+  "smoke-connector-token": "pglite",
   "smoke-connector-outbox": "pglite",
   "smoke-connector-sync-pass": "pglite",
   "smoke-scan-handoff": "pglite",
