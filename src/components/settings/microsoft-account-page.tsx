@@ -89,7 +89,7 @@ export function MicrosoftAccountPage({
   /** Opens another page of this dialog — the Reminders row and the "Turn on AI" link. */
   onOpenPage: (page: IntegrationTabId) => void;
 }) {
-  const connection = useMicrosoftConnection({ returnTo });
+  const connection = useMicrosoftConnection({ returnTo, label: "Microsoft" });
   const contacts = useContactsImport("microsoft");
   const { status } = connection;
   const account = status ? microsoftAccountStatus(status, { canUseRecruiters }) : null;

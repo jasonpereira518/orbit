@@ -229,33 +229,57 @@ function DialogBody({
     tabRefs.current.get(view)?.scrollIntoView({ block: "nearest" });
     if (!focus) return;
 
-    // Keep looking, and keep re-scrolling to what turns up — the rest of the page loading
-    // around it pushes it down too — until the panel stops resizing, the person takes over,
-    // or 3s pass. The panel is observed rather than the row, because there may be no row yet.
+    // Two budgets, because the id can be late for two different reasons. Nothing may be in
+    // the document yet — the page is still behind its `dynamic()` chunk, or that chunk is
+    // still waiting on its own connection-status round trip — so keep looking for up to 10s
+    // from here. Once something is found, the rest of the page can still grow around it and
+    // push it down, so keep re-scrolling to it for a further 3s from that first find, then
+    // leave it alone. Whichever budget runs out first, the person taking over, or the
+    // effect's own cleanup stops it immediately. The panel is observed rather than the row,
+    // because there may be no row yet — and because it's the panel, not the row
+    // `scrollIntoView` just moved, this can't retrigger itself into a loop.
     const panel = document.getElementById(`integration-panel-${view}`);
     let stopped = false;
+    let found = false;
     let observer: ResizeObserver | undefined;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
 
     function stop() {
       if (stopped) return;
       stopped = true;
       observer?.disconnect();
-      clearTimeout(timer);
+      clearTimeout(searchTimer);
+      clearTimeout(settleTimer);
       scroller?.removeEventListener("wheel", stop);
       scroller?.removeEventListener("touchstart", stop);
       scroller?.removeEventListener("pointerdown", stop);
       scroller?.removeEventListener("keydown", stop);
     }
 
+    // The first successful find closes the 10s search budget and opens the 3s settle one.
+    function onFound() {
+      if (found) return;
+      found = true;
+      clearTimeout(searchTimer);
+      settleTimer = setTimeout(stop, 3_000);
+    }
+
     scroller?.addEventListener("wheel", stop, { passive: true });
     scroller?.addEventListener("touchstart", stop, { passive: true });
     scroller?.addEventListener("pointerdown", stop);
     scroller?.addEventListener("keydown", stop);
-    const timer = setTimeout(stop, 3_000);
+    const searchTimer = setTimeout(stop, 10_000);
+
+    if (first) onFound();
 
     if (panel && typeof ResizeObserver !== "undefined") {
       observer = new ResizeObserver(() => {
-        if (!stopped) findTarget()?.scrollIntoView({ block: "start" });
+        if (stopped) return;
+        const target = findTarget();
+        if (target) {
+          target.scrollIntoView({ block: "start" });
+          onFound();
+        }
       });
       observer.observe(panel);
     }

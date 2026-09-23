@@ -297,6 +297,13 @@ export function useMicrosoftConnection(opts: {
   returnTo: string;
   enabled?: boolean;
   /**
+   * "Microsoft" for the Settings account page, which is headed "Microsoft" rather than
+   * "Outlook" — the Outlook Contacts card and the recruiter-scan panel have always worded
+   * their toasts and OAuth-error copy around Outlook, so they keep the default. Defaults
+   * to "Outlook".
+   */
+  label?: "Microsoft" | "Outlook";
+  /**
    * False for the Outlook Contacts card, whose disconnect toast has never named the
    * recruiter data an `alsoDelete` disconnect also removes — unlike every other provider
    * card, including the Outlook recruiter-scan panel, which does. Defaults to true.
@@ -308,7 +315,7 @@ export function useMicrosoftConnection(opts: {
     enabled: opts.enabled,
     oauthParam: "outlook",
     extraStripKeys: MICROSOFT_EXTRA_STRIP_KEYS,
-    label: "Outlook",
+    label: opts.label ?? "Outlook",
     deletedDataSuffix: opts.deletesData === false ? undefined : "its recruiter data deleted",
     defaultPurposes: MICROSOFT_CONNECT_PURPOSES,
     getStatus: getOutlookConnectionStatus,
