@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import {
   Dialog,
@@ -42,11 +42,20 @@ import { TOAST_COPY } from "@/lib/toast-copy";
  * `onOpenChange` to catch it.
  *
  * Cancel is disabled while a request is in flight — the same guard `delete-account-dialog.tsx`
- * puts on its own Cancel button. Without it, a Cancel click during `sendCode()` ran `close()`
- * immediately (clearing `address`/`code`/`pendingId`), but the in-flight `createEmailAddress`
- * call was not cancelled and this component never unmounts (only the Base UI popup portal
- * does) — so it resolved anyway, silently re-arming `pendingId` and toasting success after
- * the user believed they had cancelled. Locking Cancel behind `working` closes that window.
+ * puts on its own Cancel button. That alone isn't enough: Escape, the backdrop, and the
+ * header's X button all reach `onOpenChange` too, and none of them check `working`, so any of
+ * them could still run `reset()` out from under an in-flight `sendCode()`/`confirm()`. Two
+ * closed doors, not one:
+ *
+ * 1. `disablePointerDismissal` (a dedicated Base UI Root prop — `DialogRoot.d.mts`) turns off
+ *    the backdrop while `working`, and `onOpenChange` itself returns early on a close request
+ *    while `working` — the installed version has no equivalent prop for Escape or the X
+ *    button, so that path is closed by refusing the callback rather than acting on it.
+ * 2. Even with dismissal blocked, a promise already in flight when this state was true can
+ *    still resolve after something else moves the dialog on (its `finally` runs regardless).
+ *    `runRef` is a token bumped every time `reset()` runs; `sendCode`/`confirm` capture it
+ *    before awaiting and check it again after, so a continuation for an abandoned run cannot
+ *    call `setPendingId` or toast success once nothing on screen corresponds to it any more.
  */
 export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
   const { isLoaded, user } = useUser();
@@ -56,7 +65,12 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
 
+  // Bumped on every reset — see the class comment. A run started before the bump checks
+  // this after its await and drops itself silently if it no longer matches.
+  const runRef = useRef(0);
+
   const reset = () => {
+    runRef.current += 1;
     setAddress("");
     setCode("");
     setPendingId(null);
@@ -70,40 +84,52 @@ export function AddEmailDialog({ trigger }: { trigger: React.ReactNode }) {
 
   const sendCode = async () => {
     if (!isLoaded || !user || address.trim().length === 0) return;
+    const runId = runRef.current;
     setWorking(true);
     try {
       const created = await user.createEmailAddress({ email: address.trim() });
       await created.prepareVerification({ strategy: "email_code" });
+      if (runId !== runRef.current) return;
       setPendingId(created.id);
       toast.success("Code sent — check that inbox");
     } catch (err) {
+      if (runId !== runRef.current) return;
       toast.error(clerkErrorMessage(err, friendlyError(err, TOAST_COPY.saveFailed)));
     } finally {
-      setWorking(false);
+      if (runId === runRef.current) setWorking(false);
     }
   };
 
   const confirm = async () => {
     if (!isLoaded || !user || !pendingId || code.trim().length === 0) return;
+    const runId = runRef.current;
     setWorking(true);
     try {
       const email = user.emailAddresses.find((e) => e.id === pendingId);
+      // Routed through the same clerkErrorMessage/friendlyError fallback as every other
+      // failure below — this text is a dev-facing label, never shown verbatim to a person.
       if (!email) throw new Error("The pending address is gone");
       await email.attemptVerification({ code: code.trim() });
       await user.reload();
+      if (runId !== runRef.current) return;
       toast.success("Address added");
       close();
     } catch (err) {
+      if (runId !== runRef.current) return;
       toast.error(clerkErrorMessage(err, friendlyError(err, TOAST_COPY.saveFailed)));
     } finally {
-      setWorking(false);
+      if (runId === runRef.current) setWorking(false);
     }
   };
 
   return (
     <Dialog
       open={open}
+      disablePointerDismissal={working}
       onOpenChange={(next) => {
+        // Escape and the header's X button reach here even though the backdrop is blocked
+        // above — Base UI has no Root-level prop for those, so refuse the close here instead.
+        if (!next && working) return;
         setOpen(next);
         if (!next) reset();
       }}
