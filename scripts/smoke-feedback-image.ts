@@ -126,6 +126,50 @@ function main() {
   check("a bare word is rejected", sanitizePath("contacts") === null);
   check("undefined is rejected", sanitizePath(undefined) === null);
   check("an over-long path is rejected", sanitizePath(`/${"a".repeat(MAX_PATH)}`) === null);
+  check("the app root survives", sanitizePath("/") === "/");
+
+  // Open-redirect-shaped bypasses. Each of these passed the old `startsWith("/")` +
+  // `!startsWith("//")` pair, and each resolves to the host `evil.example` once a WHATWG
+  // URL parser sees it: backslashes are folded to forward slashes, and tab/LF/CR are
+  // stripped from the input entirely, both BEFORE the authority is parsed. Nothing in the
+  // feedback path resolves the stored route as a URL today — it is rendered as escaped
+  // text — so these guard the invariant rather than a live hole. They are asserted against
+  // the real parser below so the test cannot rot into agreeing with a broken guard.
+  const BYPASSES = [
+    "/\\evil.example",
+    "/\\/evil.example",
+    "/\t/evil.example",
+    "/\n/evil.example",
+    "/\r/evil.example",
+  ];
+  for (const value of BYPASSES) {
+    const shown = JSON.stringify(value);
+    check(`${shown} is rejected`, sanitizePath(value) === null);
+    // The reason it must be rejected, stated independently of the guard.
+    check(
+      `${shown} really does resolve off-origin`,
+      new URL(value, "https://orbit.test").host === "evil.example"
+    );
+  }
+
+  // Defense in depth, NOT a bypass: a raw interior space is not stripped by the URL parser
+  // (only tab, LF and CR are), so "/ /evil.example" stays same-origin. It is rejected
+  // anyway because a real `location.pathname` is percent-encoded and never contains one,
+  // which makes a raw space a sign the value did not come from where it claims to.
+  check(
+    "a raw interior space is rejected",
+    sanitizePath("/ /evil.example") === null
+  );
+  check(
+    "...though it is same-origin, so this is hygiene",
+    new URL("/ /evil.example", "https://orbit.test").host === "orbit.test"
+  );
+
+  // The guard must not have become a blunt "no punctuation" rule: these are ordinary
+  // routes, and one plausible mis-transcription of it rejects every hyphen.
+  for (const ok of ["/contacts/my-contact", "/settings/integrations", "/a?q=1&r=2", "/x.y"]) {
+    check(`${JSON.stringify(ok)} still survives`, sanitizePath(ok) === ok);
+  }
 
   console.log("");
 

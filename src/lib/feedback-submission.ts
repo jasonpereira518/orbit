@@ -18,6 +18,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { feedback, feedbackScreenshots } from "@/db/schema";
 import { hasBlobStorage } from "@/lib/contact-avatar";
+import { isAppRelativePath } from "@/lib/safe-path";
 import {
   FEEDBACK_AREAS,
   FEEDBACK_CATEGORIES,
@@ -158,13 +159,18 @@ export function decodeScreenshot(dataUrl: string): DecodedScreenshot | null {
  * somewhere else — `javascript:alert(1)`, `https://evil.test/x`, protocol-relative
  * `//evil.test` — has to become null here rather than being cleaned up at render time by
  * everyone who touches it.
+ *
+ * The "is it app-relative" half lives in `isAppRelativePath` because it is subtler than it
+ * looks (backslashes fold to slashes, tabs and newlines are stripped, both before a URL
+ * parser looks for an authority) and because a second copy of it already drifted once. The
+ * null return, the fragment strip and the length cap stay here: they are this feature's
+ * policy, not a general fact about paths.
  */
 export function sanitizePath(raw: string | undefined | null): string | null {
   if (typeof raw !== "string") return null;
 
   const hashless = raw.split("#")[0].trim();
-  if (!hashless.startsWith("/")) return null;
-  if (hashless.startsWith("//")) return null;
+  if (!isAppRelativePath(hashless)) return null;
   if (hashless.length > MAX_PATH) return null;
 
   return hashless;
