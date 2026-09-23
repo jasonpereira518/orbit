@@ -9,6 +9,7 @@
  * outcome lands, the other runner's UPDATE matches zero rows.
  */
 import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { CAPTURE_INPUT_MAX_CHARS } from "@/lib/capture/limits";
 import { randomBytes } from "node:crypto";
 import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
@@ -45,7 +46,6 @@ export const CAPTURE_JOB_RETENTION_DAYS = 30;
 /** A job that failed this recently is still shown on /capture so the person sees why. */
 const FAILED_VISIBLE_MS = 24 * 60 * 60 * 1000;
 
-const CAPTURE_INPUT_MAX_CHARS = 100_000;
 
 // ---------------------------------------------------------------------------------------
 // The client's view

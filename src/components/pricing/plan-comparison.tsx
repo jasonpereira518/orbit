@@ -66,6 +66,10 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
     cells: ["Your own key", "Orbit's credits", "Your own key"],
   },
   { label: "AI provider key", cells: ["Yours", "Yours", "Yours"] },
+  {
+    label: "Meeting transcription",
+    cells: ["—", "5 hours a month", "10 hours a month"],
+  },
 ];
 
 function CellValue({ value, plan }: { value: Cell; plan: Plan }) {

@@ -11,7 +11,7 @@ import {
   type ImportStats,
 } from "@/db/schema";
 import { internalFetch } from "@/lib/internal-auth";
-import { failImport } from "@/lib/import-job-processor";
+import { failImport, truncateStoredError } from "@/lib/import-job-processor";
 import {
   buildOutlookRecruiterQuery,
   fetchOutlookExcludedFolderIds,
@@ -461,14 +461,14 @@ export async function runOutlookRecruiterScanJob(
             return;
           }
           // A dead sender must not kill the scan — record why and move on.
-          const message = err instanceof Error ? err.message : "Classification failed";
+          const message = err instanceof Error ? err.message : "Couldn’t read this sender";
           rejected += 1;
           consecutiveFailures += 1;
           await db
             .update(importJobRows)
             .set({
               status: "skipped",
-              errorMessage: message.slice(0, 300),
+              errorMessage: truncateStoredError(message),
               updatedAt: new Date(),
             })
             .where(eq(importJobRows.id, row.id));

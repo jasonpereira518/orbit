@@ -64,6 +64,31 @@ check("contacts says contacts", missingScopeMessage("contacts") === "Google didn
 check("calendar says calendar", missingScopeMessage("calendar") === "Google didn’t grant calendar access — reconnect and allow it");
 check("send says send", missingScopeMessage("send") === "Google didn’t grant permission to send — reconnect and allow it");
 
+console.log("Drive");
+// Drive: files the person picks, nothing else — never a restricted Drive scope.
+check("drive is a purpose", isGooglePurpose("drive"));
+check(
+  "drive asks for drive.file only",
+  requiredScopeFor("drive") === "https://www.googleapis.com/auth/drive.file",
+);
+check(
+  "drive consent = identity + drive.file",
+  JSON.stringify(googleScopesFor("drive")) ===
+    JSON.stringify([...identity, GOOGLE_SCOPES.drive]),
+);
+check(
+  "no restricted Drive scope anywhere",
+  !Object.values(GOOGLE_SCOPES).some((s) => /drive\.(readonly|metadata)/.test(s)),
+);
+check(
+  "a contacts-only grant doesn't cover drive",
+  !grantCovers("drive", `openid ${GOOGLE_SCOPES.contacts}`),
+);
+check(
+  "missing drive scope has its own line",
+  missingScopeMessage("drive") === "Google didn’t grant Drive access — reconnect and allow it",
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);
