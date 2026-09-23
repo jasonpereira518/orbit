@@ -54,7 +54,13 @@ const FALLBACK_TEASER = "We're still building this part of Orbit";
  * Client components under src/components/leads. Each task that adds one appends its file here,
  * so a missing file or a lost "use client" is a failed check, not a silent build surprise.
  */
-const CLIENT_COMPONENTS: string[] = ["join-team-card.tsx", "team-card.tsx", "find-path.tsx"];
+const CLIENT_COMPONENTS: string[] = [
+  "join-team-card.tsx",
+  "team-card.tsx",
+  "find-path.tsx",
+  "leads-pipeline.tsx",
+  "lead-detail-sheet.tsx",
+];
 
 function main() {
   console.log("\nnav and surface registration");
