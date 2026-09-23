@@ -2,7 +2,10 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { imports } from "@/db/schema";
 import { failImport } from "@/lib/import-engine";
-import { RESUMABLE_IMPORT_TYPES, runImportJobById } from "@/lib/import-job-dispatch";
+import {
+  RESUMABLE_IMPORT_TYPES,
+  runImportJobById,
+} from "@/lib/import-job-dispatch";
 import { reportError } from "@/lib/report-error";
 
 /**
@@ -32,13 +35,15 @@ export type StallSweepResult = {
   gaveUp: number;
 };
 
-export async function resumeStalledImports(options: {
-  now?: Date;
-  thresholdMs?: number;
-  maxResumes?: number;
-  /** Injectable for the smoke test; the real one dispatches by import type. */
-  runner?: (importId: string) => Promise<unknown>;
-} = {}): Promise<StallSweepResult> {
+export async function resumeStalledImports(
+  options: {
+    now?: Date;
+    thresholdMs?: number;
+    maxResumes?: number;
+    /** Injectable for the smoke test; the real one dispatches by import type. */
+    runner?: (importId: string) => Promise<unknown>;
+  } = {},
+): Promise<StallSweepResult> {
   const now = options.now ?? new Date();
   const threshold = options.thresholdMs ?? CRON_STALL_THRESHOLD_MS;
   const maxResumes = options.maxResumes ?? MAX_STALL_RESUMES;
@@ -51,12 +56,17 @@ export async function resumeStalledImports(options: {
       // needs the same backstop, and it is the longer-running of the two.
       inArray(imports.importType, [...RESUMABLE_IMPORT_TYPES]),
       eq(imports.status, "processing"),
-      lt(imports.updatedAt, new Date(now.getTime() - threshold))
+      lt(imports.updatedAt, new Date(now.getTime() - threshold)),
     ),
     columns: { id: true },
   });
 
-  const result: StallSweepResult = { found: stalled.length, resumed: 0, resumeFailed: 0, gaveUp: 0 };
+  const result: StallSweepResult = {
+    found: stalled.length,
+    resumed: 0,
+    resumeFailed: 0,
+    gaveUp: 0,
+  };
 
   for (const job of stalled) {
     // Bump-and-read in one statement. `updated_at` is deliberately NOT touched here: if
@@ -70,8 +80,8 @@ export async function resumeStalledImports(options: {
       await failImport(
         job.id,
         new Error(
-          `Import stalled ${maxResumes} times and gave up. Please re-upload the file to try again.`
-        )
+          `Import stalled ${maxResumes} times and gave up — upload the file again to import the rest`,
+        ),
       );
       result.gaveUp += 1;
       continue;
@@ -83,7 +93,10 @@ export async function resumeStalledImports(options: {
       result.resumed += 1;
     } catch (err) {
       result.resumeFailed += 1;
-      reportError(err, { where: "job.import.resume-stalled", extra: { importId: job.id } });
+      reportError(err, {
+        where: "job.import.resume-stalled",
+        extra: { importId: job.id },
+      });
     }
   }
 

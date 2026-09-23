@@ -419,6 +419,15 @@ CREATE TABLE IF NOT EXISTS memory_chunks (
   chunk_index integer NOT NULL DEFAULT 0,
   content text NOT NULL,
   content_hash text NOT NULL,
+  -- md5 of the SOURCE this chunk set was built from, identical across the set. The sweep
+  -- claims an interaction when no chunk of it carries the hash of the text the interaction
+  -- holds NOW, which is one predicate for two cases: never indexed, and indexed then edited.
+  -- Postgres md5() and node crypto md5 agree byte for byte, so the claim can compute it in
+  -- SQL while the writer computes it in TypeScript. See memorySourceHash in
+  -- @/lib/memory-chunks, where the two renderings live side by side.
+  --
+  -- NO SEMICOLONS OR BACKTICKS IN THESE COMMENTS, for the reason spelled out above.
+  source_hash text,
   -- The staleness predicate is embedded_hash IS DISTINCT FROM content_hash, per chunk.
   -- Deliberately not contacts.embedding_stale_at, which is contact-grained and already has
   -- five writers stamping it.
@@ -1772,6 +1781,18 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // Sep 22 2026, after merging main (now at 85) into this branch a second time; 86 is still
 // the highest found anywhere and is still free.
 //
+// 88 = memory_chunks.source_hash — what the passage index was built from, so an edited note
+// can be told from an unindexed one. The sweep's claim was a pure anti-join ("has no
+// passages"), so an interaction was indexed once and never revisited: editing a note left its
+// original passages in the index, and chat could quote text the user had since rewritten or
+// deleted. Five paths change that text and three of them are bulk (import upsert, calendar
+// ingest upsert, calendar event update), so a write-path hook could not have covered it.
+//
+// NOT 87. That is held by the unpushed `brave-bouman-df6c4f` worktree
+// (claude/orbit-integrations-strategy-0b8be6), which took it for its own main merge. Scanned
+// every remote branch and every local worktree on Sep 22 2026: 87 was the highest found
+// anywhere, so this takes 88.
+//
 // 89 = speech_usage, meeting_transcript_segments.speaker, and the Deepgram engine value;
 // also drops user_settings.wispr_api_key_encrypted, retired with Wispr in #245 and kept
 // until now so the removal and its migration were one version, not two. 87 and 88 were
@@ -1792,7 +1813,15 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // line would have conflicted on merge. Rescanned against every remote ref, every local branch
 // and every worktree's working file on Sep 23 2026 immediately before committing: 94 is the
 // highest claimed anywhere, and 95 is free.
-export const SCHEMA_VERSION = 95;
+//
+// 96 = no new DDL of its own. This branch merged main (then at 88, carrying
+// memory_chunks.source_hash) after preview builds had already stamped databases with 95, and
+// `reconcileSchema` only runs when the stored version differs — so those databases would have
+// matched 95, skipped the merged-in column, and 500'd on it, which is exactly what PR #143 hit
+// in September. The merge itself is what needs the new number. Rescanned every remote ref,
+// every local branch and every worktree's working file on Sep 23 2026: 95 was this branch's
+// own, 94 the highest elsewhere, so 96 is free.
+export const SCHEMA_VERSION = 96;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -2967,6 +2996,11 @@ async function migratePgvector(run: StatementRunner) {
  * BEFORE its indexes — see `applySchema`.
  */
 const alters = [
+  // memory_chunks predates this column (v79), so every existing row has NULL here and is
+  // claimed by the sweep exactly once, re-chunked, and then matches. Nothing is re-embedded
+  // by that pass: syncMemoryChunks carries vectors across by content_hash, which unchanged
+  // text does not move.
+  `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS source_hash text`,
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
   // The events feature landed whole at v32, so these are its first incremental columns.
@@ -3389,9 +3423,19 @@ async function applySchema(run: StatementRunner, failed: SchemaFailure[]): Promi
   const statements = DDL.split(";")
     .map((s) => s.trim())
     .filter(Boolean);
-  const tables = statements.filter((s) => /^CREATE TABLE/i.test(s));
-  const columns = statements.filter((s) => /^ALTER TABLE/i.test(s));
-  const rest = statements.filter((s) => !/^(CREATE TABLE|ALTER TABLE)/i.test(s));
+  // Classify on the statement with its leading `--` comments stripped, not on its raw text.
+  // Splitting on `;` leaves any comment block that introduces a statement attached to the
+  // FRONT of it, so a CREATE TABLE with an explanation above it did not look like a CREATE
+  // TABLE and fell through to `rest` — which runs after `alters`. The first ALTER naming
+  // such a table then failed on a fresh database with "relation does not exist", and since
+  // the version is only recorded on zero failures (see `sweep`), every boot re-ran the
+  // whole sweep and the app got slower on every request until it timed out. Only the
+  // ORDER changes here; each statement still executes with its comments attached.
+  // `scripts/smoke-schema-ddl.ts` asserts no CREATE TABLE can hide in `rest` again.
+  const body = (s: string) => s.replace(/^(?:\s*--[^\n]*\n)+/, "");
+  const tables = statements.filter((s) => /^CREATE TABLE/i.test(body(s)));
+  const columns = statements.filter((s) => /^ALTER TABLE/i.test(body(s)));
+  const rest = statements.filter((s) => !/^(CREATE TABLE|ALTER TABLE)/i.test(body(s)));
   await runStatements(run, tables, "DDL", failed);
   await runStatements(run, columns, "DDL", failed);
   await runStatements(run, alters, "alters", failed);

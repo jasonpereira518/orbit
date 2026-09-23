@@ -24,30 +24,65 @@ export type ImportProgressState = {
   importedLabel?: string;
 };
 
+/** Which member of a LinkedIn archive a card wants out of it. */
+export type LinkedInArchiveMember = "connections" | "messages";
+
+const ARCHIVE_MEMBERS: Record<
+  LinkedInArchiveMember,
+  { pattern: RegExp; fallbackName: string; missing: string }
+> = {
+  connections: {
+    pattern: /connections\.csv$/i,
+    fallbackName: "Connections.csv",
+    missing:
+      "No Connections.csv in that ZIP — download Connections from LinkedIn\u2019s data export and upload that",
+  },
+  messages: {
+    pattern: /messages\.csv$/i,
+    fallbackName: "messages.csv",
+    missing:
+      "No messages.csv in that ZIP — download Messages from LinkedIn\u2019s data export and upload that",
+  },
+};
+
+/**
+ * Read a LinkedIn export, whether the person kept the CSV or handed us the whole archive.
+ *
+ * The export arrives as a ZIP of dozens of files and the guide has always told people they can
+ * upload it whole, so refusing one on the connections card was a promise the product was not
+ * keeping. Both cards come through here; the queue does not, because detection already had to
+ * decompress a ZIP to identify it and carries the text it found.
+ */
+export async function readLinkedInArchive(
+  file: File,
+  member: LinkedInArchiveMember,
+): Promise<{ text: string; fileName: string }> {
+  const lower = file.name.toLowerCase();
+  if (!lower.endsWith(".zip")) {
+    return { text: await file.text(), fileName: file.name };
+  }
+
+  const { pattern, fallbackName, missing } = ARCHIVE_MEMBERS[member];
+  const { default: JSZip } = await import("jszip");
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const entry =
+    zip.file(pattern)[0] ||
+    Object.values(zip.files).find((f) => !f.dir && pattern.test(f.name));
+  if (!entry) {
+    // Thrown in the browser, so it survives — but a plain Error still reaches the toast
+    // as the generic fallback, which is why this is a `UserFacingError`.
+    throw new UserFacingError(missing);
+  }
+  const text = await entry.async("string");
+  return { text, fileName: entry.name.split("/").pop() || fallbackName };
+}
+
+/** The messages card's long-standing name for the above. Kept so its call sites are unchanged. */
 export async function readCsvOrZipMessages(file: File): Promise<{
   text: string;
   fileName: string;
 }> {
-  const lower = file.name.toLowerCase();
-  if (lower.endsWith(".zip")) {
-    const { default: JSZip } = await import("jszip");
-    const zip = await JSZip.loadAsync(await file.arrayBuffer());
-    const entry =
-      zip.file(/messages\.csv$/i)[0] ||
-      Object.values(zip.files).find(
-        (f) => !f.dir && /messages\.csv$/i.test(f.name)
-      );
-    if (!entry) {
-      // Thrown in the browser, so it survives — but a plain Error still reaches the toast
-      // as the generic fallback, which is why this is a `UserFacingError`.
-      throw new UserFacingError(
-        "No messages.csv in that ZIP — download Messages from LinkedIn’s data export and upload that"
-      );
-    }
-    const text = await entry.async("string");
-    return { text, fileName: entry.name.split("/").pop() || "messages.csv" };
-  }
-  return { text: await file.text(), fileName: file.name };
+  return readLinkedInArchive(file, "messages");
 }
 
 /** Styled file picker that matches Orbit buttons (hides native Choose File UI). */
@@ -126,9 +161,15 @@ export function ImportProgress({
   importedLabel,
   onCancel,
   cancelling = false,
+  step,
 }: ImportProgressState & {
   onCancel?: () => void;
   cancelling?: boolean;
+  /**
+   * Which step of a multi-file drop this is. Optional, so the five existing call sites —
+   * including the Settings dialog's — are unchanged.
+   */
+  step?: { index: number; total: number };
 }) {
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
   const eta = useEtaCountdown({
@@ -153,9 +194,16 @@ export function ImportProgress({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
-          <h3 className="truncate text-sm font-medium text-primary">
-            {cancelling ? "Stopping import…" : "Import in progress"}
-          </h3>
+          <div className="min-w-0">
+            {step && step.total > 1 ? (
+              <p className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                Step {step.index} of {step.total}
+              </p>
+            ) : null}
+            <h3 className="truncate text-sm font-medium text-primary">
+              {cancelling ? "Stopping import…" : "Import in progress"}
+            </h3>
+          </div>
         </div>
         {onCancel ? (
           <Button
@@ -180,12 +228,14 @@ export function ImportProgress({
               {imported.toLocaleString()}
             </p>
             <p className="text-xs text-muted-foreground">
-              {importedLabel ?? (imported === 1 ? "contact imported" : "contacts imported")}
+              {importedLabel ??
+                (imported === 1 ? "contact imported" : "contacts imported")}
             </p>
           </div>
         ) : (
           <p className="text-sm font-medium">
-            {cancelling ? "Stopping import…" : "Importing…"} {done} of {total} {label}
+            {cancelling ? "Stopping import…" : "Importing…"} {done} of {total}{" "}
+            {label}
           </p>
         )}
         <div className="text-right">
@@ -258,4 +308,3 @@ export function BusyHint({ children }: { children: ReactNode }) {
     </div>
   );
 }
-

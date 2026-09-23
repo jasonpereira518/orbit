@@ -155,6 +155,8 @@ export type ContactsListFilters = {
   followUp?: "due";
   sort?: ContactSort;
   letter?: string;
+  /** Narrows the list to one import's people — see `/contacts/page.tsx`'s banner. */
+  importId?: string;
 };
 
 export function ContactsList({
@@ -361,6 +363,7 @@ export function ContactsList({
     if (filters.minScore) params.set("minScore", String(filters.minScore));
     if (filters.followUp) params.set("followUp", filters.followUp);
     if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
+    if (filters.importId) params.set("importId", filters.importId);
     params.set("letter", letter);
     router.replace(`/contacts?${params.toString()}`);
   }

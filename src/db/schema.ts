@@ -1568,6 +1568,32 @@ export type ImportStats = {
   durationMs?: number;
   /** SQL statements issued across every invocation. The cost this work exists to bound. */
   statements?: number;
+  /**
+   * Why this import stopped, as one of `ImportFailureCode` in `src/lib/import-errors.ts`.
+   *
+   * Classified where the error was thrown, from the error *instance* — a `ReauthRequiredError`
+   * or a Postgres `code` — which the stored message has already thrown away. The renderers
+   * fall back to classifying `error_message` when this is absent, so every row written before
+   * this existed still reads properly and no backfill is needed.
+   *
+   * Lives in `stats` rather than a column of its own precisely because it needs no DDL and no
+   * SCHEMA_VERSION bump.
+   */
+  errorCode?: string;
+
+  /**
+   * The moment this job made its last write, frozen by the engine when it marks the import
+   * `completed` or `failed`. Undo reads it to tell the interactions this import wrote from
+   * the ones that arrived after it; `updated_at` cannot stand in, because an admin retry
+   * bumps that long after the run. Absent on imports written before this field existed, and
+   * undo falls back to `updated_at` for those. See `lib/imports/import-undo.ts`.
+   */
+  runEndedAt?: string;
+
+  /** Set when an import was undone: when, and what went. See `lib/imports/import-undo.ts`. */
+  undoneAt?: string;
+  undoneRemoved?: number;
+  undoneKept?: number;
 };
 
 export const imports = pgTable("imports", {
@@ -1974,6 +2000,13 @@ export const memoryChunks = pgTable(
     chunkIndex: integer("chunk_index").default(0).notNull(),
     content: text("content").notNull(),
     contentHash: text("content_hash").notNull(),
+    /**
+     * md5 of the source this chunk set was built from — the same value on every chunk of one
+     * source. The sweep claims an interaction that has no chunk carrying the hash of its
+     * CURRENT text, which covers "never indexed" and "indexed, then edited" in one predicate.
+     * Nullable because v79 rows predate it; they read as stale once and are re-chunked.
+     */
+    sourceHash: text("source_hash"),
     /**
      * The hash that was embedded, which is the staleness predicate: a chunk is pending when
      * `embedded_hash IS DISTINCT FROM content_hash`. Per chunk, so editing paragraph three

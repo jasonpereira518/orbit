@@ -11,7 +11,7 @@ import {
   type ImportStats,
 } from "@/db/schema";
 import { internalFetch } from "@/lib/internal-auth";
-import { failImport } from "@/lib/import-job-processor";
+import { failImport, truncateStoredError } from "@/lib/import-job-processor";
 import {
   buildRecruiterQuery,
   fetchGmailHeaders,
@@ -628,14 +628,14 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
             return;
           }
           // A dead sender must not kill the scan — record why and move on.
-          const message = err instanceof Error ? err.message : "Classification failed";
+          const message = err instanceof Error ? err.message : "Couldn’t read this sender";
           rejected += 1;
           consecutiveFailures += 1;
           await db
             .update(importJobRows)
             .set({
               status: "skipped",
-              errorMessage: message.slice(0, 300),
+              errorMessage: truncateStoredError(message),
               updatedAt: new Date(),
             })
             .where(eq(importJobRows.id, row.id));
@@ -690,7 +690,9 @@ export async function applyRecruiterScanOutcome(
     if (!content) throw new Error("The classifier returned nothing for this sender");
     outcome = await applyRecruiterVerdict(userId, item.payload, item.meta, recruiterResultFromContent(content));
   } catch (err) {
-    errorMessage = (err instanceof Error ? err.message : "Classification failed").slice(0, 300);
+    errorMessage = truncateStoredError(
+      err instanceof Error ? err.message : "Couldn’t read this sender"
+    );
   }
 
   await db

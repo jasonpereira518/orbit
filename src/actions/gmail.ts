@@ -24,7 +24,10 @@ import {
   hasSendScope,
 } from "@/lib/gmail";
 import { isGooglePurpose, type GooglePurpose } from "@/lib/google-scopes";
-import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
+import {
+  deriveConnectionHealth,
+  type ConnectionHealth,
+} from "@/lib/connection-status";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
@@ -52,6 +55,14 @@ export type GmailConnectionStatus = {
   canRead: boolean;
   /** The grant covers contacts.readonly. */
   canImportContacts: boolean;
+  /**
+   * The grant covers calendar.readonly, so continuous meeting sync can run.
+   *
+   * `hasCalendarScope` was already read here — it just fed `deriveConnectionHealth` and was
+   * never returned, so nothing could tell a person their calendar sync was available and off.
+   * Named to match `OutlookConnectionStatus.hasCalendarScope` so one adapter reads both.
+   */
+  hasCalendarScope: boolean;
   /** Safe: configured redirect URI only (no secrets). */
   redirectUri: string | null;
 };
@@ -71,6 +82,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       nextSyncAt: null,
       canRead: false,
       canImportContacts: false,
+      hasCalendarScope: false,
       redirectUri: summary.redirectUri,
     };
   }
@@ -85,7 +97,9 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     connected: Boolean(conn && conn.status === "active"),
     emailAddress: conn?.emailAddress || null,
     lastSyncedAt: conn?.lastSyncedAt?.toISOString() || null,
-    canSend: Boolean(conn && conn.status === "active" && hasSendScope(conn.scopes)),
+    canSend: Boolean(
+      conn && conn.status === "active" && hasSendScope(conn.scopes),
+    ),
     status: conn
       ? deriveConnectionHealth({
           status: conn.status,
@@ -96,8 +110,15 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       : null,
     syncError: conn?.syncError ?? null,
     nextSyncAt: conn?.nextSyncAt?.toISOString() ?? null,
-    canRead: Boolean(conn && conn.status === "active" && hasGmailReadScope(conn.scopes)),
-    canImportContacts: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
+    canRead: Boolean(
+      conn && conn.status === "active" && hasGmailReadScope(conn.scopes),
+    ),
+    canImportContacts: Boolean(
+      conn && conn.status === "active" && hasContactsScope(conn.scopes),
+    ),
+    hasCalendarScope: Boolean(
+      conn && conn.status === "active" && hasCalendarScope(conn.scopes),
+    ),
     redirectUri: summary.redirectUri,
   };
 }
@@ -106,7 +127,8 @@ export async function startGmailOAuth(input: {
   purpose: GooglePurpose;
   returnTo?: string;
 }): Promise<{ url: string }> {
-  if (!isGooglePurpose(input.purpose)) throw new Error("Unknown Google connection purpose");
+  if (!isGooglePurpose(input.purpose))
+    throw new Error("Unknown Google connection purpose");
   const userId = await requireSyncUser();
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
@@ -114,7 +136,7 @@ export async function startGmailOAuth(input: {
       ? ` (${summary.redirectUriError})`
       : "";
     throw new Error(
-      `Gmail is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.${hint}`
+      `Gmail is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.${hint}`,
     );
   }
 
@@ -158,8 +180,12 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
 }
 
 export async function consumeGmailOAuthState(
-  state: string | null
-): Promise<{ userId: string; returnTo: string | null; purpose: GooglePurpose | null }> {
+  state: string | null,
+): Promise<{
+  userId: string;
+  returnTo: string | null;
+  purpose: GooglePurpose | null;
+}> {
   const jar = await cookies();
   const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
   jar.delete(OAUTH_STATE_COOKIE);
@@ -175,7 +201,6 @@ export async function consumeGmailOAuthState(
     purpose: isGooglePurpose(rawPurpose) ? rawPurpose : null,
   };
 }
-
 
 export type GmailScanStatus = {
   importId: string;
@@ -212,7 +237,9 @@ function toScanStatus(row: typeof imports.$inferSelect): GmailScanStatus {
  * backstop), so it survives navigation, a closed tab, and a dead invocation. The client
  * only polls.
  */
-export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId: string }>> {
+export async function startGmailRecruiterScan(): Promise<
+  ActionResult<{ importId: string }>
+> {
   return asActionResult(async () => {
     const userId = await requireSyncUser();
     const db = await getDb();
@@ -224,7 +251,9 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
       throw new UserFacingError("Connect Gmail first, then scan");
     }
     if (!hasGmailReadScope(conn.scopes)) {
-      throw new UserFacingError("Allow Orbit to read your mail first — reconnect Gmail and tick mail access");
+      throw new UserFacingError(
+        "Allow Orbit to read your mail first — reconnect Gmail and tick mail access",
+      );
     }
 
     // Fail here rather than after the mailbox sweep: classification is the whole point of
@@ -238,7 +267,7 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
         throw new UserFacingError(err.message);
       }
       throw new UserFacingError(
-        "Add an AI API key in Settings before scanning — the scan uses it to identify recruiters and summarize your threads"
+        "Add an AI API key in Settings before scanning — the scan uses it to identify recruiters and summarize your threads",
       );
     }
 
@@ -246,7 +275,7 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
       where: and(
         eq(imports.userId, userId),
         eq(imports.importType, GMAIL_SCAN_IMPORT_TYPE),
-        eq(imports.status, "processing")
+        eq(imports.status, "processing"),
       ),
     });
     if (running) return { importId: running.id };
@@ -272,7 +301,7 @@ export async function startGmailRecruiterScan(): Promise<ActionResult<{ importId
 
 /** Read-only poll target for the scan panel. */
 export async function getGmailScanStatus(
-  importId?: string
+  importId?: string,
 ): Promise<GmailScanStatus | null> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -284,7 +313,7 @@ export async function getGmailScanStatus(
     : await db.query.imports.findFirst({
         where: and(
           eq(imports.userId, userId),
-          eq(imports.importType, GMAIL_SCAN_IMPORT_TYPE)
+          eq(imports.importType, GMAIL_SCAN_IMPORT_TYPE),
         ),
         orderBy: [desc(imports.createdAt)],
       });
@@ -303,7 +332,6 @@ export async function cancelGmailRecruiterScan(importId: string) {
     .where(and(eq(imports.id, importId), eq(imports.userId, userId)));
   revalidatePath("/recruiters");
 }
-
 
 export type GmailSendIdentity = {
   connected: boolean;

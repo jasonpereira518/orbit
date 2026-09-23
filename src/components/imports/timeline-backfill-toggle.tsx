@@ -16,7 +16,11 @@ import { TOAST_COPY } from "@/lib/toast-copy";
  * Off by default; the label carries the estimate BEFORE the person turns it on. `refreshKey`
  * re-reads the count when an import finishes, since that is when conversations appear.
  */
-export function TimelineBackfillToggle({ refreshKey }: { refreshKey?: unknown }) {
+export function TimelineBackfillToggle({
+  refreshKey,
+}: {
+  refreshKey?: unknown;
+}) {
   const [status, setStatus] = useState<TimelineBackfillStatus | null>(null);
   const [pending, start] = useTransition();
 
@@ -41,7 +45,7 @@ export function TimelineBackfillToggle({ refreshKey }: { refreshKey?: unknown })
         toast.success(
           checked
             ? `Timeline events on — up to ${status.dailyCap} conversations a day`
-            : "Timeline events off"
+            : "Timeline events off",
         );
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.saveFailed));
@@ -58,12 +62,17 @@ export function TimelineBackfillToggle({ refreshKey }: { refreshKey?: unknown })
         className="mt-0.5"
       />
       <span className="min-w-0 text-sm">
-        <span className="block font-medium text-ink tabular-nums">{status.label}</span>
+        <span className="block font-medium text-ink tabular-nums">
+          {status.label}
+        </span>
         <span className="mt-0.5 block text-xs text-muted-foreground">
-          Finds meetings and meetups in your threads and adds them to each person’s timeline.
-          One call per conversation on {status.model}, up to {status.dailyCap} a day; threads
-          with a single message get only a reach-out, with no AI call.
-          {status.hasKey ? "" : " Without an AI key, Orbit falls back to simple keyword matching."}
+          Finds meetings and meetups in your threads and adds them to each
+          person’s timeline. One call per conversation on {status.model}, up to{" "}
+          {status.dailyCap} a day; threads with a single message get only a
+          reach-out, with no AI call.
+          {status.hasKey
+            ? ""
+            : " Without an AI key, Orbit falls back to simple keyword matching."}
         </span>
       </span>
     </label>
