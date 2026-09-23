@@ -66,7 +66,7 @@
  * Apple's real responses are not guaranteed to match any one fixture's prefix choice — see
  * `src/lib/caldav/fixtures/index.ts` for how that variation is exercised on purpose.
  *
- * ## The `syncToken` cursor's value grammar — a contract Tasks 6 and 7 depend on
+ * ## The `syncToken` cursor's value grammar — a contract Tasks 6, 7 and 8 depend on
  *
  * `fetchChanges` returns `nextSyncToken` as one of three shapes, and whoever persists it
  * into `CalendarSyncCursor.syncToken` (Task 7) must round-trip it byte-for-byte as the
@@ -76,14 +76,34 @@
  *     sync-token nor a ctag. Treat this the same as no stored cursor at all next time.
  *   - An opaque, UNPREFIXED string — a real WebDAV-Sync `sync-token` from a
  *     `sync-collection` REPORT (RFC 6578). Sent back verbatim as `<D:sync-token>` next time.
- *   - `ctag:<value>` — a CalendarServer `getctag`, from the non-sync fallback path, prefixed
- *     so a later call can tell on sight (`ctagFromCursor` below) that this calendar has
- *     already been probed and does not support `sync-collection` — and skip straight to the
- *     fallback, rather than spending one doomed credentialed REPORT reconfirming that on
- *     every single call. A real sync-token happening to start with the literal characters
- *     `ctag:` is not a case RFC 6578 rules out, but it is astronomically unlikely for an
- *     opaque server-issued token, and the cost of a false positive is one wasted PROPFIND,
- *     not a security issue.
+ *   - `ctag:<probedAtEpochMs>:<value>` — a CalendarServer `getctag`, from the non-sync
+ *     fallback path, prefixed with WHEN sync-collection support was last ruled out
+ *     (`ctagCursor`/`parseCtagCursor` below). The timestamp is what lets `fetchChanges` tell
+ *     on sight whether this calendar has already been probed and can skip straight to the
+ *     fallback (see `CTAG_PROBE_TTL_MS`), rather than spending one doomed credentialed
+ *     REPORT reconfirming that on every single call. The value after the second colon is the
+ *     ctag verbatim, however many colons IT contains — only the first colon after the
+ *     timestamp digits is the delimiter, so an opaque ctag is never misparsed. A real
+ *     sync-token happening to start with the literal characters `ctag:` is not a case RFC
+ *     6578 rules out, but it is astronomically unlikely for an opaque server-issued token,
+ *     and the cost of a false positive is one wasted PROPFIND, not a security issue.
+ *
+ * **The classification expires.** `CTAG_PROBE_TTL_MS` (7 days): once a `ctag:` cursor is
+ * older than that, `fetchChanges` re-attempts `sync-collection` instead of trusting the old
+ * "unsupported" verdict. A calendar that was misclassified by one bad response (see the
+ * stale-sync-token handling just below — the previous version of this ruling had no such
+ * escape hatch, and a single 4xx pinned a calendar to the fallback path forever) heals on its
+ * own within a week instead of staying wrong for the life of the connection.
+ *
+ * **A stale sync-token is not a capability signal.** RFC 6578's prescribed response to an
+ * invalid or expired `sync-token` is a 403 or 409 carrying the `DAV:valid-sync-token`
+ * precondition in the response body, and its prescribed recovery is a full resync — reissuing
+ * `sync-collection` with an EMPTY token — not "this calendar doesn't support REPORT".
+ * `fetchChanges` detects that precondition (`davRequest` surfaces it as
+ * `CalDavStaleSyncTokenError`, reading the response body — the only place in this module that
+ * does, since `guardedFetchText` never reads a body on a non-2xx response) and retries once,
+ * immediately, with an empty token, before ever falling back to the ctag path. Only a
+ * definitive 4xx that is NOT that precondition (`CalDavRejectedError`) means "unsupported".
  *
  * The fallback path's short-circuit (skip the time-range query entirely when nothing could
  * have changed) also depends on `cursor.windowStart` / `cursor.windowEnd` — already fields
@@ -94,6 +114,14 @@
  * storing, every time. Without that, an unchanged ctag cannot be told apart from a rolling
  * window simply not having reached a future event yet, and the two look identical from a
  * ctag alone — see the fix log in task-5-report.md for the failure this caused.
+ *
+ * **When to clear the cursor entirely**, rather than round-trip it: on reconnect, and
+ * whenever the user re-enters credentials. Task 8, which calls `discoverPrincipal` from the
+ * connect action, owns this — a cursor inherited from a dead connection can be stale in ways
+ * nothing in this module can detect on its own (a different Apple account reusing the same
+ * calendar display name, a calendar deleted and recreated under the same path, and so on).
+ * Neither `null`ing the cursor nor leaving it in place is unsafe from a security standpoint;
+ * this is a correctness obligation, not one this module can discharge for Task 8.
  */
 import { XMLParser } from "fast-xml-parser";
 import { guardedFetchText } from "@/lib/events/guarded-fetch";
@@ -121,19 +149,36 @@ export class CalDavAuthError extends Error {
 }
 
 /**
- * Internal: a request was rejected with a definitive 4xx — not 401 (its own error, handled
- * separately), and not 429 (which `guardedFetchText` already classifies as transient and
- * retries, same as a 5xx). Only this range means "the server looked at this exact request
- * and refused it", which is `fetchChanges`' signal to fall back to the non-sync path rather
- * than a fault to surface. Not exported: nothing outside this file is meant to catch it —
- * everything else should see either `CalDavAuthError` or a plain propagated failure.
+ * A request was rejected with a definitive 4xx — not 401 (its own error), not 429 (which
+ * `guardedFetchText` already classifies as transient and retries, same as a 5xx), and not a
+ * stale-sync-token precondition (`CalDavStaleSyncTokenError`, handled separately). Only this
+ * range means "the server looked at this exact request and refused it", which is
+ * `fetchChanges`' signal to fall back to the non-sync path rather than a fault to surface.
+ * Exported so a caller of `discoverPrincipal` / `listCalendars` (which do not themselves fall
+ * back on anything) can still tell a definitive rejection apart from a generic failure.
  */
-class CalDavRejectedError extends Error {
+export class CalDavRejectedError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
     super(message);
     this.name = "CalDavRejectedError";
     this.status = status;
+  }
+}
+
+/**
+ * The `sync-token` sent with a `sync-collection` REPORT was rejected as invalid or expired —
+ * RFC 6578's `DAV:valid-sync-token` precondition, carried in the body of a 403 or 409.
+ * `fetchChanges` treats this as "resync from scratch", not "this calendar doesn't support
+ * sync-collection" — see the module doc comment's cursor grammar section. Exported for the
+ * same reason as `CalDavRejectedError`, though `fetchChanges` itself never lets this escape
+ * to its own caller — it is always either resolved by the one retry or converted into a
+ * `CalDavRejectedError`-shaped fallback.
+ */
+export class CalDavStaleSyncTokenError extends Error {
+  constructor(message = "The stored sync-token is no longer valid.") {
+    super(message);
+    this.name = "CalDavStaleSyncTokenError";
   }
 }
 
@@ -304,9 +349,10 @@ function calendarQueryBody(fromUtc: string, toUtc: string): string {
  * necessarily `url` above, since Apple is free to redirect a request to a shard host
  * (`p42-caldav.icloud.com` and the like) and a relative href in the response must resolve
  * against where the response actually came from, not where the request was first aimed.
- * Throws `CalDavAuthError` on a 401 and lets every other `guardedFetchText` failure (network,
- * wrong content type, too many redirects, body too large) propagate as its own
- * `EventPageError`.
+ * Throws `CalDavAuthError` on a 401, `CalDavStaleSyncTokenError` on a stale-sync-token
+ * precondition, `CalDavRejectedError` on any other definitive 4xx, and lets every other
+ * `guardedFetchText` failure (network, wrong content type, too many redirects, body too
+ * large) propagate as its own `EventPageError`.
  */
 async function davRequest(
   creds: CalDavCredentials,
@@ -323,6 +369,13 @@ async function davRequest(
 
   const basic = Buffer.from(`${creds.username}:${creds.password}`, "utf8").toString("base64");
   let lastStatus = 0;
+  // The body of a non-2xx response, for the one thing this module needs to read out of an
+  // error body: RFC 6578's `valid-sync-token` precondition. `guardedFetchText` itself never
+  // reads a body on this path — it throws before doing so — so this is the only place it is
+  // ever available. Read from a CLONE, not the response `guardedFetchText` goes on to use:
+  // if that ever changed to read the body on an error path too, this must not have consumed
+  // it first.
+  let lastBody = "";
 
   const authedFetch = (async (input: string | URL, init?: RequestInit) => {
     const target = typeof input === "string" ? input : input.toString();
@@ -354,6 +407,13 @@ async function davRequest(
       body,
     });
     lastStatus = res.status;
+    if (!res.ok) {
+      try {
+        lastBody = await res.clone().text();
+      } catch {
+        lastBody = "";
+      }
+    }
     return res;
   }) as unknown as typeof fetch;
 
@@ -381,6 +441,15 @@ async function davRequest(
     // `guardedFetchText` happens to word its own error.
     if (lastStatus === 401) {
       throw new CalDavAuthError();
+    }
+    // RFC 6578: an invalid/expired sync-token is a 403 or 409 carrying the
+    // `valid-sync-token` precondition in the body — checked before the generic 4xx
+    // classification below, since 403 would otherwise match it too. A plain substring check,
+    // not a parse of the error body: the precondition element's LOCAL name is what matters,
+    // and it stays "valid-sync-token" regardless of which namespace prefix (or none) the
+    // server wraps it in, same as every other element this module reads.
+    if ((lastStatus === 403 || lastStatus === 409) && lastBody.includes("valid-sync-token")) {
+      throw new CalDavStaleSyncTokenError();
     }
     // A definitive 4xx (not 401, not 429 — see `CalDavRejectedError`'s own comment) is the
     // one status range `fetchChanges` is entitled to read as "unsupported, fall back to the
@@ -560,15 +629,33 @@ function parseSyncCollectionResponse(xml: string): {
  *  grammar section for the full contract. */
 const CTAG_CURSOR_PREFIX = "ctag:";
 
-function ctagCursor(ctag: string): string {
-  return `${CTAG_CURSOR_PREFIX}${ctag}`;
+/** How long a "this calendar does not support sync-collection" classification is trusted
+ *  before `fetchChanges` re-attempts the probe. See the module doc comment. */
+const CTAG_PROBE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function ctagCursor(ctag: string, probedAt: Date = new Date()): string {
+  return `${CTAG_CURSOR_PREFIX}${probedAt.getTime()}:${ctag}`;
 }
 
-/** Unwraps a stored cursor value to its bare ctag, or returns `null` if `value` is not one —
- *  either there is no stored cursor, or it holds a real (unprefixed) WebDAV-Sync token. */
-function ctagFromCursor(value: string | null | undefined): string | null {
+/**
+ * Unwraps a stored cursor value into its ctag and probe timestamp, or returns `null` if
+ * `value` is not a `ctag:`-prefixed cursor at all — either there is no stored cursor, or it
+ * holds a real (unprefixed) WebDAV-Sync token. Also returns `null` for a `ctag:`-prefixed
+ * value with no parseable timestamp — a defensive fallback for a value written before this
+ * timestamp was added to the grammar, treated as "re-probe", the safe direction to fail in.
+ *
+ * The split is on the FIRST colon after the numeric timestamp, not on colons generally — an
+ * opaque ctag is free to contain its own colons (a URL-shaped ctag, for instance) and must
+ * not be truncated by them.
+ */
+function parseCtagCursor(value: string | null | undefined): { ctag: string; probedAt: Date } | null {
   if (!value || !value.startsWith(CTAG_CURSOR_PREFIX)) return null;
-  return value.slice(CTAG_CURSOR_PREFIX.length);
+  const rest = value.slice(CTAG_CURSOR_PREFIX.length);
+  const sep = rest.indexOf(":");
+  if (sep === -1) return null;
+  const epoch = Number(rest.slice(0, sep));
+  if (!Number.isFinite(epoch)) return null;
+  return { ctag: rest.slice(sep + 1), probedAt: new Date(epoch) };
 }
 
 /** Whether the window this run was asked to cover is fully inside the window the stored
@@ -585,6 +672,37 @@ function windowCoveredByCursor(cursor: CalendarSyncCursor | null, window: { from
   return storedStart <= window.from.getTime() && storedEnd >= window.to.getTime();
 }
 
+type SyncCollectionOutcome =
+  | { outcome: "ok"; result: { icsDocuments: string[]; nextSyncToken: string | null; tombstones: number } }
+  | { outcome: "stale" }
+  | { outcome: "rejected" };
+
+/**
+ * One `sync-collection` REPORT attempt, classified into the three outcomes `fetchChanges`
+ * needs to act on. `CalDavAuthError` is the one failure this never classifies — a revoked
+ * password is a revoked password regardless of which request surfaced it, and is always
+ * rethrown rather than folded into "try the fallback".
+ */
+async function tryProbeSyncCollection(
+  creds: CalDavCredentials,
+  calendarUrl: string,
+  syncToken: string | null,
+  fetchImpl: typeof fetch
+): Promise<SyncCollectionOutcome> {
+  try {
+    const synced = await davRequest(creds, calendarUrl, "REPORT", "1", syncCollectionBody(syncToken), fetchImpl);
+    return { outcome: "ok", result: parseSyncCollectionResponse(synced.text) };
+  } catch (err) {
+    if (err instanceof CalDavAuthError) throw err;
+    if (err instanceof CalDavStaleSyncTokenError) return { outcome: "stale" };
+    if (err instanceof CalDavRejectedError) return { outcome: "rejected" };
+    // A network failure, an exhausted 429/5xx retry ladder, too many redirects, an oversized
+    // body: real faults, not a capability signal. Folding these into "fall back" is exactly
+    // what would permanently downgrade a sync-capable calendar over one bad moment.
+    throw err;
+  }
+}
+
 export async function fetchChanges(
   creds: CalDavCredentials,
   calendarUrl: string,
@@ -597,36 +715,43 @@ export async function fetchChanges(
   // A `ctag:`-prefixed cursor means a PRIOR call already learned, from the server itself,
   // that this calendar does not support `sync-collection` — see the cursor grammar in the
   // module doc comment. Skip straight to the fallback rather than spending one guaranteed-
-  // rejected credentialed REPORT reconfirming that on every single call.
-  const knownCtag = ctagFromCursor(cursor?.syncToken);
-  const probeSync = knownCtag === null;
+  // rejected credentialed REPORT reconfirming that on every single call — UNLESS that
+  // classification is old enough (`CTAG_PROBE_TTL_MS`) that it is worth re-checking whether
+  // it still holds.
+  const parsedCtagCursor = parseCtagCursor(cursor?.syncToken);
+  const knownCtag = parsedCtagCursor?.ctag ?? null;
+  const ctagCursorExpired =
+    parsedCtagCursor !== null && Date.now() - parsedCtagCursor.probedAt.getTime() >= CTAG_PROBE_TTL_MS;
+  const probeSync = parsedCtagCursor === null || ctagCursorExpired;
 
   if (probeSync) {
-    // Try WebDAV-Sync first. `CalDavCalendar.supportsSync` (from `listCalendars`) is a
-    // snapshot from whenever that calendar was last listed and could be stale; asking the
-    // server directly is what stays correct if Apple ever adds sync support to a calendar
-    // that lacked it, and the `ctag:` prefix above is what stops this from happening on
-    // every call once a calendar's answer is already known.
-    try {
-      const synced = await davRequest(
-        creds,
-        calendarUrl,
-        "REPORT",
-        "1",
-        syncCollectionBody(cursor?.syncToken ?? null),
-        fetchImpl
-      );
-      return parseSyncCollectionResponse(synced.text);
-    } catch (err) {
-      // A revoked password is a revoked password regardless of which request surfaced it —
-      // never swallowed into "must just be an unsupported report". Likewise anything that
-      // isn't a definitive rejection (a network failure, an exhausted 429/5xx retry ladder,
-      // too many redirects, an oversized body): those are real faults, and treating them as
-      // "unsupported, fall back" is exactly what would permanently downgrade a sync-capable
-      // calendar over one bad moment. Only `CalDavRejectedError` — the server looked at this
-      // exact request and said no — means fall back.
-      if (!(err instanceof CalDavRejectedError)) throw err;
+    // Try WebDAV-Sync. `CalDavCalendar.supportsSync` (from `listCalendars`) is a snapshot
+    // from whenever that calendar was last listed and could be stale; asking the server
+    // directly is what stays correct if Apple ever adds sync support to a calendar that
+    // lacked it, and the `ctag:` prefix (and its expiry) above is what stops this from
+    // happening on every call once a calendar's answer is already known and still fresh.
+    //
+    // A `ctag:`-prefixed cursor never carries a real sync-token to resume from (there isn't
+    // one — that's what the prefix means), so a re-probe triggered by expiry always starts
+    // from an empty token, same as a calendar's very first sync.
+    const startToken = parsedCtagCursor === null ? (cursor?.syncToken ?? null) : null;
+    const first = await tryProbeSyncCollection(creds, calendarUrl, startToken, fetchImpl);
+    if (first.outcome === "ok") return first.result;
+    if (first.outcome === "stale") {
+      // RFC 6578's prescribed recovery for an invalid/expired sync-token is a full resync,
+      // not a capability failure — retried exactly once, with an empty token. A FRESH
+      // request rejected the same way means something other than "this token expired" is
+      // going on, and is treated as "unsupported" (falls through below) rather than retried
+      // forever — see the module doc comment's cursor grammar section.
+      const retried = await tryProbeSyncCollection(creds, calendarUrl, null, fetchImpl);
+      if (retried.outcome === "ok") return retried.result;
+      // Whether the retry failed as "stale" again or as a definitive rejection, both fall
+      // through to the ctag path below — this calendar is being treated as unsupported
+      // either way, and the fallback's own PROPFIND (never a real sync-token) recomputes a
+      // fresh ctag rather than trusting anything from this failed attempt.
     }
+    // else: `first.outcome === "rejected"` — a definitive, non-precondition rejection.
+    // Falls straight through to the fallback below.
   }
 
   // Fallback: ctag change-detection plus a bounded time-range query. `calendar-query` has no
