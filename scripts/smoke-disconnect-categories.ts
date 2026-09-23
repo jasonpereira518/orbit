@@ -23,8 +23,16 @@ for (const [provider, ids] of Object.entries(DISCONNECT_DELETE_CATEGORIES)) {
   check(`${provider}: never reaches contacts`, !expandCategories(ids).has("contacts"));
   check(`${provider}: expands to nothing it did not name`, expandCategories(ids).size === ids.length);
 }
-check("Google offers the recruiter scan's data", DISCONNECT_DELETE_CATEGORIES.gmail.includes("recruiters"));
-check("Outlook offers the recruiter scan's data", DISCONNECT_DELETE_CATEGORIES.outlook.includes("recruiters"));
+// Exactly `["recruiters"]`, not merely including it. The Google and Microsoft account pages
+// (`src/components/settings/google-account-page.tsx`, `microsoft-account-page.tsx`) decide
+// whether the disconnect dialog has anything to offer from the recruiter scan alone: a read
+// that ran, succeeded and found no scan means "nothing to delete", and the checkbox is
+// dropped. That inference holds only while the recruiter scan is the whole list. A second
+// category added here would be silently hidden on both pages for every account that has
+// never scanned — so this fails loudly instead.
+const only = (ids: readonly string[], one: string) => ids.length === 1 && ids[0] === one;
+check("Google offers the recruiter scan data and nothing else", only(DISCONNECT_DELETE_CATEGORIES.gmail, "recruiters"));
+check("Outlook offers the recruiter scan data and nothing else", only(DISCONNECT_DELETE_CATEGORIES.outlook, "recruiters"));
 
 if (failures > 0) process.exit(1);
 console.log("\nAll disconnect-category checks passed.");

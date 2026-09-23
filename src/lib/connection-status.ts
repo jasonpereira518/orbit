@@ -44,9 +44,13 @@ export function calendarPauseLine(syncError: string | null, provider: "Google" |
  * (`pauseSync`), which is a choice and not a fault. `calendarPauseLine` says "reconnect" —
  * right for `disarmed`, wrong here, where a consent screen would fix nothing — so this names
  * the switch instead. One line for all four cards, so they cannot word it four ways.
+ *
+ * Three hops, like every other breadcrumb in the app (`ai-key-notice.tsx`, `surfaces.ts`):
+ * the account page it names is where the Meetings row lives, so a fourth hop only makes the
+ * line longer.
  */
 export function calendarOffLine(provider: "Google" | "Microsoft" = "Google"): string {
-  return `Meetings are switched off — turn them on in Settings → Integrations → ${provider}, on the Meetings row`;
+  return `Meetings are switched off — turn them on in Settings → Integrations → ${provider}`;
 }
 
 /** One line for the Integrations card and nav, which truncate — so the short forms. */

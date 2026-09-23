@@ -23,7 +23,8 @@
  * - `useLatestScan` owns the one read that tells that hook where the scan already is — see
  *   "The scan that is already running", below. The same read answers the disconnect dialog:
  *   recruiter data can only come from a scan, so a read that ran, succeeded and found none
- *   is the one case where there is nothing for it to offer to delete.
+ *   is the one case where there is nothing for it to offer to delete — until the inbox row
+ *   reports a scan started here, which is later than that read and undoes it.
  * - `googleAccountStatus` + `rowControl` decide what each row offers; neither lives here, so
  *   the Microsoft page cannot answer the same state differently.
  *
@@ -47,7 +48,7 @@
  * job (`contacts.jobRunning`) instead. It is the one deliberate behaviour change here.
  */
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { CalendarClock, CalendarDays, Loader2, Mail, Send, Users } from "lucide-react";
@@ -113,8 +114,28 @@ export function GoogleAccountPage({
   // recruiter data from a past subscription), and a rejected read settles as "no scan" for
   // the row's sake. Either would hide the offer for data that exists, so both stay
   // `undefined`, which leaves the dialog's checkbox exactly where it was.
-  const hasDeletableData =
-    latestScan.loaded && !latestScan.failed ? latestScan.scan !== null : undefined;
+  //
+  // The read happens once per mount — `useLatestScan`'s effect deps are `[read, enabled]`,
+  // and `read` is a module-level action while `enabled` stays true once it flips — so a scan
+  // started from the inbox row below is always later than the only answer it has. Without
+  // this flag, opening a never-scanned account, pressing Scan inbox, then ⋯ → Disconnect
+  // would say only that contacts stay, for an account whose fresh recruiter summaries also
+  // stay. The row reports the press; from then on this page stops claiming there is nothing
+  // to delete. Set on the press rather than on the scan's first status, so it costs no round
+  // trip and errs towards showing the checkbox if the start is refused.
+  //
+  // The flag lives here, not in the row, so it survives the row's `key` remount.
+  //
+  // Known boundary: a scan started in *another tab* while this dialog sits open is still not
+  // seen, and the dialog will say contacts stay. Accepted — the other branch's copy names
+  // Settings → Data and privacy as the route to delete everything — rather than paid for
+  // with a poll behind an open dialog.
+  const [scanStartedHere, setScanStartedHere] = useState(false);
+  const hasDeletableData = scanStartedHere
+    ? true
+    : latestScan.loaded && !latestScan.failed
+      ? latestScan.scan !== null
+      : undefined;
 
   return (
     <AccountPageShell
@@ -158,6 +179,7 @@ export function GoogleAccountPage({
           busy={connection.busy}
           initialScan={latestScan.scan}
           scanKnown={latestScan.loaded}
+          onScanStarted={() => setScanStartedHere(true)}
           onAllow={() => connection.connect(["recruiter_scan"])}
           onOpenPage={onOpenPage}
         />
@@ -329,6 +351,7 @@ function InboxRow({
   busy,
   initialScan,
   scanKnown,
+  onScanStarted,
   onAllow,
   onOpenPage,
 }: {
@@ -339,6 +362,12 @@ function InboxRow({
   initialScan: GmailScanStatus | null;
   /** The page's scan read has settled. False means "not known yet", never "no scan". */
   scanKnown: boolean;
+  /**
+   * A scan is being started from this row. The page's own scan read is older than this, so
+   * this is the only way it learns that recruiter data now exists — see `hasDeletableData`
+   * above. Told, never asked: it must not gate or delay the scan.
+   */
+  onScanStarted: () => void;
   onAllow: () => void;
   onOpenPage: (page: IntegrationTabId) => void;
 }) {
@@ -392,7 +421,10 @@ function InboxRow({
       onAction={() => {
         if (control.kind === "locked") router.push("/upgrade");
         else if (isAllow) onAllow();
-        else startTransition(() => start());
+        else {
+          onScanStarted();
+          startTransition(() => start());
+        }
       }}
     >
       {control.kind === "locked" ? (

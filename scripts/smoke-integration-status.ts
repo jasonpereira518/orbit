@@ -164,16 +164,27 @@ check("healthy accounts and AI on add nothing", attentionItems({ accounts: { goo
 
 console.log("\noverviewAction");
 const label = (...args: Parameters<typeof overviewAction>) => overviewAction(...args).label;
+// `connects` is the field with the side effect: set, the Overview's button starts that
+// provider's consent screen itself instead of opening its page. Pinned beside every label so
+// a button can never quietly gain or lose a consent screen.
+const connects = (...args: Parameters<typeof overviewAction>) => overviewAction(...args).connects;
 const offGoogle = googleAccountStatus(google({ connected: false, status: null }), pro);
 check("an unconnected account offers Connect", label("google", accountPageStatus(offGoogle), offGoogle) === "Connect Google");
 check("Connect is the primary action", overviewAction("google", accountPageStatus(offGoogle), offGoogle).primary);
+check("Connect starts the Google consent screen", connects("google", accountPageStatus(offGoogle), offGoogle) === "google");
 const offMicrosoft = microsoftAccountStatus(microsoft({ connected: false, status: null }), pro);
 check("names Microsoft", label("microsoft", accountPageStatus(offMicrosoft), offMicrosoft) === "Connect Microsoft");
+check("Connect starts the Microsoft consent screen", connects("microsoft", accountPageStatus(offMicrosoft), offMicrosoft) === "microsoft");
 const expiredGoogle = googleAccountStatus(google({ connected: false, status: "needs_reauth" }), pro);
 check("an expired account offers Sign in again", label("google", accountPageStatus(expiredGoogle), expiredGoogle) === "Sign in again");
+check("Sign in again opens the page, which owns the return", connects("google", accountPageStatus(expiredGoogle), expiredGoogle) === undefined);
 check("a connected account offers Manage", label("google", accountPageStatus(g), g) === "Manage");
+check("Manage opens the page", connects("google", accountPageStatus(g), g) === undefined);
 check("a still-loading account offers Open", label("google", undefined, undefined) === "Open");
+check("a still-loading account opens the page", connects("google", undefined, undefined) === undefined);
 check("an unavailable account offers Open", label("google", undefined, googleAccountStatus(google({ configured: false }), pro)) === "Open");
+// No client id, no consent screen to start — this one has to open the page.
+check("an unavailable account opens the page", connects("google", undefined, googleAccountStatus(google({ configured: false }), pro)) === undefined);
 check("LinkedIn never imported", label("linkedin", linkedinPageStatus(null, now)) === "Import");
 check("LinkedIn imported before", label("linkedin", linkedinPageStatus(new Date("2026-09-01T00:00:00Z"), now)) === "Import again");
 check("AI off", label("ai", aiOff) === "Turn on AI" && overviewAction("ai", aiOff).primary);

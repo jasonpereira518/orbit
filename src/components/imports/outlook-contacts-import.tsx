@@ -74,9 +74,16 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
                 Reconnect Microsoft
               </Button>
             </p>
-          ) : status.status === "paused" ? (
+          ) : status.status === "paused" && status.hasCalendarScope ? (
             // The person switched meetings off themselves: not a fault, so no warning colour
             // and no Reconnect — a consent screen would not turn them back on.
+            //
+            // Guarded on the scope because `deriveConnectionHealth` answers "paused" from
+            // `sync_status` alone: an account that paused and later reconnected without
+            // calendar would otherwise say "Meetings are switched off — turn them on"
+            // directly above the block below offering to grant the calendar in the first
+            // place. Only one of those two can be true, so only one renders. (`disarmed`
+            // above cannot reach this: its branch already requires the scope.)
             <p className="mt-1 text-sm text-muted-foreground">{calendarOffLine("Microsoft")}</p>
           ) : null}
         </div>
