@@ -1504,6 +1504,11 @@ export type ImportStats = {
    * SCHEMA_VERSION bump.
    */
   errorCode?: string;
+
+  /** Set when an import was undone: when, and what went. See `lib/imports/import-undo.ts`. */
+  undoneAt?: string;
+  undoneRemoved?: number;
+  undoneKept?: number;
 };
 
 export const imports = pgTable("imports", {
