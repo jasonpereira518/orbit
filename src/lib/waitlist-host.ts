@@ -157,6 +157,21 @@ export function waitlistRewrites(env: Env = process.env): ConfigRewrite[] {
 }
 
 /**
+ * Local-only preview of the waitlist: `/waitlist` and `/waitlist/privacy` on localhost render
+ * the pages the waitlist host serves at `/` and `/privacy`, since `*.localhost` host routing
+ * is awkward and the real rewrites match on the Host header. Never emitted outside `next dev`,
+ * so production and preview builds keep 404ing on `/waitlist` (`public/waitlist/` only holds
+ * the icon).
+ */
+export function localWaitlistRewrites(env: Env = process.env): ConfigRewrite[] {
+  if (env.NODE_ENV !== "development") return [];
+  return [
+    { source: "/waitlist", destination: "/interest" },
+    { source: "/waitlist/privacy", destination: "/interest/privacy" },
+  ];
+}
+
+/**
  * `redirects()` entries for the APP host in stealth mode. The session-dependent rules (the
  * marketing pages, `/`) live in the proxy, which can read the session; these need none.
  */
