@@ -118,6 +118,7 @@ function DefaultViewFitter({
     let cancelled = false;
     let tries = 0;
     let timeoutId: number | undefined;
+    let rafId: number | undefined;
 
     const centerNow = () => {
       if (cancelled) return;
@@ -143,11 +144,17 @@ function DefaultViewFitter({
           }
           return;
         }
-        // One refine after layout settles (no animation) — the first pass
-        // above ran before nodes were DOM-measured, so it under-estimates
-        // extents and frames too tight. This is the frame callers should
-        // actually reveal.
-        timeoutId = window.setTimeout(() => {
+        // One refine once the nodes are measured (no animation) — the first
+        // pass above ran before they were, so it can under-estimate extents
+        // and frame too tight. This is the frame callers should actually
+        // reveal.
+        //
+        // React Flow measures nodes with a ResizeObserver, which reports in the
+        // frame they first lay out — after that frame's rAF callbacks — so the
+        // sizes are in its store by the next frame's. This was a flat 100ms,
+        // which on opening the chart was most of the wait between the sky
+        // being ready and it being shown.
+        const refine = () => {
           if (cancelled) return;
           const size = storeApi.getState();
           if (size.width < 48 || size.height < 48) {
@@ -165,7 +172,10 @@ function DefaultViewFitter({
             if (cancelled) return;
             onSettledRef.current?.();
           });
-        }, 100);
+        };
+        rafId = requestAnimationFrame(() => {
+          rafId = requestAnimationFrame(refine);
+        });
       });
     };
 
@@ -175,6 +185,7 @@ function DefaultViewFitter({
     return () => {
       cancelled = true;
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      if (rafId !== undefined) cancelAnimationFrame(rafId);
     };
     // Mounted fresh per request (see the key at the call site) — refs hold the rest
     // eslint-disable-next-line react-hooks/exhaustive-deps

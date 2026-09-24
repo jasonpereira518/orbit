@@ -17,7 +17,7 @@ import {
   mixWithWhite,
   withAlpha,
 } from "@/lib/school-color";
-import { hashUnit } from "@/lib/hash";
+import { hashUnit, hashUnitStream } from "@/lib/hash";
 
 export { orderConstellationMembers };
 
@@ -275,6 +275,9 @@ function labelClear(
   );
 }
 
+const GRID_OFFSET = 2 ** 20;
+const GRID_STRIDE = 2 ** 21;
+
 /**
  * The placed stars, bucketed so a clearance test looks at neighbours rather than everyone.
  *
@@ -286,10 +289,15 @@ function labelClear(
  * one field, so it grew with the square of the network.
  */
 class ClearanceGrid {
-  private cells = new Map<string, Array<{ x: number; y: number }>>();
+  private cells = new Map<number, Array<{ x: number; y: number }>>();
 
+  /**
+   * One number per cell rather than a `"cx,cy"` string: the test below looks up nine cells per
+   * candidate, and building and hashing those strings was most of the layout's time at 10,000
+   * contacts. Exact for |cx|, |cy| < 2^20 cells — over a hundred million world px either way.
+   */
   private static key(cx: number, cy: number) {
-    return `${cx},${cy}`;
+    return (cx + GRID_OFFSET) * GRID_STRIDE + (cy + GRID_OFFSET);
   }
 
   add(p: { x: number; y: number }) {
@@ -342,10 +350,12 @@ function scatterField(
     let spot: { x: number; y: number } | null = null;
     let attempt = 0;
     let rounds = 0;
+    // The same values as hashUnit(seedPrefix + ":" + id, salt), hashing the string once per star.
+    const hash = hashUnitStream(`${seedPrefix}:${id}`);
     while (!spot && rounds < 200) {
       for (let tries = 0; tries < 24 && !spot; tries++, attempt++) {
-        const u = hashUnit(`${seedPrefix}:${id}`, attempt * 2 + 1);
-        const v = hashUnit(`${seedPrefix}:${id}`, attempt * 2 + 2);
+        const u = hash(attempt * 2 + 1);
+        const v = hash(attempt * 2 + 2);
         const angle = u * Math.PI * 2;
         // sqrt() → uniform density over the annulus
         const radius = Math.sqrt(

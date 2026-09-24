@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect } from "react";
 import type { getGraphData } from "@/actions/graph";
 import { predictSlowIntro } from "@/lib/graph/intro-choreography";
@@ -11,21 +10,12 @@ import {
   ConstellationLoading,
   CONSTELLATION_STAGE_HEIGHT,
 } from "@/components/graph/constellation-loading";
+import {
+  preloadConstellation,
+  useNetworkGraphModule,
+} from "@/components/graph/constellation-modules";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
-
-const NetworkGraphFull = dynamic(
-  () =>
-    import("@/components/graph/network-graph").then((m) => ({
-      default: m.NetworkGraph,
-    })),
-  {
-    ssr: false,
-    loading: () => (
-      <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
-    ),
-  }
-);
 
 /**
  * Decision two: the payload has arrived, so the layout cost is finally knowable.
@@ -82,5 +72,11 @@ export function NetworkGraphLazy({
     decideFromPayload(contactCount);
   }, [compact, contactCount]);
 
-  return <NetworkGraphFull initialData={initialData} />;
+  // Usually already under way (see `ConstellationIntro`); this covers any other host.
+  useEffect(() => preloadConstellation(), []);
+
+  // Loaded without a Suspense boundary — see constellation-modules.ts for why that matters.
+  const graph = useNetworkGraphModule();
+  if (!graph) return <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />;
+  return <graph.NetworkGraph initialData={initialData} />;
 }

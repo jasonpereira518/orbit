@@ -181,9 +181,9 @@ export function predictSlowIntro(input: {
   // what is happening and announces it politely, so declining here removes nothing.
   if (input.reduced) return { warp: false, reason: null };
 
-  // The chunk has never evaluated in this document. Because `next/dynamic` is `ssr: false`
-  // here, its request cannot even start until the payload has streamed and the lazy wrapper
-  // has hydrated — so a cold chunk is reliably a real wait.
+  // The chunk has never evaluated in this document. Its request starts when the page hydrates
+  // (`preloadConstellation`), and it carries `@xyflow/react` — the largest download on the
+  // page — so a cold chunk is reliably a real wait.
   if (!input.chunkLoaded) return { warp: true, reason: "cold-chunk" };
 
   // Warm chunk and no payload yet is the "asked too early" case. Not slow, and emphatically
