@@ -43,7 +43,13 @@ export async function countDuplicates(): Promise<number> {
   return countDuplicatesAwaitingReview(await requireUserId());
 }
 
-/** Merge one pair. `keepId` survives; `mergeId` is archived and disappears from every view. */
+/**
+ * Merge one pair. `keepId` survives; `mergeId` is archived and disappears from every view.
+ *
+ * Passes NO `confidence`, and that is load-bearing: a merge row with a null confidence is how
+ * the admin engagement report (`engagementDepth`) tells a person-confirmed merge from the
+ * automatic sweep and import-time resolution, which always record one.
+ */
 export async function mergeDuplicatePair(keepId: string, mergeId: string, reason?: string) {
   const userId = await requireUserId();
   const result = await mergeContacts(userId, keepId, mergeId, { reason });

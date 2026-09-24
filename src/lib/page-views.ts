@@ -26,13 +26,15 @@ export type PageViewInput = {
   city: string | null;
   device: DeviceKind;
   isBot: boolean;
+  /** Orbit's own traffic. See `src/lib/analytics-internal.ts`. Defaults to false. */
+  isInternal?: boolean;
 };
 
 export async function recordPageView(input: PageViewInput): Promise<void> {
   const db = await getDb();
   await db
     .insert(pageViews)
-    .values(input)
+    .values({ ...input, isInternal: input.isInternal ?? false })
     // The id comes from the client, so a retried beacon can present one twice. Ignoring
     // the second is right: it is the same view, not a new one.
     .onConflictDoNothing({ target: pageViews.id });
