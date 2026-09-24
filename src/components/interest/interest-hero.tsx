@@ -17,6 +17,7 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { pulseStarfield } from "@/lib/starfield-events";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
+import { frauncesItalic } from "@/components/fonts/fraunces-italic";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
 
 export type HeroInitial =
@@ -178,12 +179,12 @@ export function InterestHero({
               exit={{ opacity: 0 }}
               transition={flipHalf}
             >
-              {/* Fraunces' true italic, declared in the root layout — the word that
+              {/* Fraunces' true italic (its own font instance) — the word that
                   carries the idea is the word that leans. */}
               {showTicket ? (
-                <>You&apos;re <em className="italic">in line</em>.</>
+                <>You&apos;re <em className={`${frauncesItalic.className} italic`}>in line</em>.</>
               ) : (
-                <>The future of <em className="italic">networking</em>.</>
+                <>The future of <em className={`${frauncesItalic.className} italic`}>networking</em>.</>
               )}
             </motion.span>
           </AnimatePresence>

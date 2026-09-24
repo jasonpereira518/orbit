@@ -4,6 +4,7 @@ import { Eye, KeyRound, RotateCcw } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { Reveal } from "@/components/motion/reveal";
+import { frauncesItalic } from "@/components/fonts/fraunces-italic";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { BackControl } from "@/components/pricing/back-control";
@@ -104,9 +105,9 @@ export default async function PricingPage() {
         <section className="pt-10 text-center md:pt-16">
           <Reveal className="reveal-celestial">
             <h1 className={`${HEADING} text-[clamp(32px,5vw,56px)]`}>
-              {/* Fraunces' true italic, declared in the root layout — the word that
+              {/* Fraunces' true italic (its own font instance) — the word that
                   carries the offer is the word that leans. */}
-              <em className="italic">Free</em> for your first {FREE_CONTACT_LIMIT}{" "}
+              <em className={`${frauncesItalic.className} italic`}>Free</em> for your first {FREE_CONTACT_LIMIT}{" "}
               contacts.
             </h1>
           </Reveal>

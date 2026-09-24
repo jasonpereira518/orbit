@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { frauncesItalic } from "@/components/fonts/fraunces-italic";
 import { CometStreak } from "@/components/landing/comet-streak";
 import { ConstellationFigure } from "@/components/landing/constellation-figure";
 import { FooterWordmark } from "@/components/landing/footer-wordmark";
@@ -283,7 +284,7 @@ function FinaleCloser({
         </div>
         <p className="font-[family-name:var(--font-display)] text-[clamp(36px,6.4vw,72px)] font-light leading-[1.06] tracking-[-0.03em] text-balance text-[#e8f3f1]">
           Don&apos;t lose the person who{" "}
-          <em className="text-[#f2c14e]">gets you hired.</em>
+          <em className={`${frauncesItalic.className} text-[#f2c14e]`}>gets you hired.</em>
         </p>
       </Reveal>
 
