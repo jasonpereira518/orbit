@@ -33,29 +33,36 @@ export function DashboardGraphPreview({
           A tap still opens the chart, and the footer link is the keyboard's way there.
           300px is a floor, not a size: beside Network depth the card is stretched to that
           card's height, and the sky grows into it instead of leaving a band of empty card.
+
+          The sky is pinned to the stage with `absolute inset-0` rather than sized `h-full`.
+          On a phone the card is not stretched, so the stage's height is only its min-height —
+          which a percentage height cannot resolve against — and the canvas fell back to its
+          intrinsic 150px, drawing the whole sky into the top half of the box.
         */}
         <div
           className={cn(
-            "min-h-[300px] flex-1 overflow-hidden rounded-2xl border border-white/10",
+            "relative min-h-[300px] flex-1 overflow-hidden rounded-2xl border border-white/10",
             STAGE_GROUND
           )}
         >
-          {sky.count > 0 ? (
-            <ConstellationPreviewCanvas
-              sky={sky}
-              href="/graph"
-              label={`Your constellation: ${sky.count.toLocaleString()} ${
-                sky.count === 1 ? "person" : "people"
-              }. Drag to move around, pinch to zoom, tap to open the full chart.`}
-            />
-          ) : (
-            <Link
-              href="/graph"
-              className="flex h-full items-center justify-center text-sm text-white/50"
-            >
-              Your sky is empty
-            </Link>
-          )}
+          <div className="absolute inset-0">
+            {sky.count > 0 ? (
+              <ConstellationPreviewCanvas
+                sky={sky}
+                href="/graph"
+                label={`Your constellation: ${sky.count.toLocaleString()} ${
+                  sky.count === 1 ? "person" : "people"
+                }. Drag to move around, pinch to zoom, tap to open the full chart.`}
+              />
+            ) : (
+              <Link
+                href="/graph"
+                className="flex h-full items-center justify-center text-sm text-white/50"
+              >
+                Your sky is empty
+              </Link>
+            )}
+          </div>
         </div>
       </CardContent>
       <CardFooter className="border-t border-border/60 pt-4">
