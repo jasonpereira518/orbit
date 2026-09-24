@@ -74,36 +74,43 @@ export default defineManifest(({ mode }) => {
     // Generate the keypair once and keep the .pem out of git; see the README.
     ...(env.VITE_EXTENSION_KEY ? { key: env.VITE_EXTENSION_KEY } : {}),
 
-    // No default_popup: the action toggles the side panel instead (see the
-    // background worker). The panel persists while the user browses, which is
-    // what makes adding several people in a row a workflow rather than a chore.
+    // No default_popup: the action opens the side panel, from the background
+    // worker's onClicked — NOT via Chrome's openPanelOnActionClick, which
+    // opens the panel but grants the tab nothing (measured; see
+    // docs/permission-spike.md). The panel persists while the user browses,
+    // which is what makes adding several people in a row a workflow.
     action: { default_title: "Orbit" },
     side_panel: { default_path: "src/panel/index.html" },
     background: { service_worker: "src/background/index.ts", type: "module" },
 
     // activeTab grants access to the current tab only, and only after the user
-    // clicks the toolbar icon — so installing shows no "read your data on
-    // linkedin.com" warning, and the extension structurally cannot read or fetch
-    // any site in the background.
+    // clicks the toolbar icon (or presses its shortcut) — so installing shows
+    // no "read your data on linkedin.com" warning, and the extension
+    // structurally cannot read or fetch any site in the background. The grant
+    // lasts until the tab leaves that site.
     // "cookies" is required by @clerk/chrome-extension's syncHost mode: sharing
     // the web app's session means reading its session cookie from the Orbit
     // origin. It is scoped by host_permissions below, so it grants nothing on
     // LinkedIn or anywhere else.
-    // "storage" is likewise Clerk's, not ours: @clerk/chrome-extension caches
-    // its session state in browser.storage. No first-party code touches it.
+    // "storage": @clerk/chrome-extension caches its session state there, and
+    // the worker hands a toolbar click to the panel through storage.session —
+    // in memory only, readable only by the extension's own pages, and deleted
+    // as soon as the panel acts on it (src/lib/intents.ts).
     permissions: ["activeTab", "scripting", "storage", "cookies", "sidePanel"],
     host_permissions: [`${appOrigin}/*`, ...clerkHosts],
 
-    // Only requested via the explicit per-site grant UI (GrantAccessView).
-    // Declaring costs no install-time warning, and anything listed here must
-    // also be offered in that UI — a permission the user can't see in the
-    // grant screen has no business being requestable. twitter.com is absent
-    // on purpose: x.com is the real host now (twitter.com only 301s to it),
-    // and URL *parsing* needs no permission.
+    // Opt-in "follow me on this site without a click", requested only from
+    // Settings (SiteAccessList). Never needed to read a page — the click does
+    // that. Declaring costs no install-time warning, and every origin here
+    // must also be offered in that list (KNOWN_SITES in src/lib/permissions.ts)
+    // — a permission the user can't see has no business being requestable.
+    // twitter.com is absent on purpose: x.com is the real host now
+    // (twitter.com only 301s to it), and URL *parsing* needs no permission.
     optional_host_permissions: [
       "https://*.linkedin.com/*",
       "https://x.com/*",
       "https://mail.google.com/*",
+      "https://github.com/*",
     ],
 
     commands: {

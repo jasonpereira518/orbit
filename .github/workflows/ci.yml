@@ -62,7 +62,7 @@ jobs:
       - run: npm test
 
   extension:
-    name: extension typecheck · build
+    name: extension typecheck · lint · test · build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -74,7 +74,31 @@ jobs:
           cache-dependency-path: extension/package-lock.json
       - run: npm --prefix extension ci --no-audit --no-fund
       - run: npm --prefix extension run typecheck
+      - run: npm --prefix extension run lint
+      - run: npm --prefix extension run test
       - run: npm --prefix extension run build
+
+  # The permission model against real Chrome: one click on the toolbar action
+  # must open the panel AND read the page (extension/docs/permission-spike.md).
+  # Headed Chrome under xvfb, because Extensions.triggerAction refuses headless.
+  # Non-blocking until it has proven stable on the runners.
+  extension-e2e:
+    name: extension e2e (permissions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: npm --prefix extension ci --no-audit --no-fund
+      - run: npm --prefix extension run build:e2e
+      - run: xvfb-run --auto-servernum node extension/e2e/permissions.e2e.mjs
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
 
   e2e:
     name: browser flows (Playwright)

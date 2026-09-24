@@ -183,6 +183,12 @@ export type ContactSnapshot = {
   notesPreview: string | null;
   recentInteractions: SnapshotInteraction[];
   openReminders: SnapshotReminder[];
+  /**
+   * How the user met them, in their own words, and when. Optional because a
+   * server older than this field omits it — the panel treats absent as unknown.
+   */
+  howMet?: string | null;
+  dateMet?: string | null;
 };
 
 /** Field values proposed for the create form, derived from the page. */
@@ -400,6 +406,33 @@ export type FollowUpResponse = {
   reminderId: string | null;
 };
 
+/**
+ * What completing a reminder changed, handed back so an Undo can reverse
+ * exactly that. `clearedFollowUpAt` is set when the reminder WAS the contact's
+ * follow-up: completing it also cleared the contact's follow-up clock, or the
+ * panel would go on saying "Follow-up was due 3 weeks ago" about a thing the
+ * user had just marked done.
+ */
+export type ReminderCompletion = {
+  reminderId: string;
+  previousStatus: string;
+  closedActionItemIds: string[];
+  contactId: string | null;
+  clearedFollowUpAt: string | null;
+};
+
+export type ReminderActionRequest =
+  | { action: "complete"; reminderId: string }
+  | { action: "reopen"; completion: ReminderCompletion };
+
+export type ReminderActionResponse = {
+  reminderId: string;
+  /** Set on complete: pass it back as `reopen` to undo. */
+  completion: ReminderCompletion | null;
+  /** On reopen: false when the reminder had moved on and there was nothing honest to undo. */
+  restored: boolean;
+};
+
 /* -------------------------------------------------------------------------- */
 /* Search + session                                                           */
 /* -------------------------------------------------------------------------- */
@@ -429,6 +462,8 @@ export type MeResponse = {
     hasAiKey: boolean;
     hasApolloKey: boolean;
     aiProvider: string;
+    /** "Anthropic", not "anthropic". Optional: older servers send only the id. */
+    aiProviderLabel?: string;
   };
   stats: {
     contactCount: number;

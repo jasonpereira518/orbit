@@ -1,19 +1,16 @@
 /**
- * Site access.
+ * Standing site access — the opt-in, not the way in.
  *
- * The popup could rely on `activeTab`: clicking the toolbar icon *is* the
- * granting gesture, so a popup always opens with permission to read the tab it
- * opened over. A side panel can't. When the action's job is to open the panel,
- * Chrome doesn't fire the action and doesn't grant `activeTab` — so the panel
- * opens able to see that a tab exists and nothing else.
+ * Reading a page never needs this: clicking the toolbar icon grants that tab
+ * (`activeTab`, via the worker's onClicked — see background/index.ts). What a
+ * standing host permission adds is *following*: on a site the user lives on,
+ * the panel reads each page as they open it, with no click each time.
  *
- * The way through is an explicit, revocable host permission requested from a
- * button in the panel. These origins are already declared under
- * `optional_host_permissions`, so asking adds no install-time warning — the
- * user meets the request at the moment it buys them something, which is a
- * better trade than a scary install dialog for a permission whose point they
- * haven't seen yet.
+ * These origins are declared under `optional_host_permissions`, so asking adds
+ * no install-time warning; the user turns them on from Settings when the
+ * convenience is worth it to them, and off from the same list.
  */
+import { browser } from "./browser";
 
 /**
  * The sites Orbit knows how to read deeply. Must stay in lockstep with
@@ -25,21 +22,13 @@ export const KNOWN_SITES = [
   { origin: "https://*.linkedin.com/*", label: "LinkedIn" },
   { origin: "https://x.com/*", label: "X" },
   { origin: "https://mail.google.com/*", label: "Gmail" },
+  { origin: "https://github.com/*", label: "GitHub" },
 ] as const;
 
 export const KNOWN_ORIGINS: string[] = KNOWN_SITES.map((site) => site.origin);
 
-export async function grantedOrigins(): Promise<string[]> {
-  try {
-    return (await chrome.permissions.getAll()).origins ?? [];
-  } catch {
-    return [];
-  }
-}
-
-export async function hasAnySitePermission(): Promise<boolean> {
-  const granted = await grantedOrigins();
-  return granted.some((origin) => KNOWN_ORIGINS.includes(origin));
+export function grantedOrigins(): Promise<string[]> {
+  return browser().permissions.granted();
 }
 
 /**
@@ -48,9 +37,9 @@ export async function hasAnySitePermission(): Promise<boolean> {
  * loses the gesture.
  */
 export function requestSites(origins: string[]): Promise<boolean> {
-  return chrome.permissions.request({ origins }).catch(() => false);
+  return browser().permissions.request(origins);
 }
 
 export function revokeSites(origins: string[]): Promise<boolean> {
-  return chrome.permissions.remove({ origins }).catch(() => false);
+  return browser().permissions.remove(origins);
 }

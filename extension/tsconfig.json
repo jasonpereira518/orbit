@@ -19,5 +19,5 @@
       "@contract": ["../src/lib/extension/contract.ts"]
     }
   },
-  "include": ["src", "*.config.ts", "scripts"]
+  "include": ["src", "dev", "test", "*.config.ts", "scripts"]
 }

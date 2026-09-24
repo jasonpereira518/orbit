@@ -11,7 +11,7 @@
  * Cards are reserved for the two things that are actionable and dismissible as
  * a unit: the diff and the starters.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
   CalendarClock,
@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import type { ContactSnapshot, PageContext } from "@contract";
 import type { OrbitApi } from "@/lib/api";
+import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
 import { cn } from "@/lib/cn";
 import { relativeTime } from "@/lib/format";
@@ -43,30 +44,45 @@ export function KnownContactView({
   state,
   api,
   onChanged,
+  onDirtyChange,
 }: {
   contact: ContactSnapshot;
   page: PageContext;
   state: PanelState;
   api: OrbitApi;
   onChanged: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [panel, setPanel] = useState<"none" | "note" | "followup">("none");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [flash, setFlash] = useState<string | null>(null);
+  const [flash, setFlash] = useState<{ message: string; undo?: () => void } | null>(
+    null
+  );
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [editingSummary, setEditingSummary] = useState(false);
   const [summaryDraft, setSummaryDraft] = useState("");
   const [summaryBusy, setSummaryBusy] = useState(false);
+
+  // Unsaved prose about *this* person outranks the tab, exactly as a capture
+  // draft does: the panel holds where it is and offers to discard, rather than
+  // following the browser and leaving the text pointed at someone else.
+  const hasUnsavedText = note.trim().length > 0 || summaryDraft.trim().length > 0;
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedText);
+    return () => onDirtyChange?.(false);
+  }, [hasUnsavedText, onDirtyChange]);
 
   const changes = (state.resolved?.changes ?? []).filter(
     (change) => !dismissed.includes(change.field)
   );
   const firstName = contact.preferredName ?? contact.fullName.split(/\s+/)[0];
 
-  const toast = (message: string) => {
-    setFlash(message);
-    setTimeout(() => setFlash(null), 1800);
+  // An Undo needs long enough to be read and reached; a plain confirmation
+  // only needs to be seen.
+  const toast = (message: string, undo?: () => void) => {
+    setFlash({ message, undo });
+    setTimeout(() => setFlash(null), undo ? 5000 : 1800);
   };
 
   const logNote = async (text: string, type = "note") => {
@@ -89,12 +105,18 @@ export function KnownContactView({
     }
   };
 
-  const scheduleFollowUp = async (days: number) => {
+  /**
+   * `reminderId` moves the reminder the user is actually looking at. Without it
+   * the server has no choice but to create a *second* one, so snoozing an
+   * overdue follow-up quietly left the original behind, still overdue, and
+   * /reminders grew a duplicate every time someone pressed Snooze.
+   */
+  const scheduleFollowUp = async (days: number, reminderId?: string) => {
     setBusy(true);
     try {
-      await api.followUp({ contactId: contact.id, inDays: days });
+      await api.followUp({ contactId: contact.id, inDays: days, reminderId });
       setPanel("none");
-      toast(`Follow-up in ${days} days`);
+      toast(reminderId ? `Moved out ${days} days` : `Follow-up in ${days} days`);
       onChanged();
     } catch {
       toast("Couldn't schedule that");
@@ -102,6 +124,48 @@ export function KnownContactView({
       setBusy(false);
     }
   };
+
+  const completeReminder = async (reminderId: string) => {
+    setBusy(true);
+    try {
+      const { completion } = await api.reminder({ action: "complete", reminderId });
+      toast("Marked done", () => {
+        setFlash(null);
+        if (!completion) return;
+        void api
+          .reminder({ action: "reopen", completion })
+          .then(onChanged)
+          .catch(() => toast("Couldn't undo that"));
+      });
+      onChanged();
+    } catch {
+      toast("Couldn't mark that done");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * The reminder behind `nextFollowUpAt`. A follow-up writes both the contact
+   * column and a reminders row at the same instant, so the banner and the row
+   * are two views of one thing, and the due date is what ties them.
+   *
+   * Exact match or nothing. This used to fall back to the first open reminder,
+   * so on a contact whose follow-up predates the mirrored row, Snooze moved an
+   * unrelated reminder and Done completed it while the banner stayed put. With
+   * no match, Snooze schedules the follow-up itself (the server's no-id path)
+   * and Done is not offered.
+   */
+  const followUpReminder = contact.nextFollowUpAt
+    ? contact.openReminders.find((r) => r.dueDate === contact.nextFollowUpAt)
+    : undefined;
+
+  // When the follow-up is overdue the banner already shouts it, with its own
+  // Snooze and Done; listing it again underneath reads as two separate debts.
+  const listedReminders =
+    contact.isFollowUpOverdue && followUpReminder
+      ? contact.openReminders.filter((r) => r.id !== followUpReminder.id)
+      : contact.openReminders;
 
   const acceptChanges = async () => {
     setBusy(true);
@@ -148,10 +212,16 @@ export function KnownContactView({
     ...contact.opportunities.map((v) => ({ v, tone: "opportunity" as const })),
   ];
 
+  // "Orbit holds nothing you'd recognise about this person." Every band that
+  // can now draw has to count, or a contact with a tag and a reminder gets
+  // both those bands *and* a prompt telling them Orbit knows nothing.
   const isSparse =
     knowledge.length === 0 &&
     contact.openActionItems.length === 0 &&
     contact.recentInteractions.length === 0 &&
+    contact.openReminders.length === 0 &&
+    contact.tags.length === 0 &&
+    !contact.howMet &&
     !contact.notesPreview;
 
   return (
@@ -164,11 +234,24 @@ export function KnownContactView({
               Follow-up was due {relativeTime(contact.nextFollowUpAt)}
             </span>
             <button
-              onClick={() => void scheduleFollowUp(7)}
-              className="shrink-0 text-[11px] text-[var(--primary)] hover:underline"
+              onClick={() => void scheduleFollowUp(7, followUpReminder?.id)}
+              disabled={busy}
+              className="shrink-0 text-[11px] text-[var(--primary)] hover:underline disabled:opacity-50"
             >
               Snooze
             </button>
+            {/* Only when there IS a reminder row to complete. A follow-up
+                written before reminders mirrored the column has none, and
+                "Done" must not pretend. */}
+            {followUpReminder ? (
+              <button
+                onClick={() => void completeReminder(followUpReminder.id)}
+                disabled={busy}
+                className="shrink-0 text-[11px] text-[var(--primary)] hover:underline disabled:opacity-50"
+              >
+                Done
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -215,6 +298,47 @@ export function KnownContactView({
             </div>
           </Section>
         ) : null}
+
+        {/* What you owe them, before what you know about them. The reminders
+            were already on the wire and simply never drawn, so the panel could
+            show "Inner orbit · last spoke 3 weeks ago" while staying silent
+            about the thing the user had explicitly asked to be reminded of. */}
+        <Section title="You said you'd">
+          {listedReminders.length > 0
+            ? listedReminders.slice(0, 3).map((reminder) => (
+                <div
+                  key={reminder.id}
+                  className="group flex items-baseline gap-2 py-0.5"
+                >
+                  <span className="min-w-0 flex-1 text-[13px] leading-[18px]">
+                    {reminder.title}
+                  </span>
+                  {reminder.dueDate ? (
+                    <Meta className="shrink-0">
+                      {relativeTime(reminder.dueDate)}
+                    </Meta>
+                  ) : null}
+                  <button
+                    onClick={() => void scheduleFollowUp(7, reminder.id)}
+                    disabled={busy}
+                    title="Move this out a week"
+                    className="shrink-0 text-[11px] text-[var(--primary)] opacity-0 transition-opacity hover:underline disabled:opacity-50 group-hover:opacity-100"
+                  >
+                    +1w
+                  </button>
+                  <button
+                    onClick={() => void completeReminder(reminder.id)}
+                    disabled={busy}
+                    title="Mark done"
+                    aria-label={`Mark "${reminder.title}" done`}
+                    className="shrink-0 text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--primary)] disabled:opacity-50 group-hover:opacity-100"
+                  >
+                    <Check size={12} />
+                  </button>
+                </div>
+              ))
+            : null}
+        </Section>
 
         <Section title="Open loops">
           {contact.openActionItems.length > 0
@@ -283,6 +407,17 @@ export function KnownContactView({
           )}
         </Section>
 
+        <Section title="How you met">
+          {contact.howMet || contact.dateMet ? (
+            <p className="text-[13px] leading-[18px] text-[var(--muted-foreground)]">
+              {contact.howMet ?? "Met"}
+              {contact.dateMet ? (
+                <span className="text-[11px]"> · {relativeTime(contact.dateMet)}</span>
+              ) : null}
+            </p>
+          ) : null}
+        </Section>
+
         <Section title="What you know">
           {knowledge.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
@@ -304,13 +439,47 @@ export function KnownContactView({
           ) : null}
         </Section>
 
-        <Section title="Last spoke">
-          {contact.recentInteractions[0]?.summary ? (
-            <p className="line-clamp-3 text-[13px] leading-[18px] text-[var(--muted-foreground)]">
-              {contact.recentInteractions[0].summary}
+        {/* Tags sit with the facts, not after the prose: they are the same
+            question — what do I know about this person — just the half the
+            user wrote by hand rather than the half Orbit inferred. */}
+        <Section title="Tags">
+          {contact.tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {contact.tags.map((tag) => (
+                <Chip key={tag}>{tag}</Chip>
+              ))}
+            </div>
+          ) : null}
+        </Section>
+
+        {/* The user's own words about this person. Held back before because it
+            can be long; clamped, it is the highest-signal thing on the panel. */}
+        <Section title="Your notes">
+          {contact.notesPreview ? (
+            <p className="line-clamp-4 text-[13px] leading-[18px] text-[var(--muted-foreground)]">
+              {contact.notesPreview}
             </p>
           ) : null}
         </Section>
+
+        {/* Three, not one. The snapshot always carried the recent interactions
+            and the panel drew only the newest, which reads as "you spoke once"
+            for someone you have a history with. */}
+        <Section title="Recently">
+          {contact.recentInteractions.length > 0
+            ? contact.recentInteractions.slice(0, 3).map((interaction) => (
+                <div key={interaction.id} className="flex gap-2 py-0.5">
+                  <Meta className="w-[52px] shrink-0 pt-[1px]">
+                    {relativeTime(interaction.interactionDate) ?? "—"}
+                  </Meta>
+                  <p className="min-w-0 flex-1 line-clamp-2 text-[13px] leading-[18px] text-[var(--muted-foreground)]">
+                    {interaction.summary ?? interaction.interactionType}
+                  </p>
+                </div>
+              ))
+            : null}
+        </Section>
+
 
         <Section>
           <StarterList
@@ -398,7 +567,15 @@ export function KnownContactView({
         {flash ? (
           <div className="col-span-4 flex items-center justify-center gap-1.5 py-3 text-[12px] text-[var(--primary)]">
             <Check size={13} />
-            {flash}
+            {flash.message}
+            {flash.undo ? (
+              <button
+                onClick={flash.undo}
+                className="ml-2 text-[var(--muted-foreground)] underline-offset-2 hover:text-[var(--foreground)] hover:underline"
+              >
+                Undo
+              </button>
+            ) : null}
           </div>
         ) : (
           <>
@@ -420,7 +597,7 @@ export function KnownContactView({
               icon={<ArrowUpRight size={15} />}
               label="Open"
               onClick={() =>
-                chrome.tabs.create({ url: `${APP_URL}/contacts/${contact.id}` })
+                browser().openTab(`${APP_URL}/contacts/${contact.id}`)
               }
             />
             <QuickAction

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CircleAlert, MousePointerClick, UserX, WifiOff } from "lucide-react";
 import type { MatchCandidate } from "@contract";
+import { browser } from "@/lib/browser";
 import { APP_URL } from "@/lib/env";
 import { relativeTime } from "@/lib/format";
 import { isPersonPage } from "@/lib/page";
@@ -15,9 +16,14 @@ import { Notice } from "./components/Notice";
 import { Button, Meta, Skeleton } from "./components/ui";
 import { AmbiguousView } from "./views/AmbiguousView";
 import { CaptureView } from "./views/CaptureView";
-import { GrantAccessView } from "./views/GrantAccessView";
+import { TabHintView } from "./views/TabHintView";
 import { KnownContactView } from "./views/KnownContactView";
 import { usePanel } from "./state/usePanel";
+import { isOutdated } from "./state/update-status";
+import { UpdateBand } from "./components/UpdateBand";
+import { SettingsView } from "./views/SettingsView";
+import { FixtureSaver } from "./dev/FixtureSaver";
+import { emptyScope, scopeFor, type PageScope } from "./state/page-scope";
 
 const TIER_WORD = {
   inner: "Inner orbit",
@@ -25,18 +31,39 @@ const TIER_WORD = {
   outer: "Outer orbit",
 } as const;
 
+/** See `state/page-scope.ts` — the rule, and why it is kept there. */
+function usePageScopedState(url: string | null) {
+  const [held, setHeld] = useState<PageScope>(() => emptyScope(url));
+  const current = scopeFor(held, url);
+
+  return {
+    forceCreate: current.forceCreate,
+    sealed: current.sealed,
+    setForceCreate: (value: boolean) =>
+      setHeld({ ...current, url, forceCreate: value }),
+    setSealed: (value: boolean) => setHeld({ ...current, url, sealed: value }),
+  };
+}
+
 export function App() {
   const { state, api, reload, refresh, setDirty, followPending } = usePanel();
-  const [forceCreate, setForceCreate] = useState(false);
-  const [sealed, setSealed] = useState(false);
+  const pageUrl = state.page?.url ?? null;
+  const { forceCreate, sealed, setForceCreate, setSealed } =
+    usePageScopedState(pageUrl);
   const [signInClicked, setSignInClicked] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const outdated = isOutdated(state.me?.contractVersion);
+
+  const signIn = () => {
+    browser().openTab(`${APP_URL}/sign-in`);
+    setSignInClicked(true);
+  };
 
   const contact = state.resolved?.contact ?? null;
   // Offline with prior data for *this same page* (usePanel only keeps
   // `resolved` set in that case — see its own comment) means there's a real
   // record to show, stale, instead of a dead end.
-  const offlineError =
-    state.phase === "error" && Boolean(state.error?.startsWith("You're offline"));
+  const offlineError = state.phase === "error" && state.errorCode === "offline";
   const staleOffline = offlineError && Boolean(state.resolved);
 
   const verdict = () => {
@@ -61,7 +88,7 @@ export function App() {
       return <VerdictZone tone="accent">Not signed in</VerdictZone>;
     }
     if (state.phase === "needs-permission") {
-      return <VerdictZone tone="accent">Waiting on your go-ahead</VerdictZone>;
+      return <VerdictZone tone="accent">Not read yet — click the icon</VerdictZone>;
     }
     if (state.phase === "unsupported") {
       return <VerdictZone>Can&apos;t read this page</VerdictZone>;
@@ -131,12 +158,7 @@ export function App() {
               </div>
             ) : (
               <div className="space-y-3 pt-1">
-                <Button
-                  onClick={() => {
-                    chrome.tabs.create({ url: `${APP_URL}/sign-in` });
-                    setSignInClicked(true);
-                  }}
-                >
+                <Button onClick={signIn}>
                   Sign in to Orbit
                 </Button>
                 <Meta>Orbit only reads a page when you click the icon.</Meta>
@@ -148,12 +170,7 @@ export function App() {
     }
 
     if (state.phase === "needs-permission") {
-      return (
-        <GrantAccessView
-          pendingOrigin={state.pendingOrigin}
-          onGranted={() => void reload()}
-        />
-      );
+      return <TabHintView onOpenSettings={() => setSettingsOpen(true)} />;
     }
 
     if (state.phase === "unsupported") {
@@ -171,7 +188,7 @@ export function App() {
             <Button
               variant="outline"
               onClick={() =>
-                chrome.tabs.create({ url: `${APP_URL}/contacts/new` })
+                browser().openTab(`${APP_URL}/contacts/new`)
               }
             >
               Add someone manually
@@ -222,11 +239,17 @@ export function App() {
     if (contact && !forceCreate) {
       return (
         <KnownContactView
+          // Without this the view is reused across people, and every piece of
+          // its own state — most dangerously a half-typed note — carries over
+          // to whoever is on screen next. The note would then be saved against
+          // the *new* contact's id.
+          key={contact.id}
           contact={contact}
           page={state.page}
           state={state}
           api={api}
           onChanged={() => void refresh()}
+          onDirtyChange={setDirty}
         />
       );
     }
@@ -240,7 +263,7 @@ export function App() {
         <AmbiguousView
           candidates={state.resolved.candidates}
           onPick={(candidate: MatchCandidate) =>
-            chrome.tabs.create({ url: `${APP_URL}/contacts/${candidate.id}` })
+            browser().openTab(`${APP_URL}/contacts/${candidate.id}`)
           }
           onCreateNew={() => setForceCreate(true)}
         />
@@ -268,10 +291,34 @@ export function App() {
 
   return (
     <>
-      <PanelHeader />
-      <IdentityZone page={state.page} sealed={sealed} stale={staleOffline} />
-      {verdict()}
-      {body()}
+      <PanelHeader onSettings={() => setSettingsOpen((open) => !open)} />
+      {settingsOpen ? (
+        <SettingsView
+          me={state.me}
+          signedIn={state.phase !== "signed-out"}
+          outdated={outdated}
+          onClose={() => setSettingsOpen(false)}
+          onSignIn={signIn}
+          devTools={
+            import.meta.env.DEV ? (
+              <FixtureSaver page={state.page} />
+            ) : undefined
+          }
+        />
+      ) : null}
+      {/* Hidden, not unmounted: a capture draft or a half-typed note lives in
+          this subtree, and opening Settings must not throw it away. */}
+      <div hidden={settingsOpen} className="flex min-h-0 flex-1 flex-col">
+        <IdentityZone
+          page={state.page}
+          sealed={sealed}
+          stale={staleOffline}
+          unread={state.phase === "needs-permission" || state.phase === "unsupported"}
+        />
+        {verdict()}
+        {outdated ? <UpdateBand /> : null}
+        {body()}
+      </div>
     </>
   );
 }

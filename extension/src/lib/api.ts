@@ -7,6 +7,8 @@ import type {
   MeResponse,
   PageContext,
   ParseResponse,
+  ReminderActionRequest,
+  ReminderActionResponse,
   ResolveResponse,
   SaveContactRequest,
   SaveContactResponse,
@@ -100,6 +102,9 @@ export function createApi(getToken: TokenGetter) {
 
     followUp: (body: FollowUpRequest, signal?: AbortSignal) =>
       post<FollowUpResponse>("/follow-ups", body, signal),
+
+    reminder: (body: ReminderActionRequest, signal?: AbortSignal) =>
+      post<ReminderActionResponse>("/reminders", body, signal),
 
     // GET /contacts?q= exists server-side but has no client here yet: it is
     // the seam for a future "link this page to an existing contact" flow.

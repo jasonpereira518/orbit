@@ -18,27 +18,15 @@ import type {
   ContactSnapshot,
   ConversationStarter,
   MatchCandidate,
+  MeResponse,
   PageContext,
 } from "@contract";
 
-/* The panel calls a handful of chrome.* APIs. Stub them before the components
- * are imported so a plain page can render them. */
-type ChromeStub = {
-  tabs: { create: (o: unknown) => void };
-  permissions: {
-    getAll: () => Promise<{ origins: string[] }>;
-    request: () => Promise<boolean>;
-    remove: () => Promise<boolean>;
-  };
-};
-(globalThis as unknown as { chrome: ChromeStub }).chrome = {
-  tabs: { create: (o) => console.log("tabs.create", o) },
-  permissions: {
-    getAll: async () => ({ origins: ["https://*.linkedin.com/*"] }),
-    request: async () => true,
-    remove: async () => true,
-  },
-};
+/* Every browser call the panel makes goes through `@/lib/browser`, so the
+ * harness installs a typed fake there instead of stubbing `globalThis.chrome`. */
+import { installBrowser } from "@/lib/browser";
+import { createFakeBrowser } from "./fake-browser";
+installBrowser(createFakeBrowser());
 
 // Deliberately NOT importing App: it reaches usePanel -> Clerk, which throws
 // outside a real extension. Every view below is imported directly instead.
@@ -51,7 +39,9 @@ const { Button, Meta, Skeleton } = await import("@/panel/components/ui");
 const { CaptureView } = await import("@/panel/views/CaptureView");
 const { KnownContactView } = await import("@/panel/views/KnownContactView");
 const { AmbiguousView } = await import("@/panel/views/AmbiguousView");
-const { GrantAccessView } = await import("@/panel/views/GrantAccessView");
+const { TabHintView } = await import("@/panel/views/TabHintView");
+const { SettingsView } = await import("@/panel/views/SettingsView");
+const { UpdateBand } = await import("@/panel/components/UpdateBand");
 import "@/styles/panel.css";
 
 /* -------------------------------------------------------------------------- */
@@ -135,7 +125,10 @@ function contact(over: Partial<ContactSnapshot> = {}): ContactSnapshot {
     opportunities: ["Could intro to the infra team"],
     openActionItems: ["Send the intro to Priya on design"],
     aiSummary: null,
-    notesPreview: null,
+    howMet: "Intro from Priya at the Stripe offsite",
+    dateMet: new Date(Date.now() - 800 * 864e5).toISOString(),
+    notesPreview:
+      "Met through Priya. Very direct, prefers a written brief before any call. Leaving Acme was about the billing rewrite being cancelled twice.",
     recentInteractions: [
       {
         id: "i1",
@@ -144,8 +137,26 @@ function contact(over: Partial<ContactSnapshot> = {}): ContactSnapshot {
         summary:
           "Coffee in Berlin. Walked through their billing migration and the vendor lock-in problem. Said they'd share the RFC once written.",
       },
+      {
+        id: "i2",
+        interactionType: "email",
+        interactionDate: new Date(Date.now() - 190 * 864e5).toISOString(),
+        summary: "Sent the Anthropic write-up they asked for.",
+      },
+      {
+        id: "i3",
+        interactionType: "reach_out",
+        interactionDate: new Date(Date.now() - 240 * 864e5).toISOString(),
+        summary: null,
+      },
     ],
-    openReminders: [],
+    openReminders: [
+      {
+        id: "r1",
+        title: "Send the payments RFC",
+        dueDate: new Date(Date.now() + 3 * 864e5).toISOString(),
+      },
+    ],
     ...over,
   };
 }
@@ -168,6 +179,20 @@ const candidates: MatchCandidate[] = [
     confidence: 0.6,
   },
 ];
+
+function me(over: { hasAiKey?: boolean } = {}): MeResponse {
+  return {
+    contractVersion: 1,
+    user: { name: "Jordan Park", email: "jordan@example.com", imageUrl: null },
+    capabilities: {
+      hasAiKey: over.hasAiKey ?? true,
+      hasApolloKey: false,
+      aiProvider: "anthropic",
+      aiProviderLabel: "Anthropic",
+    },
+    stats: { contactCount: 1248, dueFollowUpCount: 3 },
+  };
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const api: any = new Proxy(
@@ -210,7 +235,6 @@ function panelState(over: Record<string, unknown> = {}) {
     startersDegraded: false,
     error: null,
     pendingUrl: null,
-    pendingOrigin: null,
     ...over,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -270,11 +294,25 @@ function States() {
     closeness: 0.15,
     title: null,
     tags: [],
+    notesPreview: null,
+    openReminders: [],
   });
+  // The overdue reminder and the banner are one thing seen twice: Snooze has to
+  // move *that* row, not mint a second one, so the fixture gives them the same
+  // due date the way the server does.
+  const overdueAt = new Date(Date.now() - 21 * 864e5).toISOString();
   const overdue = contact({
     isFollowUpOverdue: true,
-    nextFollowUpAt: new Date(Date.now() - 21 * 864e5).toISOString(),
+    nextFollowUpAt: overdueAt,
     closenessTier: "mid",
+    openReminders: [
+      { id: "r-overdue", title: "Follow up on the RFC", dueDate: overdueAt },
+      {
+        id: "r1",
+        title: "Send the payments RFC",
+        dueDate: new Date(Date.now() + 3 * 864e5).toISOString(),
+      },
+    ],
   });
 
   const changed = panelState({
@@ -365,11 +403,61 @@ function States() {
         <AmbiguousView candidates={candidates} onPick={() => {}} onCreateNew={() => {}} />
       </Frame>
 
-      <Frame label="Needs site access" note="the panel's activeTab problem">
-        <PanelHeader />
-        <IdentityZone page={null} />
-        <VerdictZone tone="accent">Waiting on your go-ahead</VerdictZone>
-        <GrantAccessView pendingOrigin={null} onGranted={() => {}} />
+      <Frame label="Tab not read yet" note="an unclicked tab — a hint, not a wall">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={null} unread />
+        <VerdictZone tone="accent">Not read yet — click the icon</VerdictZone>
+        <TabHintView onOpenSettings={() => {}} />
+      </Frame>
+
+      <Frame label="Settings" note="who am I, is AI on, which sites">
+        <PanelHeader onSettings={() => {}} />
+        <SettingsView
+          me={me()}
+          signedIn
+          outdated={false}
+          onClose={() => {}}
+          onSignIn={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Settings — AI off" note="the free, no-key account">
+        <PanelHeader onSettings={() => {}} />
+        <SettingsView
+          me={me({ hasAiKey: false })}
+          signedIn
+          outdated
+          onClose={() => {}}
+          onSignIn={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Settings — signed out">
+        <PanelHeader onSettings={() => {}} />
+        <SettingsView
+          me={null}
+          signedIn={false}
+          outdated={false}
+          onClose={() => {}}
+          onSignIn={() => {}}
+        />
+      </Frame>
+
+      <Frame label="Update available" note="server moved ahead of this build">
+        <PanelHeader onSettings={() => {}} />
+        <IdentityZone page={page()} />
+        <VerdictZone>
+          <OrbitGlyph tier="inner" size={16} />
+          <span style={{ flex: 1 }}>Inner orbit · last spoke 5 months ago</span>
+        </VerdictZone>
+        <UpdateBand />
+        <KnownContactView
+          contact={rich}
+          page={page()}
+          state={panelState()}
+          api={api}
+          onChanged={() => {}}
+        />
       </Frame>
 
       <Frame label="Loading" note="staged arrival, reserved heights">
