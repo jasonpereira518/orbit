@@ -73,6 +73,10 @@ import {
 } from "@/lib/graph/sky-selection";
 import { starSubtitle, starVisual, zoomRelief } from "@/lib/graph/star-style";
 import { markGraphViewportReady } from "@/lib/graph/intro-signal";
+import {
+  markFirstPaintThenInteractive,
+  markOpenStage,
+} from "@/lib/graph/open-marks";
 import { CAMERA_MS } from "@/lib/motion";
 import { Loader2 } from "lucide-react";
 
@@ -609,6 +613,7 @@ function contactIds(nodes: LayoutNodes) {
  * the chosen one is ever imported.
  */
 export function GraphCanvasFlow(props: GraphChartProps) {
+  markOpenStage("renderer-loaded");
   const { filteredContacts, layout, layoutKey } = useGraphLayout(props);
 
   // Deliberately not keyed on the layout. Remounting per change — which a refresh did once
@@ -714,7 +719,9 @@ function GraphCanvasInner({
    * an intro run, never start one.
    */
   useEffect(() => {
-    if (viewportReady) markGraphViewportReady();
+    if (!viewportReady) return;
+    markGraphViewportReady();
+    markFirstPaintThenInteractive();
   }, [viewportReady]);
 
   // The entrance plays once per arrival; drop the class afterwards so a star scrolled back

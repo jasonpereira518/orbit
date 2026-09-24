@@ -13,7 +13,8 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 
-const root = join(import.meta.dirname, "../../.next");
+// BENCH_NEXT_DIR serves another build (e.g. a baseline worktree's) from this same server code.
+const root = process.env.BENCH_NEXT_DIR ?? join(import.meta.dirname, "../../.next");
 const port = Number(process.argv[2] ?? process.env.PORT ?? 3417);
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -42,6 +43,12 @@ createServer((req, res) => {
   if (bench) {
     const page = join(root, "server/app/bench", `${bench[1]}.html`);
     if (existsSync(page)) return send(res, page);
+  }
+  // Network fixtures for `?data=fetch` (scripts/bench/constellation-fixtures.ts).
+  const fixture = url.pathname.match(/^\/bench-data\/([a-z0-9-]+\.json)$/);
+  if (fixture) {
+    const file = join(import.meta.dirname, "../../.bench-data", fixture[1]);
+    if (existsSync(file)) return send(res, file);
   }
   if (url.pathname.startsWith("/_next/static/")) {
     const rel = normalize(decodeURIComponent(url.pathname.slice("/_next/static/".length)));

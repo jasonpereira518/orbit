@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import type { getGraphData } from "@/actions/graph";
 import { predictSlowIntro } from "@/lib/graph/intro-choreography";
 import { beginIntro } from "@/lib/graph/intro-signal";
+import { markOpenStage } from "@/lib/graph/open-marks";
 import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
 import {
   ConstellationLoading,
@@ -77,6 +78,7 @@ export function NetworkGraphLazy({
   // `beginIntro` is idempotent, so StrictMode's double-invoke is a no-op.
   useEffect(() => {
     if (compact) return;
+    if (contactCount !== null) markOpenStage("data-received");
     decideFromPayload(contactCount);
   }, [compact, contactCount]);
 

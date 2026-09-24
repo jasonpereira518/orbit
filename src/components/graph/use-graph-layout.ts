@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { buildHybridGraphLayout } from "@/lib/graph-layout";
+import { markOpenStage } from "@/lib/graph/open-marks";
 import type { GraphChartProps } from "@/components/graph/graph-chart-types";
 
 /**
@@ -60,7 +61,10 @@ export function useGraphLayout(props: GraphChartProps) {
   ]);
 
   const layout = useMemo(() => {
-    return buildHybridGraphLayout(filteredContacts, props.data.summary.userName);
+    const built = buildHybridGraphLayout(filteredContacts, props.data.summary.userName);
+    // Once per open; a later filter's rebuild is not part of opening the chart.
+    markOpenStage("layout-computed");
+    return built;
   }, [filteredContacts, props.data.summary.userName]);
 
   /**
