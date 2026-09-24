@@ -12,14 +12,25 @@ const PILL =
   "inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e8f3f1]/[0.14] px-3 text-sm text-[#e8f3f1] transition-colors hover:border-[#e8f3f1]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60";
 
 /**
- * The pass's share tools: the invite link in a read-only field, Copy, X, LinkedIn, and —
- * only after mount, only where the browser has one — the native share sheet.
+ * The pass's share tools: the invite link in a read-only field, Copy, X and LinkedIn (only
+ * when `socialShare` — never on the waitlist host), and — only after mount, only where the
+ * browser has one — the native share sheet. With neither, the second row isn't rendered.
  *
  * Share intents open in a new tab; the text is prewritten (`SHARE_TEXT`) and the URL is the
  * `?ref=` link, so whoever follows it lands on the invited state and the referral counts.
  * `pageUrl` is the waitlist page on its own domain (`getWaitlistPageUrl`).
  */
-export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pageUrl: string; play: boolean }) {
+export function ShareRow({
+  ticket,
+  pageUrl,
+  socialShare,
+  play,
+}: {
+  ticket: InterestTicket;
+  pageUrl: string;
+  socialShare: boolean;
+  play: boolean;
+}) {
   const reduced = usePrefersReducedMotion();
   const url = buildShareUrl(pageUrl, ticket.shareToken);
   const text = SHARE_TEXT;
@@ -96,20 +107,26 @@ export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pa
           {copied ? "Copied" : "Copy"}
         </button>
       </motion.div>
-      <motion.div {...enter(1)} className="mt-2 flex flex-wrap gap-2">
-        <a href={x} target="_blank" rel="noopener noreferrer" className={PILL}>
-          Share on X
-        </a>
-        <a href={linkedin} target="_blank" rel="noopener noreferrer" className={PILL}>
-          LinkedIn
-        </a>
-        {canShare ? (
-          <button type="button" onClick={nativeShare} className={PILL}>
-            <Share2 className="size-4" aria-hidden="true" />
-            Share…
-          </button>
-        ) : null}
-      </motion.div>
+      {socialShare || canShare ? (
+        <motion.div {...enter(1)} className="mt-2 flex flex-wrap gap-2">
+          {socialShare ? (
+            <>
+              <a href={x} target="_blank" rel="noopener noreferrer" className={PILL}>
+                Share on X
+              </a>
+              <a href={linkedin} target="_blank" rel="noopener noreferrer" className={PILL}>
+                LinkedIn
+              </a>
+            </>
+          ) : null}
+          {canShare ? (
+            <button type="button" onClick={nativeShare} className={PILL}>
+              <Share2 className="size-4" aria-hidden="true" />
+              Share…
+            </button>
+          ) : null}
+        </motion.div>
+      ) : null}
     </div>
   );
 }

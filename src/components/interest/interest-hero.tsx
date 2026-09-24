@@ -59,12 +59,15 @@ export function InterestHero({
   initial,
   pageUrl,
   pagePath,
+  socialShare,
 }: {
   initial: HeroInitial;
   /** The waitlist page on its own domain, for the share link. */
   pageUrl: string;
   /** The path this page is served at — `/` on the waitlist host — for the pass's URL. */
   pagePath: string;
+  /** Offer the X and LinkedIn share buttons. Off on the waitlist host. */
+  socialShare: boolean;
 }) {
   const reduced = usePrefersReducedMotion();
   const [phase, setPhase] = useState<Phase>(initial.kind === "ticket" ? "ticket" : "form");
@@ -238,6 +241,7 @@ export function InterestHero({
                 <BoardingPass
                   ticket={ticket}
                   pageUrl={pageUrl}
+                  socialShare={socialShare}
                   entrance={entrance}
                   headingRef={headingRef}
                 />

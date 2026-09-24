@@ -43,12 +43,15 @@ function joinedLabel(iso: string) {
 export function BoardingPass({
   ticket,
   pageUrl,
+  socialShare,
   entrance,
   headingRef,
 }: {
   ticket: InterestTicket;
   /** The waitlist page on its own domain; the share link is built on it. */
   pageUrl: string;
+  /** Offer the X and LinkedIn share buttons. Off on the waitlist host. */
+  socialShare: boolean;
   entrance: "flip" | "direct";
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
@@ -145,7 +148,7 @@ export function BoardingPass({
           </span>
         </motion.p>
 
-        <ShareRow ticket={ticket} pageUrl={pageUrl} play={full} />
+        <ShareRow ticket={ticket} pageUrl={pageUrl} socialShare={socialShare} play={full} />
 
         <motion.p {...rise(1.5)} className="mt-4 text-xs leading-[1.6] text-[#6d807c]">
           Save this link — it&apos;s your pass. Your invite arrives by email when your wave opens.

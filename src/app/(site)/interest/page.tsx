@@ -201,7 +201,12 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
       <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 pt-6 md:px-10 md:pt-10">
         <div className="relative">
           <RingsBackdrop />
-          <InterestHero initial={initial} pageUrl={getWaitlistPageUrl()} pagePath={pagePath} />
+          <InterestHero
+            initial={initial}
+            pageUrl={getWaitlistPageUrl()}
+            pagePath={pagePath}
+            socialShare={!onWaitlistHost}
+          />
         </div>
 
         <Reveal className="reveal-celestial mt-20 block">
