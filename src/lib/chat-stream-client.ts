@@ -1,25 +1,69 @@
 import type { ChatRecommendation } from "@/db/schema";
-import { parseSseChunk, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
+import type { EvidenceSource } from "@/lib/chat-evidence";
+import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
+import { parseSseChunk, type ChatStep, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 
 /**
  * Browser side of `/api/chat`: POST the question, read the event stream, dispatch.
  *
- * A plain `fetch` + `ReadableStream` reader rather than a chat SDK: the protocol is three
- * event types and the app already owns its message state. Errors before the stream starts
- * (no key, paywall, bad input) arrive as a JSON body with a non-2xx status; errors after
- * it starts arrive as an `error` event, since the status line has already been sent.
+ * A plain `fetch` + `ReadableStream` reader rather than a chat SDK: the protocol is a
+ * handful of event types and the app already owns its message state. Errors before the
+ * stream starts (no key, paywall, bad input) arrive as a JSON body with a non-2xx status;
+ * errors from retrieval onwards arrive as an `error` event, since the status line has
+ * already been sent.
  */
 export type DoneInfo = Extract<ChatStreamEvent, { type: "done" }>;
 
 export type ChatStreamHandlers = {
   onAnswer: (delta: string) => void;
   onRecommendations: (items: ChatRecommendation[]) => void;
+  /**
+   * A stage of the work starting or finishing. Steps are keyed by `step.id`, and a later
+   * step with the same id replaces the earlier one rather than being appended.
+   */
+  onStep?: (step: ChatStep) => void;
+  /** The sources actually cited in the answer — see `@/lib/chat-evidence`. Sent once, if any. */
+  onEvidence?: (items: Record<string, EvidenceSource>) => void;
+  /** Actions this answer proposed, already validated. Sent once, if any. */
+  onActions?: (items: StoredProposedAction[]) => void;
   onDone: (info: DoneInfo) => void;
   onError: (message: string) => void;
 };
 
+export const CHAT_SIGNED_OUT_MESSAGE = "You’re signed out — sign in again to keep chatting";
+
+export type ChatResponseKind = "stream" | "signed_out" | "error";
+
+/**
+ * What came back from `/api/chat`, before a byte of it is parsed. A 200 that is not an
+ * event stream is the sign-in page reached through a followed redirect — the one way a
+ * signed-out request used to look like success.
+ */
+export function classifyChatResponse(res: {
+  status: number;
+  ok: boolean;
+  contentType: string | null;
+}): ChatResponseKind {
+  if (res.status === 401) return "signed_out";
+  if (!res.ok) return "error";
+  return (res.contentType ?? "").toLowerCase().includes("text/event-stream")
+    ? "stream"
+    : "signed_out";
+}
+
 export async function streamChat(
-  body: { question: string; threadId?: string | null; contactId?: string | null },
+  body: {
+    question: string;
+    threadId?: string | null;
+    contactId?: string | null;
+    /** Contact ids the composer's `@Name` chips resolved to. */
+    contextContactIds?: string[];
+    /**
+     * Ask for another version of the last turn instead of a new one — omitting `question`
+     * regenerates the same ask, a `question` edits it. See `@/lib/chat-versions`.
+     */
+    versionOf?: { assistantMessageId: string; question?: string };
+  },
   handlers: ChatStreamHandlers,
   signal?: AbortSignal
 ): Promise<void> {
@@ -36,7 +80,16 @@ export async function streamChat(
     return;
   }
 
-  if (!res.ok || !res.body) {
+  const kind = classifyChatResponse({
+    status: res.status,
+    ok: res.ok,
+    contentType: res.headers.get("content-type"),
+  });
+  if (kind === "signed_out") {
+    handlers.onError(CHAT_SIGNED_OUT_MESSAGE);
+    return;
+  }
+  if (kind === "error" || !res.body) {
     let message = `Chat failed (${res.status})`;
     try {
       const data = (await res.json()) as { error?: string };
@@ -78,6 +131,15 @@ function dispatch(event: ChatStreamEvent, handlers: ChatStreamHandlers) {
       return;
     case "recommendations":
       handlers.onRecommendations(event.items as ChatRecommendation[]);
+      return;
+    case "step":
+      handlers.onStep?.(event.step);
+      return;
+    case "evidence":
+      handlers.onEvidence?.(event.items);
+      return;
+    case "actions":
+      handlers.onActions?.(event.items);
       return;
     case "done":
       handlers.onDone(event);

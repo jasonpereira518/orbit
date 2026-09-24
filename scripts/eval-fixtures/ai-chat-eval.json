@@ -1,0 +1,115 @@
+{
+  "cases": [
+    {
+      "id": "chat-01-company-stripe",
+      "question": "Who do I know at Stripe?",
+      "mustMention": [
+        "maya@stripe.example",
+        "omar@stripe.example"
+      ]
+    },
+    {
+      "id": "chat-02-school-stanford",
+      "question": "Which of my contacts went to Stanford?",
+      "mustMention": [
+        "maya@stripe.example",
+        "ines@shopify.example"
+      ]
+    },
+    {
+      "id": "chat-03-location-industry-ny-fintech",
+      "question": "Who in my network works in fintech in New York?",
+      "mustMention": [
+        "dev@plaid.example",
+        "prisha@ramp.example"
+      ]
+    },
+    {
+      "id": "chat-04-location-industry-sf-ai",
+      "question": "Who do I know working in AI in San Francisco?",
+      "mustMention": [
+        "sofia@openai.example",
+        "sam@anthropic.example"
+      ]
+    },
+    {
+      "id": "chat-05-intro-fintech-investor",
+      "question": "I'm raising a seed round for a fintech startup. Which of my contacts invests in fintech and could be worth a warm intro?",
+      "mustMention": [
+        "james@sequoia.example"
+      ]
+    },
+    {
+      "id": "chat-06-notes-rock-climbing",
+      "question": "Who told me they love rock climbing?",
+      "mustMention": [
+        "maya@stripe.example"
+      ]
+    },
+    {
+      "id": "chat-07-notes-homebrewing",
+      "question": "Which of my contacts is big into homebrewing?",
+      "mustMention": [
+        "tom@datadog.example"
+      ]
+    },
+    {
+      "id": "chat-08-notes-billing-integration",
+      "question": "Who helped us with our billing integration?",
+      "mustMention": [
+        "omar@stripe.example"
+      ]
+    },
+    {
+      "id": "chat-09-notes-agent-evals-dinner",
+      "question": "Who did I talk to about agent evals at dinner?",
+      "mustMention": [
+        "sam@anthropic.example"
+      ]
+    },
+    {
+      "id": "chat-10-intro-west-africa-payments",
+      "question": "Who could connect me with payments operators in West Africa?",
+      "mustMention": [
+        "kofi@flutterwave.example"
+      ]
+    },
+    {
+      "id": "chat-11-advice-key-custody",
+      "question": "I need someone to sanity-check our crypto wallet key custody design. Who should I ask?",
+      "mustMention": [
+        "raj@coinbase.example"
+      ]
+    },
+    {
+      "id": "chat-12-multi-investors",
+      "question": "Which investors are in my network?",
+      "mustMention": [
+        "james@sequoia.example",
+        "claire@nea.example"
+      ]
+    },
+    {
+      "id": "chat-13-location-canada",
+      "question": "Who do I know in Canada?",
+      "mustMention": [
+        "omar@stripe.example",
+        "ines@shopify.example"
+      ]
+    },
+    {
+      "id": "chat-14-press-tech-policy",
+      "question": "Who could help me find sources for a story on tech policy?",
+      "mustMention": [
+        "amelia@nyt.example"
+      ]
+    },
+    {
+      "id": "chat-15-podcast-recommendations",
+      "question": "Is there anyone I know who works on podcast recommendations?",
+      "mustMention": [
+        "erik@spotify.example"
+      ]
+    }
+  ]
+}

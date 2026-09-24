@@ -1,0 +1,134 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { Check, Copy, MessageCircle, Share2 } from "lucide-react";
+import { motion } from "motion/react";
+import { SHARE_TEXT, SHARE_TITLE, buildShareUrl, type InterestTicket } from "@/lib/interest-list";
+import { DUR, EASE_HOUSE } from "@/lib/motion";
+import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+
+const PILL =
+  "inline-flex h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e8f3f1]/[0.14] px-3 text-sm text-[#e8f3f1] transition-colors hover:border-[#e8f3f1]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f2c14e]/60";
+
+/**
+ * The pass's share tools: the invite link in a read-only field, Copy, Messages (copies the intro and the link), LinkedIn, and —
+ * only after mount, only where the browser has one — the native share sheet.
+ *
+ * LinkedIn opens in a new tab; the text is prewritten (`SHARE_TEXT`) and the URL is the
+ * `?ref=` link, so whoever follows it lands on the invited state and the referral counts.
+ * `pageUrl` is the waitlist page on its own domain (`getWaitlistPageUrl`).
+ */
+export function ShareRow({ ticket, pageUrl, play }: { ticket: InterestTicket; pageUrl: string; play: boolean }) {
+  const reduced = usePrefersReducedMotion();
+  const url = buildShareUrl(pageUrl, ticket.shareToken);
+  const text = SHARE_TEXT;
+  const [copied, setCopied] = useState(false);
+  const [messageCopied, setMessageCopied] = useState(false);
+  const [canShare, setCanShare] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const timer = useRef<number | null>(null);
+  const messageTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    setCanShare(typeof navigator !== "undefined" && typeof navigator.share === "function");
+    return () => {
+      if (timer.current) window.clearTimeout(timer.current);
+      if (messageTimer.current) window.clearTimeout(messageTimer.current);
+    };
+  }, []);
+
+  async function copy() {
+    // "Copied" has to be true. The clipboard API throws where it is denied, and the
+    // `execCommand` fallback answers false rather than throwing — so both are checked, and
+    // when neither worked the label stays "Copy". The field's text is selected either way,
+    // which leaves the manual copy one keystroke off.
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      ok = true;
+    } catch {
+      inputRef.current?.select();
+      try {
+        ok = document.execCommand("copy");
+      } catch {
+        ok = false;
+      }
+    }
+    if (!ok) return;
+    setCopied(true);
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  async function nativeShare() {
+    try {
+      await navigator.share({ title: SHARE_TITLE, text, url });
+    } catch {
+      // Dismissed. Nothing to do.
+    }
+  }
+
+  // Messages has no web share intent, so this copies the intro and the link together, ready
+  // to paste into any thread.
+  async function copyMessage() {
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      ok = true;
+    } catch {
+      ok = false;
+    }
+    if (!ok) return;
+    setMessageCopied(true);
+    if (messageTimer.current) window.clearTimeout(messageTimer.current);
+    messageTimer.current = window.setTimeout(() => setMessageCopied(false), 1600);
+  }
+
+  const linkedin = `https://www.linkedin.com/sharing/share-offsite/?${new URLSearchParams({ url })}`;
+
+  const enter = (i: number) =>
+    play && !reduced
+      ? { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { duration: DUR.base, ease: EASE_HOUSE, delay: 1.35 + i * 0.05 } }
+      : { initial: false as const, animate: { opacity: 1, y: 0 } };
+
+  return (
+    <div className="mt-4">
+      <motion.div {...enter(0)} className="flex gap-2">
+        <label htmlFor="interest-share-link" className="sr-only">
+          Your invite link
+        </label>
+        <input
+          id="interest-share-link"
+          ref={inputRef}
+          readOnly
+          value={url}
+          onFocus={(e) => e.currentTarget.select()}
+          className={cn(
+            "h-10 min-w-0 flex-1 rounded-lg border bg-[#05070f]/50 px-3 font-mono text-xs text-[#9aada8] transition-colors focus:outline-none",
+            copied ? "border-[#f2c14e]/70" : "border-[#e8f3f1]/[0.14]"
+          )}
+        />
+        <button type="button" onClick={copy} className={cn(PILL, "bg-[#e8f3f1] text-[#0f3d3e] hover:border-transparent hover:bg-white")} aria-live="polite">
+          {copied ? <Check className="size-4" aria-hidden="true" /> : <Copy className="size-4" aria-hidden="true" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </motion.div>
+      <motion.div {...enter(1)} className="mt-2 flex flex-wrap gap-2">
+        <button type="button" onClick={copyMessage} className={PILL} aria-live="polite">
+          {messageCopied ? <Check className="size-4" aria-hidden="true" /> : <MessageCircle className="size-4" aria-hidden="true" />}
+          {messageCopied ? "Copied — paste in Messages" : "Share on Messages"}
+        </button>
+        <a href={linkedin} target="_blank" rel="noopener noreferrer" className={PILL}>
+          LinkedIn
+        </a>
+        {canShare ? (
+          <button type="button" onClick={nativeShare} className={PILL}>
+            <Share2 className="size-4" aria-hidden="true" />
+            Share…
+          </button>
+        ) : null}
+      </motion.div>
+    </div>
+  );
+}

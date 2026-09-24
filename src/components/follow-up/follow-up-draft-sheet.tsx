@@ -20,6 +20,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { FollowUpDraftComposer } from "@/components/follow-up/follow-up-draft-composer";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export function FollowUpDraftSheet({
   open,
@@ -51,7 +53,9 @@ export function FollowUpDraftSheet({
       try {
         const [options, result] = await Promise.all([
           getContactFollowUpSendOptions(contactId),
-          draftContactFollowUp(contactId),
+          // Opening the sheet shows the draft already written for this context; only
+          // Regenerate below pays for a new one.
+          draftContactFollowUp(contactId, { reuse: true }),
         ]);
         if (session !== sessionRef.current) return;
         setSendOptions(options);
@@ -59,7 +63,7 @@ export function FollowUpDraftSheet({
       } catch (err) {
         if (session !== sessionRef.current) return;
         toast.error(
-          err instanceof Error ? err.message : "Could not draft follow-up"
+          friendlyError(err, TOAST_COPY.draftFollowUpFailed)
         );
       }
     });
@@ -73,7 +77,7 @@ export function FollowUpDraftSheet({
         toast.success("Draft ready");
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not draft follow-up"
+          friendlyError(err, TOAST_COPY.draftFollowUpFailed)
         );
       }
     });
@@ -92,7 +96,7 @@ export function FollowUpDraftSheet({
         await sendContactFollowUpEmail(contactId, draft);
         finishAndClose(`Email sent to ${contactName}`);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not send email");
+        toast.error(friendlyError(err, "That email didn’t send — try again?"));
       }
     });
   }
@@ -107,7 +111,7 @@ export function FollowUpDraftSheet({
         finishAndClose("Follow-up marked sent");
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not mark follow-up sent"
+          friendlyError(err, "Couldn’t mark that follow-up sent — try again?")
         );
       }
     });
@@ -150,14 +154,14 @@ export function FollowUpDraftSheet({
             onCopy={() => {
               if (!draft.trim()) return;
               void navigator.clipboard.writeText(draft);
-              toast.success("Copied to clipboard");
+              toast.success(TOAST_COPY.copied);
             }}
             onSendEmail={sendEmail}
             onMarkSent={markSent}
             onOpenLinkedIn={(url) => {
               if (draft.trim()) {
                 void navigator.clipboard.writeText(draft);
-                toast.success("Copied to clipboard");
+                toast.success(TOAST_COPY.copied);
               }
               window.open(url, "_blank", "noopener,noreferrer");
             }}

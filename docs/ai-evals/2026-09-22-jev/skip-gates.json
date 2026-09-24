@@ -1,0 +1,140 @@
+{
+  "label": "gemini-gemini-3.8-flash-jev",
+  "provider": "gemini",
+  "model": "gemini-3.8-flash",
+  "date": "2026-09-22T17:20:15.638Z",
+  "commit": "3b9eca9d",
+  "fixtures": "074a060d9c04",
+  "runs": 1,
+  "decisions": "jev",
+  "tasks": {
+    "skip-gates": {
+      "cases": 62,
+      "metrics": {
+        "gateAccuracy": 0.9032258064516129,
+        "wrongSkips": 0,
+        "savedShare": 0.8
+      },
+      "misses": [
+        "brief-02",
+        "brief-04",
+        "brief-06",
+        "brief-08",
+        "brief-10",
+        "enrich-07"
+      ],
+      "p50LatencyMs": 177.5,
+      "costMicros": 1015,
+      "costPerCaseMicros": 16.370967741935484,
+      "usage": [
+        {
+          "operation": "capture.dates.gate",
+          "model": "jev-1.13.0",
+          "calls": 14,
+          "failures": 0,
+          "inputTokens": 5172,
+          "outputTokens": 280,
+          "cachedInputTokens": 0,
+          "costMicros": 216,
+          "unpriced": 0,
+          "p50Ms": 168
+        },
+        {
+          "operation": "contact.brief.gate",
+          "model": "jev-1.13.0",
+          "calls": 10,
+          "failures": 0,
+          "inputTokens": 4366,
+          "outputTokens": 200,
+          "cachedInputTokens": 0,
+          "costMicros": 182,
+          "unpriced": 0,
+          "p50Ms": 186
+        },
+        {
+          "operation": "extension.starters.gate",
+          "model": "jev-1.13.0",
+          "calls": 14,
+          "failures": 0,
+          "inputTokens": 5324,
+          "outputTokens": 280,
+          "cachedInputTokens": 0,
+          "costMicros": 222,
+          "unpriced": 0,
+          "p50Ms": 172
+        },
+        {
+          "operation": "import.enrich.gate",
+          "model": "jev-1.13.0",
+          "calls": 12,
+          "failures": 0,
+          "inputTokens": 4824,
+          "outputTokens": 240,
+          "cachedInputTokens": 0,
+          "costMicros": 202,
+          "unpriced": 0,
+          "p50Ms": 196
+        },
+        {
+          "operation": "import.linkedin.timeline.decide",
+          "model": "jev-1.13.0",
+          "calls": 12,
+          "failures": 0,
+          "inputTokens": 4542,
+          "outputTokens": 240,
+          "cachedInputTokens": 0,
+          "costMicros": 193,
+          "unpriced": 0,
+          "p50Ms": 159
+        }
+      ],
+      "decisionCostMicros": 1015,
+      "calibration": {
+        "skip-gates": [
+          {
+            "from": 0,
+            "to": 0.1,
+            "n": 16,
+            "meanP": 0.03375,
+            "observed": 0
+          },
+          {
+            "from": 0.1,
+            "to": 0.3,
+            "n": 8,
+            "meanP": 0.20249999999999999,
+            "observed": 0
+          },
+          {
+            "from": 0.3,
+            "to": 0.5,
+            "n": 3,
+            "meanP": 0.43999999999999995,
+            "observed": 0.3333333333333333
+          },
+          {
+            "from": 0.5,
+            "to": 0.7,
+            "n": 2,
+            "meanP": 0.64,
+            "observed": 0.5
+          },
+          {
+            "from": 0.7,
+            "to": 0.9,
+            "n": 2,
+            "meanP": 0.8200000000000001,
+            "observed": 0.5
+          },
+          {
+            "from": 0.9,
+            "to": 1,
+            "n": 31,
+            "meanP": 0.9658064516129033,
+            "observed": 0.9354838709677419
+          }
+        ]
+      }
+    }
+  }
+}

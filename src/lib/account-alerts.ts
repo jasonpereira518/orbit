@@ -1,5 +1,6 @@
 import { AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
 import type { Plan, PlanSource } from "@/lib/plan-limits";
+import { integrationHref } from "@/components/settings/sections";
 
 /**
  * What is wrong with an account, and how to say it to the person who owns it.
@@ -28,6 +29,7 @@ import type { Plan, PlanSource } from "@/lib/plan-limits";
  * has to respect: anything derived from a HISTORICAL row must be windowed, or a single bad
  * day becomes a permanent badge. See `IMPORT_ALERT_WINDOW_MS`.
  */
+import { icsFailureLine, importFailureLine } from "@/lib/import-errors";
 
 /** How many alerts the server will ever return. A pathological account cannot balloon the payload. */
 export const MAX_ACCOUNT_ALERTS = 6;
@@ -72,6 +74,9 @@ export type HealthCode =
   | "ai.no_embedding_key"
   | "connection.gmail"
   | "connection.outlook"
+  | "connection.google_calendar"
+  | "connection.microsoft_calendar"
+  | "connection.apple_calendar"
   | "calendar.sync_error"
   | "import.failed"
   | "import.stalled"
@@ -100,13 +105,39 @@ export type ConnectionFacts = {
  */
 export type HealthInput = {
   aiProvider: AiProvider;
-  /** Personal key for the selected provider, OR a usable env key. Never a decrypted secret. */
+  /**
+   * Whether AI would run: a personal key for the selected provider, or — on Orbit Lifetime —
+   * Orbit's managed key (`aiReadyFromSettings`). Never a decrypted secret.
+   */
   hasAiKey: boolean;
   onboardingCompletedAt: Date | null;
 
   /** null = no connection at all, or OAuth is unconfigured on this deployment. */
   gmail: ConnectionFacts | null;
   outlook: ConnectionFacts | null;
+  /**
+   * Google Calendar sync, only when the grant includes the calendar scope. Null for no
+   * connection, no OAuth app, or a grant without calendar — a sync the user never asked
+   * for being parked is not something to alert about.
+   */
+  googleCalendar: { paused: boolean; reason: string | null } | null;
+  /**
+   * Outlook Calendar sync, shaped and gated exactly like `googleCalendar` above — only when
+   * the grant includes the calendar scope, null for no connection, no OAuth app, or a grant
+   * without calendar.
+   */
+  microsoftCalendar: { paused: boolean; reason: string | null } | null;
+  /**
+   * iCloud calendar sync. Shaped like the other two, but NOT gated on scope — Apple grants no
+   * scopes for a CalDAV app-specific password (see `apple_connections.scopes`'s own comment),
+   * so calendar access is inherent to the connection existing at all. Null only for no
+   * connection. `paused` covers both a sync that gave up after repeated failures AND a
+   * revoked app-specific password — the connector maps that 401 to the same non-retryable
+   * failure that disarms sync, so both read as the same "disarmed" state here. There is no
+   * separate `connection.apple` alert the way `connection.gmail`/`connection.outlook` exist,
+   * because Apple's connection has no other feature riding on it — this alert IS the signal.
+   */
+  appleCalendar: { paused: boolean; reason: string | null } | null;
 
   calendarErrorCount: number;
   calendarErrorLabel: string | null;
@@ -138,12 +169,7 @@ export type HealthFinding = {
 };
 
 export type AccountAlertKind =
-  | "ai_key"
-  | "connection"
-  | "calendar"
-  | "import"
-  | "billing"
-  | "plan_limit";
+  "ai_key" | "connection" | "calendar" | "import" | "billing" | "plan_limit";
 
 export type AccountAlert = {
   /**
@@ -190,7 +216,7 @@ function providerLabel(provider: AiProvider) {
  */
 export function evaluateAccountHealth(
   input: HealthInput,
-  now: Date = new Date()
+  now: Date = new Date(),
 ): HealthFinding[] {
   const findings: HealthFinding[] = [];
   const nowMs = now.getTime();
@@ -203,7 +229,10 @@ export function evaluateAccountHealth(
     findings.push({
       code: "ai.no_key",
       severity: "error",
-      data: { provider: input.aiProvider, providerLabel: providerLabel(input.aiProvider) },
+      data: {
+        provider: input.aiProvider,
+        providerLabel: providerLabel(input.aiProvider),
+      },
     });
   }
 
@@ -231,6 +260,41 @@ export function evaluateAccountHealth(
         data: { emailAddress: conn.emailAddress },
       });
     }
+  }
+
+  // --- Google Calendar sync -----------------------------------------------------------
+  // Only on a healthy grant: a dead one already raises `connection.gmail`, and two alerts
+  // for one reconnect is noise. `warn`, not `error` — calendar is one input among many.
+  if (input.googleCalendar?.paused && input.gmail?.status === "active") {
+    findings.push({
+      code: "connection.google_calendar",
+      severity: "warn",
+      data: { reason: truncate(input.googleCalendar.reason) },
+    });
+  }
+
+  // --- Outlook Calendar sync -----------------------------------------------------------
+  // Same reasoning as Google's, above: only on a healthy grant, so a dead one raises
+  // `connection.outlook` alone rather than that plus this.
+  if (input.microsoftCalendar?.paused && input.outlook?.status === "active") {
+    findings.push({
+      code: "connection.microsoft_calendar",
+      severity: "warn",
+      data: { reason: truncate(input.microsoftCalendar.reason) },
+    });
+  }
+
+  // --- iCloud Calendar sync -------------------------------------------------------------
+  // NOT gated on a sibling connection the way Google's and Microsoft's are — Apple has no
+  // `connection.apple` mailbox alert to defer to, since the connection exists only for
+  // calendar sync. This finding is the only signal that connection ever raises, so it fires
+  // whenever `appleCalendar.paused` is true, full stop.
+  if (input.appleCalendar?.paused) {
+    findings.push({
+      code: "connection.apple_calendar",
+      severity: "warn",
+      data: { reason: truncate(input.appleCalendar.reason) },
+    });
   }
 
   // --- Calendar feeds -----------------------------------------------------------------
@@ -353,7 +417,9 @@ const DISMISSIBLE_CODES: ReadonlySet<HealthCode> = new Set<HealthCode>([
 /**
  * Non-dismissible, and why each one has to be:
  *   `ai.no_key` / `ai.no_embedding_key` — every AI feature is dark until a key exists.
- *   `connection.gmail` / `connection.outlook` — sync and mailbox scans stay paused.
+ *   `connection.gmail` / `connection.outlook` / `connection.google_calendar` /
+ *     `connection.microsoft_calendar` / `connection.apple_calendar` — sync and mailbox
+ *     scans stay paused.
  *   `plan.contact_cap_reached` — no new contacts can be created at all.
  *   `billing.past_due` — see the note above.
  */
@@ -366,6 +432,9 @@ const KIND_BY_CODE: Record<HealthCode, AccountAlertKind> = {
   "ai.no_embedding_key": "ai_key",
   "connection.gmail": "connection",
   "connection.outlook": "connection",
+  "connection.google_calendar": "connection",
+  "connection.microsoft_calendar": "connection",
+  "connection.apple_calendar": "connection",
   "calendar.sync_error": "calendar",
   "import.failed": "import",
   "import.stalled": "import",
@@ -394,6 +463,9 @@ const CODE_RANK: HealthCode[] = [
   "ai.no_embedding_key",
   "connection.gmail",
   "connection.outlook",
+  "connection.google_calendar",
+  "connection.microsoft_calendar",
+  "connection.apple_calendar",
   "billing.past_due",
   "plan.contact_cap_reached",
   "plan.contact_cap_near",
@@ -432,9 +504,12 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: `Add your ${str(f.data.providerLabel) ?? "AI"} API key`,
-          body:
-            "Capture, chat, suggestions and search stay switched off until Orbit has a key. Orbit never charges you for AI — you bring your own.",
-          cta: { label: "Open AI settings", href: "/settings#settings-ai", external: false },
+          body: "Capture, chat, suggestions and search stay switched off until Orbit has a key. Orbit never charges you for AI — you bring your own.",
+          cta: {
+            label: "Open AI settings",
+            href: integrationHref("ai"),
+            external: false,
+          },
           surfaceKey: "settings.ai",
         });
         break;
@@ -445,9 +520,12 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: "Semantic search needs an OpenAI or Gemini key",
-          body:
-            "Anthropic has no embeddings API, so search falls back to keywords until you add a second key.",
-          cta: { label: "Open AI settings", href: "/settings#settings-ai", external: false },
+          body: "Anthropic has no embeddings API, so search falls back to keywords until you add a second key.",
+          cta: {
+            label: "Open AI settings",
+            href: integrationHref("ai"),
+            external: false,
+          },
           surfaceKey: "settings.ai",
         });
         break;
@@ -476,6 +554,47 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         break;
       }
 
+      case "connection.google_calendar": {
+        alerts.push({
+          ...base,
+          title: "Calendar sync is paused",
+          body: "New meetings aren’t reaching Orbit. Reconnect Google to start calendar sync again.",
+          cta: {
+            label: "Reconnect",
+            href: "/imports#import-google-contacts",
+            external: false,
+          },
+          surfaceKey: "page.imports",
+        });
+        break;
+      }
+
+      case "connection.microsoft_calendar": {
+        alerts.push({
+          ...base,
+          title: "Calendar sync is paused",
+          body: "New meetings aren’t reaching Orbit. Reconnect Outlook to start calendar sync again.",
+          cta: { label: "Reconnect", href: "/imports#import-outlook-contacts", external: false },
+          surfaceKey: "page.imports",
+        });
+        break;
+      }
+
+      case "connection.apple_calendar": {
+        alerts.push({
+          ...base,
+          title: "Calendar sync is paused",
+          body: "New meetings aren’t reaching Orbit. Your app-specific password may have been revoked at Apple — generate a new one in Settings to reconnect.",
+          // Points at Settings, not /imports: there is no OAuth flow to send someone through
+          // for Apple, and unlike Google and Microsoft, no Apple card exists on the imports
+          // page to land on yet. `surfaceKey` is null for the same reason — there is no
+          // registered surface to gate this on.
+          cta: { label: "Open settings", href: "/settings", external: false },
+          surfaceKey: null,
+        });
+        break;
+      }
+
       case "calendar.sync_error": {
         const n = int(f.data.count) ?? 1;
         const label = str(f.data.label);
@@ -485,10 +604,12 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
             n === 1
               ? `${label ?? "Calendar feed"} isn't syncing`
               : `${n} calendar feeds aren't syncing`,
-          body: str(f.data.detail) ?? "Orbit couldn't read the feed on its last try.",
+          // `detail` is `calendar_subscriptions.last_sync_error` — provider prose, written for
+          // whoever wrote the fetcher. Mapped rather than shown.
+          body: icsFailureLine(str(f.data.detail)),
           cta: {
             label: "Check calendar feeds",
-            // `/settings#settings-calendar` is Orbit's OUTBOUND ICS feed. This alert is
+            // Settings → Integrations → Calendar feed is Orbit's OUTBOUND ICS feed. This alert is
             // about an INBOUND subscription in `calendar_subscriptions`, which is managed
             // on the imports page — the old link sent people to an unrelated card.
             href: "/imports#import-panel-calendar",
@@ -507,9 +628,13 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
           ...base,
           title:
             n === 1 ? "An import didn't finish" : `${n} imports didn't finish`,
+          // `detail` is `imports.error_message` — raw Postgres and OAuth text. This is the
+          // second place it reaches a person, and it is the one nobody was looking at.
           body:
             n === 1
-              ? [label, detail].filter(Boolean).join(" — ") || null
+              ? [label, detail ? importFailureLine(detail) : null]
+                  .filter(Boolean)
+                  .join(" — ") || null
               : "Open imports to see which ones and try again.",
           cta: {
             label: "Open imports",
@@ -548,8 +673,7 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         alerts.push({
           ...base,
           title: `You've reached the ${limit}-contact limit`,
-          body:
-            "Orbit won't add new people until you upgrade. Everything already in your orbit stays fully available — reads, edits and interaction logging are never gated.",
+          body: "Orbit won't add new people until you upgrade. Everything already in your orbit stays fully available — reads, edits and interaction logging are never gated.",
           cta: { label: "See plans", href: "/pricing", external: true },
           surfaceKey: null,
         });
@@ -575,7 +699,10 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
         const until = periodEnd ? new Date(periodEnd) : null;
         const readable =
           until && !Number.isNaN(until.getTime())
-            ? until.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+            ? until.toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+              })
             : null;
         alerts.push({
           ...base,

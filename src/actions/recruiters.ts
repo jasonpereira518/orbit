@@ -22,37 +22,21 @@ import {
   recomputeRecruiterRating,
   resweepUserRatings,
   searchCanonicalRecruiters,
+  mergeRecruiterFields,
+  pooledIdsForViewer,
+  rederiveSharedRecruiterPii,
+  resolveRecruiterPii,
   toPublicRecruiter,
   upsertCanonicalRecruiter,
   type PublicRecruiter,
 } from "@/lib/recruiters";
+import { asActionResult, UserFacingError } from "@/lib/errors";
+import { reportError } from "@/lib/report-error";
 
 function revalidateRecruiterPaths(id?: string) {
   revalidatePath("/recruiters");
   revalidatePath("/chat");
   if (id) revalidatePath(`/recruiters/${id}`);
-}
-
-export async function searchRecruiters(q?: string): Promise<PublicRecruiter[]> {
-  const userId = await requireRecruitersUser();
-  const db = await getDb();
-  const sharing = await isViewerSharing(userId);
-  const rows = await searchCanonicalRecruiters({
-    q,
-    limit: 50,
-    viewerUserId: userId,
-    viewerIsSharing: sharing,
-  });
-  const links = await db.query.userRecruiterLinks.findMany({
-    where: eq(userRecruiterLinks.userId, userId),
-  });
-  const byRecruiter = new Map(links.map((l) => [l.recruiterId, l]));
-  const pooled = sharing
-    ? await pooledRecruiterIds(rows.map((r) => r.id))
-    : new Set<string>();
-  return rows.map((r) =>
-    toPublicRecruiter(r, byRecruiter.get(r.id) || null, pooled.has(r.id))
-  );
 }
 
 /** Pool recruiters the user has not logged. Empty unless they are sharing. */
@@ -68,7 +52,8 @@ export async function listDiscoverRecruiters(
     q,
     limit: 40,
   });
-  // Every row here is pooled by construction, and none is linked by this viewer.
+  // Every row here is pooled by construction, and none is linked by this viewer: the shared
+  // values are what a sharing viewer may see.
   return rows.map((r) => toPublicRecruiter(r, null, true));
 }
 
@@ -80,7 +65,8 @@ export async function listMyRecruiters(): Promise<PublicRecruiter[]> {
     with: { recruiter: true },
     orderBy: [desc(userRecruiterLinks.updatedAt)],
   });
-  return links.map((l) => toPublicRecruiter(l.recruiter, l));
+  const pooled = await pooledIdsForViewer(userId, links.map((l) => l.recruiterId));
+  return links.map((l) => toPublicRecruiter(l.recruiter, l, pooled.has(l.recruiterId)));
 }
 
 export async function getRecruiter(id: string): Promise<PublicRecruiter | null> {
@@ -104,10 +90,9 @@ export async function getRecruiter(id: string): Promise<PublicRecruiter | null> 
     if (!sharing) return null;
     const pooled = await pooledRecruiterIds([id]);
     if (!pooled.has(id)) return null;
-    return toPublicRecruiter(row, null, true);
   }
 
-  return toPublicRecruiter(row, link);
+  return toPublicRecruiter(row, link ?? null, (await pooledIdsForViewer(userId, [id])).has(id));
 }
 
 /** Current sharing state, for the toggle card. */
@@ -133,7 +118,7 @@ export async function setRecruiterSharing(enabled: boolean) {
       await resweepUserRatings(userId);
       revalidatePath("/recruiters");
     } catch (err) {
-      console.error("[recruiters] rating resweep failed", err);
+      reportError(err, { where: "action.recruiters.rating-resweep", userId, level: "warning" });
     }
   });
 
@@ -159,6 +144,8 @@ export async function setLinkShared(recruiterId: string, shared: boolean) {
     .where(eq(userRecruiterLinks.id, link.id));
 
   await recomputeRecruiterRating(recruiterId);
+  // This link just joined or left the pool: the shared row re-derives what is still vouched for.
+  await rederiveSharedRecruiterPii(recruiterId, { withdrawn: link });
   revalidateRecruiterPaths(recruiterId);
   return { shared };
 }
@@ -179,64 +166,79 @@ export type LogRecruiterInput = {
 };
 
 export async function logRecruiter(input: LogRecruiterInput) {
-  const userId = await requireRecruitersUser();
-  const fullName = input.fullName?.trim();
-  if (!fullName && !input.recruiterId) {
-    throw new Error("Recruiter name is required");
-  }
-
-  let recruiterId = input.recruiterId;
-
-  if (recruiterId) {
-    const db = await getDb();
-    const existing = await db.query.recruiters.findFirst({
-      where: eq(recruiters.id, recruiterId),
-    });
-    if (!existing) throw new Error("Recruiter not found");
-    if (fullName || input.email || input.firm || input.linkedinUrl) {
-      await upsertCanonicalRecruiter({
-        fullName: fullName || existing.fullName,
-        firm: input.firm ?? existing.firm,
-        specialty: input.specialty,
-        email: input.email ?? existing.email,
-        linkedinUrl: input.linkedinUrl ?? existing.linkedinUrl,
-        phone: input.phone ?? existing.phone,
-      });
+  return asActionResult(async () => {
+    const userId = await requireRecruitersUser();
+    // Contact details reach the SHARED row only from someone who shares; they always land
+    // on this user's own link.
+    const sharing = await isViewerSharing(userId);
+    const fullName = input.fullName?.trim();
+    if (!fullName && !input.recruiterId) {
+      throw new UserFacingError("Add the recruiter’s name first");
     }
-  } else {
-    const created = await upsertCanonicalRecruiter({
-      fullName: fullName!,
-      firm: input.firm,
-      specialty: input.specialty,
+
+    let recruiterId = input.recruiterId;
+
+    if (recruiterId) {
+      const db = await getDb();
+      const existing = await db.query.recruiters.findFirst({
+        where: eq(recruiters.id, recruiterId),
+      });
+      if (!existing) throw new Error("Recruiter not found");
+      // Patch THIS row directly: going back through upsertCanonicalRecruiter would let an
+      // email match — and then patch — a different recruiter than the one being logged.
+      // Only a sharing user may fill gaps on the shared row at all: firm and specialty are
+      // visible to everyone who can see it, so a private user's log stays on their own link.
+      if (sharing) {
+        const patch = mergeRecruiterFields(existing, {
+          fullName: fullName || existing.fullName,
+          firm: input.firm,
+          specialty: input.specialty,
+          email: input.email,
+          linkedinUrl: input.linkedinUrl,
+          phone: input.phone,
+        });
+        if (Object.keys(patch).length > 1) {
+          await db.update(recruiters).set(patch).where(eq(recruiters.id, existing.id));
+        }
+      }
+    } else {
+      const created = await upsertCanonicalRecruiter({
+        fullName: fullName!,
+        firm: input.firm,
+        specialty: input.specialty,
+        email: input.email,
+        linkedinUrl: input.linkedinUrl,
+        phone: input.phone,
+      }, { contributePii: sharing, createdByUserId: userId });
+      recruiterId = created.id;
+    }
+
+    const rating =
+      typeof input.personalRating === "number" &&
+      input.personalRating >= 1 &&
+      input.personalRating <= 5
+        ? input.personalRating
+        : null;
+
+    await ensureUserLink({
+      userId,
+      recruiterId: recruiterId!,
+      status: input.status || "planned",
       email: input.email,
-      linkedinUrl: input.linkedinUrl,
       phone: input.phone,
+      linkedinUrl: input.linkedinUrl,
+      notes: input.notes || null,
+      source: input.source || "manual",
+      personalRating: rating,
     });
-    recruiterId = created.id;
-  }
 
-  const rating =
-    typeof input.personalRating === "number" &&
-    input.personalRating >= 1 &&
-    input.personalRating <= 5
-      ? input.personalRating
-      : null;
+    if (rating !== null) {
+      await recomputeRecruiterRating(recruiterId!);
+    }
 
-  await ensureUserLink({
-    userId,
-    recruiterId: recruiterId!,
-    status: input.status || "planned",
-    notes: input.notes || null,
-    source: input.source || "manual",
-    personalRating: rating,
+    revalidateRecruiterPaths(recruiterId);
+    return { id: recruiterId! };
   });
-
-  if (rating !== null) {
-    await recomputeRecruiterRating(recruiterId!);
-  }
-
-  revalidateRecruiterPaths(recruiterId);
-  return { id: recruiterId! };
 }
 
 export async function updateMyLink(
@@ -297,6 +299,8 @@ export async function loadRecruitersForChat(
     orderBy: [desc(userRecruiterLinks.updatedAt)],
     limit: 20,
   });
+  // Chat recites what it is given, so it gets only the details this viewer may read.
+  const pooledPersonal = await pooledIdsForViewer(userId, personal.map((l) => l.recruiterId));
 
   const q = question.toLowerCase();
   const tokens = q
@@ -321,8 +325,9 @@ export async function loadRecruitersForChat(
         notes: l.notes,
         contactId: l.contactId,
         piiUnlocked: true,
-        email: r.email,
-        linkedinUrl: r.linkedinUrl,
+        ...(({ email, linkedinUrl }) => ({ email, linkedinUrl }))(
+          resolveRecruiterPii(r, l, pooledPersonal.has(r.id))
+        ),
         score: 100 + personalBoost + tokenHits * 10 + communityScore(r),
       };
     })

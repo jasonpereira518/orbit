@@ -10,7 +10,7 @@
  *
  * Pure: no database, no network. Run: npx tsx scripts/smoke-env.ts
  */
-import { validateEnv, REQUIRED_IN_PRODUCTION } from "../src/lib/env";
+import { validateEnv, REQUIRED_IN_PRODUCTION, EXPECTED_IN_PRODUCTION } from "../src/lib/env";
 
 function check(label: string, cond: boolean, detail?: string) {
   if (!cond) throw new Error(`${label} FAILED${detail ? `: ${detail}` : ""}`);
@@ -101,6 +101,28 @@ function main() {
       prod({ SLACK_OPS_WEBHOOK_URL: undefined }).warnings.some((w) => w.includes("SLACK_OPS_WEBHOOK_URL"))
   );
 
+  check(
+    "missingExpected lists exactly the unset EXPECTED_IN_PRODUCTION names",
+    JSON.stringify(prod({}).missingExpected) ===
+      JSON.stringify(EXPECTED_IN_PRODUCTION.filter((n) => !GOOD[n])),
+    JSON.stringify(prod({}).missingExpected)
+  );
+  check("an unset Slack webhook is in missingExpected",
+    prod({ SLACK_OPS_WEBHOOK_URL: undefined }).missingExpected.includes("SLACK_OPS_WEBHOOK_URL"));
+  check("off production missingExpected is always empty",
+    validateEnv({}, { vercelEnv: undefined }).missingExpected.length === 0 &&
+      validateEnv({}, { vercelEnv: "preview" }).missingExpected.length === 0);
+
+  for (const name of [
+    "SLACK_OPS_CRITICAL_WEBHOOK_URL", "BETTERSTACK_HEARTBEAT_URL", "RESEND_WEBHOOK_SECRET",
+    "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI",
+  ]) {
+    check(`${name} is expected in production`, (EXPECTED_IN_PRODUCTION as readonly string[]).includes(name));
+    const r = prod({ [name]: undefined });
+    check(`production without ${name} warns and never errors`,
+      r.errors.length === 0 && r.warnings.some((w) => w.startsWith(name)), r.errors.join("; "));
+  }
+
   const preview = validateEnv(
     { DATABASE_URL: GOOD.DATABASE_URL, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x", CLERK_SECRET_KEY: "sk_test_x", ENCRYPTION_SECRET: GOOD.ENCRYPTION_SECRET },
     { vercelEnv: "preview" }
@@ -111,6 +133,34 @@ function main() {
   const dev = validateEnv({}, { vercelEnv: undefined });
   check("local dev with nothing set has no errors", dev.errors.length === 0, dev.errors.join("; "));
   check("local dev still warns about what production would need", dev.warnings.length > 0);
+
+  console.log("\nThe waitlist's own domain...");
+  // Optional, but once set its mail must not come from the app's domain: that would print
+  // the app's name in the From line of the one thing that must never show it.
+  check("no waitlist host, no waitlist requirements", prod({}).errors.length === 0);
+  const noSender = prod({ WAITLIST_HOST: "join.example" });
+  check("a waitlist host needs its own sender", noSender.errors.some((e) => e.includes("WAITLIST_FROM_EMAIL")), noSender.errors.join("; "));
+  const own = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "Jason <hello@join.example>" });
+  check("a sender on the waitlist's own domain is fine", own.errors.length === 0, own.errors.join("; "));
+  for (const leaky of ["hello@orbit.jasonpereira.live", "Jason <hi@jasonpereira.live>"]) {
+    const r = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: leaky });
+    check(`a sender on the app's domain is refused (${leaky})`, r.errors.some((e) => e.includes("WAITLIST_FROM_EMAIL")), r.errors.join("; "));
+  }
+  const leakyReply = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_REPLY_TO: "orbit@jasonpereira.live" });
+  check("a reply-to on the app's domain is refused", leakyReply.errors.some((e) => e.includes("WAITLIST_REPLY_TO")));
+  const gmailSender = prod({
+    RESEND_FROM_EMAIL: "someone@gmail.com",
+    WAITLIST_HOST: "join.example",
+    WAITLIST_FROM_EMAIL: "hello@join.example",
+    WAITLIST_REPLY_TO: "someone.else@gmail.com",
+  });
+  check(
+    "a Gmail app sender does not make every Gmail reply-to 'the app's domain'",
+    gmailSender.errors.length === 0,
+    gmailSender.errors.join("; ")
+  );
+  const insecure = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_BASE_URL: "http://join.example" });
+  check("the waitlist base URL must be https", insecure.errors.some((e) => e.includes("WAITLIST_BASE_URL")));
 
   console.log("\nAll env checks passed.");
 }

@@ -16,6 +16,8 @@ import {
 } from "@/actions/duplicates";
 import type { DuplicateCandidate, DuplicatePair } from "@/lib/duplicate-review";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 function describe(c: DuplicateCandidate) {
   return [c.title, c.company].filter(Boolean).join(" · ");
@@ -80,6 +82,19 @@ function Side({
   );
 }
 
+/**
+ * The model's read on a pair, in words. A hint only: the queue is ordered by it, but nothing
+ * merges without a click, and the person's own judgement is the one that counts.
+ */
+function decisionHint(decision: DuplicatePair["decision"]): string | null {
+  if (!decision) return null;
+  const who = decision.engine === "jev" ? "decision model" : "your AI model";
+  const p = decision.sameProbability;
+  if (p >= 0.7) return `Likely the same person, says the ${who}`;
+  if (p <= 0.3) return `Likely two different people, says the ${who}`;
+  return `Hard to tell, says the ${who}`;
+}
+
 function PairCard({ pair }: { pair: DuplicatePair }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -99,13 +114,13 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
         await mergeDuplicatePair(keep.id, drop.id, pair.reason);
         setDone("merged");
         toast.success(`Merged into ${keep.fullName}`, {
-          description: "The other record is hidden. You can undo this below.",
+          description: "The other record is hidden — you can undo this below",
         });
         router.refresh();
       } catch (err) {
-        toast.error("Could not merge", {
-          description: err instanceof Error ? err.message : "Please try again.",
-        });
+        // The description used to carry `err.message`, which production turns into the
+        // Server Components digest. See `friendlyError`.
+        toast.error(friendlyError(err, TOAST_COPY.mergeFailed));
       }
     });
 
@@ -113,10 +128,15 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
     startTransition(async () => {
       // By contact ids, not by suggestion id: a pair found by scanning for a shared name has
       // no stored row yet, and dismissing it is what creates one.
-      await dismissDuplicatePair(pair.keep.id, pair.merge.id);
-      setDone("dismissed");
-      toast.success("Dismissed", { description: "This pair won't be suggested again." });
-      router.refresh();
+      // Guarded like its siblings: unhandled, a failure here threw inside the transition.
+      try {
+        await dismissDuplicatePair(pair.keep.id, pair.merge.id);
+        setDone("dismissed");
+        toast.success("Dismissed", { description: "This pair won’t be suggested again" });
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t dismiss that pair — try again?"));
+      }
     });
 
   return (
@@ -130,6 +150,9 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
             </Badge>
           ) : null}
         </CardTitle>
+        {decisionHint(pair.decision) ? (
+          <p className="text-xs text-muted-foreground">{decisionHint(pair.decision)}</p>
+        ) : null}
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
@@ -186,12 +209,10 @@ export function DuplicateReviewList({
     startTransition(async () => {
       try {
         await undoMerge(mergeId);
-        toast.success("Merge undone", { description: "The contact and its history are back." });
+        toast.success("Merge undone", { description: "The contact and its history are back" });
         router.refresh();
       } catch (err) {
-        toast.error("Could not undo", {
-          description: err instanceof Error ? err.message : "Please try again.",
-        });
+        toast.error(friendlyError(err, TOAST_COPY.undoFailed));
       }
     });
 

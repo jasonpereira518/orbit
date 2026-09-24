@@ -20,6 +20,9 @@ import {
 import { internalFetch } from "@/lib/internal-auth";
 import { createCompanyResolver } from "@/lib/companies";
 import { recordDuplicateSuggestion } from "@/lib/contact-merge";
+import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
+import { NO_ENGINES, openEngines, type Engines } from "@/lib/decisions/engine";
+import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
@@ -28,10 +31,18 @@ import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
   type DuplicateIndex,
+  type DuplicateMatch,
   type DuplicateSubject,
 } from "@/lib/duplicates";
 import { getAdapter } from "@/lib/import-adapters";
+import { classifyImportFailure } from "@/lib/import-errors";
+import {
+  fingerprintContact,
+  type ImportedContactProvenance,
+} from "@/lib/imports/import-provenance";
 import { startQueryCount, stopQueryCount } from "@/lib/query-counter";
+import { reportAndContinue, reportError } from "@/lib/report-error";
+import { withReference } from "@/lib/errors";
 
 /**
  * Rows pulled from the DB per processing loop iteration. Widened from 40 to cut the fixed
@@ -150,8 +161,10 @@ export type ImportAdapter<P> = {
 async function scheduleContinuation(importId: string) {
   try {
     await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
-  } catch {
-    // Best-effort — the process-stalled cron will pick this job back up.
+  } catch (err) {
+    // Best-effort — the process-stalled cron will pick this job back up. Reported (throttled)
+    // because a kick that always fails means every large import waits an hour per chunk.
+    reportError(err, { where: "job.import.continuation-kick", level: "warning", extra: { importId } });
   }
 }
 
@@ -182,18 +195,28 @@ export const PLAN_LIMIT_ROW_REASON = "Contact limit reached on your plan";
  * `Promise.all`, which on `neon-http` is one HTTPS request per row, with no transaction to
  * make the chunk atomic. A single statement is both faster and all-or-nothing.
  */
-async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, string>) {
+async function markRowsDone(
+  rowIds: string[],
+  contactIdByRowId: Map<string, string>,
+  provenanceByRowId: Map<string, ImportedContactProvenance>
+) {
   if (rowIds.length === 0) return;
   const db = await getDb();
   const now = new Date();
   const tuples = rowIds.map(
     (rowId) =>
-      sql`(${rowId}::uuid, ${contactIdByRowId.get(rowId) ?? null}::uuid)`
+      sql`(${rowId}::uuid, ${contactIdByRowId.get(rowId) ?? null}::uuid, ${JSON.stringify(
+        provenanceByRowId.get(rowId) ?? { created: false }
+      )}::jsonb)`
   );
   await db.execute(sql`
     UPDATE import_job_rows AS r
-    SET status = 'done', contact_id = v.contact_id, updated_at = ${now}
-    FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, contact_id)
+    SET status = 'done',
+        contact_id = v.contact_id,
+        -- Merged, not replaced: the payload is the adapter's own row data and must survive.
+        payload = coalesce(r.payload, '{}'::jsonb) || jsonb_build_object('importedBy', v.provenance),
+        updated_at = ${now}
+    FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, contact_id, provenance)
     WHERE r.id = v.id
   `);
 }
@@ -257,7 +280,9 @@ async function markRowFailed(row: PendingRow, err: unknown) {
     .update(importJobRows)
     .set({
       status: "failed",
-      errorMessage: (err instanceof Error ? err.message : "Row failed").slice(0, 500),
+      errorMessage: truncateStoredError(
+        err instanceof Error ? err.message : "Couldn’t save this row"
+      ),
       updatedAt: new Date(),
     })
     .where(eq(importJobRows.id, row.id));
@@ -373,6 +398,7 @@ export async function runImportJob(importId: string): Promise<void> {
     let existingContacts: DuplicateSubject[];
     let duplicateIndex: DuplicateIndex;
     let companyResolve: Awaited<ReturnType<typeof createCompanyResolver>>;
+    let engines: Engines = NO_ENGINES;
     try {
       existingContacts = await db.query.contacts.findMany({
         where: eq(contacts.userId, userId),
@@ -388,6 +414,8 @@ export async function runImportJob(importId: string): Promise<void> {
       });
       duplicateIndex = buildDuplicateIndex(existingContacts);
       companyResolve = await createCompanyResolver(userId);
+      // Opened once per invocation, like the index: Jev checks name-evidence folds below.
+      engines = await openEngines(userId);
     } catch (err) {
       await failImport(
         importId,
@@ -516,6 +544,33 @@ export async function runImportJob(importId: string): Promise<void> {
         const toUpdate: { row: PendingRow; contactId: string; input: Partial<ContactInput> }[] = [];
         const toSkip: PendingRow[] = [];
 
+        // Folds that rest on a NAME are checked by the decision model first, one batch per
+        // chunk: a fold overwrites the existing contact's fields and cannot be undone, so a
+        // confident "different people" becomes a new contact plus a review item instead.
+        // Jev only (`engines` has no LLM); without it this is a no-op.
+        const vetoedRows = new Set<string>();
+        if (engines.jev) {
+          const nameFolds: Array<{ rowId: string; probe: DuplicateProbe; best: DuplicateMatch }> = [];
+          for (const row of pendingRows) {
+            const probe = adapter.identity(row.payload as ImportJobRowPayload);
+            if (!probe) continue;
+            const best = findDuplicateCandidatesIndexed(duplicateIndex, probe)[0];
+            if (best && !best.strong && best.confidence >= matchConfidence) {
+              nameFolds.push({ rowId: row.id, probe, best });
+            }
+          }
+          if (nameFolds.length) {
+            const vetoes = await nameMergeVetoes(
+              engines,
+              nameFolds.map((f) => [personCard(f.probe), personCard(f.best.contact)] as const),
+              DUPLICATE_TUNING.backgroundBudgetMs
+            );
+            nameFolds.forEach((f, j) => {
+              if (vetoes[j]) vetoedRows.add(f.rowId);
+            });
+          }
+        }
+
         for (const row of pendingRows) {
           // The adapter was chosen from this job's own `importType` and the rows belong to
           // that job, so the payload union is narrowed once here rather than at each of the
@@ -533,7 +588,8 @@ export async function runImportJob(importId: string): Promise<void> {
           // match clears the confidence floor, otherwise create and queue the pair for
           // review rather than discarding it.
           const best = dups[0];
-          const canFold = best ? best.confidence >= matchConfidence : false;
+          const heldForReview = vetoedRows.has(row.id);
+          const canFold = best ? best.confidence >= matchConfidence && !heldForReview : false;
 
           if (best && canFold) {
             toUpdate.push({
@@ -550,8 +606,12 @@ export async function runImportJob(importId: string): Promise<void> {
               lookalike: best && !best.strong && !canFold
                 ? {
                     contactId: best.contact.id,
-                    reason: best.reason,
-                    confidence: best.confidence,
+                    reason: heldForReview ? `${best.reason} — held for review` : best.reason,
+                    // A vetoed fold scored at or above the line; the review queue lists only
+                    // pairs below it, so it is recorded just under.
+                    confidence: heldForReview
+                      ? Math.min(best.confidence, DUPLICATE_MERGE_CONFIDENCE - 0.01)
+                      : best.confidence,
                   }
                 : undefined,
             });
@@ -574,6 +634,7 @@ export async function runImportJob(importId: string): Promise<void> {
 
         const touchedContactIds: string[] = [];
         const contactIdByRowId = new Map<string, string>();
+        const provenanceByRowId = new Map<string, ImportedContactProvenance>();
 
         // `createContactsBulk` admits only what the plan's contact headroom allows, taking
         // from the front, so anything past `created.length` was refused by the cap rather
@@ -627,6 +688,20 @@ export async function runImportJob(importId: string): Promise<void> {
               created.forEach((contact, i) => {
                 addToDuplicateIndex(duplicateIndex, contact);
                 contactIdByRowId.set(batch[i].row.id, contact.id);
+                provenanceByRowId.set(batch[i].row.id, {
+                  created: true,
+                  // The PERSISTED contact, not `batch[i].input`. The two differ: the input's
+                  // `company` is the adapter's raw string, while `contactInsertValues` writes
+                  // the resolver's canonical name, so `"Acme  Corp"` lands as `"Acme Corp"`.
+                  // Hashing the input would store a fingerprint the row can never match
+                  // again, and undo would read every such person as edited — permanently
+                  // un-undoable. Undo re-hashes the contact row, so the contact row is what
+                  // has to be hashed here. The whole row, not a hand-picked subset: every
+                  // field `FingerprintInput` names (identifying fields plus location, school,
+                  // phone, website and X handle) is a `contacts` column of the same name, so
+                  // widening the fingerprint cannot leave this call site behind.
+                  fp: fingerprintContact(contact),
+                });
                 touchedContactIds.push(contact.id);
                 const lookalike = batch[i].lookalike;
                 if (lookalike) {
@@ -665,6 +740,7 @@ export async function runImportJob(importId: string): Promise<void> {
               );
               for (const item of batch) {
                 contactIdByRowId.set(item.row.id, item.contactId);
+                provenanceByRowId.set(item.row.id, { created: false });
                 touchedContactIds.push(item.contactId);
               }
               contactsUpdated += batch.length;
@@ -850,7 +926,7 @@ export async function runImportJob(importId: string): Promise<void> {
                 })
                 .where(inArray(importJobRows.id, [...blockedRowIds]))
             : Promise.resolve(),
-          markRowsDone(doneRowIds, contactIdByRowId),
+          markRowsDone(doneRowIds, contactIdByRowId, provenanceByRowId),
           toSkip.length > 0
             ? db
                 .update(importJobRows)
@@ -922,13 +998,20 @@ export async function runImportJob(importId: string): Promise<void> {
       .update(imports)
       .set({
         status: "completed",
-        stats: accumulatedStats(latestStats, jobStart, {
-          skipped: skippedTotal,
-          blockedByPlan: blockedByPlanTotal,
-          failedRows: failedRowsTotal,
-          interactionsLogged: interactionsLoggedTotal,
-          remindersCreated: remindersCreatedTotal,
-        }),
+        stats: {
+          ...accumulatedStats(latestStats, jobStart, {
+            skipped: skippedTotal,
+            blockedByPlan: blockedByPlanTotal,
+            failedRows: failedRowsTotal,
+            interactionsLogged: interactionsLoggedTotal,
+            remindersCreated: remindersCreatedTotal,
+          }),
+          // Frozen here, at the last write this job will ever make, because `updated_at`
+          // cannot be trusted to stay put: an admin retry (`admin-operations.ts`) bumps it
+          // months later, and undo reads this boundary to tell the interactions this import
+          // wrote from the ones that arrived afterwards. See `lib/imports/import-undo.ts`.
+          runEndedAt: new Date().toISOString(),
+        },
         updatedAt: new Date(),
       })
       .where(eq(imports.id, importId));
@@ -942,13 +1025,17 @@ export async function runImportJob(importId: string): Promise<void> {
     // Google/Outlook contacts and every other import type already had — a deliberate
     // improvement, not scope creep: it's the one finalization step every import type is
     // supposed to get, not something specific to this task's two new adapters.
-    await refreshOutreachSuggestions(importRow.userId).catch(() => null);
+    await refreshOutreachSuggestions(importRow.userId).catch(
+      reportAndContinue({ where: "job.import.finalize.outreach", userId: importRow.userId }, null)
+    );
 
     // Adapter-specific once-per-job finalization (see `ImportAdapter.finalize`) — e.g. the
     // LinkedIn messages adapter's AI enrichment pass. Runs over every contact this job
     // touched across every chunk, once, not per chunk; non-fatal like the two calls above.
     if (adapter.finalize) {
-      await adapter.finalize(importRow.userId, [...allTouchedContactIds]).catch(() => null);
+      await adapter.finalize(importRow.userId, [...allTouchedContactIds]).catch(
+        reportAndContinue({ where: "job.import.finalize.adapter", userId: importRow.userId, extra: { importId: importRow.id } }, null)
+      );
     }
 
     // Redraw the distribution once, now that every contact this import will ever add is in.
@@ -957,7 +1044,9 @@ export async function runImportJob(importId: string): Promise<void> {
     // is also why neither the create nor the merge path scores rows as they land: scoring a
     // duplicate as it is merged would issue extra queries per row to reach a number that is
     // immediately superseded by this recalibration.
-    await recalibrateCloseness(importRow.userId).catch(() => null);
+    await recalibrateCloseness(importRow.userId).catch(
+      reportAndContinue({ where: "job.import.finalize.recalibrate", userId: importRow.userId }, null)
+    );
     await kickEmbeddingBackfill(importRow.userId);
 
     revalidatePath("/");
@@ -983,6 +1072,19 @@ export async function runImportJob(importId: string): Promise<void> {
  */
 const PER_CONTACT_REVALIDATE_LIMIT = 50;
 
+/**
+ * How much of a raw error is worth keeping.
+ *
+ * One rule, because there were four — 480 here, 500 on a row, 300 in each scan runner — and a
+ * number that differs per call site is a number nobody chose. Long enough for a Postgres
+ * message with its constraint name, short enough that a stack-shaped body cannot fill a row.
+ */
+export const STORED_ERROR_MAX = 480;
+
+export function truncateStoredError(message: string): string {
+  return message.length > STORED_ERROR_MAX ? message.slice(0, STORED_ERROR_MAX) : message;
+}
+
 /** Exported so the Gmail recruiter scan runner shares one job-failure path. */
 export async function failImport(
   importId: string,
@@ -990,18 +1092,31 @@ export async function failImport(
   stats?: ImportStats
 ) {
   const message = err instanceof Error ? err.message : "Import failed";
+  // Reported, and the stored message carries the reference, so a failed import in someone's
+  // history can be traced to the real error rather than to a truncated line on a row.
+  const ref = reportError(err, { where: "job.import", extra: { importId } });
+  // Classified here, from the error instance, because `ReauthRequiredError` and a Postgres
+  // `code` are both gone once the message has been stringified into the column.
+  const errorCode = classifyImportFailure(err);
   const db = await getDb();
   await db
     .update(imports)
     .set({
       status: "failed",
-      errorMessage: message.slice(0, 500),
+      errorMessage: withReference(truncateStoredError(message), ref),
       updatedAt: new Date(),
-      // Optional and additive: the Gmail recruiter scan runner shares this failure path but
-      // has no query-count stats of its own to report, so it calls this with the two-arg
-      // form and `stats` stays undefined — Drizzle's partial `.set()` just omits the column
-      // from the update rather than nulling out whatever `stats` the row already carried.
-      ...(stats ? { stats } : {}),
+      // A jsonb merge rather than a partial `.set()`: the Gmail and Outlook scan runners share
+      // this failure path and call the two-arg form, so `stats` is undefined for them — and
+      // the error code still has to land without nulling whatever stats the row already had.
+      stats: sql`coalesce(stats, '{}'::jsonb) || ${JSON.stringify({
+        ...(stats ?? {}),
+        errorCode,
+        // A failed job has also stopped writing, so freeze undo's boundary here too — same
+        // reason as the completion path. A retry that gets further overwrites it on its own
+        // completion, so this can only ever be too early, which keeps people rather than
+        // removing them.
+        runEndedAt: new Date().toISOString(),
+      })}::jsonb`,
     })
     .where(eq(imports.id, importId));
 }

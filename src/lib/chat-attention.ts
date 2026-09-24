@@ -39,39 +39,55 @@ const OVERDUE_CAP = 12;
 const SUGGESTION_CAP = 12;
 const DAY_MS = 86_400_000;
 
-/**
- * Questions this brief is for. Deliberately narrow: attaching an attention queue to
- * "who do I know at Google?" would push the model toward answering a question nobody
- * asked. Substring matching on purpose — "follow up", "followed up", "follow-ups" all hit.
- */
-const ATTENTION_PATTERNS = [
-  "reconnect",
-  "reach out",
-  "follow up",
-  "follow-up",
-  "followup",
-  "followed up",
-  "catch up",
-  "check in",
-  "overdue",
-  "gone quiet",
-  "quiet",
-  "dormant",
-  "neglect",
-  "lost touch",
-  "haven't spoken",
-  "havent spoken",
-  "haven't talked",
-  "not talked",
-  "who should i",
-  "need attention",
-  "this week",
-  "cold",
-];
+// The predicate lives in `@/lib/chat-attention-match`, a leaf with no database reach: the
+// composer's suggestion rules use it to drop questions that would trip this brief, and they
+// run in a client bundle that must never pull `@/db` in behind it. Re-exported so callers
+// that already have the brief in hand need not know that.
+export { ATTENTION_PATTERNS, isAttentionQuestion } from "@/lib/chat-attention-match";
 
-export function isAttentionQuestion(question: string) {
-  const q = question.toLowerCase();
-  return ATTENTION_PATTERNS.some((p) => q.includes(p));
+/** How many overdue people the one-line summary names before it stops counting out loud. */
+const LITE_NAME_CAP = 5;
+
+/**
+ * The overdue queue as a single line, computed for EVERY question.
+ *
+ * `isAttentionQuestion` is a substring list, and a narrow one on purpose — the full brief
+ * carries an instruction to name those people and not plead ignorance, which would hijack
+ * "who do I know at Google?" if it fired on everything. But a narrow list has a cliff:
+ * "anyone slipping through the cracks?" uses none of its phrases, so the model was told
+ * nothing and answered that it had nothing, with eight overdue follow-ups sitting one query
+ * away.
+ *
+ * This is the other side of that trade — one factual line, no instruction to act on it. It
+ * costs one indexed read on a column the dashboard reads anyway, and it means the answer can
+ * never be "I don't know" about a fact the product already computed.
+ */
+export async function renderAttentionLite(userId: string): Promise<string | null> {
+  const db = await getDb();
+  const now = new Date();
+  const rows = await db.query.contacts
+    .findMany({
+      where: and(
+        eq(contacts.userId, userId),
+        isNotNull(contacts.nextFollowUpAt),
+        lte(contacts.nextFollowUpAt, now)
+      ),
+      columns: { id: true, fullName: true, preferredName: true, nextFollowUpAt: true },
+      orderBy: (c, { asc }) => [asc(c.nextFollowUpAt)],
+      limit: OVERDUE_CAP,
+    })
+    .catch(() => []);
+
+  if (!rows.length) return "No follow-up is overdue right now.";
+
+  const nowMs = now.getTime();
+  const named = rows.slice(0, LITE_NAME_CAP).map((c) => {
+    const days = daysBetween(c.nextFollowUpAt, nowMs) ?? 0;
+    return `${c.preferredName || c.fullName} (${days}d)`;
+  });
+  const more = rows.length > named.length ? `, +${rows.length - named.length} more` : "";
+  const total = rows.length === OVERDUE_CAP ? `${OVERDUE_CAP}+` : String(rows.length);
+  return `${total} follow-up${rows.length === 1 ? " is" : "s are"} overdue: ${named.join(", ")}${more}.`;
 }
 
 function daysBetween(from: Date | string | null, now: number) {
