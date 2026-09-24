@@ -326,6 +326,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
+  "smoke-behavior-golden": "pglite",
   "smoke-chat-lookup-tools": "pglite",
   "smoke-tool-registry": "pglite",
   "smoke-memory-search": "pglite",
