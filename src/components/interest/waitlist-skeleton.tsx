@@ -1,8 +1,8 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Matches the waitlist page — centred hero, the join card, the 3-up pillars, the three
- * steps, four FAQ rows, the closing CTA and the two-item footer — on the same dark
+ * Matches the waitlist page — centred hero, the join card, the 3-up pillars, the two
+ * referral tiers, the three steps, five FAQ rows, the closing CTA and the two-item footer — on the same dark
  * landing-root ground. The page is dynamic, so this shows while its first request runs.
  *
  * Its own module, not a member of `loading/page-skeletons.tsx`: that file carries every
@@ -49,6 +49,16 @@ export function WaitlistSkeleton() {
         </section>
 
         <section className="mt-24 md:mt-32">
+          <Skeleton className="mx-auto h-8 w-64 max-w-full bg-white/10" />
+          <Skeleton className="mx-auto mt-4 h-4 w-full max-w-md bg-white/5" />
+          <div className="mt-10 grid gap-4 sm:grid-cols-2">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <Skeleton key={i} className="h-40 w-full rounded-2xl border border-white/10 bg-white/[0.03]" />
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-24 md:mt-32">
           <Skeleton className="mx-auto h-8 w-72 max-w-full bg-white/10" />
           <div className="mt-10 grid gap-4 sm:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -60,7 +70,7 @@ export function WaitlistSkeleton() {
         <section className="mt-24 md:mt-32">
           <Skeleton className="mx-auto h-8 w-56 max-w-full bg-white/10" />
           <div className="mt-10 grid gap-3 lg:grid-cols-2">
-            {Array.from({ length: 4 }).map((_, i) => (
+            {Array.from({ length: 5 }).map((_, i) => (
               <Skeleton key={i} className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.03]" />
             ))}
           </div>
