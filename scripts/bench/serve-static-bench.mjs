@@ -7,15 +7,23 @@
  * `/_next/static` is the whole page — the only server call it can make, the focus refetch,
  * 404s here and the chart keeps its synthetic payload.
  *
- *   ORBIT_BENCH=1 npx next build --profile && node scripts/bench/serve-static-bench.mjs [port]
+ *   ORBIT_BENCH=1 npx next build --profile && node scripts/bench/serve-static-bench.mjs [port] [--h2]
+ *
+ * `--h2` serves HTTP/2 over TLS (a self-signed certificate made on first use; Chrome needs
+ * `--ignore-certificate-errors`), which is what production is served over. Plain HTTP/1.1 caps a
+ * browser at six connections per host, so a page's dozen-odd chunks arrive in RTT-spaced waves
+ * that production never sees — enough to misattribute a loading cost to request waterfalls.
  */
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:http";
+import { createSecureServer } from "node:http2";
 import { extname, join, normalize } from "node:path";
 
 // BENCH_NEXT_DIR serves another build (e.g. a baseline worktree's) from this same server code.
 const root = process.env.BENCH_NEXT_DIR ?? join(import.meta.dirname, "../../.next");
-const port = Number(process.argv[2] ?? process.env.PORT ?? 3417);
+const port = Number(process.argv.slice(2).find((a) => /^\d+$/.test(a)) ?? process.env.PORT ?? 3417);
+const h2 = process.argv.includes("--h2");
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
@@ -36,7 +44,7 @@ function send(res, file) {
   createReadStream(file).pipe(res);
 }
 
-createServer((req, res) => {
+function handle(req, res) {
   const url = new URL(req.url, "http://x");
   // Any prerendered bench page: /bench/constellation, /bench/preview, /bench/preview-old.
   const bench = url.pathname.match(/^\/bench\/([a-z0-9-]+)$/);
@@ -62,4 +70,19 @@ createServer((req, res) => {
     if (existsSync(pub) && statSync(pub).isFile()) return send(res, pub);
   }
   res.writeHead(404).end();
-}).listen(port, () => console.log(`bench static server on http://localhost:${port}/bench/constellation`));
+}
+
+function tls() {
+  const dir = join(import.meta.dirname, "../../.bench-data/tls");
+  const key = join(dir, "key.pem");
+  const cert = join(dir, "cert.pem");
+  if (!existsSync(key)) {
+    mkdirSync(dir, { recursive: true });
+    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "3650", "-subj", "/CN=localhost"], { stdio: "ignore" });
+  }
+  return { key: readFileSync(key), cert: readFileSync(cert) };
+}
+
+(h2 ? createSecureServer({ ...tls(), allowHTTP1: true }, handle) : createServer(handle)).listen(port, () =>
+  console.log(`bench static server on ${h2 ? "https" : "http"}://localhost:${port}/bench/constellation${h2 ? " (HTTP/2)" : ""}`)
+);

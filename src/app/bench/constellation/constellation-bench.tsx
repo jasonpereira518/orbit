@@ -3,6 +3,10 @@
 import { Profiler, useEffect, useState, type ProfilerOnRenderCallback } from "react";
 import { ConstellationIntro } from "@/components/graph/constellation-intro";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
+import {
+  ConstellationLoading,
+  CONSTELLATION_STAGE_HEIGHT,
+} from "@/components/graph/constellation-loading";
 import { buildSyntheticGraphPayload } from "@/lib/graph/synthetic-network";
 import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 import { markOpenStage } from "@/lib/graph/open-marks";
@@ -82,21 +86,26 @@ export function ConstellationBench() {
     received(buildSyntheticGraphPayload(n, { seed }));
   }, []);
 
-  if (!payload) return null;
-
   // The same nesting as src/app/(clerk)/(app)/(main)/graph/page.tsx, so the stage has the
-  // same box, the intro the same host, and the chart the same lazy chunk.
+  // same box, the intro the same host, and the chart the same lazy chunk. Like that page, the
+  // intro and the loading panel are up before the payload is — there they sit outside the
+  // Suspense boundary the payload streams into, and hydrate with the page shell.
   return (
     <div className="min-h-dvh bg-background p-4">
       <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
         <h1 className="px-1 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
-          Constellation bench · {payload.contacts.length.toLocaleString()} contacts
+          Constellation bench
+          {payload ? ` · ${payload.contacts.length.toLocaleString()} contacts` : ""}
         </h1>
         <div className={`relative rounded-2xl ${STAGE_GROUND}`}>
           <ConstellationIntro />
-          <Profiler id="constellation" onRender={onRender}>
-            <NetworkGraphLazy initialData={payload} />
-          </Profiler>
+          {payload ? (
+            <Profiler id="constellation" onRender={onRender}>
+              <NetworkGraphLazy initialData={payload} />
+            </Profiler>
+          ) : (
+            <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
+          )}
         </div>
       </div>
     </div>

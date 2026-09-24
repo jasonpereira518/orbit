@@ -4,15 +4,22 @@
  *
  *   ORBIT_BENCH=1 npx next build --profile
  *   npx tsx scripts/bench/constellation-fixtures.ts 100,1000,2500,5000,10000
- *   node scripts/bench/serve-static-bench.mjs 3417 &
+ *   node scripts/bench/serve-static-bench.mjs 3417 --h2 &
  *   node scripts/bench/constellation-interactions.mjs 100,1000,2500,5000,10000 --reps 3 --label before --out before.json
- *   node scripts/bench/constellation-report.mjs before.json after.json   # the markdown table
+ *
+ * or, to compare two builds (the other served with BENCH_NEXT_DIR on another port):
+ *
+ *   node scripts/bench/constellation-interactions.mjs 100,1000,2500,5000,10000 --reps 5 \
+ *     --ab before=https://localhost:3418/bench/constellation,after=https://localhost:3417/bench/constellation --out ab.json
+ *   node scripts/bench/constellation-report.mjs ab.json      # the markdown table
  *
  * Methodology (fixed; change it and old results stop being comparable — bump METHOD if you do):
  *
  * - One fresh headless Chrome per repetition, GPU raster on, 1440x900 at DPR 1, HTTP cache off,
  *   and 40ms of emulated round-trip latency on every request (localhost has none, and without it
  *   a request waterfall costs nothing and cannot be seen). Throughput is not throttled.
+ * - Served over HTTP/2 (`serve-static-bench.mjs --h2`), as production is. Over HTTP/1.1 the six-
+ *   connection cap turns a dozen chunk requests into three RTT-spaced waves.
  * - A control frame rate from an empty page first. Not ~60 means the machine is the ceiling.
  *
  * OPEN — `/bench/constellation?n=N&data=fetch`: the payload is fetched and parsed, as the real
@@ -39,8 +46,9 @@
  * the count of long tasks (> 50ms, PerformanceObserver `longtask`) that started in the window.
  * Each size runs `--reps` times; the report uses the median of each metric.
  *
- * `--trace-dir d` also records the first repetition of each gesture as a Chrome trace
- * (`d/<label>-<n>-<gesture>.json`): open it in DevTools → Performance → Load profile.
+ * `--trace-dir d` adds one more, unscored repetition that records each gesture as a Chrome trace
+ * (`d/<label>-<n>-<gesture>.json`; DevTools → Performance → Load profile). Unscored because
+ * tracing costs frames of its own.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -60,7 +68,17 @@ const reps = Number(flag("--reps") ?? 3);
 const label = flag("--label") ?? "run";
 const out = flag("--out");
 const traceDir = flag("--trace-dir");
-const base = flag("--base") ?? process.env.BENCH_URL ?? "http://localhost:3417/bench/constellation";
+const base = flag("--base") ?? process.env.BENCH_URL ?? "https://localhost:3417/bench/constellation";
+/**
+ * `--ab before=URL,after=URL`: measure two builds interleaved — every repetition runs both, in
+ * alternating order — so machine load drifting over a long run lands on both sides equally.
+ */
+const targets = flag("--ab")
+  ? flag("--ab").split(",").map((pair) => {
+      const i = pair.indexOf("=");
+      return { label: pair.slice(0, i), base: pair.slice(i + 1) };
+    })
+  : [{ label, base }];
 
 const GESTURE_MS = 3000;
 const SETTLE_MS = 1500;
@@ -186,8 +204,9 @@ async function traced(cdp, expr, file) {
   return result;
 }
 
-async function runOnce(n, rep) {
-  const cdp = await launch({ width: 1440, height: 900, gpu: true });
+async function runOnce(n, traced_, { label, base }) {
+  // The bench server's certificate is self-signed.
+  const cdp = await launch({ width: 1440, height: 900, gpu: true, extraArgs: ["--ignore-certificate-errors"] });
   try {
     await cdp.goto("data:text/html,<body></body>");
     const controlFps = await cdp.evaluate(`new Promise((res) => { const ts = []; const t0 = performance.now(); (function f(t) { ts.push(t); if (t - t0 < 2000) requestAnimationFrame(f); else res(Math.round(((ts.length - 1) / ((ts.at(-1) - ts[0]) / 1000)) * 10) / 10); })(t0); })`);
@@ -236,7 +255,7 @@ async function runOnce(n, rep) {
     const measure = async (name, setup, expr) => {
       await evaluateWithin(cdp, setup);
       await cdp.sleep(SETTLE_MS);
-      const file = traceDir && rep === 0 ? join(traceDir, `${label}-${n}-${name}.json`) : null;
+      const file = traced_ ? join(traceDir, `${label}-${n}-${name}.json`) : null;
       gestures[name] = file ? await traced(cdp, expr, file) : await evaluateWithin(cdp, expr);
     };
 
@@ -270,30 +289,46 @@ function medianOf(runs) {
 }
 
 if (traceDir) mkdirSync(traceDir, { recursive: true });
-const results = [];
+const results = Object.fromEntries(targets.map((t) => [t.label, []]));
 for (const n of sizes) {
-  const runs = [];
+  const runs = Object.fromEntries(targets.map((t) => [t.label, []]));
   for (let rep = 0; rep < reps; rep++) {
-    process.stdout.write(`[${label}] n=${n} rep ${rep + 1}/${reps} … `);
-    try {
-      const r = await runOnce(n, rep);
-      runs.push(r);
-      const g = r.gestures;
-      console.log(
-        `control ${r.controlFps} · TTI ${r.open.tti}ms ${JSON.stringify(r.open.stages)} lt ${r.open.longTasks} · ` +
-          Object.entries(g).map(([k, v]) => `${k} ${v.avgFps}/${v.minFps}fps lt ${v.longTasks}`).join(" · ") +
-          (r.errors.length ? `  ERR ${r.errors.join(" | ").slice(0, 200)}` : "")
-      );
-    } catch (err) {
-      console.log(`FAILED: ${err.message}`);
+    // A B, then B A: neither build always runs first, or on the warmer machine.
+    const order = rep % 2 ? [...targets].reverse() : targets;
+    for (const t of order) {
+      process.stdout.write(`[${t.label}] n=${n} rep ${rep + 1}/${reps} … `);
+      try {
+        const r = await runOnce(n, false, t);
+        runs[t.label].push(r);
+        const g = r.gestures;
+        console.log(
+          `control ${r.controlFps} · TTI ${r.open.tti}ms ${JSON.stringify(r.open.stages)} lt ${r.open.longTasks} · ` +
+            Object.entries(g).map(([k, v]) => `${k} ${v.avgFps}/${v.minFps}fps lt ${v.longTasks}`).join(" · ") +
+            (r.errors.length ? `  ERR ${r.errors.join(" | ").slice(0, 200)}` : "")
+        );
+      } catch (err) {
+        console.log(`FAILED: ${err.message}`);
+      }
     }
   }
-  if (!runs.length) {
-    results.push({ n, label, failed: true });
-    continue;
+  for (const t of targets) {
+    if (traceDir) {
+      process.stdout.write(`[${t.label}] n=${n} traced (unscored) … `);
+      try {
+        await runOnce(n, true, t);
+        console.log("done");
+      } catch (err) {
+        console.log(`FAILED: ${err.message}`);
+      }
+    }
+    const done = runs[t.label];
+    if (!done.length) {
+      results[t.label].push({ n, failed: true });
+      continue;
+    }
+    const { controlFps, open, gestures } = medianOf(done.map(({ controlFps, open, gestures }) => ({ controlFps, open, gestures })));
+    results[t.label].push({ n, reps: done.length, controlFps, open, gestures, runs: done });
   }
-  const { controlFps, open, gestures } = medianOf(runs.map(({ controlFps, open, gestures }) => ({ controlFps, open, gestures })));
-  results.push({ n, label, method: METHOD, reps: runs.length, controlFps, open, gestures, runs });
 }
-if (out) writeFileSync(out, JSON.stringify(results, null, 2));
+if (out) writeFileSync(out, JSON.stringify({ method: METHOD, labels: targets.map((t) => t.label), results }, null, 2));
 process.exit(0);
