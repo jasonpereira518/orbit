@@ -77,11 +77,23 @@ jobs:
           # Keep the Sentry build plugin quiet and source-map upload off in CI.
           SENTRY_AUTH_TOKEN: ""
 
+  # The smoke suite is ~380 scripts run one after another (PGlite is single-writer), about
+  # twelve minutes and by far the slowest job. Splitting it over four machines runs exactly
+  # the same scripts (scripts/run-smoke.ts --shard i/n covers each one once) but the wait
+  # drops to the slowest shard. Each shard has its own PGlite directory, so the
+  # single-writer rule holds. `fail-fast: false` so one shard failing still reports the rest.
+  #
+  # The job id stays `smoke`, and the matrix names read `smoke suite (PGlite) 1/4` …; if a
+  # required status check is ever added, require all four names.
   smoke:
-    name: smoke suite (PGlite)
+    name: smoke suite (PGlite) ${{ matrix.shard }}/4
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -89,7 +101,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm test
+      - run: npm test -- --shard ${{ matrix.shard }}/4
 
   extension:
     name: extension typecheck · build
