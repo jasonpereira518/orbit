@@ -16,7 +16,12 @@
  * Scripts run SEQUENTIALLY: PGlite is single-writer, and the pglite tier shares one
  * throwaway directory per run so the DDL bootstraps once, not fifty times.
  *
- * Run: npx tsx scripts/run-smoke.ts [--ci] [--check] [--only <name>...]
+ * `--shard i/n` runs every n-th script (1-based i) so CI can split the suite across
+ * machines. Each shard is its own process with its own PGlite directory, so the
+ * single-writer rule still holds, and the shards together cover every script exactly once.
+ * `--list` prints the selection and exits, for checking a partition without running it.
+ *
+ * Run: npx tsx scripts/run-smoke.ts [--ci] [--check] [--shard i/n] [--list] [--only <name>...]
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
@@ -465,6 +470,19 @@ function main() {
   const checkOnly = args.includes("--check");
   const onlyIdx = args.indexOf("--only");
   const only = onlyIdx >= 0 ? args.slice(onlyIdx + 1).filter((a) => !a.startsWith("--")) : null;
+  const listOnly = args.includes("--list");
+  const shardIdx = args.indexOf("--shard");
+  let shard: { index: number; total: number } | null = null;
+  if (shardIdx >= 0) {
+    const m = /^(\d+)\/(\d+)$/.exec(args[shardIdx + 1] ?? "");
+    const index = m ? Number(m[1]) : 0;
+    const total = m ? Number(m[2]) : 0;
+    if (!m || index < 1 || index > total) {
+      console.error("run-smoke: --shard takes i/n with 1 <= i <= n, for example --shard 2/4.");
+      process.exit(2);
+    }
+    shard = { index, total };
+  }
 
   const problems = check();
   if (problems.length > 0) {
@@ -477,7 +495,15 @@ function main() {
 
   const selected = Object.entries(MANIFEST)
     .filter(([name, tier]) => (only ? only.includes(name) : ci ? tier !== "manual" : true))
-    .map(([name]) => name);
+    .map(([name]) => name)
+    // Round-robin over manifest order, so the few long scripts (see TIMEOUT_MS) land in
+    // different shards rather than one shard inheriting a whole block of them.
+    .filter((_, i) => !shard || i % shard.total === shard.index - 1);
+  if (shard) console.log(`run-smoke: shard ${shard.index}/${shard.total} — ${selected.length} scripts.`);
+  if (listOnly) {
+    console.log(selected.join("\n"));
+    process.exit(0);
+  }
 
   // One throwaway PGlite directory for the whole run: the DDL bootstraps once.
   const pgliteDir = mkdtempSync(join(tmpdir(), "orbit-smoke-run-"));
