@@ -8,15 +8,32 @@ import {
   disconnectGmail,
   type GmailConnectionStatus,
 } from "@/actions/gmail";
-import { previewGoogleContacts, type GoogleContactPerson } from "@/actions/imports";
+import {
+  previewGoogleContacts,
+  type GoogleContactPerson,
+} from "@/actions/imports";
 import { Button } from "@/components/ui/button";
+import {
+  SESSION_EXPIRED_LINE,
+  calendarPauseLine,
+} from "@/lib/connection-status";
+import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
-export function GoogleContactsImport() {
+/**
+ * `returnTo` is where Google's consent screen sends the user back to. /imports by default;
+ * the Integrations dialog in Settings passes its own URL so a connect started there lands
+ * back in the dialog, on this tab.
+ */
+export function GoogleContactsImport({
+  returnTo = "/imports",
+}: { returnTo?: string } = {}) {
   const router = useRouter();
   const job = useImportJob();
   const [pending, start] = useTransition();
@@ -30,6 +47,22 @@ export function GoogleContactsImport() {
     job?.kind === "google_contacts" && job.status === "running" ? job : null;
   const importProgress = googleJob?.progress ?? null;
   const busy = pending || job?.status === "running";
+  // One handler for the header link and the button: both start the same contacts consent.
+  const connect = () =>
+    start(async () => {
+      try {
+        const { url } = await startGmailOAuth({
+          purpose: "contacts",
+          returnTo,
+        });
+        window.location.href = url;
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
+      }
+    });
+  // The status knows the stored grant; the preview result can narrow it further.
+  const contactsGranted =
+    contactsScopeGranted && (status?.canImportContacts ?? true);
 
   // Clear local review UI once this job finishes (toast handled globally by
   // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
@@ -53,7 +86,9 @@ export function GoogleContactsImport() {
   }, [job]);
 
   useEffect(() => {
-    getGmailConnectionStatus().then(setStatus).catch(() => {});
+    getGmailConnectionStatus()
+      .then(setStatus)
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -64,17 +99,45 @@ export function GoogleContactsImport() {
       params.delete("google");
       params.delete("gmail");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`,
+      );
       router.refresh();
-      getGmailConnectionStatus().then(setStatus).catch(() => {});
+      getGmailConnectionStatus()
+        .then(setStatus)
+        .catch(() => {});
     } else if (google === "error") {
-      toast.error(params.get("reason") || "Google connection failed");
+      {
+        const oauth = describeOAuthReason(
+          params.get("reason"),
+          "Google",
+          params.get("purpose"),
+        );
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
       params.delete("google");
       params.delete("gmail");
       params.delete("reason");
+      params.delete("purpose");
       const next = params.toString();
-      window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
+      // The current path, not a hardcoded one: this card also lives in Settings.
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`,
+      );
+      // Re-read the status: a Next router "restore" (which `replaceState` is) drops any
+      // server action still queued — here, the status fetch this card fired a moment ago
+      // on mount — without settling it, which would leave the card rendering nothing.
+      getGmailConnectionStatus()
+        .then(setStatus)
+        .catch(() => {});
     }
   }, [router]);
 
@@ -87,7 +150,7 @@ export function GoogleContactsImport() {
       <IntegrationUnavailable
         id="import-google-contacts"
         title="Google Contacts"
-        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        blurb="Not connected yet. Export your Google contacts as a vCard or Google CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
           "GOOGLE_CLIENT_ID",
           "GOOGLE_CLIENT_SECRET",
@@ -98,32 +161,41 @@ export function GoogleContactsImport() {
   }
 
   return (
-    <section id="import-google-contacts" className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section
+      id="import-google-contacts"
+      className="space-y-4 rounded-2xl border border-border/70 bg-card p-6"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {status.connected
-              ? `Connected as ${status.emailAddress}${!contactsScopeGranted ? " — reconnect to grant contacts access" : ""}`
-              : "Connect your Google account to import contacts directly."}
+            {status.status === "needs_reauth"
+              ? `${SESSION_EXPIRED_LINE} to import contacts again`
+              : status.connected
+                ? `Connected as ${status.emailAddress}${!contactsGranted ? " — reconnect to grant contacts access" : ""}`
+                : "Connect your Google account to import contacts directly."}
           </p>
+          {status.status === "disarmed" ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
+              <span>{calendarPauseLine(status.syncError)}</span>
+              <Button
+                variant="link"
+                size="sm"
+                className="h-auto px-0"
+                disabled={busy}
+                onClick={connect}
+              >
+                Reconnect Google
+              </Button>
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
-          {!status.connected || !contactsScopeGranted ? (
-            <Button
-              disabled={busy}
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const { url } = await startGmailOAuth("/imports");
-                    window.location.href = url;
-                  } catch (err) {
-                    toast.error(err instanceof Error ? err.message : "OAuth failed");
-                  }
-                })
-              }
-            >
-              {status.connected ? "Reconnect Google" : "Connect Google"}
+          {!status.connected || !contactsGranted ? (
+            <Button disabled={busy} onClick={connect}>
+              {status.connected || status.status === "needs_reauth"
+                ? "Reconnect Google"
+                : "Connect Google"}
             </Button>
           ) : (
             <>
@@ -135,42 +207,56 @@ export function GoogleContactsImport() {
                       const res = await previewGoogleContacts();
                       setContactsScopeGranted(res.contactsScopeGranted);
                       if (!res.contactsScopeGranted) {
-                        toast.error("Reconnect Google to grant contacts access");
+                        toast.error(
+                          "Reconnect Google to allow access to your contacts",
+                        );
                         return;
                       }
                       setPeople(res.people);
                       setSelected(
-                        new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
+                        new Set(
+                          res.people
+                            .filter((p) => !p.isRepeat)
+                            .map((p) => p.id),
+                        ),
                       );
                       setLoaded(true);
                       toast.success(`Loaded ${res.people.length} contacts`);
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not load contacts"
+                        friendlyError(err, TOAST_COPY.loadContactsFailed),
                       );
                     }
                   })
                 }
               >
-                {pending ? "Loading…" : loaded ? "Refresh contacts" : "Import contacts"}
+                {pending
+                  ? "Loading…"
+                  : loaded
+                    ? "Refresh contacts"
+                    : "Import contacts"}
               </Button>
-              <Button
-                variant="outline"
+              <DisconnectAccountDialog
+                provider="gmail"
                 disabled={busy}
-                onClick={() =>
+                onConfirm={(opts) =>
                   start(async () => {
-                    await disconnectGmail();
+                    await disconnectGmail(opts);
                     setPeople([]);
                     setLoaded(false);
                     setStatus(null);
-                    toast.success("Google disconnected");
+                    toast.success(
+                      opts.alsoDelete
+                        ? "Google disconnected and its recruiter data deleted"
+                        : "Google disconnected",
+                    );
                     router.refresh();
-                    getGmailConnectionStatus().then(setStatus).catch(() => {});
+                    getGmailConnectionStatus()
+                      .then(setStatus)
+                      .catch(() => {});
                   })
                 }
-              >
-                Disconnect
-              </Button>
+              />
             </>
           )}
         </div>
@@ -212,7 +298,7 @@ export function GoogleContactsImport() {
                 setSelected(new Set());
                 setLoaded(false);
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Import failed");
+                toast.error(friendlyError(err, TOAST_COPY.importFailed));
               }
             }}
           >

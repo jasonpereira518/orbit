@@ -1,0 +1,163 @@
+import { Suspense } from "react";
+import Link from "next/link";
+import { Copy, Plus } from "lucide-react";
+import { listContactLetters, listContactsPage } from "@/actions/contacts";
+import { CONTACTS_PAGE_SIZE, type ContactSort } from "@/lib/contacts-page";
+import { getPlanOverview } from "@/actions/settings";
+import { countDuplicates } from "@/actions/duplicates";
+import { buttonVariants } from "@/components/ui/button";
+import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
+import { ContactsFilters } from "@/components/contacts/contacts-filters";
+import { ContactsList } from "@/components/contacts/contacts-list";
+import { PeopleListShell } from "@/components/contacts/people-list-shell";
+import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
+import { cn } from "@/lib/utils";
+
+const SORTS: ContactSort[] = ["name", "closeness", "recent", "relevance"];
+
+export default async function ContactsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    q?: string;
+    company?: string;
+    minScore?: string;
+    followUp?: string;
+    sort?: string;
+    letter?: string;
+    /** Narrows the list to one import's people — see the banner below. */
+    importId?: string;
+  }>;
+}) {
+  const params = await searchParams;
+  // There's no sort control in the UI yet, so `sort` only ever comes from a
+  // hand-typed URL today — but it still wins over the default whenever present,
+  // so a future sort control can override the implicit "relevance while
+  // searching" behavior below.
+  const explicitSort = SORTS.includes(params.sort as ContactSort)
+    ? (params.sort as ContactSort)
+    : undefined;
+  const sort: ContactSort = explicitSort ?? (params.q?.trim() ? "relevance" : "name");
+
+  const filters = {
+    q: params.q,
+    company: params.company,
+    minScore: params.minScore ? Number(params.minScore) : undefined,
+    followUp: params.followUp === "due" ? ("due" as const) : undefined,
+    sort,
+    letter: params.letter,
+    importId: params.importId,
+  };
+
+  // The duplicates button streams in behind the list (`DuplicatesButton` below): its count
+  // is a self-join over the whole network, two round trips deep, and it was the slowest
+  // thing in this `Promise.all`, so it decided when the list appeared. The quota notice
+  // stays here — it renders a line above the list for every free account, and arriving
+  // late it would shove the list down after it had painted.
+  const [page, letters, planOverview] = await Promise.all([
+    // One page, not the whole network. Filtering, searching and ordering all happen in
+    // Postgres now, so this costs the same whether the user knows 50 people or 50,000.
+    listContactsPage({ ...filters, limit: CONTACTS_PAGE_SIZE }),
+    listContactLetters(),
+    getPlanOverview(),
+  ]);
+
+  return (
+    <PeopleListShell
+      active="contacts"
+      title="Contacts"
+      subtitle={
+        page.total === null
+          ? "Your network"
+          : `${page.total.toLocaleString()} ${page.total === 1 ? "person" : "people"} in your network`
+      }
+      actions={
+        <>
+          {/* No fallback: the button only exists when there are duplicates, so it arriving
+              a beat late is indistinguishable from it being there. */}
+          <Suspense fallback={null}>
+            <DuplicatesButton />
+          </Suspense>
+          <RefreshContactsButton />
+          <Link
+            href="/capture"
+            className={cn(buttonVariants({ variant: "outline" }))}
+          >
+            AI capture
+          </Link>
+          <Link
+            href="/contacts/new"
+            className={cn(
+              buttonVariants(),
+              "bg-primary text-primary-foreground hover:bg-primary/90"
+            )}
+          >
+            <Plus className="mr-1 h-4 w-4" />
+            Add contact
+          </Link>
+        </>
+      }
+    >
+      <div className="space-y-6">
+        <ContactQuotaNotice
+          used={planOverview.usage.used}
+          limit={planOverview.usage.limit}
+        />
+        {params.importId ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/40 p-3 text-sm">
+            <p className="text-muted-foreground">
+              {/* A dropped LinkedIn archive is two imports and one done card, and its button
+                  sends both ids — so this line has to be able to say "that drop" too. */}
+              {params.importId.includes(",")
+                ? "Showing the people that drop brought in"
+                : "Showing people from one import"}
+            </p>
+            <Link
+              href="/contacts"
+              className="shrink-0 font-medium text-primary underline underline-offset-4 hover:opacity-80"
+            >
+              From one import — show everyone
+            </Link>
+          </div>
+        ) : null}
+        <ContactsFilters
+          initialQ={params.q || ""}
+          initialCompany={params.company || ""}
+          initialMinScore={params.minScore || ""}
+          initialFollowUp={params.followUp || ""}
+          importId={params.importId}
+        >
+          {/*
+            Keyed on the filters so a new query starts from a clean list rather than appending
+            onto the previous one's pages. Note this is the *filter* identity, not the contact
+            data — the list used to be keyed on the latter, which meant every keystroke tore
+            down and rebuilt the whole subtree.
+          */}
+          <ContactsList
+            key={[params.q, params.company, params.minScore, params.followUp, sort, params.importId].join("|")}
+            initialItems={page.items}
+            initialCursor={page.nextCursor}
+            total={page.total}
+            filters={filters}
+            availableLetters={letters}
+            activeLetter={params.letter ?? null}
+          />
+        </ContactsFilters>
+      </div>
+    </PeopleListShell>
+  );
+}
+
+/** Cheap and capped; decides whether the review entry point appears at all. */
+async function DuplicatesButton() {
+  const duplicateCount = await countDuplicates().catch(() => 0);
+  if (duplicateCount <= 0) return null;
+  return (
+    <Link href="/contacts/duplicates" className={cn(buttonVariants({ variant: "outline" }))}>
+      <Copy className="mr-1 h-4 w-4" aria-hidden />
+      {duplicateCount >= 99
+        ? "99+ duplicates"
+        : `${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}`}
+    </Link>
+  );
+}

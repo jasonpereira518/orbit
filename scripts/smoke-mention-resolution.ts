@@ -3,7 +3,7 @@
  * Pure — no DB, no AI.
  * Run: npx tsx scripts/smoke-mention-resolution.ts
  */
-import { resolveMentions } from "../src/lib/mention-resolution";
+import { resolveMentions, resolveMentionsWithPicks } from "../src/lib/mention-resolution";
 import type { DuplicateSubject } from "../src/lib/duplicates";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -96,6 +96,80 @@ const contacts = [
   }
   check("nameless candidates do not throw", !threw);
   check("  and produce no output", out !== null && out.resolved.length === 0 && out.unresolved.length === 0, JSON.stringify(out));
+}
+
+// 12. `@`-picks: chosen from a menu, so never re-litigated — and never double-counted.
+{
+  const picked = resolveMentionsWithPicks(contacts, [], [{ id: "mira", name: "Mira" }]);
+  check("a pick resolves to exactly who was picked", picked.resolved.length === 1 && picked.resolved[0].contactId === "mira");
+  check("  marked user_pick, at full confidence", picked.resolved[0].matchedBy === "user_pick" && picked.resolved[0].confidence === 1);
+}
+// An id that is not in the subject list is not the caller's — forged, or a contact deleted
+// between the pick and the save. Either way there is nobody to link to.
+{
+  const forged = resolveMentionsWithPicks(contacts, [], [{ id: "someone-elses-contact", name: "Mallory" }]);
+  check("a pick for a contact the user does not own is dropped", forged.resolved.length === 0 && forged.unresolved.length === 0);
+}
+// The reason picked names leave the fuzzy pool: both would resolve, and the two rows then
+// collapse under the unique index on `interaction_mentions` — so the save reports two
+// mentions and writes one.
+{
+  const both = resolveMentionsWithPicks(
+    contacts,
+    [{ name: "Mira", context: "came up again later" }],
+    [{ id: "mira", name: "Mira" }]
+  );
+  check("a picked name is not also matched by the fuzzy pass", both.resolved.length === 1, JSON.stringify(both.resolved));
+  check("  and it is the pick that survives", both.resolved[0].matchedBy === "user_pick");
+}
+// The token may be a disambiguated variant; the note spells the person's real name. Both
+// have to leave the pool or the second one comes back as a separate mention.
+{
+  const variant = resolveMentionsWithPicks(
+    contacts,
+    [{ name: "Mira Okafor", context: null }],
+    [{ id: "mira", name: "Mira (Stripe)" }]
+  );
+  check("the contact's real name leaves the pool too", variant.resolved.length === 1 && variant.resolved[0].matchedBy === "user_pick");
+}
+// Everything the user did NOT point at still goes through the ordinary tiers.
+{
+  const mixed = resolveMentionsWithPicks(
+    contacts,
+    [{ name: "Raj Patel", context: null }],
+    [{ id: "mira", name: "Mira" }]
+  );
+  check("unpicked names still resolve normally", mixed.resolved.length === 2);
+  check("  picks first", mixed.resolved[0].contactId === "mira" && mixed.resolved[1].matchedBy === "exact_name");
+}
+// A pick who turned out to be a PARTICIPANT of this batch is not also a mention of it —
+// otherwise the review screen offers them as "also mentioned" while they are standing on
+// their own card above it, and `saveNoteBatch` would drop the row regardless.
+{
+  const participant = resolveMentionsWithPicks(contacts, [], [{ id: "raj", name: "Raj Patel" }], {
+    excludeContactIds: ["raj"],
+  });
+  check("a pick who became a participant is not also a mention", participant.resolved.length === 0 && participant.unresolved.length === 0);
+}
+// ...but their name still leaves the fuzzy pool. Dropping the pick and then letting the
+// tiers have another go at the same name is how the participant comes back as a mention of
+// themselves by the back door.
+{
+  const participant = resolveMentionsWithPicks(
+    contacts,
+    [{ name: "Raj Patel", context: "he said" }],
+    [{ id: "raj", name: "Raj Patel" }],
+    { excludeContactIds: ["raj"] }
+  );
+  check("  and the prose does not bring them back as one", participant.resolved.length === 0 && participant.unresolved.length === 0, JSON.stringify(participant));
+}
+// Picking the same person twice (two tokens, one contact) is one link.
+{
+  const twice = resolveMentionsWithPicks(contacts, [], [
+    { id: "mira", name: "Mira" },
+    { id: "mira", name: "Mira Okafor" },
+  ]);
+  check("one contact picked twice is one mention", twice.resolved.length === 1);
 }
 
 console.log("\nsmoke-mention-resolution: all checks passed");

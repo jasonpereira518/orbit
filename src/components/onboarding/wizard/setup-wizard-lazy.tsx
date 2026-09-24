@@ -17,9 +17,17 @@ const SetupWizard = dynamic(
 export function SetupWizardLazy({
   initialStepId = null,
   hasApiKey = true,
+  termsAccepted = true,
 }: {
   initialStepId?: string | null;
   hasApiKey?: boolean;
+  termsAccepted?: boolean;
 }) {
-  return <SetupWizard initialStepId={initialStepId} hasApiKey={hasApiKey} />;
+  return (
+    <SetupWizard
+      initialStepId={initialStepId}
+      hasApiKey={hasApiKey}
+      termsAccepted={termsAccepted}
+    />
+  );
 }

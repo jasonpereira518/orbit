@@ -108,8 +108,3 @@ export async function lifetimeOffer(): Promise<LifetimeOffer> {
   }
   return offerForCount(sold);
 }
-
-/** `$25`. Whole dollars — every Orbit price is one, and `.00` reads as a rounding error. */
-export function formatUsd(amount: number): string {
-  return `$${amount}`;
-}

@@ -30,17 +30,25 @@ const VECTOR_WRITE_CHUNK = 50;
  * unbounded set and build an oversized statement.
  */
 export async function persistEmbeddingVectors(
-  rows: Array<{ id: string; embedding: number[] }>
+  rows: Array<{ id: string; embedding: number[] }>,
+  /**
+   * Which table's `embedding_vector` to fill. A closed union rather than a string, because it
+   * is spliced into the statement as an identifier and must never come from anywhere but here.
+   * `memory_chunks` has its own vector column and HNSW index for the reason its table comment
+   * gives: sharing this one would put many rows per contact into an overscan built for one.
+   */
+  table: "contact_embeddings" | "memory_chunks" = "contact_embeddings"
 ) {
   if (!isPgvectorAvailable() || rows.length === 0) return;
   const db = await getDb();
+  const target = sql.raw(table === "memory_chunks" ? "memory_chunks" : "contact_embeddings");
   for (let i = 0; i < rows.length; i += VECTOR_WRITE_CHUNK) {
     const chunk = rows.slice(i, i + VECTOR_WRITE_CHUNK);
     const tuples = chunk.map(
       (row) => sql`(${row.id}::uuid, ${formatVectorLiteral(row.embedding)}::vector)`
     );
     await db.execute(sql`
-      UPDATE contact_embeddings AS e
+      UPDATE ${target} AS e
       SET embedding_vector = v.vec
       FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, vec)
       WHERE e.id = v.id

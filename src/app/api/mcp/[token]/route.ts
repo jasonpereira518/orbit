@@ -1,5 +1,11 @@
 /**
- * The same MCP endpoint, with the credential in the URL.
+ * The same MCP endpoint, with the credential in the URL. DEPRECATED — kept for the keys
+ * already in people's connectors.
+ *
+ * claude.ai now speaks OAuth, so `/api/mcp` can authenticate a browser-based client without
+ * a credential in the path at all (`src/lib/mcp/oauth.ts`). Settings has stopped minting
+ * `mcp_url` keys; this route stays until the existing ones stop being used, because removing
+ * it would silently break every connector already configured.
  *
  * This exists for one concrete reason: claude.ai's custom-connector UI accepts a URL plus
  * optional OAuth client credentials, and has no field for a custom header — so a bearer key

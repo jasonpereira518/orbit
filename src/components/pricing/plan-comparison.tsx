@@ -51,16 +51,25 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   { label: "Reminders and follow-up feed", cells: [true, true, true] },
   { label: "Knowledge base", cells: [true, true, true] },
   { label: "Export your data", cells: [true, true, true] },
+  // Free on every plan, and the only connector that is. It is how most people will first
+  // see what Orbit is for — a paywall in front of it would be a paywall in front of the
+  // demonstration. See `canUseMcp` in entitlements.ts.
+  { label: "Use from Claude and ChatGPT", cells: [true, true, true] },
   { label: "Recruiter tracking", cells: [false, true, true] },
   { label: "Gmail, Outlook, calendar sync", cells: [false, true, true] },
   { label: "Chrome extension", cells: [false, true, true] },
   { label: "Outreach campaigns", cells: [false, true, true] },
   { label: "Email and SMS sending", cells: [false, true, true] },
+  { label: "API and webhooks", cells: [false, true, true] },
   {
     label: "Contact enrichment",
     cells: ["Your own key", "Orbit's credits", "Your own key"],
   },
   { label: "AI provider key", cells: ["Yours", "Yours", "Yours"] },
+  {
+    label: "Meeting transcription",
+    cells: ["—", "5 hours a month", "10 hours a month"],
+  },
 ];
 
 function CellValue({ value, plan }: { value: Cell; plan: Plan }) {

@@ -43,15 +43,27 @@ export function internalAuthHeaders(): Record<string, string> {
 }
 
 /**
- * `fetch` against this app's own internal routes, with the bearer attached.
+ * How long a self-kick may take. Every internal route answers as soon as it has queued its
+ * work in `after()`, so ten seconds is generous — except `/api/sync/run`, which runs inline;
+ * its continuation kick is best-effort by design (a lost one is picked up by the next run).
+ */
+export const INTERNAL_FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * `fetch` against this app's own internal routes, with the bearer attached and a timeout.
  *
  * Targets `getAppBaseUrl()` rather than the per-deployment `VERCEL_URL` so a preview build
  * does not kick a job on itself and then vanish; in production that is `APP_BASE_URL`.
+ * Without the timeout, one hung kick held the kicking invocation to its own maxDuration.
  */
 export function internalFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   for (const [k, v] of Object.entries(internalAuthHeaders())) headers.set(k, v);
-  return fetch(`${getAppBaseUrl()}${path}`, { ...init, headers });
+  return fetch(`${getAppBaseUrl()}${path}`, {
+    ...init,
+    headers,
+    signal: init.signal ?? AbortSignal.timeout(INTERNAL_FETCH_TIMEOUT_MS),
+  });
 }
 
 /**
@@ -67,4 +79,18 @@ export function isHealthTokenValid(request: Request): boolean {
   const a = Buffer.from(presented);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export type HealthTokenState = "absent" | "valid" | "invalid";
+
+/**
+ * What the caller of /api/health presented. A `?token=` that does not match is `invalid`
+ * — a 401, so a mistyped monitor token goes red instead of reading as a healthy shallow 200.
+ * That includes a token presented while HEALTH_TOKEN is unset: a monitor configured with a
+ * token against a deployment that lost it must go red too. With no parameter a valid bearer
+ * still opens the deep view; anything else is `absent`.
+ */
+export function healthTokenState(request: Request): HealthTokenState {
+  if (isHealthTokenValid(request)) return "valid";
+  return new URL(request.url).searchParams.has("token") ? "invalid" : "absent";
 }
