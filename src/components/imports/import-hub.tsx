@@ -44,7 +44,6 @@ import {
   useWindowFileDrop,
   useWindowFilePaste,
 } from "@/lib/use-window-file-drop";
-import { detectImportFiles } from "@/lib/imports/detect-import-file";
 import { stageDrop, useImportQueue } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import {
@@ -90,6 +89,13 @@ const READINESS_FRESH_MS = 60_000;
  * capture tray's; the queue surfaces `truncated` when even that is not enough.
  */
 const IMPORT_DROP_LIMITS = { maxFiles: 200, maxDepth: MAX_DROP_DEPTH };
+
+/**
+ * File detection and the parsers behind it (papaparse, the LinkedIn and contacts readers) load
+ * as their own chunk rather than in this page's first one. The hub warms it on mount, so by
+ * the time anything is dropped it is already in hand.
+ */
+const loadDetect = () => import("@/lib/imports/detect-import-file");
 
 /**
  * Which finishes this browser has already been shown and told to put away.
@@ -399,7 +405,13 @@ export function ImportHub({
    */
   const refreshAfterUndo = useCallback(() => router.refresh(), [router]);
 
+  useEffect(() => {
+    // Warm the detection chunk. A failure here is not an error yet: the drop retries it.
+    loadDetect().catch(() => {});
+  }, []);
+
   const handleFiles = useCallback(async (files: DroppedFile[]) => {
+    const { detectImportFiles } = await loadDetect();
     const result = await detectImportFiles(files, {
       maxBytes: MAX_CONTACTS_FILE_BYTES,
     });
