@@ -148,6 +148,17 @@ function main() {
   }
   const leakyReply = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_REPLY_TO: "orbit@jasonpereira.live" });
   check("a reply-to on the app's domain is refused", leakyReply.errors.some((e) => e.includes("WAITLIST_REPLY_TO")));
+  const gmailSender = prod({
+    RESEND_FROM_EMAIL: "someone@gmail.com",
+    WAITLIST_HOST: "join.example",
+    WAITLIST_FROM_EMAIL: "hello@join.example",
+    WAITLIST_REPLY_TO: "someone.else@gmail.com",
+  });
+  check(
+    "a Gmail app sender does not make every Gmail reply-to 'the app's domain'",
+    gmailSender.errors.length === 0,
+    gmailSender.errors.join("; ")
+  );
   const insecure = prod({ WAITLIST_HOST: "join.example", WAITLIST_FROM_EMAIL: "hello@join.example", WAITLIST_BASE_URL: "http://join.example" });
   check("the waitlist base URL must be https", insecure.errors.some((e) => e.includes("WAITLIST_BASE_URL")));
 

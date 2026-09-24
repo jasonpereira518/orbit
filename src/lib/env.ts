@@ -151,8 +151,10 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
     // its mail needs a sender of its own: falling back to the app's sender would put the
     // app's domain in the From line of the one thing that must never show it.
     if (has(env, "WAITLIST_HOST")) {
+      // A public mailbox provider (a gmail.com RESEND_FROM_EMAIL, say) is shared by millions
+      // and identifies nothing, so it never counts as the app's domain.
       const appDomains = [hostOf(env.APP_BASE_URL), emailDomain(env.RESEND_FROM_EMAIL)].filter(
-        (d): d is string => Boolean(d)
+        (d): d is string => Boolean(d) && !PUBLIC_MAIL_DOMAINS.has(d!)
       );
       if (!has(env, "WAITLIST_FROM_EMAIL")) {
         errors.push("WAITLIST_FROM_EMAIL is required when WAITLIST_HOST is set");
@@ -361,6 +363,20 @@ export function checkDrizzleCommand(
   }
   return { allowed: true, reason: `target ${target} is not the production host` };
 }
+
+/** Mailbox providers anyone can sign up to — never evidence of whose domain it is. */
+const PUBLIC_MAIL_DOMAINS: ReadonlySet<string> = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "icloud.com",
+  "me.com",
+  "yahoo.com",
+  "proton.me",
+  "protonmail.com",
+]);
 
 /** The hostname of a URL, lowercased, or null. */
 function hostOf(url: string | undefined): string | null {
