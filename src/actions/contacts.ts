@@ -1312,36 +1312,48 @@ export async function listRelatedContacts(
       relationshipScore: true,
     },
   }));
+  // The two tag reads start alongside the scan too. They used to wait for the ownership gate
+  // below; scoping them to the caller's account in SQL makes them safe to start first — for a
+  // contact outside this account both return nothing — and they are only consumed after
+  // the gate, so a contact you do not own still reads to [] exactly as before.
+  //
+  // Tags share is the one reason findRelatedContacts needs that isn't in the narrow scan.
+  // Answered as a bounded aggregate over the join table rather than hydrating every
+  // contact's tag list: only contacts sharing >=2 tags with the source can ever produce a
+  // "sharedTags" match, and HAVING keeps the result set to that size, not the account size.
+  // The source's tag ids ride along as a subquery, so the count no longer waits on them.
+  const sourceTagsRead = settle(
+    db
+      .select({ tagId: contactTags.tagId })
+      .from(contactTags)
+      .innerJoin(contacts, eq(contacts.id, contactTags.contactId))
+      .where(and(eq(contactTags.contactId, contactId), eq(contacts.userId, userId)))
+  );
+  const sharedCountsRead = settle(
+    db
+      .select({ contactId: contactTags.contactId, shared: sql<number>`count(*)` })
+      .from(contactTags)
+      .where(
+        and(
+          sql`${contactTags.tagId} in (
+            select ct.tag_id from contact_tags ct join contacts c on c.id = ct.contact_id
+             where ct.contact_id = ${contactId}::uuid and c.user_id = ${userId}
+          )`,
+          sql`${contactTags.contactId} <> ${contactId}::uuid`
+        )
+      )
+      .groupBy(contactTags.contactId)
+      .having(sql`count(*) >= 2`)
+  );
   const goals = unwrap(await goalsRead);
   const narrowRows = unwrap(await narrowRead);
-  // Ownership gate: nothing below (the source's tag ids included) is read for a contact
+  // Ownership gate: nothing below (the source's tag ids included) is used for a contact
   // outside this account.
   if (!narrowRows.some((r) => r.id === contactId)) return [];
 
-  // Tags share is the one reason findRelatedContacts needs that isn't in the narrow scan
-  // above. Answered as a bounded aggregate over the join table rather than hydrating every
-  // contact's tag list: only contacts sharing >=2 tags with the source can ever produce a
-  // "sharedTags" match, and HAVING keeps the result set to that size, not the account size.
-  const sourceTagIds = (
-    await db
-      .select({ tagId: contactTags.tagId })
-      .from(contactTags)
-      .where(eq(contactTags.contactId, contactId))
-  ).map((r) => r.tagId);
-
-  const sharedTagCounts = sourceTagIds.length
-    ? await db
-        .select({ contactId: contactTags.contactId, shared: sql<number>`count(*)` })
-        .from(contactTags)
-        .where(
-          and(
-            inArray(contactTags.tagId, sourceTagIds),
-            sql`${contactTags.contactId} <> ${contactId}::uuid`
-          )
-        )
-        .groupBy(contactTags.contactId)
-        .having(sql`count(*) >= 2`)
-    : [];
+  const sourceTagIds = unwrap(await sourceTagsRead).map((r) => r.tagId);
+  // Empty when the source has no tags — the subquery matches nothing — as it always was.
+  const sharedTagCounts = unwrap(await sharedCountsRead);
   const sharesTwoTags = new Set(sharedTagCounts.map((r) => r.contactId));
 
   const ranked = findRelatedContacts(
@@ -1382,11 +1394,15 @@ export async function listRelatedContacts(
       firstName: true,
       title: true,
       location: true,
-      profileImageUrl: true,
       linkedinUrl: true,
       email: true,
       phone: true,
     },
+    // The browser-safe avatar URL, not the stored value: an inline photo is up to ~120 KB of
+    // base64, and six of them rode inside every profile's payload (and every prefetch of it)
+    // only for `ContactAvatar` to render `/api/avatars/{id}` for them anyway. It maps every
+    // stored value to what that component draws for it — see `clientAvatarUrlSql`.
+    extras: { profileImageUrl: clientAvatarUrlSql.as("profile_image_url") },
   });
   const displayById = new Map(displayRows.map((r) => [r.id, r]));
   return ranked.map((r) => ({ ...r, ...(displayById.get(r.id) ?? {}) }));

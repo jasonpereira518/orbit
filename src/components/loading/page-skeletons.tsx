@@ -972,3 +972,28 @@ export function EventDetailSkeleton() {
     </div>
   );
 }
+
+/**
+ * The duplicates review list: pair cards (two contact panels side by side, an action row).
+ * Shared by the route's `loading.tsx` and the page's own Suspense fallback, so the list's
+ * placeholder is identical whichever one is on screen.
+ */
+export function DuplicatesListSkeleton() {
+  return (
+    <div className="space-y-3" aria-hidden>
+      {Array.from({ length: 3 }).map((_, i) => (
+        <div key={i} className="space-y-3 rounded-xl border border-border/60 p-4">
+          <Skeleton className="h-4 w-40" />
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Skeleton className="h-20 flex-1 rounded-lg" />
+            <Skeleton className="h-20 flex-1 rounded-lg" />
+          </div>
+          <div className="flex gap-2">
+            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-8 w-24" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
