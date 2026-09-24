@@ -16,9 +16,17 @@ export const IMPORT_COPY = {
   nothingRecognised:
     "Nothing in that drop looked like contacts, messages or a calendar — the Connections.csv from your LinkedIn export is a good place to start",
   dropHint: "Drop to import",
+  // --- A LinkedIn profile link dropped or pasted onto the page ---------------------------
+  linkDropHint: "Drop to add them to your contacts",
+  linkNotProfile:
+    "That link isn’t a LinkedIn profile — drag in a linkedin.com/in/… address",
+  linkAdding: "Adding them to your contacts…",
+  linkAddFailed: "Couldn’t add them — try again in a moment",
+  linkNameGuessed:
+    "Their name is read from the link — check it on their page",
   dropTitle: "Drop anything here",
   dropBody:
-    "A LinkedIn export (the whole ZIP is fine), a contacts file, a calendar — or a whole folder. Orbit works out what each file is",
+    "A LinkedIn export (the whole ZIP is fine), a contacts file, a calendar, a whole folder — or a LinkedIn profile link. Orbit works out what each one is",
   notImported: "Not imported",
   truncated:
     "That folder had more files than Orbit reads in one go — drop the rest after this",

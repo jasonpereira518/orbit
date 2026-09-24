@@ -140,7 +140,7 @@ export function BoardingPass({
         </motion.h3>
         <motion.p {...rise(1.05)} className="mt-2 text-sm text-[#9aada8]">
           Joined {joinedLabel(ticket.joinedAt)} ·{" "}
-          <span className={ticket.frontWave ? "text-landing-accent" : undefined}>
+          <span className="text-[#f2c14e]">
             {frontWaveLine(ticket.referrals)}
           </span>
         </motion.p>
@@ -148,7 +148,7 @@ export function BoardingPass({
         <ShareRow ticket={ticket} pageUrl={pageUrl} play={full} />
 
         <motion.p {...rise(1.5)} className="mt-4 text-xs leading-[1.6] text-[#6d807c]">
-          Save this link — it&apos;s your pass. Your invite arrives by email when your wave opens.
+          This is your pass. Your invite arrives by email when your wave opens.
         </motion.p>
       </div>
     </div>

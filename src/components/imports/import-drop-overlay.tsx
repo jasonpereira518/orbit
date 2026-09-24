@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Upload } from "lucide-react";
+import { Upload, UserPlus } from "lucide-react";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,15 @@ import { cn } from "@/lib/utils";
  * The text is announced through a polite live region rather than by the overlay itself, so a
  * screen-reader user hears "drop to import" without the decorative frame being read out.
  */
-export function ImportDropOverlay({ active }: { active: boolean }) {
+export function ImportDropOverlay({
+  active,
+  kind = "files",
+}: {
+  active: boolean;
+  /** A dragged link adds a person rather than importing a file, and the hint says so. */
+  kind?: "files" | "text" | null;
+}) {
+  const hint = kind === "text" ? IMPORT_COPY.linkDropHint : IMPORT_COPY.dropHint;
   // Portals need a DOM target, and `document.body` does not exist during SSR.
   //
   // `useSyncExternalStore(noop, () => true, () => false)` looks tidier and is what
@@ -46,7 +54,7 @@ export function ImportDropOverlay({ active }: { active: boolean }) {
 
   const live = (
     <div className="sr-only" role="status" aria-live="polite">
-      {active ? IMPORT_COPY.dropHint : ""}
+      {active ? hint : ""}
     </div>
   );
 
@@ -69,8 +77,12 @@ export function ImportDropOverlay({ active }: { active: boolean }) {
         >
           <div className="absolute inset-4 rounded-[1.75rem] border-2 border-dashed border-primary/50 bg-primary/5" />
           <p className="relative flex items-center gap-2.5 rounded-full border border-primary/30 bg-card px-6 py-3 text-base font-medium text-primary shadow-xl">
-            <Upload className="size-5" />
-            {IMPORT_COPY.dropHint}
+            {kind === "text" ? (
+              <UserPlus className="size-5" />
+            ) : (
+              <Upload className="size-5" />
+            )}
+            {hint}
           </p>
         </div>,
         document.body,

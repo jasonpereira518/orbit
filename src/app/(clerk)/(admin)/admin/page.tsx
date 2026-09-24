@@ -7,6 +7,8 @@ import {
   OverviewLiveProvider,
   type OverviewLiveData,
 } from "@/components/admin/overview-live";
+import { WaitlistStatsPanel } from "@/components/admin/waitlist-stats-panel";
+import { getWaitlistStats } from "@/lib/admin-interest-list";
 import { getAdminOverview } from "@/lib/admin-metrics";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { countLifetimePurchases } from "@/lib/user-settings";
@@ -26,9 +28,14 @@ export const metadata = { title: "Admin · Overview" };
  * change no decision.
  */
 export default async function AdminOverviewPage() {
-  const [overview, lifetimeSold] = await Promise.all([
+  const [overview, lifetimeSold, waitlist] = await Promise.all([
     getAdminOverview(),
     countLifetimePurchases().catch(() => 0),
+    // Its own failure mode: a broken waitlist read says so in its panel, never 500s triage.
+    getWaitlistStats().catch((err: unknown) => {
+      console.error("[admin] waitlist stats failed", err);
+      return null;
+    }),
   ]);
 
   const { plans, alerts, rows } = overview;
@@ -116,6 +123,8 @@ export default async function AdminOverviewPage() {
             />
           </div>
         </AdminPanel>
+
+        <WaitlistStatsPanel stats={waitlist} />
       </div>
     </OverviewLiveProvider>
   );

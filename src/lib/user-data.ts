@@ -699,6 +699,8 @@ const PRESERVED_SETTINGS_COLUMNS = {
   suspendedAt: true,
   suspendedReason: true,
   suspendedBy: true,
+  // Stealth admission is about the account, not its contents: a delete must not re-hold it.
+  stealthClearedAt: true,
   createdAt: true,
   lastActiveAt: true,
   termsAcceptedAt: true,

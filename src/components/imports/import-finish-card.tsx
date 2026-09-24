@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Undo2, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -12,9 +12,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ImportFinishScene } from "@/components/imports/import-finish-scene";
+import {
+  ImportFinishScene,
+  type FinishArrival,
+} from "@/components/imports/import-finish-scene";
 import { previewImportUndo, undoImport } from "@/actions/imports";
 import {
+  countingHeadlineParts,
   finishCopy,
   foldPreviews,
   undoDismissLabel,
@@ -367,6 +371,10 @@ export function UndoDialogBody({
  * `faces` is memoised on the ids rather than passed straight through: the scene's effect
  * depends on the array by reference, so a parent that rebuilds it on every unrelated render
  * restarts the whole arrival animation underneath someone who is reading the sentence.
+ *
+ * `arrival` is `"live"` only for the run that just finished in front of the person: the
+ * headline then counts up as people settle into orbit. Anything else — the card a person comes
+ * back to — starts settled, with the whole number already there.
  */
 export function ImportFinishCard({
   summary,
@@ -374,10 +382,12 @@ export function ImportFinishCard({
   onDismiss,
   onShowDetail,
   onUndone,
+  arrival = "settled",
   className,
 }: {
   summary: FinishSummary;
   avatars: FinishFace[];
+  arrival?: FinishArrival;
   onDismiss?: () => void;
   /** Opens the history detail sheet, for the finish that has no people to link to. */
   onShowDetail?: () => void;
@@ -392,6 +402,25 @@ export function ImportFinishCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- by identity, not by reference: see the note above
     [faceKey],
   );
+
+  // The scene is only the people this run added: a run that matched everyone, or a calendar
+  // file, has nobody new to arrive, so its card leads with the sentence alone.
+  const showScene = !summary.unfinished && summary.added > 0;
+  const initial = countingHeadlineParts(arrival === "live" ? 0 : summary.added);
+  const lineRef = useRef<HTMLSpanElement>(null);
+  const numberRef = useRef<HTMLSpanElement>(null);
+  const nounRef = useRef<HTMLSpanElement>(null);
+  /**
+   * The count, written straight into the headline rather than through state: up to 36 ticks in
+   * a few seconds would otherwise re-render the whole card (and its undo dialog) for each one.
+   * The line is hidden until the first person settles, so it never says "You added 0".
+   */
+  const showCount = useCallback((n: number) => {
+    const parts = countingHeadlineParts(n);
+    if (numberRef.current) numberRef.current.textContent = String(parts.count);
+    if (nounRef.current) nounRef.current.textContent = parts.noun;
+    if (lineRef.current) lineRef.current.style.opacity = n > 0 ? "1" : "0";
+  }, []);
 
   return (
     <section
@@ -418,12 +447,14 @@ export function ImportFinishCard({
         instead of celebrating, and a field of people settling into orbit underneath
         "Your LinkedIn messages didn't finish" is the card celebrating anyway.
       */}
-      {summary.unfinished ? null : (
+      {showScene ? (
         <ImportFinishScene
-          people={summary.added || summary.existing}
+          people={summary.added}
           faces={faces}
+          arrival={arrival}
+          onCount={showCount}
         />
-      )}
+      ) : null}
 
       <div className="space-y-1 text-center">
         {/*
@@ -434,7 +465,35 @@ export function ImportFinishCard({
           after a refresh is read, not announced.
         */}
         <p className="font-[family-name:var(--font-display)] text-xl text-ink">
-          {copy.headline}
+          {showScene ? (
+            <>
+              {/* What a screen reader hears: the finished sentence, never a half-counted one. */}
+              <span className="sr-only">{copy.headline}</span>
+              <span
+                ref={lineRef}
+                aria-hidden
+                className="transition-opacity duration-300"
+                style={{ opacity: initial.count > 0 ? 1 : 0 }}
+              >
+                {initial.lead}{" "}
+                {/*
+                  Wide enough for the final number, so the line does not shift as it grows.
+                  Centred, not right-aligned: `ch` is the width of a zero, and a narrower "1"
+                  would otherwise leave all its slack on one side as a visible gap.
+                */}
+                <span
+                  ref={numberRef}
+                  className="inline-block text-center tabular-nums"
+                  style={{ minWidth: `${String(summary.added).length}ch` }}
+                >
+                  {initial.count}
+                </span>{" "}
+                <span ref={nounRef}>{initial.noun}</span>
+              </span>
+            </>
+          ) : (
+            copy.headline
+          )}
         </p>
         {copy.detail ? (
           <p className="text-sm text-muted-foreground">{copy.detail}</p>

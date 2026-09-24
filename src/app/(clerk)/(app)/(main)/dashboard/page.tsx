@@ -111,9 +111,10 @@ export default async function DashboardPage() {
           share this row, which put THREE children in a two-column grid and left a
           visible empty cell beside the third; hiding Reminders left the same hole
           on the other side. It owns the row below instead, where its own column
-          count can adapt. */}
+          count can adapt. Stretched, like every other two-card row here: the two cards
+          end on one line, and the shorter one's footer drops to meet it. */}
       {show("dashboard.reminders") && (
-        <div className="grid items-start gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2">
           <Suspense
             fallback={
               <>

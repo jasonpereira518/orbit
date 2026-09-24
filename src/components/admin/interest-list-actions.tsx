@@ -1,12 +1,16 @@
 "use client";
 
-import { MailX, Trash2, Undo2 } from "lucide-react";
+import { useTransition } from "react";
+import { MailX, Send, Trash2, Undo2 } from "lucide-react";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import {
   deleteInterestListAction,
+  inviteToSiteAction,
   resubscribeInterestListAction,
   unsubscribeInterestListAction,
 } from "@/actions/admin";
+import { friendlyError } from "@/lib/errors";
+import { toast } from "@/lib/toast";
 
 /**
  * Per-row removal controls.
@@ -24,17 +28,51 @@ import {
 const BUTTON =
   "inline-flex items-center gap-1 rounded-md border border-border/70 px-2 py-1 text-xs transition-colors duration-fast";
 
+/**
+ * Let one person in: a Clerk invitation, emailed by Clerk, that creates an account even while
+ * the site is in stealth. No confirm dialog — it grants one address one link, is revocable
+ * from /admin/access, and is audited there like every other invitation.
+ */
+function InviteButton({ email }: { email: string }) {
+  const [pending, start] = useTransition();
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={() =>
+        start(async () => {
+          try {
+            const res = await inviteToSiteAction({ email, notify: true });
+            if (res.kind === "error") toast.error(res.message);
+            else if (res.kind === "existing-account") toast.success("They already have an account — it’s let in now");
+            else toast.success(`Invitation sent to ${email}`);
+          } catch (err) {
+            toast.error(friendlyError(err, "Couldn’t send that invitation — try again?"));
+          }
+        })
+      }
+      className={`${BUTTON} border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-60`}
+    >
+      <Send className="size-3" aria-hidden />
+      {pending ? "Inviting…" : "Invite"}
+    </button>
+  );
+}
+
 export function InterestListRowActions({
   id,
   email,
   unsubscribed,
+  invitable = false,
 }: {
   id: string;
   email: string;
   unsubscribed: boolean;
+  invitable?: boolean;
 }) {
   return (
     <div className="flex items-center justify-end gap-1.5">
+      {invitable && <InviteButton email={email} />}
       {unsubscribed ? (
         <ConfirmActionDialog
           trigger={

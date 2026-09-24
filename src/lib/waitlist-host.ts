@@ -13,9 +13,13 @@
  * the pure functions below. The proxy's one job for this host is to skip Clerk, whose
  * handshake would otherwise redirect a visitor to the app's own Clerk domain.
  *
- * STEALTH (`SITE_STEALTH=1`) closes the app host's public face: the marketing pages need a
- * session, `/sign-up` sends people to `/sign-in` unless they carry a Clerk invitation, old
- * `/interest` links move to the waitlist host, and every response is `noindex`.
+ * STEALTH closes the app host to everyone without an account: a signed-out visitor to any
+ * page is sent to the waitlist, except `/sign-in` (existing accounts must be able to get
+ * back in) and `/sign-up` carrying a Clerk invitation. Old `/interest` links move to the
+ * waitlist host, and every response is `noindex`. It is a RUNTIME switch — an admin flips it
+ * from the console (`site_settings`), and `SITE_STEALTH=1` is only the default for a
+ * deployment nobody has toggled yet — so it lives in the proxy, never in next.config, whose
+ * rules are frozen at build time. `stealthGate` below is the whole decision.
  *
  * No imports and no aliases: `next.config.ts` loads this before any alias exists, and the
  * proxy and `scripts/smoke-waitlist-host.ts` share it.
@@ -49,8 +53,18 @@ export function waitlistHost(env: Env = process.env): string | null {
   return /^[a-z0-9.-]+$/.test(host) ? host : null;
 }
 
-export function isStealth(env: Env = process.env): boolean {
+/** Stealth's default before any admin has toggled it: the `SITE_STEALTH` env var. */
+export function stealthEnvDefault(env: Env = process.env): boolean {
   return env.SITE_STEALTH === "1";
+}
+
+/**
+ * Whether the site is in stealth: the admin console's switch when it has ever been set
+ * (`site_settings.stealth_enabled` non-null), else the env default. Shared by the proxy's
+ * reader and the server's, so the two cannot disagree about what a missing row means.
+ */
+export function resolveStealth(stored: boolean | null | undefined, env: Env = process.env): boolean {
+  return typeof stored === "boolean" ? stored : stealthEnvDefault(env);
 }
 
 /** The waitlist's public origin: `WAITLIST_BASE_URL`, else https on the host, else null. */
@@ -157,40 +171,97 @@ export function waitlistRewrites(env: Env = process.env): ConfigRewrite[] {
 }
 
 /**
- * `redirects()` entries for the APP host in stealth mode. The session-dependent rules (the
- * marketing pages, `/`) live in the proxy, which can read the session; these need none.
+ * Local-only preview of the waitlist: `/waitlist` and `/waitlist/privacy` on localhost render
+ * the pages the waitlist host serves at `/` and `/privacy`, since `*.localhost` host routing
+ * is awkward and the real rewrites match on the Host header. Never emitted outside `next dev`,
+ * so production and preview builds keep 404ing on `/waitlist` (`public/waitlist/` only holds
+ * the icon).
  */
-export function stealthRedirects(env: Env = process.env): ConfigRedirect[] {
-  if (!isStealth(env)) return [];
-  const host = waitlistHost(env);
-  const missing: HostMatch[] = host ? [{ type: "host", value: hostMatchValue(host) }] : [];
-  const out: ConfigRedirect[] = [
-    // Sign-up is closed. A Clerk invitation lands on `/sign-up?__clerk_ticket=…`, so that
-    // one still opens; Clerk's own later steps (`/sign-up/continue`, …) are sub-paths and
-    // are left alone — without a ticket, a Restricted Clerk instance never starts one.
-    {
-      source: "/sign-up",
-      destination: "/sign-in",
-      permanent: false,
-      missing: [...missing, { type: "query", key: "__clerk_ticket" }],
-    },
+export function localWaitlistRewrites(env: Env = process.env): ConfigRewrite[] {
+  if (env.NODE_ENV !== "development") return [];
+  return [
+    { source: "/waitlist", destination: "/interest" },
+    { source: "/waitlist/privacy", destination: "/interest/privacy" },
   ];
-  const origin = waitlistOrigin(env);
-  if (origin) {
-    // Tickets and share links from before the move still resolve: `?me=` / `?ref=` ride
-    // along to the waitlist host's `/`.
-    out.push(
-      { source: "/interest", destination: `${origin}/`, permanent: false, missing },
-      { source: "/interest/privacy", destination: `${origin}/privacy`, permanent: false, missing }
-    );
-  }
-  return out;
 }
 
-/** Pages that are public on the app host normally and need a session in stealth mode. */
-export const STEALTH_CLOSED_PAGES = ["/", "/pricing", "/connect", "/contact"] as const;
+/**
+ * Where stealth sends someone without an account: the waitlist host's `/` when there is
+ * one, else `/interest` on the app host itself (which stealth then leaves open).
+ */
+export function stealthWaitlistUrl(env: Env = process.env): string {
+  const origin = waitlistOrigin(env);
+  return origin ? `${origin}/` : "/interest";
+}
 
 /** API paths that answer 404 in stealth mode. */
 export const STEALTH_HIDDEN_API = ["/api/v1/openapi.json"] as const;
+
+/**
+ * Page paths a signed-out visitor may still open in stealth, as prefixes (`/sign-in` covers
+ * Clerk's own `/sign-in/factor-one`, `/sign-in/sso-callback`, …).
+ *
+ * - `/sign-in`: people who already have an account need a way back in.
+ * - `/sign-up/` sub-paths: Clerk's later sign-up steps. A bare `/sign-up` is handled on its
+ *   own below — it opens only with an invitation ticket. Without one, no step after it can
+ *   start either: the sub-paths bounce back to `/sign-up`, which bounces to the waitlist.
+ * - `/scan/`: the phone half of note scanning, authenticated by a token in the path and
+ *   opened by an existing user's own phone.
+ * - `/.well-known/` and `/__clerk/`: machine endpoints (OAuth discovery, Clerk's proxy).
+ */
+export const STEALTH_OPEN_PREFIXES = [
+  "/sign-in",
+  "/sign-up/",
+  "/scan/",
+  "/.well-known/",
+  "/__clerk/",
+] as const;
+
+/** The query key a Clerk invitation link lands on `/sign-up` with. */
+export const CLERK_TICKET_PARAM = "__clerk_ticket";
+
+export type StealthGate =
+  | { kind: "pass" }
+  | { kind: "not-found" }
+  | { kind: "redirect"; to: string };
+
+/**
+ * Stealth's decision for one request to the APP host. Call it only while stealth is on.
+ *
+ * Signed in is the whole test for "has an account": the proxy cannot see more than the
+ * session, and an account that was created behind stealth's back (a Google sign-in on
+ * `/sign-in` makes one) is caught one layer down, by `src/lib/site-access.ts`.
+ *
+ * API routes always pass — they carry their own authentication and answer JSON, and a
+ * redirect would hand an API client the waitlist's HTML as a 200.
+ */
+export function stealthGate(
+  input: { pathname: string; search: string; signedIn: boolean; isApi: boolean },
+  env: Env = process.env
+): StealthGate {
+  const { pathname, search, signedIn, isApi } = input;
+
+  if ((STEALTH_HIDDEN_API as readonly string[]).includes(pathname)) return { kind: "not-found" };
+
+  // Old waitlist links, for everyone: the waitlist has moved to its own host. Tickets and
+  // share links (`?me=`, `?ref=`) ride along. With no waitlist host, `/interest` IS the
+  // waitlist, so it stays open.
+  const origin = waitlistOrigin(env);
+  if (pathname === "/interest" || pathname === "/interest/privacy") {
+    if (!origin) return { kind: "pass" };
+    return { kind: "redirect", to: `${origin}${pathname === "/interest" ? "/" : "/privacy"}${search}` };
+  }
+
+  if (isApi || signedIn) return { kind: "pass" };
+  if (STEALTH_OPEN_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return { kind: "pass" };
+  if (pathname === "/sign-up" && new URLSearchParams(search).has(CLERK_TICKET_PARAM)) {
+    return { kind: "pass" };
+  }
+
+  // Everything else — the landing page, marketing, legal, the app itself, a bare /sign-up.
+  // The landing page's query rides along so a share link (`/?ref=`) keeps its referrer.
+  const to = stealthWaitlistUrl(env);
+  return { kind: "redirect", to: pathname === "/" && origin ? `${to}${search}` : to };
+}
 
 export const STEALTH_ROBOTS = "noindex, nofollow";

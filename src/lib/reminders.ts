@@ -804,9 +804,25 @@ export async function getDashboardData(
   // the link into /graph is where that lives — so this is always the engaged scope.
   const previewFilterActive = constellationConfig.enabled;
   const previewEligibleCount = eligibleIds.size;
-  const previewVisibleContacts = previewFilterActive
+  const { clusters: builtClusters, byContactId: clusterByContactId } =
+    buildConstellationClusters(lightContacts);
+  const engagedContacts = previewFilterActive
     ? lightContacts.filter((c) => eligibleIds.has(c.id))
     : lightContacts;
+  // The preview draws constellations only — no lone stars. Keep a contact only when at
+  // least one other shown contact shares its company/school cluster; singletons and Deep
+  // Space are individual connections, which belong on /graph.
+  const shownPerCluster = new Map<string, number>();
+  for (const c of engagedContacts) {
+    const ref = clusterByContactId.get(c.id);
+    if (ref && ref.kind !== "other") {
+      shownPerCluster.set(ref.id, (shownPerCluster.get(ref.id) ?? 0) + 1);
+    }
+  }
+  const previewVisibleContacts = engagedContacts.filter((c) => {
+    const ref = clusterByContactId.get(c.id);
+    return ref !== undefined && (shownPerCluster.get(ref.id) ?? 0) >= 2;
+  });
 
   // Filter FIRST, then cap. Capping first would spend the budget on contacts that are about
   // to be hidden and render far fewer than the cap allows.
@@ -973,7 +989,6 @@ export async function getDashboardData(
   // Clusters still see the whole network — a cluster's count is "how many people at Acme",
   // which a capped sample cannot answer — but they only ever needed three columns, and the
   // light scan has them.
-  const { clusters: builtClusters } = buildConstellationClusters(lightContacts);
   const clusters = toNamedGraphClusters(builtClusters);
 
   // companies, schools and tags come from `getDashboardVocabularies`, not from a pass over

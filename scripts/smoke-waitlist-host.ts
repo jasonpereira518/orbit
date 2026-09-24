@@ -1,23 +1,25 @@
 /**
  * The waitlist's own domain answers the waitlist and nothing else, and stealth mode closes
- * the app domain's public face (src/lib/waitlist-host.ts).
+ * the app domain to everyone without an account (src/lib/waitlist-host.ts).
  *
  * WHY THIS EXISTS. The allowlist is a regex inside a Next `redirects()` source, and the
  * only thing standing between a waitlist visitor and the app. A typo in it fails open —
  * `/pricing` quietly serves — or fails shut, and neither shows up in tsc or in `next dev`
  * without the host set. So the rules are replayed here through Next's OWN matchers
  * (`getPathMatch` for sources, `matchHas` for host and query conditions), in the order
- * Next applies them: redirects, then beforeFiles rewrites.
+ * Next applies them: redirects, then beforeFiles rewrites. Stealth is a runtime switch the
+ * proxy applies, so its rules are replayed through `stealthGate` directly.
  *
  * Pure: no network, no database. Run: npx tsx scripts/smoke-waitlist-host.ts
  */
 import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
 import { matchHas } from "next/dist/shared/lib/router/utils/prepare-destination";
 import {
-  STEALTH_CLOSED_PAGES,
   STEALTH_HIDDEN_API,
   isWaitlistHostHeader,
-  stealthRedirects,
+  resolveStealth,
+  stealthGate,
+  stealthWaitlistUrl,
   waitlistHost,
   waitlistOrigin,
   waitlistRedirects,
@@ -55,7 +57,7 @@ function route(host: string, url: string, redirects: ConfigRedirect[], rewrites:
   return { kind: "serve", path: parsed.pathname };
 }
 
-const redirects = [...waitlistRedirects(ENV), ...stealthRedirects(ENV)];
+const redirects = waitlistRedirects(ENV);
 const rewrites = waitlistRewrites(ENV);
 const onWaitlist = (url: string) => route(WAITLIST, url, redirects, rewrites);
 const onApp = (url: string) => route(APP, url, redirects, rewrites);
@@ -69,7 +71,8 @@ check("an explicit base URL wins", waitlistOrigin({ ...ENV, WAITLIST_BASE_URL: "
 check("the host header matches with a port and www", isWaitlistHostHeader("WWW.join.example:443", ENV));
 check("a lookalike host does not match", !isWaitlistHostHeader("join.example.evil.test", ENV) && !isWaitlistHostHeader("xjoin.example", ENV));
 check("no host means no waitlist rules", waitlistRedirects({}).length === 0 && waitlistRewrites({}).length === 0);
-check("no stealth means no stealth rules", stealthRedirects({ WAITLIST_HOST: WAITLIST }).length === 0);
+check("the console's switch wins over the env", resolveStealth(false, ENV) === false && resolveStealth(true, {}) === true);
+check("an untouched console defers to SITE_STEALTH", resolveStealth(null, ENV) === true && resolveStealth(null, {}) === false);
 
 console.log("\nThe waitlist host serves the waitlist:");
 check("/ is the waitlist page", show(onWaitlist("/")) === show({ kind: "rewrite", to: "/interest" }), show(onWaitlist("/")));
@@ -124,20 +127,39 @@ check("the pure allowlist agrees with the config", ["/", "/privacy", "/api/track
 
 console.log("\nStealth on the app host:");
 check("app pages are untouched by the waitlist rules", onApp("/pricing").kind === "serve" && onApp("/").kind === "serve");
-check("/sign-up goes to /sign-in", show(onApp("/sign-up")) === show({ kind: "redirect", to: "/sign-in" }), show(onApp("/sign-up")));
-check("a Clerk invitation still opens /sign-up", onApp("/sign-up?__clerk_ticket=abc").kind === "serve");
-check("Clerk's own sign-up steps are left alone", onApp("/sign-up/continue").kind === "serve");
+const gate = (url: string, signedIn: boolean, env: Record<string, string> = ENV) => {
+  const parsed = new URL(url, `https://${APP}`);
+  const isApi = parsed.pathname === "/api" || parsed.pathname.startsWith("/api/");
+  return JSON.stringify(stealthGate({ pathname: parsed.pathname, search: parsed.search, signedIn, isApi }, env));
+};
+const toWaitlist = JSON.stringify({ kind: "redirect", to: "https://join.example/" });
+const pass = JSON.stringify({ kind: "pass" });
+for (const path of ["/", "/pricing", "/connect", "/contact", "/privacy", "/terms", "/dashboard", "/contacts/abc", "/settings", "/onboarding", "/sign-up"]) {
+  check(`signed out, ${path} goes to the waitlist`, gate(path, false) === toWaitlist, gate(path, false));
+  check(`signed in, ${path} opens`, gate(path, true) === pass, gate(path, true));
+}
+check("a landing-page share link keeps its referrer", gate("/?ref=abc", false) === JSON.stringify({ kind: "redirect", to: "https://join.example/?ref=abc" }), gate("/?ref=abc", false));
+check("sign-in stays open, steps included", ["/sign-in", "/sign-in/factor-one", "/sign-in/sso-callback"].every((p) => gate(p, false) === pass));
+check("a Clerk invitation opens /sign-up", gate("/sign-up?__clerk_ticket=abc&__clerk_status=sign_up", false) === pass);
+check("Clerk's own sign-up steps are left alone", gate("/sign-up/continue", false) === pass);
+check("the phone scan page stays open", gate("/scan/tok123", false) === pass);
+check("API routes pass, signed out or not", gate("/api/track", false) === pass && gate("/api/v1/contacts", false) === pass);
+check("the API schema is hidden", gate("/api/v1/openapi.json", true) === JSON.stringify({ kind: "not-found" }));
 check(
   "old /interest links move to the waitlist host",
-  show(onApp("/interest?me=abc")) === show({ kind: "redirect", to: "https://join.example/" })
+  gate("/interest?me=abc", true) === JSON.stringify({ kind: "redirect", to: "https://join.example/?me=abc" }),
+  gate("/interest?me=abc", true)
 );
 check(
   "old privacy links follow",
-  show(onApp("/interest/privacy")) === show({ kind: "redirect", to: "https://join.example/privacy" })
+  gate("/interest/privacy", false) === JSON.stringify({ kind: "redirect", to: "https://join.example/privacy" })
 );
-check("stealth closes the landing, pricing, connect and contact", ["/", "/pricing", "/connect", "/contact"].every((p) => (STEALTH_CLOSED_PAGES as readonly string[]).includes(p)));
+const NO_HOST = { SITE_STEALTH: "1" };
+check("with no waitlist host, the waitlist is /interest", stealthWaitlistUrl(NO_HOST) === "/interest");
+check("…and signed-out pages go there", gate("/pricing", false, NO_HOST) === JSON.stringify({ kind: "redirect", to: "/interest" }));
+check("…and it stays open, so there is no loop", gate("/interest", false, NO_HOST) === pass && gate("/interest/privacy", false, NO_HOST) === pass);
 check("stealth hides the API schema", (STEALTH_HIDDEN_API as readonly string[]).includes("/api/v1/openapi.json"));
-check("every stealth redirect is temporary, so launch undoes it", redirects.every((r) => !r.permanent));
+check("every waitlist redirect is temporary, so launch undoes it", redirects.every((r) => !r.permanent));
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
