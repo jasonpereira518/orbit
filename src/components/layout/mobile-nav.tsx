@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { usePathname, useRouter } from "next/navigation";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
@@ -471,8 +472,9 @@ export function MobileNav({
 
               return (
                 <li key={navItem.href} className="flex-1">
-                  <Link
+                  <IntentLink
                     href={navItem.href}
+                    // Touch-start upgrades it to a full prefetch ~100 ms before the tap's click.
                     prefetch={fullPrefetch(navItem, isNavActive(pathname, navItem.href))}
                     ref={(el) => {
                       itemRefs.current[myIndex] = el;
@@ -518,7 +520,7 @@ export function MobileNav({
                         <span>{navItem.label}</span>
                       </span>
                     </span>
-                  </Link>
+                  </IntentLink>
                 </li>
               );
             })}

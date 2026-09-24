@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useMemo, useState, useTransition } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -183,9 +184,9 @@ function ContactSection({ item }: { item: ReminderRow }) {
         <span id={`contact-${item.id}`}>Person</span>
       </SectionHeading>
       <div className="rounded-xl border border-border/70 p-3">
-        <Link href={`/contacts/${item.contactId}`} className="text-sm font-medium text-primary hover:underline">
+        <IntentLink href={`/contacts/${item.contactId}`} className="text-sm font-medium text-primary hover:underline">
           {item.contactName ?? "Linked contact"}
-        </Link>
+        </IntentLink>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {item.contactLastTouch
             ? `Last in touch ${formatDistanceToNow(new Date(item.contactLastTouch), { addSuffix: true })}`

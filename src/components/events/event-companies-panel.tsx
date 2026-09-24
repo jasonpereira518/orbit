@@ -13,7 +13,7 @@
  */
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { Building2, Loader2, Plus, Star, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -188,12 +188,12 @@ export function EventCompaniesPanel({
                     You know
                     {row.contacts.slice(0, 3).map((person, index) => (
                       <span key={person.contactId}>
-                        <Link
+                        <IntentLink
                           href={`/contacts/${person.contactId}`}
                           className="text-ink hover:underline"
                         >
                           {person.name}
-                        </Link>
+                        </IntentLink>
                         {/* "used to be there" is often the better introduction, and it is a
                             different fact — an alum will take the call. */}
                         {person.tenure === "past" ? " (was there)" : ""}

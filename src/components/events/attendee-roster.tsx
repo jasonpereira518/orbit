@@ -28,7 +28,7 @@
  */
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { Check, Loader2, MoreHorizontal, Pencil, Search, UserPlus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -301,13 +301,13 @@ export function AttendeeRoster({
 
               {connected ? (
                 <div className="flex shrink-0 items-center gap-2">
-                  <Link
+                  <IntentLink
                     href={`/contacts/${row.contactId}`}
                     className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
                   >
                     <Check className="size-3.5" aria-hidden />
                     In your network
-                  </Link>
+                  </IntentLink>
                   <Button variant="ghost" size="xs" onClick={() => disconnect(row.id)} disabled={busy}>
                     {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
                     Unlink
@@ -328,14 +328,14 @@ export function AttendeeRoster({
               ) : match ? (
                 // Known, but not yet attached to this event. Still selectable: connecting is
                 // what adds this event to the timeline you already have for them.
-                <Link
+                <IntentLink
                   href={`/contacts/${match.contactId}`}
                   className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
                   title={`${match.contactName ?? "This person"} is already in your contacts`}
                 >
                   <Users className="size-3" aria-hidden />
                   Already a contact
-                </Link>
+                </IntentLink>
               ) : (
                 <span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
                   {SOURCE_LABEL[row.source]}

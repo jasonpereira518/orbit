@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import {
@@ -624,7 +625,7 @@ export function FloatingAskBar() {
                   <ul className="p-1.5">
                     {hits.map((hit) => (
                       <li key={hit.id}>
-                        <Link
+                        <IntentLink
                           href={`/contacts/${hit.id}`}
                           className="block rounded-2xl px-3 py-2 transition-colors hover:bg-muted/60"
                           onClick={() => setOpen(false)}
@@ -668,7 +669,7 @@ export function FloatingAskBar() {
                               ))}
                             </div>
                           )}
-                        </Link>
+                        </IntentLink>
                       </li>
                     ))}
                   </ul>
@@ -884,14 +885,14 @@ const AssistantBubble = memo(function AssistantBubble({
         msg.recommendations.length === 0 && (
           <div className="flex flex-wrap gap-1.5 px-1">
             {msg.retrieved.slice(0, 6).map((c) => (
-              <Link
+              <IntentLink
                 key={c.id}
                 href={`/contacts/${c.id}`}
                 className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 onClick={() => onNavigate(false)}
               >
                 {c.fullName}
-              </Link>
+              </IntentLink>
             ))}
           </div>
         )}

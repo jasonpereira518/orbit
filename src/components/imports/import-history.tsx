@@ -8,7 +8,7 @@ import {
   useTransition,
   type Ref,
 } from "react";
-import Link from "next/link";
+import { IntentLink } from "@/components/ui/intent-link";
 import { formatDistanceToNow } from "date-fns";
 import {
   BookUser,
@@ -704,7 +704,7 @@ function ImportPeopleList({
         <ul className="mt-2 divide-y divide-border/50 rounded-lg border border-border/60">
           {page.people.map((p) => (
             <li key={p.id}>
-              <Link
+              <IntentLink
                 href={`/contacts/${p.id}`}
                 className="block px-3 py-2 text-xs hover:bg-muted/50"
               >
@@ -714,7 +714,7 @@ function ImportPeopleList({
                     {p.detail}
                   </span>
                 ) : null}
-              </Link>
+              </IntentLink>
             </li>
           ))}
         </ul>

@@ -10,6 +10,11 @@ const CaptureFlow = dynamic(
   { loading: () => <CaptureFormSkeleton /> }
 );
 
+/** The capture form's code, fetched ahead of a click on anything that opens /capture. */
+export function preloadCaptureFlow() {
+  void import("@/components/capture/capture-flow").catch(() => {});
+}
+
 export function CaptureFlowLazy(props: ComponentProps<typeof CaptureFlowComponent>) {
   return <CaptureFlow {...props} />;
 }
