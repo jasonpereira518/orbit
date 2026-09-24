@@ -24,6 +24,8 @@ import {
 import { listContactsPage as listContactsPageForUser } from "@/lib/contacts-page-query";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
+import { listActiveGoalTextsForUser } from "@/lib/user-goals";
+import { settle, unwrap } from "@/lib/settled";
 import { type CompanyResolver } from "@/lib/companies";
 import {
   createContactsBulkForUser,
@@ -706,11 +708,15 @@ export async function reorderSameDayInteractions(
   const userId = await requireUserId();
   const db = await getDb();
 
+  // Only the id and date are read — the day filter and the allow-list. Unprojected, this
+  // shipped every note body the contact has (a whole imported LinkedIn thread) to reorder
+  // one day's rows.
   const rows = await db.query.interactions.findMany({
     where: and(
       eq(interactions.userId, userId),
       eq(interactions.contactId, contactId)
     ),
+    columns: { id: true, interactionDate: true },
   });
 
   const dayRows = rows.filter((r) => {
@@ -1186,6 +1192,9 @@ export async function getContactFollowUpSendOptions(
 ): Promise<ContactFollowUpSendOptions> {
   const userId = await requireUserId();
   const db = await getDb();
+  // The send config needs nothing from the contact, so both reads start together. The
+  // not-found check still comes first; a config failure only surfaces after it, as before.
+  const configRead = settle(getOutreachSendConfig(userId));
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: {
@@ -1195,7 +1204,7 @@ export async function getContactFollowUpSendOptions(
   });
   if (!contact) throw new Error("Contact not found");
 
-  const config = await getOutreachSendConfig(userId);
+  const config = unwrap(await configRead);
   const email = contact.email?.trim() || null;
   const linkedinUrl = contact.linkedinUrl?.trim() || null;
 
@@ -1281,9 +1290,12 @@ export async function listRelatedContacts(
 ): Promise<RelatedContact[]> {
   const userId = await requireUserId();
   const db = await getDb();
-  const goals = await listActiveGoalTexts();
-
-  const narrowRows = await db.query.contacts.findMany({
+  // Goals and the narrow scan need nothing from each other, so they start together; their
+  // outcomes are taken in the old order (a goals failure still surfaces first). The
+  // ForUser variant is what `listActiveGoalTexts()` calls after its own `requireUserId()`,
+  // which this function has just done — in a Server Action that repeat is not deduped.
+  const goalsRead = settle(listActiveGoalTextsForUser(userId));
+  const narrowRead = settle(db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
     columns: {
       id: true,
@@ -1299,7 +1311,11 @@ export async function listRelatedContacts(
       sharedInterests: true,
       relationshipScore: true,
     },
-  });
+  }));
+  const goals = unwrap(await goalsRead);
+  const narrowRows = unwrap(await narrowRead);
+  // Ownership gate: nothing below (the source's tag ids included) is read for a contact
+  // outside this account.
   if (!narrowRows.some((r) => r.id === contactId)) return [];
 
   // Tags share is the one reason findRelatedContacts needs that isn't in the narrow scan

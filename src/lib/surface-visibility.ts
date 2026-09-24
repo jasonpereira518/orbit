@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { appSurfaceFlags } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
-import { recordAdminAction } from "@/lib/admin-operations";
+import { recordAdminAction } from "@/lib/admin-audit";
 import {
   COMING_SOON_COMPANIONS,
   COMING_SOON_KEYS,

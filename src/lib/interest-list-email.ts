@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { Resend } from "resend";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getWaitlistOrigin } from "@/lib/app-url";
 import { formatTicketNumber, FRONT_WAVE_REFERRALS } from "@/lib/interest-list";
@@ -265,6 +264,8 @@ async function deliver(
   }
 
   try {
+    // Loaded on send, inside the same try: the SDK stays off cold starts that send nothing.
+    const { Resend } = await import("resend");
     const resend = new Resend(apiKey);
     const { error } = await resend.emails.send({
       from,

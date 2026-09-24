@@ -2,7 +2,10 @@ import { count, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { companies, interactions } from "@/db/schema";
 import { closenessTier } from "@/lib/closeness";
-import { getClosenessCohortSlim } from "@/lib/closeness-cohort";
+import {
+  getClosenessCohortSlim,
+  type ClosenessCohortSlimResult,
+} from "@/lib/closeness-cohort";
 import { getNetworkStatsCounts } from "@/lib/dashboard-aggregates";
 
 export type NetworkStatItem = {
@@ -78,6 +81,8 @@ export async function getNetworkStats(
   preloaded?: {
     interactionCount?: number;
     companyCount?: number;
+    /** A slim cohort another read on this request already started — shared, not re-read. */
+    cohort?: Promise<ClosenessCohortSlimResult>;
   }
 ): Promise<NetworkStats> {
   const db = await getDb();
@@ -105,7 +110,7 @@ export async function getNetworkStats(
           .from(companies)
           .where(eq(companies.userId, userId)),
     // Slim, and shared with the dashboard load on the same request: this reads `raw` only.
-    getClosenessCohortSlim(userId),
+    preloaded?.cohort ?? getClosenessCohortSlim(userId),
   ]);
 
   const interactionCount = interactionCountRows[0]?.value ?? 0;

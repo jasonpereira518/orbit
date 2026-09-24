@@ -327,6 +327,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
   "smoke-behavior-golden": "pglite",
+  "smoke-due-follow-ups-parity": "pglite",
   "smoke-chat-lookup-tools": "pglite",
   "smoke-tool-registry": "pglite",
   "smoke-memory-search": "pglite",

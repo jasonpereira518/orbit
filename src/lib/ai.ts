@@ -557,7 +557,7 @@ export async function completeJson(
     async (report) => {
       try {
         if (provider === "gemini") {
-          const client = geminiClient(grant);
+          const client = await geminiClient(grant);
           const response = await client.models.generateContent({
             model,
             contents: userText,
@@ -576,7 +576,7 @@ export async function completeJson(
         }
 
         if (provider === "openai") {
-          const client = openaiClient(grant);
+          const client = await openaiClient(grant);
           const response = await client.chat.completions.create({
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(operation) }),
@@ -593,7 +593,7 @@ export async function completeJson(
           return normalizeJsonResponse(content);
         }
 
-        const client = anthropicClient(grant);
+        const client = await anthropicClient(grant);
         const response = await client.messages.create({
           model,
           max_tokens: maxOutputTokens,
@@ -685,7 +685,7 @@ async function completeMultimodalJsonInner(
 
   try {
     if (provider === "gemini") {
-      const client = geminiClient(grant);
+      const client = await geminiClient(grant);
       const contents = [
         ...textParts.map((p) => ({ text: p.text })),
         ...mediaParts.map((p) => ({
@@ -713,7 +713,7 @@ async function completeMultimodalJsonInner(
     }
 
     if (provider === "openai") {
-      const client = openaiClient(grant);
+      const client = await openaiClient(grant);
       const content: OpenAI.Chat.ChatCompletionContentPart[] = [
         ...textParts.map((p): OpenAI.Chat.ChatCompletionContentPart => ({
           type: "text",
@@ -751,7 +751,7 @@ async function completeMultimodalJsonInner(
       return normalizeJsonResponse(out);
     }
 
-    const client = anthropicClient(grant);
+    const client = await anthropicClient(grant);
     type AnthropicContent = Exclude<
       Anthropic.MessageCreateParams["messages"][0]["content"],
       string
@@ -953,7 +953,7 @@ export async function transcribeAudioWithAI(
   }
 
   if (grant.provider === "openai") {
-    const client = openaiClient(grant);
+    const client = await openaiClient(grant);
     const bytes = Buffer.from(input.base64, "base64");
     const file = new File(
       [bytes],
@@ -1001,7 +1001,7 @@ export async function transcribeAudioWithAI(
   }
 
   {
-    const client = geminiClient(grant);
+    const client = await geminiClient(grant);
     // The user's configured Gemini model on their own key; a managed model on Orbit's.
     const model = grant.model;
     return runOnGrant(grant, withUsage(
@@ -1680,7 +1680,7 @@ export async function createEmbedding(userId: string, text: string) {
     (report) =>
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
         if (backend === "openai") {
-          const client = openaiClient(grant);
+          const client = await openaiClient(grant);
           // maxRetries 0: `withRateLimitBackoff` around this call already retries a rate
           // limit, and the SDK's own two retries stacked under it made one throttled batch
           // up to twelve requests.
@@ -1694,7 +1694,7 @@ export async function createEmbedding(userId: string, text: string) {
           return values;
         }
 
-        const client = geminiClient(grant);
+        const client = await geminiClient(grant);
         const res = await client.models.embedContent({
           model: GEMINI_EMBEDDING_MODEL,
           contents: input,
@@ -1733,7 +1733,7 @@ export async function createEmbeddingsBatch(
     (report) =>
       withRateLimitBackoff(() => translatingProviderErrors(aiProviderLabel(backend), async () => {
         if (backend === "openai") {
-          const client = openaiClient(grant);
+          const client = await openaiClient(grant);
           // maxRetries 0 for the same reason as `createEmbedding`: the backoff wrapper owns retries.
           const res = await client.embeddings.create({
             model: OPENAI_EMBEDDING_MODEL,
@@ -1750,7 +1750,7 @@ export async function createEmbeddingsBatch(
           return values;
         }
 
-        const client = geminiClient(grant);
+        const client = await geminiClient(grant);
         const res = await client.models.embedContent({
           model: GEMINI_EMBEDDING_MODEL,
           contents: inputs,
@@ -2109,7 +2109,7 @@ async function streamText(
       };
 
       if (provider === "gemini") {
-        const client = geminiClient(grant);
+        const client = await geminiClient(grant);
         const stream = await client.models.generateContentStream({
           model,
           contents: input.user,
@@ -2128,7 +2128,7 @@ async function streamText(
         }
         if (last) report(tokensFromGemini(last));
       } else if (provider === "openai") {
-        const client = openaiClient(grant);
+        const client = await openaiClient(grant);
         const stream = await client.chat.completions.create(
           {
             model,
@@ -2149,7 +2149,7 @@ async function streamText(
         }
         if (usage) report(tokensFromOpenAi({ usage }));
       } else {
-        const client = anthropicClient(grant);
+        const client = await anthropicClient(grant);
         const stream = client.messages.stream(
           {
             model,

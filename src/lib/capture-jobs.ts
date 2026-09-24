@@ -77,7 +77,7 @@ export type CaptureJobView = {
   updatedAt: string;
 };
 
-export function toCaptureJobView(row: CaptureJobRow): CaptureJobView {
+export function toCaptureJobView(row: Omit<CaptureJobRow, "sourceText">): CaptureJobView {
   return {
     id: row.id,
     status: row.status,
@@ -150,9 +150,14 @@ export async function findActiveCaptureJobs(
   userId: string,
   limit = 25,
   now = new Date()
-): Promise<CaptureJobRow[]> {
+): Promise<Omit<CaptureJobRow, "sourceText">[]> {
   const db = await getDb();
   return db.query.captureJobs.findMany({
+    // Everything but the assembled corpus the model read (`source_text`, written by the
+    // runner, up to a whole meeting transcript per job). Nothing downstream of this reads
+    // it — the page and the polling client see `toCaptureJobView`, which never has — and
+    // this list is re-fetched while a queue is in flight.
+    columns: { sourceText: false },
     where: and(
       eq(captureJobs.userId, userId),
       or(

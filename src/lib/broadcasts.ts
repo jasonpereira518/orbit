@@ -1,5 +1,4 @@
 import { and, desc, eq, isNull, notExists, sql } from "drizzle-orm";
-import { Resend } from "resend";
 import { getDb } from "@/db";
 import {
   broadcastRecipients,
@@ -207,6 +206,8 @@ async function deliver(input: {
   if (!apiKey || !from) return { ok: false, error: "Resend is not configured." };
 
   try {
+    // Loaded on send, inside the same try: the SDK stays off cold starts that send nothing.
+    const { Resend } = await import("resend");
     const resend = new Resend(apiKey);
     const { error } = await resend.emails.send({
       from,
