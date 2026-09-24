@@ -50,9 +50,26 @@ import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
 import { loadKnowledgeBase } from "../src/lib/knowledge-base";
 import { logExtensionInteraction, saveContactFromExtension } from "../src/lib/extension/writes";
+import { buildStarterContext } from "../src/lib/extension/resolve";
+import { GET as V1_CONTACTS } from "../src/app/api/v1/contacts/route";
+import { GET as V1_FOLLOWUPS } from "../src/app/api/v1/followups/route";
+import { GET as V1_ME } from "../src/app/api/v1/me/route";
+import {
+  getContact,
+  getContactFollowUpSendOptions,
+  listRelatedContacts,
+} from "../src/actions/contacts";
+import { listRecentMerges } from "../src/actions/duplicates";
+import { getSettings } from "../src/actions/settings";
+import { getIntegrationStatuses } from "../src/actions/integrations";
+import { listContactMentions } from "../src/lib/contact-mentions";
+import { getContactBrief } from "../src/lib/contact-brief";
+import { ensureOutreachSuggestions } from "../src/lib/reminders";
 import type { PageContext } from "../src/lib/extension/contract";
 
-const USER = "behavior-golden-user";
+// `demo-user` because request-bound server actions (`requireUserId()`) resolve to it on a
+// local server with no Clerk keys, so they can be probed directly.
+const USER = "demo-user";
 const GOLDEN = join(__dirname, "fixtures", "behavior-golden.json");
 const UPDATE = process.argv.includes("--update");
 const DEV_SECRET = "behavior-golden-secret";
@@ -116,7 +133,18 @@ async function buildUuidLabels() {
 }
 
 function normalizeString(s: string): string {
+  // An opaque paging cursor wraps a timestamp and an id: compare what it encodes.
+  if (/^[A-Za-z0-9_-]{24,}$/.test(s)) {
+    const decoded = Buffer.from(s, "base64url").toString("utf8");
+    if (ISO_RE.test(decoded) || UUID_RE.test(decoded)) {
+      ISO_RE.lastIndex = 0;
+      UUID_RE.lastIndex = 0;
+      return `<cursor:${normalizeString(decoded)}>`;
+    }
+  }
   return s
+    // Minted per run, like the key itself.
+    .replace(/orb_(live|test)_[A-Za-z0-9]+/g, "<api-key>")
     .replace(UUID_RE, (id) => uuidLabels.get(id.toLowerCase()) ?? "<uuid>")
     .replace(ISO_RE, "<ts>")
     // Bare calendar days (a follow-up item's key, say) are relative to the day the
@@ -188,6 +216,26 @@ async function ext(
     })
   );
   return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+async function v1(handler: (req: Request) => Promise<Response>, token: string, path: string) {
+  const res = await handler(
+    new Request(`https://orbit.test${path}`, { headers: { authorization: `Bearer ${token}` } })
+  );
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+/** Every row of `table` for the golden user, in an order that does not depend on ids. */
+async function tableState(table: string) {
+  const db = await getDb();
+  const res = (await db.execute(
+    sql`SELECT to_jsonb(t) AS row FROM ${sql.raw(table)} t WHERE user_id = ${USER}`
+  )) as unknown as { rows: Array<{ row: Record<string, unknown> }> };
+  // Columns whose values are machine bookkeeping rather than behavior.
+  const volatile = new Set(["created_at", "updated_at", "last_active_at", "embedding", "embedding_vector", "embedding_stale_at", "search_vector"]);
+  return res.rows.map(({ row }) =>
+    Object.fromEntries(Object.entries(row).filter(([k]) => !volatile.has(k)))
+  );
 }
 
 function field(value: string | null | undefined, source = "h1") {
@@ -266,6 +314,23 @@ run(async () => {
     ["loader: notification panel", () => loadNotificationPanel(USER, new Date(), { withAlerts: true })],
     ["loader: knowledge base", () => loadKnowledgeBase(USER)],
 
+    // --- server actions and libs behind the contact page and settings -----------------
+    ["action: getContact", () => getContact(sarah.id)],
+    ["action: listRelatedContacts", () => listRelatedContacts(sarah.id)],
+    ["action: listRelatedContacts (missing)", () => listRelatedContacts("00000000-0000-4000-8000-000000000000")],
+    ["action: getContactFollowUpSendOptions", () => getContactFollowUpSendOptions(sarah.id)],
+    ["action: listRecentMerges", () => listRecentMerges()],
+    ["action: getSettings", () => getSettings()],
+    ["action: getIntegrationStatuses", () => getIntegrationStatuses()],
+    ["lib: listContactMentions", () => listContactMentions(USER, sarah.id)],
+    ["lib: getContactBrief", () => getContactBrief(USER, sarah.id)],
+
+    // --- public API --------------------------------------------------------------------
+    ["v1 me", () => v1(V1_ME, writeKey, "/api/v1/me")],
+    ["v1 contacts search", () => v1(V1_CONTACTS, writeKey, "/api/v1/contacts?q=OpenAI&limit=10")],
+    ["v1 contacts list", () => v1(V1_CONTACTS, writeKey, "/api/v1/contacts?limit=5")],
+    ["v1 followups", () => v1(V1_FOLLOWUPS, writeKey, "/api/v1/followups?limit=25")],
+
     // --- MCP: protocol and read tools ---------------------------------------------------
     ["mcp initialize", () => mcp(writeKey, "initialize", {
       protocolVersion: "2025-06-18",
@@ -307,6 +372,15 @@ run(async () => {
         page: page({ name: "Nobody Atall", url: "https://www.linkedin.com/in/nobody-atall-golden" }),
       })],
     ["ext search", () => ext(EXT_CONTACTS_SEARCH, "GET", "/api/extension/contacts?q=chen")],
+    ["ext starters context warm", () =>
+      buildStarterContext(USER, page({
+        name: "Sarah Chen",
+        title: "Head of Partnerships",
+        company: "OpenAI",
+        url: sarah.linkedinUrl ?? "https://www.linkedin.com/in/sarah-chen-golden",
+      }), sarah.id)],
+    ["ext starters context cold", () =>
+      buildStarterContext(USER, page({ name: "Nobody Atall", company: "Stripe", url: "https://www.linkedin.com/in/nobody-atall-golden" }))],
     ["ext search empty", () => ext(EXT_CONTACTS_SEARCH, "GET", "/api/extension/contacts?q=")],
 
     // --- writes, then the reads they change ---------------------------------------------
@@ -344,6 +418,12 @@ run(async () => {
     ["mcp due_followups (after writes)", () => tool("due_followups", { limit: 25 })],
     ["loader: dashboard (after writes)", () => getDashboardData(USER)],
     ["loader: graph (after writes)", () => loadGraphData(USER, { profile: null })],
+    ["lib: ensureOutreachSuggestions", () => ensureOutreachSuggestions(USER)],
+
+    // --- what every write above left in the database -----------------------------------
+    ...["contacts", "interactions", "reminders", "contact_tags", "tags", "action_items", "ai_suggestions", "duplicate_suggestions"].map(
+      (table): [string, () => Promise<unknown>] => [`db: ${table}`, () => tableState(table)]
+    ),
   ];
 
   // Map and Set serialize as {} through JSON, so turn them into arrays first.
@@ -367,7 +447,14 @@ run(async () => {
   }
   await buildUuidLabels();
   const actual: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(raw)) actual[name] = normalize(value);
+  for (const [name, value] of Object.entries(raw)) {
+    const normalized = normalize(value);
+    // Table dumps have no inherent order; sort the normalized rows so only content counts.
+    actual[name] =
+      name.startsWith("db: ") && Array.isArray(normalized)
+        ? [...normalized].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+        : normalized;
+  }
 
   if (UPDATE || !existsSync(GOLDEN)) {
     mkdirSync(dirname(GOLDEN), { recursive: true });
