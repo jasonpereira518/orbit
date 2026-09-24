@@ -29,15 +29,17 @@ function sleep(ms: number, signal: AbortSignal) {
       resolve();
       return;
     }
-    const timer = window.setTimeout(() => resolve(), ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        window.clearTimeout(timer);
-        resolve();
-      },
-      { once: true }
-    );
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    // A normal wake-up removes the listener too: `once` only fires on abort, so every batch
+    // used to leave one closure on the signal for as long as the component was mounted.
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 

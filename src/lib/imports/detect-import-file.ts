@@ -28,6 +28,7 @@ import {
 import { looksLikeContactsCsv } from "@/lib/contacts-file";
 import { headerFields } from "@/lib/imports/csv-header";
 import { isIgnorableFile, type DroppedFile } from "@/lib/capture/file-drop";
+import { RUN_ORDER } from "@/lib/imports/import-constants";
 
 /**
  * Deliberately the same strings as `imports.import_type`.
@@ -89,19 +90,10 @@ export type DetectionResult = {
 };
 
 /**
- * The order imports run in, regardless of the order files were dropped.
- *
- * Connections before messages is not cosmetic. The messages preview matches conversation
- * partners against contacts that already exist, so running messages first makes every partner
- * look new and does the deduplication backwards.
+ * The order imports run in, regardless of the order files were dropped. Lives in the
+ * dependency-free `import-constants` so the queue can read it without this module's parsers.
  */
-export const RUN_ORDER: readonly ImportTarget[] = [
-  "linkedin_connections",
-  "contacts_file",
-  "linkedin_messages",
-  "calendar_ics",
-  "calendar_csv",
-];
+export { RUN_ORDER };
 
 /** Enough to hold a header row and a few data rows of even a very wide export. */
 const HEAD_BYTES = 65_536;
