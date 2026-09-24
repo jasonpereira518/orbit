@@ -528,7 +528,7 @@ export function FloatingAskBar() {
         // "Ask your network" item in the More sheet opens it. Desktop keeps
         // the persistent collapsed pill.
         open ? "flex" : "hidden md:flex",
-        "bottom-[calc(6.5rem+env(safe-area-inset-bottom))] md:bottom-5",
+        "bottom-[calc(6.875rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
       aria-hidden={!visible}

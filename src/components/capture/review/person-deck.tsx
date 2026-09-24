@@ -255,7 +255,7 @@ export function PersonDeck({
       */}
       <div
         ref={actionRowRef}
-        className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 -mx-4 flex items-center justify-center gap-3 rounded-2xl border border-border/60 bg-card/95 px-4 py-3 shadow-lg backdrop-blur md:static md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:py-1 md:shadow-none md:backdrop-blur-none"
+        className="sticky bottom-[calc(4.375rem+env(safe-area-inset-bottom))] z-20 -mx-4 flex items-center justify-center gap-3 rounded-2xl border border-border/60 bg-card/95 px-4 py-3 shadow-lg backdrop-blur md:static md:mx-0 md:rounded-none md:border-0 md:bg-transparent md:py-1 md:shadow-none md:backdrop-blur-none"
       >
         <Button
           type="button"
