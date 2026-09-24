@@ -10,10 +10,38 @@
 # and `smoke` status checks before merging.
 name: ci
 
+# CI skips runs that cannot tell you anything, so a result means something and the runners
+# stay free for the runs that do:
+#
+# - Draft PRs are skipped. A PR runs CI when it is opened ready, or when a draft is marked
+#   ready for review, and on every push after that. A ready PR gets every job.
+# - `paths-ignore` skips the run for changes no job reads: docs, agent skills, and the two
+#   workflows that only schedule ops calls. docs/RUNBOOK.md is re-included because
+#   scripts/smoke-schedules.ts parses it. There are no required status checks on main
+#   (Protected Main Branch only blocks deletion and force-pushes); if `check`/`smoke` are
+#   ever made required, drop `paths-ignore` from `pull_request`, or a docs-only PR waits
+#   forever on checks that never start.
+#
+# The repository is public, so hosted runners are free. This workflow is written to stay
+# safe there: it triggers on `pull_request` (never `pull_request_target` or `workflow_run`),
+# so a fork's PR runs with a read-only token and no secrets, and it uses none. Keep it that
+# way; the two workflows that do use secrets (ops, backup) run only on schedule or manual
+# dispatch from the default branch.
 on:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths-ignore: &ignore
+      - "**.md"
+      - "docs/**"
+      - "!docs/RUNBOOK.md"
+      - ".agents/**"
+      - ".claude/**"
+      - ".github/workflows/ops.yml"
+      - ".github/workflows/backup.yml"
+      - "LICENSE"
   push:
     branches: [main]
+    paths-ignore: *ignore
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -25,6 +53,7 @@ permissions:
 jobs:
   check:
     name: typecheck · lint · build
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -50,6 +79,7 @@ jobs:
 
   smoke:
     name: smoke suite (PGlite)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -63,6 +93,7 @@ jobs:
 
   extension:
     name: extension typecheck · build
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -78,6 +109,7 @@ jobs:
 
   e2e:
     name: browser flows (Playwright)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
