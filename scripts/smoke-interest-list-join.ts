@@ -24,7 +24,7 @@ import {
   readInterestProof,
 } from "../src/lib/interest-list-ticket";
 import { INTEREST_LIST_COUNT_FLOOR, MIN_FILL_MS } from "../src/lib/interest-list";
-import { joinInterestListCore, type JoinContext } from "../src/lib/interest-list-join";
+import { emailPassCore, joinInterestListCore, type JoinContext } from "../src/lib/interest-list-join";
 import type { EmailLinks } from "../src/lib/interest-list-email";
 
 const PREFIX = "smoke-join-";
@@ -134,38 +134,65 @@ async function joinPath() {
       sent.push({ email, links, position });
     },
     sendFrontWave: async () => undefined,
+    sendFriendJoined: async () => undefined,
+    sendPass: async (email, _unsub, _planet, links, position) => {
+      passes.push({ email, links, position });
+    },
   });
+  const passes: Array<{ email: string; links: EmailLinks; position: number | null }> = [];
   const base = { website: "", elapsedMs: MIN_FILL_MS + 10 };
   const rowFor = async (email: string) =>
     (await db.select().from(interestListSignups).where(eq(interestListSignups.email, email)))[0];
 
   // --- new join
   const a = await joinInterestListCore({ ...base, email: `${PREFIX}A@Example.test` }, ctx("a"));
-  check("new join is ok", a.ok);
-  if (!a.ok) return;
+  check("new join is ok", a.ok && Boolean(a.ticket));
+  if (!a.ok || !a.ticket) return;
+  const ta = a.ticket;
   const rowA = await rowFor(`${PREFIX}a@example.test`);
   check("email is normalised on insert", Boolean(rowA));
-  check("ticket carries the stored share token", rowA?.shareToken === a.ticket.shareToken);
-  check("ticket planet matches the stored one", rowA?.welcomePlanet === a.ticket.planet);
+  check("ticket carries the stored share token", rowA?.shareToken === ta.shareToken);
+  check("ticket planet matches the stored one", rowA?.welcomePlanet === ta.planet);
   check("attribution is stored", rowA?.utmSource === "reddit" && rowA.landingPath === "/interest");
-  check("welcome states the place in line", sent[0]?.position === a.ticket.position, String(sent[0]?.position));
-  check("welcome sent once with both links", sent.length === 1 && sent[0]!.links.ticketUrl.includes(`me=${a.ticket.shareToken}`) && sent[0]!.links.shareUrl.includes(`ref=${a.ticket.shareToken}`));
+  check("welcome states the place in line", sent[0]?.position === ta.position, String(sent[0]?.position));
+  check("welcome sent once with both links", sent.length === 1 && sent[0]!.links.ticketUrl.includes(`me=${ta.shareToken}`) && sent[0]!.links.shareUrl.includes(`ref=${ta.shareToken}`));
 
-  // --- duplicate: same ticket, no second mail, still one row
+  // --- duplicate: the pass goes to the inbox, never back to whoever typed the address
   const a2 = await joinInterestListCore({ ...base, email: `${PREFIX}a@example.test` }, ctx("a"));
   check("duplicate is ok", a2.ok);
-  check("duplicate returns the same ticket", a2.ok && a2.ticket.shareToken === a.ticket.shareToken && a2.ticket.number === a.ticket.number);
-  check("duplicate sends nothing", sent.length === 1);
+  check("duplicate returns no ticket — only that it emailed", a2.ok && a2.emailed === true && a2.ticket === undefined);
+  check("duplicate sends no second welcome", sent.length === 1);
+  check(
+    "duplicate emails the pass to its own address",
+    passes.length === 1 && passes[0]!.email === `${PREFIX}a@example.test` && passes[0]!.links.ticketUrl.includes(`me=${ta.shareToken}`)
+  );
   check("duplicate creates no row", (await db.select().from(interestListSignups).where(like(interestListSignups.email, `${PREFIX}a@%`))).length === 1);
 
   // --- referral: B joins through A's link
-  const b = await joinInterestListCore({ ...base, email: `${PREFIX}b@example.test`, ref: a.ticket.shareToken }, ctx("b"));
+  const b = await joinInterestListCore({ ...base, email: `${PREFIX}b@example.test`, ref: ta.shareToken }, ctx("b"));
   check("referred join is ok", b.ok);
   const rowB = await rowFor(`${PREFIX}b@example.test`);
   check("referred row points at the referrer", rowB?.referredById === rowA?.id);
-  const a3 = await joinInterestListCore({ ...base, email: `${PREFIX}a@example.test` }, ctx("a"));
-  check("referrer now has one referral", a3.ok && a3.ticket.referrals === 1, a3.ok ? String(a3.ticket.referrals) : "not ok");
-  check("referred ticket is the next number", b.ok && a.ok && b.ticket.number === a.ticket.number + 1);
+  const a3 = await getTicketByShareToken(ta.shareToken);
+  check("referrer now has one referral", a3?.referrals === 1, String(a3?.referrals));
+  check("referred ticket is the next number", b.ok && b.ticket?.number === ta.number + 1);
+
+  // --- the pass email is capped per address, whoever asks
+  await joinInterestListCore({ ...base, email: `${PREFIX}a@example.test` }, ctx("a-again"));
+  await joinInterestListCore({ ...base, email: `${PREFIX}a@example.test` }, ctx("a-third"));
+  check("a third pass request inside the window sends nothing", passes.length === 2, String(passes.length));
+
+  // --- "email me my pass": the same answer for every address, and it never joins anyone
+  const knownB = await emailPassCore({ ...base, email: `${PREFIX}B@example.test` }, ctx("pass"));
+  check("a known address answers ok and gets its pass", knownB.ok && passes.at(-1)?.email === `${PREFIX}b@example.test`);
+  const passCount = passes.length;
+  const unknown = await emailPassCore({ ...base, email: `${PREFIX}nobody@example.test` }, ctx("pass"));
+  check("an unknown address answers the same", unknown.ok);
+  check("…sends nothing and joins no one", passes.length === passCount && (await rowFor(`${PREFIX}nobody@example.test`)) === undefined);
+  const badPass = await emailPassCore({ ...base, email: "nope" }, ctx("pass"));
+  check("a malformed address is the one visible error", !badPass.ok);
+  const botPass = await emailPassCore({ ...base, website: "http://spam", email: `${PREFIX}b@example.test` }, ctx("pass"));
+  check("a honeypot answers ok and sends nothing", botPass.ok && passes.length === passCount);
 
   // --- self-referral and unknown ref
   const c = await joinInterestListCore({ ...base, email: `${PREFIX}c@example.test`, ref: "no-such-token" }, ctx("c"));
@@ -174,13 +201,13 @@ async function joinPath() {
   // Rejoining with your own token must never credit yourself (the branch is unreachable
   // for an active row, but an unsubscribed one rejoins through the update path).
   await db.update(interestListSignups).set({ unsubscribedAt: new Date(), followUpSentAt: new Date() }).where(eq(interestListSignups.email, `${PREFIX}c@example.test`));
-  const cTicket = c.ok ? c.ticket : null;
+  const cTicket = c.ok ? (c.ticket ?? null) : null;
   const c2 = await joinInterestListCore({ ...base, email: `${PREFIX}c@example.test`, ref: cTicket!.shareToken }, ctx("c"));
   const rowC = await rowFor(`${PREFIX}c@example.test`);
   check("rejoin puts them back in line", c2.ok && rowC?.unsubscribedAt === null);
   check(
     "rejoin keeps the original join time",
-    c2.ok && cTicket !== null && c2.ticket.joinedAt === cTicket.joinedAt
+    c2.ok && cTicket !== null && c2.ticket?.joinedAt === cTicket.joinedAt
   );
   check("rejoin keeps the planet and token", rowC?.welcomePlanet === cTicket!.planet && rowC?.shareToken === cTicket!.shareToken);
   check("rejoin never credits a referrer", rowC?.referredById === null);
@@ -190,18 +217,22 @@ async function joinPath() {
   await db.insert(interestListSignups).values({ email: `${PREFIX}legacy@example.test`, unsubscribeToken: generateUnsubscribeToken(), welcomePlanet: "saturn" });
   const legacy = await joinInterestListCore({ ...base, email: `${PREFIX}legacy@example.test` }, ctx("legacy"));
   const rowL = await rowFor(`${PREFIX}legacy@example.test`);
-  check("legacy row is minted a share token", legacy.ok && Boolean(rowL?.shareToken) && legacy.ticket.shareToken === rowL?.shareToken);
-  check("legacy mint sends no mail", !sent.some((s) => s.email === `${PREFIX}legacy@example.test`));
+  check("legacy row is minted a share token", legacy.ok && legacy.emailed === true && Boolean(rowL?.shareToken));
+  check("legacy mint sends no welcome", !sent.some((s) => s.email === `${PREFIX}legacy@example.test`));
+  check(
+    "…but mails the new pass",
+    passes.some((p) => p.email === `${PREFIX}legacy@example.test` && p.links.ticketUrl.includes(`me=${rowL?.shareToken}`))
+  );
 
   // --- honeypot, too fast: ok, plausible ticket, no row
   const rowsBefore = (await db.select().from(interestListSignups)).length;
   const bot = await joinInterestListCore({ ...base, website: "http://spam", email: `${PREFIX}bot@example.test` }, ctx("bot"));
   const fast = await joinInterestListCore({ ...base, elapsedMs: 10, email: `${PREFIX}fast@example.test` }, ctx("fast"));
-  check("honeypot answers ok with a ticket", bot.ok && bot.ticket.number > 0 && bot.ticket.shareToken.length > 10);
-  check("too-fast answers ok with a ticket", fast.ok && fast.ticket.referrals === 0 && !fast.ticket.frontWave);
-  check("a fake ticket stands at the back of the line", fast.ok && fast.ticket.position === (await readInterestProof()).count + 1);
+  check("honeypot answers ok with a ticket", bot.ok && bot.ticket!.number > 0 && bot.ticket!.shareToken.length > 10);
+  check("too-fast answers ok with a ticket", fast.ok && fast.ticket!.referrals === 0 && !fast.ticket!.frontWave);
+  check("a fake ticket stands at the back of the line", fast.ok && fast.ticket!.position === (await readInterestProof()).count + 1);
   check("neither writes a row", (await db.select().from(interestListSignups)).length === rowsBefore);
-  check("fake tokens resolve to nothing", bot.ok && (await getTicketByShareToken(bot.ticket.shareToken)) === null);
+  check("fake tokens resolve to nothing", bot.ok && (await getTicketByShareToken(bot.ticket!.shareToken)) === null);
 
   // --- invalid email is the one visible error
   const bad = await joinInterestListCore({ ...base, email: "not-an-email" }, ctx("bad"));

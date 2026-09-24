@@ -131,6 +131,12 @@ export const RATE_LIMITS = {
    */
   interestJoin: { limit: 10, windowSec: 600 },
   /**
+   * The "here's your pass" email, keyed on a hash of the ADDRESS rather than the caller:
+   * anyone can type anyone's email, so this is what stops the form being used to fill a
+   * stranger's inbox. Two in ten minutes covers a person who asked twice.
+   */
+  interestPassEmail: { limit: 2, windowSec: 600 },
+  /**
    * Public API reads. Generous — a read is one or two indexed queries — but bounded, because
    * these endpoints are reachable by anyone holding a key and a polling integration with a
    * misconfigured interval is the normal failure mode, not an attack.

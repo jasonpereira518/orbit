@@ -4,13 +4,18 @@
  * script with a fake IP and a recording mail sender.
  *
  * WHAT A CALLER LEARNS. Every path that does not end in a visible validation error returns
- * `ok` with a ticket. A real join, a duplicate, an unsubscribed address rejoining, a bot
- * and a rate-limited caller all get the same shape, so which check a submit tripped is
- * not inferable from the response. What IS inferable, by design (see the spec's privacy
- * section): a duplicate gets its real ticket, whose number is below the current total —
- * membership of an address can be probed at ten tries per ten minutes per IP. The
- * address itself is never returned.
+ * `ok`. A real join, an unsubscribed address rejoining, a bot and a rate-limited caller
+ * all get a ticket of the same shape, so which check a submit tripped is not inferable
+ * from the response.
+ *
+ * An address ALREADY on the list gets `emailed` instead: its pass goes to its inbox, never
+ * onto the screen. It used to come back as the real ticket, which handed anyone who knew
+ * an address that person's pass and invite link. Membership of an address is still
+ * inferable, as it was before (see the spec's privacy section) — probed at ten tries per
+ * ten minutes per IP, and the pass email itself is capped per address
+ * (`RATE_LIMITS.interestPassEmail`) so the form cannot be used to fill a stranger's inbox.
  */
+import { createHash } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
@@ -27,6 +32,7 @@ import {
   type InterestListInput,
   type InterestListResult,
   type InterestTicket,
+  type PassEmailResult,
 } from "@/lib/interest-list";
 import {
   buildUnsubscribeUrl,
@@ -35,6 +41,7 @@ import {
   sendFriendJoinedEmail,
   sendFrontWaveEmail,
   sendInterestListWelcomeEmail,
+  sendPassEmail,
   type EmailLinks,
 } from "@/lib/interest-list-email";
 import {
@@ -83,6 +90,8 @@ export type JoinContext = {
   sendFounding?: FrontWaveSender;
   /** Injected by the smoke test; defaults to the real Resend send. */
   sendFriendJoined?: FriendJoinedSender;
+  /** Injected by the smoke test; defaults to the real Resend send. */
+  sendPass?: WelcomeSender;
 };
 
 const FORMAT_ERROR = "That address doesn't look right.";
@@ -245,6 +254,13 @@ export async function joinInterestListCore(
     return { ok: true, ticket: await plausibleTicket() };
   }
 
+  // 7. Already on the list: the pass goes to the address's own inbox, never onto the
+  //    screen of whoever typed it.
+  if (!welcome) {
+    await mailPass({ ...row, shareToken: row.shareToken }, ctx);
+    return { ok: true, emailed: true };
+  }
+
   // Counted before the welcome, because the welcome states the place in line. But a throw
   // here must not cost the welcome: the row is durable now, and a retry would land on the
   // active branch, which sends nothing. So the welcome goes out without a number, and the
@@ -338,4 +354,84 @@ async function notifyReferrer(
   } catch (err) {
     console.error("[interest-list] referrer notice failed", err);
   }
+}
+
+/**
+ * Mails a waiting row its pass, at most `RATE_LIMITS.interestPassEmail` times per window
+ * per address. The bucket key is a hash, so the limiter table never holds an address.
+ * Never throws: every caller answers the same thing whether or not this sent.
+ */
+async function mailPass(
+  row: {
+    id: string;
+    email: string;
+    createdAt: Date;
+    unsubscribeToken: string;
+    welcomePlanet: string | null;
+    shareToken: string;
+  },
+  ctx: Pick<JoinContext, "sendPass">
+) {
+  try {
+    const key = createHash("sha256").update(row.email).digest("base64url");
+    await consumeBucket("interest.pass", key, RATE_LIMITS.interestPassEmail);
+  } catch (err) {
+    if (!isRateLimitedError(err)) console.error("[interest-list] pass limiter failed", err);
+    return;
+  }
+  try {
+    const ticket = await ticketForRow(row).catch(() => null);
+    const pageUrl = getWaitlistPageUrl();
+    await (ctx.sendPass ?? sendPassEmail)(
+      row.email,
+      buildUnsubscribeUrl(row.unsubscribeToken),
+      asWelcomePlanet(row.welcomePlanet),
+      {
+        ticketUrl: buildTicketUrl(pageUrl, row.shareToken),
+        shareUrl: buildShareUrl(pageUrl, row.shareToken),
+      },
+      ticket?.position ?? null
+    );
+  } catch (err) {
+    console.error("[interest-list] pass email failed", err);
+  }
+}
+
+const passEmailSchema = interestListSchema.pick({ email: true, website: true, elapsedMs: true });
+
+/**
+ * "Already on the list? Email me my pass." Answers `ok` for every well-formed address —
+ * on the list or not, bot or not, limited or not — so the form reveals nothing; only the
+ * address's own inbox learns whether it was there. It never adds anyone to the list.
+ */
+export async function emailPassCore(
+  input: { email: string; website: string; elapsedMs: number },
+  ctx: Pick<JoinContext, "ip" | "sendPass">
+): Promise<PassEmailResult> {
+  if (typeof input.website === "string" && input.website.length > 0) return { ok: true };
+  const parsed = passEmailSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: FORMAT_ERROR };
+  if (parsed.data.elapsedMs < MIN_FILL_MS) return { ok: true };
+  try {
+    // The join's bucket: one budget per IP for everything that looks an address up.
+    await consumeBucket("interest.join", ctx.ip, RATE_LIMITS.interestJoin);
+  } catch (err) {
+    if (isRateLimitedError(err)) console.warn("[interest-list] pass request rate-limited", { ipTag: ipLogTag(ctx.ip) });
+    else console.error("[interest-list] limiter failed", err);
+    return { ok: true };
+  }
+
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(interestListSignups)
+    .where(
+      and(
+        eq(interestListSignups.email, parsed.data.email.trim().toLowerCase()),
+        isNull(interestListSignups.unsubscribedAt)
+      )
+    )
+    .limit(1);
+  if (row?.shareToken) await mailPass({ ...row, shareToken: row.shareToken }, ctx);
+  return { ok: true };
 }

@@ -3,8 +3,8 @@
 import { clientIpFrom } from "@/lib/client-ip";
 import { cookies, headers } from "next/headers";
 import { ATTRIBUTION_COOKIE, parseAttribution } from "@/lib/attribution-parse";
-import type { InterestListInput, InterestListResult } from "@/lib/interest-list";
-import { joinInterestListCore } from "@/lib/interest-list-join";
+import type { InterestListInput, InterestListResult, PassEmailResult } from "@/lib/interest-list";
+import { emailPassCore, joinInterestListCore } from "@/lib/interest-list-join";
 
 /**
  * The request-reading half of the join. Everything that decides what happens lives in
@@ -20,4 +20,13 @@ export async function joinInterestList(
   const attribution = parseAttribution(cookieStore.get(ATTRIBUTION_COOKIE)?.value ?? null);
 
   return joinInterestListCore(input, { ip, attribution });
+}
+
+/** "Email me my pass" — the lookup and the answer live in `emailPassCore`. */
+export async function emailMyPass(input: {
+  email: string;
+  website: string;
+  elapsedMs: number;
+}): Promise<PassEmailResult> {
+  return emailPassCore(input, { ip: clientIpFrom(await headers()) });
 }

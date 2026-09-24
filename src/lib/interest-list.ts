@@ -87,9 +87,17 @@ export type InterestTicket = {
   shareToken: string;
 };
 
+/**
+ * `emailed`: the address was already on the list, so its pass went to its inbox rather
+ * than onto the screen of whoever typed it.
+ */
 export type InterestListResult =
-  | { ok: true; ticket: InterestTicket }
+  | { ok: true; ticket: InterestTicket; emailed?: never }
+  | { ok: true; emailed: true; ticket?: never }
   | { ok: false; message: string };
+
+/** What "email me my pass" answers: always the same, whether or not the address is on the list. */
+export type PassEmailResult = { ok: true } | { ok: false; message: string };
 
 /**
  * `pageUrl` is the waitlist page itself — `https://<waitlist host>/` in production,

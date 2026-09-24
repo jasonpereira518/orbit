@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
-import { joinInterestList } from "@/actions/interest-list";
+import { emailMyPass, joinInterestList } from "@/actions/interest-list";
 import { BoardingPass } from "@/components/interest/boarding-pass";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { ProofLine } from "@/components/interest/proof-line";
@@ -36,6 +36,8 @@ const buttonClass =
 
 const GENERIC_ERROR = "Something went wrong — please try again.";
 const FORMAT_ERROR = "That address doesn't look right.";
+const ALREADY_NOTICE = "You're already on the list — we've emailed you a link to your pass.";
+const RECOVER_NOTICE = "If that address is on the list, a link to your pass is on its way.";
 
 type Phase = "form" | "turning" | "ticket";
 
@@ -54,8 +56,10 @@ type Phase = "form" | "turning" | "ticket";
  * memory of the same name).
  *
  * The success path never promises an email: `joinInterestList` answers `ok` with a ticket
- * for a duplicate, a rate-limited caller and a bot alike — by design — and the welcome
- * mail is best-effort on top of that.
+ * for a rate-limited caller and a bot alike — by design — and the welcome mail is
+ * best-effort on top of that. An address already on the list answers `emailed`: its pass
+ * goes to its inbox, never onto this screen. "Email me my pass" (`mode: "recover"`) asks
+ * for the same email without joining, and answers the same thing for every address.
  */
 export function InterestHero({
   initial,
@@ -76,6 +80,10 @@ export function InterestHero({
   const [entrance, setEntrance] = useState<"flip" | "direct">("direct");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** "join" adds to the list; "recover" only asks for an existing pass by email. */
+  const [mode, setMode] = useState<"join" | "recover">("join");
+  /** What the last submit settled to when it did not become a pass on screen. */
+  const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [rowScope, animateRow] = useAnimate();
 
@@ -134,17 +142,25 @@ export function InterestHero({
       return;
     }
     setError(null);
+    setNotice(null);
+    const website = String(data.get("website") ?? "");
+    const elapsedMs = readyAt.current ? Date.now() - readyAt.current : 0;
 
     startTransition(async () => {
       try {
-        const result = await joinInterestList({
-          email: address,
-          website: String(data.get("website") ?? ""),
-          elapsedMs: readyAt.current ? Date.now() - readyAt.current : 0,
-          ref: ref ?? undefined,
-        });
+        if (mode === "recover") {
+          const sent = await emailMyPass({ email: address, website, elapsedMs });
+          if (!sent.ok) fail(sent.message);
+          else setNotice(RECOVER_NOTICE);
+          return;
+        }
+        const result = await joinInterestList({ email: address, website, elapsedMs, ref: ref ?? undefined });
         if (!result.ok) {
           fail(result.message);
+          return;
+        }
+        if (result.emailed) {
+          setNotice(ALREADY_NOTICE);
           return;
         }
         // Measure while the button is still on screen: the state change below unmounts
@@ -217,7 +233,13 @@ export function InterestHero({
         {/* Lives outside the swap so it exists before its text changes — a live region
             that mounts already populated is not announced. */}
         <p role="status" aria-live="polite" className="sr-only">
-          {pending ? "Joining the waitlist…" : showTicket ? "You're on the waitlist." : ""}
+          {pending
+            ? mode === "recover"
+              ? "Sending your pass…"
+              : "Joining the waitlist…"
+            : showTicket
+              ? "You're on the waitlist."
+              : (notice ?? "")}
         </p>
 
         <div className="interest-flip-stage mx-auto max-w-xl">
@@ -267,10 +289,12 @@ export function InterestHero({
                 ) : null}
 
                 <p className="text-xs uppercase tracking-[0.16em] text-landing-accent">
-                  Join the waitlist
+                  {mode === "recover" ? "Find your pass" : "Join the waitlist"}
                 </p>
                 <p className="mt-2 text-lg text-[#e8f3f1]">
-                  We&apos;ll only email you about your place in line.
+                  {mode === "recover"
+                    ? "We'll email a link to your pass to the address you joined with."
+                    : "We'll only email you about your place in line."}
                 </p>
 
                 <div ref={rowScope} className="mt-5 flex flex-col gap-3 sm:flex-row">
@@ -313,8 +337,10 @@ export function InterestHero({
                             <span className="absolute left-1/2 top-0 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-current" />
                           </span>
                         </span>
-                        Joining…
+                        {mode === "recover" ? "Sending…" : "Joining…"}
                       </>
+                    ) : mode === "recover" ? (
+                      "Email my pass"
                     ) : (
                       "Join the waitlist"
                     )}
@@ -335,9 +361,25 @@ export function InterestHero({
                   <p id="interest-error" role="alert" className="mt-3 text-sm text-[#e8a84e]">
                     {error}
                   </p>
-                ) : (
+                ) : notice ? (
+                  <p className="mt-3 text-sm text-landing-accent">{notice}</p>
+                ) : mode === "join" ? (
                   <ProofLine proof={initial.proof} showCount={showCount} />
-                )}
+                ) : null}
+
+                <p className="mt-3 text-center text-xs text-[#6d807c]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode(mode === "recover" ? "join" : "recover");
+                      setError(null);
+                      setNotice(null);
+                    }}
+                    className="underline decoration-[#6d807c]/50 underline-offset-2 transition-colors hover:text-[#9aada8]"
+                  >
+                    {mode === "recover" ? "Not on the list yet? Join instead" : "Already on the list? Email me my pass"}
+                  </button>
+                </p>
               </motion.form>
             )}
           </motion.div>

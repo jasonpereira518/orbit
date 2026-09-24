@@ -298,6 +298,33 @@ export function buildFriendJoinedEmail(input: {
 }
 
 /**
+ * The way back to a pass: sent when someone already on the list enters their address
+ * again, or asks for it. The pass itself never appears on screen for a typed address —
+ * whoever types it may not own it — so the link goes to the inbox that does.
+ */
+export function buildPassEmail(input: {
+  unsubscribeUrl: string;
+  planet: WelcomePlanet;
+  links: EmailLinks;
+  position: number | null;
+}) {
+  const place = input.position ? `You're #${formatTicketNumber(input.position)} on the waitlist. ` : "";
+  return referralEmail({
+    unsubscribeUrl: input.unsubscribeUrl,
+    planet: input.planet,
+    links: input.links,
+    subject: "Your pass",
+    headline: "Here's your pass.",
+    preheader: "Your way back to your place in line.",
+    paragraphs: [
+      `${place}Your pass shows where you stand and how many friends have joined with your link. Keep this email — it's your way back.`,
+      `When ${FRONT_WAVE_REFERRALS} friends join with your invite link, you're in the front wave; at ${FOUNDING_REFERRALS}, you earn a founding-member badge.`,
+    ],
+    invite: true,
+  });
+}
+
+/**
  * Who waitlist mail is from: `WAITLIST_FROM_EMAIL`, on the waitlist's own domain. A bare
  * address is given Jason's name; one that already carries a display name is left as is.
  *
@@ -324,7 +351,7 @@ export function waitlistReplyTo(): string | undefined {
  * its signup row is durable either way and a Resend hiccup must not fail the submission.
  */
 async function deliver(
-  kind: "welcome" | "front-wave" | "founding" | "friend-joined",
+  kind: "welcome" | "front-wave" | "founding" | "friend-joined" | "pass",
   email: string,
   unsubscribeUrl: string,
   message: { subject: string; html: string; text: string }
@@ -433,4 +460,15 @@ export async function sendFriendJoinedEmail(
     unsubscribeUrl,
     buildFriendJoinedEmail({ unsubscribeUrl, planet, links, referrals })
   );
+}
+
+/** Best-effort, like the welcome. Returns whether it sent. */
+export async function sendPassEmail(
+  email: string,
+  unsubscribeUrl: string,
+  planet: WelcomePlanet,
+  links: EmailLinks,
+  position: number | null
+): Promise<boolean> {
+  return deliver("pass", email, unsubscribeUrl, buildPassEmail({ unsubscribeUrl, planet, links, position }));
 }

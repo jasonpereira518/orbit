@@ -82,6 +82,8 @@ async function main() {
   check("welcome: explains the front wave", numbered.text.includes("front wave"));
   assertClean("front wave", email.buildFrontWaveEmail({ unsubscribeUrl: leave, planet: "mars", links }));
   assertClean("founding", email.buildFoundingEmail({ unsubscribeUrl: leave, planet: "mars", links }));
+  assertClean("pass", email.buildPassEmail({ unsubscribeUrl: leave, planet: "mars", links, position: 42 }));
+  assertClean("pass (no count)", email.buildPassEmail({ unsubscribeUrl: leave, planet: "mars", links, position: null }));
   for (const referrals of [1, 2, 4, 9]) {
     assertClean(`friend joined (${referrals})`, email.buildFriendJoinedEmail({ unsubscribeUrl: leave, planet: "mars", links, referrals }));
   }
