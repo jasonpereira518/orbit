@@ -29,7 +29,8 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -78,6 +79,10 @@ const DEV_SECRET = "behavior-golden-secret";
 // to EXTENSION_DEV_USER_ID. The demo workspace is seeded explicitly below, so the
 // automatic one-on-first-request seeding is switched off.
 const env = process.env as Record<string, string | undefined>;
+// A database of its own, even inside `run-smoke.ts`, which shares one PGlite directory across
+// the whole tier: other scripts write `demo-user` rows and global settings, and a snapshot
+// has to start from the same empty database every time. (Read when the db first opens.)
+env.ORBIT_PGLITE_DIR = mkdtempSync(join(tmpdir(), "orbit-golden-"));
 env.NODE_ENV = "development";
 env.EXTENSION_DEV_SECRET = DEV_SECRET;
 env.EXTENSION_DEV_USER_ID = USER;
