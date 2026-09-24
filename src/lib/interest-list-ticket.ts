@@ -35,6 +35,8 @@ export type InterestProof = {
   total: number;
   /** The last three planets handed out, newest first. */
   recent: WelcomePlanet[];
+  /** People who joined in the last 24 hours and are still waiting — the momentum line. */
+  today: number;
 };
 
 export type SignupRowForTicket = {
@@ -187,7 +189,7 @@ export async function getInviterPlanet(token: string): Promise<WelcomePlanet | n
   return row ? asWelcomePlanet(row.welcomePlanet) : null;
 }
 
-/** Uncached. Two counts, one three-row read. */
+/** Uncached. Three counts, one three-row read. */
 export async function readInterestProof(): Promise<InterestProof> {
   const db = await getDb();
   const [[totals], recentRows] = await Promise.all([
@@ -195,6 +197,7 @@ export async function readInterestProof(): Promise<InterestProof> {
       .select({
         total: countInt,
         waiting: sql<number>`count(*) FILTER (WHERE ${interestListSignups.unsubscribedAt} IS NULL)::int`,
+        today: sql<number>`count(*) FILTER (WHERE ${interestListSignups.unsubscribedAt} IS NULL AND ${interestListSignups.createdAt} > now() - interval '24 hours')::int`,
       })
       .from(interestListSignups),
     db
@@ -207,6 +210,7 @@ export async function readInterestProof(): Promise<InterestProof> {
     count: totals?.waiting ?? 0,
     total: totals?.total ?? 0,
     recent: recentRows.map((r) => asWelcomePlanet(r.planet)),
+    today: totals?.today ?? 0,
   };
 }
 

@@ -341,6 +341,9 @@ export function InterestHero({
               </motion.form>
             )}
           </motion.div>
+          {/* The pass keeps the proof line too: the count is the momentum a sharer is
+              selling, so it should be in view while they share. */}
+          {showTicket ? <ProofLine proof={initial.proof} showCount={showCount} /> : null}
         </div>
       </section>
     </>

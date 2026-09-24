@@ -21,6 +21,7 @@ import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
 import {
   getTicketByShareToken,
   invalidateInterestProof,
+  readInterestProof,
   readStandings,
 } from "../src/lib/interest-list-ticket";
 import {
@@ -138,6 +139,11 @@ async function main() {
   const notesBefore = friendMail.length;
   await join("friend-past", ref3);
   check("past the last tier, friends are not news", friendMail.length === notesBefore && foundingMail.length === 1);
+
+  console.log("\njoined today…");
+  const proof = await readInterestProof();
+  check("today counts the friends who just joined", proof.today >= FOUNDING_REFERRALS + 1, String(proof.today));
+  check("…but not the seeds from 2020", proof.today <= proof.count - 3, `${proof.today} of ${proof.count}`);
 
   console.log("\nleaving…");
   // All but two friends leave: the referrer drops out of both tiers, to their join-order place.

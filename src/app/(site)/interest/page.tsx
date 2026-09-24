@@ -94,7 +94,7 @@ const HEADING =
 
 /** What the proof line degrades to if the database read fails: count 0 stays below the
  * floor, so the count itself is hidden. */
-const EMPTY_PROOF: InterestProof = { count: 0, total: 0, recent: [] };
+const EMPTY_PROOF: InterestProof = { count: 0, total: 0, recent: [], today: 0 };
 
 /** High level on purpose: what it is for, never what it does or how. */
 const PILLARS = [

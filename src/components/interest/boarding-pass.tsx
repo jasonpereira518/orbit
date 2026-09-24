@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Moons } from "@/components/interest/moons";
+import { MovedUp } from "@/components/interest/moved-up";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { RollingCount } from "@/components/interest/proof-line";
 import { ShareRow } from "@/components/interest/share-row";
@@ -150,6 +151,8 @@ export function BoardingPass({
             {frontWaveLine(ticket.referrals)}
           </span>
         </motion.p>
+
+        <MovedUp shareToken={ticket.shareToken} position={ticket.position} />
 
         {ticket.frontWave && !ticket.founding ? (
           <motion.div {...rise(1.1)} className="mt-3">

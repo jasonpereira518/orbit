@@ -3,13 +3,15 @@
 import { useEffect, useState } from "react";
 import { animate, motion, useMotionValue, useTransform } from "motion/react";
 import { PlanetArt } from "@/components/interest/planet-art";
-import { formatTicketNumber } from "@/lib/interest-list";
+import { INTEREST_LIST_TODAY_FLOOR, formatTicketNumber } from "@/lib/interest-list";
 import type { InterestProof } from "@/lib/interest-list-ticket";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 /**
- * "1,284 people on the waitlist", or "Opening in waves" below the count floor.
+ * "1,284 people on the waitlist · 37 joined today", or "Opening in waves" below the count
+ * floor. The day's count only shows alongside the total, and only from
+ * `INTEREST_LIST_TODAY_FLOOR` up.
  *
  * The server renders the final number; after hydration the digits roll up from a few
  * dozen below, once. The roll starts in an effect, never in render, so the HTML and the
@@ -31,6 +33,9 @@ export function ProofLine({ proof, showCount }: { proof: InterestProof; showCoun
       {showCount ? (
         <span>
           <RollingCount value={proof.count} /> people on the waitlist
+          {proof.today >= INTEREST_LIST_TODAY_FLOOR ? (
+            <> · {formatTicketNumber(proof.today)} joined today</>
+          ) : null}
         </span>
       ) : (
         <span>Opening in waves</span>

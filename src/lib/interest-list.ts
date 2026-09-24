@@ -15,6 +15,12 @@ export const MIN_FILL_MS = 2500;
 /** Below this many people on the waitlist the proof line shows no count at all. */
 export const INTEREST_LIST_COUNT_FLOOR = 50;
 
+/**
+ * Below this many joins in a day the proof line leaves "joined today" out: a quiet day
+ * should read as nothing, not as a dead list.
+ */
+export const INTEREST_LIST_TODAY_FLOOR = 5;
+
 /** Share and ticket tokens are base64url of 32 bytes = 43 chars; this leaves headroom. */
 export const SHARE_TOKEN_MAX = 64;
 

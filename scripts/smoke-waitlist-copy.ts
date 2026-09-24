@@ -129,6 +129,7 @@ async function main() {
     "src/components/interest/moons.tsx",
     "src/components/interest/waitlist-skeleton.tsx",
     "src/components/interest/why-invite.tsx",
+    "src/components/interest/moved-up.tsx",
     "src/app/api/interest-list/ticket-image/route.tsx",
     "src/app/api/interest-list/unsubscribe/route.ts",
     "src/lib/interest-list.ts",
