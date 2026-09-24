@@ -189,6 +189,25 @@ export function stealthRedirects(env: Env = process.env): ConfigRedirect[] {
   return out;
 }
 
+/**
+ * LOCAL MIRROR. On `next dev`, `/waitlist` is the waitlist exactly as its own domain serves
+ * it — no Clerk, links kept under `/waitlist` — so it can be looked at on localhost without
+ * a hosts-file entry. The proxy rewrites these paths and sets `WAITLIST_MIRROR_HEADER`; the
+ * pages trust that header only on `next dev`, so it means nothing anywhere else.
+ */
+export const WAITLIST_MIRROR_HEADER = "x-waitlist-mirror";
+
+const LOCAL_MIRROR: Readonly<Record<string, string>> = {
+  "/waitlist": "/interest",
+  "/waitlist/privacy": "/interest/privacy",
+};
+
+/** The page a local-mirror path renders, or null when `pathname` is not one. */
+export function localMirrorTarget(pathname: string): string | null {
+  const bare = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  return LOCAL_MIRROR[bare] ?? null;
+}
+
 /** Pages that are public on the app host normally and need a session in stealth mode. */
 export const STEALTH_CLOSED_PAGES = ["/", "/pricing", "/connect", "/contact"] as const;
 

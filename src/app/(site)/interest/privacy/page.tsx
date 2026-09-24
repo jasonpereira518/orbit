@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { headers } from "next/headers";
 import { getWaitlistOrigin } from "@/lib/app-url";
-import { isWaitlistHostHeader } from "@/lib/waitlist-host";
+import { waitlistServed } from "@/lib/waitlist-served";
 
 /**
  * The waitlist's own privacy notice, served at `/privacy` on the waitlist domain.
@@ -67,8 +66,7 @@ const SECTIONS: ReadonlyArray<{ title: string; body: React.ReactNode }> = [
 ];
 
 export default async function WaitlistPrivacyPage() {
-  const onWaitlistHost = await servedOnWaitlistHost();
-  const home = onWaitlistHost ? "/" : "/interest";
+  const home = (await waitlistServed()).page;
 
   return (
     <div className="landing-root relative min-h-dvh bg-[#03050c] text-[#e8f3f1]">
@@ -103,18 +101,4 @@ export default async function WaitlistPrivacyPage() {
       </main>
     </div>
   );
-}
-
-/**
- * Whether this request came in on the waitlist's own domain. Outside a request — the page
- * smoke renders this function directly — there is no host, which reads as the app's.
- */
-async function servedOnWaitlistHost() {
-  let host: string | null = null;
-  try {
-    host = (await headers()).get("host");
-  } catch {
-    return false;
-  }
-  return isWaitlistHostHeader(host);
 }

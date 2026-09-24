@@ -17,6 +17,7 @@ import {
   STEALTH_CLOSED_PAGES,
   STEALTH_HIDDEN_API,
   isWaitlistHostHeader,
+  localMirrorTarget,
   stealthRedirects,
   waitlistHost,
   waitlistOrigin,
@@ -139,6 +140,15 @@ check(
 check("stealth closes the landing, pricing, connect and contact", ["/", "/pricing", "/connect", "/contact"].every((p) => (STEALTH_CLOSED_PAGES as readonly string[]).includes(p)));
 check("stealth hides the API schema", (STEALTH_HIDDEN_API as readonly string[]).includes("/api/v1/openapi.json"));
 check("every stealth redirect is temporary, so launch undoes it", redirects.every((r) => !r.permanent));
+
+console.log("\nThe local mirror (next dev only):");
+check("/waitlist renders the waitlist", localMirrorTarget("/waitlist") === "/interest");
+check("/waitlist/ does too", localMirrorTarget("/waitlist/") === "/interest");
+check("/waitlist/privacy renders its notice", localMirrorTarget("/waitlist/privacy") === "/interest/privacy");
+check(
+  "nothing else is mirrored — not the icon, not a neighbour",
+  ["/waitlist/icon.png", "/waitlists", "/waitlist/other", "/", "/interest"].every((p) => localMirrorTarget(p) === null)
+);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

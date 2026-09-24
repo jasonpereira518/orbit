@@ -7,8 +7,10 @@ import { isLocalhost } from "@/lib/demo-account";
 import {
   STEALTH_CLOSED_PAGES,
   STEALTH_HIDDEN_API,
+  WAITLIST_MIRROR_HEADER,
   isStealth,
   isWaitlistHostHeader,
+  localMirrorTarget,
 } from "@/lib/waitlist-host";
 import {
   ATTRIBUTION_COOKIE,
@@ -184,6 +186,19 @@ const appProxy = configured
  */
 export default function proxy(req: NextRequest, event: NextFetchEvent) {
   if (isWaitlistHostHeader(req.headers.get("host"))) return withPathname(req);
+  // `next dev` only: `/waitlist` is the waitlist as its own domain serves it, Clerk-free
+  // like the host above. See `localMirrorTarget` in waitlist-host.ts.
+  if (isLocalhost()) {
+    const target = localMirrorTarget(req.nextUrl.pathname);
+    if (target) {
+      const requestHeaders = new Headers(req.headers);
+      requestHeaders.set(WAITLIST_MIRROR_HEADER, "1");
+      requestHeaders.set("x-pathname", target);
+      const url = req.nextUrl.clone();
+      url.pathname = target;
+      return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
+    }
+  }
   return appProxy(req, event);
 }
 

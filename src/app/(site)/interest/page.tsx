@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { headers } from "next/headers";
 import { Clock3, Network, ShieldCheck } from "lucide-react";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
@@ -8,7 +7,7 @@ import { InterestHero, type HeroInitial } from "@/components/interest/interest-h
 import { RingsBackdrop } from "@/components/interest/rings-backdrop";
 import { WhyInvite } from "@/components/interest/why-invite";
 import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
-import { getWaitlistOrigin, getWaitlistPageUrl } from "@/lib/app-url";
+import { getWaitlistOrigin } from "@/lib/app-url";
 import {
   FOUNDING_REFERRALS,
   FRONT_WAVE_REFERRALS,
@@ -22,7 +21,7 @@ import {
   getTicketByShareToken,
   type InterestProof,
 } from "@/lib/interest-list-ticket";
-import { isWaitlistHostHeader } from "@/lib/waitlist-host";
+import { waitlistServed } from "@/lib/waitlist-served";
 
 // The proof line, the invited strip and the pass all come from the URL and the database
 // on every request. The proof memo (60 s) keeps the count query off the hot path.
@@ -174,11 +173,11 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
   const params = await searchParams;
   const me = tokenParam(params.me);
 
-  // Served at `/` on the waitlist's own domain, at `/interest` anywhere else (local
-  // development, the app host before stealth). Links on the page follow suit.
-  const onWaitlistHost = await servedOnWaitlistHost();
-  const pagePath = onWaitlistHost ? "/" : "/interest";
-  const privacyHref = onWaitlistHost ? "/privacy" : "/interest/privacy";
+  // Served at `/` on the waitlist's own domain, at `/waitlist` on the local mirror, at
+  // `/interest` anywhere else. Links on the page follow suit.
+  const served = await waitlistServed();
+  const pagePath = served.page;
+  const privacyHref = served.privacy;
 
   // The proof line never depends on either token, so it runs alongside the pass.
   const [proof, ticket] = await Promise.all([
@@ -218,7 +217,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
       <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 pt-6 md:px-10 md:pt-10">
         <div className="relative">
           <RingsBackdrop />
-          <InterestHero initial={initial} pageUrl={getWaitlistPageUrl()} pagePath={pagePath} />
+          <InterestHero initial={initial} pageUrl={served.pageUrl} pagePath={pagePath} />
         </div>
 
         <Reveal className="reveal-celestial mt-20 block">
@@ -302,18 +301,4 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
       </footer>
     </div>
   );
-}
-
-/**
- * Whether this request came in on the waitlist's own domain. Outside a request — the page
- * smoke renders this function directly — there is no host, which reads as the app's.
- */
-async function servedOnWaitlistHost() {
-  let host: string | null = null;
-  try {
-    host = (await headers()).get("host");
-  } catch {
-    return false;
-  }
-  return isWaitlistHostHeader(host);
 }
