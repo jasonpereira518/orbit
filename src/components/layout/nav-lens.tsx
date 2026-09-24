@@ -29,16 +29,24 @@ const REST_STRENGTH = 0.02;
 const LIFT_STRENGTH = 0.07;
 const STRENGTH_EASE = { duration: 0.22, ease: "easeOut" } as const;
 
-// The unfiltered copy laid over the resting lens (see `crispRef` below). It gets out of
-// the way fast on a press, so the refraction shows at once, and comes back once the lift
-// has mostly settled, so the release still reads as glass before it goes sharp.
-const CRISP_HIDE = { duration: 0.08, ease: "easeOut" } as const;
-const CRISP_SHOW = { duration: 0.18, delay: 0.12, ease: "easeOut" } as const;
+// How the sharp copy (see `crispRef` below) hands over on a press: it pulls in to the
+// lens's flat core fast, so the rim's refraction shows at once, and widens back once the
+// lift has mostly settled, so the release still reads as glass before it goes sharp.
+const CORE_IN = { duration: 0.12, ease: "easeOut" } as const;
+const CORE_OUT = { duration: 0.18, delay: 0.12, ease: "easeOut" } as const;
+// Where the sharp core's soft edge starts, as a fraction of its radius.
+const CORE_SOLID = 0.65;
+
+// `depth` is how far in from the rim the bend reaches; with no `curvature` the middle
+// inside it stays flat, not domed. That flat middle is what lets a sharp, unfiltered copy
+// stand in for it exactly (a dome would magnify, and the two would disagree), so the
+// lifted lens bends only at the rim and keeps a crisp centre. DEPTH is read below too.
+const DEPTH = 0.3;
 
 const OPTICS: Partial<GlassOptics> = {
   strength: REST_STRENGTH,
-  depth: 0.4,
-  curvature: 0.3,
+  depth: DEPTH,
+  curvature: 0,
   bend: 0.3,
   dispersion: 0.15,
   sheen: 0.35,
@@ -197,47 +205,56 @@ export default function NavLens({
     };
   }, [targetW, targetH, lifted, reducedMotion, w, h, shadow, strength]);
 
-  // A sharp copy of the row over the lens, cut to the lens's exact shape.
+  // A sharp copy of the row over the lens, so the lens's centre stays full resolution.
   //
   // Everything the lens shows comes through an SVG filter, and Safari renders filters at
-  // 1×: on a 3× iPhone the tab under a resting lens came out soft even at the faintest
-  // bend. So at rest this unfiltered copy covers the lens's content, and a press fades it
-  // out to reveal the glass. Its clip follows the lens every frame from the same motion
-  // values, so it can't lag or overhang the lens; only glyphs paint, so the rim and sheen
-  // still show around them. The two copies cross-fade rather than stack: the bent copy's
-  // glyphs showing around the sharp ones read as a soft halo, the very blur this removes.
+  // 1×: on a 3× iPhone whatever sat under the lens came out soft, pressed or not. So this
+  // unfiltered copy stands in wherever the lens isn't bending anything:
+  //   - at rest (`core` 0) it covers the whole lens, glyphs only, and the bent copy is
+  //     hidden (the two stacked read as a soft halo around each glyph);
+  //   - lifted (`core` 1) it pulls in to the flat middle, feathered, on its own patch of
+  //     lens fill, and the bent copy shows around it: refraction at the rim, sharp centre.
+  // Clip and mask follow the lens every frame from the same motion values, so it can't
+  // lag or overhang the lens.
   const crispRef = useRef<HTMLDivElement | null>(null);
+  const crispFillRef = useRef<HTMLDivElement | null>(null);
   const bentRef = useRef<HTMLDivElement | null>(null);
-  const crisp = useMotionValue(lifted ? 0 : 1);
+  const core = useMotionValue(lifted ? 1 : 0);
   useEffect(() => {
     const el = crispRef.current;
     if (!el) return;
     const place = () => {
       const lw = w.get();
       const lh = h.get();
+      const k = core.get();
       const left = x.get() * stageW - lw / 2;
       const top = y.get() * stageH - lh / 2;
       el.style.clipPath = `inset(${top}px ${stageW - left - lw}px ${stageH - top - lh}px ${left}px round ${lh / 2}px)`;
-    };
-    const setOpacity = (v: number) => {
-      el.style.opacity = String(v);
-      if (bentRef.current) bentRef.current.style.opacity = String(1 - v);
+      // At k=0 an ellipse bigger than the lens, solid throughout (no mask in effect); at
+      // k=1 the flat core inside the bend band, fading out towards it.
+      const rim = (DEPTH * Math.min(lw, lh)) / 2;
+      const rx = lw + (Math.max(1, lw / 2 - rim) - lw) * k;
+      const ry = lh + (Math.max(1, lh / 2 - rim) - lh) * k;
+      const solid = 100 + (CORE_SOLID * 100 - 100) * k;
+      const mask = `radial-gradient(ellipse ${rx}px ${ry}px at ${left + lw / 2}px ${top + lh / 2}px, #000 ${solid}%, transparent 100%)`;
+      el.style.maskImage = mask;
+      el.style.setProperty("-webkit-mask-image", mask);
+      if (crispFillRef.current) crispFillRef.current.style.opacity = String(k);
+      if (bentRef.current) bentRef.current.style.opacity = String(k);
     };
     place();
-    setOpacity(crisp.get());
-    const subs = [x, y, w, h].map((v) => v.on("change", place));
-    subs.push(crisp.on("change", setOpacity));
+    const subs = [x, y, w, h, core].map((v) => v.on("change", place));
     return () => subs.forEach((unsubscribe) => unsubscribe());
-  }, [x, y, w, h, crisp, stageW, stageH]);
+  }, [x, y, w, h, core, stageW, stageH]);
   useEffect(() => {
-    const target = lifted ? 0 : 1;
+    const target = lifted ? 1 : 0;
     if (reducedMotion) {
-      crisp.jump(target);
+      core.jump(target);
       return;
     }
-    const a = animate(crisp, target, lifted ? CRISP_HIDE : CRISP_SHOW);
+    const a = animate(core, target, lifted ? CORE_IN : CORE_OUT);
     return () => a.stop();
-  }, [lifted, reducedMotion, crisp]);
+  }, [lifted, reducedMotion, core]);
 
   const face = (
     <TabRowFace
@@ -271,7 +288,7 @@ export default function NavLens({
             // above has run, so it takes its starting opacity as it attaches.
             ref={(el) => {
               bentRef.current = el;
-              if (el) el.style.opacity = String(1 - crisp.get());
+              if (el) el.style.opacity = String(core.get());
             }}
             style={facePadding}
           >
@@ -292,7 +309,12 @@ export default function NavLens({
         onLensMapChange={(url) => onReady(url !== null)}
       />
       <div ref={crispRef} className="absolute inset-0" style={facePadding}>
-        {face}
+        <div
+          ref={crispFillRef}
+          className="absolute inset-0"
+          style={{ background: "var(--nav-lens-fill)", opacity: 0 }}
+        />
+        <div className="relative">{face}</div>
       </div>
     </div>
   );
