@@ -73,10 +73,8 @@ import {
 } from "@/lib/graph/sky-selection";
 import { starSubtitle, starVisual, zoomRelief } from "@/lib/graph/star-style";
 import { markGraphViewportReady } from "@/lib/graph/intro-signal";
-import {
-  markFirstPaintThenInteractive,
-  markOpenStage,
-} from "@/lib/graph/open-marks";
+import { markOpenStage } from "@/lib/graph/open-marks";
+import { markFirstPaintThenInteractive } from "@/lib/graph/open-marks-paint";
 import { CAMERA_MS } from "@/lib/motion";
 import { Loader2 } from "lucide-react";
 

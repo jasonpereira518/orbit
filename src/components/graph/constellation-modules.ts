@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
+import type { GraphPayload } from "@/components/graph/graph-chart-types";
 
 /**
  * The constellation's lazily-loaded code — the chart shell and its two renderers — loaded ahead
@@ -27,6 +28,7 @@ import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
 type NetworkGraphModule = typeof import("@/components/graph/network-graph");
 type FlowModule = typeof import("@/components/graph/graph-canvas-flow");
 type MobileModule = typeof import("@/components/graph/graph-canvas-mobile");
+type LayoutModule = typeof import("@/lib/graph/sky-layout");
 
 type Slot<M> = {
   module: M | null;
@@ -55,6 +57,12 @@ const slots = {
     error: null,
     load: () => import("@/components/graph/graph-canvas-mobile"),
   } as Slot<MobileModule>,
+  layout: {
+    module: null,
+    promise: null,
+    error: null,
+    load: () => import("@/lib/graph/sky-layout"),
+  } as Slot<LayoutModule>,
 };
 
 type SlotName = keyof typeof slots;
@@ -94,17 +102,51 @@ function rendererFor(smallSky: boolean): "flow" | "mobile" {
 }
 
 /**
- * Start fetching the chart shell and this viewport's renderer. Idempotent, and cheap once done.
- * Call it as early as the page knows the chart is coming.
+ * Whether a download nobody has asked for yet is welcome on this connection.
+ *
+ * The early preload fetches ~200KB of chart code while the payload is still on its way; leave
+ * the page before it arrives and that code went unused this visit. It stays in the HTTP cache
+ * (`/_next/static` is immutable), so the next visit to the chart gets it free, but on a metered
+ * or 2G link the speculation is not worth it: there the code waits for the payload, as it did.
  */
-export function preloadConstellation() {
+function speculationWelcome() {
+  const connection = (
+    navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }
+  ).connection;
+  if (!connection) return true;
+  if (connection.saveData) return false;
+  return !/2g$/.test(connection.effectiveType ?? "");
+}
+
+/**
+ * Start fetching the chart shell, its layout, and this viewport's renderer. Idempotent, and cheap
+ * once done. `speculative` marks a call made before the page knows the chart will be drawn (from
+ * `ConstellationIntro`, ahead of the payload); those are skipped where data is precious.
+ */
+export function preloadConstellation({ speculative = false } = {}) {
   if (typeof window === "undefined") return;
-  void load("shell").catch(() => {});
-  void load(rendererFor(window.matchMedia(SMALL_SKY_QUERY).matches)).catch(() => {});
+  if (speculative && !speculationWelcome()) return;
+  const start = () => {
+    void load("shell").catch(() => {});
+    void load("layout").catch(() => {});
+    void load(rendererFor(window.matchMedia(SMALL_SKY_QUERY).matches)).catch(() => {});
+  };
+  if (!speculative) return start();
+  // Behind whatever the page is doing as it hydrates — above all, fetching and parsing the
+  // payload this code is for. Started in the same task, the chunk requests went out first and
+  // their evaluation landed in the payload's way, which cost the data 6–13ms at the sizes
+  // benchmarked. A background task is still well inside the payload's own round trip.
+  const scheduler = (
+    globalThis as {
+      scheduler?: { postTask?: (cb: () => void, o: { priority: string }) => unknown };
+    }
+  ).scheduler;
+  if (typeof scheduler?.postTask === "function") scheduler.postTask(start, { priority: "background" });
+  else window.setTimeout(start, 0);
 }
 
 /** The module in `name`'s slot, or null; loaded on demand only while `wanted`. */
-function useSlot<K extends SlotName>(name: K, wanted = true) {
+export function useSlot<K extends SlotName>(name: K, wanted = true) {
   const mod = useSyncExternalStore(
     subscribe,
     () => slots[name].module as (typeof slots)[K]["module"],
@@ -127,15 +169,28 @@ export function useNetworkGraphModule() {
   return useSlot("shell");
 }
 
+
 /**
- * The renderer for this viewport, as `{ Chart }` (render `<renderer.Chart />`), or null until
- * its chunk has loaded. `Chart` is a module export, so its identity is stable across renders.
+ * Whether the opening sky's layout is ready for `payload`, computing it (in slices, see
+ * `precomputeSkyLayout`) the moment both the payload and the layout code are here. Hold the chart
+ * until it is, and its first render finds the layout waiting instead of computing it inline.
+ *
+ * A failed or abandoned precompute still reports ready: the chart then lays out in render, as it
+ * always did, and any real error surfaces there.
  */
-export function useSkyRenderer(smallSky: boolean) {
-  // Both hooks run so their order is fixed, but only the chosen renderer is ever requested: a
-  // phone must not download React Flow, nor a laptop the canvas renderer.
-  const flow = useSlot("flow", !smallSky);
-  const mobile = useSlot("mobile", smallSky);
-  if (smallSky) return mobile ? { Chart: mobile.GraphCanvasMobile } : null;
-  return flow ? { Chart: flow.GraphCanvasFlow } : null;
+export function useSkyLayoutReady(payload: GraphPayload | null): boolean {
+  const layout = useSlot("layout", payload !== null);
+  const [settled, setSettled] = useState<GraphPayload | null>(null);
+  useEffect(() => {
+    if (!layout || !payload) return;
+    const abort = new AbortController();
+    const settle = () => {
+      if (!abort.signal.aborted) setSettled(payload);
+    };
+    layout.precomputeSkyLayout(payload, abort.signal).then(settle, settle);
+    return () => abort.abort();
+  }, [layout, payload]);
+  if (!payload) return true;
+  if (settled === payload) return true;
+  return layout?.cachedSkyLayout(payload.contacts, payload.summary.userName) != null;
 }

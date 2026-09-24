@@ -13,6 +13,7 @@ import {
 import {
   preloadConstellation,
   useNetworkGraphModule,
+  useSkyLayoutReady,
 } from "@/components/graph/constellation-modules";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
@@ -77,6 +78,9 @@ export function NetworkGraphLazy({
 
   // Loaded without a Suspense boundary — see constellation-modules.ts for why that matters.
   const graph = useNetworkGraphModule();
-  if (!graph) return <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />;
+  const layoutReady = useSkyLayoutReady(initialData);
+  if (!graph || !layoutReady) {
+    return <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />;
+  }
   return <graph.NetworkGraph initialData={initialData} />;
 }

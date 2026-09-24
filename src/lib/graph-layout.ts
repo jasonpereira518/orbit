@@ -17,7 +17,8 @@ import {
   mixWithWhite,
   withAlpha,
 } from "@/lib/school-color";
-import { hashUnit, hashUnitStream } from "@/lib/hash";
+import { hashUnit } from "@/lib/hash";
+import { hashUnitStream } from "@/lib/hash-stream";
 
 export { orderConstellationMembers };
 
@@ -653,12 +654,46 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
  * - Deep Space and singletons rim the sky beyond the last shell.
  * - Nothing overlaps: stars, figures, and lines all keep their distance.
  */
+export type HybridGraphLayout = { nodes: LayoutNode[]; edges: LayoutEdge[] };
+
 export function buildHybridGraphLayout(
   contacts: GraphContactInput[],
   userName: string
-): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
+): HybridGraphLayout {
+  const steps = buildHybridGraphLayoutSteps(contacts, userName);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/**
+ * `buildHybridGraphLayout`, one phase at a time: it yields between phases so a caller can give
+ * the main thread back in between (`src/lib/graph/sky-layout.ts`). At 10,000 contacts the whole
+ * layout is ~50ms in one piece — a long task on its own — and no phase is more than ~15ms.
+ * Drained without pausing, it is exactly the synchronous layout.
+ */
+export function* buildHybridGraphLayoutSteps(
+  contacts: GraphContactInput[],
+  userName: string
+): Generator<void, HybridGraphLayout, void> {
+  // `clusterBrandColor` normalises, looks up and mixes a colour on every call, and a layout asks
+  // about each cluster once for itself and again for every line of its figure. Scoped to this
+  // one layout, so it neither outlives it nor ships to pages that never lay out a sky.
+  const brandMemo = new Map<string, string>();
+  const brandOf = (name: string, kind?: string) => {
+    const key = `${kind ?? ""}|${name}`;
+    let color = brandMemo.get(key);
+    if (color === undefined) {
+      color = clusterBrandColor(name, kind);
+      brandMemo.set(key, color);
+    }
+    return color;
+  };
+
   const fit = buildConstellationFit(contacts);
   const { byContactId, fits } = fit;
+  yield;
 
   const eligible = fit.clusters.filter((c) => fits.has(c.id));
   const satellites = familySatellites(contacts, eligible);
@@ -666,6 +701,7 @@ export function buildHybridGraphLayout(
     ...buildClusterGeometry(fits.get(cluster.id)!, satellites.get(cluster.id)),
     family: clusterFamily(cluster),
   }));
+  yield;
   const { centers, skyEdge } = packClusterShells(geoms);
 
   const positions = new Map<string, PolarPosition>();
@@ -703,11 +739,12 @@ export function buildHybridGraphLayout(
     }
   }
 
+  yield;
   const clusterNodes: LayoutNode[] = [];
   const clusterColorById = new Map<string, string>();
   for (const geom of geoms) {
     const cluster = geom.cluster;
-    const color = clusterBrandColor(cluster.name, cluster.kind);
+    const color = brandOf(cluster.name, cluster.kind);
     clusterColorById.set(cluster.id, color);
 
     const memberPositions = cluster.contactIds
@@ -866,6 +903,7 @@ export function buildHybridGraphLayout(
 
   // Constellation path edges only — brand-tinted lines along each figure,
   // synthesized from the same fit that placed the stars.
+  yield;
   const edges: LayoutEdge[] = [];
   for (const fitEdge of constellationFitEdges(fit)) {
     const reason = fitEdge.clusterKind === "school" ? "school" : "company";
@@ -877,7 +915,7 @@ export function buildHybridGraphLayout(
       company: fitEdge.clusterName,
     };
     const layoutEdge = peerEdgeToLayoutEdge(peer);
-    const brand = clusterBrandColor(fitEdge.clusterName, reason);
+    const brand = brandOf(fitEdge.clusterName, reason);
     edges.push({
       ...layoutEdge,
       type: "labeled",

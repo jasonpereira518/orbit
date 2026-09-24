@@ -37,7 +37,7 @@ import {
 import type { GraphNodeData } from "@/lib/graph-layout";
 import { Starfield } from "@/components/graph/constellation-starfield";
 import { useSmallSky } from "@/components/graph/use-small-sky";
-import { useSkyRenderer } from "@/components/graph/constellation-modules";
+import { useSkyRenderer } from "@/components/graph/use-sky-renderer";
 import {
   buildContactHaystackIndex,
   findClusterMatch,

@@ -76,33 +76,16 @@ export function skyBrandColor(brand: Brand): string {
   return mapFriendlyBrand(SKY_HUE_OVERRIDES[brand.name] ?? brand.hex);
 }
 
-/**
- * Resolved colours by kind and name. The constellation asks once per star, so a 10,000-person
- * sky asked ten thousand times about a few hundred organisations, each a normalise, a brand
- * lookup and a colour mix. The answer is a pure function of the two, and the set of names is
- * bounded by the network; the cap only guards a long session that sees many networks.
- */
-const brandCache = new Map<string, string>();
-const BRAND_CACHE_MAX = 20_000;
-
 function resolveBrand(
   name: string | null | undefined,
   kind: BrandKind | undefined,
   fallbackNeutral: string
 ): string {
-  const cacheKey = `${kind ?? ""}\u0000${fallbackNeutral}\u0000${name ?? ""}`;
-  const cached = brandCache.get(cacheKey);
-  if (cached !== undefined) return cached;
   const key = normalizeOrgKey(name);
-  let color: string;
-  if (!key) color = fallbackNeutral;
-  else {
-    const hit = lookupBrand(name, kind);
-    color = hit ? skyBrandColor(hit) : hashToBrandHex(key);
-  }
-  if (brandCache.size >= BRAND_CACHE_MAX) brandCache.clear();
-  brandCache.set(cacheKey, color);
-  return color;
+  if (!key) return fallbackNeutral;
+  const hit = lookupBrand(name, kind);
+  if (hit) return skyBrandColor(hit);
+  return hashToBrandHex(key);
 }
 
 /** Primary color for a contact's school star tint. */

@@ -29,6 +29,10 @@ export const OPEN_MARK_PREFIX = "constellation:";
 
 const done = new Set<OpenStage>();
 
+export function openStageMarked(stage: OpenStage) {
+  return done.has(stage);
+}
+
 export function markOpenStage(stage: OpenStage) {
   if (typeof performance === "undefined" || typeof performance.mark !== "function") return;
   if (stage === "data-fetch-start" || (stage === "data-received" && !done.has("data-fetch-start"))) {
@@ -37,22 +41,4 @@ export function markOpenStage(stage: OpenStage) {
   if (done.has(stage)) return;
   done.add(stage);
   performance.mark(OPEN_MARK_PREFIX + stage);
-}
-
-/** Mark `first-paint` once the current frame is on screen, then `interactive` at the next idle. */
-export function markFirstPaintThenInteractive() {
-  if (typeof window === "undefined" || done.has("first-paint")) return;
-  requestAnimationFrame(() => {
-    // rAF callbacks run before the frame paints; a task queued from one runs after it.
-    const channel = new MessageChannel();
-    channel.port1.onmessage = () => {
-      markOpenStage("first-paint");
-      if (typeof requestIdleCallback === "function") {
-        requestIdleCallback(() => markOpenStage("interactive"));
-      } else {
-        setTimeout(() => markOpenStage("interactive"), 0);
-      }
-    };
-    channel.port2.postMessage(null);
-  });
 }

@@ -5,7 +5,8 @@
  * No DB, no network, no DOM.
  * Run: npx tsx scripts/smoke-hash-stream.ts
  */
-import { HASH_STREAM_MAX_SALT, hashUnit, hashUnitStream } from "../src/lib/hash";
+import { hashUnit } from "../src/lib/hash";
+import { HASH_STREAM_MAX_SALT, hashUnitStream } from "../src/lib/hash-stream";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) {
