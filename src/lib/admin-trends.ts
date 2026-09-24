@@ -122,16 +122,28 @@ export type AiOperationCostRow = {
   orbitMicros: number;
 };
 
-export type FeatureAdoption = {
-  chat: number;
-  outreach: number;
-  recruiters: number;
-  calendar: number;
-  gmail: number;
-  outlook: number;
-  imports: number;
-  goals: number;
-};
+/** One row of the Growth page's "Accounts that have used each feature" bars. */
+export type FeatureAdoptionRow = { key: FeatureKey; label: string; count: number };
+
+/**
+ * The product's core features, and the table whose rows prove an account used it.
+ * Deliberately short: connectors (Gmail, Outlook, iCloud), the API/MCP surface, phone
+ * scanning and Recruiters are left off to keep the chart about the main loop. A feature
+ * behind a coming-soon screen (Outreach, Events) is left out too: nobody can use it, so
+ * its bar would only ever measure the operator's own testing. The query and the labels
+ * are both built from this list.
+ */
+const FEATURES = [
+  { key: "capture", label: "Capture", table: "capture_jobs" },
+  { key: "chat", label: "Chat", table: "chat_messages" },
+  { key: "meetings", label: "Meetings", table: "meeting_sessions" },
+  { key: "reminders", label: "Reminders", table: "reminders" },
+  { key: "imports", label: "Imports", table: "imports" },
+  { key: "goals", label: "Goals", table: "user_goals" },
+  { key: "extension", label: "Extension", table: "extension_usage" },
+] as const;
+
+type FeatureKey = (typeof FEATURES)[number]["key"] | "calendar";
 
 function toDate(value: Date | string | null | undefined): Date {
   if (value instanceof Date) return value;
@@ -740,36 +752,37 @@ export async function activationTrend(
 }
 
 /**
- * How many accounts have ever touched each feature.
+ * How many accounts have ever touched each released feature, most-used first.
  *
  * The question this answers is which parts of Orbit are load-bearing and which are
  * decoration — the one cross-account total that does change a decision, unlike "contacts
  * across all accounts".
+ *
+ * Calendar is the one feature with two paths in: a pasted ICS feed
+ * (`calendar_subscriptions`) or a connected account's calendars (`calendar_sources`,
+ * Google, Microsoft or iCloud). An account counts once whichever it used.
  */
-export async function featureAdoption(): Promise<FeatureAdoption> {
+export async function featureAdoption(): Promise<FeatureAdoptionRow[]> {
   const db = await getDb();
+  // Table names come from the constant list above, never from input, so sql.raw is safe.
+  const columns = FEATURES.map(
+    (f) => `(SELECT count(DISTINCT user_id) FROM ${f.table}) AS "${f.key}"`
+  ).join(",\n      ");
   const result = await db.execute(sql`
     SELECT
-      (SELECT count(DISTINCT user_id) FROM chat_messages)          AS chat,
-      (SELECT count(DISTINCT user_id) FROM outreach_campaigns)     AS outreach,
-      (SELECT count(DISTINCT user_id) FROM user_recruiter_links)   AS recruiters,
-      (SELECT count(DISTINCT user_id) FROM calendar_subscriptions) AS calendar,
-      (SELECT count(DISTINCT user_id) FROM gmail_connections)      AS gmail,
-      (SELECT count(DISTINCT user_id) FROM outlook_connections)    AS outlook,
-      (SELECT count(DISTINCT user_id) FROM imports)                AS imports,
-      (SELECT count(DISTINCT user_id) FROM user_goals)             AS goals
+      ${sql.raw(columns)},
+      (SELECT count(*) FROM (
+        SELECT user_id FROM calendar_subscriptions
+        UNION
+        SELECT user_id FROM calendar_sources
+      ) AS c) AS "calendar"
   `);
   const row = rowsOf<Record<string, string | number>>(result)[0] ?? {};
-  return {
-    chat: num(row.chat),
-    outreach: num(row.outreach),
-    recruiters: num(row.recruiters),
-    calendar: num(row.calendar),
-    gmail: num(row.gmail),
-    outlook: num(row.outlook),
-    imports: num(row.imports),
-    goals: num(row.goals),
-  };
+  const rows: FeatureAdoptionRow[] = [
+    ...FEATURES.map((f) => ({ key: f.key, label: f.label, count: num(row[f.key]) })),
+    { key: "calendar", label: "Calendar", count: num(row.calendar) },
+  ];
+  return rows.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
 /** AI calls and failures per period. Capped at the retention window; older rows are pruned. */

@@ -8,7 +8,6 @@ import {
   EmptyState,
   MetricTile,
   MiniBars,
-  RelativeTime,
   Td,
   Th,
 } from "@/components/admin/primitives";
@@ -26,6 +25,8 @@ import {
   viewersTrend,
   type Grain,
 } from "@/lib/admin-trends";
+import { WaitlistStatsPanel } from "@/components/admin/waitlist-stats-panel";
+import { getWaitlistStats } from "@/lib/admin-interest-list";
 import { getWaitlist } from "@/lib/admin-product-health";
 import { analyticsDisabledReason } from "@/lib/analytics-visitor";
 import { formatRate } from "@/lib/format-rate";
@@ -81,7 +82,7 @@ export default async function AdminGrowthPage({
   const first = await firstSignupAt().catch(() => null);
   const { range, grain, buckets, spanDays } = resolveGrowthWindow(params, first);
 
-  const [snapshot, totals, viewers, rolling, depth, curves, activation, adoption, waitlist] =
+  const [snapshot, totals, viewers, rolling, depth, curves, activation, adoption, waitlist, waitlistStats] =
     await Promise.all([
       growthSnapshot(spanDays),
       userTotalsTrend(grain, buckets),
@@ -92,7 +93,8 @@ export default async function AdminGrowthPage({
       retentionCurves(RETENTION_COHORTS, RETENTION_WEEKS),
       activationTrend(grain, buckets),
       featureAdoption(),
-      getWaitlist().catch(() => null),
+      getWaitlist(6).catch(() => null),
+      getWaitlistStats().catch(() => null),
     ]);
 
   const labels = totals.map((p) => shortLabel(p.bucketStart, grain));
@@ -489,51 +491,10 @@ export default async function AdminGrowthPage({
           {/* The one cross-account total that changes a decision: which parts of Orbit are
               load-bearing and which are decoration. */}
           <AdminPanel title="Accounts that have used each feature">
-            <MiniBars
-              rows={[
-                { label: "Imports", count: adoption.imports },
-                { label: "Chat", count: adoption.chat },
-                { label: "Goals", count: adoption.goals },
-                { label: "Calendar", count: adoption.calendar },
-                { label: "Recruiters", count: adoption.recruiters },
-                { label: "Gmail", count: adoption.gmail },
-                { label: "Outreach", count: adoption.outreach },
-                { label: "Outlook", count: adoption.outlook },
-              ].sort((a, b) => b.count - a.count)}
-            />
+            <MiniBars rows={adoption.map(({ label, count }) => ({ label, count }))} />
           </AdminPanel>
 
-          <AdminPanel
-            title="Interest list"
-            action={
-              <Link
-                href="/admin/growth/interest-list"
-                className="text-xs text-muted-foreground underline underline-offset-2 transition-colors duration-fast hover:text-primary"
-              >
-                View all
-              </Link>
-            }
-          >
-            {!waitlist ? (
-              <EmptyState>Not instrumented yet.</EmptyState>
-            ) : waitlist.total === 0 ? (
-              <EmptyState>No signups yet.</EmptyState>
-            ) : (
-              <>
-                <MetricTile label="Signups" value={waitlist.total} />
-                <ul className="mt-3 space-y-1 border-t border-border/60 pt-3 text-sm">
-                  {waitlist.recent.map((w, i) => (
-                    <li key={i} className="flex justify-between gap-4">
-                      <span className="truncate">{w.email ?? "—"}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        <RelativeTime date={w.at} /> ago
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </AdminPanel>
+          <WaitlistStatsPanel stats={waitlistStats} recent={waitlist?.recent} />
         </div>
 
         {/* Detail, closed by default. Native <details> so it opens without JavaScript, and

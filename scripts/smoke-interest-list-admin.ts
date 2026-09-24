@@ -224,6 +224,26 @@ async function main() {
     summary.converted === 1,
     `converted=${summary.converted}`
   );
+  // --- the at-a-glance stats on Overview and Growth
+  const { getWaitlistStats } = await import("../src/lib/admin-interest-list");
+  const activeRow = (
+    await db.select().from(interestListSignups).where(like(interestListSignups.email, `${PREFIX}active%`))
+  )[0]!;
+  await db.insert(interestListSignups).values(
+    mk(`${PREFIX}friend@example.test`, { referredById: activeRow.id })
+  );
+  const stats = await getWaitlistStats();
+  check("stats carry the summary tiles", stats.converted === summary.converted && stats.total >= 4);
+  check("stats count joins through an invite link", stats.referred >= 1, String(stats.referred));
+  check("stats count joins this week", stats.joined7d >= 1 && stats.joined24h <= stats.joined7d);
+  const leader = stats.topReferrers.find((r) => r.email === activeRow.email);
+  check(
+    "the referrer leads the top-referrers list with their place in line",
+    leader?.referrals === 1 && typeof leader.position === "number",
+    JSON.stringify(stats.topReferrers)
+  );
+  await db.delete(interestListSignups).where(like(interestListSignups.email, `${PREFIX}friend@%`));
+
   const audience = await (await import("../src/lib/broadcasts")).audienceFor();
   const audienceEmails = audience.filter((a) => a.email.startsWith(PREFIX)).map((a) => a.email);
   check(

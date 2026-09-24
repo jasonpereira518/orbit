@@ -135,6 +135,57 @@ export async function getInterestListSummary(): Promise<InterestListSummary> {
   };
 }
 
+export type WaitlistStats = InterestListSummary & {
+  /** Joined in the last 24 hours / 7 days — every row, including ones that later left. */
+  joined24h: number;
+  joined7d: number;
+  /** Rows that arrived through someone's invite link. */
+  referred: number;
+  /** The people bringing others in: most still-waiting referrals first. */
+  topReferrers: Array<{ email: string; referrals: number; position: number | null }>;
+};
+
+const TOP_REFERRERS = 5;
+
+/**
+ * Everything the admin needs to know about the waitlist at a glance: its size, how much
+ * of it is still waiting, how fast it is growing, how much of that growth is word of
+ * mouth, and who is driving it. The tiles reuse `getInterestListSummary`; positions come
+ * from `readStandings`, the same line the pass shows, so the console and the page agree.
+ */
+export async function getWaitlistStats(): Promise<WaitlistStats> {
+  const db = await getDb();
+  const [summary, [growth], leaders, standings] = await Promise.all([
+    getInterestListSummary(),
+    db
+      .select({
+        joined24h: sql<number>`count(*) filter (where ${interestListSignups.createdAt} > now() - interval '24 hours')::int`,
+        joined7d: sql<number>`count(*) filter (where ${interestListSignups.createdAt} > now() - interval '7 days')::int`,
+        referred: sql<number>`count(*) filter (where ${interestListSignups.referredById} is not null)::int`,
+      })
+      .from(interestListSignups),
+    db
+      .select({ id: interestListSignups.id, email: interestListSignups.email, referrals: referralsSql })
+      .from(interestListSignups)
+      .where(and(isNull(interestListSignups.unsubscribedAt), sql`${referralsSql} > 0`))
+      .orderBy(sql`${referralsSql} desc`, interestListSignups.createdAt)
+      .limit(TOP_REFERRERS),
+    readStandings(),
+  ]);
+
+  return {
+    ...summary,
+    joined24h: growth?.joined24h ?? 0,
+    joined7d: growth?.joined7d ?? 0,
+    referred: growth?.referred ?? 0,
+    topReferrers: leaders.map((l) => ({
+      email: l.email,
+      referrals: Number(l.referrals),
+      position: standings.get(l.id)?.position ?? null,
+    })),
+  };
+}
+
 function selection() {
   return {
     id: interestListSignups.id,

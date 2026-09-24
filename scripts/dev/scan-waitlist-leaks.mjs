@@ -49,7 +49,14 @@ const TERMS = [
 const leaks = [];
 const assets = [];
 
+// The waitlist's own hostname is not a leak, even when it contains a term (a subdomain of
+// jasonpereira.live does). It is blanked out before scanning, so what remains is everything
+// ELSE the page says.
+const ownHost = new URL(base).hostname;
+const ownHostRe = new RegExp(ownHost.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+
 function scan(where, text, bucket) {
+  text = text.replace(ownHostRe, "<waitlist-host>");
   for (const term of TERMS) {
     const re = new RegExp(term.source, term.flags.includes("g") ? term.flags : `${term.flags}g`);
     for (const m of text.matchAll(re)) {
