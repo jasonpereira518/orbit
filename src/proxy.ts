@@ -117,9 +117,7 @@ function withFirstTouch(req: Request, url: URL, res: NextResponse) {
 function stealthResponse(req: Request, pathname: string): NextResponse | null {
   if (!stealth) return null;
   if (hiddenApiInStealth.has(pathname)) return new NextResponse(null, { status: 404 });
-  // The landing page is closed; the app's front door is the dashboard, which sends a
-  // signed-out visitor on to sign-in by itself.
-  if (pathname === "/") return NextResponse.redirect(new URL("/dashboard", req.url));
+  // `/` is not redirected: the landing page stays open in stealth (see STEALTH_CLOSED_PAGES).
   return null;
 }
 

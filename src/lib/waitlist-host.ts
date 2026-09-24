@@ -13,8 +13,8 @@
  * the pure functions below. The proxy's one job for this host is to skip Clerk, whose
  * handshake would otherwise redirect a visitor to the app's own Clerk domain.
  *
- * STEALTH (`SITE_STEALTH=1`) closes the app host's public face: the marketing pages need a
- * session, `/sign-up` sends people to `/sign-in` unless they carry a Clerk invitation, old
+ * STEALTH (`SITE_STEALTH=1`) closes the app host's public face: the landing page stays open,
+ * but the other marketing pages need a session, `/sign-up` sends people to `/sign-in` unless they carry a Clerk invitation, old
  * `/interest` links move to the waitlist host, and every response is `noindex`.
  *
  * No imports and no aliases: `next.config.ts` loads this before any alias exists, and the
@@ -202,8 +202,13 @@ export function stealthRedirects(env: Env = process.env): ConfigRedirect[] {
   return out;
 }
 
-/** Pages that are public on the app host normally and need a session in stealth mode. */
-export const STEALTH_CLOSED_PAGES = ["/", "/pricing", "/connect", "/contact"] as const;
+/**
+ * Pages that are public on the app host normally and need a session in stealth mode.
+ *
+ * `/` is deliberately NOT here: the landing page stays open in stealth, so typing the domain
+ * shows Orbit rather than bouncing through /dashboard to a sign-in form.
+ */
+export const STEALTH_CLOSED_PAGES = ["/pricing", "/connect", "/contact"] as const;
 
 /** API paths that answer 404 in stealth mode. */
 export const STEALTH_HIDDEN_API = ["/api/v1/openapi.json"] as const;
