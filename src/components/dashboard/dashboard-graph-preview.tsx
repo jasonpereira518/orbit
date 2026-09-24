@@ -27,14 +27,16 @@ export function DashboardGraphPreview({
           Your network at a glance — each constellation is a company or school
         </p>
       </CardHeader>
-      <CardContent className="min-h-0 flex-1 overflow-hidden p-0 px-4 pb-2">
+      <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0 px-4 pb-2">
         {/*
           Not a link: the sky moves under a drag, and a drag that ended over a link would open it.
           A tap still opens the chart, and the footer link is the keyboard's way there.
+          300px is a floor, not a size: beside Network depth the card is stretched to that
+          card's height, and the sky grows into it instead of leaving a band of empty card.
         */}
         <div
           className={cn(
-            "h-[300px] overflow-hidden rounded-2xl border border-white/10",
+            "min-h-[300px] flex-1 overflow-hidden rounded-2xl border border-white/10",
             STAGE_GROUND
           )}
         >
