@@ -10,13 +10,39 @@
 # and `smoke` status checks before merging.
 name: ci
 
+# Actions bills every job in whole minutes, so CI is cut down three ways:
+#
+# - Draft PRs are skipped. A PR runs CI when it is opened ready, or when a draft is marked
+#   ready for review, and on every push after that.
+# - The two slow jobs, `smoke` and `e2e` (up to 30 minutes each), run on a PR only when it
+#   carries the `ci-full` label. On main they always run, so nothing lands unchecked.
+#   `labeled` is a trigger type for that label, so the other jobs skip on label events, and
+#   label events get their own concurrency group so labeling never cancels a run that is
+#   already checking the code.
+# - `paths-ignore` skips the run for changes no job reads: docs, agent skills, and the two
+#   workflows that only schedule ops calls. docs/RUNBOOK.md is re-included because
+#   scripts/smoke-schedules.ts parses it. There are no required status checks on main
+#   (Protected Main Branch only blocks deletion and force-pushes); if `check`/`smoke` are
+#   ever made required, drop `paths-ignore` from `pull_request`, or a docs-only PR waits
+#   forever on checks that never start.
 on:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
+    paths-ignore: &ignore
+      - "**.md"
+      - "docs/**"
+      - "!docs/RUNBOOK.md"
+      - ".agents/**"
+      - ".claude/**"
+      - ".github/workflows/ops.yml"
+      - ".github/workflows/backup.yml"
+      - "LICENSE"
   push:
     branches: [main]
+    paths-ignore: *ignore
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event.action == 'labeled' && 'label' || 'code' }}
   cancel-in-progress: true
 
 permissions:
@@ -25,6 +51,7 @@ permissions:
 jobs:
   check:
     name: typecheck · lint · build
+    if: github.event.action != 'labeled' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -50,6 +77,12 @@ jobs:
 
   smoke:
     name: smoke suite (PGlite)
+    if: >-
+      github.event_name == 'push' || (
+        !github.event.pull_request.draft
+        && contains(github.event.pull_request.labels.*.name, 'ci-full')
+        && (github.event.action != 'labeled' || github.event.label.name == 'ci-full')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -63,6 +96,7 @@ jobs:
 
   extension:
     name: extension typecheck · build
+    if: github.event.action != 'labeled' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -78,6 +112,12 @@ jobs:
 
   e2e:
     name: browser flows (Playwright)
+    if: >-
+      github.event_name == 'push' || (
+        !github.event.pull_request.draft
+        && contains(github.event.pull_request.labels.*.name, 'ci-full')
+        && (github.event.action != 'labeled' || github.event.label.name == 'ci-full')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
