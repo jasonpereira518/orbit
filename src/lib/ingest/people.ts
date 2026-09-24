@@ -21,7 +21,7 @@ import {
   createContactsBulkForUser,
   type ContactInput,
 } from "@/lib/contact-writes";
-import type { IngestContext } from "@/lib/ingest/events";
+import { ensureIngestNetwork, type IngestContext } from "@/lib/ingest/events";
 
 /** One person as a provider describes them. Every field but the name is optional. */
 export type PersonRecord = {
@@ -113,6 +113,7 @@ export async function ingestPeople(
 ): Promise<PeopleIngestStats> {
   const stats = emptyStats();
   if (people.length === 0) return stats;
+  await ensureIngestNetwork(ctx);
 
   /**
    * Both accumulators are keyed, not appended to blindly — the same reason `ingestEvents`

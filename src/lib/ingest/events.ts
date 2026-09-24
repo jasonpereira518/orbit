@@ -251,14 +251,72 @@ function toContactInput(
  */
 export async function openIngestContext(
   userId: string,
-  options: IngestOptions
+  options: IngestOptions,
+  opts: {
+    /**
+     * Read the duplicate index and the company cache on the first batch that has someone in
+     * it, instead of now. For the scheduled sync phases, where most runs page through zero
+     * changes and never ingest anything. Only those two pure reads move: the headroom check
+     * (which touches `user_settings`) and the engines still open here, in the same order.
+     * A context opened this way must only be read through `ingestEvents` / `ingestPeople`.
+     */
+    deferNetwork?: boolean;
+  } = {}
 ): Promise<IngestContext> {
-  const db = await getDb();
+  const readNetwork = async () => ({
+    index: buildDuplicateIndex(await readDuplicateSubjects(userId)),
+    companyResolve: await createCompanyResolver(userId),
+  });
 
+  if (opts.deferNetwork) {
+    const ctx: IngestContext = {
+      userId,
+      options: ingestOptions(options),
+      // Placeholders until `ensureNetwork` swaps in the real reads; never consulted before.
+      index: buildDuplicateIndex([]),
+      companyResolve: DEFERRED_COMPANY_RESOLVE,
+      headroom: options.createsContacts ? await contactHeadroomForUser(userId) : null,
+      touchedContactIds: new Set(),
+      engines: await openEngines(userId),
+    };
+    let loading: Promise<void> | null = null;
+    deferredNetwork.set(ctx, () =>
+      (loading ??= readNetwork().then((network) => {
+        ctx.index = network.index;
+        ctx.companyResolve = network.companyResolve;
+        deferredNetwork.delete(ctx);
+      }))
+    );
+    return ctx;
+  }
+
+  const network = await readNetwork();
+  return {
+    userId,
+    options: ingestOptions(options),
+    index: network.index,
+    companyResolve: network.companyResolve,
+    headroom: options.createsContacts ? await contactHeadroomForUser(userId) : null,
+    touchedContactIds: new Set(),
+    engines: await openEngines(userId),
+  };
+}
+
+function ingestOptions(options: IngestOptions): IngestContext["options"] {
+  return {
+    ...options,
+    matchConfidence: options.matchConfidence ?? DUPLICATE_MERGE_CONFIDENCE,
+    source: options.source,
+    createsContacts: options.createsContacts,
+  };
+}
+
+async function readDuplicateSubjects(userId: string): Promise<DuplicateSubject[]> {
+  const db = await getDb();
   // The same seven narrow columns the import engine reads. Deliberately not `select *`:
   // `DuplicateSubject` is kept small so a batch never drags notes and summaries across the
   // wire for people it is not going to touch.
-  const existing = (await db.query.contacts.findMany({
+  return (await db.query.contacts.findMany({
     where: (c, { eq }) => eq(c.userId, userId),
     columns: {
       id: true,
@@ -270,21 +328,26 @@ export async function openIngestContext(
       title: true,
     },
   })) as DuplicateSubject[];
+}
 
-  return {
-    userId,
-    options: {
-      ...options,
-      matchConfidence: options.matchConfidence ?? DUPLICATE_MERGE_CONFIDENCE,
-      source: options.source,
-      createsContacts: options.createsContacts,
+/** Contexts opened with `deferNetwork` whose index and company cache are not read yet. */
+const deferredNetwork = new WeakMap<IngestContext, () => Promise<void>>();
+
+const DEFERRED_COMPANY_RESOLVE = Object.assign(
+  async () => {
+    throw new Error("ingest context: company resolver used before the network was read");
+  },
+  {
+    prime: async () => {
+      throw new Error("ingest context: company resolver used before the network was read");
     },
-    index: buildDuplicateIndex(existing),
-    companyResolve: await createCompanyResolver(userId),
-    headroom: options.createsContacts ? await contactHeadroomForUser(userId) : null,
-    touchedContactIds: new Set(),
-    engines: await openEngines(userId),
-  };
+  }
+) as unknown as CompanyResolver;
+
+/** Complete a deferred context's reads, once; a no-op for every other context. */
+export async function ensureIngestNetwork(ctx: IngestContext): Promise<void> {
+  const load = deferredNetwork.get(ctx);
+  if (load) await load();
 }
 
 /**
@@ -316,6 +379,7 @@ export async function ingestEvents(
     }
   }
   if (pairs.length === 0) return stats;
+  await ensureIngestNetwork(ctx);
 
   /**
    * Both accumulators are keyed, not appended to blindly, and that is load-bearing.

@@ -352,7 +352,7 @@ async function syncGoogleCalendar(
     // one contact by the next sync, silently and permanently. Name+company and name+title
     // still fold; a name on its own now becomes a review suggestion instead.
     // `calendarAdapter` keeps 0.6 because it only annotates and never creates or merges.
-  });
+  }, { deferNetwork: true });
 
   // The cursor now lives on the `calendar_sources` row; falling back to the connection's own
   // (pre-migration) cursor — `startCursor`, read off `conn.syncCursor?.calendar` by the caller —
@@ -435,7 +435,7 @@ async function syncGoogleContacts(
     // calendar phase makes, and the opposite of the one-shot file import, which is a review
     // screen precisely because a file is somebody else's list.
     createsContacts: true,
-  });
+  }, { deferNetwork: true });
 
   let cursor = startCursor;
 
@@ -555,7 +555,7 @@ async function syncMicrosoftCalendar(
     source: "microsoft_calendar",
     // Same business decision as the Google path — see its comment above.
     createsContacts: true,
-  });
+  }, { deferNetwork: true });
 
   let cursor = source.syncCursor ?? conn.syncCursor?.calendar ?? null;
   const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS);
@@ -684,7 +684,7 @@ async function syncAppleCalendar(
     source: "apple_calendar",
     // Same business decision as the Google and Microsoft paths — see the Google comment above.
     createsContacts: true,
-  });
+  }, { deferNetwork: true });
 
   const clockNow = deps.budgetClock ?? Date.now;
   const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS, clockNow);
